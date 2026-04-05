@@ -2,6 +2,16 @@
 
 Hardware checks are manual. CI does not attempt to validate RealSense behavior.
 
+## Active Hardware Inventory
+
+Current connected cameras:
+
+- `239222303506` - Intel RealSense D455
+- `239222300433` - Intel RealSense D455
+- `239222300781` - Intel RealSense D455
+
+Design assumption: treat the active setup as 3 homogeneous D455 devices on one D400-family code path.
+
 ## Checklist
 
 ### Viewer

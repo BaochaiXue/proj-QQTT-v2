@@ -16,6 +16,8 @@ This repository handles 3-camera RealSense preview, calibration, synchronized RG
 - `docs/WORKFLOWS.md`: canonical operator workflows
 - `docs/ARCHITECTURE.md`: kept package/file structure
 - `docs/HARDWARE_VALIDATION.md`: manual real-hardware checklist
+- `docs/external-deps.md`: external repo / checkpoint source of truth
+- `docs/envs.md`: validated local conda environments
 - `docs/exec-plans/`: first-class execution plans for non-trivial changes
 - `scripts/harness/check_scope.py`: deterministic repo scope guard
 - `tests/test_record_data_align_smoke.py`: smoke test for aligned-case generation
@@ -27,6 +29,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized RG
 3. Update docs and tests in the same change when behavior changes.
 4. Run deterministic checks before finishing:
    - `python scripts/harness/check_all.py`
+5. For external dependency proof-of-life work, record exact commands and outcomes under `docs/generated/`.
 
 ## Invariants
 
@@ -35,6 +38,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized RG
 - `qqtt/__init__.py` exports only `CameraSystem`.
 - `env_install/env_install.sh` stays camera-only.
 - Hardware checks remain manual and documented; do not fake them in CI.
+- External repos and weights stay outside this repo and are referenced by path.
 
 ## Do Not Change Without Updating Docs / Tests
 
