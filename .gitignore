@@ -1,0 +1,116 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python cache / tooling
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.nox/
+.tox/
+.hypothesis/
+.ipynb_checkpoints/
+
+# Virtual environments
+.env
+/.venv/
+/venv/
+/ENV/
+/env.bak/
+/venv.bak/
+
+# Build / packaging
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+*.egg
+.Python
+MANIFEST
+
+# Logs / runtime state
+*.log
+pip-log.txt
+pip-delete-this-directory.txt
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+wandb/
+
+# Root-level local data / archives
+/data/
+/data_collect/
+/GIF/
+/release_data/
+/real_data/
+/past_data_collect/
+/feng_data_collect/
+/data.7z
+*.7z
+*.zip
+*.tar
+*.gz
+
+# Project outputs / experiments
+/experiments/
+/experiments_optimization/
+/experiments_transfer/
+/temp_experiments/
+/past_exps/
+/outcmaes/
+/results/
+/exp_results/
+/test_output/
+/visualization/
+/_tmp_teleop_frames/
+
+# Local capture / robot rollout folders
+/robot_data/
+/episode_0000/
+/episode_0001/
+/episode_0000_old/
+/MPC/
+
+# Downloaded third-party assets / checkpoints
+/data_process/TRELLIS/
+/data_process/models/weights/
+/data_process/groundedSAM_checkpoints/
+
+# Gaussian Splatting generated outputs
+/gaussian_splatting/output/
+/gaussian_splatting/output_dynamic/
+/gaussian_splatting/output_video/
+
+# Generated artifacts that should not be versioned
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.npy
+*.npz
+*.pkl
+*.ply
+*.obj
+*.glb
+*.mp4
+
+# Temp / scratch
+quick_test/
+deprecated/
+non_rigid_matching/
