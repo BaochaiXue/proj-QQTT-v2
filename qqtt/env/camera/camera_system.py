@@ -1,4 +1,13 @@
 from .realsense import MultiRealsense, SingleRealsense
+from .defaults import (
+    DEFAULT_EXPOSURE,
+    DEFAULT_FPS,
+    DEFAULT_GAIN,
+    DEFAULT_HEIGHT,
+    DEFAULT_NUM_CAM,
+    DEFAULT_WHITE_BALANCE,
+    DEFAULT_WIDTH,
+)
 from multiprocessing.managers import SharedMemoryManager
 import numpy as np
 import time
@@ -25,12 +34,12 @@ def exist_dir(dir):
 class CameraSystem:
     def __init__(
         self,
-        WH=[848, 480],
-        fps=30,
-        num_cam=3,
-        exposure=70,
-        gain=60,
-        white_balance=3800,
+        WH=(DEFAULT_WIDTH, DEFAULT_HEIGHT),
+        fps=DEFAULT_FPS,
+        num_cam=DEFAULT_NUM_CAM,
+        exposure=DEFAULT_EXPOSURE,
+        gain=DEFAULT_GAIN,
+        white_balance=DEFAULT_WHITE_BALANCE,
         exposure_overrides=None,
         enable_keyboard_listener=True,
     ):

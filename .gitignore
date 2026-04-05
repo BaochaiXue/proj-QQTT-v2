@@ -114,3 +114,7 @@ wandb/
 quick_test/
 deprecated/
 non_rigid_matching/
+
+# Keep test fixtures versioned even when they use ignored extensions.
+!tests/fixtures/
+!tests/fixtures/**

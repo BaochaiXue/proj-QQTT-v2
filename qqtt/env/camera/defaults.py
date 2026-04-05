@@ -1,0 +1,9 @@
+"""Shared camera workflow defaults for the camera-only repo."""
+
+DEFAULT_WIDTH = 848
+DEFAULT_HEIGHT = 480
+DEFAULT_FPS = 30
+DEFAULT_NUM_CAM = 3
+DEFAULT_EXPOSURE = 70.0
+DEFAULT_GAIN = 60.0
+DEFAULT_WHITE_BALANCE = 3800.0

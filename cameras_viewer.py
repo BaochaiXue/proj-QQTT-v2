@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Simple GUI viewer for up to 3 RealSense cameras.
+"""Simple GUI viewer for the camera-only RealSense workflow.
 
 Shows color (top) + depth colormap (bottom) per camera, tiled in a grid.
 Press `q` or `Esc` to exit.
@@ -11,11 +10,22 @@ from __future__ import annotations
 import argparse
 import math
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-import cv2
-import numpy as np
-import pyrealsense2 as rs
+from qqtt.env.camera.defaults import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_NUM_CAM, DEFAULT_WIDTH
+
+if TYPE_CHECKING:
+    import cv2
+    import numpy as np
+    import pyrealsense2 as rs
+
+
+def _runtime_imports():
+    import cv2
+    import numpy as np
+    import pyrealsense2 as rs
+
+    return cv2, np, rs
 
 DEFAULT_EXPOSURE_OVERRIDES = {
     "239222303506": 156.0,
@@ -25,7 +35,7 @@ DEFAULT_EXPOSURE_OVERRIDES = {
 
 def _apply_color_controls(
     *,
-    pipeline: rs.pipeline,
+    pipeline: Any,
     auto_exposure: bool,
     exposure: float,
     gain: float,
@@ -36,6 +46,7 @@ def _apply_color_controls(
     auto_val = float("nan")
     exp_val = float("nan")
     gain_val = float("nan")
+    _, _, rs = _runtime_imports()
     try:
         color_sensor = pipeline.get_active_profile().get_device().first_color_sensor()
         if color_sensor.supports(rs.option.enable_auto_exposure):
@@ -62,10 +73,11 @@ def _apply_color_controls(
 
 def _start_pipeline(
     *,
-    ctx: rs.context,
+    ctx: Any,
     serial: str,
     profiles: Tuple[Tuple[int, int, int], ...],
-) -> Tuple[rs.pipeline, Tuple[int, int, int]]:
+) -> Tuple[Any, Tuple[int, int, int]]:
+    _, _, rs = _runtime_imports()
     last_err: Optional[BaseException] = None
     for width, height, fps in profiles:
         pipeline = rs.pipeline(ctx)
@@ -151,9 +163,9 @@ def _build_profiles(
 
 
 def _safe_wait_frames(
-    pipeline: rs.pipeline,
+    pipeline: Any,
     timeout_ms: int = 100,
-) -> Optional[rs.frameset]:
+) -> Optional[Any]:
     try:
         return pipeline.wait_for_frames(timeout_ms)
     except RuntimeError:
@@ -162,10 +174,11 @@ def _safe_wait_frames(
 
 def _make_panel(
     *,
-    color: np.ndarray,
-    depth: np.ndarray,
+    color: Any,
+    depth: Any,
     label: str,
-) -> np.ndarray:
+) -> Any:
+    cv2, _, _ = _runtime_imports()
     depth_8u = cv2.convertScaleAbs(depth, alpha=0.03)
     depth_colormap = cv2.applyColorMap(depth_8u, cv2.COLORMAP_JET)
     panel = np.vstack([color, depth_colormap])
@@ -183,6 +196,7 @@ def _make_panel(
 
 
 def _empty_panel(width: int, height: int, label: str) -> np.ndarray:
+    cv2, np, _ = _runtime_imports()
     panel = np.zeros((height * 2, width, 3), dtype=np.uint8)
     cv2.putText(
         panel,
@@ -198,10 +212,11 @@ def _empty_panel(width: int, height: int, label: str) -> np.ndarray:
 
 
 def _tile_panels(
-    panels: List[np.ndarray],
+    panels: List[Any],
     panel_h: int,
     panel_w: int,
-) -> np.ndarray:
+) -> Any:
+    _, np, _ = _runtime_imports()
     if not panels:
         return np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
     cols = 2
@@ -216,8 +231,9 @@ def _tile_panels(
     return grid
 
 
-def _enumerate_d400_devices(ctx: rs.context) -> List[rs.device]:
-    devices: List[rs.device] = []
+def _enumerate_d400_devices(ctx: Any) -> List[Any]:
+    _, _, rs = _runtime_imports()
+    devices: List[Any] = []
     for dev in ctx.query_devices():
         try:
             name = dev.get_info(rs.camera_info.name).lower()
@@ -234,15 +250,15 @@ def _enumerate_d400_devices(ctx: rs.context) -> List[rs.device]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    # Keep defaults aligned with cameras_calibrate.py.
-    parser.add_argument("--width", type=int, default=1280)
-    parser.add_argument("--height", type=int, default=720)
-    parser.add_argument("--fps", type=int, default=5)
-    parser.add_argument("--max-cams", type=int, default=3)
+    parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
+    parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
+    parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
+    parser.add_argument("--max-cams", type=int, default=DEFAULT_NUM_CAM)
     parser.add_argument("--auto-exposure", action="store_true")
     parser.add_argument("--exposure", type=float, default=70.0)
     parser.add_argument("--gain", type=float, default=60.0)
     args = parser.parse_args()
+    cv2, np, rs = _runtime_imports()
 
     ctx = rs.context()
     devices = _enumerate_d400_devices(ctx)
