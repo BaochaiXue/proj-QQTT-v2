@@ -26,6 +26,7 @@ class RecordingMetadataSchemaV2Test(unittest.TestCase):
         ]
         metadata = build_recording_metadata(
             serial_numbers=["239222303506"],
+            calibration_reference_serials=["239222300433", "239222300781", "239222303506"],
             capture_mode="both_eval",
             streams_present=["color", "depth", "ir_left", "ir_right"],
             fps=30,
@@ -37,6 +38,7 @@ class RecordingMetadataSchemaV2Test(unittest.TestCase):
         for key in (
             "schema_version",
             "serial_numbers",
+            "calibration_reference_serials",
             "logical_camera_names",
             "capture_mode",
             "streams_present",

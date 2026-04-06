@@ -151,7 +151,8 @@ def main() -> int:
         camera_system.realsense.stop()
         raise RuntimeError(
             "both_eval is blocked by the latest D455 stream probe on this machine "
-            f"for serials={effective_serials}, {args.width}x{args.height}@{args.fps}, emitter={args.emitter}."
+            f"for serials={effective_serials}, {args.width}x{args.height}@{args.fps}, emitter={args.emitter}. "
+            f"See {_resolve_path('./docs/generated/d455_stream_probe_results.md')}."
         )
     if args.capture_mode == "stereo_ir" and support is False:
         print(

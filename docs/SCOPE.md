@@ -11,6 +11,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized RG
 - synchronized RGB-D recording
 - trimming and timestamp alignment of recorded cases
 - packaging aligned cases under `data/`
+- aligned depth-backend comparison visualization utilities
 - manual hardware validation documentation
 - deterministic tests and scope guard for the kept workflow
 
@@ -26,7 +27,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized RG
 - Gaussian Splatting
 - rendering evaluation
 - teleoperation
-- downstream demos or visualization for simulation pipelines
+- downstream demos or visualization for simulation / manipulation pipelines
 
 ## Boundary Rule
 

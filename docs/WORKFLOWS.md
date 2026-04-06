@@ -91,3 +91,25 @@ Important:
 - `realsense` remains the default backend.
 - `ffs` requires raw `ir_left` / `ir_right` plus runtime geometry metadata.
 - `both` is experimental and should only be used when the hardware probe says the same-take stream set is supported.
+
+## 5. Compare
+
+Same-case comparison when an aligned case contains both native and FFS depth:
+
+```bash
+python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --write_mp4
+```
+
+Fallback two-case comparison when `both_eval` is not supported:
+
+```bash
+python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --write_mp4 --use_float_ffs_depth_when_available
+```
+
+The comparison workflow:
+
+- decodes compatible depth to meters
+- deprojects with `K_color`
+- transforms to world using `calibrate.pkl`
+- fuses the aligned camera clouds
+- renders native and FFS clouds from the same deterministic fixed view

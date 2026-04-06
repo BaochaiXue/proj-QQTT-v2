@@ -26,6 +26,13 @@ The repo is intentionally small.
 - `data_process/depth_backends/geometry.py`
 - `data_process/depth_backends/fast_foundation_stereo.py`
 
+### Comparison Visualization
+
+- `data_process/visualization/__init__.py`
+- `data_process/visualization/calibration_io.py`
+- `data_process/visualization/pointcloud_compare.py`
+- `scripts/harness/visual_compare_depth_video.py`
+
 ### Tooling / Harness
 
 - `env_install/env_install.sh`
@@ -52,9 +59,18 @@ The repo is intentionally small.
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
 
+`calibrate.pkl` support is intentionally narrow and matches the current producer:
+
+- object type: `list` / `tuple` or `numpy.ndarray`
+- shape: `(N, 4, 4)`
+- convention: each transform is `camera -> world` (`c2w`)
+- ordering: calibration-time camera order
+
+Subset capture cases rely on `metadata["calibration_reference_serials"]` to map case serials back to the full calibration order.
+
 ## Architectural Invariants
 
 - No dependency from kept code into deleted downstream packages.
 - No physics / rendering exports at the `qqtt` top level.
-- Alignment is the terminal data product of this repo.
+- Alignment remains the canonical data product of this repo; comparison visualization is an ancillary utility built on aligned cases.
 - `depth/` remains the canonical compatibility output in aligned cases.

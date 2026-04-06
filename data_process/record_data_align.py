@@ -296,6 +296,7 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
         "schema_version": "qqtt_aligned_case_v2",
         "source_case_name": args.case_name,
         "serial_numbers": metadata["serial_numbers"],
+        "calibration_reference_serials": metadata.get("calibration_reference_serials", metadata["serial_numbers"]),
         "logical_camera_names": metadata.get("logical_camera_names", [f"cam{i}" for i in range(num_cameras)]),
         "fps": fps,
         "WH": metadata["WH"],

@@ -51,3 +51,4 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - latest stream probe result: `rgb_ir_pair` is not stable on all 3 cameras
 - latest stream probe result: same-take `rgbd_ir_pair` should not be promised on this machine
 - integrated `stereo_ir -> ffs` path has been validated on serial `239222300781`
+- fallback two-case comparison video workflow has been validated on serial `239222300781`

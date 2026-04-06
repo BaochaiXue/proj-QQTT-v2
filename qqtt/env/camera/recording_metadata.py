@@ -4,6 +4,7 @@ from __future__ import annotations
 def build_recording_metadata(
     *,
     serial_numbers,
+    calibration_reference_serials,
     capture_mode,
     streams_present,
     fps,
@@ -17,6 +18,7 @@ def build_recording_metadata(
     return {
         "schema_version": "qqtt_recording_v2",
         "serial_numbers": list(serial_numbers),
+        "calibration_reference_serials": list(calibration_reference_serials),
         "logical_camera_names": [f"cam{i}" for i in range(len(serial_numbers))],
         "capture_mode": capture_mode,
         "streams_present": list(streams_present),

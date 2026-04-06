@@ -1,6 +1,6 @@
 # proj-QQTT-v2
 
-This repository handles 3-camera RealSense preview, calibration, synchronized raw capture, and aligned case generation up to `data_process/record_data_align.py`.
+This repository handles 3-camera RealSense preview, calibration, synchronized raw capture, aligned case generation, and native-vs-FFS comparison visualization for aligned cases.
 
 ## Scope
 
@@ -13,6 +13,7 @@ This repo is intentionally narrow. It supports only:
    - optional raw D455 IR stereo capture
 4. raw recording alignment and trimming
 5. optional Fast-FoundationStereo depth generation during alignment
+6. native-vs-FFS aligned depth comparison visualization
 
 This repo does **not** include:
 
@@ -141,6 +142,29 @@ Important:
 - this repo explicitly reprojects FFS depth from IR-left coordinates into color coordinates during alignment
 - canonical aligned `depth/` remains compatibility-oriented
 
+## Compare Native vs FFS
+
+Same-case comparison, when an aligned case contains both native depth and FFS depth:
+
+```bash
+python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --write_mp4
+```
+
+Fallback two-case comparison, when `both_eval` is not supported on the current machine:
+
+```bash
+python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --write_mp4 --use_float_ffs_depth_when_available
+```
+
+The comparison utility:
+
+- decodes compatible depth to meters
+- deprojects with color intrinsics
+- uses `calibrate.pkl` camera-to-world transforms
+- fuses per-camera point clouds into a common frame
+- renders native and FFS point clouds from the same deterministic viewpoint
+- writes side-by-side frame sequences and optional videos
+
 ## Output Layout
 
 ### Raw case layout
@@ -200,6 +224,13 @@ data/<case_name>/
     0/<frame>.npy
     1/<frame>.npy
     2/<frame>.npy
+  comparison/           # optional native-vs-FFS visualization output
+    native_frames/
+    ffs_frames/
+    side_by_side_frames/
+    videos/
+    metrics.json
+    comparison_metadata.json
 ```
 
 ## Validation
@@ -214,6 +245,7 @@ Manual hardware validation checklist:
 
 - [docs/HARDWARE_VALIDATION.md](/c:/Users/zhang/proj-QQTT/docs/HARDWARE_VALIDATION.md)
 - [docs/generated/ffs_depth_backend_integration_validation.md](/c:/Users/zhang/proj-QQTT/docs/generated/ffs_depth_backend_integration_validation.md)
+- [docs/generated/ffs_comparison_workflow_validation.md](/c:/Users/zhang/proj-QQTT/docs/generated/ffs_comparison_workflow_validation.md)
 
 ## Future Changes
 

@@ -85,6 +85,7 @@ class CameraSystem:
             raise ValueError(f"Unsupported emitter: {emitter}")
 
         connected_serials = SingleRealsense.get_connected_devices_serial()
+        self.connected_serial_numbers = list(connected_serials)
         if serial_numbers is not None:
             missing = [serial for serial in serial_numbers if serial not in connected_serials]
             if missing:
@@ -262,6 +263,7 @@ class CameraSystem:
     def build_recording_metadata(self):
         return build_recording_metadata_payload(
             serial_numbers=self.serial_numbers,
+            calibration_reference_serials=self.connected_serial_numbers,
             capture_mode=self.capture_mode,
             streams_present=self.streams_present,
             fps=self.fps,
