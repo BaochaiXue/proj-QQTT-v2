@@ -19,7 +19,7 @@ This writes `calibrate.pkl` in the repo root by default.
 Useful options:
 
 ```bash
-python cameras_calibrate.py --width 848 --height 480 --fps 30 --num-cam 3
+python cameras_calibrate.py --width 1280 --height 720 --fps 5 --num-cam 3
 ```
 
 ## 3. Record

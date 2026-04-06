@@ -74,6 +74,12 @@ python cameras_calibrate.py
 
 Successful calibration writes `calibrate.pkl` in the repo root by default.
 
+Current calibration defaults are optimized for board detection rather than live throughput:
+
+```bash
+python cameras_calibrate.py --width 1280 --height 720 --fps 5
+```
+
 ## Recording
 
 Record a raw case.

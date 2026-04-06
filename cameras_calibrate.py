@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import argparse
 
-from qqtt.env.camera.defaults import (
-    DEFAULT_FPS,
-    DEFAULT_HEIGHT,
-    DEFAULT_NUM_CAM,
-    DEFAULT_WIDTH,
-)
+from qqtt.env.camera.defaults import DEFAULT_NUM_CAM
+
+
+CALIBRATE_DEFAULT_WIDTH = 1280
+CALIBRATE_DEFAULT_HEIGHT = 720
+CALIBRATE_DEFAULT_FPS = 5
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -15,9 +15,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Calibrate a 3-camera RealSense setup with a ChArUco board.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
-    parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
-    parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
+    parser.add_argument("--width", type=int, default=CALIBRATE_DEFAULT_WIDTH)
+    parser.add_argument("--height", type=int, default=CALIBRATE_DEFAULT_HEIGHT)
+    parser.add_argument("--fps", type=int, default=CALIBRATE_DEFAULT_FPS)
     parser.add_argument("--num-cam", type=int, default=DEFAULT_NUM_CAM)
     parser.add_argument(
         "--disable-keyboard-listener",
