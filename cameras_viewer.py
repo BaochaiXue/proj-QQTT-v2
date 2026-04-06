@@ -195,6 +195,64 @@ def _make_panel(
     return panel
 
 
+def _fit_to_canvas(
+    image: Any,
+    target_width: int,
+    target_height: int,
+    *,
+    interpolation: int,
+    fill_value: int = 0,
+) -> Any:
+    cv2, np, _ = _runtime_imports()
+    src_height, src_width = image.shape[:2]
+    if src_width <= 0 or src_height <= 0:
+        raise ValueError(f"Invalid image shape: {image.shape}")
+
+    scale = min(target_width / src_width, target_height / src_height)
+    scaled_width = max(1, int(round(src_width * scale)))
+    scaled_height = max(1, int(round(src_height * scale)))
+    resized = cv2.resize(image, (scaled_width, scaled_height), interpolation=interpolation)
+
+    if image.ndim == 2:
+        canvas = np.full((target_height, target_width), fill_value, dtype=image.dtype)
+    else:
+        channels = image.shape[2]
+        canvas = np.full((target_height, target_width, channels), fill_value, dtype=image.dtype)
+
+    y0 = (target_height - scaled_height) // 2
+    x0 = (target_width - scaled_width) // 2
+    canvas[y0:y0 + scaled_height, x0:x0 + scaled_width] = resized
+    return canvas
+
+
+def _get_screen_size() -> tuple[int, int]:
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        width = int(root.winfo_screenwidth())
+        height = int(root.winfo_screenheight())
+        root.destroy()
+        return width, height
+    except Exception:
+        return 1920, 1080
+
+
+def _fit_grid_for_display(grid: Any) -> Any:
+    cv2, _, _ = _runtime_imports()
+    screen_width, screen_height = _get_screen_size()
+    max_width = max(640, screen_width - 120)
+    max_height = max(480, screen_height - 180)
+    grid_height, grid_width = grid.shape[:2]
+    scale = min(max_width / grid_width, max_height / grid_height, 1.0)
+    if scale >= 1.0:
+        return grid
+    resized_width = max(1, int(round(grid_width * scale)))
+    resized_height = max(1, int(round(grid_height * scale)))
+    return cv2.resize(grid, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+
+
 def _empty_panel(width: int, height: int, label: str) -> np.ndarray:
     cv2, np, _ = _runtime_imports()
     panel = np.zeros((height * 2, width, 3), dtype=np.uint8)
@@ -329,7 +387,10 @@ def main() -> int:
 
     panel_h = args.height * 2
     panel_w = args.width
-    cv2.namedWindow("RealSense Viewer", cv2.WINDOW_NORMAL)
+    window_flags = cv2.WINDOW_NORMAL
+    if hasattr(cv2, "WINDOW_KEEPRATIO"):
+        window_flags |= cv2.WINDOW_KEEPRATIO
+    cv2.namedWindow("RealSense Viewer", window_flags)
 
     try:
         while True:
@@ -348,18 +409,20 @@ def main() -> int:
                             color_np.shape[1] != args.width
                             or color_np.shape[0] != args.height
                         ):
-                            color_np = cv2.resize(
+                            color_np = _fit_to_canvas(
                                 color_np,
-                                (args.width, args.height),
+                                args.width,
+                                args.height,
                                 interpolation=cv2.INTER_LINEAR,
                             )
                         if (
                             depth_np.shape[1] != args.width
                             or depth_np.shape[0] != args.height
                         ):
-                            depth_np = cv2.resize(
+                            depth_np = _fit_to_canvas(
                                 depth_np,
-                                (args.width, args.height),
+                                args.width,
+                                args.height,
                                 interpolation=cv2.INTER_NEAREST,
                             )
                         label = (
@@ -374,7 +437,8 @@ def main() -> int:
                 panels.append(cam["last_panel"])
 
             grid = _tile_panels(panels, panel_h, panel_w)
-            cv2.imshow("RealSense Viewer", grid)
+            display_grid = _fit_grid_for_display(grid)
+            cv2.imshow("RealSense Viewer", display_grid)
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 break
