@@ -178,7 +178,7 @@ def _make_panel(
     depth: Any,
     label: str,
 ) -> Any:
-    cv2, _, _ = _runtime_imports()
+    cv2, np, _ = _runtime_imports()
     depth_8u = cv2.convertScaleAbs(depth, alpha=0.03)
     depth_colormap = cv2.applyColorMap(depth_8u, cv2.COLORMAP_JET)
     panel = np.vstack([color, depth_colormap])
