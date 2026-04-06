@@ -1,4 +1,5 @@
 from .realsense import MultiRealsense, SingleRealsense
+from .recording_metadata import build_recording_metadata as build_recording_metadata_payload
 from .defaults import (
     DEFAULT_EXPOSURE,
     DEFAULT_FPS,
@@ -25,6 +26,33 @@ DEFAULT_EXPOSURE_OVERRIDES = {
     "239222300781": 156,
 }
 
+CAPTURE_MODE_CONFIGS = {
+    "rgbd": {
+        "enable_color": True,
+        "enable_depth": True,
+        "enable_ir_left": False,
+        "enable_ir_right": False,
+        "process_depth": True,
+        "streams_present": ["color", "depth"],
+    },
+    "stereo_ir": {
+        "enable_color": True,
+        "enable_depth": False,
+        "enable_ir_left": True,
+        "enable_ir_right": True,
+        "process_depth": False,
+        "streams_present": ["color", "ir_left", "ir_right"],
+    },
+    "both_eval": {
+        "enable_color": True,
+        "enable_depth": True,
+        "enable_ir_left": True,
+        "enable_ir_right": True,
+        "process_depth": True,
+        "streams_present": ["color", "depth", "ir_left", "ir_right"],
+    },
+}
+
 
 def exist_dir(dir):
     if not os.path.exists(dir):
@@ -37,6 +65,9 @@ class CameraSystem:
         WH=(DEFAULT_WIDTH, DEFAULT_HEIGHT),
         fps=DEFAULT_FPS,
         num_cam=DEFAULT_NUM_CAM,
+        serial_numbers=None,
+        capture_mode="rgbd",
+        emitter="auto",
         exposure=DEFAULT_EXPOSURE,
         gain=DEFAULT_GAIN,
         white_balance=DEFAULT_WHITE_BALANCE,
@@ -48,9 +79,29 @@ class CameraSystem:
         self.listener: Optional[Any] = None
         self._keyboard = None
 
-        self.serial_numbers = SingleRealsense.get_connected_devices_serial()
+        if capture_mode not in CAPTURE_MODE_CONFIGS:
+            raise ValueError(f"Unsupported capture_mode: {capture_mode}")
+        if emitter not in {"on", "off", "auto"}:
+            raise ValueError(f"Unsupported emitter: {emitter}")
+
+        connected_serials = SingleRealsense.get_connected_devices_serial()
+        if serial_numbers is not None:
+            missing = [serial for serial in serial_numbers if serial not in connected_serials]
+            if missing:
+                raise AssertionError(f"Requested serials not connected: {missing}")
+            self.serial_numbers = list(serial_numbers)
+        else:
+            if len(connected_serials) < num_cam:
+                raise AssertionError(f"Only {len(connected_serials)} cameras are connected.")
+            self.serial_numbers = connected_serials[:num_cam]
         self.num_cam = len(self.serial_numbers)
-        assert self.num_cam == num_cam, f"Only {self.num_cam} cameras are connected."
+        self.capture_mode = capture_mode
+        self.capture_config = CAPTURE_MODE_CONFIGS[capture_mode]
+        self.streams_present = list(self.capture_config["streams_present"])
+        self.emitter = emitter
+        self.exposure = exposure
+        self.gain = gain
+        self.white_balance = white_balance
 
         self.shm_manager = SharedMemoryManager()
         self.shm_manager.start()
@@ -60,9 +111,12 @@ class CameraSystem:
             shm_manager=self.shm_manager,
             resolution=(self.WH[0], self.WH[1]),
             capture_fps=self.fps,
-            enable_color=True,
-            enable_depth=True,
-            process_depth=True,
+            enable_color=self.capture_config["enable_color"],
+            enable_depth=self.capture_config["enable_depth"],
+            process_depth=self.capture_config["process_depth"],
+            enable_ir_left=self.capture_config["enable_ir_left"],
+            enable_ir_right=self.capture_config["enable_ir_right"],
+            emitter=emitter,
             verbose=False,
         )
         # Some camera settings
@@ -80,6 +134,7 @@ class CameraSystem:
 
         self.realsense.start()
         time.sleep(3)
+        self.stream_metadata = self.realsense.get_stream_metadata()
         self.recording = False
         self.end = False
         if enable_keyboard_listener:
@@ -121,8 +176,9 @@ class CameraSystem:
                     best_idx = i
             # remap key, step_idx is different, timestamp can be the same when some frames are lost
             data[camera_idx] = {}
-            data[camera_idx]["color"] = value["color"][best_idx]
-            data[camera_idx]["depth"] = value["depth"][best_idx]
+            for key in self.streams_present:
+                if key in value:
+                    data[camera_idx][key] = value[key][best_idx]
             data[camera_idx]["timestamp"] = value["timestamp"][best_idx]
             data[camera_idx]["step_idx"] = value["step_idx"][best_idx]
 
@@ -142,53 +198,58 @@ class CameraSystem:
         except AttributeError:
             pass
 
-    def record(self, output_path):
+    def record(self, output_path, max_frames=None):
+        output_path = str(output_path)
         exist_dir(output_path)
-        exist_dir(f"{output_path}/color")
-        exist_dir(f"{output_path}/depth")
 
-        metadata = {}
-        intrinsics = self.realsense.get_intrinsics()
-        metadata["intrinsics"] = intrinsics.tolist()
-        metadata["serial_numbers"] = self.serial_numbers
-        metadata["fps"] = self.fps
-        metadata["WH"] = self.WH
-        metadata["recording"] = {}
+        for stream_name in self.streams_present:
+            exist_dir(f"{output_path}/{stream_name}")
+            for i in range(self.num_cam):
+                exist_dir(f"{output_path}/{stream_name}/{i}")
+
+        metadata = self.build_recording_metadata()
         for i in range(self.num_cam):
             metadata["recording"][i] = {}
-            exist_dir(f"{output_path}/color/{i}")
-            exist_dir(f"{output_path}/depth/{i}")
 
-        # Set the max time for recording
+        if max_frames is not None:
+            self.recording = True
+
         last_step_idxs = [-1] * self.num_cam
         while not self.end:
-            if self.recording:
-                last_realsense_data = self.realsense.get()
-                timestamps = [
-                    last_realsense_data[i]["timestamp"].item()
-                    for i in range(self.num_cam)
-                ]
-                step_idxs = [
-                    last_realsense_data[i]["step_idx"].item()
-                    for i in range(self.num_cam)
-                ]
+            if not self.recording:
+                time.sleep(0.01)
+                continue
 
-                if not all(
-                    [step_idxs[i] == last_step_idxs[i] for i in range(self.num_cam)]
-                ):
-                    for i in range(self.num_cam):
-                        if last_step_idxs[i] != step_idxs[i]:
-                            # Record the the step for this camera
-                            time_stamp = timestamps[i]
-                            step_idx = step_idxs[i]
-                            color = last_realsense_data[i]["color"]
-                            depth = last_realsense_data[i]["depth"]
+            last_realsense_data = self.realsense.get()
+            timestamps = [
+                last_realsense_data[i]["timestamp"].item()
+                for i in range(self.num_cam)
+            ]
+            step_idxs = [
+                last_realsense_data[i]["step_idx"].item()
+                for i in range(self.num_cam)
+            ]
 
-                            metadata["recording"][i][step_idx] = time_stamp
-                            cv2.imwrite(
-                                f"{output_path}/color/{i}/{step_idx}.png", color
-                            )
-                            np.save(f"{output_path}/depth/{i}/{step_idx}.npy", depth)
+            if not all(
+                [step_idxs[i] == last_step_idxs[i] for i in range(self.num_cam)]
+            ):
+                for i in range(self.num_cam):
+                    if last_step_idxs[i] != step_idxs[i]:
+                        time_stamp = timestamps[i]
+                        step_idx = step_idxs[i]
+                        metadata["recording"][i][step_idx] = time_stamp
+                        for stream_name in self.streams_present:
+                            if stream_name not in last_realsense_data[i]:
+                                continue
+                            stream_value = last_realsense_data[i][stream_name]
+                            if stream_name == "depth":
+                                np.save(f"{output_path}/{stream_name}/{i}/{step_idx}.npy", stream_value)
+                            else:
+                                cv2.imwrite(f"{output_path}/{stream_name}/{i}/{step_idx}.png", stream_value)
+                        last_step_idxs[i] = step_idx
+
+                if max_frames is not None and len(metadata["recording"][0]) >= int(max_frames):
+                    self.end = True
 
         print("End recording")
         if self.listener is not None:
@@ -197,6 +258,17 @@ class CameraSystem:
             json.dump(metadata, f)
 
         self.realsense.stop()
+
+    def build_recording_metadata(self):
+        return build_recording_metadata_payload(
+            serial_numbers=self.serial_numbers,
+            capture_mode=self.capture_mode,
+            streams_present=self.streams_present,
+            fps=self.fps,
+            WH=self.WH,
+            emitter_request=self.emitter,
+            stream_metadata=self.stream_metadata,
+        )
 
     def calibrate(self, visualize=True):
         # Initialize the calibration board information

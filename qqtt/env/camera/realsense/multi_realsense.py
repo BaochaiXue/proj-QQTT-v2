@@ -19,7 +19,9 @@ class MultiRealsense:
         enable_color=True,
         enable_depth=False,
         process_depth=False,
-        enable_infrared=False,
+        enable_ir_left=False,
+        enable_ir_right=False,
+        emitter='auto',
         get_max_k=30,
         advanced_mode_config: Optional[Union[dict, List[dict]]]=None,
         transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]]=None,
@@ -52,7 +54,9 @@ class MultiRealsense:
                 enable_color=enable_color,
                 enable_depth=enable_depth,
                 process_depth=process_depth,
-                enable_infrared=enable_infrared,
+                enable_ir_left=enable_ir_left,
+                enable_ir_right=enable_ir_right,
+                emitter=emitter,
                 get_max_k=get_max_k,
                 advanced_mode_config=advanced_mode_config[i],
                 transform=transform[i],
@@ -170,6 +174,9 @@ class MultiRealsense:
 
     def get_depth_scale(self):
         return np.array([c.get_depth_scale() for c in self.cameras.values()])
+
+    def get_stream_metadata(self):
+        return [c.get_stream_metadata() for c in self.cameras.values()]
     
     def restart_put(self, start_time):
         for camera in self.cameras.values():

@@ -66,7 +66,7 @@ def try_capture(
     import numpy as np
     import pyrealsense2 as rs
 
-    from scripts.harness.ffs_geometry import write_ffs_intrinsic_file
+    from data_process.depth_backends import write_ffs_intrinsic_file
 
     pipeline = rs.pipeline()
     config = rs.config()

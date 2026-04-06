@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from data_process.depth_backends.geometry import (
+from .geometry import (
     align_depth_to_color,
     disparity_to_metric_depth,
     format_ffs_intrinsic_text,
@@ -11,8 +9,10 @@ from data_process.depth_backends.geometry import (
     unproject_ir_depth,
     write_ffs_intrinsic_file,
 )
+from .fast_foundation_stereo import FastFoundationStereoRunner
 
 __all__ = [
+    "FastFoundationStereoRunner",
     "align_depth_to_color",
     "disparity_to_metric_depth",
     "format_ffs_intrinsic_text",

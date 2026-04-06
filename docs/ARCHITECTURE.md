@@ -18,6 +18,13 @@ The repo is intentionally small.
 - `qqtt/env/camera/defaults.py`
 - `qqtt/env/camera/camera_system.py`
 - `qqtt/env/camera/realsense/**`
+- `qqtt/env/camera/recording_metadata.py`
+
+### Optional FFS Depth Backend
+
+- `data_process/depth_backends/__init__.py`
+- `data_process/depth_backends/geometry.py`
+- `data_process/depth_backends/fast_foundation_stereo.py`
 
 ### Tooling / Harness
 
@@ -37,10 +44,17 @@ The repo is intentionally small.
 - `qqtt/env/camera/realsense/single_realsense.py`
 - shared-memory helpers under `qqtt/env/camera/realsense/shared_memory/`
 
-`data_process/record_data_align.py` is intentionally stdlib-only so it can be tested in CI without RealSense hardware.
+`data_process/record_data_align.py` remains the terminal product stage. It:
+
+- stays stdlib-only at import time so `--help` remains cheap
+- lazily imports `data_process/depth_backends/*` only when `--depth_backend ffs|both` is requested
+- keeps `realsense` as the default backend
+
+Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
 
 ## Architectural Invariants
 
 - No dependency from kept code into deleted downstream packages.
 - No physics / rendering exports at the `qqtt` top level.
 - Alignment is the terminal data product of this repo.
+- `depth/` remains the canonical compatibility output in aligned cases.

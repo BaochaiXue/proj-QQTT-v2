@@ -10,6 +10,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized RG
 - `cameras_calibrate.py`: calibration entrypoint
 - `record_data.py`: raw RGB-D recording entrypoint
 - `data_process/record_data_align.py`: trim + align raw cases into `data/`
+- `data_process/depth_backends/`: shared FFS geometry + runner used by production alignment and harness scripts
 - `qqtt/env/camera/`: shared RealSense camera runtime
 - `env_install/env_install.sh`: camera-only environment setup
 - `docs/SCOPE.md`: exact in-scope vs out-of-scope boundary
@@ -30,6 +31,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized RG
 4. Run deterministic checks before finishing:
    - `python scripts/harness/check_all.py`
 5. For external dependency proof-of-life work, record exact commands and outcomes under `docs/generated/`.
+6. For FFS changes, keep weights external and validate both deterministic tests and manual hardware outcomes.
 
 ## Invariants
 
@@ -39,6 +41,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized RG
 - `env_install/env_install.sh` stays camera-only.
 - Hardware checks remain manual and documented; do not fake them in CI.
 - External repos and weights stay outside this repo and are referenced by path.
+- `depth/` must remain the canonical compatibility output for aligned cases.
 
 ## Do Not Change Without Updating Docs / Tests
 

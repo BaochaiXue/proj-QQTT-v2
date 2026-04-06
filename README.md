@@ -1,6 +1,6 @@
 # proj-QQTT-v2
 
-This repository handles 3-camera RealSense preview, calibration, synchronized RGB-D recording, and aligned case generation up to `data_process/record_data_align.py`.
+This repository handles 3-camera RealSense preview, calibration, synchronized raw capture, and aligned case generation up to `data_process/record_data_align.py`.
 
 ## Scope
 
@@ -8,8 +8,11 @@ This repo is intentionally narrow. It supports only:
 
 1. RealSense camera preview / debugging
 2. multi-camera calibration
-3. synchronized RGB-D recording
+3. synchronized recording with:
+   - default RealSense RGB-D
+   - optional raw D455 IR stereo capture
 4. raw recording alignment and trimming
+5. optional Fast-FoundationStereo depth generation during alignment
 
 This repo does **not** include:
 
@@ -72,11 +75,13 @@ Successful calibration writes `calibrate.pkl` in the repo root by default.
 
 ## Recording
 
-Record a raw case:
+Record a raw case.
+
+Default path:
 
 ```bash
 python record_data.py --help
-python record_data.py --case_name my_case
+python record_data.py --case_name my_case --capture_mode rgbd
 ```
 
 If `--case_name` is omitted, a timestamp-based folder name is used.
@@ -85,23 +90,56 @@ Raw cases are written under `data_collect/<case_name>/`.
 
 If `calibrate.pkl` exists, `record_data.py` copies it into the recorded case folder.
 
+Optional FFS raw capture path:
+
+```bash
+python record_data.py --case_name my_case --capture_mode stereo_ir --emitter on
+```
+
+Optional experimental comparison path:
+
+```bash
+python record_data.py --case_name my_case --capture_mode both_eval --emitter on
+```
+
+`both_eval` is intentionally gated. On the current machine it is blocked by the latest D455 stream capability probe instead of silently dropping streams.
+
 ## Alignment
 
 Align and trim a raw case:
 
 ```bash
 python data_process/record_data_align.py --help
-python data_process/record_data_align.py --case_name my_case --start 0 --end 120
+python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend realsense
 ```
 
 Defaults:
 
 - `--base_path ./data_collect`
 - `--output_path ./data`
+- `--depth_backend realsense`
 - output fps comes from raw recording metadata unless `--fps` is provided
 - mp4 generation is off unless `--write_mp4` is passed
 
 Aligned cases are written to `data/<case_name>/`.
+
+Optional FFS alignment backend:
+
+```bash
+python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --write_ffs_float_m
+```
+
+Optional comparison backend:
+
+```bash
+python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend both --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth
+```
+
+Important:
+
+- raw Fast-FoundationStereo output is not color-aligned by itself
+- this repo explicitly reprojects FFS depth from IR-left coordinates into color coordinates during alignment
+- canonical aligned `depth/` remains compatibility-oriented
 
 ## Output Layout
 
@@ -115,10 +153,18 @@ data_collect/<case_name>/
     0/<step>.png
     1/<step>.png
     2/<step>.png
-  depth/
+  depth/                # for rgbd or both_eval
     0/<step>.npy
     1/<step>.npy
     2/<step>.npy
+  ir_left/              # for stereo_ir or both_eval
+    0/<step>.png
+    1/<step>.png
+    2/<step>.png
+  ir_right/             # for stereo_ir or both_eval
+    0/<step>.png
+    1/<step>.png
+    2/<step>.png
 ```
 
 ### Aligned case layout
@@ -138,6 +184,22 @@ data/<case_name>/
     0/<frame>.npy
     1/<frame>.npy
     2/<frame>.npy
+  ir_left/              # copied through when present
+    0/<frame>.png
+    1/<frame>.png
+    2/<frame>.png
+  ir_right/             # copied through when present
+    0/<frame>.png
+    1/<frame>.png
+    2/<frame>.png
+  depth_ffs/            # only for --depth_backend both
+    0/<frame>.npy
+    1/<frame>.npy
+    2/<frame>.npy
+  depth_ffs_float_m/    # optional
+    0/<frame>.npy
+    1/<frame>.npy
+    2/<frame>.npy
 ```
 
 ## Validation
@@ -151,6 +213,7 @@ python scripts/harness/check_all.py
 Manual hardware validation checklist:
 
 - [docs/HARDWARE_VALIDATION.md](/c:/Users/zhang/proj-QQTT/docs/HARDWARE_VALIDATION.md)
+- [docs/generated/ffs_depth_backend_integration_validation.md](/c:/Users/zhang/proj-QQTT/docs/generated/ffs_depth_backend_integration_validation.md)
 
 ## Future Changes
 

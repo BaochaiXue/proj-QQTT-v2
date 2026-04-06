@@ -25,7 +25,10 @@
   - `conda run -n qqtt-ffs-compat python scripts/harness/probe_d455_ir_pair.py --help`
   - `conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_on_saved_pair.py --help`
   - `conda run -n qqtt-ffs-compat python scripts/harness/reproject_ffs_to_color.py --help`
+  - `conda run -n qqtt-ffs-compat python record_data.py --help`
+  - `conda run -n qqtt-ffs-compat python data_process/record_data_align.py --help`
 - Expected use:
   - D455 raw IR probe
   - saved-pair FFS inference
   - geometry / scale conversion
+  - integrated `stereo_ir -> ffs` camera-only workflow

@@ -14,4 +14,4 @@
 - Model file size: `71,098,210` bytes
 - How obtained: downloaded from the official Google Drive weights folder referenced by the Fast-FoundationStereo README using `gdown --folder`
 - Date obtained: `2026-04-05`
-- Runtime role: baseline proof-of-life checkpoint for official demo validation and saved-pair inference
+- Runtime role: baseline checkpoint for official demo validation, proof-of-life, and optional `--depth_backend ffs|both` alignment

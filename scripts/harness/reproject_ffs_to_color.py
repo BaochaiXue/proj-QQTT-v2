@@ -43,13 +43,10 @@ def main() -> int:
 
     import numpy as np
 
-    from scripts.harness.ffs_geometry import (
+    from data_process.depth_backends import (
+        align_depth_to_color,
         disparity_to_metric_depth,
-        project_to_color,
         quantize_depth_with_invalid_zero,
-        rasterize_nearest_depth,
-        transform_points,
-        unproject_ir_depth,
     )
 
     sample_dir = Path(args.sample_dir).resolve()
@@ -89,12 +86,15 @@ def main() -> int:
 
     quicklook_source = depth_ir
     if "K_color" in metadata and "T_ir_left_to_color" in metadata:
-        points_ir, _ = unproject_ir_depth(depth_ir, K_ir_left)
         T_ir_left_to_color = np.asarray(metadata["T_ir_left_to_color"], dtype=np.float32)
-        points_color = transform_points(points_ir, T_ir_left_to_color)
-        uv_color, z_color = project_to_color(points_color, np.asarray(metadata["K_color"], dtype=np.float32))
         output_shape = (int(metadata["height"]), int(metadata["width"]))
-        depth_color = rasterize_nearest_depth(uv_color, z_color, output_shape=output_shape)
+        depth_color = align_depth_to_color(
+            depth_ir,
+            K_ir_left,
+            T_ir_left_to_color,
+            np.asarray(metadata["K_color"], dtype=np.float32),
+            output_shape=output_shape,
+        )
         np.save(out_dir / "depth_color_aligned_float_m.npy", depth_color)
         quicklook_source = depth_color
         conversion_metadata["K_color"] = metadata["K_color"]

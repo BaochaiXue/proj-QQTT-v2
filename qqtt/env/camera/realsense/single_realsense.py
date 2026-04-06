@@ -24,6 +24,30 @@ class Command(enum.Enum):
     STOP_RECORDING = 3
     RESTART_PUT = 4
 
+
+def intrinsics_to_matrix(intrinsics) -> list[list[float]]:
+    return [
+        [float(intrinsics.fx), 0.0, float(intrinsics.ppx)],
+        [0.0, float(intrinsics.fy), float(intrinsics.ppy)],
+        [0.0, 0.0, 1.0],
+    ]
+
+
+def extrinsics_to_matrix(extrinsics) -> list[list[float]]:
+    rotation = list(map(float, extrinsics.rotation))
+    translation = list(map(float, extrinsics.translation))
+    return [
+        [rotation[0], rotation[1], rotation[2], translation[0]],
+        [rotation[3], rotation[4], rotation[5], translation[1]],
+        [rotation[6], rotation[7], rotation[8], translation[2]],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
+def translation_norm(extrinsics) -> float:
+    tx, ty, tz = map(float, extrinsics.translation)
+    return float((tx * tx + ty * ty + tz * tz) ** 0.5)
+
 class SingleRealsense(mp.Process):
     MAX_PATH_LENGTH = 4096 # linux path has a limit of 4096 bytes
 
@@ -38,7 +62,9 @@ class SingleRealsense(mp.Process):
             enable_color=True,
             enable_depth=False,
             process_depth=False,
-            enable_infrared=False,
+            enable_ir_left=False,
+            enable_ir_right=False,
+            emitter='auto',
             get_max_k=30,
             advanced_mode_config=None,
             transform: Optional[Callable[[Dict], Dict]] = None,
@@ -61,8 +87,11 @@ class SingleRealsense(mp.Process):
         if enable_depth:
             examples['depth'] = np.empty(
                 shape=shape, dtype=np.uint16)
-        if enable_infrared:
-            examples['infrared'] = np.empty(
+        if enable_ir_left:
+            examples['ir_left'] = np.empty(
+                shape=shape, dtype=np.uint8)
+        if enable_ir_right:
+            examples['ir_right'] = np.empty(
                 shape=shape, dtype=np.uint8)
         examples['camera_capture_timestamp'] = 0.0
         examples['camera_receive_timestamp'] = 0.0
@@ -107,7 +136,9 @@ class SingleRealsense(mp.Process):
         self.put_downsample = put_downsample
         self.enable_color = enable_color
         self.enable_depth = enable_depth
-        self.enable_infrared = enable_infrared
+        self.enable_ir_left = enable_ir_left
+        self.enable_ir_right = enable_ir_right
+        self.emitter = emitter
         self.advanced_mode_config = advanced_mode_config
         self.transform = transform
         self.vis_transform = vis_transform
@@ -122,6 +153,8 @@ class SingleRealsense(mp.Process):
         self.ring_buffer = ring_buffer
         self.command_queue = command_queue
         self.intrinsics_array = intrinsics_array
+        self.metadata_queue = mp.Queue(maxsize=1)
+        self.metadata_cache = None
     
     @staticmethod
     def get_connected_devices_serial():
@@ -206,6 +239,9 @@ class SingleRealsense(mp.Process):
 
     def get_intrinsics(self):
         assert self.ready_event.is_set()
+        metadata = self.get_stream_metadata()
+        if metadata.get('K_color') is not None:
+            return np.asarray(metadata['K_color'], dtype=np.float64)
         fx, fy, ppx, ppy = self.intrinsics_array.get()[:4]
         mat = np.eye(3)
         mat[0,0] = fx
@@ -216,8 +252,17 @@ class SingleRealsense(mp.Process):
 
     def get_depth_scale(self):
         assert self.ready_event.is_set()
+        metadata = self.get_stream_metadata()
+        if metadata.get('depth_scale_m_per_unit') is not None:
+            return float(metadata['depth_scale_m_per_unit'])
         scale = self.intrinsics_array.get()[-1]
         return scale
+
+    def get_stream_metadata(self):
+        assert self.ready_event.is_set()
+        if self.metadata_cache is None:
+            self.metadata_cache = self.metadata_queue.get()
+        return self.metadata_cache
     
     def depth_process(self, depth_frame):
         depth_to_disparity = rs.disparity_transform(True)
@@ -261,8 +306,11 @@ class SingleRealsense(mp.Process):
         if self.enable_depth:
             rs_config.enable_stream(rs.stream.depth, 
                 w, h, rs.format.z16, fps)
-        if self.enable_infrared:
-            rs_config.enable_stream(rs.stream.infrared,
+        if self.enable_ir_left:
+            rs_config.enable_stream(rs.stream.infrared, 1,
+                w, h, rs.format.y8, fps)
+        if self.enable_ir_right:
+            rs_config.enable_stream(rs.stream.infrared, 2,
                 w, h, rs.format.y8, fps)
         
         def init_device():
@@ -286,17 +334,94 @@ class SingleRealsense(mp.Process):
                 advanced_mode = rs.rs400_advanced_mode(device)
                 advanced_mode.load_json(json_text)
 
-            # get
-            color_stream = self.pipeline_profile.get_stream(rs.stream.color)
-            intr = color_stream.as_video_stream_profile().get_intrinsics()
-            order = ['fx', 'fy', 'ppx', 'ppy', 'height', 'width']
-            for i, name in enumerate(order):
-                self.intrinsics_array.get()[i] = getattr(intr, name)
+            device = self.pipeline_profile.get_device()
+            depth_sensor = device.first_depth_sensor()
+            if self.emitter != 'auto' and depth_sensor.supports(rs.option.emitter_enabled):
+                depth_sensor.set_option(rs.option.emitter_enabled, 1.0 if self.emitter == 'on' else 0.0)
 
+            stream_metadata = {
+                'serial': self.serial_number,
+                'model_name': device.get_info(rs.camera_info.name),
+                'product_line': device.get_info(rs.camera_info.product_line),
+                'firmware_version': device.get_info(rs.camera_info.firmware_version),
+                'usb_type_descriptor': device.get_info(rs.camera_info.usb_type_descriptor),
+                'physical_port': device.get_info(rs.camera_info.physical_port),
+                'resolution': [w, h],
+                'fps': fps,
+                'streams_present': [],
+                'K_color': None,
+                'K_ir_left': None,
+                'K_ir_right': None,
+                'T_ir_left_to_right': None,
+                'T_ir_left_to_color': None,
+                'ir_baseline_m': None,
+                'depth_scale_m_per_unit': None,
+                'depth_encoding': 'uint16_meters_scaled_invalid_zero' if self.enable_depth else None,
+                'alignment_target': 'color' if self.enable_depth and self.enable_color else None,
+                'depth_coordinate_frame': 'color' if self.enable_depth and self.enable_color else None,
+                'emitter_request': self.emitter,
+                'emitter_actual': None,
+                'exposure': None,
+                'gain': None,
+                'white_balance': None,
+            }
+
+            if self.enable_color:
+                color_stream = self.pipeline_profile.get_stream(rs.stream.color).as_video_stream_profile()
+                intr = color_stream.get_intrinsics()
+                order = ['fx', 'fy', 'ppx', 'ppy', 'height', 'width']
+                for i, name in enumerate(order):
+                    self.intrinsics_array.get()[i] = getattr(intr, name)
+                stream_metadata['K_color'] = intrinsics_to_matrix(intr)
+                stream_metadata['streams_present'].append('color')
+                color_sensor = device.first_color_sensor()
+                try:
+                    stream_metadata['exposure'] = float(color_sensor.get_option(rs.option.exposure))
+                except Exception:
+                    pass
+                try:
+                    stream_metadata['gain'] = float(color_sensor.get_option(rs.option.gain))
+                except Exception:
+                    pass
+                try:
+                    stream_metadata['white_balance'] = float(color_sensor.get_option(rs.option.white_balance))
+                except Exception:
+                    pass
+
+            depth_scale = depth_sensor.get_depth_scale()
+            self.intrinsics_array.get()[-1] = depth_scale
+            stream_metadata['depth_scale_m_per_unit'] = float(depth_scale)
             if self.enable_depth:
-                depth_sensor = self.pipeline_profile.get_device().first_depth_sensor()
-                depth_scale = depth_sensor.get_depth_scale()
-                self.intrinsics_array.get()[-1] = depth_scale
+                stream_metadata['streams_present'].append('depth')
+
+            if depth_sensor.supports(rs.option.emitter_enabled):
+                try:
+                    stream_metadata['emitter_actual'] = float(depth_sensor.get_option(rs.option.emitter_enabled))
+                except Exception:
+                    pass
+
+            ir_left_profile = None
+            if self.enable_ir_left:
+                ir_left_profile = self.pipeline_profile.get_stream(rs.stream.infrared, 1).as_video_stream_profile()
+                stream_metadata['K_ir_left'] = intrinsics_to_matrix(ir_left_profile.get_intrinsics())
+                stream_metadata['streams_present'].append('ir_left')
+            if self.enable_ir_right:
+                ir_right_profile = self.pipeline_profile.get_stream(rs.stream.infrared, 2).as_video_stream_profile()
+                stream_metadata['K_ir_right'] = intrinsics_to_matrix(ir_right_profile.get_intrinsics())
+                stream_metadata['streams_present'].append('ir_right')
+                if ir_left_profile is not None:
+                    ir_left_to_right = ir_left_profile.get_extrinsics_to(ir_right_profile)
+                    stream_metadata['T_ir_left_to_right'] = extrinsics_to_matrix(ir_left_to_right)
+                    stream_metadata['ir_baseline_m'] = translation_norm(ir_left_to_right)
+            if ir_left_profile is not None and self.enable_color:
+                color_profile = self.pipeline_profile.get_stream(rs.stream.color).as_video_stream_profile()
+                ir_left_to_color = ir_left_profile.get_extrinsics_to(color_profile)
+                stream_metadata['T_ir_left_to_color'] = extrinsics_to_matrix(ir_left_to_color)
+
+            try:
+                self.metadata_queue.put_nowait(stream_metadata)
+            except Exception:
+                pass
             
             # one-time setup (intrinsics etc, ignore for now)
             if self.verbose:
@@ -326,8 +451,8 @@ class SingleRealsense(mp.Process):
                         init_device()
                         continue
                 receive_time = time.time()
-                # align frames to color
-                frameset = align.process(frameset)
+                raw_frameset = frameset
+                aligned_frameset = align.process(raw_frameset) if (self.enable_color and self.enable_depth) else raw_frameset
 
                 self.ring_buffer.ready_for_get = (receive_time - put_start_time >= 0)
 
@@ -337,24 +462,27 @@ class SingleRealsense(mp.Process):
                 data = dict()
                 data['camera_receive_timestamp'] = receive_time
                 # realsense report in ms
-                data['camera_capture_timestamp'] = frameset.get_timestamp() / 1000
+                data['camera_capture_timestamp'] = raw_frameset.get_timestamp() / 1000
                 if self.enable_color:
                     # print(time.time())
-                    color_frame = frameset.get_color_frame()
+                    color_frame = aligned_frameset.get_color_frame()
                     data['color'] = np.asarray(color_frame.get_data())
                     t = color_frame.get_timestamp() / 1000
                     data['camera_capture_timestamp'] = t
                     # print('device', time.time() - t)
                     # print(color_frame.get_frame_timestamp_domain())
                 if self.enable_depth:
-                    depth_frame = frameset.get_depth_frame()
+                    depth_frame = aligned_frameset.get_depth_frame()
                     if self.process_depth:
                         data['depth'] = self.depth_process(depth_frame).get_data()
                     else:
                         data['depth'] = np.asarray(depth_frame.get_data())
-                if self.enable_infrared:
-                    data['infrared'] = np.asarray(
-                        frameset.get_infrared_frame().get_data())
+                if self.enable_ir_left:
+                    data['ir_left'] = np.asarray(
+                        raw_frameset.get_infrared_frame(1).get_data())
+                if self.enable_ir_right:
+                    data['ir_right'] = np.asarray(
+                        raw_frameset.get_infrared_frame(2).get_data())
                 if self.verbose:
                     print(f'[SingleRealsense {self.serial_number}] Grab data time {time.time() - grad_start_time}')
                 
@@ -434,7 +562,7 @@ class SingleRealsense(mp.Process):
                         # print('exposure', sensor.get_option(rs.option.exposure))
                         # print('gain', sensor.get_option(rs.option.gain))
                     elif cmd == Command.SET_DEPTH_OPTION.value:
-                        sensor = self.pipeline_profile.get_device().first_depth_sensor().set_option(rs.option.inter_cam_sync_mode, 1 if self.is_master else 2)
+                        sensor = self.pipeline_profile.get_device().first_depth_sensor()
                         option = rs.option(command['option_enum'])
                         value = float(command['option_value'])
                         sensor.set_option(option, value)
