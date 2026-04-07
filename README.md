@@ -203,7 +203,7 @@ The fused-cloud utility:
 - supports:
   - classic pair output per view
   - a 2x3 summary grid with top row = Native and bottom row = FFS
-- defaults to geometry-readable rendering such as `neutral_gray_shaded`
+- the `tabletop_compare_2x3` preset now uses `color_by_height` plus orthographic tabletop framing for readability
 - keeps `color_by_rgb` as a secondary reference mode
 - writes per-view frame sequences and optional videos, plus `grid_2x3_frames/` and `videos/grid_2x3.mp4` when requested
 

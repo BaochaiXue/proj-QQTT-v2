@@ -150,3 +150,4 @@ The comparison workflow:
   - columns = camera 0 / 1 / 2 viewpoints
 - recommends geometry-first rendering (`neutral_gray_shaded`) for judging shape
 - keeps `color_by_rgb` available as a secondary reference view
+- the `tabletop_compare_2x3` preset currently uses `color_by_height` plus orthographic tabletop framing as the most robust readable default

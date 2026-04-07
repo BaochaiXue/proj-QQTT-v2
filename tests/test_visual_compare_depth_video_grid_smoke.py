@@ -48,6 +48,8 @@ class VisualCompareDepthVideoGridSmokeTest(unittest.TestCase):
                 "grid_2x3",
                 "--zoom_scale",
                 "2.2",
+                "--image_flip",
+                "vertical",
             ]
             subprocess.run(cmd, check=True, cwd=ROOT)
 
@@ -57,6 +59,7 @@ class VisualCompareDepthVideoGridSmokeTest(unittest.TestCase):
             self.assertEqual(metadata["layout_mode"], "grid_2x3")
             self.assertEqual(metadata["view_mode"], "camera_poses_table_focus")
             self.assertEqual(metadata["views"], ["cam0", "cam1", "cam2"])
+            self.assertEqual(metadata["image_flip"], "vertical")
 
 
 if __name__ == "__main__":

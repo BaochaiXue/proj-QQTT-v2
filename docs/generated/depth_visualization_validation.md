@@ -84,6 +84,7 @@ Fused cloud comparison:
   - world-space tabletop cropping before framing
   - geometry-aware camera distance scaling
   - denser splat-like fallback rendering
+  - the current preset uses `color_by_height` and `orthographic` projection as the most robust readable configuration
 
 ## Why This Workflow Is Easier To Read
 

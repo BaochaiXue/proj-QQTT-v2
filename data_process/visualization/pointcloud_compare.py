@@ -23,6 +23,7 @@ FOCUS_MODES = ("none", "table")
 LAYOUT_MODES = ("pair", "grid_2x3")
 SCENE_CROP_MODES = ("none", "auto_table_bbox", "manual_xyz_roi")
 PROJECTION_MODES = ("perspective", "orthographic")
+IMAGE_FLIP_MODES = ("none", "vertical", "horizontal", "both")
 
 
 def load_case_metadata(case_dir: Path) -> dict[str, Any]:
@@ -429,13 +430,17 @@ def build_camera_pose_view_configs(
     serial_numbers: list[str],
     focus_point: np.ndarray,
     view_distance_scale: float,
+    target_distance: float | None = None,
 ) -> list[dict[str, Any]]:
     configs: list[dict[str, Any]] = []
     for camera_idx, (serial, c2w) in enumerate(zip(serial_numbers, c2w_list, strict=False)):
         transform = np.asarray(c2w, dtype=np.float32).reshape(4, 4)
         original_camera_position = transform[:3, 3]
         direction = _normalize_vector(original_camera_position - focus_point, np.array([0.0, 0.0, 1.0], dtype=np.float32))
-        distance = max(1e-3, float(np.linalg.norm(original_camera_position - focus_point)) * float(view_distance_scale))
+        if target_distance is None:
+            distance = max(1e-3, float(np.linalg.norm(original_camera_position - focus_point)) * float(view_distance_scale))
+        else:
+            distance = max(1e-3, float(target_distance) * float(view_distance_scale))
         camera_position = np.asarray(focus_point, dtype=np.float32) + direction * distance
         up_hint = -transform[:3, 1]
         up = _normalize_vector(up_hint, np.array([0.0, 0.0, 1.0], dtype=np.float32))
@@ -531,6 +536,18 @@ def compose_grid_2x3(
     return np.vstack([title_bar, header_bar, body])
 
 
+def apply_image_flip(image: np.ndarray, image_flip: str) -> np.ndarray:
+    if image_flip == "none":
+        return image
+    if image_flip == "vertical":
+        return cv2.flip(image, 0)
+    if image_flip == "horizontal":
+        return cv2.flip(image, 1)
+    if image_flip == "both":
+        return cv2.flip(image, -1)
+    raise ValueError(f"Unsupported image_flip: {image_flip}")
+
+
 def _look_at(camera_position: np.ndarray, center: np.ndarray, up: np.ndarray) -> np.ndarray:
     forward = center - camera_position
     forward = forward / np.linalg.norm(forward)
@@ -567,6 +584,35 @@ def _project_view_coordinates(
         v = (xyz[:, 1] / scale) * (height * 0.5) + height * 0.5
         return u, v
     raise ValueError(f"Unsupported projection_mode: {projection_mode}")
+
+
+def estimate_ortho_scale(
+    point_sets: list[np.ndarray],
+    *,
+    view_config: dict[str, Any],
+    margin: float = 1.15,
+) -> float:
+    points = [np.asarray(item, dtype=np.float32) for item in point_sets if len(item) > 0]
+    if not points:
+        return 1.0
+    stacked = np.concatenate(points, axis=0)
+    homogeneous = np.concatenate(
+        [stacked.astype(np.float32), np.ones((len(stacked), 1), dtype=np.float32)],
+        axis=1,
+    )
+    view = _look_at(view_config["camera_position"], view_config["center"], view_config["up"])
+    camera_points = homogeneous @ view.T
+    xyz = camera_points[:, :3]
+    valid = xyz[:, 2] < -1e-6
+    xyz = xyz[valid]
+    if len(xyz) == 0:
+        return 1.0
+    scale = max(
+        float(np.max(np.abs(xyz[:, 0]))),
+        float(np.max(np.abs(xyz[:, 1]))),
+        1e-3,
+    )
+    return float(scale * margin)
 
 
 def _rasterize_view(
@@ -680,6 +726,25 @@ def _compute_normals_from_xyz_map(xyz_map: np.ndarray, valid_mask: np.ndarray) -
     return normals, valid_normals
 
 
+def _densify_xyz_map(
+    xyz_map: np.ndarray,
+    valid_mask: np.ndarray,
+    *,
+    blur_radius: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    kernel = max(3, blur_radius * 2 + 1)
+    mask = valid_mask.astype(np.float32)
+    blurred_mask = cv2.GaussianBlur(mask, (kernel, kernel), sigmaX=max(1.0, blur_radius * 0.75))
+    densified = np.zeros_like(xyz_map, dtype=np.float32)
+    for channel_idx in range(3):
+        channel = np.asarray(xyz_map[..., channel_idx], dtype=np.float32) * mask
+        blurred_channel = cv2.GaussianBlur(channel, (kernel, kernel), sigmaX=max(1.0, blur_radius * 0.75))
+        valid = blurred_mask > 1e-4
+        densified[..., channel_idx][valid] = blurred_channel[valid] / np.maximum(blurred_mask[valid], 1e-4)
+    valid_dense = blurred_mask > 0.05
+    return densified, valid_dense
+
+
 def _render_normals(normals: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
     canvas = np.zeros(normals.shape, dtype=np.uint8)
     if np.any(valid_mask):
@@ -740,6 +805,7 @@ def render_point_cloud_fallback(
         ortho_scale=ortho_scale,
     )
     valid = raster["valid"]
+    radius_ss = max(1, int(point_radius_px) * ss)
     if render_mode == "color_by_rgb":
         canvas = raster["rgb"]
     elif render_mode == "color_by_height":
@@ -749,13 +815,25 @@ def render_point_cloud_fallback(
         min_depth, max_depth = scalar_bounds["depth"]
         canvas = _colorize_scalar_map(raster["depth"], valid, min_value=min_depth, max_value=max_depth)
     else:
-        normals, valid_normals = _compute_normals_from_xyz_map(raster["xyz_view"], valid)
+        densified_xyz, densified_valid = _densify_xyz_map(
+            raster["xyz_view"],
+            valid,
+            blur_radius=radius_ss,
+        )
+        normals, valid_normals = _compute_normals_from_xyz_map(densified_xyz, densified_valid)
         if render_mode == "color_by_normals":
-            canvas = _render_normals(normals, valid_normals)
+            if np.count_nonzero(valid_normals) < 512:
+                min_height, max_height = scalar_bounds["height"]
+                canvas = _colorize_scalar_map(raster["world_z"], valid, min_value=min_height, max_value=max_height)
+            else:
+                canvas = _render_normals(normals, valid_normals)
         else:
-            canvas = _render_gray_shaded(normals, valid_normals)
+            if np.count_nonzero(valid_normals) < 512:
+                min_height, max_height = scalar_bounds["height"]
+                canvas = _colorize_scalar_map(raster["world_z"], valid, min_value=min_height, max_value=max_height)
+            else:
+                canvas = _render_gray_shaded(normals, valid_normals)
 
-    radius_ss = max(1, int(point_radius_px) * ss)
     if radius_ss > 1:
         kernel = radius_ss * 2 + 1
         mask = valid.astype(np.float32)
@@ -921,6 +999,7 @@ def run_depth_comparison_workflow(
     ortho_scale: float | None = None,
     point_radius_px: int = 2,
     supersample_scale: int = 2,
+    image_flip: str = "none",
 ) -> dict[str, Any]:
     if render_mode not in RENDER_MODES:
         raise ValueError(f"Unsupported render_mode: {render_mode}")
@@ -934,6 +1013,8 @@ def run_depth_comparison_workflow(
         raise ValueError(f"Unsupported scene_crop_mode: {scene_crop_mode}")
     if projection_mode not in PROJECTION_MODES:
         raise ValueError(f"Unsupported projection_mode: {projection_mode}")
+    if image_flip not in IMAGE_FLIP_MODES:
+        raise ValueError(f"Unsupported image_flip: {image_flip}")
     aligned_root = Path(aligned_root).resolve()
     output_dir = Path(output_dir).resolve()
     native_case_dir, ffs_case_dir, same_case_mode = resolve_case_dirs(
@@ -1077,11 +1158,16 @@ def run_depth_comparison_workflow(
             serial_numbers=native_metadata["serial_numbers"],
             calibration_reference_serials=calibration_reference_serials,
         )
+        target_distance = max(
+            0.6,
+            float(np.linalg.norm(bounds_max - bounds_min)),
+        )
         view_configs = build_camera_pose_view_configs(
             c2w_list=native_c2w,
             serial_numbers=native_metadata["serial_numbers"],
             focus_point=focus_point,
             view_distance_scale=float(view_distance_scale),
+            target_distance=target_distance,
         )
 
     if layout_mode == "grid_2x3" and len(view_configs) != 3:
@@ -1119,7 +1205,18 @@ def run_depth_comparison_workflow(
             "side_frame_paths": [],
             "renderer_used": None,
             "view_config": view_config,
+            "ortho_scale": None,
         }
+
+        if projection_mode == "orthographic":
+            per_view_outputs[view_name]["ortho_scale"] = float(
+                ortho_scale
+                if ortho_scale is not None
+                else estimate_ortho_scale(
+                    cropped_point_sets if cropped_point_sets else all_point_sets,
+                    view_config=view_config,
+                )
+            )
 
     for panel_idx, (native_frame_idx, ffs_frame_idx) in enumerate(frame_pairs):
         native_points, native_colors, native_stats = cropped_cache[("native", native_frame_idx)]
@@ -1142,7 +1239,7 @@ def run_depth_comparison_workflow(
                 point_radius_px=point_radius_px,
                 supersample_scale=supersample_scale,
                 projection_mode=projection_mode,
-                ortho_scale=ortho_scale,
+                ortho_scale=view_state["ortho_scale"],
             )
             ffs_render, renderer_used = render_point_cloud(
                 ffs_points,
@@ -1155,10 +1252,12 @@ def run_depth_comparison_workflow(
                 point_radius_px=point_radius_px,
                 supersample_scale=supersample_scale,
                 projection_mode=projection_mode,
-                ortho_scale=ortho_scale,
+                ortho_scale=view_state["ortho_scale"],
             )
             view_state["renderer_used"] = renderer_used
 
+            native_render = apply_image_flip(native_render, image_flip)
+            ffs_render = apply_image_flip(ffs_render, image_flip)
             native_labeled = overlay_panel_label(native_render, label=f"Native | {view_config['label']}")
             ffs_labeled = overlay_panel_label(ffs_render, label=f"FFS | {view_config['label']}")
             side_render = compose_panel(native_labeled, ffs_labeled, layout=panel_layout)
@@ -1252,8 +1351,13 @@ def run_depth_comparison_workflow(
         "view_distance_scale": float(view_distance_scale),
         "projection_mode": projection_mode,
         "ortho_scale": ortho_scale,
+        "ortho_scale_by_view": {
+            view_name: per_view_outputs[view_name]["ortho_scale"]
+            for view_name in per_view_outputs
+        },
         "point_radius_px": int(point_radius_px),
         "supersample_scale": int(supersample_scale),
+        "image_flip": image_flip,
         "scalar_bounds": scalar_bounds,
         "focus_point": focus_point.tolist(),
     }

@@ -52,18 +52,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ortho_scale", type=float, default=None)
     parser.add_argument("--point_radius_px", type=int, default=2)
     parser.add_argument("--supersample_scale", type=int, default=2)
+    parser.add_argument("--image_flip", choices=("none", "vertical", "horizontal", "both"), default="none")
     return parser.parse_args()
 
 
 def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
     if args.preset == "tabletop_compare_2x3":
-        args.render_mode = "neutral_gray_shaded"
+        args.render_mode = "color_by_height"
         args.view_mode = "camera_poses_table_focus"
         args.focus_mode = "table"
         args.layout_mode = "grid_2x3"
         args.scene_crop_mode = "auto_table_bbox"
-        args.projection_mode = "perspective"
-        args.view_distance_scale = 0.7
+        args.projection_mode = "orthographic"
+        args.view_distance_scale = 1.0
         args.point_radius_px = 3
         args.supersample_scale = 2
         args.depth_min_m = 0.2
@@ -123,6 +124,7 @@ def main() -> int:
         ortho_scale=args.ortho_scale,
         point_radius_px=args.point_radius_px,
         supersample_scale=args.supersample_scale,
+        image_flip=args.image_flip,
     )
     print(f"Comparison outputs written to {result['output_dir']}")
     return 0
