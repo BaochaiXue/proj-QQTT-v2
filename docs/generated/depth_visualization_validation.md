@@ -32,7 +32,7 @@ python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zha
 2x3 tabletop-focused fused cloud comparison:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --output_dir C:\Users\zhang\proj-QQTT\data\comparison_native_30_static_vs_ffs_30_static_grid --renderer fallback --render_mode color_by_rgb --view_mode camera_poses_table_focus --focus_mode table --layout_mode grid_2x3 --depth_min_m 0.2 --depth_max_m 1.5 --zoom_scale 2.2 --write_mp4 --use_float_ffs_depth_when_available
+python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --output_dir C:\Users\zhang\proj-QQTT\data\comparison_native_30_static_vs_ffs_30_static_grid --renderer fallback --preset tabletop_compare_2x3 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
 ## Outputs Produced
@@ -81,6 +81,16 @@ Fused cloud comparison:
   - real calibrated camera-pose views
   - tabletop focus
   - a single 2x3 comparison layout
+  - world-space tabletop cropping before framing
+  - geometry-aware camera distance scaling
+  - denser splat-like fallback rendering
+
+## Why This Workflow Is Easier To Read
+
+- Tabletop crop prevents the full room bounds from dominating the frame.
+- View distance scaling moves each camera-direction view closer to the tabletop ROI in 3D, instead of relying mainly on a 2D post-crop.
+- `neutral_gray_shaded` is now the recommended default because it emphasizes geometry differences more clearly than RGB texture.
+- `color_by_rgb` remains available as a reference mode when color context is helpful.
 
 ## Known Limitations
 

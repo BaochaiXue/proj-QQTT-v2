@@ -19,6 +19,7 @@ class CameraPoseViewConfigSmokeTest(unittest.TestCase):
             c2w_list=c2w_list,
             serial_numbers=["a", "b", "c"],
             focus_point=focus,
+            view_distance_scale=1.0,
         )
         self.assertEqual([cfg["view_name"] for cfg in configs], ["cam0", "cam1", "cam2"])
         np.testing.assert_allclose(configs[0]["camera_position"], np.array([1.0, 2.0, 3.0], dtype=np.float32))

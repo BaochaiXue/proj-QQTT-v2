@@ -789,7 +789,13 @@ def render_point_cloud(
     projection_mode: str = "perspective",
     ortho_scale: float | None = None,
 ) -> tuple[np.ndarray, str]:
-    if renderer == "fallback" or render_mode != "color_by_rgb":
+    if (
+        renderer == "fallback"
+        or render_mode != "color_by_rgb"
+        or projection_mode != "perspective"
+        or point_radius_px != 1
+        or supersample_scale != 1
+    ):
         return render_point_cloud_fallback(
             points,
             colors,
