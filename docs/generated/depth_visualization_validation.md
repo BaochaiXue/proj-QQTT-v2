@@ -35,6 +35,12 @@ python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zha
 python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --output_dir C:\Users\zhang\proj-QQTT\data\comparison_native_30_static_vs_ffs_30_static_grid --renderer fallback --preset tabletop_compare_2x3 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
+Single-frame camera-aware turntable comparison:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\turntable_native_30_static_vs_ffs_30_static_frame_0000 --renderer fallback --render_mode neutral_gray_shaded --num_orbit_steps 6 --orbit_degrees 30 --projection_mode perspective --scene_crop_mode auto_table_bbox --write_keyframe_sheet --no_use_float_ffs_depth_when_available
+```
+
 ## Outputs Produced
 
 Per-camera diagnostic panels:
@@ -71,6 +77,13 @@ Fused cloud comparison:
 - `data/comparison_native_30_static_vs_ffs_30_static_grid/view_cam1/...`
 - `data/comparison_native_30_static_vs_ffs_30_static_grid/view_cam2/...`
 
+Single-frame camera-aware turntable comparison:
+
+- `data/turntable_native_30_static_vs_ffs_30_static_frame_0000/scene_overview_with_cameras.png`
+- `data/turntable_native_30_static_vs_ffs_30_static_frame_0000/boards/*.png`
+- `data/turntable_native_30_static_vs_ffs_30_static_frame_0000/turntable_keyframes_sheet.png`
+- `data/turntable_native_30_static_vs_ffs_30_static_frame_0000/turntable_metadata.json`
+
 ## What Was Validated
 
 - Single-camera panel generation works in two-case fallback mode.
@@ -85,6 +98,12 @@ Fused cloud comparison:
   - geometry-aware camera distance scaling
   - denser splat-like fallback rendering
   - the current preset uses `color_by_height` and `orthographic` projection as the most robust readable configuration
+- The new turntable workflow now supports:
+  - a single selected frame as the primary comparison unit
+  - explicit camera-frusta visualization from real `calibrate.pkl` `c2w`
+  - local orbit arcs centered on the tabletop ROI while staying near each real camera pose
+  - synchronized Native vs FFS 2x3 boards using identical per-column views
+  - a static `turntable_keyframes_sheet.png` as the primary artifact
 
 ## Why This Workflow Is Easier To Read
 

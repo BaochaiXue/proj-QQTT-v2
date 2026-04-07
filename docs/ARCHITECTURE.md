@@ -30,13 +30,16 @@ The repo is intentionally small.
 
 - `data_process/visualization/__init__.py`
 - `data_process/visualization/calibration_io.py`
+- `data_process/visualization/camera_frusta.py`
 - `data_process/visualization/depth_diagnostics.py`
 - `data_process/visualization/panel_compare.py`
 - `data_process/visualization/pointcloud_compare.py`
 - `data_process/visualization/reprojection_compare.py`
+- `data_process/visualization/turntable_compare.py`
 - `scripts/harness/visual_compare_depth_panels.py`
 - `scripts/harness/visual_compare_reprojection.py`
 - `scripts/harness/visual_compare_depth_video.py`
+- `scripts/harness/visual_compare_turntable.py`
 
 ### Tooling / Harness
 
@@ -70,6 +73,17 @@ The visualization layer intentionally uses three different diagnostics built on 
 - reprojection / warp comparison for multi-view consistency
 - fused point-cloud rendering for global geometry shape
 
+The fused point-cloud visualization is now split into two user-facing workflows:
+
+- `visual_compare_turntable.py`
+  - primary single-frame camera-aware compare
+  - explicit camera-frusta visualization from real `c2w`
+  - per-camera local orbit views
+  - static keyframe sheet as the primary artifact
+- `visual_compare_depth_video.py`
+  - older temporal fused compare over a frame range
+  - still useful as a secondary motion/consistency diagnostic
+
 The fused point-cloud renderer now supports two view-selection modes:
 
 - `fixed`: synthetic deterministic views such as `oblique`, `top`, and `side`
@@ -79,6 +93,14 @@ The fused renderer also supports two layout modes:
 
 - `pair`: one native-vs-ffs panel per view
 - `grid_2x3`: a single 2x3 panel where the top row is Native, the bottom row is FFS, and the 3 columns use the selected camera-pose views
+
+`turntable_compare.py` reuses the same aligned-case loading and fallback rendering primitives, then adds:
+
+- single-frame case selection
+- world-space ROI cropping before orbit computation
+- camera-frustum geometry extraction
+- per-camera orbit arcs anchored near real camera positions
+- static board and keyframe-sheet composition
 
 `calibrate.pkl` support is intentionally narrow and matches the current producer:
 

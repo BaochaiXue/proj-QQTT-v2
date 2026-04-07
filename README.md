@@ -175,7 +175,36 @@ python scripts/harness/visual_compare_reprojection.py --aligned_root ./data --re
 
 This is the main multi-view consistency diagnostic. It warps source RGB into the target view using native depth and FFS depth separately, then compares each warp against the target RGB with residual heatmaps and summary metrics.
 
-3. Fused point-cloud comparison video:
+3. Single-frame camera-aware turntable compare:
+
+Same-case comparison, when an aligned case contains both native depth and FFS depth:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --case_name my_case --aligned_root ./data --frame_idx 0
+```
+
+Fallback two-case comparison:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --render_mode neutral_gray_shaded --scene_crop_mode auto_table_bbox
+```
+
+This is now the primary fused-cloud diagnostic for professor-facing review. It:
+
+- loads one selected aligned frame instead of a temporal frame range
+- fuses one native point cloud and one FFS point cloud
+- visualizes the 3 real camera poses from `calibrate.pkl`
+- renders 2x3 boards where:
+  - columns = views near Cam0 / Cam1 / Cam2
+  - rows = Native / FFS
+- generates deterministic local orbit arcs around the ROI center while staying near each real camera pose
+- writes:
+  - `scene_overview_with_cameras.png`
+  - per-angle `boards/*.png`
+  - `turntable_keyframes_sheet.png`
+  - optional `videos/turntable_orbit.mp4`
+
+4. Temporal fused point-cloud comparison video:
 
 Same-case comparison, when an aligned case contains both native depth and FFS depth:
 
@@ -189,7 +218,7 @@ Fallback two-case comparison, when `both_eval` is not supported on the current m
 python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --preset tabletop_compare_2x3 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
-The fused-cloud utility:
+The temporal fused-cloud utility remains available as a secondary diagnostic. It:
 
 - decodes compatible depth to meters
 - deprojects with color intrinsics
@@ -275,6 +304,14 @@ data/<case_name>/
       grid_2x3.mp4
     metrics.json
     comparison_metadata.json
+  turntable_frame_<idx>/ # optional single-frame camera-aware turntable output
+    scene_overview_with_cameras.png
+    turntable_keyframes_sheet.png
+    turntable_metadata.json
+    boards/
+      000_angle_*.png
+    videos/
+      turntable_orbit.mp4
   depth_panels/         # optional per-camera diagnostic panels
     camera_0/frames/
     camera_1/frames/

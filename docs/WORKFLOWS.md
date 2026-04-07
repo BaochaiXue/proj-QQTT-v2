@@ -119,7 +119,36 @@ Use this to judge:
 - which source depth produces lower reprojection residuals in the target camera
 - whether failures are localized to one camera pair or happen everywhere
 
-Finally use fused-cloud comparison for global geometry:
+Finally use the single-frame camera-aware turntable for professor-facing fused geometry review:
+
+Same-case comparison when an aligned case contains both native and FFS depth:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --case_name my_case --aligned_root ./data --frame_idx 0
+```
+
+Fallback two-case comparison when `both_eval` is not supported:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --render_mode neutral_gray_shaded --scene_crop_mode auto_table_bbox
+```
+
+The turntable workflow:
+
+- selects one aligned frame
+- reuses the fused native and fused FFS cloud loader
+- computes a world-space tabletop ROI before orbit generation
+- visualizes the 3 real camera frusta from `calibrate.pkl`
+- renders 2x3 boards:
+  - columns = Near Cam0 / Near Cam1 / Near Cam2
+  - rows = Native / FFS
+- produces:
+  - `scene_overview_with_cameras.png`
+  - per-angle `boards/*.png`
+  - `turntable_keyframes_sheet.png`
+  - optional `videos/turntable_orbit.mp4`
+
+Keep the older fused-cloud temporal video workflow only as a secondary diagnostic:
 
 Same-case comparison when an aligned case contains both native and FFS depth:
 
@@ -133,7 +162,7 @@ Fallback two-case comparison when `both_eval` is not supported:
 python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --preset tabletop_compare_2x3 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
-The comparison workflow:
+The temporal comparison workflow:
 
 - decodes compatible depth to meters
 - deprojects with `K_color`
