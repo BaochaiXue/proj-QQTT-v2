@@ -25,22 +25,56 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth_min_m", type=float, default=0.1)
     parser.add_argument("--depth_max_m", type=float, default=3.0)
     parser.add_argument("--renderer", choices=("auto", "open3d", "fallback"), default="auto")
-    parser.add_argument("--render_mode", choices=("color_by_rgb", "color_by_depth", "color_by_height", "color_by_normals", "neutral_gray_shaded"), default="color_by_rgb")
+    parser.add_argument("--preset", choices=("tabletop_compare_2x3",), default=None)
+    parser.add_argument("--render_mode", choices=("color_by_rgb", "color_by_depth", "color_by_height", "color_by_normals", "neutral_gray_shaded"), default="neutral_gray_shaded")
     parser.add_argument("--views", nargs="+", choices=("oblique", "top", "side"), default=["oblique"])
     parser.add_argument("--view_mode", choices=("fixed", "camera_poses_table_focus"), default="fixed")
     parser.add_argument("--focus_mode", choices=("none", "table"), default="none")
     parser.add_argument("--layout_mode", choices=("pair", "grid_2x3"), default="pair")
+    parser.add_argument("--scene_crop_mode", choices=("none", "auto_table_bbox", "manual_xyz_roi"), default="none")
+    parser.add_argument("--crop_margin_xy", type=float, default=0.12)
+    parser.add_argument("--crop_min_z", type=float, default=-0.15)
+    parser.add_argument("--crop_max_z", type=float, default=0.35)
+    parser.add_argument("--roi_x_min", type=float, default=None)
+    parser.add_argument("--roi_x_max", type=float, default=None)
+    parser.add_argument("--roi_y_min", type=float, default=None)
+    parser.add_argument("--roi_y_max", type=float, default=None)
+    parser.add_argument("--roi_z_min", type=float, default=None)
+    parser.add_argument("--roi_z_max", type=float, default=None)
     parser.add_argument("--write_ply", action="store_true")
     parser.add_argument("--write_mp4", action="store_true")
     parser.add_argument("--fps", type=int, default=10)
     parser.add_argument("--panel_layout", choices=("side_by_side", "stacked"), default="side_by_side")
     parser.add_argument("--use_float_ffs_depth_when_available", action="store_true")
     parser.add_argument("--zoom_scale", type=float, default=1.0)
+    parser.add_argument("--view_distance_scale", type=float, default=1.0)
+    parser.add_argument("--projection_mode", choices=("perspective", "orthographic"), default="perspective")
+    parser.add_argument("--ortho_scale", type=float, default=None)
+    parser.add_argument("--point_radius_px", type=int, default=2)
+    parser.add_argument("--supersample_scale", type=int, default=2)
     return parser.parse_args()
 
 
+def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
+    if args.preset == "tabletop_compare_2x3":
+        args.render_mode = "neutral_gray_shaded"
+        args.view_mode = "camera_poses_table_focus"
+        args.focus_mode = "table"
+        args.layout_mode = "grid_2x3"
+        args.scene_crop_mode = "auto_table_bbox"
+        args.projection_mode = "perspective"
+        args.view_distance_scale = 0.7
+        args.point_radius_px = 3
+        args.supersample_scale = 2
+        args.depth_min_m = 0.2
+        args.depth_max_m = 1.5
+        args.zoom_scale = 1.0
+        args.views = ["oblique"]
+    return args
+
+
 def main() -> int:
-    args = parse_args()
+    args = apply_preset(parse_args())
     from data_process.visualization.pointcloud_compare import run_depth_comparison_workflow
     output_dir = args.output_dir
     if output_dir is None:
@@ -68,12 +102,27 @@ def main() -> int:
         view_mode=args.view_mode,
         focus_mode=args.focus_mode,
         layout_mode=args.layout_mode,
+        scene_crop_mode=args.scene_crop_mode,
+        crop_margin_xy=args.crop_margin_xy,
+        crop_min_z=args.crop_min_z,
+        crop_max_z=args.crop_max_z,
+        roi_x_min=args.roi_x_min,
+        roi_x_max=args.roi_x_max,
+        roi_y_min=args.roi_y_min,
+        roi_y_max=args.roi_y_max,
+        roi_z_min=args.roi_z_min,
+        roi_z_max=args.roi_z_max,
         write_ply=args.write_ply,
         write_mp4=args.write_mp4,
         fps=args.fps,
         panel_layout=args.panel_layout,
         use_float_ffs_depth_when_available=args.use_float_ffs_depth_when_available,
         zoom_scale=args.zoom_scale,
+        view_distance_scale=args.view_distance_scale,
+        projection_mode=args.projection_mode,
+        ortho_scale=args.ortho_scale,
+        point_radius_px=args.point_radius_px,
+        supersample_scale=args.supersample_scale,
     )
     print(f"Comparison outputs written to {result['output_dir']}")
     return 0

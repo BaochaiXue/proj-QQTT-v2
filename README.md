@@ -180,13 +180,13 @@ This is the main multi-view consistency diagnostic. It warps source RGB into the
 Same-case comparison, when an aligned case contains both native depth and FFS depth:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --render_mode color_by_rgb --view_mode camera_poses_table_focus --focus_mode table --layout_mode grid_2x3 --depth_min_m 0.2 --depth_max_m 1.5 --zoom_scale 2.2 --write_mp4
+python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --preset tabletop_compare_2x3 --write_mp4
 ```
 
 Fallback two-case comparison, when `both_eval` is not supported on the current machine:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --render_mode color_by_rgb --view_mode camera_poses_table_focus --focus_mode table --layout_mode grid_2x3 --depth_min_m 0.2 --depth_max_m 1.5 --zoom_scale 2.2 --write_mp4 --use_float_ffs_depth_when_available
+python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --preset tabletop_compare_2x3 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
 The fused-cloud utility:
@@ -196,11 +196,15 @@ The fused-cloud utility:
 - uses `calibrate.pkl` camera-to-world transforms
 - fuses per-camera point clouds into a common frame
 - can render from fixed synthetic views or from the 3 real calibrated camera poses
+- supports a world-space tabletop crop before view bounds are computed
+- supports geometry-aware camera distance control and perspective / orthographic projection
 - supports a table-focus mode that keeps the view centered on the tabletop
+- uses denser splat-like fallback rendering instead of isolated 1-pixel dots
 - supports:
   - classic pair output per view
   - a 2x3 summary grid with top row = Native and bottom row = FFS
-- still supports geometry-first modes such as `neutral_gray_shaded`, `color_by_height`, and `color_by_normals`
+- defaults to geometry-readable rendering such as `neutral_gray_shaded`
+- keeps `color_by_rgb` as a secondary reference mode
 - writes per-view frame sequences and optional videos, plus `grid_2x3_frames/` and `videos/grid_2x3.mp4` when requested
 
 ## Output Layout

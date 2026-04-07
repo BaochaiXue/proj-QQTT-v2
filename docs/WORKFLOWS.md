@@ -124,13 +124,13 @@ Finally use fused-cloud comparison for global geometry:
 Same-case comparison when an aligned case contains both native and FFS depth:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --render_mode color_by_rgb --view_mode camera_poses_table_focus --focus_mode table --layout_mode grid_2x3 --depth_min_m 0.2 --depth_max_m 1.5 --zoom_scale 2.2 --write_mp4
+python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --preset tabletop_compare_2x3 --write_mp4
 ```
 
 Fallback two-case comparison when `both_eval` is not supported:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --render_mode color_by_rgb --view_mode camera_poses_table_focus --focus_mode table --layout_mode grid_2x3 --depth_min_m 0.2 --depth_max_m 1.5 --zoom_scale 2.2 --write_mp4 --use_float_ffs_depth_when_available
+python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --preset tabletop_compare_2x3 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
 The comparison workflow:
@@ -140,9 +140,13 @@ The comparison workflow:
 - transforms to world using `calibrate.pkl`
 - fuses the aligned camera clouds
 - can render from the 3 real calibrated camera poses
-- can auto-focus the view on the tabletop region
+- applies a world-space tabletop crop before framing
+- can move the effective viewpoint closer to the tabletop via `--view_distance_scale`
+- supports `perspective` and `orthographic` projection in the fallback renderer
+- uses denser splat-like fallback rendering for tabletop inspection
 - can compose a single `2x3` output:
   - row 1 = Native
   - row 2 = FFS
   - columns = camera 0 / 1 / 2 viewpoints
-- still supports fixed synthetic views and geometry-first render modes when needed
+- recommends geometry-first rendering (`neutral_gray_shaded`) for judging shape
+- keeps `color_by_rgb` available as a secondary reference view
