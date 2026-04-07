@@ -548,7 +548,7 @@ def apply_image_flip(image: np.ndarray, image_flip: str) -> np.ndarray:
     raise ValueError(f"Unsupported image_flip: {image_flip}")
 
 
-def _look_at(camera_position: np.ndarray, center: np.ndarray, up: np.ndarray) -> np.ndarray:
+def look_at_view_matrix(camera_position: np.ndarray, center: np.ndarray, up: np.ndarray) -> np.ndarray:
     forward = center - camera_position
     forward = forward / np.linalg.norm(forward)
     right = np.cross(forward, up)
@@ -560,6 +560,10 @@ def _look_at(camera_position: np.ndarray, center: np.ndarray, up: np.ndarray) ->
     view[:3, :3] = rotation
     view[:3, 3] = translation
     return view
+
+
+def _look_at(camera_position: np.ndarray, center: np.ndarray, up: np.ndarray) -> np.ndarray:
+    return look_at_view_matrix(camera_position, center, up)
 
 
 def _project_view_coordinates(
@@ -584,6 +588,49 @@ def _project_view_coordinates(
         v = (xyz[:, 1] / scale) * (height * 0.5) + height * 0.5
         return u, v
     raise ValueError(f"Unsupported projection_mode: {projection_mode}")
+
+
+def project_world_points_to_image(
+    points: np.ndarray,
+    *,
+    view_config: dict[str, Any],
+    width: int,
+    height: int,
+    projection_mode: str,
+    ortho_scale: float | None,
+) -> dict[str, np.ndarray]:
+    points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    uv = np.full((len(points), 2), np.nan, dtype=np.float32)
+    xyz_view = np.zeros((len(points), 3), dtype=np.float32)
+    valid = np.zeros((len(points),), dtype=bool)
+    if len(points) == 0:
+        return {
+            "uv": uv,
+            "xyz_view": xyz_view,
+            "valid": valid,
+        }
+
+    homogeneous = np.concatenate([points, np.ones((len(points), 1), dtype=np.float32)], axis=1)
+    view = look_at_view_matrix(view_config["camera_position"], view_config["center"], view_config["up"])
+    camera_points = homogeneous @ view.T
+    xyz_view = camera_points[:, :3]
+    valid = xyz_view[:, 2] < -1e-6
+    if np.any(valid):
+        u, v = _project_view_coordinates(
+            xyz_view[valid],
+            width=width,
+            height=height,
+            projection_mode=projection_mode,
+            ortho_scale=ortho_scale,
+        )
+        uv[valid, 0] = u
+        uv[valid, 1] = v
+
+    return {
+        "uv": uv,
+        "xyz_view": xyz_view,
+        "valid": valid,
+    }
 
 
 def estimate_ortho_scale(
