@@ -94,16 +94,43 @@ Important:
 
 ## 5. Compare
 
+Start with single-camera panels:
+
+```bash
+python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --write_mp4 --use_float_ffs_depth_when_available
+```
+
+Use this to judge:
+
+- per-camera holes / invalid regions
+- depth edge quality
+- local surface smoothness
+- ROI crops on the same spatial region
+
+Then run cross-view reprojection diagnostics:
+
+```bash
+python scripts/harness/visual_compare_reprojection.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --camera_pair 0,1 --camera_pair 0,2 --write_mp4 --use_float_ffs_depth_when_available
+```
+
+Use this to judge:
+
+- which depth is more multi-view consistent
+- which source depth produces lower reprojection residuals in the target camera
+- whether failures are localized to one camera pair or happen everywhere
+
+Finally use fused-cloud comparison for global geometry:
+
 Same-case comparison when an aligned case contains both native and FFS depth:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --write_mp4
+python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --render_mode neutral_gray_shaded --views oblique top side --write_mp4
 ```
 
 Fallback two-case comparison when `both_eval` is not supported:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --write_mp4 --use_float_ffs_depth_when_available
+python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --render_mode neutral_gray_shaded --views oblique top side --write_mp4 --use_float_ffs_depth_when_available
 ```
 
 The comparison workflow:
@@ -112,4 +139,8 @@ The comparison workflow:
 - deprojects with `K_color`
 - transforms to world using `calibrate.pkl`
 - fuses the aligned camera clouds
-- renders native and FFS clouds from the same deterministic fixed view
+- renders native and FFS clouds from the same deterministic fixed views
+- supports geometry-first render modes:
+  - `neutral_gray_shaded`
+  - `color_by_height`
+  - `color_by_normals`

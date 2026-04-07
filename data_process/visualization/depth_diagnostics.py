@@ -396,9 +396,16 @@ def warp_rgb_between_cameras(
     if not np.any(valid):
         return warped, valid_mask, depth_map
 
-    coords = np.rint(uv[valid]).astype(np.int32)
+    uv_valid = uv[valid]
     z = z_values[valid]
     colors = source_colors[valid]
+    finite_uv = np.isfinite(uv_valid[:, 0]) & np.isfinite(uv_valid[:, 1])
+    uv_valid = uv_valid[finite_uv]
+    z = z[finite_uv]
+    colors = colors[finite_uv]
+    if len(uv_valid) == 0:
+        return warped, valid_mask, depth_map
+    coords = np.rint(np.nan_to_num(uv_valid, nan=-1.0)).astype(np.int32)
     inside = (coords[:, 0] >= 0) & (coords[:, 0] < width) & (coords[:, 1] >= 0) & (coords[:, 1] < height)
     coords = coords[inside]
     z = z[inside]
@@ -452,4 +459,3 @@ def compute_photometric_residual(
         heatmap[:] = np.asarray(DIFF_INVALID_COLOR_BGR, dtype=np.uint8)
     heatmap[~valid] = np.asarray(DIFF_INVALID_COLOR_BGR, dtype=np.uint8)
     return heatmap, stats
-

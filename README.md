@@ -150,25 +150,53 @@ Important:
 
 ## Compare Native vs FFS
 
+The repo now provides three complementary comparison views. Use them together:
+
+1. Per-camera diagnostic panels:
+
+```bash
+python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --write_mp4 --use_float_ffs_depth_when_available
+```
+
+This is the primary first-pass diagnostic. It shows:
+
+- native RGB and FFS RGB
+- native depth and FFS depth with the same scale
+- absolute depth difference heatmap
+- valid-mask comparison
+- surface-shaded depth
+- deterministic ROI crops
+
+2. Cross-view reprojection / warp comparison:
+
+```bash
+python scripts/harness/visual_compare_reprojection.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --camera_pair 0,1 --camera_pair 0,2 --write_mp4 --use_float_ffs_depth_when_available
+```
+
+This is the main multi-view consistency diagnostic. It warps source RGB into the target view using native depth and FFS depth separately, then compares each warp against the target RGB with residual heatmaps and summary metrics.
+
+3. Fused point-cloud comparison video:
+
 Same-case comparison, when an aligned case contains both native depth and FFS depth:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --write_mp4
+python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --render_mode neutral_gray_shaded --views oblique top side --write_mp4
 ```
 
 Fallback two-case comparison, when `both_eval` is not supported on the current machine:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --write_mp4 --use_float_ffs_depth_when_available
+python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --render_mode neutral_gray_shaded --views oblique top side --write_mp4 --use_float_ffs_depth_when_available
 ```
 
-The comparison utility:
+The fused-cloud utility:
 
 - decodes compatible depth to meters
 - deprojects with color intrinsics
 - uses `calibrate.pkl` camera-to-world transforms
 - fuses per-camera point clouds into a common frame
-- renders native and FFS point clouds from the same deterministic viewpoint
+- renders native and FFS clouds from fixed deterministic viewpoints
+- supports geometry-first render modes such as `neutral_gray_shaded`, `color_by_height`, and `color_by_normals`
 - writes side-by-side frame sequences and optional videos
 
 ## Output Layout
@@ -237,6 +265,15 @@ data/<case_name>/
     videos/
     metrics.json
     comparison_metadata.json
+  depth_panels/         # optional per-camera diagnostic panels
+    camera_0/frames/
+    camera_1/frames/
+    camera_2/frames/
+    summary.json
+  reprojection_compare/ # optional cross-view warp diagnostics
+    pair_0_to_1/frames/
+    pair_0_to_2/frames/
+    summary_metrics.json
 ```
 
 ## Validation

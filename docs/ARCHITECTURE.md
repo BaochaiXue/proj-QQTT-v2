@@ -30,7 +30,12 @@ The repo is intentionally small.
 
 - `data_process/visualization/__init__.py`
 - `data_process/visualization/calibration_io.py`
+- `data_process/visualization/depth_diagnostics.py`
+- `data_process/visualization/panel_compare.py`
 - `data_process/visualization/pointcloud_compare.py`
+- `data_process/visualization/reprojection_compare.py`
+- `scripts/harness/visual_compare_depth_panels.py`
+- `scripts/harness/visual_compare_reprojection.py`
 - `scripts/harness/visual_compare_depth_video.py`
 
 ### Tooling / Harness
@@ -59,6 +64,12 @@ The repo is intentionally small.
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
 
+The visualization layer intentionally uses three different diagnostics built on aligned cases:
+
+- per-camera panels for local depth quality
+- reprojection / warp comparison for multi-view consistency
+- fused point-cloud rendering for global geometry shape
+
 `calibrate.pkl` support is intentionally narrow and matches the current producer:
 
 - object type: `list` / `tuple` or `numpy.ndarray`
@@ -74,3 +85,4 @@ Subset capture cases rely on `metadata["calibration_reference_serials"]` to map 
 - No physics / rendering exports at the `qqtt` top level.
 - Alignment remains the canonical data product of this repo; comparison visualization is an ancillary utility built on aligned cases.
 - `depth/` remains the canonical compatibility output in aligned cases.
+- Comparison visualization is diagnostic-only. It reads aligned cases and does not create new training or downstream simulation artifacts.
