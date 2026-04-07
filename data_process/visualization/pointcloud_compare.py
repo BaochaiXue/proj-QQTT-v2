@@ -8,7 +8,6 @@ import cv2
 import numpy as np
 
 from .calibration_io import load_calibration_transforms
-from .depth_diagnostics import get_case_camera_transform, load_color_frame, load_depth_frame
 
 
 RENDER_MODES = (
@@ -196,21 +195,28 @@ def load_case_frame_cloud(
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     serials = metadata["serial_numbers"]
     intrinsics = get_case_intrinsics(metadata)
-    c2w_list = get_case_camera_transform(case_dir=case_dir, metadata=metadata)
+    depth_scales = get_depth_scale_list(metadata, len(serials))
+    calibration_reference_serials = metadata.get("calibration_reference_serials", metadata["serial_numbers"])
+    c2w_list = load_calibration_transforms(
+        case_dir / "calibrate.pkl",
+        serial_numbers=serials,
+        calibration_reference_serials=calibration_reference_serials,
+    )
+    depth_dir_name, use_float = choose_depth_stream(case_dir, metadata, depth_source, use_float_ffs_depth_when_available)
 
     fused_points = []
     fused_colors = []
     per_camera_stats = []
     for camera_idx, serial in enumerate(serials):
-        color_image = load_color_frame(case_dir, camera_idx, frame_idx)
-        _, depth_m, depth_info = load_depth_frame(
-            case_dir=case_dir,
-            metadata=metadata,
-            camera_idx=camera_idx,
-            frame_idx=frame_idx,
-            depth_source=depth_source,
-            use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
-        )
+        color_path = case_dir / "color" / str(camera_idx) / f"{frame_idx}.png"
+        depth_path = case_dir / depth_dir_name / str(camera_idx) / f"{frame_idx}.npy"
+        color_image = cv2.imread(str(color_path), cv2.IMREAD_COLOR)
+        if color_image is None:
+            raise FileNotFoundError(f"Missing color frame: {color_path}")
+        if not depth_path.exists():
+            raise FileNotFoundError(f"Missing depth frame: {depth_path}")
+        depth_raw = np.load(depth_path)
+        depth_m = decode_depth_to_meters(depth_raw, None if use_float else depth_scales[camera_idx])
         camera_points, camera_colors, stats = depth_to_camera_points(
             depth_m,
             intrinsics[camera_idx],
@@ -226,8 +232,8 @@ def load_case_frame_cloud(
             {
                 "camera_idx": camera_idx,
                 "serial": serial,
-                "depth_dir_used": depth_info["depth_dir_used"],
-                "used_float_depth": bool(depth_info["used_float_depth"]),
+                "depth_dir_used": depth_dir_name,
+                "used_float_depth": bool(use_float),
                 **stats,
             }
         )
