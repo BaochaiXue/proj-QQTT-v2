@@ -124,13 +124,13 @@ Finally use fused-cloud comparison for global geometry:
 Same-case comparison when an aligned case contains both native and FFS depth:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --render_mode neutral_gray_shaded --views oblique top side --write_mp4
+python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --render_mode color_by_rgb --view_mode camera_poses_table_focus --focus_mode table --layout_mode grid_2x3 --depth_min_m 0.2 --depth_max_m 1.5 --zoom_scale 2.2 --write_mp4
 ```
 
 Fallback two-case comparison when `both_eval` is not supported:
 
 ```bash
-python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --render_mode neutral_gray_shaded --views oblique top side --write_mp4 --use_float_ffs_depth_when_available
+python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --render_mode color_by_rgb --view_mode camera_poses_table_focus --focus_mode table --layout_mode grid_2x3 --depth_min_m 0.2 --depth_max_m 1.5 --zoom_scale 2.2 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
 The comparison workflow:
@@ -139,8 +139,10 @@ The comparison workflow:
 - deprojects with `K_color`
 - transforms to world using `calibrate.pkl`
 - fuses the aligned camera clouds
-- renders native and FFS clouds from the same deterministic fixed views
-- supports geometry-first render modes:
-  - `neutral_gray_shaded`
-  - `color_by_height`
-  - `color_by_normals`
+- can render from the 3 real calibrated camera poses
+- can auto-focus the view on the tabletop region
+- can compose a single `2x3` output:
+  - row 1 = Native
+  - row 2 = FFS
+  - columns = camera 0 / 1 / 2 viewpoints
+- still supports fixed synthetic views and geometry-first render modes when needed

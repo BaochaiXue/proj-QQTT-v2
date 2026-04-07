@@ -70,6 +70,16 @@ The visualization layer intentionally uses three different diagnostics built on 
 - reprojection / warp comparison for multi-view consistency
 - fused point-cloud rendering for global geometry shape
 
+The fused point-cloud renderer now supports two view-selection modes:
+
+- `fixed`: synthetic deterministic views such as `oblique`, `top`, and `side`
+- `camera_poses_table_focus`: the 3 real calibrated camera poses, all refocused toward a shared tabletop center
+
+The fused renderer also supports two layout modes:
+
+- `pair`: one native-vs-ffs panel per view
+- `grid_2x3`: a single 2x3 panel where the top row is Native, the bottom row is FFS, and the 3 columns use the selected camera-pose views
+
 `calibrate.pkl` support is intentionally narrow and matches the current producer:
 
 - object type: `list` / `tuple` or `numpy.ndarray`

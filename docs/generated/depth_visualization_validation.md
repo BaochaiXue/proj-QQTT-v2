@@ -29,6 +29,12 @@ Fused cloud comparison:
 python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --output_dir C:\Users\zhang\proj-QQTT\data\comparison_native_30_static_vs_ffs_30_static_diagnostic --renderer fallback --render_mode neutral_gray_shaded --views oblique top side --write_mp4 --use_float_ffs_depth_when_available
 ```
 
+2x3 tabletop-focused fused cloud comparison:
+
+```bash
+python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --output_dir C:\Users\zhang\proj-QQTT\data\comparison_native_30_static_vs_ffs_30_static_grid --renderer fallback --render_mode color_by_rgb --view_mode camera_poses_table_focus --focus_mode table --layout_mode grid_2x3 --depth_min_m 0.2 --depth_max_m 1.5 --zoom_scale 2.2 --write_mp4 --use_float_ffs_depth_when_available
+```
+
 ## Outputs Produced
 
 Per-camera diagnostic panels:
@@ -57,12 +63,24 @@ Fused cloud comparison:
 - `data/comparison_native_30_static_vs_ffs_30_static_diagnostic/comparison_metadata.json`
 - `data/comparison_native_30_static_vs_ffs_30_static_diagnostic/metrics.json`
 
+2x3 tabletop-focused fused cloud comparison:
+
+- `data/comparison_native_30_static_vs_ffs_30_static_grid/grid_2x3_frames/*.png`
+- `data/comparison_native_30_static_vs_ffs_30_static_grid/videos/grid_2x3.mp4`
+- `data/comparison_native_30_static_vs_ffs_30_static_grid/view_cam0/...`
+- `data/comparison_native_30_static_vs_ffs_30_static_grid/view_cam1/...`
+- `data/comparison_native_30_static_vs_ffs_30_static_grid/view_cam2/...`
+
 ## What Was Validated
 
 - Single-camera panel generation works in two-case fallback mode.
 - Panel outputs include native depth, ffs depth, absolute difference, valid-mask comparison, shaded depth, and ROI crops.
 - Cross-view reprojection works in two-case fallback mode and writes per-pair frame panels plus summary metrics.
 - Fused cloud comparison now supports multi-view output (`oblique`, `top`, `side`) and geometry-first render mode (`neutral_gray_shaded`).
+- Fused cloud comparison now also supports:
+  - real calibrated camera-pose views
+  - tabletop focus
+  - a single 2x3 comparison layout
 
 ## Known Limitations
 
