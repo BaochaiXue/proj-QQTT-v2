@@ -216,49 +216,82 @@ class CameraSystem:
             self.recording = True
 
         last_step_idxs = [-1] * self.num_cam
-        while not self.end:
-            if not self.recording:
-                time.sleep(0.01)
-                continue
+        frame_counts = [0] * self.num_cam
+        progress_interval_s = 1.0
+        stall_timeout_s = 15.0 if max_frames is not None else None
+        last_progress_time = time.time()
+        last_log_time = last_progress_time
 
-            last_realsense_data = self.realsense.get()
-            timestamps = [
-                last_realsense_data[i]["timestamp"].item()
-                for i in range(self.num_cam)
-            ]
-            step_idxs = [
-                last_realsense_data[i]["step_idx"].item()
-                for i in range(self.num_cam)
-            ]
+        try:
+            while not self.end:
+                if not self.recording:
+                    time.sleep(0.01)
+                    continue
 
-            if not all(
-                [step_idxs[i] == last_step_idxs[i] for i in range(self.num_cam)]
-            ):
-                for i in range(self.num_cam):
-                    if last_step_idxs[i] != step_idxs[i]:
-                        time_stamp = timestamps[i]
-                        step_idx = step_idxs[i]
-                        metadata["recording"][i][step_idx] = time_stamp
-                        for stream_name in self.streams_present:
-                            if stream_name not in last_realsense_data[i]:
-                                continue
-                            stream_value = last_realsense_data[i][stream_name]
-                            if stream_name == "depth":
-                                np.save(f"{output_path}/{stream_name}/{i}/{step_idx}.npy", stream_value)
-                            else:
-                                cv2.imwrite(f"{output_path}/{stream_name}/{i}/{step_idx}.png", stream_value)
-                        last_step_idxs[i] = step_idx
+                last_realsense_data = self.realsense.get()
+                timestamps = [
+                    last_realsense_data[i]["timestamp"].item()
+                    for i in range(self.num_cam)
+                ]
+                step_idxs = [
+                    last_realsense_data[i]["step_idx"].item()
+                    for i in range(self.num_cam)
+                ]
 
-                if max_frames is not None and len(metadata["recording"][0]) >= int(max_frames):
+                any_progress = False
+                if not all(
+                    [step_idxs[i] == last_step_idxs[i] for i in range(self.num_cam)]
+                ):
+                    for i in range(self.num_cam):
+                        if last_step_idxs[i] != step_idxs[i]:
+                            time_stamp = timestamps[i]
+                            step_idx = step_idxs[i]
+                            metadata["recording"][i][step_idx] = time_stamp
+                            for stream_name in self.streams_present:
+                                if stream_name not in last_realsense_data[i]:
+                                    continue
+                                stream_value = last_realsense_data[i][stream_name]
+                                if stream_name == "depth":
+                                    np.save(f"{output_path}/{stream_name}/{i}/{step_idx}.npy", stream_value)
+                                else:
+                                    cv2.imwrite(f"{output_path}/{stream_name}/{i}/{step_idx}.png", stream_value)
+                            last_step_idxs[i] = step_idx
+                            frame_counts[i] = len(metadata["recording"][i])
+                            any_progress = True
+
+                now = time.time()
+                if any_progress:
+                    last_progress_time = now
+
+                if now - last_log_time >= progress_interval_s:
+                    print(
+                        f"[record] counts={frame_counts} "
+                        f"steps={last_step_idxs} "
+                        f"target={max_frames}",
+                        flush=True,
+                    )
+                    last_log_time = now
+
+                if max_frames is not None and min(frame_counts) >= int(max_frames):
                     self.end = True
 
-        print("End recording")
-        if self.listener is not None:
-            self.listener.stop()
-        with open(f"{output_path}/metadata.json", "w") as f:
-            json.dump(metadata, f)
+                if (
+                    stall_timeout_s is not None
+                    and not self.end
+                    and (now - last_progress_time) >= stall_timeout_s
+                ):
+                    raise RuntimeError(
+                        "Recording stalled before every camera reached the requested "
+                        f"frame target. counts={frame_counts}, steps={last_step_idxs}"
+                    )
 
-        self.realsense.stop()
+            print("End recording")
+            with open(f"{output_path}/metadata.json", "w") as f:
+                json.dump(metadata, f)
+        finally:
+            if self.listener is not None:
+                self.listener.stop()
+            self.realsense.stop()
 
     def build_recording_metadata(self):
         return build_recording_metadata_payload(
