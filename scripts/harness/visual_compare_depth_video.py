@@ -25,11 +25,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth_min_m", type=float, default=0.1)
     parser.add_argument("--depth_max_m", type=float, default=3.0)
     parser.add_argument("--renderer", choices=("auto", "open3d", "fallback"), default="auto")
+    parser.add_argument("--render_mode", choices=("color_by_rgb", "color_by_depth", "color_by_height", "color_by_normals", "neutral_gray_shaded"), default="neutral_gray_shaded")
+    parser.add_argument("--views", nargs="+", choices=("oblique", "top", "side"), default=["oblique"])
     parser.add_argument("--write_ply", action="store_true")
     parser.add_argument("--write_mp4", action="store_true")
     parser.add_argument("--fps", type=int, default=10)
     parser.add_argument("--panel_layout", choices=("side_by_side", "stacked"), default="side_by_side")
     parser.add_argument("--use_float_ffs_depth_when_available", action="store_true")
+    parser.add_argument("--zoom_scale", type=float, default=1.0)
     return parser.parse_args()
 
 
@@ -57,11 +60,14 @@ def main() -> int:
         depth_min_m=args.depth_min_m,
         depth_max_m=args.depth_max_m,
         renderer=args.renderer,
+        render_mode=args.render_mode,
+        views=args.views,
         write_ply=args.write_ply,
         write_mp4=args.write_mp4,
         fps=args.fps,
         panel_layout=args.panel_layout,
         use_float_ffs_depth_when_available=args.use_float_ffs_depth_when_available,
+        zoom_scale=args.zoom_scale,
     )
     print(f"Comparison outputs written to {result['output_dir']}")
     return 0

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +8,17 @@ import cv2
 import numpy as np
 
 from .calibration_io import load_calibration_transforms
+from .depth_diagnostics import get_case_camera_transform, load_color_frame, load_depth_frame
+
+
+RENDER_MODES = (
+    "color_by_rgb",
+    "color_by_depth",
+    "color_by_height",
+    "color_by_normals",
+    "neutral_gray_shaded",
+)
+VIEW_NAMES = ("oblique", "top", "side")
 
 
 def load_case_metadata(case_dir: Path) -> dict[str, Any]:
@@ -186,28 +196,21 @@ def load_case_frame_cloud(
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     serials = metadata["serial_numbers"]
     intrinsics = get_case_intrinsics(metadata)
-    depth_scales = get_depth_scale_list(metadata, len(serials))
-    calibration_reference_serials = metadata.get("calibration_reference_serials", metadata["serial_numbers"])
-    c2w_list = load_calibration_transforms(
-        case_dir / "calibrate.pkl",
-        serial_numbers=serials,
-        calibration_reference_serials=calibration_reference_serials,
-    )
-    depth_dir_name, use_float = choose_depth_stream(case_dir, metadata, depth_source, use_float_ffs_depth_when_available)
+    c2w_list = get_case_camera_transform(case_dir=case_dir, metadata=metadata)
 
     fused_points = []
     fused_colors = []
     per_camera_stats = []
     for camera_idx, serial in enumerate(serials):
-        color_path = case_dir / "color" / str(camera_idx) / f"{frame_idx}.png"
-        depth_path = case_dir / depth_dir_name / str(camera_idx) / f"{frame_idx}.npy"
-        color_image = cv2.imread(str(color_path), cv2.IMREAD_COLOR)
-        if color_image is None:
-            raise FileNotFoundError(f"Missing color frame: {color_path}")
-        if not depth_path.exists():
-            raise FileNotFoundError(f"Missing depth frame: {depth_path}")
-        depth_raw = np.load(depth_path)
-        depth_m = decode_depth_to_meters(depth_raw, None if use_float else depth_scales[camera_idx])
+        color_image = load_color_frame(case_dir, camera_idx, frame_idx)
+        _, depth_m, depth_info = load_depth_frame(
+            case_dir=case_dir,
+            metadata=metadata,
+            camera_idx=camera_idx,
+            frame_idx=frame_idx,
+            depth_source=depth_source,
+            use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+        )
         camera_points, camera_colors, stats = depth_to_camera_points(
             depth_m,
             intrinsics[camera_idx],
@@ -223,8 +226,8 @@ def load_case_frame_cloud(
             {
                 "camera_idx": camera_idx,
                 "serial": serial,
-                "depth_dir_used": depth_dir_name,
-                "used_float_depth": bool(use_float),
+                "depth_dir_used": depth_info["depth_dir_used"],
+                "used_float_depth": bool(depth_info["used_float_depth"]),
                 **stats,
             }
         )
@@ -243,24 +246,33 @@ def load_case_frame_cloud(
     return points, colors, stats
 
 
-def compute_view_config(bounds_min: np.ndarray, bounds_max: np.ndarray) -> dict[str, Any]:
+def compute_view_config(bounds_min: np.ndarray, bounds_max: np.ndarray, view_name: str = "oblique") -> dict[str, Any]:
     center = (bounds_min + bounds_max) * 0.5
     extents = np.maximum(bounds_max - bounds_min, 1e-6)
     radius = float(np.linalg.norm(extents))
-    azimuth = np.deg2rad(35.0)
-    elevation = np.deg2rad(25.0)
-    camera_position = center + radius * np.array(
-        [
-            np.cos(elevation) * np.cos(azimuth),
-            np.cos(elevation) * np.sin(azimuth),
-            np.sin(elevation),
-        ],
-        dtype=np.float32,
-    )
+    if view_name == "top":
+        camera_position = center + radius * np.array([0.0, 0.0, 1.8], dtype=np.float32)
+        up = np.array([0.0, -1.0, 0.0], dtype=np.float32)
+    elif view_name == "side":
+        camera_position = center + radius * np.array([0.0, -1.8, 0.35], dtype=np.float32)
+        up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    else:
+        azimuth = np.deg2rad(35.0)
+        elevation = np.deg2rad(25.0)
+        camera_position = center + radius * np.array(
+            [
+                np.cos(elevation) * np.cos(azimuth),
+                np.cos(elevation) * np.sin(azimuth),
+                np.sin(elevation),
+            ],
+            dtype=np.float32,
+        )
+        up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
     return {
+        "view_name": view_name,
         "center": center.astype(np.float32),
         "camera_position": camera_position.astype(np.float32),
-        "up": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+        "up": up,
         "radius": radius,
     }
 
@@ -279,16 +291,21 @@ def _look_at(camera_position: np.ndarray, center: np.ndarray, up: np.ndarray) ->
     return view
 
 
-def render_point_cloud_fallback(
+def _rasterize_view(
     points: np.ndarray,
     colors: np.ndarray,
     *,
     view_config: dict[str, Any],
-    width: int = 960,
-    height: int = 720,
-    point_radius: int = 1,
-) -> np.ndarray:
-    canvas = np.zeros((height, width, 3), dtype=np.uint8)
+    width: int,
+    height: int,
+) -> dict[str, np.ndarray]:
+    canvas = {
+        "rgb": np.zeros((height, width, 3), dtype=np.uint8),
+        "depth": np.zeros((height, width), dtype=np.float32),
+        "xyz_view": np.zeros((height, width, 3), dtype=np.float32),
+        "world_z": np.zeros((height, width), dtype=np.float32),
+        "valid": np.zeros((height, width), dtype=bool),
+    }
     if len(points) == 0:
         return canvas
 
@@ -298,24 +315,145 @@ def render_point_cloud_fallback(
     xyz = camera_points[:, :3]
     valid = xyz[:, 2] < -1e-6
     xyz = xyz[valid]
+    world_points = points[valid]
     color_values = colors[valid]
     if len(xyz) == 0:
         return canvas
 
     z = -xyz[:, 2]
-    f = width / (2.0 * np.tan(np.deg2rad(35.0) / 2.0))
-    u = (xyz[:, 0] * f / z) + width * 0.5
-    v = (xyz[:, 1] * f / z) + height * 0.5
+    focal = width / (2.0 * np.tan(np.deg2rad(35.0) / 2.0))
+    u = (xyz[:, 0] * focal / z) + width * 0.5
+    v = (xyz[:, 1] * focal / z) + height * 0.5
     inside = (u >= 0) & (u < width) & (v >= 0) & (v < height)
+    if not np.any(inside):
+        return canvas
     u = np.rint(u[inside]).astype(np.int32)
     v = np.rint(v[inside]).astype(np.int32)
     z = z[inside]
+    xyz = xyz[inside]
+    world_points = world_points[inside]
     color_values = color_values[inside]
 
     order = np.argsort(z)[::-1]
-    for idx in order:
-        cv2.circle(canvas, (u[idx], v[idx]), point_radius, tuple(int(c) for c in color_values[idx]), -1, lineType=cv2.LINE_AA)
+    u = u[order]
+    v = v[order]
+    z = z[order]
+    xyz = xyz[order]
+    world_points = world_points[order]
+    color_values = color_values[order]
+
+    canvas["rgb"][v, u] = color_values
+    canvas["depth"][v, u] = z
+    canvas["xyz_view"][v, u] = xyz
+    canvas["world_z"][v, u] = world_points[:, 2]
+    canvas["valid"][v, u] = True
     return canvas
+
+
+def _colorize_scalar_map(
+    scalar_map: np.ndarray,
+    valid_mask: np.ndarray,
+    *,
+    min_value: float,
+    max_value: float,
+) -> np.ndarray:
+    canvas = np.zeros(scalar_map.shape + (3,), dtype=np.uint8)
+    if np.any(valid_mask):
+        normalized = np.clip((scalar_map - float(min_value)) / max(1e-6, float(max_value) - float(min_value)), 0.0, 1.0)
+        colored = cv2.applyColorMap((normalized * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
+        canvas[valid_mask] = colored[valid_mask]
+    return canvas
+
+
+def _compute_normals_from_xyz_map(xyz_map: np.ndarray, valid_mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    normals = np.zeros_like(xyz_map, dtype=np.float32)
+    if xyz_map.shape[0] < 3 or xyz_map.shape[1] < 3:
+        return normals, np.zeros(valid_mask.shape, dtype=bool)
+    left = xyz_map[1:-1, :-2]
+    right = xyz_map[1:-1, 2:]
+    up = xyz_map[:-2, 1:-1]
+    down = xyz_map[2:, 1:-1]
+    valid_inner = (
+        valid_mask[1:-1, 1:-1]
+        & valid_mask[1:-1, :-2]
+        & valid_mask[1:-1, 2:]
+        & valid_mask[:-2, 1:-1]
+        & valid_mask[2:, 1:-1]
+    )
+    dx = right - left
+    dy = down - up
+    inner_normals = np.cross(dx, dy)
+    norm = np.linalg.norm(inner_normals, axis=2, keepdims=True)
+    good = valid_inner & (norm[..., 0] > 1e-6)
+    inner_normals[good] = inner_normals[good] / norm[good]
+    flip = inner_normals[..., 2] > 0
+    inner_normals[flip] *= -1.0
+    normals[1:-1, 1:-1] = inner_normals
+    valid_normals = np.zeros(valid_mask.shape, dtype=bool)
+    valid_normals[1:-1, 1:-1] = good
+    return normals, valid_normals
+
+
+def _render_normals(normals: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+    canvas = np.zeros(normals.shape, dtype=np.uint8)
+    if np.any(valid_mask):
+        rgb = ((normals + 1.0) * 0.5 * 255.0).astype(np.uint8)
+        canvas[valid_mask] = rgb[valid_mask][:, ::-1]
+    return canvas
+
+
+def _render_gray_shaded(normals: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+    canvas = np.zeros(normals.shape, dtype=np.uint8)
+    if np.any(valid_mask):
+        light_dir = np.asarray([0.35, -0.25, -1.0], dtype=np.float32)
+        light_dir /= np.linalg.norm(light_dir)
+        intensity = np.clip((normals @ light_dir) * 0.5 + 0.5, 0.0, 1.0)
+        shaded = np.clip(35.0 + intensity * 220.0, 0.0, 255.0).astype(np.uint8)
+        gray = np.stack([shaded, shaded, shaded], axis=2)
+        canvas[valid_mask] = gray[valid_mask]
+    return canvas
+
+
+def _apply_zoom(image: np.ndarray, zoom_scale: float) -> np.ndarray:
+    if zoom_scale <= 1.0:
+        return image
+    height, width = image.shape[:2]
+    crop_w = max(8, int(round(width / float(zoom_scale))))
+    crop_h = max(8, int(round(height / float(zoom_scale))))
+    x0 = max(0, (width - crop_w) // 2)
+    y0 = max(0, (height - crop_h) // 2)
+    cropped = image[y0:y0 + crop_h, x0:x0 + crop_w]
+    return cv2.resize(cropped, (width, height), interpolation=cv2.INTER_LINEAR)
+
+
+def render_point_cloud_fallback(
+    points: np.ndarray,
+    colors: np.ndarray,
+    *,
+    view_config: dict[str, Any],
+    render_mode: str,
+    scalar_bounds: dict[str, tuple[float, float]],
+    width: int = 960,
+    height: int = 720,
+    zoom_scale: float = 1.0,
+) -> np.ndarray:
+    raster = _rasterize_view(points, colors, view_config=view_config, width=width, height=height)
+    valid = raster["valid"]
+    if render_mode == "color_by_rgb":
+        canvas = raster["rgb"]
+    elif render_mode == "color_by_height":
+        min_height, max_height = scalar_bounds["height"]
+        canvas = _colorize_scalar_map(raster["world_z"], valid, min_value=min_height, max_value=max_height)
+    elif render_mode == "color_by_depth":
+        min_depth, max_depth = scalar_bounds["depth"]
+        canvas = _colorize_scalar_map(raster["depth"], valid, min_value=min_depth, max_value=max_depth)
+    else:
+        normals, valid_normals = _compute_normals_from_xyz_map(raster["xyz_view"], valid)
+        if render_mode == "color_by_normals":
+            canvas = _render_normals(normals, valid_normals)
+        else:
+            canvas = _render_gray_shaded(normals, valid_normals)
+    return _apply_zoom(canvas, zoom_scale)
 
 
 def render_point_cloud(
@@ -324,11 +462,23 @@ def render_point_cloud(
     *,
     renderer: str,
     view_config: dict[str, Any],
+    render_mode: str,
+    scalar_bounds: dict[str, tuple[float, float]],
     width: int = 960,
     height: int = 720,
+    zoom_scale: float = 1.0,
 ) -> tuple[np.ndarray, str]:
-    if renderer == "fallback":
-        return render_point_cloud_fallback(points, colors, view_config=view_config, width=width, height=height), "fallback"
+    if renderer == "fallback" or render_mode != "color_by_rgb":
+        return render_point_cloud_fallback(
+            points,
+            colors,
+            view_config=view_config,
+            render_mode=render_mode,
+            scalar_bounds=scalar_bounds,
+            width=width,
+            height=height,
+            zoom_scale=zoom_scale,
+        ), "fallback"
 
     if renderer == "open3d" or renderer == "auto":
         try:
@@ -353,11 +503,20 @@ def render_point_cloud(
             renderer_o3d.scene.set_background([0.0, 0.0, 0.0, 1.0])
             image = np.asarray(renderer_o3d.render_to_image())
             renderer_o3d.release()
-            return cv2.cvtColor(image, cv2.COLOR_RGBA2BGR), "open3d"
+            return _apply_zoom(cv2.cvtColor(image, cv2.COLOR_RGBA2BGR), zoom_scale), "open3d"
         except Exception:
             if renderer == "open3d":
                 raise
-    return render_point_cloud_fallback(points, colors, view_config=view_config, width=width, height=height), "fallback"
+    return render_point_cloud_fallback(
+        points,
+        colors,
+        view_config=view_config,
+        render_mode=render_mode,
+        scalar_bounds=scalar_bounds,
+        width=width,
+        height=height,
+        zoom_scale=zoom_scale,
+    ), "fallback"
 
 
 def compose_panel(native_image: np.ndarray, ffs_image: np.ndarray, *, layout: str) -> np.ndarray:
@@ -406,7 +565,12 @@ def run_depth_comparison_workflow(
     fps: int = 30,
     panel_layout: str = "side_by_side",
     use_float_ffs_depth_when_available: bool = False,
+    render_mode: str = "neutral_gray_shaded",
+    views: list[str] | None = None,
+    zoom_scale: float = 1.0,
 ) -> dict[str, Any]:
+    if render_mode not in RENDER_MODES:
+        raise ValueError(f"Unsupported render_mode: {render_mode}")
     aligned_root = Path(aligned_root).resolve()
     output_dir = Path(output_dir).resolve()
     native_case_dir, ffs_case_dir, same_case_mode = resolve_case_dirs(
@@ -434,18 +598,12 @@ def run_depth_comparison_workflow(
     if not frame_pairs:
         raise ValueError("No frame pairs selected for comparison.")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    native_frames_dir = output_dir / "native_frames"
-    ffs_frames_dir = output_dir / "ffs_frames"
-    side_frames_dir = output_dir / "side_by_side_frames"
-    for directory in (native_frames_dir, ffs_frames_dir, side_frames_dir):
-        directory.mkdir(parents=True, exist_ok=True)
-    native_clouds_dir = output_dir / "native_clouds"
-    ffs_clouds_dir = output_dir / "ffs_clouds"
-    if write_ply:
-        native_clouds_dir.mkdir(parents=True, exist_ok=True)
-        ffs_clouds_dir.mkdir(parents=True, exist_ok=True)
+    selected_views = views or ["oblique"]
+    for view_name in selected_views:
+        if view_name not in VIEW_NAMES:
+            raise ValueError(f"Unsupported view: {view_name}")
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     cache: dict[tuple[str, int], tuple[np.ndarray, np.ndarray, dict[str, Any]]] = {}
     bounds_min = np.array([np.inf, np.inf, np.inf], dtype=np.float32)
     bounds_max = np.array([-np.inf, -np.inf, -np.inf], dtype=np.float32)
@@ -474,60 +632,88 @@ def run_depth_comparison_workflow(
         bounds_min = np.array([-1.0, -1.0, -1.0], dtype=np.float32)
         bounds_max = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
-    view_config = compute_view_config(bounds_min, bounds_max)
+    scalar_bounds = {
+        "height": (float(bounds_min[2]), float(bounds_max[2])),
+        "depth": (0.0, max(float(np.linalg.norm(bounds_max - bounds_min)) * 2.0, 1.0)),
+    }
     metrics = []
-    renderer_used = None
-    native_frame_paths = []
-    ffs_frame_paths = []
-    side_frame_paths = []
+    renderer_used_by_view: dict[str, str] = {}
 
-    for panel_idx, (native_frame_idx, ffs_frame_idx) in enumerate(frame_pairs):
-        native_points, native_colors, native_stats = cache[("native", native_frame_idx)]
-        ffs_points, ffs_colors, ffs_stats = cache[("ffs", ffs_frame_idx)]
-        native_render, renderer_used = render_point_cloud(
-            native_points,
-            native_colors,
-            renderer=renderer,
-            view_config=view_config,
-        )
-        ffs_render, renderer_used = render_point_cloud(
-            ffs_points,
-            ffs_colors,
-            renderer=renderer if renderer != "auto" else renderer_used or "auto",
-            view_config=view_config,
-        )
-        side_render = compose_panel(native_render, ffs_render, layout=panel_layout)
-
-        native_frame_path = native_frames_dir / f"{panel_idx:06d}.png"
-        ffs_frame_path = ffs_frames_dir / f"{panel_idx:06d}.png"
-        side_frame_path = side_frames_dir / f"{panel_idx:06d}.png"
-        cv2.imwrite(str(native_frame_path), native_render)
-        cv2.imwrite(str(ffs_frame_path), ffs_render)
-        cv2.imwrite(str(side_frame_path), side_render)
-        native_frame_paths.append(native_frame_path)
-        ffs_frame_paths.append(ffs_frame_path)
-        side_frame_paths.append(side_frame_path)
-
+    for view_name in selected_views:
+        view_output_dir = output_dir if len(selected_views) == 1 else output_dir / f"view_{view_name}"
+        view_output_dir.mkdir(parents=True, exist_ok=True)
+        native_frames_dir = view_output_dir / "native_frames"
+        ffs_frames_dir = view_output_dir / "ffs_frames"
+        side_frames_dir = view_output_dir / "side_by_side_frames"
+        for directory in (native_frames_dir, ffs_frames_dir, side_frames_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+        native_clouds_dir = view_output_dir / "native_clouds"
+        ffs_clouds_dir = view_output_dir / "ffs_clouds"
         if write_ply:
-            write_ply_ascii(native_clouds_dir / f"{panel_idx:06d}.ply", native_points, native_colors)
-            write_ply_ascii(ffs_clouds_dir / f"{panel_idx:06d}.ply", ffs_points, ffs_colors)
+            native_clouds_dir.mkdir(parents=True, exist_ok=True)
+            ffs_clouds_dir.mkdir(parents=True, exist_ok=True)
 
-        metrics.append(
-            {
-                "panel_frame_idx": panel_idx,
-                "native_frame_idx": native_frame_idx,
-                "ffs_frame_idx": ffs_frame_idx,
-                "native": native_stats,
-                "ffs": ffs_stats,
-            }
-        )
+        view_config = compute_view_config(bounds_min, bounds_max, view_name=view_name)
+        renderer_used = None
+        native_frame_paths = []
+        ffs_frame_paths = []
+        side_frame_paths = []
 
-    videos_dir = output_dir / "videos"
-    videos_dir.mkdir(parents=True, exist_ok=True)
-    if write_mp4:
-        write_video(videos_dir / "native.mp4", native_frame_paths, fps)
-        write_video(videos_dir / "ffs.mp4", ffs_frame_paths, fps)
-        write_video(videos_dir / "side_by_side.mp4", side_frame_paths, fps)
+        for panel_idx, (native_frame_idx, ffs_frame_idx) in enumerate(frame_pairs):
+            native_points, native_colors, native_stats = cache[("native", native_frame_idx)]
+            ffs_points, ffs_colors, ffs_stats = cache[("ffs", ffs_frame_idx)]
+            native_render, renderer_used = render_point_cloud(
+                native_points,
+                native_colors,
+                renderer=renderer,
+                view_config=view_config,
+                render_mode=render_mode,
+                scalar_bounds=scalar_bounds,
+                zoom_scale=zoom_scale,
+            )
+            ffs_render, renderer_used = render_point_cloud(
+                ffs_points,
+                ffs_colors,
+                renderer=renderer if renderer != "auto" else renderer_used or "auto",
+                view_config=view_config,
+                render_mode=render_mode,
+                scalar_bounds=scalar_bounds,
+                zoom_scale=zoom_scale,
+            )
+            side_render = compose_panel(native_render, ffs_render, layout=panel_layout)
+
+            native_frame_path = native_frames_dir / f"{panel_idx:06d}.png"
+            ffs_frame_path = ffs_frames_dir / f"{panel_idx:06d}.png"
+            side_frame_path = side_frames_dir / f"{panel_idx:06d}.png"
+            cv2.imwrite(str(native_frame_path), native_render)
+            cv2.imwrite(str(ffs_frame_path), ffs_render)
+            cv2.imwrite(str(side_frame_path), side_render)
+            native_frame_paths.append(native_frame_path)
+            ffs_frame_paths.append(ffs_frame_path)
+            side_frame_paths.append(side_frame_path)
+
+            if write_ply:
+                write_ply_ascii(native_clouds_dir / f"{panel_idx:06d}.ply", native_points, native_colors)
+                write_ply_ascii(ffs_clouds_dir / f"{panel_idx:06d}.ply", ffs_points, ffs_colors)
+
+            metrics.append(
+                {
+                    "view_name": view_name,
+                    "panel_frame_idx": panel_idx,
+                    "native_frame_idx": native_frame_idx,
+                    "ffs_frame_idx": ffs_frame_idx,
+                    "native": native_stats,
+                    "ffs": ffs_stats,
+                }
+            )
+
+        renderer_used_by_view[view_name] = renderer_used or "fallback"
+        videos_dir = view_output_dir / "videos"
+        videos_dir.mkdir(parents=True, exist_ok=True)
+        if write_mp4:
+            write_video(videos_dir / "native.mp4", native_frame_paths, fps)
+            write_video(videos_dir / "ffs.mp4", ffs_frame_paths, fps)
+            write_video(videos_dir / "side_by_side.mp4", side_frame_paths, fps)
 
     comparison_metadata = {
         "same_case_mode": same_case_mode,
@@ -535,19 +721,17 @@ def run_depth_comparison_workflow(
         "ffs_case_dir": str(ffs_case_dir),
         "frame_pairs": frame_pairs,
         "renderer_requested": renderer,
-        "renderer_used": renderer_used or "fallback",
-        "view_config": {
-            "center": view_config["center"].tolist(),
-            "camera_position": view_config["camera_position"].tolist(),
-            "up": view_config["up"].tolist(),
-            "radius": float(view_config["radius"]),
-        },
+        "renderer_used": renderer_used_by_view,
+        "views": list(selected_views),
+        "render_mode": render_mode,
         "panel_layout": panel_layout,
         "depth_min_m": float(depth_min_m),
         "depth_max_m": float(depth_max_m),
         "voxel_size": voxel_size,
         "max_points_per_camera": max_points_per_camera,
         "use_float_ffs_depth_when_available": use_float_ffs_depth_when_available,
+        "zoom_scale": float(zoom_scale),
+        "scalar_bounds": scalar_bounds,
     }
     (output_dir / "comparison_metadata.json").write_text(json.dumps(comparison_metadata, indent=2), encoding="utf-8")
     (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
