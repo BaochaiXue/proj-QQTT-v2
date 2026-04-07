@@ -119,7 +119,7 @@ Use this to judge:
 - which source depth produces lower reprojection residuals in the target camera
 - whether failures are localized to one camera pair or happen everywhere
 
-Finally use the single-frame camera-aware turntable for professor-facing fused geometry review:
+Finally use the single-frame object-centered orbit compare for professor-facing fused geometry review:
 
 Same-case comparison when an aligned case contains both native and FFS depth:
 
@@ -139,14 +139,25 @@ The turntable workflow:
 - reuses the fused native and fused FFS cloud loader
 - computes a world-space tabletop ROI before orbit generation
 - visualizes the 3 real camera frusta from `calibrate.pkl`
-- renders 2x3 boards:
-  - columns = Near Cam0 / Near Cam1 / Near Cam2
-  - rows = Native / FFS
+- defaults to a full 360-degree object-centered orbit
+- renders a large side-by-side compare:
+  - left = Native
+  - right = FFS
+- uses the exact same orbit path for Native and FFS
+- automatically writes both geometry and RGB products in one run
 - produces:
   - `scene_overview_with_cameras.png`
-  - per-angle `boards/*.png`
-  - `turntable_keyframes_sheet.png`
-  - optional `videos/turntable_orbit.mp4`
+  - `orbit_compare_geom.mp4`
+  - `orbit_compare_rgb.mp4`
+  - `turntable_keyframes_geom.png`
+  - `turntable_keyframes_rgb.png`
+  - per-angle `frames_geom/*.png` and `frames_rgb/*.png`
+
+The old 2x3 near-camera board remains available only as a secondary mode:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --case_name my_case --layout_mode camera_neighborhood_grid --orbit_mode camera_neighborhood --num_orbit_steps 6 --orbit_degrees 30
+```
 
 Keep the older fused-cloud temporal video workflow only as a secondary diagnostic:
 

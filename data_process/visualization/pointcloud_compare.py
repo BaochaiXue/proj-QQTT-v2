@@ -803,13 +803,21 @@ def _render_normals(normals: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
 def _render_gray_shaded(normals: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
     canvas = np.zeros(normals.shape, dtype=np.uint8)
     if np.any(valid_mask):
-        light_dir = np.asarray([0.35, -0.25, -1.0], dtype=np.float32)
+        light_dir = np.asarray([0.30, -0.18, -1.0], dtype=np.float32)
         light_dir /= np.linalg.norm(light_dir)
         intensity = np.clip((normals @ light_dir) * 0.5 + 0.5, 0.0, 1.0)
-        shaded = np.clip(35.0 + intensity * 220.0, 0.0, 255.0).astype(np.uint8)
+        shaded = np.clip(58.0 + intensity * 178.0, 0.0, 255.0).astype(np.uint8)
         gray = np.stack([shaded, shaded, shaded], axis=2)
         canvas[valid_mask] = gray[valid_mask]
     return canvas
+
+
+def _background_bgr_for_render_mode(render_mode: str) -> tuple[int, int, int]:
+    if render_mode == "color_by_rgb":
+        return (28, 28, 30)
+    if render_mode == "neutral_gray_shaded":
+        return (30, 34, 40)
+    return (24, 26, 30)
 
 
 def _apply_zoom(image: np.ndarray, zoom_scale: float) -> np.ndarray:
@@ -852,6 +860,7 @@ def render_point_cloud_fallback(
         ortho_scale=ortho_scale,
     )
     valid = raster["valid"]
+    valid_render = valid.astype(np.float32)
     radius_ss = max(1, int(point_radius_px) * ss)
     if render_mode == "color_by_rgb":
         canvas = raster["rgb"]
@@ -885,6 +894,7 @@ def render_point_cloud_fallback(
         kernel = radius_ss * 2 + 1
         mask = valid.astype(np.float32)
         blurred_mask = cv2.GaussianBlur(mask, (kernel, kernel), sigmaX=max(1.0, radius_ss * 0.65))
+        valid_render = blurred_mask
         if canvas.ndim == 3:
             blurred_canvas = cv2.GaussianBlur(canvas.astype(np.float32), (kernel, kernel), sigmaX=max(1.0, radius_ss * 0.65))
             canvas = np.zeros_like(canvas)
@@ -895,7 +905,13 @@ def render_point_cloud_fallback(
 
     if ss > 1:
         canvas = cv2.resize(canvas, (width, height), interpolation=cv2.INTER_AREA)
-    return _apply_zoom(canvas, zoom_scale)
+        valid_render = cv2.resize(valid_render.astype(np.float32), (width, height), interpolation=cv2.INTER_AREA)
+
+    background = np.full(canvas.shape, _background_bgr_for_render_mode(render_mode), dtype=np.uint8)
+    final_valid = valid_render > (1e-4 if radius_ss > 1 else 0.0)
+    if np.any(final_valid):
+        background[final_valid] = canvas[final_valid]
+    return _apply_zoom(background, zoom_scale)
 
 
 def render_point_cloud(

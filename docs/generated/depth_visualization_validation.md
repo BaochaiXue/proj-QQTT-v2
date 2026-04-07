@@ -35,10 +35,10 @@ python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zha
 python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --output_dir C:\Users\zhang\proj-QQTT\data\comparison_native_30_static_vs_ffs_30_static_grid --renderer fallback --preset tabletop_compare_2x3 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
-Single-frame camera-aware turntable comparison:
+Single-frame object-centered side-by-side orbit comparison:
 
 ```bash
-python scripts/harness/visual_compare_turntable.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\turntable_native_30_static_vs_ffs_30_static_frame_0000 --renderer fallback --render_mode neutral_gray_shaded --num_orbit_steps 6 --orbit_degrees 30 --projection_mode perspective --scene_crop_mode auto_table_bbox --write_keyframe_sheet --no_use_float_ffs_depth_when_available
+python scripts/harness/visual_compare_turntable.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000 --renderer fallback --num_orbit_steps 24 --orbit_degrees 360 --projection_mode perspective --scene_crop_mode auto_table_bbox --fps 12
 ```
 
 ## Outputs Produced
@@ -77,12 +77,16 @@ Fused cloud comparison:
 - `data/comparison_native_30_static_vs_ffs_30_static_grid/view_cam1/...`
 - `data/comparison_native_30_static_vs_ffs_30_static_grid/view_cam2/...`
 
-Single-frame camera-aware turntable comparison:
+Single-frame object-centered side-by-side orbit comparison:
 
-- `data/turntable_native_30_static_vs_ffs_30_static_frame_0000/scene_overview_with_cameras.png`
-- `data/turntable_native_30_static_vs_ffs_30_static_frame_0000/boards/*.png`
-- `data/turntable_native_30_static_vs_ffs_30_static_frame_0000/turntable_keyframes_sheet.png`
-- `data/turntable_native_30_static_vs_ffs_30_static_frame_0000/turntable_metadata.json`
+- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/scene_overview_with_cameras.png`
+- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/frames_geom/*.png`
+- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/frames_rgb/*.png`
+- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/orbit_compare_geom.mp4`
+- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/orbit_compare_rgb.mp4`
+- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/turntable_keyframes_geom.png`
+- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/turntable_keyframes_rgb.png`
+- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/turntable_metadata.json`
 
 ## What Was Validated
 
@@ -101,16 +105,19 @@ Single-frame camera-aware turntable comparison:
 - The new turntable workflow now supports:
   - a single selected frame as the primary comparison unit
   - explicit camera-frusta visualization from real `calibrate.pkl` `c2w`
-  - local orbit arcs centered on the tabletop ROI while staying near each real camera pose
-  - synchronized Native vs FFS 2x3 boards using identical per-column views
-  - a static `turntable_keyframes_sheet.png` as the primary artifact
+  - a full object-centered 360 orbit informed by the real camera layout
+  - synchronized Native vs FFS large side-by-side panels using the exact same orbit path
+  - automatic dual outputs:
+    - geometry diagnostic video + keyframe sheet
+    - RGB reference video + keyframe sheet
 
 ## Why This Workflow Is Easier To Read
 
 - Tabletop crop prevents the full room bounds from dominating the frame.
-- View distance scaling moves each camera-direction view closer to the tabletop ROI in 3D, instead of relying mainly on a 2D post-crop.
-- `neutral_gray_shaded` is now the recommended default because it emphasizes geometry differences more clearly than RGB texture.
-- `color_by_rgb` remains available as a reference mode when color context is helpful.
+- The new default gives each depth source a much larger panel than the prior 2x3 board.
+- The geometry video and RGB reference video are generated together, so the same orbit path can be judged in both modes without rerunning the workflow.
+- The larger overview makes the real camera locations and the current orbit position much easier to interpret.
+- `neutral_gray_shaded` plus larger splats and supersampling is now the default geometry view because it emphasizes tabletop flatness more clearly than sparse white points.
 
 ## Known Limitations
 

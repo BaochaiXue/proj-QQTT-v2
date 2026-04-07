@@ -76,10 +76,11 @@ The visualization layer intentionally uses three different diagnostics built on 
 The fused point-cloud visualization is now split into two user-facing workflows:
 
 - `visual_compare_turntable.py`
-  - primary single-frame camera-aware compare
+  - primary single-frame object-centered orbit compare
   - explicit camera-frusta visualization from real `c2w`
-  - per-camera local orbit views
-  - static keyframe sheet as the primary artifact
+  - large side-by-side Native vs FFS panels
+  - automatic geometry + RGB videos and keyframe sheets
+  - old 2x3 near-camera board retained only as a secondary mode
 - `visual_compare_depth_video.py`
   - older temporal fused compare over a frame range
   - still useful as a secondary motion/consistency diagnostic
@@ -99,8 +100,10 @@ The fused renderer also supports two layout modes:
 - single-frame case selection
 - world-space ROI cropping before orbit computation
 - camera-frustum geometry extraction
-- per-camera orbit arcs anchored near real camera positions
-- static board and keyframe-sheet composition
+- object-centered 360 orbit planning informed by the real camera layout
+- large side-by-side compare composition
+- automatic dual-output planning for geometry and RGB products
+- larger overview rendering with orbit path and crop visualization
 
 `calibrate.pkl` support is intentionally narrow and matches the current producer:
 

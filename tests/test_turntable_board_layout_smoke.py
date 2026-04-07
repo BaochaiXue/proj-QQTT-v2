@@ -7,8 +7,10 @@ import numpy as np
 from data_process.visualization.camera_frusta import build_camera_frustum_geometry, extract_camera_poses
 from data_process.visualization.turntable_compare import (
     build_camera_anchored_orbit_views,
+    build_object_centered_orbit_views,
     build_scene_overview_state,
     compose_keyframe_sheet,
+    compose_side_by_side_large,
     compose_turntable_board,
     estimate_orbit_axis,
     render_overview_inset,
@@ -51,6 +53,11 @@ class TurntableBoardLayoutSmokeTest(unittest.TestCase):
             scalar_bounds={"height": (0.5, 1.3), "depth": (0.0, 2.0)},
             point_radius_px=2,
             supersample_scale=1,
+            orbit_path_points=scene_points,
+            crop_bounds={
+                "min": np.array([-0.25, -0.25, 0.75], dtype=np.float32),
+                "max": np.array([0.25, 0.25, 1.25], dtype=np.float32),
+            },
         )
         orbit_steps = build_camera_anchored_orbit_views(
             camera_poses=poses,
@@ -61,11 +68,9 @@ class TurntableBoardLayoutSmokeTest(unittest.TestCase):
         )
         inset = render_overview_inset(
             overview_state,
-            camera_geometries=geometries,
             current_views=orbit_steps[0]["view_configs"],
-            focus_point=focus_point,
         )
-        self.assertEqual(inset.shape[:2], (240, 360))
+        self.assertEqual(inset.shape[:2], (320, 560))
         self.assertGreater(int(inset.sum()), 0)
 
         panel = np.full((120, 160, 3), 70, dtype=np.uint8)
@@ -79,6 +84,29 @@ class TurntableBoardLayoutSmokeTest(unittest.TestCase):
         )
         self.assertEqual(board.shape[1], 170 + 160 * 3)
         self.assertGreater(board.shape[0], 40 + 120 * 2)
+
+        object_orbit = build_object_centered_orbit_views(
+            camera_poses=poses,
+            focus_point=focus_point,
+            bounds_min=np.array([-0.25, -0.25, 0.75], dtype=np.float32),
+            bounds_max=np.array([0.25, 0.25, 1.25], dtype=np.float32),
+            orbit_axis=estimate_orbit_axis(poses),
+            num_orbit_steps=1,
+            orbit_degrees=360.0,
+            orbit_radius_scale=1.8,
+            view_height_offset=0.0,
+        )
+        side = compose_side_by_side_large(
+            title_lines=["demo case", "frame=0"],
+            native_image=panel,
+            ffs_image=panel,
+            overview_inset=render_overview_inset(
+                overview_state,
+                current_views=object_orbit["orbit_steps"][0]["view_configs"],
+            ),
+        )
+        self.assertGreaterEqual(side.shape[1], 160 * 2)
+        self.assertGreater(side.shape[0], 120)
 
         sheet = compose_keyframe_sheet([board, board])
         self.assertGreater(sheet.shape[0], board.shape[0] // 2)

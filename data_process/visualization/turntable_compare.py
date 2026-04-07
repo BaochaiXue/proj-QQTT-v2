@@ -29,6 +29,8 @@ from .pointcloud_compare import (
 
 
 DEFAULT_CAMERA_IDS = [0, 1, 2]
+ORBIT_MODES = ("object_centered_360", "camera_neighborhood")
+LAYOUT_MODES = ("side_by_side_large", "camera_neighborhood_grid")
 
 
 def _normalize_vector(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
@@ -46,6 +48,51 @@ def _compute_bounds(point_sets: list[np.ndarray], *, fallback_center: np.ndarray
         return center - 1.0, center + 1.0
     stacked = np.concatenate(points, axis=0)
     return stacked.min(axis=0).astype(np.float32), stacked.max(axis=0).astype(np.float32)
+
+
+def _project_vector_to_plane(vector: np.ndarray, axis: np.ndarray) -> np.ndarray:
+    vec = np.asarray(vector, dtype=np.float32)
+    normal = _normalize_vector(axis, np.array([0.0, 0.0, 1.0], dtype=np.float32))
+    return vec - normal * float(vec @ normal)
+
+
+def _build_orbit_basis(
+    *,
+    camera_poses: list[dict[str, Any]],
+    focus_point: np.ndarray,
+    orbit_axis: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    focus = np.asarray(focus_point, dtype=np.float32)
+    axis = _normalize_vector(orbit_axis, np.array([0.0, 0.0, 1.0], dtype=np.float32))
+    basis_x = None
+    for pose in camera_poses:
+        projected = _project_vector_to_plane(np.asarray(pose["position"], dtype=np.float32) - focus, axis)
+        if float(np.linalg.norm(projected)) > 1e-6:
+            basis_x = _normalize_vector(projected, np.array([1.0, 0.0, 0.0], dtype=np.float32))
+            break
+    if basis_x is None:
+        fallback = _project_vector_to_plane(np.array([1.0, 0.0, 0.0], dtype=np.float32), axis)
+        if float(np.linalg.norm(fallback)) <= 1e-6:
+            fallback = _project_vector_to_plane(np.array([0.0, 1.0, 0.0], dtype=np.float32), axis)
+        basis_x = _normalize_vector(fallback, np.array([1.0, 0.0, 0.0], dtype=np.float32))
+    basis_y = _normalize_vector(np.cross(axis, basis_x), np.array([0.0, 1.0, 0.0], dtype=np.float32))
+    return basis_x, basis_y
+
+
+def _compute_crop_corners(bounds_min: np.ndarray, bounds_max: np.ndarray) -> np.ndarray:
+    min_corner = np.asarray(bounds_min, dtype=np.float32)
+    max_corner = np.asarray(bounds_max, dtype=np.float32)
+    corners: list[np.ndarray] = []
+    for x_value in (min_corner[0], max_corner[0]):
+        for y_value in (min_corner[1], max_corner[1]):
+            for z_value in (min_corner[2], max_corner[2]):
+                corners.append(np.array([x_value, y_value, z_value], dtype=np.float32))
+    return np.stack(corners, axis=0)
+
+
+def _wrap_angle_deg(angle_deg: float) -> float:
+    wrapped = (float(angle_deg) + 180.0) % 360.0 - 180.0
+    return wrapped
 
 
 def _parse_manual_xyz_roi(
@@ -326,6 +373,122 @@ def build_camera_anchored_orbit_views(
     return orbit_steps
 
 
+def build_object_centered_orbit_views(
+    *,
+    camera_poses: list[dict[str, Any]],
+    focus_point: np.ndarray,
+    bounds_min: np.ndarray,
+    bounds_max: np.ndarray,
+    orbit_axis: np.ndarray,
+    num_orbit_steps: int,
+    orbit_degrees: float,
+    orbit_radius_scale: float,
+    view_height_offset: float,
+) -> dict[str, Any]:
+    focus = np.asarray(focus_point, dtype=np.float32)
+    axis = _normalize_vector(orbit_axis, np.array([0.0, 0.0, 1.0], dtype=np.float32))
+    basis_x, basis_y = _build_orbit_basis(
+        camera_poses=camera_poses,
+        focus_point=focus,
+        orbit_axis=axis,
+    )
+
+    crop_corners = _compute_crop_corners(bounds_min, bounds_max)
+    crop_offsets = crop_corners - focus[None, :]
+    crop_planar_x = crop_offsets @ basis_x
+    crop_planar_y = crop_offsets @ basis_y
+    crop_axis = crop_offsets @ axis
+    crop_planar_radius = max(
+        float(np.max(np.abs(crop_planar_x))),
+        float(np.max(np.abs(crop_planar_y))),
+        1e-3,
+    )
+    crop_axis_extent = max(float(np.max(np.abs(crop_axis))), 1e-3)
+
+    camera_planar_radii: list[float] = []
+    camera_axis_heights: list[float] = []
+    camera_reference_azimuths_deg: dict[int, float] = {}
+    for pose in camera_poses:
+        offset = np.asarray(pose["position"], dtype=np.float32) - focus
+        planar = _project_vector_to_plane(offset, axis)
+        camera_planar_radii.append(float(np.linalg.norm(planar)))
+        camera_axis_heights.append(float(offset @ axis))
+        if float(np.linalg.norm(planar)) > 1e-6:
+            camera_reference_azimuths_deg[int(pose["camera_idx"])] = float(
+                np.rad2deg(np.arctan2(float(planar @ basis_y), float(planar @ basis_x)))
+            )
+
+    orbit_radius = max(crop_planar_radius * float(orbit_radius_scale), 0.25)
+    median_camera_height = float(np.median(camera_axis_heights)) if camera_axis_heights else crop_axis_extent * 1.4
+    orbit_height = max(median_camera_height + crop_axis_extent * float(view_height_offset), crop_axis_extent * 0.9, 0.12)
+
+    start_azimuth_deg = camera_reference_azimuths_deg.get(0)
+    if start_azimuth_deg is None and camera_reference_azimuths_deg:
+        start_azimuth_deg = float(next(iter(camera_reference_azimuths_deg.values())))
+    if start_azimuth_deg is None:
+        start_azimuth_deg = 0.0
+
+    orbit_steps: list[dict[str, Any]] = []
+    orbit_path_points: list[np.ndarray] = []
+    camera_azimuths = {
+        camera_idx: angle_deg
+        for camera_idx, angle_deg in camera_reference_azimuths_deg.items()
+    }
+    for step_idx, angle_deg in enumerate(generate_orbit_angles(num_orbit_steps=num_orbit_steps, orbit_degrees=orbit_degrees)):
+        azimuth_deg = float(start_azimuth_deg + angle_deg)
+        azimuth_rad = np.deg2rad(azimuth_deg)
+        planar_offset = basis_x * (np.cos(azimuth_rad) * orbit_radius) + basis_y * (np.sin(azimuth_rad) * orbit_radius)
+        camera_position = (focus + planar_offset + axis * orbit_height).astype(np.float32)
+        current_angle_deg = float(np.rad2deg(np.arctan2(float(planar_offset @ basis_y), float(planar_offset @ basis_x))))
+        nearest_camera_idx = None
+        nearest_camera_delta_deg = None
+        for camera_idx, camera_angle_deg in camera_azimuths.items():
+            delta_deg = abs(_wrap_angle_deg(current_angle_deg - float(camera_angle_deg)))
+            if nearest_camera_delta_deg is None or delta_deg < nearest_camera_delta_deg:
+                nearest_camera_idx = int(camera_idx)
+                nearest_camera_delta_deg = float(delta_deg)
+        view_config = {
+            "view_name": f"orbit_step{step_idx:03d}",
+            "label": "Object-Centered Orbit",
+            "camera_idx": nearest_camera_idx,
+            "serial": None,
+            "angle_deg": float(angle_deg),
+            "azimuth_deg": float(current_angle_deg),
+            "center": focus.copy(),
+            "camera_position": camera_position,
+            "anchor_camera_position": focus.copy(),
+            "up": axis.copy(),
+            "radius": float(np.linalg.norm(camera_position - focus)),
+            "orbit_axis": axis.copy(),
+            "orbit_angle_deg": float(angle_deg),
+            "color_bgr": (255, 255, 255),
+            "nearest_camera_idx": nearest_camera_idx,
+            "nearest_camera_delta_deg": nearest_camera_delta_deg,
+        }
+        orbit_steps.append(
+            {
+                "step_idx": int(step_idx),
+                "angle_deg": float(angle_deg),
+                "view_config": view_config,
+                "view_configs": [view_config],
+            }
+        )
+        orbit_path_points.append(camera_position)
+
+    orbit_path = np.stack(orbit_path_points, axis=0).astype(np.float32) if orbit_path_points else np.empty((0, 3), dtype=np.float32)
+    return {
+        "orbit_steps": orbit_steps,
+        "orbit_path": orbit_path,
+        "orbit_axis": axis,
+        "orbit_basis_x": basis_x,
+        "orbit_basis_y": basis_y,
+        "orbit_radius": float(orbit_radius),
+        "orbit_height": float(orbit_height),
+        "start_azimuth_deg": float(start_azimuth_deg),
+        "camera_reference_azimuths_deg": camera_azimuths,
+    }
+
+
 def _draw_text_box(
     image: np.ndarray,
     *,
@@ -353,6 +516,33 @@ def _draw_text_box(
     )
 
 
+def build_render_output_specs(
+    *,
+    geom_render_mode: str,
+    render_both_modes: bool,
+) -> list[dict[str, str]]:
+    outputs = [
+        {
+            "name": "geom",
+            "render_mode": str(geom_render_mode),
+            "video_name": "orbit_compare_geom.mp4",
+            "sheet_name": "turntable_keyframes_geom.png",
+            "frames_dir_name": "frames_geom",
+        }
+    ]
+    if render_both_modes:
+        outputs.append(
+            {
+                "name": "rgb",
+                "render_mode": "color_by_rgb",
+                "video_name": "orbit_compare_rgb.mp4",
+                "sheet_name": "turntable_keyframes_rgb.png",
+                "frames_dir_name": "frames_rgb",
+            }
+        )
+    return outputs
+
+
 def draw_scene_overlays(
     image: np.ndarray,
     *,
@@ -362,9 +552,50 @@ def draw_scene_overlays(
     ortho_scale: float | None,
     focus_point: np.ndarray | None = None,
     current_views: list[dict[str, Any]] | None = None,
+    orbit_path_points: np.ndarray | None = None,
+    crop_bounds: dict[str, np.ndarray] | None = None,
 ) -> np.ndarray:
     canvas = np.asarray(image, dtype=np.uint8).copy()
     height, width = canvas.shape[:2]
+
+    if orbit_path_points is not None and len(orbit_path_points) >= 2:
+        projected_path = project_world_points_to_image(
+            np.asarray(orbit_path_points, dtype=np.float32),
+            view_config=view_config,
+            width=width,
+            height=height,
+            projection_mode=projection_mode,
+            ortho_scale=ortho_scale,
+        )
+        path_uv = np.rint(projected_path["uv"][projected_path["valid"]]).astype(np.int32)
+        if len(path_uv) >= 2:
+            cv2.polylines(canvas, [path_uv.reshape(-1, 1, 2)], True, (170, 170, 170), 2, cv2.LINE_AA)
+
+    if crop_bounds is not None:
+        corners = _compute_crop_corners(crop_bounds["min"], crop_bounds["max"])
+        projected_box = project_world_points_to_image(
+            corners,
+            view_config=view_config,
+            width=width,
+            height=height,
+            projection_mode=projection_mode,
+            ortho_scale=ortho_scale,
+        )
+        edges = (
+            (0, 1), (0, 2), (0, 4),
+            (1, 3), (1, 5),
+            (2, 3), (2, 6),
+            (3, 7),
+            (4, 5), (4, 6),
+            (5, 7),
+            (6, 7),
+        )
+        for start_idx, end_idx in edges:
+            if not bool(projected_box["valid"][start_idx] and projected_box["valid"][end_idx]):
+                continue
+            pt0 = tuple(np.rint(projected_box["uv"][start_idx]).astype(np.int32))
+            pt1 = tuple(np.rint(projected_box["uv"][end_idx]).astype(np.int32))
+            cv2.line(canvas, pt0, pt1, (240, 200, 80), 1, cv2.LINE_AA)
 
     for geometry in camera_geometries:
         for start, end in geometry["segments"]:
@@ -419,13 +650,14 @@ def draw_scene_overlays(
 
     if current_views:
         for current_view in current_views:
-            overlay_points = np.stack(
-                [
-                    np.asarray(current_view["anchor_camera_position"], dtype=np.float32),
-                    np.asarray(current_view["camera_position"], dtype=np.float32),
-                ],
-                axis=0,
+            anchor_point = np.asarray(
+                current_view.get(
+                    "anchor_camera_position",
+                    focus_point if focus_point is not None else current_view["center"],
+                ),
+                dtype=np.float32,
             )
+            overlay_points = np.stack([anchor_point, np.asarray(current_view["camera_position"], dtype=np.float32)], axis=0)
             projected = project_world_points_to_image(
                 overlay_points,
                 view_config=view_config,
@@ -437,11 +669,15 @@ def draw_scene_overlays(
             if bool(projected["valid"][0] and projected["valid"][1]):
                 anchor_uv = tuple(np.rint(projected["uv"][0]).astype(np.int32))
                 eye_uv = tuple(np.rint(projected["uv"][1]).astype(np.int32))
-                cv2.line(canvas, anchor_uv, eye_uv, current_view["color_bgr"], 1, cv2.LINE_AA)
+                cv2.line(canvas, anchor_uv, eye_uv, current_view["color_bgr"], 2, cv2.LINE_AA)
                 cv2.circle(canvas, eye_uv, 6, current_view["color_bgr"], 2, cv2.LINE_AA)
                 _draw_text_box(
                     canvas,
-                    text=f"V{current_view['camera_idx']}",
+                    text=(
+                        f"Orbit | near Cam{current_view['nearest_camera_idx']}"
+                        if current_view.get("nearest_camera_idx") is not None
+                        else "Orbit"
+                    ),
                     origin=(eye_uv[0] + 8, eye_uv[1] - 8),
                     color=current_view["color_bgr"],
                     font_scale=0.50,
@@ -462,6 +698,8 @@ def build_scene_overview_state(
     scalar_bounds: dict[str, tuple[float, float]],
     point_radius_px: int,
     supersample_scale: int,
+    orbit_path_points: np.ndarray | None = None,
+    crop_bounds: dict[str, np.ndarray] | None = None,
 ) -> dict[str, Any]:
     geometry_points = collect_camera_geometry_points(camera_geometries)
     bounds_min, bounds_max = _compute_bounds([scene_points, geometry_points, np.asarray(focus_point, dtype=np.float32).reshape(1, 3)])
@@ -500,6 +738,8 @@ def build_scene_overview_state(
         projection_mode=overview_projection_mode,
         ortho_scale=overview_ortho_scale,
         focus_point=focus,
+        orbit_path_points=orbit_path_points,
+        crop_bounds=crop_bounds,
     )
     return {
         "image": base_overlay,
@@ -513,10 +753,8 @@ def build_scene_overview_state(
 def render_overview_inset(
     overview_state: dict[str, Any],
     *,
-    camera_geometries: list[dict[str, Any]],
     current_views: list[dict[str, Any]],
-    focus_point: np.ndarray,
-    inset_size: tuple[int, int] = (360, 240),
+    inset_size: tuple[int, int] = (560, 320),
 ) -> np.ndarray:
     overlay = draw_scene_overlays(
         overview_state["image"],
@@ -526,8 +764,74 @@ def render_overview_inset(
         ortho_scale=overview_state["ortho_scale"],
         focus_point=None,
         current_views=current_views,
+        orbit_path_points=None,
+        crop_bounds=None,
     )
     return cv2.resize(overlay, inset_size, interpolation=cv2.INTER_AREA)
+
+
+def _overlay_large_panel_label(
+    image: np.ndarray,
+    *,
+    label: str,
+    accent_bgr: tuple[int, int, int],
+) -> np.ndarray:
+    canvas = np.asarray(image, dtype=np.uint8).copy()
+    strip_h = 48
+    cv2.rectangle(canvas, (0, 0), (canvas.shape[1] - 1, strip_h), (18, 18, 20), -1)
+    cv2.rectangle(canvas, (0, 0), (18, strip_h), accent_bgr, -1)
+    cv2.putText(canvas, label, (30, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.92, (255, 255, 255), 2, cv2.LINE_AA)
+    return canvas
+
+
+def compose_side_by_side_large(
+    *,
+    title_lines: list[str],
+    native_image: np.ndarray,
+    ffs_image: np.ndarray,
+    overview_inset: np.ndarray,
+) -> np.ndarray:
+    native_labeled = _overlay_large_panel_label(native_image, label="Native", accent_bgr=(80, 180, 255))
+    ffs_labeled = _overlay_large_panel_label(ffs_image, label="FFS", accent_bgr=(120, 220, 120))
+    main_body = np.hstack([native_labeled, ffs_labeled])
+
+    title_h = 86
+    title_bar = np.zeros((title_h, main_body.shape[1], 3), dtype=np.uint8)
+    title_bar[:] = (12, 14, 18)
+    for line_idx, line in enumerate(title_lines[:2]):
+        y = 28 + line_idx * 26
+        cv2.putText(
+            title_bar,
+            line,
+            (18, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.76 if line_idx == 0 else 0.62,
+            (255, 255, 255),
+            2 if line_idx == 0 else 1,
+            cv2.LINE_AA,
+        )
+
+    inset = np.asarray(overview_inset, dtype=np.uint8)
+    overview_h, overview_w = inset.shape[:2]
+    footer_h = max(overview_h + 24, 340)
+    footer = np.zeros((footer_h, main_body.shape[1], 3), dtype=np.uint8)
+    footer[:] = (16, 18, 22)
+    cv2.putText(footer, "Overview", (18, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.86, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(footer, "Real camera frusta, ROI crop, orbit ring, and current orbit camera", (18, 66), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (220, 220, 220), 1, cv2.LINE_AA)
+    cv2.putText(footer, "The orbit path is identical for Native and FFS.", (18, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (220, 220, 220), 1, cv2.LINE_AA)
+    max_overview_w = max(180, footer.shape[1] - 220)
+    max_overview_h = footer_h - 28
+    scale = min(1.0, float(max_overview_w) / max(1, overview_w), float(max_overview_h) / max(1, overview_h))
+    if scale < 1.0:
+        overview_w = max(160, int(round(overview_w * scale)))
+        overview_h = max(120, int(round(overview_h * scale)))
+        inset = cv2.resize(inset, (overview_w, overview_h), interpolation=cv2.INTER_AREA)
+    x0 = footer.shape[1] - overview_w - 20
+    y0 = max(14, (footer_h - overview_h) // 2)
+    footer[y0:y0 + overview_h, x0:x0 + overview_w] = inset
+    cv2.rectangle(footer, (x0 - 1, y0 - 1), (x0 + overview_w, y0 + overview_h), (255, 255, 255), 1, cv2.LINE_AA)
+
+    return np.vstack([title_bar, main_body, footer])
 
 
 def compose_turntable_board(
@@ -638,10 +942,10 @@ def run_turntable_compare_workflow(
     frame_idx: int = 0,
     renderer: str = "auto",
     render_mode: str = "neutral_gray_shaded",
-    write_mp4: bool = False,
+    write_mp4: bool = True,
     write_keyframe_sheet: bool = True,
-    num_orbit_steps: int = 6,
-    orbit_degrees: float = 30.0,
+    num_orbit_steps: int = 72,
+    orbit_degrees: float = 360.0,
     camera_ids: list[int] | None = None,
     scene_crop_mode: str = "auto_table_bbox",
     focus_mode: str = "table",
@@ -655,14 +959,19 @@ def run_turntable_compare_workflow(
     roi_z_min: float | None = None,
     roi_z_max: float | None = None,
     projection_mode: str = "perspective",
-    point_radius_px: int = 3,
-    supersample_scale: int = 2,
+    point_radius_px: int = 4,
+    supersample_scale: int = 3,
     voxel_size: float | None = None,
     max_points_per_camera: int | None = 50000,
     depth_min_m: float = 0.2,
     depth_max_m: float = 1.5,
     use_float_ffs_depth_when_available: bool = True,
     fps: int = 8,
+    orbit_mode: str = "object_centered_360",
+    layout_mode: str = "side_by_side_large",
+    orbit_radius_scale: float = 1.9,
+    view_height_offset: float = 0.0,
+    render_both_modes: bool = True,
 ) -> dict[str, Any]:
     if render_mode not in RENDER_MODES:
         raise ValueError(f"Unsupported render_mode: {render_mode}")
@@ -670,13 +979,13 @@ def run_turntable_compare_workflow(
         raise ValueError(f"Unsupported scene_crop_mode: {scene_crop_mode}")
     if projection_mode not in PROJECTION_MODES:
         raise ValueError(f"Unsupported projection_mode: {projection_mode}")
+    if orbit_mode not in ORBIT_MODES:
+        raise ValueError(f"Unsupported orbit_mode: {orbit_mode}")
+    if layout_mode not in LAYOUT_MODES:
+        raise ValueError(f"Unsupported layout_mode: {layout_mode}")
 
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    boards_dir = output_dir / "boards"
-    boards_dir.mkdir(parents=True, exist_ok=True)
-    videos_dir = output_dir / "videos"
-    videos_dir.mkdir(parents=True, exist_ok=True)
 
     selection = resolve_single_frame_case_selection(
         aligned_root=Path(aligned_root).resolve(),
@@ -722,13 +1031,45 @@ def run_turntable_compare_workflow(
         camera_ids=selection["camera_ids"],
     )
     orbit_axis = estimate_orbit_axis(camera_poses)
-    orbit_steps = build_camera_anchored_orbit_views(
-        camera_poses=camera_poses,
-        focus_point=scene["focus_point"],
-        orbit_axis=orbit_axis,
-        num_orbit_steps=num_orbit_steps,
-        orbit_degrees=orbit_degrees,
-    )
+    if layout_mode == "side_by_side_large" and orbit_mode != "object_centered_360":
+        raise ValueError("side_by_side_large currently requires orbit_mode=object_centered_360.")
+    if layout_mode == "camera_neighborhood_grid" and orbit_mode != "camera_neighborhood":
+        raise ValueError("camera_neighborhood_grid currently requires orbit_mode=camera_neighborhood.")
+
+    if orbit_mode == "object_centered_360":
+        object_orbit = build_object_centered_orbit_views(
+            camera_poses=camera_poses,
+            focus_point=scene["focus_point"],
+            bounds_min=scene["bounds_min"],
+            bounds_max=scene["bounds_max"],
+            orbit_axis=orbit_axis,
+            num_orbit_steps=num_orbit_steps,
+            orbit_degrees=orbit_degrees,
+            orbit_radius_scale=orbit_radius_scale,
+            view_height_offset=view_height_offset,
+        )
+        orbit_steps = object_orbit["orbit_steps"]
+        orbit_path_points = object_orbit["orbit_path"]
+        orbit_radius = object_orbit["orbit_radius"]
+        orbit_height = object_orbit["orbit_height"]
+        start_azimuth_deg = object_orbit["start_azimuth_deg"]
+        camera_reference_azimuths_deg = object_orbit["camera_reference_azimuths_deg"]
+    else:
+        orbit_steps = build_camera_anchored_orbit_views(
+            camera_poses=camera_poses,
+            focus_point=scene["focus_point"],
+            orbit_axis=orbit_axis,
+            num_orbit_steps=num_orbit_steps,
+            orbit_degrees=orbit_degrees,
+        )
+        orbit_path_points = np.stack(
+            [step["view_configs"][0]["camera_position"] for step in orbit_steps],
+            axis=0,
+        ).astype(np.float32)
+        orbit_radius = float(np.median([step["view_configs"][0]["radius"] for step in orbit_steps])) if orbit_steps else 0.0
+        orbit_height = 0.0
+        start_azimuth_deg = 0.0
+        camera_reference_azimuths_deg = {}
 
     scene_diagonal = float(np.linalg.norm(scene["bounds_max"] - scene["bounds_min"]))
     frustum_scale = max(0.06, scene_diagonal * 0.14)
@@ -737,103 +1078,159 @@ def run_turntable_compare_workflow(
         for pose in camera_poses
     ]
 
-    overview_cloud_points = scene["native_points"] if len(scene["native_points"]) > 0 else scene["ffs_points"]
-    overview_cloud_colors = scene["native_colors"] if len(scene["native_points"]) > 0 else scene["ffs_colors"]
+    if len(scene["native_points"]) > 0 and len(scene["ffs_points"]) > 0:
+        overview_cloud_points = np.concatenate([scene["native_points"], scene["ffs_points"]], axis=0)
+        overview_cloud_colors = np.concatenate([scene["native_colors"], scene["ffs_colors"]], axis=0)
+    elif len(scene["native_points"]) > 0:
+        overview_cloud_points = scene["native_points"]
+        overview_cloud_colors = scene["native_colors"]
+    else:
+        overview_cloud_points = scene["ffs_points"]
+        overview_cloud_colors = scene["ffs_colors"]
     overview_state = build_scene_overview_state(
         scene_points=overview_cloud_points,
         scene_colors=overview_cloud_colors,
         camera_geometries=camera_geometries,
         focus_point=scene["focus_point"],
-        render_mode=render_mode,
+        render_mode="color_by_height",
         renderer=renderer,
         scalar_bounds=scene["scalar_bounds"],
         point_radius_px=point_radius_px,
         supersample_scale=supersample_scale,
+        orbit_path_points=orbit_path_points,
+        crop_bounds=scene["crop_bounds"],
     )
     overview_image_path = output_dir / "scene_overview_with_cameras.png"
     cv2.imwrite(str(overview_image_path), overview_state["image"])
 
-    board_paths: list[Path] = []
-    board_images: list[np.ndarray] = []
-    tile_renderer_used: dict[str, str] = {}
+    output_specs = build_render_output_specs(
+        geom_render_mode=render_mode,
+        render_both_modes=render_both_modes,
+    )
+    frame_paths_by_output: dict[str, list[Path]] = {spec["name"]: [] for spec in output_specs}
+    frames_dir_by_output: dict[str, Path] = {}
+    board_images_by_output: dict[str, list[np.ndarray]] = {spec["name"]: [] for spec in output_specs}
+    renderer_used_by_output: dict[str, dict[str, str]] = {spec["name"]: {} for spec in output_specs}
     compare_mode_label = "same-case" if selection["same_case_mode"] else "two-case fallback"
     case_label = (
         selection["native_case_dir"].name
         if selection["same_case_mode"]
         else f"{selection['native_case_dir'].name} vs {selection['ffs_case_dir'].name}"
     )
+    main_width = 1280 if layout_mode == "side_by_side_large" else 960
+    main_height = 900 if layout_mode == "side_by_side_large" else 720
+
+    for output_spec in output_specs:
+        frames_dir = output_dir / output_spec["frames_dir_name"]
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        frames_dir_by_output[output_spec["name"]] = frames_dir
 
     for orbit_step in orbit_steps:
+        current_views = orbit_step["view_configs"]
         overview_inset = render_overview_inset(
             overview_state,
-            camera_geometries=camera_geometries,
-            current_views=orbit_step["view_configs"],
-            focus_point=scene["focus_point"],
+            current_views=current_views,
+            inset_size=(560, 320) if layout_mode == "side_by_side_large" else (420, 260),
         )
-        native_images: list[np.ndarray] = []
-        ffs_images: list[np.ndarray] = []
-        column_headers: list[str] = []
 
-        for view_config in orbit_step["view_configs"]:
-            column_headers.append(f"Near Cam{view_config['camera_idx']}")
-            ortho_scale = None
-            if projection_mode == "orthographic":
-                ortho_scale = estimate_ortho_scale(
-                    [scene["native_points"], scene["ffs_points"]],
+        per_step_renders: dict[tuple[str, str], np.ndarray] = {}
+        for output_spec in output_specs:
+            mode_name = output_spec["name"]
+            mode_render = output_spec["render_mode"]
+            if layout_mode == "side_by_side_large":
+                view_configs = [orbit_step["view_config"]]
+            else:
+                view_configs = orbit_step["view_configs"]
+
+            native_images: list[np.ndarray] = []
+            ffs_images: list[np.ndarray] = []
+            for view_config in view_configs:
+                ortho_scale = None
+                if projection_mode == "orthographic":
+                    ortho_scale = estimate_ortho_scale(
+                        [scene["native_points"], scene["ffs_points"]],
+                        view_config=view_config,
+                    )
+                native_render, native_renderer_used = render_point_cloud(
+                    scene["native_points"],
+                    scene["native_colors"],
+                    renderer=renderer,
                     view_config=view_config,
+                    render_mode=mode_render,
+                    scalar_bounds=scene["scalar_bounds"],
+                    width=main_width,
+                    height=main_height,
+                    point_radius_px=point_radius_px,
+                    supersample_scale=supersample_scale,
+                    projection_mode=projection_mode,
+                    ortho_scale=ortho_scale,
                 )
+                ffs_render, ffs_renderer_used = render_point_cloud(
+                    scene["ffs_points"],
+                    scene["ffs_colors"],
+                    renderer=renderer if renderer != "auto" else native_renderer_used,
+                    view_config=view_config,
+                    render_mode=mode_render,
+                    scalar_bounds=scene["scalar_bounds"],
+                    width=main_width,
+                    height=main_height,
+                    point_radius_px=point_radius_px,
+                    supersample_scale=supersample_scale,
+                    projection_mode=projection_mode,
+                    ortho_scale=ortho_scale,
+                )
+                native_images.append(native_render)
+                ffs_images.append(ffs_render)
+                renderer_used_by_output[mode_name][f"native_{view_config['view_name']}"] = native_renderer_used
+                renderer_used_by_output[mode_name][f"ffs_{view_config['view_name']}"] = ffs_renderer_used
 
-            native_render, native_renderer_used = render_point_cloud(
-                scene["native_points"],
-                scene["native_colors"],
-                renderer=renderer,
-                view_config=view_config,
-                render_mode=render_mode,
-                scalar_bounds=scene["scalar_bounds"],
-                point_radius_px=point_radius_px,
-                supersample_scale=supersample_scale,
-                projection_mode=projection_mode,
-                ortho_scale=ortho_scale,
-            )
-            ffs_render, ffs_renderer_used = render_point_cloud(
-                scene["ffs_points"],
-                scene["ffs_colors"],
-                renderer=renderer if renderer != "auto" else native_renderer_used,
-                view_config=view_config,
-                render_mode=render_mode,
-                scalar_bounds=scene["scalar_bounds"],
-                point_radius_px=point_radius_px,
-                supersample_scale=supersample_scale,
-                projection_mode=projection_mode,
-                ortho_scale=ortho_scale,
-            )
-            native_images.append(native_render)
-            ffs_images.append(ffs_render)
-            tile_renderer_used[f"cam{view_config['camera_idx']}"] = native_renderer_used
-            tile_renderer_used[f"cam{view_config['camera_idx']}_ffs"] = ffs_renderer_used
+            if layout_mode == "side_by_side_large":
+                board = compose_side_by_side_large(
+                    title_lines=[
+                        f"{case_label} | frame_idx={selection['native_frame_idx']} | {compare_mode_label}",
+                        f"{mode_name} | render={mode_render} | orbit={orbit_step['angle_deg']:+.1f} deg | proj={projection_mode} | crop={scene_crop_mode}",
+                    ],
+                    native_image=native_images[0],
+                    ffs_image=ffs_images[0],
+                    overview_inset=overview_inset,
+                )
+            else:
+                board = compose_turntable_board(
+                    title_lines=[
+                        f"{case_label} | frame_idx={selection['native_frame_idx']} | {compare_mode_label}",
+                        f"{mode_name} | render={mode_render} | orbit={orbit_step['angle_deg']:+.1f} deg | proj={projection_mode}",
+                    ],
+                    column_headers=[f"Near Cam{view_config['camera_idx']}" for view_config in view_configs],
+                    row_headers=["Native", "FFS"],
+                    native_images=native_images,
+                    ffs_images=ffs_images,
+                    overview_inset=overview_inset,
+                )
+            per_step_renders[(mode_name, "board")] = board
 
-        board = compose_turntable_board(
-            title_lines=[
-                f"{case_label} | frame_idx={selection['native_frame_idx']} | {compare_mode_label}",
-                f"render={render_mode} | projection={projection_mode} | orbit={orbit_step['angle_deg']:+.1f} deg",
-            ],
-            column_headers=column_headers,
-            row_headers=["Native", "FFS"],
-            native_images=native_images,
-            ffs_images=ffs_images,
-            overview_inset=overview_inset,
-        )
-        board_path = boards_dir / f"{orbit_step['step_idx']:03d}_angle_{_format_angle_token(orbit_step['angle_deg'])}.png"
-        cv2.imwrite(str(board_path), board)
-        board_paths.append(board_path)
-        board_images.append(board)
+        for output_spec in output_specs:
+            mode_name = output_spec["name"]
+            board = per_step_renders[(mode_name, "board")]
+            board_path = frames_dir_by_output[mode_name] / f"{orbit_step['step_idx']:03d}_angle_{_format_angle_token(orbit_step['angle_deg'])}.png"
+            cv2.imwrite(str(board_path), board)
+            frame_paths_by_output[mode_name].append(board_path)
+            board_images_by_output[mode_name].append(board)
 
-    if write_keyframe_sheet and board_images:
-        sheet = compose_keyframe_sheet(board_images)
-        cv2.imwrite(str(output_dir / "turntable_keyframes_sheet.png"), sheet)
-
-    if write_mp4:
-        write_video(videos_dir / "turntable_orbit.mp4", board_paths, fps)
+    output_files: dict[str, dict[str, str | None]] = {}
+    for output_spec in output_specs:
+        mode_name = output_spec["name"]
+        video_path = output_dir / output_spec["video_name"]
+        sheet_path = output_dir / output_spec["sheet_name"]
+        if write_mp4:
+            write_video(video_path, frame_paths_by_output[mode_name], fps)
+        if write_keyframe_sheet and board_images_by_output[mode_name]:
+            sheet = compose_keyframe_sheet(board_images_by_output[mode_name])
+            cv2.imwrite(str(sheet_path), sheet)
+        output_files[mode_name] = {
+            "frames_dir": str(frames_dir_by_output[mode_name]),
+            "video_path": str(video_path) if write_mp4 else None,
+            "sheet_path": str(sheet_path) if write_keyframe_sheet else None,
+        }
 
     metadata = {
         "same_case_mode": selection["same_case_mode"],
@@ -845,10 +1242,13 @@ def run_turntable_compare_workflow(
         "camera_ids": selection["camera_ids"],
         "camera_labels": [geometry["label"] for geometry in camera_geometries],
         "compare_mode_label": compare_mode_label,
-        "render_mode": render_mode,
+        "geom_render_mode": render_mode,
+        "render_both_modes": bool(render_both_modes),
         "projection_mode": projection_mode,
         "scene_crop_mode": scene_crop_mode,
         "focus_mode": focus_mode,
+        "orbit_mode": orbit_mode,
+        "layout_mode": layout_mode,
         "crop_bounds": {
             "min": scene["crop_bounds"]["min"].tolist(),
             "max": scene["crop_bounds"]["max"].tolist(),
@@ -858,6 +1258,12 @@ def run_turntable_compare_workflow(
         "orbit_angles_deg": [step["angle_deg"] for step in orbit_steps],
         "num_orbit_steps": int(num_orbit_steps),
         "orbit_degrees": float(orbit_degrees),
+        "orbit_radius": float(orbit_radius),
+        "orbit_radius_scale": float(orbit_radius_scale),
+        "orbit_height": float(orbit_height),
+        "view_height_offset": float(view_height_offset),
+        "start_azimuth_deg": float(start_azimuth_deg),
+        "camera_reference_azimuths_deg": camera_reference_azimuths_deg,
         "point_radius_px": int(point_radius_px),
         "supersample_scale": int(supersample_scale),
         "depth_min_m": float(depth_min_m),
@@ -866,14 +1272,12 @@ def run_turntable_compare_workflow(
         "max_points_per_camera": max_points_per_camera,
         "use_float_ffs_depth_when_available": bool(use_float_ffs_depth_when_available),
         "scene_overview_with_cameras": str(overview_image_path),
-        "boards_dir": str(boards_dir),
-        "board_paths": [str(path) for path in board_paths],
-        "turntable_keyframes_sheet": str(output_dir / "turntable_keyframes_sheet.png") if write_keyframe_sheet else None,
-        "orbit_video_path": str(videos_dir / "turntable_orbit.mp4") if write_mp4 else None,
+        "orbit_path_point_count": int(len(orbit_path_points)),
+        "outputs": output_files,
         "renderer_requested": renderer,
         "renderer_used": {
             "overview": overview_state["renderer_used"],
-            **tile_renderer_used,
+            **renderer_used_by_output,
         },
         "native_stats": raw_scene["native_stats"],
         "ffs_stats": raw_scene["ffs_stats"],

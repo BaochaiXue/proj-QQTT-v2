@@ -175,7 +175,7 @@ python scripts/harness/visual_compare_reprojection.py --aligned_root ./data --re
 
 This is the main multi-view consistency diagnostic. It warps source RGB into the target view using native depth and FFS depth separately, then compares each warp against the target RGB with residual heatmaps and summary metrics.
 
-3. Single-frame camera-aware turntable compare:
+3. Single-frame object-centered orbit compare:
 
 Same-case comparison, when an aligned case contains both native depth and FFS depth:
 
@@ -194,15 +194,28 @@ This is now the primary fused-cloud diagnostic for professor-facing review. It:
 - loads one selected aligned frame instead of a temporal frame range
 - fuses one native point cloud and one FFS point cloud
 - visualizes the 3 real camera poses from `calibrate.pkl`
-- renders 2x3 boards where:
-  - columns = views near Cam0 / Cam1 / Cam2
-  - rows = Native / FFS
-- generates deterministic local orbit arcs around the ROI center while staying near each real camera pose
+- orbits 360 degrees around the cropped tabletop / object ROI
+- renders one large left-right comparison:
+  - left = Native
+  - right = FFS
+- uses the exact same orbit path for both renders
+- automatically writes both:
+  - geometry diagnostic outputs
+  - RGB-colored reference outputs
 - writes:
   - `scene_overview_with_cameras.png`
-  - per-angle `boards/*.png`
-  - `turntable_keyframes_sheet.png`
-  - optional `videos/turntable_orbit.mp4`
+  - `frames_geom/*.png`
+  - `frames_rgb/*.png`
+  - `orbit_compare_geom.mp4`
+  - `orbit_compare_rgb.mp4`
+  - `turntable_keyframes_geom.png`
+  - `turntable_keyframes_rgb.png`
+
+The older 2x3 near-camera turntable board remains available only as a secondary advanced mode via:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --case_name my_case --layout_mode camera_neighborhood_grid --orbit_mode camera_neighborhood --num_orbit_steps 6 --orbit_degrees 30
+```
 
 4. Temporal fused point-cloud comparison video:
 
@@ -304,14 +317,17 @@ data/<case_name>/
       grid_2x3.mp4
     metrics.json
     comparison_metadata.json
-  turntable_frame_<idx>/ # optional single-frame camera-aware turntable output
+  turntable_frame_<idx>/ # optional single-frame object-centered orbit compare
     scene_overview_with_cameras.png
-    turntable_keyframes_sheet.png
+    orbit_compare_geom.mp4
+    orbit_compare_rgb.mp4
+    turntable_keyframes_geom.png
+    turntable_keyframes_rgb.png
     turntable_metadata.json
-    boards/
+    frames_geom/
       000_angle_*.png
-    videos/
-      turntable_orbit.mp4
+    frames_rgb/
+      000_angle_*.png
   depth_panels/         # optional per-camera diagnostic panels
     camera_0/frames/
     camera_1/frames/

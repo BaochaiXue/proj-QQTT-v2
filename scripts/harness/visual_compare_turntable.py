@@ -26,12 +26,22 @@ def parse_args() -> argparse.Namespace:
         choices=("color_by_rgb", "color_by_depth", "color_by_height", "color_by_normals", "neutral_gray_shaded"),
         default="neutral_gray_shaded",
     )
-    parser.add_argument("--write_mp4", action="store_true")
+    parser.add_argument("--write_mp4", dest="write_mp4", action="store_true")
+    parser.add_argument("--no_write_mp4", dest="write_mp4", action="store_false")
     parser.add_argument("--write_keyframe_sheet", dest="write_keyframe_sheet", action="store_true")
     parser.add_argument("--no_write_keyframe_sheet", dest="write_keyframe_sheet", action="store_false")
-    parser.set_defaults(write_keyframe_sheet=True, use_float_ffs_depth_when_available=True)
-    parser.add_argument("--num_orbit_steps", type=int, default=6)
-    parser.add_argument("--orbit_degrees", type=float, default=30.0)
+    parser.add_argument("--render_both_modes", dest="render_both_modes", action="store_true")
+    parser.add_argument("--no_render_both_modes", dest="render_both_modes", action="store_false")
+    parser.set_defaults(
+        write_mp4=True,
+        write_keyframe_sheet=True,
+        use_float_ffs_depth_when_available=True,
+        render_both_modes=True,
+    )
+    parser.add_argument("--layout_mode", choices=("side_by_side_large", "camera_neighborhood_grid"), default="side_by_side_large")
+    parser.add_argument("--orbit_mode", choices=("object_centered_360", "camera_neighborhood"), default="object_centered_360")
+    parser.add_argument("--num_orbit_steps", type=int, default=72)
+    parser.add_argument("--orbit_degrees", type=float, default=360.0)
     parser.add_argument("--camera_ids", nargs="+", type=int, default=[0, 1, 2])
     parser.add_argument("--scene_crop_mode", choices=("none", "auto_table_bbox", "manual_xyz_roi"), default="auto_table_bbox")
     parser.add_argument("--crop_margin_xy", type=float, default=0.12)
@@ -44,8 +54,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--roi_z_min", type=float, default=None)
     parser.add_argument("--roi_z_max", type=float, default=None)
     parser.add_argument("--projection_mode", choices=("perspective", "orthographic"), default="perspective")
-    parser.add_argument("--point_radius_px", type=int, default=3)
-    parser.add_argument("--supersample_scale", type=int, default=2)
+    parser.add_argument("--orbit_radius_scale", type=float, default=1.9)
+    parser.add_argument("--view_height_offset", type=float, default=0.0)
+    parser.add_argument("--point_radius_px", type=int, default=4)
+    parser.add_argument("--supersample_scale", type=int, default=3)
     parser.add_argument("--voxel_size", type=float, default=None)
     parser.add_argument("--max_points_per_camera", type=int, default=50000)
     parser.add_argument("--depth_min_m", type=float, default=0.2)
@@ -100,6 +112,11 @@ def main() -> int:
         depth_max_m=args.depth_max_m,
         fps=args.fps,
         use_float_ffs_depth_when_available=args.use_float_ffs_depth_when_available,
+        orbit_mode=args.orbit_mode,
+        layout_mode=args.layout_mode,
+        orbit_radius_scale=args.orbit_radius_scale,
+        view_height_offset=args.view_height_offset,
+        render_both_modes=args.render_both_modes,
     )
     print(f"Turntable outputs written to {result['output_dir']}")
     return 0

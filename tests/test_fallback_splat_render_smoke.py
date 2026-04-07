@@ -42,7 +42,11 @@ class FallbackSplatRenderSmokeTest(unittest.TestCase):
             point_radius_px=4,
             supersample_scale=2,
         )
-        self.assertGreater(int(np.count_nonzero(dense)), int(np.count_nonzero(sparse)))
+        sparse_bg = sparse[0, 0]
+        dense_bg = dense[0, 0]
+        sparse_foreground = int(np.count_nonzero(np.any(sparse != sparse_bg, axis=2)))
+        dense_foreground = int(np.count_nonzero(np.any(dense != dense_bg, axis=2)))
+        self.assertGreater(dense_foreground, sparse_foreground)
 
 
 if __name__ == "__main__":
