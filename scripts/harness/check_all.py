@@ -39,11 +39,14 @@ def main() -> int:
     run([python, "-m", "unittest", "-v", "tests.test_record_data_align_ffs_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_record_data_align_both_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_calibrate_loader_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_camera_pose_view_config_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_table_focus_center_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_pointcloud_fusion_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_depth_panels_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_reprojection_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_fused_cloud_render_config_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_depth_video_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_visual_compare_depth_video_grid_smoke"])
     print("[check] all deterministic checks passed")
     return 0
 

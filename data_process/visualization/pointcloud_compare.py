@@ -18,6 +18,9 @@ RENDER_MODES = (
     "neutral_gray_shaded",
 )
 VIEW_NAMES = ("oblique", "top", "side")
+VIEW_MODES = ("fixed", "camera_poses_table_focus")
+FOCUS_MODES = ("none", "table")
+LAYOUT_MODES = ("pair", "grid_2x3")
 
 
 def load_case_metadata(case_dir: Path) -> dict[str, Any]:
@@ -276,11 +279,131 @@ def compute_view_config(bounds_min: np.ndarray, bounds_max: np.ndarray, view_nam
         up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
     return {
         "view_name": view_name,
+        "label": view_name.title(),
         "center": center.astype(np.float32),
         "camera_position": camera_position.astype(np.float32),
         "up": up,
         "radius": radius,
     }
+
+
+def estimate_focus_point(
+    point_sets: list[np.ndarray],
+    *,
+    bounds_min: np.ndarray,
+    bounds_max: np.ndarray,
+    focus_mode: str,
+) -> np.ndarray:
+    default_center = ((bounds_min + bounds_max) * 0.5).astype(np.float32)
+    if focus_mode == "none":
+        return default_center
+
+    points = [np.asarray(item, dtype=np.float32) for item in point_sets if len(item) > 0]
+    if not points:
+        return default_center
+
+    stacked = np.concatenate(points, axis=0)
+    if len(stacked) == 0:
+        return default_center
+
+    if focus_mode == "table":
+        z_low = float(np.percentile(stacked[:, 2], 20))
+        z_high = float(np.percentile(stacked[:, 2], 65))
+        band = stacked[(stacked[:, 2] >= z_low) & (stacked[:, 2] <= z_high)]
+        if len(band) < 128:
+            band = stacked
+        return np.asarray(
+            [
+                float(np.median(band[:, 0])),
+                float(np.median(band[:, 1])),
+                float(np.median(band[:, 2])),
+            ],
+            dtype=np.float32,
+        )
+
+    raise ValueError(f"Unsupported focus_mode: {focus_mode}")
+
+
+def _normalize_vector(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
+    vec = np.asarray(vector, dtype=np.float32)
+    norm = float(np.linalg.norm(vec))
+    if norm <= 1e-6:
+        return np.asarray(fallback, dtype=np.float32)
+    return vec / norm
+
+
+def build_camera_pose_view_configs(
+    *,
+    c2w_list: list[np.ndarray],
+    serial_numbers: list[str],
+    focus_point: np.ndarray,
+) -> list[dict[str, Any]]:
+    configs: list[dict[str, Any]] = []
+    for camera_idx, (serial, c2w) in enumerate(zip(serial_numbers, c2w_list, strict=False)):
+        transform = np.asarray(c2w, dtype=np.float32).reshape(4, 4)
+        camera_position = transform[:3, 3]
+        up_hint = -transform[:3, 1]
+        up = _normalize_vector(up_hint, np.array([0.0, 0.0, 1.0], dtype=np.float32))
+        configs.append(
+            {
+                "view_name": f"cam{camera_idx}",
+                "label": f"Cam{camera_idx} | {serial}",
+                "camera_idx": camera_idx,
+                "serial": serial,
+                "center": np.asarray(focus_point, dtype=np.float32),
+                "camera_position": np.asarray(camera_position, dtype=np.float32),
+                "up": up,
+                "radius": float(np.linalg.norm(camera_position - focus_point)),
+            }
+        )
+    return configs
+
+
+def overlay_panel_label(
+    image: np.ndarray,
+    *,
+    label: str,
+    text_color: tuple[int, int, int] = (255, 255, 255),
+) -> np.ndarray:
+    canvas = np.asarray(image, dtype=np.uint8).copy()
+    cv2.rectangle(canvas, (0, 0), (canvas.shape[1] - 1, 26), (0, 0, 0), -1)
+    cv2.putText(
+        canvas,
+        label,
+        (10, 18),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        text_color,
+        1,
+        cv2.LINE_AA,
+    )
+    return canvas
+
+
+def compose_grid_2x3(
+    *,
+    title: str,
+    native_images: list[np.ndarray],
+    ffs_images: list[np.ndarray],
+) -> np.ndarray:
+    if len(native_images) != 3 or len(ffs_images) != 3:
+        raise ValueError("grid_2x3 layout requires exactly 3 native images and 3 ffs images.")
+    row_native = np.hstack(native_images)
+    row_ffs = np.hstack(ffs_images)
+    body = np.vstack([row_native, row_ffs])
+    title_h = 34
+    title_bar = np.zeros((title_h, body.shape[1], 3), dtype=np.uint8)
+    cv2.putText(
+        title_bar,
+        title,
+        (12, 22),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.62,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
+    return np.vstack([title_bar, body])
 
 
 def _look_at(camera_position: np.ndarray, center: np.ndarray, up: np.ndarray) -> np.ndarray:
@@ -573,12 +696,21 @@ def run_depth_comparison_workflow(
     fps: int = 30,
     panel_layout: str = "side_by_side",
     use_float_ffs_depth_when_available: bool = False,
-    render_mode: str = "neutral_gray_shaded",
+    render_mode: str = "color_by_rgb",
     views: list[str] | None = None,
     zoom_scale: float = 1.0,
+    view_mode: str = "fixed",
+    focus_mode: str = "none",
+    layout_mode: str = "pair",
 ) -> dict[str, Any]:
     if render_mode not in RENDER_MODES:
         raise ValueError(f"Unsupported render_mode: {render_mode}")
+    if view_mode not in VIEW_MODES:
+        raise ValueError(f"Unsupported view_mode: {view_mode}")
+    if focus_mode not in FOCUS_MODES:
+        raise ValueError(f"Unsupported focus_mode: {focus_mode}")
+    if layout_mode not in LAYOUT_MODES:
+        raise ValueError(f"Unsupported layout_mode: {layout_mode}")
     aligned_root = Path(aligned_root).resolve()
     output_dir = Path(output_dir).resolve()
     native_case_dir, ffs_case_dir, same_case_mode = resolve_case_dirs(
@@ -606,15 +738,11 @@ def run_depth_comparison_workflow(
     if not frame_pairs:
         raise ValueError("No frame pairs selected for comparison.")
 
-    selected_views = views or ["oblique"]
-    for view_name in selected_views:
-        if view_name not in VIEW_NAMES:
-            raise ValueError(f"Unsupported view: {view_name}")
-
     output_dir.mkdir(parents=True, exist_ok=True)
     cache: dict[tuple[str, int], tuple[np.ndarray, np.ndarray, dict[str, Any]]] = {}
     bounds_min = np.array([np.inf, np.inf, np.inf], dtype=np.float32)
     bounds_max = np.array([-np.inf, -np.inf, -np.inf], dtype=np.float32)
+    all_point_sets: list[np.ndarray] = []
     for native_frame_idx, ffs_frame_idx in frame_pairs:
         for source, case_dir, metadata, frame_idx in (
             ("native", native_case_dir, native_metadata, native_frame_idx),
@@ -633,6 +761,7 @@ def run_depth_comparison_workflow(
             )
             cache[(source, frame_idx)] = (points, colors, stats)
             if len(points) > 0:
+                all_point_sets.append(points)
                 bounds_min = np.minimum(bounds_min, points.min(axis=0))
                 bounds_max = np.maximum(bounds_max, points.max(axis=0))
 
@@ -646,9 +775,46 @@ def run_depth_comparison_workflow(
     }
     metrics = []
     renderer_used_by_view: dict[str, str] = {}
+    focus_point = estimate_focus_point(
+        all_point_sets,
+        bounds_min=bounds_min,
+        bounds_max=bounds_max,
+        focus_mode=focus_mode,
+    )
 
-    for view_name in selected_views:
-        view_output_dir = output_dir if len(selected_views) == 1 else output_dir / f"view_{view_name}"
+    if view_mode == "fixed":
+        selected_view_names = views or ["oblique"]
+        for view_name in selected_view_names:
+            if view_name not in VIEW_NAMES:
+                raise ValueError(f"Unsupported view: {view_name}")
+        view_configs = [compute_view_config(bounds_min, bounds_max, view_name=view_name) for view_name in selected_view_names]
+    else:
+        if len(native_metadata["serial_numbers"]) != 3:
+            raise ValueError("camera_poses_table_focus currently requires exactly 3 cameras.")
+        calibration_reference_serials = native_metadata.get("calibration_reference_serials", native_metadata["serial_numbers"])
+        native_c2w = load_calibration_transforms(
+            native_case_dir / "calibrate.pkl",
+            serial_numbers=native_metadata["serial_numbers"],
+            calibration_reference_serials=calibration_reference_serials,
+        )
+        view_configs = build_camera_pose_view_configs(
+            c2w_list=native_c2w,
+            serial_numbers=native_metadata["serial_numbers"],
+            focus_point=focus_point,
+        )
+
+    if layout_mode == "grid_2x3" and len(view_configs) != 3:
+        raise ValueError("grid_2x3 layout requires exactly 3 view configs.")
+
+    per_view_outputs: dict[str, dict[str, Any]] = {}
+    grid_frame_paths: list[Path] = []
+    if layout_mode == "grid_2x3":
+        grid_frames_dir = output_dir / "grid_2x3_frames"
+        grid_frames_dir.mkdir(parents=True, exist_ok=True)
+
+    for view_config in view_configs:
+        view_name = str(view_config["view_name"])
+        view_output_dir = output_dir if len(view_configs) == 1 and layout_mode == "pair" else output_dir / f"view_{view_name}"
         view_output_dir.mkdir(parents=True, exist_ok=True)
         native_frames_dir = view_output_dir / "native_frames"
         ffs_frames_dir = view_output_dir / "ffs_frames"
@@ -660,16 +826,30 @@ def run_depth_comparison_workflow(
         if write_ply:
             native_clouds_dir.mkdir(parents=True, exist_ok=True)
             ffs_clouds_dir.mkdir(parents=True, exist_ok=True)
+        per_view_outputs[view_name] = {
+            "view_output_dir": view_output_dir,
+            "native_frames_dir": native_frames_dir,
+            "ffs_frames_dir": ffs_frames_dir,
+            "side_frames_dir": side_frames_dir,
+            "native_clouds_dir": native_clouds_dir,
+            "ffs_clouds_dir": ffs_clouds_dir,
+            "native_frame_paths": [],
+            "ffs_frame_paths": [],
+            "side_frame_paths": [],
+            "renderer_used": None,
+            "view_config": view_config,
+        }
 
-        view_config = compute_view_config(bounds_min, bounds_max, view_name=view_name)
-        renderer_used = None
-        native_frame_paths = []
-        ffs_frame_paths = []
-        side_frame_paths = []
+    for panel_idx, (native_frame_idx, ffs_frame_idx) in enumerate(frame_pairs):
+        native_points, native_colors, native_stats = cache[("native", native_frame_idx)]
+        ffs_points, ffs_colors, ffs_stats = cache[("ffs", ffs_frame_idx)]
+        grid_native_images: list[np.ndarray] = []
+        grid_ffs_images: list[np.ndarray] = []
 
-        for panel_idx, (native_frame_idx, ffs_frame_idx) in enumerate(frame_pairs):
-            native_points, native_colors, native_stats = cache[("native", native_frame_idx)]
-            ffs_points, ffs_colors, ffs_stats = cache[("ffs", ffs_frame_idx)]
+        for view_config in view_configs:
+            view_name = str(view_config["view_name"])
+            view_state = per_view_outputs[view_name]
+            renderer_used = view_state["renderer_used"]
             native_render, renderer_used = render_point_cloud(
                 native_points,
                 native_colors,
@@ -688,21 +868,29 @@ def run_depth_comparison_workflow(
                 scalar_bounds=scalar_bounds,
                 zoom_scale=zoom_scale,
             )
-            side_render = compose_panel(native_render, ffs_render, layout=panel_layout)
+            view_state["renderer_used"] = renderer_used
 
-            native_frame_path = native_frames_dir / f"{panel_idx:06d}.png"
-            ffs_frame_path = ffs_frames_dir / f"{panel_idx:06d}.png"
-            side_frame_path = side_frames_dir / f"{panel_idx:06d}.png"
-            cv2.imwrite(str(native_frame_path), native_render)
-            cv2.imwrite(str(ffs_frame_path), ffs_render)
+            native_labeled = overlay_panel_label(native_render, label=f"Native | {view_config['label']}")
+            ffs_labeled = overlay_panel_label(ffs_render, label=f"FFS | {view_config['label']}")
+            side_render = compose_panel(native_labeled, ffs_labeled, layout=panel_layout)
+
+            native_frame_path = view_state["native_frames_dir"] / f"{panel_idx:06d}.png"
+            ffs_frame_path = view_state["ffs_frames_dir"] / f"{panel_idx:06d}.png"
+            side_frame_path = view_state["side_frames_dir"] / f"{panel_idx:06d}.png"
+            cv2.imwrite(str(native_frame_path), native_labeled)
+            cv2.imwrite(str(ffs_frame_path), ffs_labeled)
             cv2.imwrite(str(side_frame_path), side_render)
-            native_frame_paths.append(native_frame_path)
-            ffs_frame_paths.append(ffs_frame_path)
-            side_frame_paths.append(side_frame_path)
+            view_state["native_frame_paths"].append(native_frame_path)
+            view_state["ffs_frame_paths"].append(ffs_frame_path)
+            view_state["side_frame_paths"].append(side_frame_path)
 
             if write_ply:
-                write_ply_ascii(native_clouds_dir / f"{panel_idx:06d}.ply", native_points, native_colors)
-                write_ply_ascii(ffs_clouds_dir / f"{panel_idx:06d}.ply", ffs_points, ffs_colors)
+                write_ply_ascii(view_state["native_clouds_dir"] / f"{panel_idx:06d}.ply", native_points, native_colors)
+                write_ply_ascii(view_state["ffs_clouds_dir"] / f"{panel_idx:06d}.ply", ffs_points, ffs_colors)
+
+            if layout_mode == "grid_2x3":
+                grid_native_images.append(native_labeled)
+                grid_ffs_images.append(ffs_labeled)
 
             metrics.append(
                 {
@@ -715,13 +903,30 @@ def run_depth_comparison_workflow(
                 }
             )
 
-        renderer_used_by_view[view_name] = renderer_used or "fallback"
-        videos_dir = view_output_dir / "videos"
+        if layout_mode == "grid_2x3":
+            title = (
+                f"{native_case_dir.name} vs {ffs_case_dir.name} | frame {panel_idx:06d} | "
+                f"{render_mode} | zoom={zoom_scale:.2f} | depth=[{depth_min_m:.2f}, {depth_max_m:.2f}] m"
+            )
+            grid_image = compose_grid_2x3(title=title, native_images=grid_native_images, ffs_images=grid_ffs_images)
+            grid_frame_path = grid_frames_dir / f"{panel_idx:06d}.png"
+            cv2.imwrite(str(grid_frame_path), grid_image)
+            grid_frame_paths.append(grid_frame_path)
+
+    for view_name, view_state in per_view_outputs.items():
+        renderer_used_by_view[view_name] = view_state["renderer_used"] or "fallback"
+        videos_dir = Path(view_state["view_output_dir"]) / "videos"
         videos_dir.mkdir(parents=True, exist_ok=True)
         if write_mp4:
-            write_video(videos_dir / "native.mp4", native_frame_paths, fps)
-            write_video(videos_dir / "ffs.mp4", ffs_frame_paths, fps)
-            write_video(videos_dir / "side_by_side.mp4", side_frame_paths, fps)
+            write_video(videos_dir / "native.mp4", view_state["native_frame_paths"], fps)
+            write_video(videos_dir / "ffs.mp4", view_state["ffs_frame_paths"], fps)
+            write_video(videos_dir / "side_by_side.mp4", view_state["side_frame_paths"], fps)
+
+    if layout_mode == "grid_2x3":
+        videos_dir = output_dir / "videos"
+        videos_dir.mkdir(parents=True, exist_ok=True)
+        if write_mp4:
+            write_video(videos_dir / "grid_2x3.mp4", grid_frame_paths, fps)
 
     comparison_metadata = {
         "same_case_mode": same_case_mode,
@@ -730,7 +935,11 @@ def run_depth_comparison_workflow(
         "frame_pairs": frame_pairs,
         "renderer_requested": renderer,
         "renderer_used": renderer_used_by_view,
-        "views": list(selected_views),
+        "views": [str(view_config["view_name"]) for view_config in view_configs],
+        "view_labels": [str(view_config["label"]) for view_config in view_configs],
+        "view_mode": view_mode,
+        "focus_mode": focus_mode,
+        "layout_mode": layout_mode,
         "render_mode": render_mode,
         "panel_layout": panel_layout,
         "depth_min_m": float(depth_min_m),
@@ -740,6 +949,7 @@ def run_depth_comparison_workflow(
         "use_float_ffs_depth_when_available": use_float_ffs_depth_when_available,
         "zoom_scale": float(zoom_scale),
         "scalar_bounds": scalar_bounds,
+        "focus_point": focus_point.tolist(),
     }
     (output_dir / "comparison_metadata.json").write_text(json.dumps(comparison_metadata, indent=2), encoding="utf-8")
     (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
