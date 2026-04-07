@@ -335,6 +335,8 @@ def _rasterize_view(
         return canvas
     u = np.rint(u[inside]).astype(np.int32)
     v = np.rint(v[inside]).astype(np.int32)
+    u = np.clip(u, 0, width - 1)
+    v = np.clip(v, 0, height - 1)
     z = z[inside]
     xyz = xyz[inside]
     world_points = world_points[inside]
