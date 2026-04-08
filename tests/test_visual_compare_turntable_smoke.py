@@ -52,6 +52,9 @@ class VisualCompareTurntableSmokeTest(unittest.TestCase):
             self.assertIn("support", metadata["outputs"])
             self.assertGreater(metadata["render_point_count"]["native"], 0)
             self.assertGreater(metadata["render_point_count"]["ffs"], 0)
+            for axis_idx in range(3):
+                self.assertLessEqual(metadata["render_bounds"]["min"][axis_idx], metadata["object_roi_bounds"]["min"][axis_idx])
+                self.assertGreaterEqual(metadata["render_bounds"]["max"][axis_idx], metadata["object_roi_bounds"]["max"][axis_idx])
 
 
 if __name__ == "__main__":

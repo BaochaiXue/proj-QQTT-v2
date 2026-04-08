@@ -218,7 +218,7 @@ This is now the primary fused-cloud diagnostic for professor-facing review. It:
   - RGB-colored reference outputs
   - support-count outputs
 - can optionally apply `--manual_image_roi_json` to keep only object pixels from each real camera before fusion when the professor-facing view should exclude the tabletop as much as possible
-- shows a larger orthographic `Top / Front / Side` overview strip so the real camera locations are readable without the old oblique-view ambiguity
+- shows a larger orthographic top-view position map so the real camera locations stay readable without stretching the inset
 - writes:
   - `scene_overview_with_cameras.png`
   - `frames_geom/*.png`

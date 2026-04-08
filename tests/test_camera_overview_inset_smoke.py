@@ -56,7 +56,7 @@ class CameraOverviewInsetSmokeTest(unittest.TestCase):
                 "max": np.array([0.25, 0.25, 0.12], dtype=np.float32),
             },
         )
-        self.assertEqual(len(overview["pane_states"]), 3)
+        self.assertEqual(overview["label"], "Top")
         inset = render_overview_inset(
             overview,
             current_views=[

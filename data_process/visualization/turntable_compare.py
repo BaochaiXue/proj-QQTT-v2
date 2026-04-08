@@ -347,24 +347,16 @@ def build_single_frame_scene(
         table_color_bgr = np.array([128.0, 128.0, 128.0], dtype=np.float32)
 
     object_extent = object_roi_max - object_roi_min
-    render_half_xy = float(np.clip(max(float(object_extent[0]), float(object_extent[1])) * 0.28, 0.10, 0.18))
-    render_half_z = float(np.clip(float(object_extent[2]) * 0.60, 0.08, 0.16))
-    render_bounds_min = np.array(
-        [
-            float(refined_focus[0] - render_half_xy),
-            float(refined_focus[1] - render_half_xy),
-            float(max(object_roi_min[2], plane_point[2] + 0.01)),
-        ],
-        dtype=np.float32,
-    )
-    render_bounds_max = np.array(
-        [
-            float(refined_focus[0] + render_half_xy),
-            float(refined_focus[1] + render_half_xy),
-            float(min(object_roi_max[2], refined_focus[2] + render_half_z)),
-        ],
-        dtype=np.float32,
-    )
+    render_margin_xy = float(np.clip(max(float(object_extent[0]), float(object_extent[1])) * 0.30, 0.05, 0.14))
+    render_margin_z = float(np.clip(max(float(object_extent[2]), max(float(object_extent[0]), float(object_extent[1])) * 0.45), 0.08, 0.22))
+    render_bounds_min = np.maximum(
+        np.asarray(crop_bounds["min"], dtype=np.float32),
+        object_roi_min - np.array([render_margin_xy, render_margin_xy, render_margin_z], dtype=np.float32),
+    ).astype(np.float32)
+    render_bounds_max = np.minimum(
+        np.asarray(crop_bounds["max"], dtype=np.float32),
+        object_roi_max + np.array([render_margin_xy, render_margin_xy, render_margin_z], dtype=np.float32),
+    ).astype(np.float32)
 
     render_native_points, render_native_colors = filter_points_to_object_region(
         cropped_native_points,
@@ -373,6 +365,8 @@ def build_single_frame_scene(
         object_roi_max=render_bounds_max,
         plane_point=plane_point,
         plane_normal=plane_normal,
+        min_height=max(0.0, float(object_height_min)),
+        max_height=max(0.40, float(object_height_max)),
         table_color_bgr=table_color_bgr,
     )
     render_ffs_points, render_ffs_colors = filter_points_to_object_region(
@@ -382,6 +376,8 @@ def build_single_frame_scene(
         object_roi_max=render_bounds_max,
         plane_point=plane_point,
         plane_normal=plane_normal,
+        min_height=max(0.0, float(object_height_min)),
+        max_height=max(0.40, float(object_height_max)),
         table_color_bgr=table_color_bgr,
     )
     render_native_camera_clouds = []
@@ -393,6 +389,8 @@ def build_single_frame_scene(
             object_roi_max=render_bounds_max,
             plane_point=plane_point,
             plane_normal=plane_normal,
+            min_height=max(0.0, float(object_height_min)),
+            max_height=max(0.40, float(object_height_max)),
             table_color_bgr=table_color_bgr,
         )
         render_native_camera_clouds.append({**camera_cloud, "points": points, "colors": colors})
@@ -405,14 +403,12 @@ def build_single_frame_scene(
             object_roi_max=render_bounds_max,
             plane_point=plane_point,
             plane_normal=plane_normal,
+            min_height=max(0.0, float(object_height_min)),
+            max_height=max(0.40, float(object_height_max)),
             table_color_bgr=table_color_bgr,
         )
         render_ffs_camera_clouds.append({**camera_cloud, "points": points, "colors": colors})
 
-    render_bounds_min, render_bounds_max = _compute_bounds(
-        [render_native_points, render_ffs_points] if len(render_native_points) > 0 or len(render_ffs_points) > 0 else [object_roi_min.reshape(1, 3), object_roi_max.reshape(1, 3)],
-        fallback_center=refined_focus,
-    )
     scalar_bounds = {
         "height": (float(render_bounds_min[2]), float(render_bounds_max[2])),
         "depth": (0.0, max(float(np.linalg.norm(render_bounds_max - render_bounds_min)) * 2.0, 0.6)),
@@ -1013,6 +1009,28 @@ def _build_overview_triptych_layout(
     return canvas
 
 
+def _fit_image_to_canvas(
+    image: np.ndarray,
+    *,
+    canvas_size: tuple[int, int],
+    background_bgr: tuple[int, int, int] = (18, 18, 22),
+) -> np.ndarray:
+    target_w, target_h = [max(1, int(item)) for item in canvas_size]
+    source = np.asarray(image, dtype=np.uint8)
+    src_h, src_w = source.shape[:2]
+    if src_h <= 0 or src_w <= 0:
+        return np.full((target_h, target_w, 3), background_bgr, dtype=np.uint8)
+    scale = min(float(target_w) / float(src_w), float(target_h) / float(src_h))
+    fit_w = max(1, int(round(src_w * scale)))
+    fit_h = max(1, int(round(src_h * scale)))
+    resized = cv2.resize(source, (fit_w, fit_h), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR)
+    canvas = np.full((target_h, target_w, 3), background_bgr, dtype=np.uint8)
+    x0 = (target_w - fit_w) // 2
+    y0 = (target_h - fit_h) // 2
+    canvas[y0:y0 + fit_h, x0:x0 + fit_w] = resized
+    return canvas
+
+
 def _make_overview_pane_configs(bounds_min: np.ndarray, bounds_max: np.ndarray) -> list[tuple[str, dict[str, Any]]]:
     center = ((np.asarray(bounds_min, dtype=np.float32) + np.asarray(bounds_max, dtype=np.float32)) * 0.5).astype(np.float32)
     radius = max(1e-3, float(np.linalg.norm(np.asarray(bounds_max, dtype=np.float32) - np.asarray(bounds_min, dtype=np.float32))))
@@ -1272,62 +1290,44 @@ def build_scene_overview_state(
         [display_scene_points, geometry_points, np.zeros((1, 3), dtype=np.float32)],
         fallback_center=np.zeros((3,), dtype=np.float32),
     )
-    pane_states: list[dict[str, Any]] = []
-    renderer_used: dict[str, str] = {}
-    pane_images: list[np.ndarray] = []
-    pane_labels: list[str] = []
-    for pane_label, pane_view in _make_overview_pane_configs(bounds_min, bounds_max):
-        pane_ortho_scale = estimate_ortho_scale(
-            [display_scene_points, geometry_points],
-            view_config=pane_view,
-        )
-        pane_image, pane_renderer_used = render_point_cloud(
-            display_scene_points,
-            scene_colors,
-            renderer=renderer,
-            view_config=pane_view,
-            render_mode=render_mode,
-            scalar_bounds=scalar_bounds,
-            width=420,
-            height=300,
-            point_radius_px=max(2, int(point_radius_px)),
-            supersample_scale=max(1, int(supersample_scale)),
-            projection_mode="orthographic",
-            ortho_scale=pane_ortho_scale,
-        )
-        pane_overlay = draw_scene_overlays(
-            pane_image,
-            camera_geometries=display_camera_geometries,
-            view_config=pane_view,
-            projection_mode="orthographic",
-            ortho_scale=pane_ortho_scale,
-            focus_point=np.zeros((3,), dtype=np.float32),
-            orbit_path_points=display_orbit_path_points,
-            orbit_path_supported=orbit_path_supported,
-            crop_bounds=display_crop_bounds,
-            supported_arc_label=None,
-        )
-        pane_states.append(
-            {
-                "label": pane_label,
-                "image": pane_overlay,
-                "view_config": pane_view,
-                "projection_mode": "orthographic",
-                "ortho_scale": float(pane_ortho_scale),
-            }
-        )
-        renderer_used[pane_label.lower()] = pane_renderer_used
-        pane_images.append(pane_overlay)
-        pane_labels.append(pane_label)
-
-    overview_image = _build_overview_triptych_layout(
-        pane_images,
-        pane_labels=pane_labels,
+    overview_label, overview_view = _make_overview_pane_configs(bounds_min, bounds_max)[0]
+    overview_ortho_scale = estimate_ortho_scale(
+        [display_scene_points, geometry_points],
+        view_config=overview_view,
+    )
+    overview_image_raw, renderer_used = render_point_cloud(
+        display_scene_points,
+        scene_colors,
+        renderer=renderer,
+        view_config=overview_view,
+        render_mode=render_mode,
+        scalar_bounds=scalar_bounds,
+        width=520,
+        height=420,
+        point_radius_px=max(2, int(point_radius_px)),
+        supersample_scale=max(1, int(supersample_scale)),
+        projection_mode="orthographic",
+        ortho_scale=overview_ortho_scale,
+    )
+    overview_image = draw_scene_overlays(
+        overview_image_raw,
+        camera_geometries=display_camera_geometries,
+        view_config=overview_view,
+        projection_mode="orthographic",
+        ortho_scale=overview_ortho_scale,
+        focus_point=np.zeros((3,), dtype=np.float32),
+        orbit_path_points=display_orbit_path_points,
+        orbit_path_supported=orbit_path_supported,
+        crop_bounds=display_crop_bounds,
+        supported_arc_label=supported_arc_label,
     )
     return {
         "image": overview_image,
         "renderer_used": renderer_used,
-        "pane_states": pane_states,
+        "label": overview_label,
+        "view_config": overview_view,
+        "projection_mode": "orthographic",
+        "ortho_scale": float(overview_ortho_scale),
         "display_origin": focus,
         "display_basis_x": basis_x,
         "display_basis_y": basis_y,
@@ -1350,30 +1350,25 @@ def render_overview_inset(
         basis_y=np.asarray(overview_state["display_basis_y"], dtype=np.float32),
         basis_z=np.asarray(overview_state["display_basis_z"], dtype=np.float32),
     )
-    pane_images: list[np.ndarray] = []
-    pane_labels: list[str] = []
-    for pane_idx, pane_state in enumerate(overview_state["pane_states"]):
-        pane_overlay = draw_scene_overlays(
-            pane_state["image"],
-            camera_geometries=[],
-            view_config=pane_state["view_config"],
-            projection_mode=pane_state["projection_mode"],
-            ortho_scale=pane_state["ortho_scale"],
-            focus_point=None,
-            current_views=transformed_views,
-            orbit_path_points=None,
-            orbit_path_supported=None,
-            crop_bounds=None,
-            angle_label=angle_label if pane_idx == 0 else None,
-            supported_arc_label=overview_state["supported_arc_label"] if pane_idx == 0 else None,
-        )
-        pane_images.append(pane_overlay)
-        pane_labels.append(str(pane_state["label"]))
-    overlay = _build_overview_triptych_layout(
-        pane_images,
-        pane_labels=pane_labels,
+    overlay = draw_scene_overlays(
+        overview_state["image"],
+        camera_geometries=[],
+        view_config=overview_state["view_config"],
+        projection_mode=overview_state["projection_mode"],
+        ortho_scale=overview_state["ortho_scale"],
+        focus_point=None,
+        current_views=transformed_views,
+        orbit_path_points=None,
+        orbit_path_supported=None,
+        crop_bounds=None,
+        angle_label=angle_label,
+        supported_arc_label=overview_state["supported_arc_label"],
     )
-    return cv2.resize(overlay, inset_size, interpolation=cv2.INTER_AREA)
+    return _fit_image_to_canvas(
+        overlay,
+        canvas_size=inset_size,
+        background_bgr=(18, 18, 22),
+    )
 
 
 def _overlay_large_panel_label(
