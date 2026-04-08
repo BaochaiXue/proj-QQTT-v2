@@ -824,6 +824,227 @@ def build_render_output_specs(
     return outputs
 
 
+def _build_overview_display_basis(
+    camera_geometries: list[dict[str, Any]],
+    focus_point: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    focus = np.asarray(focus_point, dtype=np.float32)
+    if camera_geometries:
+        camera_positions = np.stack([np.asarray(item["position"], dtype=np.float32) for item in camera_geometries], axis=0)
+        rig_direction = camera_positions.mean(axis=0) - focus
+    else:
+        rig_direction = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    basis_z = _normalize_vector(rig_direction, np.array([0.0, 0.0, 1.0], dtype=np.float32))
+
+    candidate = None
+    if len(camera_geometries) >= 2:
+        camera_positions = np.stack([np.asarray(item["position"], dtype=np.float32) for item in camera_geometries], axis=0)
+        for idx in range(len(camera_positions)):
+            for jdx in range(idx + 1, len(camera_positions)):
+                vector = camera_positions[jdx] - camera_positions[idx]
+                projected = _project_vector_to_plane(vector, basis_z)
+                if float(np.linalg.norm(projected)) > 1e-4:
+                    candidate = projected
+                    break
+            if candidate is not None:
+                break
+    if candidate is None:
+        candidate = _project_vector_to_plane(np.array([1.0, 0.0, 0.0], dtype=np.float32), basis_z)
+        if float(np.linalg.norm(candidate)) <= 1e-6:
+            candidate = _project_vector_to_plane(np.array([0.0, 1.0, 0.0], dtype=np.float32), basis_z)
+    basis_x = _normalize_vector(candidate, np.array([1.0, 0.0, 0.0], dtype=np.float32))
+    basis_y = _normalize_vector(np.cross(basis_z, basis_x), np.array([0.0, 1.0, 0.0], dtype=np.float32))
+    return basis_x, basis_y, basis_z
+
+
+def _transform_points_to_display_frame(
+    points: np.ndarray,
+    *,
+    origin: np.ndarray,
+    basis_x: np.ndarray,
+    basis_y: np.ndarray,
+    basis_z: np.ndarray,
+) -> np.ndarray:
+    cloud = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    if len(cloud) == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    centered = cloud - np.asarray(origin, dtype=np.float32)[None, :]
+    transformed = np.stack(
+        [
+            centered @ np.asarray(basis_x, dtype=np.float32),
+            centered @ np.asarray(basis_y, dtype=np.float32),
+            centered @ np.asarray(basis_z, dtype=np.float32),
+        ],
+        axis=1,
+    ).astype(np.float32)
+    return transformed
+
+
+def _transform_camera_geometries_to_display_frame(
+    camera_geometries: list[dict[str, Any]],
+    *,
+    origin: np.ndarray,
+    basis_x: np.ndarray,
+    basis_y: np.ndarray,
+    basis_z: np.ndarray,
+) -> list[dict[str, Any]]:
+    transformed_geometries: list[dict[str, Any]] = []
+    for geometry in camera_geometries:
+        transformed_segments = []
+        for start, end in geometry["segments"]:
+            transformed_pair = _transform_points_to_display_frame(
+                np.stack([start, end], axis=0),
+                origin=origin,
+                basis_x=basis_x,
+                basis_y=basis_y,
+                basis_z=basis_z,
+            )
+            transformed_segments.append((transformed_pair[0], transformed_pair[1]))
+        transformed_geometry = {
+            **geometry,
+            "position": _transform_points_to_display_frame(
+                np.asarray(geometry["position"], dtype=np.float32).reshape(1, 3),
+                origin=origin,
+                basis_x=basis_x,
+                basis_y=basis_y,
+                basis_z=basis_z,
+            )[0],
+            "forward_tip": _transform_points_to_display_frame(
+                np.asarray(geometry["forward_tip"], dtype=np.float32).reshape(1, 3),
+                origin=origin,
+                basis_x=basis_x,
+                basis_y=basis_y,
+                basis_z=basis_z,
+            )[0],
+            "label_anchor": _transform_points_to_display_frame(
+                np.asarray(geometry["label_anchor"], dtype=np.float32).reshape(1, 3),
+                origin=origin,
+                basis_x=basis_x,
+                basis_y=basis_y,
+                basis_z=basis_z,
+            )[0],
+            "frustum_corners": _transform_points_to_display_frame(
+                np.asarray(geometry["frustum_corners"], dtype=np.float32),
+                origin=origin,
+                basis_x=basis_x,
+                basis_y=basis_y,
+                basis_z=basis_z,
+            ),
+            "segments": transformed_segments,
+        }
+        transformed_geometries.append(transformed_geometry)
+    return transformed_geometries
+
+
+def _transform_views_to_display_frame(
+    current_views: list[dict[str, Any]],
+    *,
+    origin: np.ndarray,
+    basis_x: np.ndarray,
+    basis_y: np.ndarray,
+    basis_z: np.ndarray,
+) -> list[dict[str, Any]]:
+    transformed_views: list[dict[str, Any]] = []
+    for current_view in current_views:
+        transformed = dict(current_view)
+        for key in ("camera_position", "anchor_camera_position", "center", "original_camera_position"):
+            if key in transformed and transformed[key] is not None:
+                transformed[key] = _transform_points_to_display_frame(
+                    np.asarray(transformed[key], dtype=np.float32).reshape(1, 3),
+                    origin=origin,
+                    basis_x=basis_x,
+                    basis_y=basis_y,
+                    basis_z=basis_z,
+                )[0]
+        if "orbit_axis" in transformed and transformed["orbit_axis"] is not None:
+            axis_point = _transform_points_to_display_frame(
+                np.asarray(origin, dtype=np.float32).reshape(1, 3) + np.asarray(transformed["orbit_axis"], dtype=np.float32).reshape(1, 3),
+                origin=origin,
+                basis_x=basis_x,
+                basis_y=basis_y,
+                basis_z=basis_z,
+            )[0]
+            transformed["orbit_axis"] = axis_point
+        transformed_views.append(transformed)
+    return transformed_views
+
+
+def _transform_crop_bounds_to_display_frame(
+    crop_bounds: dict[str, np.ndarray] | None,
+    *,
+    origin: np.ndarray,
+    basis_x: np.ndarray,
+    basis_y: np.ndarray,
+    basis_z: np.ndarray,
+) -> dict[str, np.ndarray] | None:
+    if crop_bounds is None:
+        return None
+    corners = _compute_crop_corners(crop_bounds["min"], crop_bounds["max"])
+    transformed = _transform_points_to_display_frame(
+        corners,
+        origin=origin,
+        basis_x=basis_x,
+        basis_y=basis_y,
+        basis_z=basis_z,
+    )
+    return {
+        "min": transformed.min(axis=0).astype(np.float32),
+        "max": transformed.max(axis=0).astype(np.float32),
+    }
+
+
+def _build_overview_triptych_layout(
+    pane_images: list[np.ndarray],
+    *,
+    pane_labels: list[str],
+) -> np.ndarray:
+    if not pane_images:
+        return np.zeros((1, 1, 3), dtype=np.uint8)
+    pane_h, pane_w = pane_images[0].shape[:2]
+    gap = 12
+    header_h = 34
+    canvas = np.zeros((header_h + pane_h, pane_w * len(pane_images) + gap * (len(pane_images) - 1), 3), dtype=np.uint8)
+    canvas[:] = (18, 18, 22)
+    for pane_idx, (pane_image, pane_label) in enumerate(zip(pane_images, pane_labels, strict=False)):
+        x0 = pane_idx * (pane_w + gap)
+        canvas[header_h:header_h + pane_h, x0:x0 + pane_w] = pane_image
+        cv2.rectangle(canvas, (x0, header_h), (x0 + pane_w - 1, header_h + pane_h - 1), (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(canvas, pane_label, (x0 + 8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (255, 255, 255), 2, cv2.LINE_AA)
+    return canvas
+
+
+def _make_overview_pane_configs(bounds_min: np.ndarray, bounds_max: np.ndarray) -> list[tuple[str, dict[str, Any]]]:
+    center = ((np.asarray(bounds_min, dtype=np.float32) + np.asarray(bounds_max, dtype=np.float32)) * 0.5).astype(np.float32)
+    radius = max(1e-3, float(np.linalg.norm(np.asarray(bounds_max, dtype=np.float32) - np.asarray(bounds_min, dtype=np.float32))))
+    distance = radius * 2.0
+    return [
+        (
+            "Top",
+            {
+                "center": center.copy(),
+                "camera_position": (center + np.array([0.0, 0.0, distance], dtype=np.float32)).astype(np.float32),
+                "up": np.array([0.0, 1.0, 0.0], dtype=np.float32),
+            },
+        ),
+        (
+            "Front",
+            {
+                "center": center.copy(),
+                "camera_position": (center + np.array([0.0, -distance, 0.0], dtype=np.float32)).astype(np.float32),
+                "up": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+            },
+        ),
+        (
+            "Side",
+            {
+                "center": center.copy(),
+                "camera_position": (center + np.array([distance, 0.0, 0.0], dtype=np.float32)).astype(np.float32),
+                "up": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+            },
+        ),
+    ]
+
+
 def draw_scene_overlays(
     image: np.ndarray,
     *,
@@ -1014,56 +1235,104 @@ def build_scene_overview_state(
     crop_bounds: dict[str, np.ndarray] | None = None,
     supported_arc_label: str | None = None,
 ) -> dict[str, Any]:
-    geometry_points = collect_camera_geometry_points(camera_geometries)
-    bounds_min, bounds_max = _compute_bounds([scene_points, geometry_points, np.asarray(focus_point, dtype=np.float32).reshape(1, 3)])
-    overview_view = compute_view_config(bounds_min, bounds_max, view_name="oblique")
     focus = np.asarray(focus_point, dtype=np.float32)
-    direction = _normalize_vector(
-        np.asarray(overview_view["camera_position"], dtype=np.float32) - np.asarray(overview_view["center"], dtype=np.float32),
-        np.array([1.0, 1.0, 1.0], dtype=np.float32),
-    )
-    overview_radius = max(float(np.linalg.norm(bounds_max - bounds_min)) * 1.1, float(np.linalg.norm(overview_view["camera_position"] - overview_view["center"])))
-    overview_view["center"] = focus
-    overview_view["camera_position"] = (focus + direction * overview_radius).astype(np.float32)
-    overview_projection_mode = "orthographic"
-    overview_ortho_scale = estimate_ortho_scale(
-        [scene_points, geometry_points],
-        view_config=overview_view,
-    )
-    overview_width = 1280
-    overview_height = 960
-    base_image, renderer_used = render_point_cloud(
+    basis_x, basis_y, basis_z = _build_overview_display_basis(camera_geometries, focus)
+    display_scene_points = _transform_points_to_display_frame(
         scene_points,
-        scene_colors,
-        renderer=renderer,
-        view_config=overview_view,
-        render_mode=render_mode,
-        scalar_bounds=scalar_bounds,
-        width=overview_width,
-        height=overview_height,
-        point_radius_px=max(2, int(point_radius_px)),
-        supersample_scale=max(1, int(supersample_scale)),
-        projection_mode=overview_projection_mode,
-        ortho_scale=overview_ortho_scale,
+        origin=focus,
+        basis_x=basis_x,
+        basis_y=basis_y,
+        basis_z=basis_z,
     )
-    base_overlay = draw_scene_overlays(
-        base_image,
-        camera_geometries=camera_geometries,
-        view_config=overview_view,
-        projection_mode=overview_projection_mode,
-        ortho_scale=overview_ortho_scale,
-        focus_point=focus,
-        orbit_path_points=orbit_path_points,
-        orbit_path_supported=orbit_path_supported,
-        crop_bounds=crop_bounds,
-        supported_arc_label=supported_arc_label,
+    display_camera_geometries = _transform_camera_geometries_to_display_frame(
+        camera_geometries,
+        origin=focus,
+        basis_x=basis_x,
+        basis_y=basis_y,
+        basis_z=basis_z,
+    )
+    display_orbit_path_points = None
+    if orbit_path_points is not None:
+        display_orbit_path_points = _transform_points_to_display_frame(
+            orbit_path_points,
+            origin=focus,
+            basis_x=basis_x,
+            basis_y=basis_y,
+            basis_z=basis_z,
+        )
+    display_crop_bounds = _transform_crop_bounds_to_display_frame(
+        crop_bounds,
+        origin=focus,
+        basis_x=basis_x,
+        basis_y=basis_y,
+        basis_z=basis_z,
+    )
+    geometry_points = collect_camera_geometry_points(display_camera_geometries)
+    bounds_min, bounds_max = _compute_bounds(
+        [display_scene_points, geometry_points, np.zeros((1, 3), dtype=np.float32)],
+        fallback_center=np.zeros((3,), dtype=np.float32),
+    )
+    pane_states: list[dict[str, Any]] = []
+    renderer_used: dict[str, str] = {}
+    pane_images: list[np.ndarray] = []
+    pane_labels: list[str] = []
+    for pane_label, pane_view in _make_overview_pane_configs(bounds_min, bounds_max):
+        pane_ortho_scale = estimate_ortho_scale(
+            [display_scene_points, geometry_points],
+            view_config=pane_view,
+        )
+        pane_image, pane_renderer_used = render_point_cloud(
+            display_scene_points,
+            scene_colors,
+            renderer=renderer,
+            view_config=pane_view,
+            render_mode=render_mode,
+            scalar_bounds=scalar_bounds,
+            width=420,
+            height=300,
+            point_radius_px=max(2, int(point_radius_px)),
+            supersample_scale=max(1, int(supersample_scale)),
+            projection_mode="orthographic",
+            ortho_scale=pane_ortho_scale,
+        )
+        pane_overlay = draw_scene_overlays(
+            pane_image,
+            camera_geometries=display_camera_geometries,
+            view_config=pane_view,
+            projection_mode="orthographic",
+            ortho_scale=pane_ortho_scale,
+            focus_point=np.zeros((3,), dtype=np.float32),
+            orbit_path_points=display_orbit_path_points,
+            orbit_path_supported=orbit_path_supported,
+            crop_bounds=display_crop_bounds,
+            supported_arc_label=None,
+        )
+        pane_states.append(
+            {
+                "label": pane_label,
+                "image": pane_overlay,
+                "view_config": pane_view,
+                "projection_mode": "orthographic",
+                "ortho_scale": float(pane_ortho_scale),
+            }
+        )
+        renderer_used[pane_label.lower()] = pane_renderer_used
+        pane_images.append(pane_overlay)
+        pane_labels.append(pane_label)
+
+    overview_image = _build_overview_triptych_layout(
+        pane_images,
+        pane_labels=pane_labels,
     )
     return {
-        "image": base_overlay,
+        "image": overview_image,
         "renderer_used": renderer_used,
-        "view_config": overview_view,
-        "projection_mode": overview_projection_mode,
-        "ortho_scale": float(overview_ortho_scale),
+        "pane_states": pane_states,
+        "display_origin": focus,
+        "display_basis_x": basis_x,
+        "display_basis_y": basis_y,
+        "display_basis_z": basis_z,
+        "supported_arc_label": supported_arc_label,
     }
 
 
@@ -1074,19 +1343,35 @@ def render_overview_inset(
     inset_size: tuple[int, int] = (560, 320),
     angle_label: str | None = None,
 ) -> np.ndarray:
-    overlay = draw_scene_overlays(
-        overview_state["image"],
-        camera_geometries=[],
-        view_config=overview_state["view_config"],
-        projection_mode=overview_state["projection_mode"],
-        ortho_scale=overview_state["ortho_scale"],
-        focus_point=None,
-        current_views=current_views,
-        orbit_path_points=None,
-        orbit_path_supported=None,
-        crop_bounds=None,
-        angle_label=angle_label,
-        supported_arc_label=None,
+    transformed_views = _transform_views_to_display_frame(
+        current_views,
+        origin=np.asarray(overview_state["display_origin"], dtype=np.float32),
+        basis_x=np.asarray(overview_state["display_basis_x"], dtype=np.float32),
+        basis_y=np.asarray(overview_state["display_basis_y"], dtype=np.float32),
+        basis_z=np.asarray(overview_state["display_basis_z"], dtype=np.float32),
+    )
+    pane_images: list[np.ndarray] = []
+    pane_labels: list[str] = []
+    for pane_idx, pane_state in enumerate(overview_state["pane_states"]):
+        pane_overlay = draw_scene_overlays(
+            pane_state["image"],
+            camera_geometries=[],
+            view_config=pane_state["view_config"],
+            projection_mode=pane_state["projection_mode"],
+            ortho_scale=pane_state["ortho_scale"],
+            focus_point=None,
+            current_views=transformed_views,
+            orbit_path_points=None,
+            orbit_path_supported=None,
+            crop_bounds=None,
+            angle_label=angle_label if pane_idx == 0 else None,
+            supported_arc_label=overview_state["supported_arc_label"] if pane_idx == 0 else None,
+        )
+        pane_images.append(pane_overlay)
+        pane_labels.append(str(pane_state["label"]))
+    overlay = _build_overview_triptych_layout(
+        pane_images,
+        pane_labels=pane_labels,
     )
     return cv2.resize(overlay, inset_size, interpolation=cv2.INTER_AREA)
 
