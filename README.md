@@ -225,8 +225,11 @@ This is now the primary fused-cloud diagnostic for professor-facing review. It:
   - `frames_rgb/*.png`
   - `frames_support/*.png`
   - `orbit_compare_geom.mp4`
+  - `orbit_compare_geom.gif`
   - `orbit_compare_rgb.mp4`
+  - `orbit_compare_rgb.gif`
   - `orbit_compare_support.mp4`
+  - `orbit_compare_support.gif`
   - `turntable_keyframes_geom.png`
   - `turntable_keyframes_rgb.png`
   - `turntable_keyframes_support.png`

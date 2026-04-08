@@ -25,6 +25,7 @@ from .pointcloud_compare import (
     project_world_points_to_image,
     render_point_cloud,
     resolve_case_dirs,
+    write_gif as write_gif_animation,
     write_video,
 )
 from .support_compare import compute_support_count_map, overlay_support_legend, render_support_count_map, summarize_support_counts
@@ -794,6 +795,7 @@ def build_render_output_specs(
             "name": "geom",
             "render_mode": str(geom_render_mode),
             "video_name": "orbit_compare_geom.mp4",
+            "gif_name": "orbit_compare_geom.gif",
             "sheet_name": "turntable_keyframes_geom.png",
             "frames_dir_name": "frames_geom",
         }
@@ -804,6 +806,7 @@ def build_render_output_specs(
                 "name": "rgb",
                 "render_mode": "color_by_rgb",
                 "video_name": "orbit_compare_rgb.mp4",
+                "gif_name": "orbit_compare_rgb.gif",
                 "sheet_name": "turntable_keyframes_rgb.png",
                 "frames_dir_name": "frames_rgb",
             }
@@ -813,6 +816,7 @@ def build_render_output_specs(
             "name": "support",
             "render_mode": "support_count",
             "video_name": "orbit_compare_support.mp4",
+            "gif_name": "orbit_compare_support.gif",
             "sheet_name": "turntable_keyframes_support.png",
             "frames_dir_name": "frames_support",
         }
@@ -1549,6 +1553,7 @@ def run_turntable_compare_workflow(
     renderer: str = "auto",
     render_mode: str = "neutral_gray_shaded",
     write_mp4: bool = True,
+    write_gif: bool = True,
     write_keyframe_sheet: bool = True,
     num_orbit_steps: int = 72,
     orbit_degrees: float = 360.0,
@@ -1890,15 +1895,19 @@ def run_turntable_compare_workflow(
     for output_spec in output_specs:
         mode_name = output_spec["name"]
         video_path = output_dir / output_spec["video_name"]
+        gif_path = output_dir / output_spec["gif_name"]
         sheet_path = output_dir / output_spec["sheet_name"]
         if write_mp4:
             write_video(video_path, frame_paths_by_output[mode_name], fps)
+        if write_gif:
+            write_gif_animation(gif_path, frame_paths_by_output[mode_name], fps)
         if write_keyframe_sheet and board_images_by_output[mode_name]:
             sheet = compose_keyframe_sheet(board_images_by_output[mode_name])
             cv2.imwrite(str(sheet_path), sheet)
         output_files[mode_name] = {
             "frames_dir": str(frames_dir_by_output[mode_name]),
             "video_path": str(video_path) if write_mp4 else None,
+            "gif_path": str(gif_path) if write_gif else None,
             "sheet_path": str(sheet_path) if write_keyframe_sheet else None,
         }
     support_metrics_path = output_dir / "support_metrics.json"

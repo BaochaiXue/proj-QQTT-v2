@@ -163,8 +163,11 @@ The turntable workflow:
 - produces:
   - `scene_overview_with_cameras.png`
   - `orbit_compare_geom.mp4`
+  - `orbit_compare_geom.gif`
   - `orbit_compare_rgb.mp4`
+  - `orbit_compare_rgb.gif`
   - `orbit_compare_support.mp4`
+  - `orbit_compare_support.gif`
   - `turntable_keyframes_geom.png`
   - `turntable_keyframes_rgb.png`
   - `turntable_keyframes_support.png`

@@ -28,12 +28,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--write_mp4", dest="write_mp4", action="store_true")
     parser.add_argument("--no_write_mp4", dest="write_mp4", action="store_false")
+    parser.add_argument("--write_gif", dest="write_gif", action="store_true")
+    parser.add_argument("--no_write_gif", dest="write_gif", action="store_false")
     parser.add_argument("--write_keyframe_sheet", dest="write_keyframe_sheet", action="store_true")
     parser.add_argument("--no_write_keyframe_sheet", dest="write_keyframe_sheet", action="store_false")
     parser.add_argument("--render_both_modes", dest="render_both_modes", action="store_true")
     parser.add_argument("--no_render_both_modes", dest="render_both_modes", action="store_false")
     parser.set_defaults(
         write_mp4=True,
+        write_gif=True,
         write_keyframe_sheet=True,
         use_float_ffs_depth_when_available=True,
         render_both_modes=True,
@@ -98,6 +101,7 @@ def main() -> int:
         renderer=args.renderer,
         render_mode=args.render_mode,
         write_mp4=args.write_mp4,
+        write_gif=args.write_gif,
         write_keyframe_sheet=args.write_keyframe_sheet,
         num_orbit_steps=args.num_orbit_steps,
         orbit_degrees=args.orbit_degrees,
