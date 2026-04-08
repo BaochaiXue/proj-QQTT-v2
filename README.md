@@ -175,7 +175,7 @@ python scripts/harness/visual_compare_reprojection.py --aligned_root ./data --re
 
 This is the main multi-view consistency diagnostic. It warps source RGB into the target view using native depth and FFS depth separately, then compares each warp against the target RGB with residual heatmaps and summary metrics.
 
-3. Single-frame object-centered orbit compare:
+3. Single-frame object-centric coverage-aware orbit compare:
 
 Same-case comparison, when an aligned case contains both native depth and FFS depth:
 
@@ -186,7 +186,7 @@ python scripts/harness/visual_compare_turntable.py --case_name my_case --aligned
 Fallback two-case comparison:
 
 ```bash
-python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --render_mode neutral_gray_shaded --scene_crop_mode auto_table_bbox
+python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --scene_crop_mode auto_object_bbox
 ```
 
 This is now the primary fused-cloud diagnostic for professor-facing review. It:
@@ -194,22 +194,35 @@ This is now the primary fused-cloud diagnostic for professor-facing review. It:
 - loads one selected aligned frame instead of a temporal frame range
 - fuses one native point cloud and one FFS point cloud
 - visualizes the 3 real camera poses from `calibrate.pkl`
-- orbits 360 degrees around the cropped tabletop / object ROI
+- computes an object ROI rather than only a tabletop crop
+- defaults to `observed_hemisphere` instead of naive full-360
+- limits the default orbit to the supported viewing arc inferred from the real camera layout
 - renders one large left-right comparison:
   - left = Native
   - right = FFS
 - uses the exact same orbit path for both renders
-- automatically writes both:
+- automatically writes all three:
   - geometry diagnostic outputs
   - RGB-colored reference outputs
+  - support-count outputs
 - writes:
   - `scene_overview_with_cameras.png`
   - `frames_geom/*.png`
   - `frames_rgb/*.png`
+  - `frames_support/*.png`
   - `orbit_compare_geom.mp4`
   - `orbit_compare_rgb.mp4`
+  - `orbit_compare_support.mp4`
   - `turntable_keyframes_geom.png`
   - `turntable_keyframes_rgb.png`
+  - `turntable_keyframes_support.png`
+  - `support_metrics.json`
+
+`full_360` remains available as a presentation mode, but unsupported backside views are labeled instead of being treated as equally trustworthy:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --case_name my_case --orbit_mode full_360 --show_unsupported_warning
+```
 
 The older 2x3 near-camera turntable board remains available only as a secondary advanced mode via:
 
@@ -317,16 +330,21 @@ data/<case_name>/
       grid_2x3.mp4
     metrics.json
     comparison_metadata.json
-  turntable_frame_<idx>/ # optional single-frame object-centered orbit compare
+  turntable_frame_<idx>/ # optional single-frame object-centric coverage-aware compare
     scene_overview_with_cameras.png
     orbit_compare_geom.mp4
     orbit_compare_rgb.mp4
+    orbit_compare_support.mp4
     turntable_keyframes_geom.png
     turntable_keyframes_rgb.png
+    turntable_keyframes_support.png
+    support_metrics.json
     turntable_metadata.json
     frames_geom/
       000_angle_*.png
     frames_rgb/
+      000_angle_*.png
+    frames_support/
       000_angle_*.png
   depth_panels/         # optional per-camera diagnostic panels
     camera_0/frames/

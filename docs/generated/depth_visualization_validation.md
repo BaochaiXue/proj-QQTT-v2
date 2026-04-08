@@ -35,10 +35,10 @@ python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zha
 python scripts/harness/visual_compare_depth_video.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --output_dir C:\Users\zhang\proj-QQTT\data\comparison_native_30_static_vs_ffs_30_static_grid --renderer fallback --preset tabletop_compare_2x3 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
-Single-frame object-centered side-by-side orbit comparison:
+Single-frame object-centric coverage-aware side-by-side orbit comparison:
 
 ```bash
-python scripts/harness/visual_compare_turntable.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000 --renderer fallback --num_orbit_steps 24 --orbit_degrees 360 --projection_mode perspective --scene_crop_mode auto_table_bbox --fps 12
+python scripts/harness/visual_compare_turntable.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000 --renderer fallback --scene_crop_mode auto_object_bbox --orbit_mode observed_hemisphere --num_orbit_steps 24 --projection_mode perspective --fps 12
 ```
 
 ## Outputs Produced
@@ -77,16 +77,20 @@ Fused cloud comparison:
 - `data/comparison_native_30_static_vs_ffs_30_static_grid/view_cam1/...`
 - `data/comparison_native_30_static_vs_ffs_30_static_grid/view_cam2/...`
 
-Single-frame object-centered side-by-side orbit comparison:
+Single-frame object-centric coverage-aware side-by-side orbit comparison:
 
-- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/scene_overview_with_cameras.png`
-- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/frames_geom/*.png`
-- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/frames_rgb/*.png`
-- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/orbit_compare_geom.mp4`
-- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/orbit_compare_rgb.mp4`
-- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/turntable_keyframes_geom.png`
-- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/turntable_keyframes_rgb.png`
-- `data/turntable_side_by_side_native_30_static_vs_ffs_30_static_frame_0000/turntable_metadata.json`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/scene_overview_with_cameras.png`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/frames_geom/*.png`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/frames_rgb/*.png`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/frames_support/*.png`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/orbit_compare_geom.mp4`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/orbit_compare_rgb.mp4`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/orbit_compare_support.mp4`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/turntable_keyframes_geom.png`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/turntable_keyframes_rgb.png`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/turntable_keyframes_support.png`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/support_metrics.json`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/turntable_metadata.json`
 
 ## What Was Validated
 
@@ -105,18 +109,21 @@ Single-frame object-centered side-by-side orbit comparison:
 - The new turntable workflow now supports:
   - a single selected frame as the primary comparison unit
   - explicit camera-frusta visualization from real `calibrate.pkl` `c2w`
-  - a full object-centered 360 orbit informed by the real camera layout
+  - object-centric ROI extraction above the tabletop plane
+  - a coverage-aware orbit informed by the real camera layout
   - synchronized Native vs FFS large side-by-side panels using the exact same orbit path
-  - automatic dual outputs:
+  - automatic triple outputs:
     - geometry diagnostic video + keyframe sheet
     - RGB reference video + keyframe sheet
+    - support-count video + keyframe sheet
 
 ## Why This Workflow Is Easier To Read
 
 - Tabletop crop prevents the full room bounds from dominating the frame.
 - The new default gives each depth source a much larger panel than the prior 2x3 board.
-- The geometry video and RGB reference video are generated together, so the same orbit path can be judged in both modes without rerunning the workflow.
-- The larger overview makes the real camera locations and the current orbit position much easier to interpret.
+- The default no longer pretends that unsupported backside views are equally trustworthy.
+- The geometry, RGB, and support videos are generated together, so the same orbit path can be judged in all three modes without rerunning the workflow.
+- The larger overview makes the real camera locations, supported arc, and current orbit position much easier to interpret.
 - `neutral_gray_shaded` plus larger splats and supersampling is now the default geometry view because it emphasizes tabletop flatness more clearly than sparse white points.
 
 ## Known Limitations

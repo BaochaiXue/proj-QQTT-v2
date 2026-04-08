@@ -119,7 +119,7 @@ Use this to judge:
 - which source depth produces lower reprojection residuals in the target camera
 - whether failures are localized to one camera pair or happen everywhere
 
-Finally use the single-frame object-centered orbit compare for professor-facing fused geometry review:
+Finally use the single-frame object-centric coverage-aware orbit compare for professor-facing fused geometry review:
 
 Same-case comparison when an aligned case contains both native and FFS depth:
 
@@ -130,28 +130,38 @@ python scripts/harness/visual_compare_turntable.py --case_name my_case --aligned
 Fallback two-case comparison when `both_eval` is not supported:
 
 ```bash
-python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --render_mode neutral_gray_shaded --scene_crop_mode auto_table_bbox
+python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --scene_crop_mode auto_object_bbox
 ```
 
 The turntable workflow:
 
 - selects one aligned frame
 - reuses the fused native and fused FFS cloud loader
-- computes a world-space tabletop ROI before orbit generation
+- computes an object ROI from the cropped tabletop scene before orbit generation
 - visualizes the 3 real camera frusta from `calibrate.pkl`
-- defaults to a full 360-degree object-centered orbit
+- defaults to `observed_hemisphere` instead of naive full-360
+- infers the supported viewing arc from the real camera azimuth layout
 - renders a large side-by-side compare:
   - left = Native
   - right = FFS
 - uses the exact same orbit path for Native and FFS
-- automatically writes both geometry and RGB products in one run
+- automatically writes geometry, RGB, and support-count products in one run
 - produces:
   - `scene_overview_with_cameras.png`
   - `orbit_compare_geom.mp4`
   - `orbit_compare_rgb.mp4`
+  - `orbit_compare_support.mp4`
   - `turntable_keyframes_geom.png`
   - `turntable_keyframes_rgb.png`
-  - per-angle `frames_geom/*.png` and `frames_rgb/*.png`
+  - `turntable_keyframes_support.png`
+  - `support_metrics.json`
+  - per-angle `frames_geom/*.png`, `frames_rgb/*.png`, and `frames_support/*.png`
+
+Use `full_360` only when you explicitly want the unsupported backside visualization to appear, with warnings:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --case_name my_case --orbit_mode full_360 --show_unsupported_warning
+```
 
 The old 2x3 near-camera board remains available only as a secondary mode:
 

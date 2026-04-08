@@ -21,7 +21,7 @@ VIEW_NAMES = ("oblique", "top", "side")
 VIEW_MODES = ("fixed", "camera_poses_table_focus")
 FOCUS_MODES = ("none", "table")
 LAYOUT_MODES = ("pair", "grid_2x3")
-SCENE_CROP_MODES = ("none", "auto_table_bbox", "manual_xyz_roi")
+SCENE_CROP_MODES = ("none", "auto_table_bbox", "auto_object_bbox", "manual_xyz_roi")
 PROJECTION_MODES = ("perspective", "orthographic")
 IMAGE_FLIP_MODES = ("none", "vertical", "horizontal", "both")
 
@@ -187,18 +187,17 @@ def choose_depth_stream(case_dir: Path, metadata: dict[str, Any], source: str, u
     return "depth", False
 
 
-def load_case_frame_cloud(
+def load_case_frame_camera_clouds(
     *,
     case_dir: Path,
     metadata: dict[str, Any],
     frame_idx: int,
     depth_source: str,
     use_float_ffs_depth_when_available: bool,
-    voxel_size: float | None,
     max_points_per_camera: int | None,
     depth_min_m: float,
     depth_max_m: float,
-) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     serials = metadata["serial_numbers"]
     intrinsics = get_case_intrinsics(metadata)
     depth_scales = get_depth_scale_list(metadata, len(serials))
@@ -210,8 +209,7 @@ def load_case_frame_cloud(
     )
     depth_dir_name, use_float = choose_depth_stream(case_dir, metadata, depth_source, use_float_ffs_depth_when_available)
 
-    fused_points = []
-    fused_colors = []
+    per_camera_clouds: list[dict[str, Any]] = []
     per_camera_stats = []
     for camera_idx, serial in enumerate(serials):
         color_path = case_dir / "color" / str(camera_idx) / f"{frame_idx}.png"
@@ -232,8 +230,16 @@ def load_case_frame_cloud(
             max_points_per_camera=max_points_per_camera,
         )
         world_points = transform_points(camera_points, c2w_list[camera_idx])
-        fused_points.append(world_points)
-        fused_colors.append(camera_colors)
+        per_camera_clouds.append(
+            {
+                "camera_idx": int(camera_idx),
+                "serial": serial,
+                "depth_dir_used": depth_dir_name,
+                "used_float_depth": bool(use_float),
+                "points": world_points,
+                "colors": camera_colors,
+            }
+        )
         per_camera_stats.append(
             {
                 "camera_idx": camera_idx,
@@ -243,6 +249,33 @@ def load_case_frame_cloud(
                 **stats,
             }
         )
+    return per_camera_clouds, {"per_camera": per_camera_stats}
+
+
+def load_case_frame_cloud(
+    *,
+    case_dir: Path,
+    metadata: dict[str, Any],
+    frame_idx: int,
+    depth_source: str,
+    use_float_ffs_depth_when_available: bool,
+    voxel_size: float | None,
+    max_points_per_camera: int | None,
+    depth_min_m: float,
+    depth_max_m: float,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    per_camera_clouds, camera_stats = load_case_frame_camera_clouds(
+        case_dir=case_dir,
+        metadata=metadata,
+        frame_idx=frame_idx,
+        depth_source=depth_source,
+        use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+        max_points_per_camera=max_points_per_camera,
+        depth_min_m=depth_min_m,
+        depth_max_m=depth_max_m,
+    )
+    fused_points = [item["points"] for item in per_camera_clouds]
+    fused_colors = [item["colors"] for item in per_camera_clouds]
 
     if fused_points:
         points = np.concatenate(fused_points, axis=0) if len(fused_points) > 1 else fused_points[0]
@@ -252,10 +285,48 @@ def load_case_frame_cloud(
         colors = np.empty((0, 3), dtype=np.uint8)
     points, colors = voxel_downsample(points, colors, voxel_size)
     stats = {
-        "per_camera": per_camera_stats,
+        "per_camera": camera_stats["per_camera"],
         "fused_point_count": int(len(points)),
     }
     return points, colors, stats
+
+
+def load_case_frame_cloud_with_sources(
+    *,
+    case_dir: Path,
+    metadata: dict[str, Any],
+    frame_idx: int,
+    depth_source: str,
+    use_float_ffs_depth_when_available: bool,
+    voxel_size: float | None,
+    max_points_per_camera: int | None,
+    depth_min_m: float,
+    depth_max_m: float,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any], list[dict[str, Any]]]:
+    per_camera_clouds, camera_stats = load_case_frame_camera_clouds(
+        case_dir=case_dir,
+        metadata=metadata,
+        frame_idx=frame_idx,
+        depth_source=depth_source,
+        use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+        max_points_per_camera=max_points_per_camera,
+        depth_min_m=depth_min_m,
+        depth_max_m=depth_max_m,
+    )
+    fused_points = [item["points"] for item in per_camera_clouds]
+    fused_colors = [item["colors"] for item in per_camera_clouds]
+    if fused_points:
+        points = np.concatenate(fused_points, axis=0) if len(fused_points) > 1 else fused_points[0]
+        colors = np.concatenate(fused_colors, axis=0) if len(fused_colors) > 1 else fused_colors[0]
+    else:
+        points = np.empty((0, 3), dtype=np.float32)
+        colors = np.empty((0, 3), dtype=np.uint8)
+    points, colors = voxel_downsample(points, colors, voxel_size)
+    stats = {
+        "per_camera": camera_stats["per_camera"],
+        "fused_point_count": int(len(points)),
+    }
+    return points, colors, stats, per_camera_clouds
 
 
 def compute_view_config(bounds_min: np.ndarray, bounds_max: np.ndarray, view_name: str = "oblique") -> dict[str, Any]:
@@ -336,6 +407,10 @@ def compute_scene_crop_bounds(
     crop_min_z: float,
     crop_max_z: float,
     manual_xyz_roi: dict[str, float] | None = None,
+    object_height_min: float = 0.02,
+    object_height_max: float = 0.30,
+    object_component_mode: str = "largest",
+    object_component_topk: int = 2,
 ) -> dict[str, np.ndarray]:
     points = [np.asarray(item, dtype=np.float32) for item in point_sets if len(item) > 0]
     if not points:
@@ -367,6 +442,36 @@ def compute_scene_crop_bounds(
         if np.any(crop_min >= crop_max):
             raise ValueError(f"Invalid manual_xyz_roi bounds: {manual_xyz_roi}")
         return {"mode": scene_crop_mode, "min": crop_min, "max": crop_max}
+
+    if scene_crop_mode == "auto_object_bbox":
+        from .object_roi import estimate_object_roi_bounds
+
+        table_bounds = compute_scene_crop_bounds(
+            point_sets,
+            focus_point=focus_point,
+            scene_crop_mode="auto_table_bbox",
+            crop_margin_xy=crop_margin_xy,
+            crop_min_z=crop_min_z,
+            crop_max_z=crop_max_z,
+            manual_xyz_roi=None,
+        )
+        table_valid = (
+            np.all(stacked >= table_bounds["min"][None, :], axis=1)
+            & np.all(stacked <= table_bounds["max"][None, :], axis=1)
+        )
+        table_points = stacked[table_valid]
+        object_roi = estimate_object_roi_bounds(
+            table_points if len(table_points) > 0 else stacked,
+            fallback_bounds=table_bounds,
+            full_bounds={"min": full_min.astype(np.float32), "max": full_max.astype(np.float32)},
+            object_height_min=float(object_height_min),
+            object_height_max=float(object_height_max),
+            object_component_mode=object_component_mode,
+            object_component_topk=int(object_component_topk),
+            roi_margin_xy=max(0.02, float(crop_margin_xy) * 0.45),
+            roi_margin_z=max(0.015, abs(float(crop_max_z) - float(crop_min_z)) * 0.08),
+        )
+        return object_roi
 
     if scene_crop_mode != "auto_table_bbox":
         raise ValueError(f"Unsupported scene_crop_mode: {scene_crop_mode}")
@@ -727,6 +832,27 @@ def _rasterize_view(
     canvas["world_z"][v, u] = world_points[:, 2]
     canvas["valid"][v, u] = True
     return canvas
+
+
+def rasterize_point_cloud_view(
+    points: np.ndarray,
+    colors: np.ndarray,
+    *,
+    view_config: dict[str, Any],
+    width: int,
+    height: int,
+    projection_mode: str,
+    ortho_scale: float | None,
+) -> dict[str, np.ndarray]:
+    return _rasterize_view(
+        points,
+        colors,
+        view_config=view_config,
+        width=width,
+        height=height,
+        projection_mode=projection_mode,
+        ortho_scale=ortho_scale,
+    )
 
 
 def _colorize_scalar_map(

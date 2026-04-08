@@ -95,6 +95,9 @@ class TurntableBoardLayoutSmokeTest(unittest.TestCase):
             orbit_degrees=360.0,
             orbit_radius_scale=1.8,
             view_height_offset=0.0,
+            orbit_mode="full_360",
+            coverage_margin_deg=12.0,
+            show_unsupported_warning=True,
         )
         side = compose_side_by_side_large(
             title_lines=["demo case", "frame=0"],

@@ -32,9 +32,11 @@ The repo is intentionally small.
 - `data_process/visualization/calibration_io.py`
 - `data_process/visualization/camera_frusta.py`
 - `data_process/visualization/depth_diagnostics.py`
+- `data_process/visualization/object_roi.py`
 - `data_process/visualization/panel_compare.py`
 - `data_process/visualization/pointcloud_compare.py`
 - `data_process/visualization/reprojection_compare.py`
+- `data_process/visualization/support_compare.py`
 - `data_process/visualization/turntable_compare.py`
 - `scripts/harness/visual_compare_depth_panels.py`
 - `scripts/harness/visual_compare_reprojection.py`
@@ -76,10 +78,10 @@ The visualization layer intentionally uses three different diagnostics built on 
 The fused point-cloud visualization is now split into two user-facing workflows:
 
 - `visual_compare_turntable.py`
-  - primary single-frame object-centered orbit compare
+  - primary single-frame object-centric coverage-aware compare
   - explicit camera-frusta visualization from real `c2w`
   - large side-by-side Native vs FFS panels
-  - automatic geometry + RGB videos and keyframe sheets
+  - automatic geometry + RGB + support videos and keyframe sheets
   - old 2x3 near-camera board retained only as a secondary mode
 - `visual_compare_depth_video.py`
   - older temporal fused compare over a frame range
@@ -100,10 +102,11 @@ The fused renderer also supports two layout modes:
 - single-frame case selection
 - world-space ROI cropping before orbit computation
 - camera-frustum geometry extraction
-- object-centered 360 orbit planning informed by the real camera layout
+- object-centric ROI extraction from the tabletop scene
+- coverage-aware orbit planning informed by the real camera layout
 - large side-by-side compare composition
-- automatic dual-output planning for geometry and RGB products
-- larger overview rendering with orbit path and crop visualization
+- automatic geom/rgb/support output planning
+- larger overview rendering with orbit path, supported arc, and crop visualization
 
 `calibrate.pkl` support is intentionally narrow and matches the current producer:
 

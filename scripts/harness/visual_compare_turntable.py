@@ -37,16 +37,21 @@ def parse_args() -> argparse.Namespace:
         write_keyframe_sheet=True,
         use_float_ffs_depth_when_available=True,
         render_both_modes=True,
+        show_unsupported_warning=True,
     )
     parser.add_argument("--layout_mode", choices=("side_by_side_large", "camera_neighborhood_grid"), default="side_by_side_large")
-    parser.add_argument("--orbit_mode", choices=("object_centered_360", "camera_neighborhood"), default="object_centered_360")
+    parser.add_argument("--orbit_mode", choices=("observed_hemisphere", "full_360", "camera_neighborhood"), default="observed_hemisphere")
     parser.add_argument("--num_orbit_steps", type=int, default=72)
     parser.add_argument("--orbit_degrees", type=float, default=360.0)
     parser.add_argument("--camera_ids", nargs="+", type=int, default=[0, 1, 2])
-    parser.add_argument("--scene_crop_mode", choices=("none", "auto_table_bbox", "manual_xyz_roi"), default="auto_table_bbox")
+    parser.add_argument("--scene_crop_mode", choices=("none", "auto_table_bbox", "auto_object_bbox", "manual_xyz_roi"), default="auto_object_bbox")
     parser.add_argument("--crop_margin_xy", type=float, default=0.12)
     parser.add_argument("--crop_min_z", type=float, default=-0.15)
     parser.add_argument("--crop_max_z", type=float, default=0.35)
+    parser.add_argument("--object_height_min", type=float, default=0.02)
+    parser.add_argument("--object_height_max", type=float, default=0.30)
+    parser.add_argument("--object_component_mode", choices=("largest", "topk"), default="largest")
+    parser.add_argument("--object_component_topk", type=int, default=2)
     parser.add_argument("--roi_x_min", type=float, default=None)
     parser.add_argument("--roi_x_max", type=float, default=None)
     parser.add_argument("--roi_y_min", type=float, default=None)
@@ -56,6 +61,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--projection_mode", choices=("perspective", "orthographic"), default="perspective")
     parser.add_argument("--orbit_radius_scale", type=float, default=1.9)
     parser.add_argument("--view_height_offset", type=float, default=0.0)
+    parser.add_argument("--coverage_margin_deg", type=float, default=18.0)
+    parser.add_argument("--show_unsupported_warning", dest="show_unsupported_warning", action="store_true")
+    parser.add_argument("--no_show_unsupported_warning", dest="show_unsupported_warning", action="store_false")
     parser.add_argument("--point_radius_px", type=int, default=4)
     parser.add_argument("--supersample_scale", type=int, default=3)
     parser.add_argument("--voxel_size", type=float, default=None)
@@ -97,6 +105,10 @@ def main() -> int:
         crop_margin_xy=args.crop_margin_xy,
         crop_min_z=args.crop_min_z,
         crop_max_z=args.crop_max_z,
+        object_height_min=args.object_height_min,
+        object_height_max=args.object_height_max,
+        object_component_mode=args.object_component_mode,
+        object_component_topk=args.object_component_topk,
         roi_x_min=args.roi_x_min,
         roi_x_max=args.roi_x_max,
         roi_y_min=args.roi_y_min,
@@ -117,6 +129,8 @@ def main() -> int:
         orbit_radius_scale=args.orbit_radius_scale,
         view_height_offset=args.view_height_offset,
         render_both_modes=args.render_both_modes,
+        coverage_margin_deg=args.coverage_margin_deg,
+        show_unsupported_warning=args.show_unsupported_warning,
     )
     print(f"Turntable outputs written to {result['output_dir']}")
     return 0
