@@ -6,6 +6,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from .calibration_io import load_calibration_transforms
 
@@ -1161,6 +1162,28 @@ def write_video(video_path: Path, frame_paths: list[Path], fps: int) -> None:
             continue
         writer.write(image)
     writer.release()
+
+
+def write_gif(gif_path: Path, frame_paths: list[Path], fps: int) -> None:
+    if not frame_paths:
+        return
+    frames: list[Image.Image] = []
+    for path in frame_paths:
+        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if image is None:
+            continue
+        frames.append(Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)))
+    if not frames:
+        return
+    duration_ms = max(20, int(round(1000.0 / max(1, int(fps)))))
+    frames[0].save(
+        str(gif_path),
+        save_all=True,
+        append_images=frames[1:],
+        duration=duration_ms,
+        loop=0,
+        optimize=False,
+    )
 
 
 def run_depth_comparison_workflow(
