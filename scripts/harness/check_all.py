@@ -34,6 +34,7 @@ def main() -> int:
     run([python, "-m", "unittest", "-v", "tests.test_ffs_intrinsic_file_format"])
     run([python, "-m", "unittest", "-v", "tests.test_ffs_reprojection_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_depth_quantization_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_depth_colormap_consistency_smoke"])
     run([python, "-m", "pytest", "tests/test_d455_probe_matrix_builder.py", "tests/test_d455_probe_result_schema.py"])
     run([python, "-m", "unittest", "-v", "tests.test_recording_metadata_schema_v2"])
     run([python, "-m", "unittest", "-v", "tests.test_depth_backend_contract_smoke"])

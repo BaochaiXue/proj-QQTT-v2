@@ -416,13 +416,20 @@ def _update_stream_metric(metric: dict[str, Any], frame, elapsed_measure_s: floa
 def _save_sample_frame(frame, stream_name: str, output_dir: Path) -> None:
     import cv2
     import numpy as np
+    from data_process.visualization.depth_colormap import colorize_depth_units
 
     output_dir.mkdir(parents=True, exist_ok=True)
     array = np.asanyarray(frame.get_data())
     if stream_name == "depth":
         np.save(output_dir / "depth.npy", array)
-        depth_vis = cv2.convertScaleAbs(array, alpha=0.03)
-        depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_TURBO)
+        try:
+            depth_scale_m_per_unit = float(frame.get_units())
+        except Exception:
+            depth_scale_m_per_unit = 0.001
+        depth_vis = colorize_depth_units(
+            array,
+            depth_scale_m_per_unit=depth_scale_m_per_unit,
+        )
         cv2.imwrite(str(output_dir / "depth.png"), depth_vis)
     else:
         cv2.imwrite(str(output_dir / f"{stream_name}.png"), array)

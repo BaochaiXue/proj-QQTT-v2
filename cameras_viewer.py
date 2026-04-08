@@ -12,6 +12,11 @@ import math
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from data_process.visualization.depth_colormap import (
+    DEFAULT_DEPTH_VIS_MAX_M,
+    DEFAULT_DEPTH_VIS_MIN_M,
+    colorize_depth_units,
+)
 from qqtt.env.camera.defaults import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_NUM_CAM, DEFAULT_WIDTH
 
 if TYPE_CHECKING:
@@ -176,11 +181,18 @@ def _make_panel(
     *,
     color: Any,
     depth: Any,
+    depth_scale_m_per_unit: float,
+    depth_vis_min_m: float,
+    depth_vis_max_m: float,
     label: str,
 ) -> Any:
     cv2, np, _ = _runtime_imports()
-    depth_8u = cv2.convertScaleAbs(depth, alpha=0.03)
-    depth_colormap = cv2.applyColorMap(depth_8u, cv2.COLORMAP_JET)
+    depth_colormap = colorize_depth_units(
+        depth,
+        depth_scale_m_per_unit=float(depth_scale_m_per_unit),
+        depth_min_m=float(depth_vis_min_m),
+        depth_max_m=float(depth_vis_max_m),
+    )
     panel = np.vstack([color, depth_colormap])
     cv2.putText(
         panel,
@@ -315,8 +327,15 @@ def main() -> int:
     parser.add_argument("--auto-exposure", action="store_true")
     parser.add_argument("--exposure", type=float, default=70.0)
     parser.add_argument("--gain", type=float, default=60.0)
+    parser.add_argument("--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M)
+    parser.add_argument("--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M)
     args = parser.parse_args()
     cv2, np, rs = _runtime_imports()
+    if float(args.depth_vis_max_m) <= float(args.depth_vis_min_m):
+        raise ValueError(
+            f"--depth-vis-max-m must be greater than --depth-vis-min-m. "
+            f"Got {args.depth_vis_min_m=} {args.depth_vis_max_m=}"
+        )
 
     ctx = rs.context()
     devices = _enumerate_d400_devices(ctx)
@@ -405,6 +424,10 @@ def main() -> int:
                     if depth and color:
                         color_np = np.asanyarray(color.get_data())
                         depth_np = np.asanyarray(depth.get_data())
+                        try:
+                            depth_scale_m_per_unit = float(depth.get_units())
+                        except Exception:
+                            depth_scale_m_per_unit = 0.001
                         if (
                             color_np.shape[1] != args.width
                             or color_np.shape[0] != args.height
@@ -432,6 +455,9 @@ def main() -> int:
                         cam["last_panel"] = _make_panel(
                             color=color_np,
                             depth=depth_np,
+                            depth_scale_m_per_unit=depth_scale_m_per_unit,
+                            depth_vis_min_m=float(args.depth_vis_min_m),
+                            depth_vis_max_m=float(args.depth_vis_max_m),
                             label=label,
                         )
                 panels.append(cam["last_panel"])

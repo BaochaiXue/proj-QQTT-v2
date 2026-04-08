@@ -7,6 +7,10 @@ import cv2
 import numpy as np
 
 from .calibration_io import load_calibration_transforms
+from .depth_colormap import (
+    INVALID_DEPTH_COLOR_BGR,
+    colorize_depth_meters,
+)
 from .pointcloud_compare import (
     choose_depth_stream,
     decode_depth_to_meters,
@@ -18,7 +22,7 @@ from .pointcloud_compare import (
     select_frame_indices,
 )
 
-INVALID_COLOR_BGR = (96, 0, 96)
+INVALID_COLOR_BGR = INVALID_DEPTH_COLOR_BGR
 DIFF_INVALID_COLOR_BGR = (32, 32, 32)
 VALID_MASK_COLORS = {
     "both_valid": np.array([0, 200, 0], dtype=np.uint8),
@@ -124,15 +128,12 @@ def colorize_depth_map(
     depth_max_m: float,
     invalid_color: tuple[int, int, int] = INVALID_COLOR_BGR,
 ) -> np.ndarray:
-    depth = np.asarray(depth_m, dtype=np.float32)
-    valid = np.isfinite(depth) & (depth > 0)
-    canvas = np.zeros(depth.shape + (3,), dtype=np.uint8)
-    if np.any(valid):
-        normalized = np.clip((depth - float(depth_min_m)) / max(1e-6, float(depth_max_m) - float(depth_min_m)), 0.0, 1.0)
-        colorized = cv2.applyColorMap((normalized * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
-        canvas[valid] = colorized[valid]
-    canvas[~valid] = np.asarray(invalid_color, dtype=np.uint8)
-    return canvas
+    return colorize_depth_meters(
+        depth_m,
+        depth_min_m=depth_min_m,
+        depth_max_m=depth_max_m,
+        invalid_color=invalid_color,
+    )
 
 
 def absolute_depth_difference_heatmap(
