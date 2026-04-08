@@ -101,6 +101,7 @@ The fused renderer also supports two layout modes:
 
 - single-frame case selection
 - world-space ROI cropping before orbit computation
+- optional per-camera image-ROI filtering before fusion for object-only review
 - camera-frustum geometry extraction
 - object-centric ROI extraction from the tabletop scene
 - coverage-aware orbit planning informed by the real camera layout

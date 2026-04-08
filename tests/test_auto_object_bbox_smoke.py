@@ -27,7 +27,16 @@ class AutoObjectBboxSmokeTest(unittest.TestCase):
             ],
             axis=1,
         ).astype(np.float32)
-        stacked = np.concatenate([table_points, object_points], axis=0)
+        clutter_points = np.array(
+            [
+                [0.42, 0.38, 0.08],
+                [0.48, 0.34, 0.10],
+                [-0.45, 0.30, 0.09],
+                [-0.38, 0.36, 0.11],
+            ],
+            dtype=np.float32,
+        )
+        stacked = np.concatenate([table_points, object_points, clutter_points], axis=0)
         bounds = compute_scene_crop_bounds(
             [stacked],
             focus_point=np.array([0.0, 0.0, 0.02], dtype=np.float32),
@@ -43,6 +52,7 @@ class AutoObjectBboxSmokeTest(unittest.TestCase):
         self.assertLess(float(bounds["max"][0] - bounds["min"][0]), 0.5)
         self.assertLess(float(bounds["max"][1] - bounds["min"][1]), 0.5)
         self.assertGreater(float(bounds["object_roi_max"][2]), 0.07)
+        self.assertLess(bounds["selected_object_point_count"], bounds["object_point_count"])
         self.assertFalse(bool(bounds["fallback_used"]))
 
 

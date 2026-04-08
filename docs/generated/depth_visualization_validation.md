@@ -110,6 +110,7 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
   - a single selected frame as the primary comparison unit
   - explicit camera-frusta visualization from real `calibrate.pkl` `c2w`
   - object-centric ROI extraction above the tabletop plane
+  - optional per-camera RGB-box filtering via `--manual_image_roi_json` when professor-facing renders should suppress the tabletop and fuse only object pixels
   - a coverage-aware orbit informed by the real camera layout
   - synchronized Native vs FFS large side-by-side panels using the exact same orbit path
   - automatic triple outputs:

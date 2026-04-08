@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from .camera_frusta import build_camera_frustum_geometry, collect_camera_geometry_points, extract_camera_poses
+from .object_roi import estimate_table_color_bgr, filter_points_to_object_region
 from .pointcloud_compare import (
     PROJECTION_MODES,
     RENDER_MODES,
@@ -121,6 +122,25 @@ def _parse_manual_xyz_roi(
     }
 
 
+def _parse_manual_image_roi_json(manual_image_roi_json: str | Path | None) -> dict[int, tuple[int, int, int, int]] | None:
+    if manual_image_roi_json is None:
+        return None
+    roi_path = Path(manual_image_roi_json).resolve()
+    data = json.loads(roi_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not data:
+        raise ValueError(f"manual_image_roi_json must contain a non-empty camera->bbox mapping: {roi_path}")
+    parsed: dict[int, tuple[int, int, int, int]] = {}
+    for camera_key, bbox in data.items():
+        camera_idx = int(camera_key)
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            raise ValueError(f"manual_image_roi_json entry for camera {camera_key} must be [x_min, y_min, x_max, y_max].")
+        x_min, y_min, x_max, y_max = [int(item) for item in bbox]
+        if x_min >= x_max or y_min >= y_max:
+            raise ValueError(f"manual_image_roi_json entry for camera {camera_key} is invalid: {bbox}")
+        parsed[camera_idx] = (x_min, y_min, x_max, y_max)
+    return parsed
+
+
 def select_single_frame_index(*, native_count: int, ffs_count: int, frame_idx: int) -> tuple[int, int]:
     max_index = min(int(native_count), int(ffs_count)) - 1
     selected = int(frame_idx)
@@ -203,6 +223,7 @@ def load_single_frame_compare_clouds(
     depth_min_m: float,
     depth_max_m: float,
     use_float_ffs_depth_when_available: bool,
+    pixel_roi_by_camera: dict[int, tuple[int, int, int, int]] | None = None,
 ) -> dict[str, Any]:
     native_points, native_colors, native_stats, native_camera_clouds = load_case_frame_cloud_with_sources(
         case_dir=selection["native_case_dir"],
@@ -211,6 +232,7 @@ def load_single_frame_compare_clouds(
         depth_source="realsense",
         use_float_ffs_depth_when_available=False,
         voxel_size=voxel_size,
+        pixel_roi_by_camera=pixel_roi_by_camera,
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
@@ -222,6 +244,7 @@ def load_single_frame_compare_clouds(
         depth_source="ffs",
         use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
         voxel_size=voxel_size,
+        pixel_roi_by_camera=pixel_roi_by_camera,
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
@@ -293,36 +316,132 @@ def build_single_frame_scene(
         cropped_point_sets if cropped_point_sets else [native_points, ffs_points],
         fallback_center=focus_point,
     )
-    refined_focus = estimate_focus_point(
+    object_roi_min = np.asarray(crop_bounds.get("object_roi_min", crop_bounds["min"]), dtype=np.float32)
+    object_roi_max = np.asarray(crop_bounds.get("object_roi_max", crop_bounds["max"]), dtype=np.float32)
+    plane_point = np.asarray(crop_bounds.get("plane_point", focus_point), dtype=np.float32)
+    plane_normal = np.asarray(
+        crop_bounds.get("plane_normal", np.array([0.0, 0.0, 1.0], dtype=np.float32)),
+        dtype=np.float32,
+    )
+    refined_focus = ((object_roi_min + object_roi_max) * 0.5).astype(np.float32) if scene_crop_mode == "auto_object_bbox" else estimate_focus_point(
         cropped_point_sets if cropped_point_sets else [native_points, ffs_points],
         bounds_min=bounds_min,
         bounds_max=bounds_max,
         focus_mode=focus_mode,
     )
+    if len(cropped_native_points) > 0:
+        table_color_bgr = estimate_table_color_bgr(
+            cropped_native_points,
+            cropped_native_colors,
+            plane_point=plane_point,
+            plane_normal=plane_normal,
+        )
+    elif len(cropped_ffs_points) > 0:
+        table_color_bgr = estimate_table_color_bgr(
+            cropped_ffs_points,
+            cropped_ffs_colors,
+            plane_point=plane_point,
+            plane_normal=plane_normal,
+        )
+    else:
+        table_color_bgr = np.array([128.0, 128.0, 128.0], dtype=np.float32)
+
+    object_extent = object_roi_max - object_roi_min
+    render_half_xy = float(np.clip(max(float(object_extent[0]), float(object_extent[1])) * 0.28, 0.10, 0.18))
+    render_half_z = float(np.clip(float(object_extent[2]) * 0.60, 0.08, 0.16))
+    render_bounds_min = np.array(
+        [
+            float(refined_focus[0] - render_half_xy),
+            float(refined_focus[1] - render_half_xy),
+            float(max(object_roi_min[2], plane_point[2] + 0.01)),
+        ],
+        dtype=np.float32,
+    )
+    render_bounds_max = np.array(
+        [
+            float(refined_focus[0] + render_half_xy),
+            float(refined_focus[1] + render_half_xy),
+            float(min(object_roi_max[2], refined_focus[2] + render_half_z)),
+        ],
+        dtype=np.float32,
+    )
+
+    render_native_points, render_native_colors = filter_points_to_object_region(
+        cropped_native_points,
+        cropped_native_colors,
+        object_roi_min=render_bounds_min,
+        object_roi_max=render_bounds_max,
+        plane_point=plane_point,
+        plane_normal=plane_normal,
+        table_color_bgr=table_color_bgr,
+    )
+    render_ffs_points, render_ffs_colors = filter_points_to_object_region(
+        cropped_ffs_points,
+        cropped_ffs_colors,
+        object_roi_min=render_bounds_min,
+        object_roi_max=render_bounds_max,
+        plane_point=plane_point,
+        plane_normal=plane_normal,
+        table_color_bgr=table_color_bgr,
+    )
+    render_native_camera_clouds = []
+    for camera_cloud in cropped_native_camera_clouds:
+        points, colors = filter_points_to_object_region(
+            camera_cloud["points"],
+            camera_cloud["colors"],
+            object_roi_min=render_bounds_min,
+            object_roi_max=render_bounds_max,
+            plane_point=plane_point,
+            plane_normal=plane_normal,
+            table_color_bgr=table_color_bgr,
+        )
+        render_native_camera_clouds.append({**camera_cloud, "points": points, "colors": colors})
+    render_ffs_camera_clouds = []
+    for camera_cloud in cropped_ffs_camera_clouds:
+        points, colors = filter_points_to_object_region(
+            camera_cloud["points"],
+            camera_cloud["colors"],
+            object_roi_min=render_bounds_min,
+            object_roi_max=render_bounds_max,
+            plane_point=plane_point,
+            plane_normal=plane_normal,
+            table_color_bgr=table_color_bgr,
+        )
+        render_ffs_camera_clouds.append({**camera_cloud, "points": points, "colors": colors})
+
+    render_bounds_min, render_bounds_max = _compute_bounds(
+        [render_native_points, render_ffs_points] if len(render_native_points) > 0 or len(render_ffs_points) > 0 else [object_roi_min.reshape(1, 3), object_roi_max.reshape(1, 3)],
+        fallback_center=refined_focus,
+    )
     scalar_bounds = {
-        "height": (float(bounds_min[2]), float(bounds_max[2])),
-        "depth": (0.0, max(float(np.linalg.norm(bounds_max - bounds_min)) * 2.0, 1.0)),
+        "height": (float(render_bounds_min[2]), float(render_bounds_max[2])),
+        "depth": (0.0, max(float(np.linalg.norm(render_bounds_max - render_bounds_min)) * 2.0, 0.6)),
     }
     return {
         "native_points": cropped_native_points,
         "native_colors": cropped_native_colors,
         "native_camera_clouds": cropped_native_camera_clouds,
+        "native_render_points": render_native_points,
+        "native_render_colors": render_native_colors,
+        "native_render_camera_clouds": render_native_camera_clouds,
         "ffs_points": cropped_ffs_points,
         "ffs_colors": cropped_ffs_colors,
         "ffs_camera_clouds": cropped_ffs_camera_clouds,
+        "ffs_render_points": render_ffs_points,
+        "ffs_render_colors": render_ffs_colors,
+        "ffs_render_camera_clouds": render_ffs_camera_clouds,
         "focus_point": refined_focus.astype(np.float32),
         "crop_bounds": {
             "min": np.asarray(crop_bounds["min"], dtype=np.float32),
             "max": np.asarray(crop_bounds["max"], dtype=np.float32),
         },
-        "object_roi_bounds": {
-            "min": np.asarray(crop_bounds.get("object_roi_min", crop_bounds["min"]), dtype=np.float32),
-            "max": np.asarray(crop_bounds.get("object_roi_max", crop_bounds["max"]), dtype=np.float32),
-        },
-        "plane_point": np.asarray(crop_bounds.get("plane_point", refined_focus), dtype=np.float32),
-        "plane_normal": np.asarray(crop_bounds.get("plane_normal", np.array([0.0, 0.0, 1.0], dtype=np.float32)), dtype=np.float32),
+        "object_roi_bounds": {"min": object_roi_min, "max": object_roi_max},
+        "plane_point": plane_point,
+        "plane_normal": plane_normal,
         "bounds_min": bounds_min,
         "bounds_max": bounds_max,
+        "render_bounds_min": render_bounds_min,
+        "render_bounds_max": render_bounds_max,
         "scalar_bounds": scalar_bounds,
         "crop_metadata": {
             key: value
@@ -538,7 +657,9 @@ def build_object_centered_orbit_views(
 
     orbit_radius = max(crop_planar_radius * float(orbit_radius_scale), 0.25)
     median_camera_height = float(np.median(camera_axis_heights)) if camera_axis_heights else crop_axis_extent * 1.4
-    orbit_height = max(median_camera_height + crop_axis_extent * float(view_height_offset), crop_axis_extent * 0.9, 0.12)
+    base_object_height = max(crop_axis_extent * 0.85, 0.12)
+    camera_guided_height = min(max(median_camera_height * 0.45, base_object_height), orbit_radius * 0.55)
+    orbit_height = max(camera_guided_height + crop_axis_extent * float(view_height_offset), 0.10)
 
     start_azimuth_deg = camera_reference_azimuths_deg.get(0)
     if start_azimuth_deg is None and camera_reference_azimuths_deg:
@@ -557,6 +678,11 @@ def build_object_centered_orbit_views(
             float(coverage_arc["start_deg"] + item)
             for item in np.linspace(0.0, span_deg, max(1, int(num_orbit_steps)), endpoint=True)
         ]
+        if len(azimuth_sequence) > 1:
+            start_idx = int(
+                np.argmin([abs(_wrap_angle_deg(angle_deg - float(start_azimuth_deg))) for angle_deg in azimuth_sequence])
+            )
+            azimuth_sequence = azimuth_sequence[start_idx:] + azimuth_sequence[:start_idx]
     else:
         azimuth_sequence = [float(start_azimuth_deg + item) for item in generate_orbit_angles(num_orbit_steps=num_orbit_steps, orbit_degrees=orbit_degrees)]
 
@@ -904,6 +1030,8 @@ def build_scene_overview_state(
         [scene_points, geometry_points],
         view_config=overview_view,
     )
+    overview_width = 1280
+    overview_height = 960
     base_image, renderer_used = render_point_cloud(
         scene_points,
         scene_colors,
@@ -911,8 +1039,8 @@ def build_scene_overview_state(
         view_config=overview_view,
         render_mode=render_mode,
         scalar_bounds=scalar_bounds,
-        width=960,
-        height=720,
+        width=overview_width,
+        height=overview_height,
         point_radius_px=max(2, int(point_radius_px)),
         supersample_scale=max(1, int(supersample_scale)),
         projection_mode=overview_projection_mode,
@@ -1010,21 +1138,22 @@ def compose_side_by_side_large(
 
     inset = np.asarray(overview_inset, dtype=np.uint8)
     overview_h, overview_w = inset.shape[:2]
-    footer_h = max(overview_h + 24, 340)
+    footer_h = max(overview_h + 32, 520)
     footer = np.zeros((footer_h, main_body.shape[1], 3), dtype=np.uint8)
     footer[:] = (16, 18, 22)
-    cv2.putText(footer, "Overview", (18, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.86, (255, 255, 255), 2, cv2.LINE_AA)
-    cv2.putText(footer, "Real camera frusta, ROI crop, supported arc, and current orbit camera", (18, 66), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (220, 220, 220), 1, cv2.LINE_AA)
-    cv2.putText(footer, "The orbit path is identical for Native, FFS, and support render.", (18, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (220, 220, 220), 1, cv2.LINE_AA)
-    max_overview_w = max(180, footer.shape[1] - 220)
-    max_overview_h = footer_h - 28
+    cv2.putText(footer, "Overview", (22, 44), cv2.FONT_HERSHEY_SIMPLEX, 1.02, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(footer, "Real camera frusta, ROI crop, supported arc, and current orbit camera", (22, 84), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (220, 220, 220), 2, cv2.LINE_AA)
+    cv2.putText(footer, "The orbit path is identical for Native, FFS, and support render.", (22, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (220, 220, 220), 2, cv2.LINE_AA)
+    cv2.putText(footer, "Camera labels show the original calibrated viewpoints used to define the supported viewing arc.", (22, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.66, (220, 220, 220), 2, cv2.LINE_AA)
+    max_overview_w = max(260, footer.shape[1] - 420)
+    max_overview_h = footer_h - 36
     scale = min(1.0, float(max_overview_w) / max(1, overview_w), float(max_overview_h) / max(1, overview_h))
     if scale < 1.0:
         overview_w = max(160, int(round(overview_w * scale)))
         overview_h = max(120, int(round(overview_h * scale)))
         inset = cv2.resize(inset, (overview_w, overview_h), interpolation=cv2.INTER_AREA)
-    x0 = footer.shape[1] - overview_w - 20
-    y0 = max(14, (footer_h - overview_h) // 2)
+    x0 = footer.shape[1] - overview_w - 28
+    y0 = max(18, (footer_h - overview_h) // 2)
     footer[y0:y0 + overview_h, x0:x0 + overview_w] = inset
     cv2.rectangle(footer, (x0 - 1, y0 - 1), (x0 + overview_w, y0 + overview_h), (255, 255, 255), 1, cv2.LINE_AA)
 
@@ -1159,6 +1288,7 @@ def run_turntable_compare_workflow(
     roi_y_max: float | None = None,
     roi_z_min: float | None = None,
     roi_z_max: float | None = None,
+    manual_image_roi_json: str | Path | None = None,
     projection_mode: str = "perspective",
     point_radius_px: int = 4,
     supersample_scale: int = 3,
@@ -1198,6 +1328,7 @@ def run_turntable_compare_workflow(
         frame_idx=frame_idx,
         camera_ids=camera_ids,
     )
+    manual_image_roi_by_camera = _parse_manual_image_roi_json(manual_image_roi_json)
     raw_scene = load_single_frame_compare_clouds(
         selection,
         voxel_size=voxel_size,
@@ -1205,6 +1336,7 @@ def run_turntable_compare_workflow(
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
         use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+        pixel_roi_by_camera=manual_image_roi_by_camera,
     )
     manual_xyz_roi = _parse_manual_xyz_roi(
         scene_crop_mode=scene_crop_mode,
@@ -1294,15 +1426,15 @@ def run_turntable_compare_workflow(
         for pose in camera_poses
     ]
 
-    if len(scene["native_points"]) > 0 and len(scene["ffs_points"]) > 0:
-        overview_cloud_points = np.concatenate([scene["native_points"], scene["ffs_points"]], axis=0)
-        overview_cloud_colors = np.concatenate([scene["native_colors"], scene["ffs_colors"]], axis=0)
-    elif len(scene["native_points"]) > 0:
-        overview_cloud_points = scene["native_points"]
-        overview_cloud_colors = scene["native_colors"]
+    if len(scene["native_render_points"]) > 0 and len(scene["ffs_render_points"]) > 0:
+        overview_cloud_points = np.concatenate([scene["native_render_points"], scene["ffs_render_points"]], axis=0)
+        overview_cloud_colors = np.concatenate([scene["native_render_colors"], scene["ffs_render_colors"]], axis=0)
+    elif len(scene["native_render_points"]) > 0:
+        overview_cloud_points = scene["native_render_points"]
+        overview_cloud_colors = scene["native_render_colors"]
     else:
-        overview_cloud_points = scene["ffs_points"]
-        overview_cloud_colors = scene["ffs_colors"]
+        overview_cloud_points = scene["ffs_render_points"]
+        overview_cloud_colors = scene["ffs_render_colors"]
     overview_state = build_scene_overview_state(
         scene_points=overview_cloud_points,
         scene_colors=overview_cloud_colors,
@@ -1350,7 +1482,7 @@ def run_turntable_compare_workflow(
         overview_inset = render_overview_inset(
             overview_state,
             current_views=current_views,
-            inset_size=(560, 320) if layout_mode == "side_by_side_large" else (420, 260),
+            inset_size=(920, 560) if layout_mode == "side_by_side_large" else (420, 260),
             angle_label=f"Angle: {current_view.get('azimuth_deg', orbit_step['angle_deg']):+.1f} deg",
         )
 
@@ -1369,12 +1501,12 @@ def run_turntable_compare_workflow(
                 ortho_scale = None
                 if projection_mode == "orthographic":
                     ortho_scale = estimate_ortho_scale(
-                        [scene["native_points"], scene["ffs_points"]],
+                        [scene["native_render_points"], scene["ffs_render_points"]],
                         view_config=view_config,
                     )
                 if mode_render == "support_count":
                     native_support = compute_support_count_map(
-                        scene["native_camera_clouds"],
+                        scene["native_render_camera_clouds"],
                         view_config=view_config,
                         width=main_width,
                         height=main_height,
@@ -1382,7 +1514,7 @@ def run_turntable_compare_workflow(
                         ortho_scale=ortho_scale,
                     )
                     ffs_support = compute_support_count_map(
-                        scene["ffs_camera_clouds"],
+                        scene["ffs_render_camera_clouds"],
                         view_config=view_config,
                         width=main_width,
                         height=main_height,
@@ -1409,8 +1541,8 @@ def run_turntable_compare_workflow(
                     )
                 else:
                     native_render, native_renderer_used = render_point_cloud(
-                        scene["native_points"],
-                        scene["native_colors"],
+                        scene["native_render_points"],
+                        scene["native_render_colors"],
                         renderer=renderer,
                         view_config=view_config,
                         render_mode=mode_render,
@@ -1423,8 +1555,8 @@ def run_turntable_compare_workflow(
                         ortho_scale=ortho_scale,
                     )
                     ffs_render, ffs_renderer_used = render_point_cloud(
-                        scene["ffs_points"],
-                        scene["ffs_colors"],
+                        scene["ffs_render_points"],
+                        scene["ffs_render_colors"],
                         renderer=renderer if renderer != "auto" else native_renderer_used,
                         view_config=view_config,
                         render_mode=mode_render,
@@ -1507,6 +1639,10 @@ def run_turntable_compare_workflow(
         "projection_mode": projection_mode,
         "scene_crop_mode": scene_crop_mode,
         "focus_mode": focus_mode,
+        "manual_image_roi_json": None if manual_image_roi_json is None else str(Path(manual_image_roi_json).resolve()),
+        "manual_image_roi_by_camera": None
+        if manual_image_roi_by_camera is None
+        else {str(key): list(value) for key, value in manual_image_roi_by_camera.items()},
         "orbit_mode": orbit_mode,
         "layout_mode": layout_mode,
         "crop_bounds": {
@@ -1540,6 +1676,14 @@ def run_turntable_compare_workflow(
         "object_roi_bounds": {
             "min": scene["object_roi_bounds"]["min"].tolist(),
             "max": scene["object_roi_bounds"]["max"].tolist(),
+        },
+        "render_bounds": {
+            "min": scene["render_bounds_min"].tolist(),
+            "max": scene["render_bounds_max"].tolist(),
+        },
+        "render_point_count": {
+            "native": int(len(scene["native_render_points"])),
+            "ffs": int(len(scene["ffs_render_points"])),
         },
         "crop_metadata": scene["crop_metadata"],
         "support_metrics_path": str(support_metrics_path),

@@ -189,6 +189,12 @@ Fallback two-case comparison:
 python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --scene_crop_mode auto_object_bbox
 ```
 
+If the automatic object crop still keeps too much tabletop, constrain the fused cloud at the source-image level with per-camera RGB boxes:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --scene_crop_mode auto_object_bbox --manual_image_roi_json docs/generated/object_only_manual_image_roi_native_30_static_frame_0000.json
+```
+
 This is now the primary fused-cloud diagnostic for professor-facing review. It:
 
 - loads one selected aligned frame instead of a temporal frame range
@@ -205,6 +211,7 @@ This is now the primary fused-cloud diagnostic for professor-facing review. It:
   - geometry diagnostic outputs
   - RGB-colored reference outputs
   - support-count outputs
+- can optionally apply `--manual_image_roi_json` to keep only object pixels from each real camera before fusion when the professor-facing view should exclude the tabletop as much as possible
 - writes:
   - `scene_overview_with_cameras.png`
   - `frames_geom/*.png`

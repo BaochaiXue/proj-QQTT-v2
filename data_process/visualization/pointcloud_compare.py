@@ -54,6 +54,7 @@ def depth_to_camera_points(
     depth_min_m: float,
     depth_max_m: float,
     color_image: np.ndarray,
+    pixel_roi: tuple[int, int, int, int] | None = None,
     max_points_per_camera: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     depth = np.asarray(depth_m, dtype=np.float32)
@@ -71,6 +72,15 @@ def depth_to_camera_points(
     valid = np.isfinite(depth) & (depth > 0)
     valid &= depth >= float(depth_min_m)
     valid &= depth <= float(depth_max_m)
+    if pixel_roi is not None:
+        x_min, y_min, x_max, y_max = [int(item) for item in pixel_roi]
+        roi_mask = (
+            (xx >= float(x_min))
+            & (xx <= float(x_max))
+            & (yy >= float(y_min))
+            & (yy <= float(y_max))
+        )
+        valid &= roi_mask
     valid_count = int(valid.sum())
     if valid_count == 0:
         return (
@@ -194,6 +204,7 @@ def load_case_frame_camera_clouds(
     frame_idx: int,
     depth_source: str,
     use_float_ffs_depth_when_available: bool,
+    pixel_roi_by_camera: dict[int, tuple[int, int, int, int]] | None = None,
     max_points_per_camera: int | None,
     depth_min_m: float,
     depth_max_m: float,
@@ -227,6 +238,7 @@ def load_case_frame_camera_clouds(
             depth_min_m=depth_min_m,
             depth_max_m=depth_max_m,
             color_image=color_image,
+            pixel_roi=None if pixel_roi_by_camera is None else pixel_roi_by_camera.get(int(camera_idx)),
             max_points_per_camera=max_points_per_camera,
         )
         world_points = transform_points(camera_points, c2w_list[camera_idx])
@@ -260,6 +272,7 @@ def load_case_frame_cloud(
     depth_source: str,
     use_float_ffs_depth_when_available: bool,
     voxel_size: float | None,
+    pixel_roi_by_camera: dict[int, tuple[int, int, int, int]] | None = None,
     max_points_per_camera: int | None,
     depth_min_m: float,
     depth_max_m: float,
@@ -270,6 +283,7 @@ def load_case_frame_cloud(
         frame_idx=frame_idx,
         depth_source=depth_source,
         use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+        pixel_roi_by_camera=pixel_roi_by_camera,
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
@@ -299,6 +313,7 @@ def load_case_frame_cloud_with_sources(
     depth_source: str,
     use_float_ffs_depth_when_available: bool,
     voxel_size: float | None,
+    pixel_roi_by_camera: dict[int, tuple[int, int, int, int]] | None = None,
     max_points_per_camera: int | None,
     depth_min_m: float,
     depth_max_m: float,
@@ -309,6 +324,7 @@ def load_case_frame_cloud_with_sources(
         frame_idx=frame_idx,
         depth_source=depth_source,
         use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+        pixel_roi_by_camera=pixel_roi_by_camera,
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,

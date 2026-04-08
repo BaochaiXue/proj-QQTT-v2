@@ -133,6 +133,12 @@ Fallback two-case comparison when `both_eval` is not supported:
 python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --scene_crop_mode auto_object_bbox
 ```
 
+When the automatic object crop still includes too much tabletop, provide per-camera RGB boxes so only object pixels are fused:
+
+```bash
+python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --scene_crop_mode auto_object_bbox --manual_image_roi_json docs/generated/object_only_manual_image_roi_native_30_static_frame_0000.json
+```
+
 The turntable workflow:
 
 - selects one aligned frame
@@ -146,6 +152,7 @@ The turntable workflow:
   - right = FFS
 - uses the exact same orbit path for Native and FFS
 - automatically writes geometry, RGB, and support-count products in one run
+- optionally applies `--manual_image_roi_json` before fusion to suppress tabletop pixels when the object itself should dominate the professor-facing render
 - produces:
   - `scene_overview_with_cameras.png`
   - `orbit_compare_geom.mp4`

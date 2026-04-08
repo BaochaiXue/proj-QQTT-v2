@@ -50,6 +50,8 @@ class VisualCompareTurntableSmokeTest(unittest.TestCase):
             self.assertIn("geom", metadata["outputs"])
             self.assertIn("rgb", metadata["outputs"])
             self.assertIn("support", metadata["outputs"])
+            self.assertGreater(metadata["render_point_count"]["native"], 0)
+            self.assertGreater(metadata["render_point_count"]["ffs"], 0)
 
 
 if __name__ == "__main__":

@@ -52,6 +52,7 @@ def main() -> int:
     run([python, "-m", "unittest", "-v", "tests.test_full_360_unsupported_annotation_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_table_crop_roi_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_table_focus_center_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_manual_image_roi_filter_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_pointcloud_fusion_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_grid_2x3_label_layout_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_projection_mode_smoke"])
