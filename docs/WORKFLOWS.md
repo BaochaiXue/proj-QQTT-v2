@@ -159,6 +159,7 @@ The turntable workflow:
 - uses the exact same orbit path for Native and FFS
 - automatically writes geometry, RGB, and support-count products in one run
 - optionally applies `--manual_image_roi_json` before fusion to suppress tabletop pixels when the object itself should dominate the professor-facing render
+- uses a larger orthographic `Top / Front / Side` overview strip so the real calibrated camera positions are readable and not confused with a single oblique projection
 - produces:
   - `scene_overview_with_cameras.png`
   - `orbit_compare_geom.mp4`

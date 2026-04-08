@@ -107,7 +107,7 @@ The fused renderer also supports two layout modes:
 - coverage-aware orbit planning informed by the real camera layout
 - large side-by-side compare composition
 - automatic geom/rgb/support output planning
-- larger overview rendering with orbit path, supported arc, and crop visualization
+- larger orthographic `Top / Front / Side` overview rendering with orbit path, supported arc, and crop visualization
 
 The shared fallback projection convention in `pointcloud_compare.py` maps positive view-space `y` upward on screen, so larger view-space height becomes a smaller image-row index without requiring any late image flip.
 
