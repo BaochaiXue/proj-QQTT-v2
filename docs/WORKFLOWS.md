@@ -8,6 +8,12 @@ python cameras_viewer.py
 
 Use this to verify that all 3 cameras enumerate and stream correctly before calibration or recording.
 
+The viewer uses the same `TURBO` metric-depth colormap as the aligned-case depth diagnostics. Keep the display range explicit when you want preview colors to match later panels:
+
+```bash
+python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
+```
+
 ## 2. Calibrate
 
 ```bash

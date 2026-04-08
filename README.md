@@ -63,6 +63,12 @@ python cameras_viewer.py
 
 Default preview settings come from the shared camera defaults in [defaults.py](/c:/Users/zhang/proj-QQTT/qqtt/env/camera/defaults.py).
 
+The preview depth panel now uses the same `TURBO` metric-depth colorization path as the repo's aligned-case depth diagnostics. You can keep the display range explicit:
+
+```bash
+python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
+```
+
 ## Calibration
 
 Calibrate the 3-camera setup:

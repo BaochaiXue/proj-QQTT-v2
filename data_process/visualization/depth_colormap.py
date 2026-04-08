@@ -25,8 +25,9 @@ def colorize_depth_meters(
     valid = np.isfinite(depth) & (depth > 0.0)
     canvas = np.zeros(depth.shape + (3,), dtype=np.uint8)
     if np.any(valid):
-        normalized = np.clip(
-            (depth - float(depth_min_m)) / (float(depth_max_m) - float(depth_min_m)),
+        normalized = np.zeros_like(depth, dtype=np.float32)
+        normalized[valid] = np.clip(
+            (depth[valid] - float(depth_min_m)) / (float(depth_max_m) - float(depth_min_m)),
             0.0,
             1.0,
         )
