@@ -109,6 +109,8 @@ The fused renderer also supports two layout modes:
 - automatic geom/rgb/support output planning
 - larger overview rendering with orbit path, supported arc, and crop visualization
 
+The shared fallback projection convention in `pointcloud_compare.py` maps positive view-space `y` upward on screen, so larger view-space height becomes a smaller image-row index without requiring any late image flip.
+
 `calibrate.pkl` support is intentionally narrow and matches the current producer:
 
 - object type: `list` / `tuple` or `numpy.ndarray`

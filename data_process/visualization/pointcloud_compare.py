@@ -701,12 +701,12 @@ def _project_view_coordinates(
     if projection_mode == "perspective":
         focal = width / (2.0 * np.tan(np.deg2rad(35.0) / 2.0))
         u = (xyz[:, 0] * focal / z) + width * 0.5
-        v = (xyz[:, 1] * focal / z) + height * 0.5
+        v = height * 0.5 - (xyz[:, 1] * focal / z)
         return u, v
     if projection_mode == "orthographic":
         scale = float(ortho_scale) if ortho_scale is not None else max(1e-6, float(np.max(np.abs(xyz[:, :2]))) * 1.2)
         u = (xyz[:, 0] / scale) * (width * 0.5) + width * 0.5
-        v = (xyz[:, 1] / scale) * (height * 0.5) + height * 0.5
+        v = height * 0.5 - (xyz[:, 1] / scale) * (height * 0.5)
         return u, v
     raise ValueError(f"Unsupported projection_mode: {projection_mode}")
 
