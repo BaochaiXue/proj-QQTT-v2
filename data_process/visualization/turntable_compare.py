@@ -703,12 +703,38 @@ def build_single_frame_scene(
     cropped_ffs_points, cropped_ffs_colors = crop_points_to_bounds(ffs_points, ffs_colors, crop_bounds)
     cropped_native_camera_clouds = []
     for camera_cloud in native_camera_clouds:
-        points, colors = crop_points_to_bounds(camera_cloud["points"], camera_cloud["colors"], crop_bounds)
-        cropped_native_camera_clouds.append({**camera_cloud, "points": points, "colors": colors})
+        points = np.asarray(camera_cloud["points"], dtype=np.float32)
+        colors = np.asarray(camera_cloud["colors"], dtype=np.uint8)
+        valid = np.all(points >= np.asarray(crop_bounds["min"], dtype=np.float32)[None, :], axis=1) & np.all(
+            points <= np.asarray(crop_bounds["max"], dtype=np.float32)[None, :],
+            axis=1,
+        )
+        cropped_native_camera_clouds.append(
+            {
+                **camera_cloud,
+                "points": points[valid],
+                "colors": colors[valid],
+                "source_camera_idx": np.asarray(camera_cloud["source_camera_idx"], dtype=np.int16).reshape(-1)[valid],
+                "source_serial": np.asarray(camera_cloud["source_serial"], dtype=object).reshape(-1)[valid],
+            }
+        )
     cropped_ffs_camera_clouds = []
     for camera_cloud in ffs_camera_clouds:
-        points, colors = crop_points_to_bounds(camera_cloud["points"], camera_cloud["colors"], crop_bounds)
-        cropped_ffs_camera_clouds.append({**camera_cloud, "points": points, "colors": colors})
+        points = np.asarray(camera_cloud["points"], dtype=np.float32)
+        colors = np.asarray(camera_cloud["colors"], dtype=np.uint8)
+        valid = np.all(points >= np.asarray(crop_bounds["min"], dtype=np.float32)[None, :], axis=1) & np.all(
+            points <= np.asarray(crop_bounds["max"], dtype=np.float32)[None, :],
+            axis=1,
+        )
+        cropped_ffs_camera_clouds.append(
+            {
+                **camera_cloud,
+                "points": points[valid],
+                "colors": colors[valid],
+                "source_camera_idx": np.asarray(camera_cloud["source_camera_idx"], dtype=np.int16).reshape(-1)[valid],
+                "source_serial": np.asarray(camera_cloud["source_serial"], dtype=object).reshape(-1)[valid],
+            }
+        )
 
     cropped_point_sets = [item for item in (cropped_native_points, cropped_ffs_points) if len(item) > 0]
     bounds_min, bounds_max = _compute_bounds(
