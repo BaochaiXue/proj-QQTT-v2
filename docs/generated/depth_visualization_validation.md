@@ -17,6 +17,12 @@ Per-camera diagnostic panels:
 python scripts/harness/visual_compare_depth_panels.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --output_dir C:\Users\zhang\proj-QQTT\data\panels_native_30_static_vs_ffs_30_static --camera_ids 0 1 2 --frame_start 0 --frame_end 9 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
+Review-quality presentation panels:
+
+```bash
+python scripts/harness/visual_compare_depth_panels.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --output_dir C:\Users\zhang\proj-QQTT\data\panels_native_30_static_vs_ffs_30_static_review --camera_ids 0 1 2 --preset review_quality --use_float_ffs_depth_when_available
+```
+
 Cross-view reprojection:
 
 ```bash
@@ -95,7 +101,13 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
 ## What Was Validated
 
 - Single-camera panel generation works in two-case fallback mode.
-- Panel outputs include native depth, ffs depth, absolute difference, valid-mask comparison, shaded depth, and ROI crops.
+- Panel outputs include native depth, ffs depth, absolute difference, valid-mask comparison, shaded depth, ROI crops, and optional RGB-vs-depth edge overlays.
+- The publication-style panel board now adds:
+  - stronger title hierarchy
+  - consistent spacing and larger ROI detail rows
+  - depth and diff legends directly on the panel tiles
+  - explicit per-frame valid-ratio and median-difference metrics
+  - named ROI support when the CLI receives `name:x0,y0,x1,y1`
 - Cross-view reprojection works in two-case fallback mode and writes per-pair frame panels plus summary metrics.
 - Fused cloud comparison now supports multi-view output (`oblique`, `top`, `side`) and geometry-first render mode (`neutral_gray_shaded`).
 - Fused cloud comparison now also supports:
@@ -158,6 +170,7 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
 - `source` now exposes which camera contributed which visible surface region.
 - `mismatch` now exposes where the overlapping 3-view geometry disagrees instead of only how many cameras touched it.
 - `support` remains complementary: it shows overlap quantity, while `source` and `mismatch` explain source identity and disagreement.
+- The upgraded depth-panel boards are now a much stronger first-pass review artifact before moving on to reprojection or fused-cloud diagnostics.
 
 ## Known Limitations
 

@@ -143,6 +143,25 @@ Use this to judge:
 - local surface smoothness
 - ROI crops on the same spatial region
 
+For professor-/review-quality static boards, use the publication-style preset:
+
+```bash
+python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --preset review_quality --camera_ids 0 1 2 --use_float_ffs_depth_when_available
+```
+
+The upgraded panel workflow now:
+
+- uses a larger title strip with case id, camera id, and frame id
+- keeps native and FFS depth panels on the exact same depth range
+- overlays ROI boxes on both RGB and depth panels
+- accepts named ROIs via `--roi name:x0,y0,x1,y1`
+- enlarges ROI detail panels
+- can add `RGB vs Depth Edges` comparison panels through the `review_quality` preset or `--show_edge_overlay`
+- writes per-frame summary metrics into `summary.json`, including:
+  - valid pixel ratios
+  - median / p90 absolute depth difference
+  - ROI-specific median absolute depth difference
+
 Then run cross-view reprojection diagnostics:
 
 ```bash
