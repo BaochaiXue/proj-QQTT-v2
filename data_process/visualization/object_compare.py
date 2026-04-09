@@ -72,6 +72,14 @@ def build_object_first_layers(
     for camera_cloud in camera_clouds:
         points = np.asarray(camera_cloud["points"], dtype=np.float32)
         colors = np.asarray(camera_cloud["colors"], dtype=np.uint8)
+        source_camera_idx_all = np.asarray(
+            camera_cloud.get("source_camera_idx", np.full((len(points),), int(camera_cloud["camera_idx"]), dtype=np.int16)),
+            dtype=np.int16,
+        ).reshape(-1)
+        source_serial_all = np.asarray(
+            camera_cloud.get("source_serial", np.full((len(points),), camera_cloud["serial"], dtype=object)),
+            dtype=object,
+        ).reshape(-1)
         geometric_object_mask = compute_object_region_mask(
             points,
             colors,
@@ -101,12 +109,12 @@ def build_object_first_layers(
                     combined_points_before = pixel_points_before
         object_points_before = points[object_mask]
         object_colors_before = colors[object_mask]
-        object_source_camera_idx_before = np.asarray(camera_cloud["source_camera_idx"], dtype=np.int16).reshape(-1)[object_mask]
-        object_source_serial_before = np.asarray(camera_cloud["source_serial"], dtype=object).reshape(-1)[object_mask]
+        object_source_camera_idx_before = source_camera_idx_all[object_mask]
+        object_source_serial_before = source_serial_all[object_mask]
         context_points_before = points[~object_mask]
         context_colors_before = colors[~object_mask]
-        context_source_camera_idx_before = np.asarray(camera_cloud["source_camera_idx"], dtype=np.int16).reshape(-1)[~object_mask]
-        context_source_serial_before = np.asarray(camera_cloud["source_serial"], dtype=object).reshape(-1)[~object_mask]
+        context_source_camera_idx_before = source_camera_idx_all[~object_mask]
+        context_source_serial_before = source_serial_all[~object_mask]
 
         object_idx = deterministic_subsample_indices(len(object_points_before), max_points=object_max_points_per_camera)
         context_idx = deterministic_subsample_indices(len(context_points_before), max_points=context_max_points_per_camera)

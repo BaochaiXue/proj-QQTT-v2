@@ -11,7 +11,7 @@ class DualTripleOutputPlanningSmokeTest(unittest.TestCase):
             geom_render_mode="neutral_gray_shaded",
             render_both_modes=False,
         )
-        self.assertEqual([spec["name"] for spec in specs], ["geom", "support"])
+        self.assertEqual([spec["name"] for spec in specs], ["geom", "support", "source", "mismatch"])
 
 
 if __name__ == "__main__":
