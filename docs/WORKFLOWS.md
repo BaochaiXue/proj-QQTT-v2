@@ -270,9 +270,9 @@ Use the new merge-diagnostic outputs like this:
 
 - `source`:
   - semi-transparent overlay by source camera
-  - orange = `Cam0`
+  - red = `Cam0`
   - green = `Cam1`
-  - cyan/blue = `Cam2`
+  - blue = `Cam2`
   - use this to spot fringing and double surfaces
 - `source_split`:
   - inspect which camera is actually providing or missing the teddy head

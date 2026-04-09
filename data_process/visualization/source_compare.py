@@ -11,9 +11,9 @@ from .renderers import rasterize_point_cloud_view, render_point_cloud
 
 
 SOURCE_CAMERA_COLORS_BGR = {
-    0: (80, 165, 255),
-    1: (110, 220, 120),
-    2: (255, 220, 80),
+    0: (0, 0, 255),
+    1: (0, 255, 0),
+    2: (255, 0, 0),
 }
 SOURCE_CAMERA_LABELS = {
     0: "Cam0",

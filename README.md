@@ -334,9 +334,9 @@ Why the new source diagnostics matter:
 - `rgb` can hide misalignment behind texture.
 - `support` shows how many cameras agree, but not which cameras created a double surface or fringe.
 - `source` colors points by camera provenance with semi-transparent overlay:
-  - `Cam0` = orange
+  - `Cam0` = red
   - `Cam1` = green
-  - `Cam2` = cyan/blue
+  - `Cam2` = blue
 - `source_split` shows each camera contribution separately on the same orbit and crop.
 - `mismatch` colors overlap residual magnitude so merge disagreement is visible even when RGB still looks plausible.
 

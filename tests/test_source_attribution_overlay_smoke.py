@@ -8,6 +8,11 @@ from data_process.visualization.source_compare import render_source_attribution_
 
 
 class SourceAttributionOverlaySmokeTest(unittest.TestCase):
+    def test_source_color_mapping_matches_rgb_semantics(self) -> None:
+        self.assertEqual(source_color_bgr(0), (0, 0, 255))
+        self.assertEqual(source_color_bgr(1), (0, 255, 0))
+        self.assertEqual(source_color_bgr(2), (255, 0, 0))
+
     def test_overlay_uses_stable_source_colors(self) -> None:
         camera_clouds = []
         for camera_idx, x_value in zip((0, 1, 2), (-0.08, 0.0, 0.08), strict=False):
