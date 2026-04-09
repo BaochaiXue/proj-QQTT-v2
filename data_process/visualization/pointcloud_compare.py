@@ -7,7 +7,9 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .calibration_frame import build_visualization_frame_contract
 from .calibration_io import load_calibration_transforms
+from .calibration_io import build_calibration_contract_summary, infer_calibration_mapping_mode
 from .io_artifacts import write_gif, write_json, write_ply_ascii, write_video
 from .io_case import (
     choose_depth_stream,
@@ -253,6 +255,7 @@ def run_depth_comparison_workflow(
             config["center"] = np.asarray(focus_point, dtype=np.float32)
             config["radius"] = distance
             view_configs.append(config)
+        calibration_contract = None
     else:
         if len(native_metadata["serial_numbers"]) != 3:
             raise ValueError("camera_poses_table_focus currently requires exactly 3 cameras.")
@@ -272,6 +275,16 @@ def run_depth_comparison_workflow(
             focus_point=focus_point,
             view_distance_scale=float(view_distance_scale),
             target_distance=target_distance,
+        )
+        calibration_contract = build_calibration_contract_summary(
+            calibrate_path=native_case_dir / "calibrate.pkl",
+            transform_count=len(native_c2w),
+            serial_numbers=native_metadata["serial_numbers"],
+            calibration_reference_serials=calibration_reference_serials,
+            mapping_mode=infer_calibration_mapping_mode(
+                serial_numbers=native_metadata["serial_numbers"],
+                calibration_reference_serials=calibration_reference_serials,
+            ),
         )
 
     if layout_mode == "grid_2x3" and len(view_configs) != 3:
@@ -464,6 +477,15 @@ def run_depth_comparison_workflow(
         "image_flip": image_flip,
         "scalar_bounds": scalar_bounds,
         "focus_point": focus_point.tolist(),
+        "calibration_contract": calibration_contract,
+        "frame_contract": build_visualization_frame_contract(
+            uses_semantic_world=False,
+            semantic_world_frame_kind=None,
+            notes=[
+                "This workflow uses the raw calibration-board c2w world frame for world-space geometry.",
+                "No semantic-world transform is applied in the current depth-video compare path.",
+            ],
+        ),
     }
     write_json(output_dir / "comparison_metadata.json", comparison_metadata)
     write_json(output_dir / "metrics.json", metrics)

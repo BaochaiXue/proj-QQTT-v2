@@ -8,8 +8,10 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .calibration_frame import build_visualization_frame_contract
+from .calibration_io import build_calibration_contract_summary, infer_calibration_mapping_mode, load_calibration_transforms
 from .camera_frusta import build_camera_frustum_geometry, collect_camera_geometry_points, extract_camera_poses
-from .io_artifacts import write_json
+from .io_artifacts import write_image, write_json
 from .layouts import (
     compose_keyframe_sheet,
     compose_side_by_side_large,
@@ -209,8 +211,6 @@ def _resolve_single_frame_case_selection_model(
         ffs_count=get_frame_count(ffs_metadata),
         frame_idx=frame_idx,
     )
-
-    from .calibration_io import load_calibration_transforms
 
     calibration_reference_serials = native_metadata.get(
         "calibration_reference_serials",
@@ -1639,8 +1639,33 @@ def run_turntable_compare_workflow(
         supported_arc_label=f"Supported arc: {coverage_arc['span_deg']:.1f} deg",
     )
     overview_image_path = output_dir / "scene_overview_with_cameras.png"
-    cv2.imwrite(str(overview_image_path), overview_state["image"])
+    overview_calibration_frame_path = output_dir / "scene_overview_calibration_frame.png"
+    write_image(overview_image_path, overview_state["image"])
+    write_image(overview_calibration_frame_path, overview_state["image"])
     source_legend_path = Path(write_source_legend_image(output_dir / "source_attribution_legend.png"))
+
+    calibration_reference_serials = selection["native_metadata"].get(
+        "calibration_reference_serials",
+        selection["native_metadata"]["serial_numbers"],
+    )
+    calibration_contract = build_calibration_contract_summary(
+        calibrate_path=selection["native_case_dir"] / "calibrate.pkl",
+        transform_count=len(selection["native_c2w"]),
+        serial_numbers=selection["native_metadata"]["serial_numbers"],
+        calibration_reference_serials=calibration_reference_serials,
+        mapping_mode=infer_calibration_mapping_mode(
+            serial_numbers=selection["native_metadata"]["serial_numbers"],
+            calibration_reference_serials=calibration_reference_serials,
+        ),
+    )
+    frame_contract = build_visualization_frame_contract(
+        uses_semantic_world=False,
+        semantic_world_frame_kind=None,
+        notes=[
+            "Professor-facing compare uses the raw calibration-board c2w world frame.",
+            "Overview display applies a readability-oriented top-down display basis but does not convert into a semantic world frame.",
+        ],
+    )
 
     output_specs = build_render_output_specs(
         geom_render_mode=render_mode,
@@ -1943,7 +1968,7 @@ def run_turntable_compare_workflow(
         "sheet_path": str(source_split_sheet_path) if write_keyframe_sheet else None,
     }
     support_metrics_path = output_dir / "support_metrics.json"
-    support_metrics_path.write_text(json.dumps(support_metrics, indent=2), encoding="utf-8")
+    write_json(support_metrics_path, support_metrics)
     source_metrics_payload = {
         "source_color_map_bgr": {str(key): list(value) for key, value in SOURCE_CAMERA_COLORS_BGR.items()},
         "native": {
@@ -1959,7 +1984,7 @@ def run_turntable_compare_workflow(
         "steps": source_metrics_steps,
     }
     source_metrics_path = output_dir / "source_metrics.json"
-    source_metrics_path.write_text(json.dumps(source_metrics_payload, indent=2), encoding="utf-8")
+    write_json(source_metrics_path, source_metrics_payload)
     mismatch_metrics_payload = {
         "steps": mismatch_metrics_steps,
         "native_overall": {
@@ -1974,7 +1999,7 @@ def run_turntable_compare_workflow(
         },
     }
     mismatch_metrics_path = output_dir / "mismatch_metrics.json"
-    mismatch_metrics_path.write_text(json.dumps(mismatch_metrics_payload, indent=2), encoding="utf-8")
+    write_json(mismatch_metrics_path, mismatch_metrics_payload)
     if refinement["pass1_crop"] is not None:
         _write_json(output_dir / "object_roi_pass1_world.json", _json_ready_crop_bounds(refinement["pass1_crop"]))
     if refinement["pass2_crop"] is not None:
@@ -2173,6 +2198,8 @@ def run_turntable_compare_workflow(
         "max_points_per_camera": max_points_per_camera,
         "use_float_ffs_depth_when_available": bool(use_float_ffs_depth_when_available),
         "scene_overview_with_cameras": str(overview_image_path),
+        "scene_overview_calibration_frame": str(overview_calibration_frame_path),
+        "scene_overview_semantic_frame": None,
         "object_roi_pass1_world": None if refinement["pass1_crop"] is None else str((output_dir / "object_roi_pass1_world.json").resolve()),
         "object_roi_pass2_world": None if refinement["pass2_crop"] is None else str((output_dir / "object_roi_pass2_world.json").resolve()),
         "per_camera_auto_bbox_dir": str((output_dir / "per_camera_auto_bbox").resolve()),
@@ -2211,10 +2238,12 @@ def run_turntable_compare_workflow(
             "overview": overview_state["renderer_used"],
             **renderer_used_by_output,
         },
+        "calibration_contract": calibration_contract,
+        "frame_contract": frame_contract,
         "native_stats": raw_scene["native_stats"],
         "ffs_stats": raw_scene["ffs_stats"],
     }
-    (output_dir / "turntable_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    write_json(output_dir / "turntable_metadata.json", metadata)
 
     return {
         "output_dir": str(output_dir),
