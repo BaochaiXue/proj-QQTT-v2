@@ -25,6 +25,12 @@ def deterministic_subsample(
     return cloud[idx], color_values[idx]
 
 
+def deterministic_subsample_indices(length: int, *, max_points: int | None) -> np.ndarray:
+    if max_points is None or int(max_points) <= 0 or int(length) <= int(max_points):
+        return np.arange(int(length), dtype=np.int32)
+    return np.linspace(0, int(length) - 1, int(max_points), dtype=np.int32)
+
+
 def _concat_clouds(camera_clouds: list[dict[str, Any]], *, key_points: str, key_colors: str) -> tuple[np.ndarray, np.ndarray]:
     point_sets = [np.asarray(item[key_points], dtype=np.float32) for item in camera_clouds if len(item[key_points]) > 0]
     color_sets = [np.asarray(item[key_colors], dtype=np.uint8) for item in camera_clouds if len(item[key_points]) > 0]
@@ -33,6 +39,15 @@ def _concat_clouds(camera_clouds: list[dict[str, Any]], *, key_points: str, key_
     if len(point_sets) == 1:
         return point_sets[0], color_sets[0]
     return np.concatenate(point_sets, axis=0), np.concatenate(color_sets, axis=0)
+
+
+def _concat_aligned_arrays(camera_clouds: list[dict[str, Any]], *, key: str, dtype: Any) -> np.ndarray:
+    arrays = [np.asarray(item[key], dtype=dtype).reshape(-1) for item in camera_clouds if len(item["points"]) > 0]
+    if not arrays:
+        return np.empty((0,), dtype=dtype)
+    if len(arrays) == 1:
+        return arrays[0]
+    return np.concatenate(arrays, axis=0)
 
 
 def build_object_first_layers(
@@ -86,34 +101,50 @@ def build_object_first_layers(
                     combined_points_before = pixel_points_before
         object_points_before = points[object_mask]
         object_colors_before = colors[object_mask]
+        object_source_camera_idx_before = np.asarray(camera_cloud["source_camera_idx"], dtype=np.int16).reshape(-1)[object_mask]
+        object_source_serial_before = np.asarray(camera_cloud["source_serial"], dtype=object).reshape(-1)[object_mask]
         context_points_before = points[~object_mask]
         context_colors_before = colors[~object_mask]
+        context_source_camera_idx_before = np.asarray(camera_cloud["source_camera_idx"], dtype=np.int16).reshape(-1)[~object_mask]
+        context_source_serial_before = np.asarray(camera_cloud["source_serial"], dtype=object).reshape(-1)[~object_mask]
 
-        object_points_after, object_colors_after = deterministic_subsample(
-            object_points_before,
-            object_colors_before,
-            max_points=object_max_points_per_camera,
-        )
-        context_points_after, context_colors_after = deterministic_subsample(
-            context_points_before,
-            context_colors_before,
-            max_points=context_max_points_per_camera,
-        )
+        object_idx = deterministic_subsample_indices(len(object_points_before), max_points=object_max_points_per_camera)
+        context_idx = deterministic_subsample_indices(len(context_points_before), max_points=context_max_points_per_camera)
+        object_points_after = object_points_before[object_idx]
+        object_colors_after = object_colors_before[object_idx]
+        object_source_camera_idx_after = object_source_camera_idx_before[object_idx]
+        object_source_serial_after = object_source_serial_before[object_idx]
+        context_points_after = context_points_before[context_idx]
+        context_colors_after = context_colors_before[context_idx]
+        context_source_camera_idx_after = context_source_camera_idx_before[context_idx]
+        context_source_serial_after = context_source_serial_before[context_idx]
 
         object_cloud = {
             **camera_cloud,
             "points": object_points_after,
             "colors": object_colors_after,
+            "source_camera_idx": object_source_camera_idx_after,
+            "source_serial": object_source_serial_after,
         }
         context_cloud = {
             **camera_cloud,
             "points": context_points_after,
             "colors": context_colors_after,
+            "source_camera_idx": context_source_camera_idx_after,
+            "source_serial": context_source_serial_after,
         }
         combined_cloud = {
             **camera_cloud,
             "points": np.concatenate([object_points_after, context_points_after], axis=0) if len(context_points_after) > 0 else object_points_after,
             "colors": np.concatenate([object_colors_after, context_colors_after], axis=0) if len(context_colors_after) > 0 else object_colors_after,
+            "source_camera_idx": (
+                np.concatenate([object_source_camera_idx_after, context_source_camera_idx_after], axis=0)
+                if len(context_points_after) > 0 else object_source_camera_idx_after
+            ),
+            "source_serial": (
+                np.concatenate([object_source_serial_after, context_source_serial_after], axis=0)
+                if len(context_points_after) > 0 else object_source_serial_after
+            ),
         }
         object_camera_clouds.append(object_cloud)
         context_camera_clouds.append(context_cloud)
@@ -135,16 +166,28 @@ def build_object_first_layers(
     fused_object_points, fused_object_colors = _concat_clouds(object_camera_clouds, key_points="points", key_colors="colors")
     fused_context_points, fused_context_colors = _concat_clouds(context_camera_clouds, key_points="points", key_colors="colors")
     fused_combined_points, fused_combined_colors = _concat_clouds(combined_camera_clouds, key_points="points", key_colors="colors")
+    fused_object_source_camera_idx = _concat_aligned_arrays(object_camera_clouds, key="source_camera_idx", dtype=np.int16)
+    fused_context_source_camera_idx = _concat_aligned_arrays(context_camera_clouds, key="source_camera_idx", dtype=np.int16)
+    fused_combined_source_camera_idx = _concat_aligned_arrays(combined_camera_clouds, key="source_camera_idx", dtype=np.int16)
+    fused_object_source_serial = _concat_aligned_arrays(object_camera_clouds, key="source_serial", dtype=object)
+    fused_context_source_serial = _concat_aligned_arrays(context_camera_clouds, key="source_serial", dtype=object)
+    fused_combined_source_serial = _concat_aligned_arrays(combined_camera_clouds, key="source_serial", dtype=object)
     return {
         "object_camera_clouds": object_camera_clouds,
         "context_camera_clouds": context_camera_clouds,
         "combined_camera_clouds": combined_camera_clouds,
         "object_points": fused_object_points,
         "object_colors": fused_object_colors,
+        "object_source_camera_idx": fused_object_source_camera_idx,
+        "object_source_serial": fused_object_source_serial,
         "context_points": fused_context_points,
         "context_colors": fused_context_colors,
+        "context_source_camera_idx": fused_context_source_camera_idx,
+        "context_source_serial": fused_context_source_serial,
         "combined_points": fused_combined_points,
         "combined_colors": fused_combined_colors,
+        "combined_source_camera_idx": fused_combined_source_camera_idx,
+        "combined_source_serial": fused_combined_source_serial,
         "per_camera_metrics": per_camera_metrics,
     }
 

@@ -254,6 +254,8 @@ def load_case_frame_camera_clouds(
                 "color_path": str(color_path),
                 "points": world_points,
                 "colors": camera_colors,
+                "source_camera_idx": np.full((len(world_points),), int(camera_idx), dtype=np.int16),
+                "source_serial": np.full((len(world_points),), serial, dtype=object),
             }
         )
         per_camera_stats.append(

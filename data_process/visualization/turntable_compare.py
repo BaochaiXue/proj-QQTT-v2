@@ -38,6 +38,14 @@ from .pointcloud_compare import (
     write_gif as write_gif_animation,
     write_video,
 )
+from .source_compare import (
+    SOURCE_CAMERA_COLORS_BGR,
+    build_source_legend_image,
+    render_mismatch_residual,
+    render_source_attribution_overlay,
+    render_source_split_images,
+    write_source_legend_image,
+)
 from .support_compare import compute_support_count_map, overlay_support_legend, render_support_count_map, summarize_support_counts
 
 
@@ -289,6 +297,19 @@ def _json_ready_crop_bounds(crop_bounds: dict[str, Any]) -> dict[str, Any]:
 def _write_json(output_path: Path, payload: dict[str, Any]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _source_histogram(source_camera_idx: np.ndarray) -> dict[str, int]:
+    values = np.asarray(source_camera_idx, dtype=np.int16).reshape(-1)
+    if len(values) == 0:
+        return {}
+    unique_values, counts = np.unique(values, return_counts=True)
+    return {str(int(camera_idx)): int(count) for camera_idx, count in zip(unique_values, counts, strict=False)}
+
+
+def _aggregate_step_metric_series(step_metrics: list[dict[str, Any]], *, key: str) -> float:
+    values = [float(item[key]) for item in step_metrics if key in item]
+    return float(np.mean(values)) if values else 0.0
 
 
 def _derive_bbox_by_camera(
@@ -762,8 +783,10 @@ def build_single_frame_scene(
     )
     render_native_points = native_layers["combined_points"]
     render_native_colors = native_layers["combined_colors"]
+    render_native_source_camera_idx = native_layers["combined_source_camera_idx"]
     render_ffs_points = ffs_layers["combined_points"]
     render_ffs_colors = ffs_layers["combined_colors"]
+    render_ffs_source_camera_idx = ffs_layers["combined_source_camera_idx"]
     render_native_camera_clouds = native_layers["combined_camera_clouds"]
     render_ffs_camera_clouds = ffs_layers["combined_camera_clouds"]
 
@@ -777,11 +800,14 @@ def build_single_frame_scene(
         "native_camera_clouds": cropped_native_camera_clouds,
         "native_render_points": render_native_points,
         "native_render_colors": render_native_colors,
+        "native_render_source_camera_idx": render_native_source_camera_idx,
         "native_render_camera_clouds": render_native_camera_clouds,
         "native_object_points": native_layers["object_points"],
         "native_object_colors": native_layers["object_colors"],
+        "native_object_source_camera_idx": native_layers["object_source_camera_idx"],
         "native_context_points": native_layers["context_points"],
         "native_context_colors": native_layers["context_colors"],
+        "native_context_source_camera_idx": native_layers["context_source_camera_idx"],
         "native_object_camera_clouds": native_layers["object_camera_clouds"],
         "native_context_camera_clouds": native_layers["context_camera_clouds"],
         "native_debug_metrics": native_layers["per_camera_metrics"],
@@ -790,11 +816,14 @@ def build_single_frame_scene(
         "ffs_camera_clouds": cropped_ffs_camera_clouds,
         "ffs_render_points": render_ffs_points,
         "ffs_render_colors": render_ffs_colors,
+        "ffs_render_source_camera_idx": render_ffs_source_camera_idx,
         "ffs_render_camera_clouds": render_ffs_camera_clouds,
         "ffs_object_points": ffs_layers["object_points"],
         "ffs_object_colors": ffs_layers["object_colors"],
+        "ffs_object_source_camera_idx": ffs_layers["object_source_camera_idx"],
         "ffs_context_points": ffs_layers["context_points"],
         "ffs_context_colors": ffs_layers["context_colors"],
+        "ffs_context_source_camera_idx": ffs_layers["context_source_camera_idx"],
         "ffs_object_camera_clouds": ffs_layers["object_camera_clouds"],
         "ffs_context_camera_clouds": ffs_layers["context_camera_clouds"],
         "ffs_debug_metrics": ffs_layers["per_camera_metrics"],
@@ -1190,6 +1219,32 @@ def build_render_output_specs(
             "gif_name": "orbit_compare_support.gif",
             "sheet_name": "turntable_keyframes_support.png",
             "frames_dir_name": "frames_support",
+            "write_video": True,
+            "write_gif": True,
+        }
+    )
+    outputs.append(
+        {
+            "name": "source",
+            "render_mode": "source_attribution_alpha",
+            "video_name": "orbit_compare_source.mp4",
+            "gif_name": "orbit_compare_source.gif",
+            "sheet_name": "turntable_keyframes_source.png",
+            "frames_dir_name": "frames_source",
+            "write_video": True,
+            "write_gif": True,
+        }
+    )
+    outputs.append(
+        {
+            "name": "mismatch",
+            "render_mode": "mismatch_residual",
+            "video_name": "orbit_compare_mismatch.mp4",
+            "gif_name": "orbit_compare_mismatch.gif",
+            "sheet_name": "turntable_keyframes_mismatch.png",
+            "frames_dir_name": "frames_mismatch",
+            "write_video": True,
+            "write_gif": True,
         }
     )
     return outputs
@@ -2127,6 +2182,7 @@ def run_turntable_compare_workflow(
     )
     overview_image_path = output_dir / "scene_overview_with_cameras.png"
     cv2.imwrite(str(overview_image_path), overview_state["image"])
+    source_legend_path = Path(write_source_legend_image(output_dir / "source_attribution_legend.png"))
 
     output_specs = build_render_output_specs(
         geom_render_mode=render_mode,
@@ -2137,6 +2193,12 @@ def run_turntable_compare_workflow(
     board_images_by_output: dict[str, list[np.ndarray]] = {spec["name"]: [] for spec in output_specs}
     renderer_used_by_output: dict[str, dict[str, str]] = {spec["name"]: {} for spec in output_specs}
     support_metrics: list[dict[str, Any]] = []
+    source_metrics_steps: list[dict[str, Any]] = []
+    mismatch_metrics_steps: list[dict[str, Any]] = []
+    source_split_frames_dir = output_dir / "frames_source_split"
+    source_split_frames_dir.mkdir(parents=True, exist_ok=True)
+    source_split_boards: list[np.ndarray] = []
+    source_split_frame_paths: list[Path] = []
     compare_mode_label = "same-case" if selection["same_case_mode"] else "two-case fallback"
     case_label = (
         selection["native_case_dir"].name
