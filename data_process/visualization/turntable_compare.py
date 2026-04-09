@@ -2242,6 +2242,7 @@ def run_turntable_compare_workflow(
     for orbit_step in orbit_steps:
         current_views = orbit_step["view_configs"]
         current_view = orbit_step["view_config"] if "view_config" in orbit_step else orbit_step["view_configs"][0]
+        step_source_metrics_entry: dict[str, Any] | None = None
         overview_inset = render_overview_inset(
             overview_state,
             current_views=current_views,
@@ -2321,15 +2322,14 @@ def run_turntable_compare_workflow(
                     )
                     native_renderer_used = "source_attribution"
                     ffs_renderer_used = "source_attribution"
-                    source_metrics_steps.append(
-                        {
-                            "step_idx": int(orbit_step["step_idx"]),
-                            "angle_deg": float(orbit_step["angle_deg"]),
-                            "azimuth_deg": float(view_config.get("azimuth_deg", orbit_step["angle_deg"])),
-                            "native": native_source,
-                            "ffs": ffs_source,
-                        }
-                    )
+                    step_source_metrics_entry = {
+                        "step_idx": int(orbit_step["step_idx"]),
+                        "angle_deg": float(orbit_step["angle_deg"]),
+                        "azimuth_deg": float(view_config.get("azimuth_deg", orbit_step["angle_deg"])),
+                        "native": native_source,
+                        "ffs": ffs_source,
+                    }
+                    source_metrics_steps.append(step_source_metrics_entry)
                 elif mode_render == "mismatch_residual":
                     native_render, native_mismatch = render_mismatch_residual(
                         scene["native_render_camera_clouds"],
@@ -2354,8 +2354,14 @@ def run_turntable_compare_workflow(
                             "step_idx": int(orbit_step["step_idx"]),
                             "angle_deg": float(orbit_step["angle_deg"]),
                             "azimuth_deg": float(view_config.get("azimuth_deg", orbit_step["angle_deg"])),
-                            "native": native_mismatch,
-                            "ffs": ffs_mismatch,
+                            "native": {
+                                "summary": native_mismatch["summary"],
+                                "per_camera": native_mismatch["per_camera"],
+                            },
+                            "ffs": {
+                                "summary": ffs_mismatch["summary"],
+                                "per_camera": ffs_mismatch["per_camera"],
+                            },
                         }
                     )
                 else:
@@ -2463,9 +2469,9 @@ def run_turntable_compare_workflow(
         cv2.imwrite(str(split_board_path), source_split_board)
         source_split_frame_paths.append(split_board_path)
         source_split_boards.append(source_split_board)
-        source_metrics_steps[-1]["native_split"] = native_split_metrics if source_metrics_steps else native_split_metrics
-        if source_metrics_steps:
-            source_metrics_steps[-1]["ffs_split"] = ffs_split_metrics
+        if step_source_metrics_entry is not None:
+            step_source_metrics_entry["native_split"] = native_split_metrics
+            step_source_metrics_entry["ffs_split"] = ffs_split_metrics
 
         for output_spec in output_specs:
             mode_name = output_spec["name"]
