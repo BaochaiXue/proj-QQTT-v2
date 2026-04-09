@@ -11,14 +11,9 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `record_data.py`: raw RGB-D recording entrypoint
 - `data_process/record_data_align.py`: trim + align raw cases into `data/`
 - `data_process/depth_backends/`: shared FFS geometry + runner used by production alignment and harness scripts
-- `data_process/visualization/`: aligned-case visualization package
-  - `calibration_frame.py`, `calibration_io.py`: calibration-world semantics and loader validation
-  - `io_case.py`, `io_artifacts.py`: aligned-case loading and artifact writing
-  - `roi.py`, `views.py`, `layouts.py`, `types.py`: shared visualization contracts/math/composition
-  - `renderers/`: rendering backends
-  - `workflows/`: thin workflow-facing orchestration wrappers
+- `data_process/visualization/`: aligned-case comparison visualization package
 - `qqtt/env/camera/`: shared RealSense camera runtime
-  - `preflight.py`: record-time probe/preflight decision table
+- `qqtt/env/camera/preflight.py`: record-time probe/preflight decision table
 - `env_install/env_install.sh`: camera-only environment setup
 - `docs/SCOPE.md`: exact in-scope vs out-of-scope boundary
 - `docs/WORKFLOWS.md`: canonical operator workflows
@@ -30,7 +25,10 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `scripts/harness/check_scope.py`: deterministic repo scope guard
 - `scripts/harness/check_visual_architecture.py`: visualization layering / file-size guard
 - `tests/test_record_data_align_smoke.py`: smoke test for aligned-case generation
-- `scripts/harness/visual_compare_depth_video.py`: native-vs-FFS aligned comparison video workflow
+- `scripts/harness/visual_compare_depth_panels.py`: per-camera aligned native-vs-FFS depth panels
+- `scripts/harness/visual_compare_reprojection.py`: aligned native-vs-FFS reprojection compare
+- `scripts/harness/visual_compare_depth_video.py`: older temporal fused compare
+- `scripts/harness/visual_compare_turntable.py`: current single-frame professor-facing compare
 
 ## Required Workflow For Future Changes
 
@@ -45,7 +43,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 
 ## Invariants
 
-- The repo stops at `data_process/record_data_align.py`.
+- The repo's primary data product stops at `data_process/record_data_align.py`; aligned native-vs-FFS comparison visualization remains an in-scope diagnostic utility built on aligned cases.
 - Do not reintroduce segmentation, tracking, shape prior, inverse physics, Gaussian Splatting, evaluation, or teleop code.
 - `qqtt/__init__.py` exports only `CameraSystem`.
 - `env_install/env_install.sh` stays camera-only.

@@ -92,3 +92,19 @@ class RecordPreflightPolicySmokeTest(unittest.TestCase):
             emitter="on",
         )
         self.assertEqual(decision.operator_status, "pending_serial_resolution")
+
+    def test_missing_probe_file_reports_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            probe_path = Path(tmp_dir) / "missing_probe.json"
+            decision = evaluate_capture_preflight(
+                capture_mode="stereo_ir",
+                serials=["a", "b", "c"],
+                width=848,
+                height=480,
+                fps=30,
+                emitter="on",
+                probe_results_path=probe_path,
+                probe_results_md_path=probe_path.with_suffix(".md"),
+            )
+        self.assertEqual(decision.operator_status, "unknown")
+        self.assertIn("No D455 stream probe results file", decision.reason)

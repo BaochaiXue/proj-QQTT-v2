@@ -70,6 +70,16 @@ Current preflight policy:
 - current repo policy
 - whether recording is allowed
 
+If `--serials` is omitted, the first summary is intentionally provisional:
+
+- stage = `before camera discovery`
+- serials = `<pending>`
+
+After `CameraSystem` resolves the actual camera serials, `record_data.py` prints a second summary:
+
+- stage = `after camera discovery`
+- final support / blocked / experimental / unknown status for the discovered serial set
+
 Optional non-interactive short capture:
 
 ```bash

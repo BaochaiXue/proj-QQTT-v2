@@ -139,6 +139,8 @@ def evaluate_capture_preflight(
     topology_type = _topology_type_for_serials(serial_list) if serials is not None else None
     stream_set = policy["probe_stream_set"]
     requires_probe = stream_set is not None
+    probe_path = Path(probe_results_path).resolve()
+    probe_md_path = Path(probe_results_md_path).resolve()
 
     if not requires_probe:
         return CapturePreflightDecision(
@@ -157,8 +159,8 @@ def evaluate_capture_preflight(
             allowed_to_record=True,
             requires_probe=False,
             reason="rgbd capture does not require the D455 IR-pair stream probe gate.",
-            probe_results_json=str(Path(probe_results_path).resolve()),
-            probe_results_md=str(Path(probe_results_md_path).resolve()),
+            probe_results_json=str(probe_path),
+            probe_results_md=str(probe_md_path),
         )
 
     if serials is None:
@@ -178,8 +180,29 @@ def evaluate_capture_preflight(
             allowed_to_record=True,
             requires_probe=True,
             reason="Serials are not resolved yet; final probe policy will be applied after camera enumeration.",
-            probe_results_json=str(Path(probe_results_path).resolve()),
-            probe_results_md=str(Path(probe_results_md_path).resolve()),
+            probe_results_json=str(probe_path),
+            probe_results_md=str(probe_md_path),
+        )
+
+    if not probe_path.exists():
+        return CapturePreflightDecision(
+            capture_mode=capture_mode,
+            serials=serial_list,
+            width=width,
+            height=height,
+            fps=fps,
+            emitter=emitter,
+            topology_type=topology_type,
+            stream_set=stream_set,
+            probe_support=None,
+            policy_label=str(policy["policy_label"]),
+            unsupported_behavior=str(policy["unsupported_behavior"]),
+            operator_status="unknown",
+            allowed_to_record=True,
+            requires_probe=True,
+            reason="No D455 stream probe results file was found for this machine, so support is currently unknown.",
+            probe_results_json=str(probe_path),
+            probe_results_md=str(probe_md_path),
         )
 
     probe_support = lookup_probe_support(
@@ -209,8 +232,8 @@ def evaluate_capture_preflight(
             allowed_to_record=True,
             requires_probe=True,
             reason="The latest D455 stream probe marked this capture profile as supported.",
-            probe_results_json=str(Path(probe_results_path).resolve()),
-            probe_results_md=str(Path(probe_results_md_path).resolve()),
+            probe_results_json=str(probe_path),
+            probe_results_md=str(probe_md_path),
         )
 
     if probe_support is False:
@@ -239,8 +262,8 @@ def evaluate_capture_preflight(
             allowed_to_record=allowed_to_record,
             requires_probe=True,
             reason=reason,
-            probe_results_json=str(Path(probe_results_path).resolve()),
-            probe_results_md=str(Path(probe_results_md_path).resolve()),
+            probe_results_json=str(probe_path),
+            probe_results_md=str(probe_md_path),
         )
 
     return CapturePreflightDecision(
@@ -255,20 +278,26 @@ def evaluate_capture_preflight(
         probe_support=None,
         policy_label=str(policy["policy_label"]),
         unsupported_behavior=str(policy["unsupported_behavior"]),
-        operator_status="probe_unknown",
+        operator_status="unknown",
         allowed_to_record=True,
         requires_probe=True,
         reason="No matching probe result was found for this exact profile; recording may proceed according to current repo policy, but the operator should treat it as unverified.",
-        probe_results_json=str(Path(probe_results_path).resolve()),
-        probe_results_md=str(Path(probe_results_md_path).resolve()),
+        probe_results_json=str(probe_path),
+        probe_results_md=str(probe_md_path),
     )
 
 
-def format_capture_preflight_summary(decision: CapturePreflightDecision) -> str:
+def format_capture_preflight_summary(
+    decision: CapturePreflightDecision,
+    *,
+    stage_label: str | None = None,
+) -> str:
     serial_label = ",".join(decision.serials) if decision.serials else "<pending>"
-    return "\n".join(
+    lines = ["[record] preflight summary"]
+    if stage_label:
+        lines.append(f"  stage: {stage_label}")
+    lines.extend(
         [
-            "[record] preflight summary",
             f"  capture_mode: {decision.capture_mode}",
             f"  serials: {serial_label}",
             f"  profile: {decision.width}x{decision.height}@{decision.fps}, emitter={decision.emitter}",
@@ -282,3 +311,4 @@ def format_capture_preflight_summary(decision: CapturePreflightDecision) -> str:
             f"  probe_json: {decision.probe_results_json}",
         ]
     )
+    return "\n".join(lines)

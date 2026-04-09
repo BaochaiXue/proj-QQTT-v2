@@ -66,6 +66,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     return parser
 
+
+def _print_preflight_summary(*, decision, stage_label: str) -> None:
+    print(format_capture_preflight_summary(decision, stage_label=stage_label))
+
+
+def _raise_if_preflight_blocked(*, decision, stage_label: str, camera_system=None) -> None:
+    if decision.allowed_to_record:
+        return
+    if camera_system is not None:
+        camera_system.realsense.stop()
+    raise RuntimeError(
+        f"Recording preflight blocked this capture profile {stage_label}. "
+        f"{decision.reason} See {decision.probe_results_md}."
+    )
+
 def main() -> int:
     args = build_parser().parse_args()
     from qqtt.env import CameraSystem
@@ -88,12 +103,12 @@ def main() -> int:
         fps=args.fps,
         emitter=args.emitter,
     )
-    print(format_capture_preflight_summary(initial_preflight))
-    if effective_serials and not initial_preflight.allowed_to_record:
-        raise RuntimeError(
-            "Recording preflight blocked this capture profile before camera startup. "
-            f"{initial_preflight.reason} See {initial_preflight.probe_results_md}."
-        )
+    _print_preflight_summary(
+        decision=initial_preflight,
+        stage_label="before camera discovery" if selected_serials is None else "before camera startup",
+    )
+    if effective_serials:
+        _raise_if_preflight_blocked(decision=initial_preflight, stage_label="before camera startup")
 
     camera_system = CameraSystem(
         WH=[args.width, args.height],
@@ -114,17 +129,21 @@ def main() -> int:
         fps=args.fps,
         emitter=args.emitter,
     )
-    print(format_capture_preflight_summary(final_preflight))
-    if not final_preflight.allowed_to_record:
-        camera_system.realsense.stop()
-        raise RuntimeError(
-            "Recording preflight blocked this capture profile after serial resolution. "
-            f"{final_preflight.reason} See {final_preflight.probe_results_md}."
-        )
+    _print_preflight_summary(decision=final_preflight, stage_label="after camera discovery")
+    _raise_if_preflight_blocked(
+        decision=final_preflight,
+        stage_label="after camera discovery",
+        camera_system=camera_system,
+    )
     if final_preflight.operator_status == "experimental_warning":
         print(
             "[record] warning: preflight policy allows this unsupported profile experimentally; "
             "recording will still be attempted."
+        )
+    elif final_preflight.operator_status == "unknown":
+        print(
+            "[record] warning: preflight support is unknown for this exact profile; "
+            "recording will still be attempted under current repo policy."
         )
     camera_system.record(output_path=str(output_path), max_frames=args.max_frames)
 
