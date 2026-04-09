@@ -2276,6 +2276,62 @@ def run_turntable_compare_workflow(
                             "ffs": summarize_support_counts(ffs_support["support_count"], ffs_support["valid"]),
                         }
                     )
+                elif mode_render == "source_attribution_alpha":
+                    native_render, native_source = render_source_attribution_overlay(
+                        scene["native_render_camera_clouds"],
+                        view_config=view_config,
+                        width=main_width,
+                        height=main_height,
+                        projection_mode=projection_mode,
+                        ortho_scale=ortho_scale,
+                    )
+                    ffs_render, ffs_source = render_source_attribution_overlay(
+                        scene["ffs_render_camera_clouds"],
+                        view_config=view_config,
+                        width=main_width,
+                        height=main_height,
+                        projection_mode=projection_mode,
+                        ortho_scale=ortho_scale,
+                    )
+                    native_renderer_used = "source_attribution"
+                    ffs_renderer_used = "source_attribution"
+                    source_metrics_steps.append(
+                        {
+                            "step_idx": int(orbit_step["step_idx"]),
+                            "angle_deg": float(orbit_step["angle_deg"]),
+                            "azimuth_deg": float(view_config.get("azimuth_deg", orbit_step["angle_deg"])),
+                            "native": native_source,
+                            "ffs": ffs_source,
+                        }
+                    )
+                elif mode_render == "mismatch_residual":
+                    native_render, native_mismatch = render_mismatch_residual(
+                        scene["native_render_camera_clouds"],
+                        view_config=view_config,
+                        width=main_width,
+                        height=main_height,
+                        projection_mode=projection_mode,
+                        ortho_scale=ortho_scale,
+                    )
+                    ffs_render, ffs_mismatch = render_mismatch_residual(
+                        scene["ffs_render_camera_clouds"],
+                        view_config=view_config,
+                        width=main_width,
+                        height=main_height,
+                        projection_mode=projection_mode,
+                        ortho_scale=ortho_scale,
+                    )
+                    native_renderer_used = "mismatch_residual"
+                    ffs_renderer_used = "mismatch_residual"
+                    mismatch_metrics_steps.append(
+                        {
+                            "step_idx": int(orbit_step["step_idx"]),
+                            "angle_deg": float(orbit_step["angle_deg"]),
+                            "azimuth_deg": float(view_config.get("azimuth_deg", orbit_step["angle_deg"])),
+                            "native": native_mismatch,
+                            "ffs": ffs_mismatch,
+                        }
+                    )
                 else:
                     native_render, native_renderer_used = render_point_cloud(
                         scene["native_render_points"],
@@ -2335,6 +2391,56 @@ def run_turntable_compare_workflow(
                 )
             per_step_renders[(mode_name, "board")] = board
 
+        split_view_config = orbit_step["view_config"] if "view_config" in orbit_step else orbit_step["view_configs"][0]
+        split_ortho_scale = None
+        if projection_mode == "orthographic":
+            split_ortho_scale = estimate_ortho_scale(
+                [scene["native_render_points"], scene["ffs_render_points"]],
+                view_config=split_view_config,
+            )
+        native_split_images, native_split_metrics = render_source_split_images(
+            scene["native_render_camera_clouds"],
+            view_config=split_view_config,
+            scalar_bounds=scene["scalar_bounds"],
+            renderer=renderer,
+            width=640,
+            height=420,
+            point_radius_px=point_radius_px,
+            supersample_scale=supersample_scale,
+            projection_mode=projection_mode,
+            ortho_scale=split_ortho_scale,
+        )
+        ffs_split_images, ffs_split_metrics = render_source_split_images(
+            scene["ffs_render_camera_clouds"],
+            view_config=split_view_config,
+            scalar_bounds=scene["scalar_bounds"],
+            renderer=renderer,
+            width=640,
+            height=420,
+            point_radius_px=point_radius_px,
+            supersample_scale=supersample_scale,
+            projection_mode=projection_mode,
+            ortho_scale=split_ortho_scale,
+        )
+        source_split_board = compose_turntable_board(
+            title_lines=[
+                f"{case_label} | frame_idx={selection['native_frame_idx']} | {compare_mode_label}",
+                f"source_split | orbit={orbit_step['angle_deg']:+.1f} deg | proj={projection_mode}",
+            ],
+            column_headers=["Cam0", "Cam1", "Cam2"],
+            row_headers=["Native", "FFS"],
+            native_images=native_split_images,
+            ffs_images=ffs_split_images,
+            overview_inset=overview_inset,
+        )
+        split_board_path = source_split_frames_dir / f"{orbit_step['step_idx']:03d}_angle_{_format_angle_token(orbit_step['angle_deg'])}.png"
+        cv2.imwrite(str(split_board_path), source_split_board)
+        source_split_frame_paths.append(split_board_path)
+        source_split_boards.append(source_split_board)
+        source_metrics_steps[-1]["native_split"] = native_split_metrics if source_metrics_steps else native_split_metrics
+        if source_metrics_steps:
+            source_metrics_steps[-1]["ffs_split"] = ffs_split_metrics
+
         for output_spec in output_specs:
             mode_name = output_spec["name"]
             board = per_step_renders[(mode_name, "board")]
@@ -2349,21 +2455,62 @@ def run_turntable_compare_workflow(
         video_path = output_dir / output_spec["video_name"]
         gif_path = output_dir / output_spec["gif_name"]
         sheet_path = output_dir / output_spec["sheet_name"]
-        if write_mp4:
+        if write_mp4 and bool(output_spec.get("write_video", True)):
             write_video(video_path, frame_paths_by_output[mode_name], fps)
-        if write_gif:
+        if write_gif and bool(output_spec.get("write_gif", True)):
             write_gif_animation(gif_path, frame_paths_by_output[mode_name], fps)
         if write_keyframe_sheet and board_images_by_output[mode_name]:
             sheet = compose_keyframe_sheet(board_images_by_output[mode_name])
             cv2.imwrite(str(sheet_path), sheet)
         output_files[mode_name] = {
             "frames_dir": str(frames_dir_by_output[mode_name]),
-            "video_path": str(video_path) if write_mp4 else None,
-            "gif_path": str(gif_path) if write_gif else None,
+            "video_path": str(video_path) if write_mp4 and bool(output_spec.get("write_video", True)) else None,
+            "gif_path": str(gif_path) if write_gif and bool(output_spec.get("write_gif", True)) else None,
             "sheet_path": str(sheet_path) if write_keyframe_sheet else None,
         }
+    source_split_sheet_path = output_dir / "turntable_keyframes_source_split.png"
+    if write_keyframe_sheet and source_split_boards:
+        source_split_sheet = compose_keyframe_sheet(source_split_boards)
+        cv2.imwrite(str(source_split_sheet_path), source_split_sheet)
+    output_files["source_split"] = {
+        "frames_dir": str(source_split_frames_dir),
+        "video_path": None,
+        "gif_path": None,
+        "sheet_path": str(source_split_sheet_path) if write_keyframe_sheet else None,
+    }
     support_metrics_path = output_dir / "support_metrics.json"
     support_metrics_path.write_text(json.dumps(support_metrics, indent=2), encoding="utf-8")
+    source_metrics_payload = {
+        "source_color_map_bgr": {str(key): list(value) for key, value in SOURCE_CAMERA_COLORS_BGR.items()},
+        "native": {
+            "object_source_histogram": _source_histogram(scene["native_object_source_camera_idx"]),
+            "context_source_histogram": _source_histogram(scene["native_context_source_camera_idx"]),
+            "combined_source_histogram": _source_histogram(scene["native_render_source_camera_idx"]),
+        },
+        "ffs": {
+            "object_source_histogram": _source_histogram(scene["ffs_object_source_camera_idx"]),
+            "context_source_histogram": _source_histogram(scene["ffs_context_source_camera_idx"]),
+            "combined_source_histogram": _source_histogram(scene["ffs_render_source_camera_idx"]),
+        },
+        "steps": source_metrics_steps,
+    }
+    source_metrics_path = output_dir / "source_metrics.json"
+    source_metrics_path.write_text(json.dumps(source_metrics_payload, indent=2), encoding="utf-8")
+    mismatch_metrics_payload = {
+        "steps": mismatch_metrics_steps,
+        "native_overall": {
+            "residual_mean_m": _aggregate_step_metric_series([item["native"]["summary"] for item in mismatch_metrics_steps], key="residual_mean_m"),
+            "residual_p90_m": _aggregate_step_metric_series([item["native"]["summary"] for item in mismatch_metrics_steps], key="residual_p90_m"),
+            "residual_max_m": _aggregate_step_metric_series([item["native"]["summary"] for item in mismatch_metrics_steps], key="residual_max_m"),
+        },
+        "ffs_overall": {
+            "residual_mean_m": _aggregate_step_metric_series([item["ffs"]["summary"] for item in mismatch_metrics_steps], key="residual_mean_m"),
+            "residual_p90_m": _aggregate_step_metric_series([item["ffs"]["summary"] for item in mismatch_metrics_steps], key="residual_p90_m"),
+            "residual_max_m": _aggregate_step_metric_series([item["ffs"]["summary"] for item in mismatch_metrics_steps], key="residual_max_m"),
+        },
+    }
+    mismatch_metrics_path = output_dir / "mismatch_metrics.json"
+    mismatch_metrics_path.write_text(json.dumps(mismatch_metrics_payload, indent=2), encoding="utf-8")
     if refinement["pass1_crop"] is not None:
         _write_json(output_dir / "object_roi_pass1_world.json", _json_ready_crop_bounds(refinement["pass1_crop"]))
     if refinement["pass2_crop"] is not None:
@@ -2421,6 +2568,14 @@ def run_turntable_compare_workflow(
     root_ffs_object_png = output_dir / "fused_object_only_ffs.png"
     root_native_object_png.write_bytes(Path(native_fused_debug["object_png"]).read_bytes())
     root_ffs_object_png.write_bytes(Path(ffs_fused_debug["object_png"]).read_bytes())
+    for camera_idx in (0, 1, 2):
+        preview_idx = next(
+            (idx for idx, metrics in enumerate(native_debug["per_camera_metrics"]) if int(metrics["camera_idx"]) == camera_idx),
+            None,
+        )
+        if preview_idx is not None:
+            preview_path = Path(native_debug["preview_paths"][preview_idx])
+            (output_dir / f"per_camera_object_cloud_cam{camera_idx}.png").write_bytes(preview_path.read_bytes())
 
     def _aggregate_support(source_name: str) -> dict[str, float]:
         relevant = [item[source_name] for item in support_metrics if source_name in item]
@@ -2468,6 +2623,9 @@ def run_turntable_compare_workflow(
             "native": _aggregate_support("native"),
             "ffs": _aggregate_support("ffs"),
         },
+        "source_metrics_path": str(source_metrics_path),
+        "mismatch_metrics_path": str(mismatch_metrics_path),
+        "source_legend_path": str(source_legend_path),
         "native": {
             "pass1_seed_mask_metrics": refinement["native_pass1_seed_metrics"],
             "pass2_seed_mask_metrics": refinement["native_pass2_seed_metrics"],
@@ -2578,6 +2736,9 @@ def run_turntable_compare_workflow(
         },
         "crop_metadata": scene["crop_metadata"],
         "support_metrics_path": str(support_metrics_path),
+        "source_metrics_path": str(source_metrics_path),
+        "mismatch_metrics_path": str(mismatch_metrics_path),
+        "source_legend_path": str(source_legend_path),
         "compare_debug_metrics_path": str(compare_debug_metrics_path),
         "compare_debug_metrics_root_path": str(compare_debug_metrics_root_path),
         "outputs": output_files,
