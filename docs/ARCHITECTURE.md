@@ -32,6 +32,7 @@ The repo is intentionally small.
 - `data_process/visualization/calibration_io.py`
 - `data_process/visualization/camera_frusta.py`
 - `data_process/visualization/depth_diagnostics.py`
+- `data_process/visualization/object_compare.py`
 - `data_process/visualization/object_roi.py`
 - `data_process/visualization/panel_compare.py`
 - `data_process/visualization/pointcloud_compare.py`
@@ -102,6 +103,8 @@ The fused renderer also supports two layout modes:
 - single-frame case selection
 - world-space ROI cropping before orbit computation
 - optional per-camera image-ROI filtering before fusion for object-only review
+- object-first dense/context splitting through `object_compare.py`
+- seeded object-union bbox crop when manual image ROI masks are available
 - camera-frustum geometry extraction
 - object-centric ROI extraction from the tabletop scene
 - coverage-aware orbit planning informed by the real camera layout
@@ -109,6 +112,7 @@ The fused renderer also supports two layout modes:
 - automatic geom/rgb/support output planning
 - automatic mp4/gif animation export from the shared per-frame PNG sequence
 - larger orthographic top-view position-map rendering with orbit path, supported arc, and crop visualization
+- debug artifact export for per-camera masks, per-camera object clouds, fused object-only clouds, and compare metrics
 
 The shared fallback projection convention in `pointcloud_compare.py` maps positive view-space `y` upward on screen, so larger view-space height becomes a smaller image-row index without requiring any late image flip.
 

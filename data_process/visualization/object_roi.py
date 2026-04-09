@@ -34,8 +34,43 @@ def fit_dominant_table_plane(
         idx = np.linspace(0, len(candidates) - 1, max_fit_points, dtype=np.int32)
         candidates = candidates[idx]
 
-    plane_point = np.median(candidates, axis=0).astype(np.float32)
-    centered = candidates - plane_point[None, :]
+    def _fit_plane_from_points(sample: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+        vec0 = sample[1] - sample[0]
+        vec1 = sample[2] - sample[0]
+        normal = np.cross(vec0, vec1)
+        if float(np.linalg.norm(normal)) <= 1e-6:
+            return None
+        normal = _normalize(normal, np.array([0.0, 0.0, 1.0], dtype=np.float32))
+        point = sample[0].astype(np.float32)
+        return point, normal.astype(np.float32)
+
+    rng = np.random.default_rng(0)
+    best_inlier_mask = None
+    best_inlier_count = -1
+    best_residual = np.inf
+    candidate_count = len(candidates)
+    ransac_trials = min(256, max(32, candidate_count // 12))
+    distance_threshold = 0.012
+    for _ in range(ransac_trials):
+        sample_indices = rng.choice(candidate_count, size=3, replace=False)
+        plane = _fit_plane_from_points(candidates[sample_indices])
+        if plane is None:
+            continue
+        plane_point, plane_normal = plane
+        signed_distance = np.abs((candidates - plane_point[None, :]) @ plane_normal)
+        inlier_mask = signed_distance <= distance_threshold
+        inlier_count = int(np.count_nonzero(inlier_mask))
+        if inlier_count < 64:
+            continue
+        residual = float(np.median(signed_distance[inlier_mask]))
+        if inlier_count > best_inlier_count or (inlier_count == best_inlier_count and residual < best_residual):
+            best_inlier_mask = inlier_mask
+            best_inlier_count = inlier_count
+            best_residual = residual
+
+    fit_points = candidates if best_inlier_mask is None else candidates[best_inlier_mask]
+    plane_point = np.median(fit_points, axis=0).astype(np.float32)
+    centered = fit_points - plane_point[None, :]
     _, _, vh = np.linalg.svd(centered, full_matrices=False)
     normal = _normalize(vh[-1], np.array([0.0, 0.0, 1.0], dtype=np.float32))
     if float(normal[2]) < 0.0:
@@ -174,6 +209,134 @@ def _select_dense_planar_component(
     return np.unique(selected_indices)
 
 
+def _compute_object_component_stats(
+    object_points: np.ndarray,
+    components: list[np.ndarray],
+    *,
+    plane_point: np.ndarray,
+    plane_normal: np.ndarray,
+) -> list[dict[str, Any]]:
+    stats: list[dict[str, Any]] = []
+    for component_idx, component_indices in enumerate(components):
+        component_points = object_points[component_indices]
+        heights = (component_points - np.asarray(plane_point, dtype=np.float32)[None, :]) @ np.asarray(plane_normal, dtype=np.float32)
+        bbox_min = component_points.min(axis=0).astype(np.float32)
+        bbox_max = component_points.max(axis=0).astype(np.float32)
+        extent = bbox_max - bbox_min
+        planar_extent = float(np.linalg.norm(extent[:2]))
+        vertical_extent = float(np.max(heights) - np.min(heights))
+        median_height = float(np.median(heights))
+        p90_height = float(np.quantile(heights, 0.90))
+        stability = float(min(vertical_extent, 0.25) + min(planar_extent, 0.35) * 0.35)
+        score = (
+            float(len(component_indices))
+            + p90_height * 800.0
+            + median_height * 300.0
+            + stability * 120.0
+        )
+        stats.append(
+            {
+                "component_idx": int(component_idx),
+                "point_count": int(len(component_indices)),
+                "bbox_min": bbox_min,
+                "bbox_max": bbox_max,
+                "extent": extent.astype(np.float32),
+                "median_height": median_height,
+                "p90_height": p90_height,
+                "score": score,
+            }
+        )
+    stats.sort(key=lambda item: item["score"], reverse=True)
+    return stats
+
+
+def _select_object_component_indices(
+    object_points: np.ndarray,
+    components: list[np.ndarray],
+    *,
+    object_component_mode: str,
+    object_component_topk: int,
+    plane_point: np.ndarray,
+    plane_normal: np.ndarray,
+) -> tuple[np.ndarray, list[dict[str, Any]], list[int]]:
+    if not components:
+        fallback_indices = np.arange(len(object_points), dtype=np.int32)
+        return fallback_indices, [], [0] if len(object_points) > 0 else []
+
+    component_stats = _compute_object_component_stats(
+        object_points,
+        components,
+        plane_point=plane_point,
+        plane_normal=plane_normal,
+    )
+    components_by_idx = {int(idx): comp for idx, comp in enumerate(components)}
+    top_component = component_stats[0]
+    selected_component_indices: list[int]
+    if object_component_mode == "largest":
+        selected_component_indices = [int(top_component["component_idx"])]
+    elif object_component_mode == "topk":
+        topk = max(1, int(object_component_topk))
+        selected_component_indices = [int(item["component_idx"]) for item in component_stats[:topk]]
+    elif object_component_mode == "union":
+        largest_count = max(1, int(top_component["point_count"]))
+        top_score = max(1e-6, float(top_component["score"]))
+        top_bbox_min = np.asarray(top_component["bbox_min"], dtype=np.float32)
+        top_bbox_max = np.asarray(top_component["bbox_max"], dtype=np.float32)
+        expanded_min = top_bbox_min - np.array([0.08, 0.08, 0.05], dtype=np.float32)
+        expanded_max = top_bbox_max + np.array([0.08, 0.08, 0.05], dtype=np.float32)
+        selected_component_indices = []
+        for item in component_stats:
+            bbox_min = np.asarray(item["bbox_min"], dtype=np.float32)
+            bbox_max = np.asarray(item["bbox_max"], dtype=np.float32)
+            overlaps_anchor = bool(np.all(bbox_max >= expanded_min) and np.all(bbox_min <= expanded_max))
+            if (
+                float(item["score"]) >= top_score * 0.22
+                or int(item["point_count"]) >= max(48, int(round(largest_count * 0.08)))
+                or overlaps_anchor
+            ):
+                selected_component_indices.append(int(item["component_idx"]))
+    else:
+        raise ValueError(f"Unsupported object_component_mode: {object_component_mode}")
+
+    merged_indices = np.concatenate(
+        [np.asarray(components_by_idx[idx], dtype=np.int32) for idx in selected_component_indices],
+        axis=0,
+    )
+    return np.unique(merged_indices), component_stats, selected_component_indices
+
+
+def compute_object_region_mask(
+    points: np.ndarray,
+    colors: np.ndarray,
+    *,
+    object_roi_min: np.ndarray,
+    object_roi_max: np.ndarray,
+    plane_point: np.ndarray,
+    plane_normal: np.ndarray,
+    min_height: float = 0.0,
+    max_height: float = 0.40,
+    xy_margin: float = 0.02,
+    z_margin: float = 0.02,
+    table_color_bgr: np.ndarray | None = None,
+    table_color_threshold: float = 26.0,
+    table_plane_band: float = 0.03,
+) -> np.ndarray:
+    cloud = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    color_values = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
+    if len(cloud) == 0:
+        return np.zeros((0,), dtype=bool)
+    roi_min = np.asarray(object_roi_min, dtype=np.float32) - np.array([xy_margin, xy_margin, z_margin], dtype=np.float32)
+    roi_max = np.asarray(object_roi_max, dtype=np.float32) + np.array([xy_margin, xy_margin, z_margin], dtype=np.float32)
+    in_bounds = np.all(cloud >= roi_min[None, :], axis=1) & np.all(cloud <= roi_max[None, :], axis=1)
+    signed_height = (cloud - np.asarray(plane_point, dtype=np.float32)[None, :]) @ np.asarray(plane_normal, dtype=np.float32)
+    keep = in_bounds & (signed_height >= float(min_height)) & (signed_height <= float(max_height))
+    if table_color_bgr is not None and np.any(keep):
+        table_color = np.asarray(table_color_bgr, dtype=np.float32).reshape(1, 3)
+        color_distance = np.linalg.norm(color_values.astype(np.float32) - table_color, axis=1)
+        keep &= ~((color_distance <= float(table_color_threshold)) & (signed_height <= float(table_plane_band)))
+    return keep
+
+
 def filter_points_to_object_region(
     points: np.ndarray,
     colors: np.ndarray,
@@ -194,15 +357,21 @@ def filter_points_to_object_region(
     color_values = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
     if len(cloud) == 0:
         return cloud, color_values
-    roi_min = np.asarray(object_roi_min, dtype=np.float32) - np.array([xy_margin, xy_margin, z_margin], dtype=np.float32)
-    roi_max = np.asarray(object_roi_max, dtype=np.float32) + np.array([xy_margin, xy_margin, z_margin], dtype=np.float32)
-    in_bounds = np.all(cloud >= roi_min[None, :], axis=1) & np.all(cloud <= roi_max[None, :], axis=1)
-    signed_height = (cloud - np.asarray(plane_point, dtype=np.float32)[None, :]) @ np.asarray(plane_normal, dtype=np.float32)
-    keep = in_bounds & (signed_height >= float(min_height)) & (signed_height <= float(max_height))
-    if table_color_bgr is not None and np.any(keep):
-        table_color = np.asarray(table_color_bgr, dtype=np.float32).reshape(1, 3)
-        color_distance = np.linalg.norm(color_values.astype(np.float32) - table_color, axis=1)
-        keep &= ~((color_distance <= float(table_color_threshold)) & (signed_height <= float(table_plane_band)))
+    keep = compute_object_region_mask(
+        cloud,
+        color_values,
+        object_roi_min=object_roi_min,
+        object_roi_max=object_roi_max,
+        plane_point=plane_point,
+        plane_normal=plane_normal,
+        min_height=min_height,
+        max_height=max_height,
+        xy_margin=xy_margin,
+        z_margin=z_margin,
+        table_color_bgr=table_color_bgr,
+        table_color_threshold=table_color_threshold,
+        table_plane_band=table_plane_band,
+    )
     return cloud[keep], color_values[keep]
 
 
@@ -232,6 +401,7 @@ def estimate_object_roi_bounds(
     *,
     fallback_bounds: dict[str, np.ndarray],
     full_bounds: dict[str, np.ndarray],
+    plane_reference_points: np.ndarray | None = None,
     object_height_min: float = 0.02,
     object_height_max: float = 0.30,
     object_component_mode: str = "largest",
@@ -252,7 +422,10 @@ def estimate_object_roi_bounds(
             "fallback_used": True,
         }
 
-    plane = fit_dominant_table_plane(cloud)
+    plane_source = cloud if plane_reference_points is None else np.asarray(plane_reference_points, dtype=np.float32).reshape(-1, 3)
+    if len(plane_source) < 64:
+        plane_source = cloud
+    plane = fit_dominant_table_plane(plane_source)
     object_mask, signed_height = estimate_object_support_mask(
         cloud,
         plane_point=plane["point"],
@@ -276,35 +449,16 @@ def estimate_object_roi_bounds(
     scene_extent = float(np.linalg.norm(object_points.max(axis=0) - object_points.min(axis=0)))
     voxel_size = max(0.04, scene_extent * 0.10)
     components = _build_voxel_components(object_points, voxel_size=voxel_size)
-    if not components:
-        component_points = object_points
-    elif object_component_mode == "largest":
-        component_points = object_points[components[0]]
-    else:
-        topk = max(1, int(object_component_topk))
-        merged_indices = np.concatenate(components[:topk], axis=0)
-        component_points = object_points[merged_indices]
-
-    dense_indices = _select_dense_planar_component(
-        component_points,
+    selected_indices, component_stats, selected_component_indices = _select_object_component_indices(
+        object_points,
+        components,
+        object_component_mode=object_component_mode,
+        object_component_topk=object_component_topk,
         plane_point=plane["point"],
         plane_normal=plane["normal"],
     )
-    selected_points = component_points[dense_indices]
-    if len(selected_points) >= 64:
-        basis_x, basis_y = _build_planar_basis(plane["normal"])
-        selected_centered = selected_points - plane["point"][None, :]
-        selected_planar = np.stack([selected_centered @ basis_x, selected_centered @ basis_y], axis=1).astype(np.float32)
-        signed_height_selected = (selected_points - plane["point"][None, :]) @ plane["normal"]
-        weights = np.clip(signed_height_selected, 1e-3, None).astype(np.float32)
-        planar_centroid = np.average(selected_planar, axis=0, weights=weights)
-        planar_distance = np.linalg.norm(selected_planar - planar_centroid[None, :], axis=1)
-        radius_threshold = float(np.quantile(planar_distance, 0.58))
-        radius_threshold = float(np.clip(radius_threshold, 0.08, 0.24))
-        compact_mask = planar_distance <= radius_threshold
-        compact_points = selected_points[compact_mask]
-        if len(compact_points) >= 48:
-            selected_points = compact_points
+    component_points = object_points[selected_indices]
+    selected_points = component_points
 
     roi_min = selected_points.min(axis=0).astype(np.float32)
     roi_max = selected_points.max(axis=0).astype(np.float32)
@@ -323,5 +477,17 @@ def estimate_object_roi_bounds(
         "object_point_count": int(len(object_points)),
         "component_point_count": int(len(component_points)),
         "selected_object_point_count": int(len(selected_points)),
+        "component_count": int(len(components)),
+        "selected_component_indices": [int(item) for item in selected_component_indices],
+        "component_scores": [
+            {
+                "component_idx": int(item["component_idx"]),
+                "point_count": int(item["point_count"]),
+                "median_height": float(item["median_height"]),
+                "p90_height": float(item["p90_height"]),
+                "score": float(item["score"]),
+            }
+            for item in component_stats[: min(len(component_stats), 8)]
+        ],
         "fallback_used": False,
     }

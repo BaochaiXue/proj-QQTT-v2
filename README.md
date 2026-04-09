@@ -218,6 +218,17 @@ This is now the primary fused-cloud diagnostic for professor-facing review. It:
   - RGB-colored reference outputs
   - support-count outputs
 - can optionally apply `--manual_image_roi_json` to keep only object pixels from each real camera before fusion when the professor-facing view should exclude the tabletop as much as possible
+- when `--manual_image_roi_json` is provided, the compare now runs an object-first path:
+  - load the full dense per-camera cloud first
+  - derive per-camera object masks before context subsampling
+  - use the seeded object union bbox to drive crop / focus / orbit
+  - keep object points dense while treating `--max_points_per_camera` as the context-layer cap
+- writes debug artifacts that show where object detail is lost or preserved:
+  - `debug/per_camera_object_mask_overlay/*.png`
+  - `debug/per_camera_object_cloud/*.png`
+  - `debug/fused_object_only/*`
+  - `debug/fused_object_context/*`
+  - `debug/compare_debug_metrics.json`
 - shows a larger orthographic top-view position map so the real camera locations stay readable without stretching the inset
 - writes:
   - `scene_overview_with_cameras.png`
@@ -246,6 +257,8 @@ The older 2x3 near-camera turntable board remains available only as a secondary 
 ```bash
 python scripts/harness/visual_compare_turntable.py --case_name my_case --layout_mode camera_neighborhood_grid --orbit_mode camera_neighborhood --num_orbit_steps 6 --orbit_degrees 30
 ```
+
+For teddy-bear-like cases, `auto_object_bbox` can still under-segment sparse protrusions or keep too much tabletop. Prefer a tight `--manual_image_roi_json` and inspect `debug/compare_debug_metrics.json` plus the per-camera mask overlays before treating the fused professor-facing compare as final.
 
 4. Temporal fused point-cloud comparison video:
 

@@ -249,6 +249,9 @@ def load_case_frame_camera_clouds(
                 "serial": serial,
                 "depth_dir_used": depth_dir_name,
                 "used_float_depth": bool(use_float),
+                "K_color": intrinsics[camera_idx],
+                "c2w": c2w_list[camera_idx],
+                "color_path": str(color_path),
                 "points": world_points,
                 "colors": camera_colors,
             }
@@ -424,6 +427,7 @@ def compute_scene_crop_bounds(
     crop_min_z: float,
     crop_max_z: float,
     manual_xyz_roi: dict[str, float] | None = None,
+    object_seed_point_sets: list[np.ndarray] | None = None,
     object_height_min: float = 0.02,
     object_height_max: float = 0.30,
     object_component_mode: str = "largest",
@@ -461,7 +465,7 @@ def compute_scene_crop_bounds(
         return {"mode": scene_crop_mode, "min": crop_min, "max": crop_max}
 
     if scene_crop_mode == "auto_object_bbox":
-        from .object_roi import estimate_object_roi_bounds
+        from .object_roi import estimate_object_roi_bounds, fit_dominant_table_plane
 
         table_bounds = compute_scene_crop_bounds(
             point_sets,
@@ -477,10 +481,52 @@ def compute_scene_crop_bounds(
             & np.all(stacked <= table_bounds["max"][None, :], axis=1)
         )
         table_points = stacked[table_valid]
+        seed_points = None
+        if object_seed_point_sets:
+            seed_sets = [np.asarray(item, dtype=np.float32) for item in object_seed_point_sets if len(item) > 0]
+            if seed_sets:
+                seed_stacked = np.concatenate(seed_sets, axis=0)
+                seed_valid = (
+                    np.all(seed_stacked >= table_bounds["min"][None, :], axis=1)
+                    & np.all(seed_stacked <= table_bounds["max"][None, :], axis=1)
+                )
+                seed_points = seed_stacked[seed_valid]
+        if seed_points is not None and len(seed_points) >= 32:
+            plane = fit_dominant_table_plane(table_points if len(table_points) > 0 else stacked)
+            roi_margin_xy = max(0.02, float(crop_margin_xy) * 0.45)
+            roi_margin_z = max(0.015, abs(float(crop_max_z) - float(crop_min_z)) * 0.08)
+            object_roi_min = seed_points.min(axis=0).astype(np.float32)
+            object_roi_max = seed_points.max(axis=0).astype(np.float32)
+            crop_min = np.maximum(
+                table_bounds["min"],
+                object_roi_min - np.array([roi_margin_xy, roi_margin_xy, roi_margin_z], dtype=np.float32),
+            ).astype(np.float32)
+            crop_max = np.minimum(
+                table_bounds["max"],
+                object_roi_max + np.array([roi_margin_xy, roi_margin_xy, roi_margin_z], dtype=np.float32),
+            ).astype(np.float32)
+            return {
+                "mode": "auto_object_bbox",
+                "min": crop_min,
+                "max": crop_max,
+                "object_roi_min": object_roi_min,
+                "object_roi_max": object_roi_max,
+                "plane_point": plane["point"],
+                "plane_normal": plane["normal"],
+                "object_point_count": int(len(seed_points)),
+                "component_point_count": int(len(seed_points)),
+                "selected_object_point_count": int(len(seed_points)),
+                "component_count": 1,
+                "selected_component_indices": [0],
+                "component_scores": [],
+                "seed_bbox_used": True,
+                "fallback_used": False,
+            }
         object_roi = estimate_object_roi_bounds(
-            table_points if len(table_points) > 0 else stacked,
+            seed_points if seed_points is not None and len(seed_points) > 0 else (table_points if len(table_points) > 0 else stacked),
             fallback_bounds=table_bounds,
             full_bounds={"min": full_min.astype(np.float32), "max": full_max.astype(np.float32)},
+            plane_reference_points=table_points if len(table_points) > 0 else stacked,
             object_height_min=float(object_height_min),
             object_height_max=float(object_height_max),
             object_component_mode=object_component_mode,

@@ -159,6 +159,11 @@ The turntable workflow:
 - uses the exact same orbit path for Native and FFS
 - automatically writes geometry, RGB, and support-count products in one run
 - optionally applies `--manual_image_roi_json` before fusion to suppress tabletop pixels when the object itself should dominate the professor-facing render
+- when `--manual_image_roi_json` is present, runs an object-first selection path:
+  - full dense camera clouds are loaded first
+  - per-camera object masks are built before context subsampling
+  - a seeded object union bbox drives crop / focus / orbit
+  - `--max_points_per_camera` becomes the context-layer cap instead of an early object-point cap
 - uses a larger orthographic top-view position map so the real calibrated camera positions stay readable without stretching the inset
 - produces:
   - `scene_overview_with_cameras.png`
@@ -172,6 +177,11 @@ The turntable workflow:
   - `turntable_keyframes_rgb.png`
   - `turntable_keyframes_support.png`
   - `support_metrics.json`
+  - `debug/per_camera_object_mask_overlay/*.png`
+  - `debug/per_camera_object_cloud/*.png`
+  - `debug/fused_object_only/*`
+  - `debug/fused_object_context/*`
+  - `debug/compare_debug_metrics.json`
   - per-angle `frames_geom/*.png`, `frames_rgb/*.png`, and `frames_support/*.png`
 
 Use `full_360` only when you explicitly want the unsupported backside visualization to appear, with warnings:
@@ -185,6 +195,15 @@ The old 2x3 near-camera board remains available only as a secondary mode:
 ```bash
 python scripts/harness/visual_compare_turntable.py --case_name my_case --layout_mode camera_neighborhood_grid --orbit_mode camera_neighborhood --num_orbit_steps 6 --orbit_degrees 30
 ```
+
+When teddy/head/ear regions are still incomplete, inspect the debug artifacts in this order:
+
+- `debug/per_camera_object_mask_overlay/*.png`
+- `debug/per_camera_object_cloud/*.png`
+- `debug/fused_object_only/*.png`
+- `debug/compare_debug_metrics.json`
+
+If the head is missing already in the per-camera overlays, tighten `--manual_image_roi_json` before rerunning. If the per-camera overlays look correct but the fused object remains weak, use the support render to confirm whether the missing region is mostly only 1-camera supported.
 
 Keep the older fused-cloud temporal video workflow only as a secondary diagnostic:
 

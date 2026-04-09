@@ -9,7 +9,15 @@ import cv2
 import numpy as np
 
 from .camera_frusta import build_camera_frustum_geometry, collect_camera_geometry_points, extract_camera_poses
-from .object_roi import estimate_table_color_bgr, filter_points_to_object_region
+from .object_compare import (
+    build_object_first_layers,
+    build_geometry_constrained_foreground_mask,
+    filter_camera_clouds_by_pixel_masks,
+    write_compare_debug_metrics,
+    write_fused_cloud_debug_artifacts,
+    write_object_debug_artifacts,
+)
+from .object_roi import estimate_table_color_bgr, fit_dominant_table_plane
 from .pointcloud_compare import (
     PROJECTION_MODES,
     RENDER_MODES,
@@ -276,10 +284,14 @@ def build_single_frame_scene(
     crop_min_z: float,
     crop_max_z: float,
     manual_xyz_roi: dict[str, float] | None,
+    object_seed_point_sets: list[np.ndarray] | None,
+    native_pixel_mask_by_camera: dict[int, np.ndarray] | None,
+    ffs_pixel_mask_by_camera: dict[int, np.ndarray] | None,
     object_height_min: float,
     object_height_max: float,
     object_component_mode: str,
     object_component_topk: int,
+    context_max_points_per_camera: int | None,
 ) -> dict[str, Any]:
     raw_bounds_min, raw_bounds_max = _compute_bounds([native_points, ffs_points])
     focus_point = estimate_focus_point(
@@ -296,6 +308,7 @@ def build_single_frame_scene(
         crop_min_z=float(crop_min_z),
         crop_max_z=float(crop_max_z),
         manual_xyz_roi=manual_xyz_roi,
+        object_seed_point_sets=object_seed_point_sets,
         object_height_min=float(object_height_min),
         object_height_max=float(object_height_max),
         object_component_mode=object_component_mode,
@@ -359,56 +372,36 @@ def build_single_frame_scene(
         object_roi_max + np.array([render_margin_xy, render_margin_xy, render_margin_z], dtype=np.float32),
     ).astype(np.float32)
 
-    render_native_points, render_native_colors = filter_points_to_object_region(
-        cropped_native_points,
-        cropped_native_colors,
-        object_roi_min=render_bounds_min,
-        object_roi_max=render_bounds_max,
+    native_layers = build_object_first_layers(
+        cropped_native_camera_clouds,
+        object_roi_min=object_roi_min,
+        object_roi_max=object_roi_max,
         plane_point=plane_point,
         plane_normal=plane_normal,
-        min_height=max(0.0, float(object_height_min)),
-        max_height=max(0.40, float(object_height_max)),
         table_color_bgr=table_color_bgr,
+        object_height_min=float(object_height_min),
+        object_height_max=float(object_height_max),
+        context_max_points_per_camera=context_max_points_per_camera,
+        pixel_mask_by_camera=native_pixel_mask_by_camera,
     )
-    render_ffs_points, render_ffs_colors = filter_points_to_object_region(
-        cropped_ffs_points,
-        cropped_ffs_colors,
-        object_roi_min=render_bounds_min,
-        object_roi_max=render_bounds_max,
+    ffs_layers = build_object_first_layers(
+        cropped_ffs_camera_clouds,
+        object_roi_min=object_roi_min,
+        object_roi_max=object_roi_max,
         plane_point=plane_point,
         plane_normal=plane_normal,
-        min_height=max(0.0, float(object_height_min)),
-        max_height=max(0.40, float(object_height_max)),
         table_color_bgr=table_color_bgr,
+        object_height_min=float(object_height_min),
+        object_height_max=float(object_height_max),
+        context_max_points_per_camera=context_max_points_per_camera,
+        pixel_mask_by_camera=ffs_pixel_mask_by_camera,
     )
-    render_native_camera_clouds = []
-    for camera_cloud in cropped_native_camera_clouds:
-        points, colors = filter_points_to_object_region(
-            camera_cloud["points"],
-            camera_cloud["colors"],
-            object_roi_min=render_bounds_min,
-            object_roi_max=render_bounds_max,
-            plane_point=plane_point,
-            plane_normal=plane_normal,
-            min_height=max(0.0, float(object_height_min)),
-            max_height=max(0.40, float(object_height_max)),
-            table_color_bgr=table_color_bgr,
-        )
-        render_native_camera_clouds.append({**camera_cloud, "points": points, "colors": colors})
-    render_ffs_camera_clouds = []
-    for camera_cloud in cropped_ffs_camera_clouds:
-        points, colors = filter_points_to_object_region(
-            camera_cloud["points"],
-            camera_cloud["colors"],
-            object_roi_min=render_bounds_min,
-            object_roi_max=render_bounds_max,
-            plane_point=plane_point,
-            plane_normal=plane_normal,
-            min_height=max(0.0, float(object_height_min)),
-            max_height=max(0.40, float(object_height_max)),
-            table_color_bgr=table_color_bgr,
-        )
-        render_ffs_camera_clouds.append({**camera_cloud, "points": points, "colors": colors})
+    render_native_points = native_layers["combined_points"]
+    render_native_colors = native_layers["combined_colors"]
+    render_ffs_points = ffs_layers["combined_points"]
+    render_ffs_colors = ffs_layers["combined_colors"]
+    render_native_camera_clouds = native_layers["combined_camera_clouds"]
+    render_ffs_camera_clouds = ffs_layers["combined_camera_clouds"]
 
     scalar_bounds = {
         "height": (float(render_bounds_min[2]), float(render_bounds_max[2])),
@@ -421,12 +414,26 @@ def build_single_frame_scene(
         "native_render_points": render_native_points,
         "native_render_colors": render_native_colors,
         "native_render_camera_clouds": render_native_camera_clouds,
+        "native_object_points": native_layers["object_points"],
+        "native_object_colors": native_layers["object_colors"],
+        "native_context_points": native_layers["context_points"],
+        "native_context_colors": native_layers["context_colors"],
+        "native_object_camera_clouds": native_layers["object_camera_clouds"],
+        "native_context_camera_clouds": native_layers["context_camera_clouds"],
+        "native_debug_metrics": native_layers["per_camera_metrics"],
         "ffs_points": cropped_ffs_points,
         "ffs_colors": cropped_ffs_colors,
         "ffs_camera_clouds": cropped_ffs_camera_clouds,
         "ffs_render_points": render_ffs_points,
         "ffs_render_colors": render_ffs_colors,
         "ffs_render_camera_clouds": render_ffs_camera_clouds,
+        "ffs_object_points": ffs_layers["object_points"],
+        "ffs_object_colors": ffs_layers["object_colors"],
+        "ffs_context_points": ffs_layers["context_points"],
+        "ffs_context_colors": ffs_layers["context_colors"],
+        "ffs_object_camera_clouds": ffs_layers["object_camera_clouds"],
+        "ffs_context_camera_clouds": ffs_layers["context_camera_clouds"],
+        "ffs_debug_metrics": ffs_layers["per_camera_metrics"],
         "focus_point": refined_focus.astype(np.float32),
         "crop_bounds": {
             "min": np.asarray(crop_bounds["min"], dtype=np.float32),
@@ -1564,8 +1571,8 @@ def run_turntable_compare_workflow(
     crop_min_z: float = -0.15,
     crop_max_z: float = 0.35,
     object_height_min: float = 0.02,
-    object_height_max: float = 0.30,
-    object_component_mode: str = "largest",
+    object_height_max: float = 0.60,
+    object_component_mode: str = "union",
     object_component_topk: int = 2,
     roi_x_min: float | None = None,
     roi_x_max: float | None = None,
@@ -1617,11 +1624,11 @@ def run_turntable_compare_workflow(
     raw_scene = load_single_frame_compare_clouds(
         selection,
         voxel_size=voxel_size,
-        max_points_per_camera=max_points_per_camera,
+        max_points_per_camera=None,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
         use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
-        pixel_roi_by_camera=manual_image_roi_by_camera,
+        pixel_roi_by_camera=None,
     )
     manual_xyz_roi = _parse_manual_xyz_roi(
         scene_crop_mode=scene_crop_mode,
@@ -1632,6 +1639,64 @@ def run_turntable_compare_workflow(
         roi_z_min=roi_z_min,
         roi_z_max=roi_z_max,
     )
+    native_seed_mask_metrics: list[dict[str, Any]] = []
+    ffs_seed_mask_metrics: list[dict[str, Any]] = []
+    object_seed_point_sets: list[np.ndarray] | None = None
+    native_pixel_masks: dict[int, np.ndarray] | None = None
+    ffs_pixel_masks: dict[int, np.ndarray] | None = None
+    native_mask_debug: dict[int, dict[str, int]] = {}
+    ffs_mask_debug: dict[int, dict[str, int]] = {}
+    if manual_image_roi_by_camera:
+        raw_seed_points = [
+            np.asarray(points, dtype=np.float32)
+            for points in (raw_scene["native_points"], raw_scene["ffs_points"])
+            if len(points) > 0
+        ]
+        coarse_plane = fit_dominant_table_plane(
+            np.concatenate(raw_seed_points, axis=0) if raw_seed_points else np.zeros((0, 3), dtype=np.float32)
+        )
+        native_pixel_masks = {}
+        for camera_cloud in raw_scene["native_camera_clouds"]:
+            camera_idx = int(camera_cloud["camera_idx"])
+            if camera_idx not in manual_image_roi_by_camera:
+                continue
+            mask, mask_metrics = build_geometry_constrained_foreground_mask(
+                camera_cloud,
+                roi=manual_image_roi_by_camera[camera_idx],
+                plane_point=coarse_plane["point"],
+                plane_normal=coarse_plane["normal"],
+                object_height_min=float(object_height_min),
+                object_height_max=max(0.60, float(object_height_max)),
+            )
+            native_pixel_masks[camera_idx] = mask
+            native_mask_debug[camera_idx] = mask_metrics
+        ffs_pixel_masks = {}
+        for camera_cloud in raw_scene["ffs_camera_clouds"]:
+            camera_idx = int(camera_cloud["camera_idx"])
+            if camera_idx not in manual_image_roi_by_camera:
+                continue
+            mask, mask_metrics = build_geometry_constrained_foreground_mask(
+                camera_cloud,
+                roi=manual_image_roi_by_camera[camera_idx],
+                plane_point=coarse_plane["point"],
+                plane_normal=coarse_plane["normal"],
+                object_height_min=float(object_height_min),
+                object_height_max=max(0.60, float(object_height_max)),
+            )
+            ffs_pixel_masks[camera_idx] = mask
+            ffs_mask_debug[camera_idx] = mask_metrics
+        native_seed_camera_clouds, native_seed_mask_metrics = filter_camera_clouds_by_pixel_masks(
+            raw_scene["native_camera_clouds"],
+            pixel_mask_by_camera=native_pixel_masks,
+        )
+        ffs_seed_camera_clouds, ffs_seed_mask_metrics = filter_camera_clouds_by_pixel_masks(
+            raw_scene["ffs_camera_clouds"],
+            pixel_mask_by_camera=ffs_pixel_masks,
+        )
+        native_seed_points = [item["points"] for item in native_seed_camera_clouds if len(item["points"]) > 0]
+        ffs_seed_points = [item["points"] for item in ffs_seed_camera_clouds if len(item["points"]) > 0]
+        if native_seed_points or ffs_seed_points:
+            object_seed_point_sets = native_seed_points + ffs_seed_points
     scene = build_single_frame_scene(
         native_points=raw_scene["native_points"],
         native_colors=raw_scene["native_colors"],
@@ -1645,10 +1710,14 @@ def run_turntable_compare_workflow(
         crop_min_z=crop_min_z,
         crop_max_z=crop_max_z,
         manual_xyz_roi=manual_xyz_roi,
+        object_seed_point_sets=object_seed_point_sets,
+        native_pixel_mask_by_camera=native_pixel_masks,
+        ffs_pixel_mask_by_camera=ffs_pixel_masks,
         object_height_min=object_height_min,
         object_height_max=object_height_max,
         object_component_mode=object_component_mode,
         object_component_topk=object_component_topk,
+        context_max_points_per_camera=max_points_per_camera,
     )
 
     camera_poses = extract_camera_poses(
@@ -1913,6 +1982,88 @@ def run_turntable_compare_workflow(
     support_metrics_path = output_dir / "support_metrics.json"
     support_metrics_path.write_text(json.dumps(support_metrics, indent=2), encoding="utf-8")
 
+    debug_dir = output_dir / "debug"
+    native_debug = write_object_debug_artifacts(
+        output_dir=debug_dir,
+        source_name="native",
+        object_layers={
+            "object_camera_clouds": scene["native_object_camera_clouds"],
+            "combined_camera_clouds": scene["native_render_camera_clouds"],
+            "per_camera_metrics": scene["native_debug_metrics"],
+        },
+        focus_point=scene["focus_point"],
+        renderer=renderer,
+        render_mode="color_by_rgb",
+    )
+    ffs_debug = write_object_debug_artifacts(
+        output_dir=debug_dir,
+        source_name="ffs",
+        object_layers={
+            "object_camera_clouds": scene["ffs_object_camera_clouds"],
+            "combined_camera_clouds": scene["ffs_render_camera_clouds"],
+            "per_camera_metrics": scene["ffs_debug_metrics"],
+        },
+        focus_point=scene["focus_point"],
+        renderer=renderer,
+        render_mode="color_by_rgb",
+    )
+    native_fused_debug = write_fused_cloud_debug_artifacts(
+        output_dir=debug_dir,
+        source_name="native",
+        object_points=scene["native_object_points"],
+        object_colors=scene["native_object_colors"],
+        combined_points=scene["native_render_points"],
+        combined_colors=scene["native_render_colors"],
+        focus_point=scene["focus_point"],
+        renderer=renderer,
+    )
+    ffs_fused_debug = write_fused_cloud_debug_artifacts(
+        output_dir=debug_dir,
+        source_name="ffs",
+        object_points=scene["ffs_object_points"],
+        object_colors=scene["ffs_object_colors"],
+        combined_points=scene["ffs_render_points"],
+        combined_colors=scene["ffs_render_colors"],
+        focus_point=scene["focus_point"],
+        renderer=renderer,
+    )
+    compare_debug_metrics_path = debug_dir / "compare_debug_metrics.json"
+    write_compare_debug_metrics(
+        compare_debug_metrics_path,
+        debug_payload={
+            "scene_crop_mode": scene_crop_mode,
+            "object_component_mode": object_component_mode,
+            "object_component_topk": int(object_component_topk),
+            "object_height_min": float(object_height_min),
+            "object_height_max": float(object_height_max),
+            "manual_image_roi_by_camera": None
+            if manual_image_roi_by_camera is None
+            else {str(key): list(value) for key, value in manual_image_roi_by_camera.items()},
+            "context_max_points_per_camera": None if max_points_per_camera is None else int(max_points_per_camera),
+            "crop_metadata": scene["crop_metadata"],
+            "native": {
+                "seed_mask_metrics": native_seed_mask_metrics,
+                "mask_debug": {str(key): value for key, value in native_mask_debug.items()},
+                "per_camera": native_debug["per_camera_metrics"],
+                "fused_object_point_count": int(len(scene["native_object_points"])),
+                "fused_context_point_count": int(len(scene["native_context_points"])),
+                "overlay_paths": native_debug["overlay_paths"],
+                "preview_paths": native_debug["preview_paths"],
+                **native_fused_debug,
+            },
+            "ffs": {
+                "seed_mask_metrics": ffs_seed_mask_metrics,
+                "mask_debug": {str(key): value for key, value in ffs_mask_debug.items()},
+                "per_camera": ffs_debug["per_camera_metrics"],
+                "fused_object_point_count": int(len(scene["ffs_object_points"])),
+                "fused_context_point_count": int(len(scene["ffs_context_points"])),
+                "overlay_paths": ffs_debug["overlay_paths"],
+                "preview_paths": ffs_debug["preview_paths"],
+                **ffs_fused_debug,
+            },
+        },
+    )
+
     metadata = {
         "same_case_mode": selection["same_case_mode"],
         "native_case_dir": str(selection["native_case_dir"]),
@@ -1974,8 +2125,17 @@ def run_turntable_compare_workflow(
             "native": int(len(scene["native_render_points"])),
             "ffs": int(len(scene["ffs_render_points"])),
         },
+        "object_point_count": {
+            "native": int(len(scene["native_object_points"])),
+            "ffs": int(len(scene["ffs_object_points"])),
+        },
+        "context_point_count": {
+            "native": int(len(scene["native_context_points"])),
+            "ffs": int(len(scene["ffs_context_points"])),
+        },
         "crop_metadata": scene["crop_metadata"],
         "support_metrics_path": str(support_metrics_path),
+        "compare_debug_metrics_path": str(compare_debug_metrics_path),
         "outputs": output_files,
         "renderer_requested": renderer,
         "renderer_used": {

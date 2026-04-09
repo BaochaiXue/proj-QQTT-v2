@@ -111,12 +111,23 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
   - explicit camera-frusta visualization from real `calibrate.pkl` `c2w`
   - object-centric ROI extraction above the tabletop plane
   - optional per-camera RGB-box filtering via `--manual_image_roi_json` when professor-facing renders should suppress the tabletop and fuse only object pixels
+  - an object-first selection path when `--manual_image_roi_json` is present:
+    - full dense per-camera clouds are loaded first
+    - per-camera object masks are derived before context subsampling
+    - a seeded object union bbox drives crop / focus / orbit
+    - `--max_points_per_camera` becomes the context-layer cap rather than an early object-point cap
   - a coverage-aware orbit informed by the real camera layout
   - synchronized Native vs FFS large side-by-side panels using the exact same orbit path
   - automatic triple outputs:
     - geometry diagnostic video + keyframe sheet
     - RGB reference video + keyframe sheet
     - support-count video + keyframe sheet
+  - object-debug outputs:
+    - `debug/per_camera_object_mask_overlay/*.png`
+    - `debug/per_camera_object_cloud/*.png`
+    - `debug/fused_object_only/*`
+    - `debug/fused_object_context/*`
+    - `debug/compare_debug_metrics.json`
 
 ## Why This Workflow Is Easier To Read
 
@@ -126,9 +137,14 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
 - The geometry, RGB, and support videos are generated together, so the same orbit path can be judged in all three modes without rerunning the workflow.
 - The larger overview makes the real camera locations, supported arc, and current orbit position much easier to interpret.
 - `neutral_gray_shaded` plus larger splats and supersampling is now the default geometry view because it emphasizes tabletop flatness more clearly than sparse white points.
+- The object-first path makes it possible to diagnose whether missing detail was lost in:
+  - the per-camera ROI mask
+  - the object/context sampling split
+  - or the final fused support pattern
 
 ## Known Limitations
 
 - Two-case fallback comparison is appropriate for static or near-static scenes only. It is not same-take ground truth.
 - The current visualization pipeline still uses pinhole `K` matrices without explicit distortion coefficients.
 - A dedicated temporal-stability script has not been added yet; static-scene stability must currently be inferred from panel videos and reprojection consistency.
+- Teddy-bear-like cases can still require a tighter `--manual_image_roi_json` because rectangular 2D boxes may preserve some tabletop pixels near the feet or box base.
