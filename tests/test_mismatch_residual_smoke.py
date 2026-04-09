@@ -19,7 +19,7 @@ class MismatchResidualSmokeTest(unittest.TestCase):
             {
                 "camera_idx": 1,
                 "serial": "serial-1",
-                "points": np.array([[0.0, 0.0, 0.02]], dtype=np.float32),
+                "points": np.array([[0.0, 0.04, 0.0]], dtype=np.float32),
                 "colors": np.zeros((1, 3), dtype=np.uint8),
             },
         ]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import warnings
 
 import cv2
 import numpy as np
@@ -65,6 +66,15 @@ def write_source_legend_image(path: Path) -> str:
 def overlay_source_legend(image: np.ndarray) -> np.ndarray:
     canvas = np.asarray(image, dtype=np.uint8).copy()
     legend = build_source_legend_image(width=260, height=122)
+    if legend.shape[1] > canvas.shape[1] - 12 or legend.shape[0] > canvas.shape[0] - 12:
+        scale = min(
+            max(0.25, float(canvas.shape[1] - 20) / float(max(1, legend.shape[1]))),
+            max(0.25, float(canvas.shape[0] - 20) / float(max(1, legend.shape[0]))),
+            1.0,
+        )
+        new_w = max(80, int(round(legend.shape[1] * scale)))
+        new_h = max(48, int(round(legend.shape[0] * scale)))
+        legend = cv2.resize(legend, (new_w, new_h), interpolation=cv2.INTER_AREA)
     x0 = 16
     y0 = canvas.shape[0] - legend.shape[0] - 18
     canvas[y0:y0 + legend.shape[0], x0:x0 + legend.shape[1]] = legend
@@ -263,7 +273,9 @@ def compute_mismatch_residual(
     residual_map = np.zeros((height, width), dtype=np.float32)
     if np.any(overlap_mask):
         residual_map[overlap_mask] = np.nanmax(depth_stack[:, overlap_mask], axis=0) - np.nanmin(depth_stack[:, overlap_mask], axis=0)
-    consensus_depth = np.nanmedian(depth_stack, axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        consensus_depth = np.nanmedian(depth_stack, axis=0)
     per_camera_metrics: list[dict[str, Any]] = []
     for source_idx, meta in enumerate(source_meta):
         mask = overlap_mask & valid_stack[source_idx]
