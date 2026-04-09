@@ -1189,7 +1189,7 @@ def build_render_output_specs(
     *,
     geom_render_mode: str,
     render_both_modes: bool,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     outputs = [
         {
             "name": "geom",
