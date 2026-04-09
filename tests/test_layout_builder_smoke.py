@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from data_process.visualization.layouts import compose_grid_2x3, compose_keyframe_sheet, compose_side_by_side_large
+from data_process.visualization.layouts import compose_grid_2x3, compose_hero_compare, compose_keyframe_sheet, compose_side_by_side_large
 
 
 class LayoutBuilderSmokeTest(unittest.TestCase):
@@ -23,9 +23,16 @@ class LayoutBuilderSmokeTest(unittest.TestCase):
             ffs_image=np.full((180, 220, 3), 120, dtype=np.uint8),
             overview_inset=np.full((120, 160, 3), 30, dtype=np.uint8),
         )
+        hero = compose_hero_compare(
+            title_lines=["Example | Native vs FFS", "frame=0 | orbit=+0.0 deg"],
+            native_image=np.full((180, 220, 3), 60, dtype=np.uint8),
+            ffs_image=np.full((180, 220, 3), 120, dtype=np.uint8),
+            overview_inset=np.full((120, 160, 3), 30, dtype=np.uint8),
+        )
         sheet = compose_keyframe_sheet([side_by_side, side_by_side], max_width=1600, max_height=1200)
         self.assertEqual(grid.ndim, 3)
         self.assertEqual(side_by_side.ndim, 3)
+        self.assertEqual(hero.ndim, 3)
         self.assertEqual(sheet.ndim, 3)
         self.assertGreater(sheet.shape[0], 0)
         self.assertGreater(sheet.shape[1], 0)

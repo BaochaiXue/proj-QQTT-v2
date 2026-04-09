@@ -157,6 +157,87 @@ def overlay_large_panel_label(
     return canvas
 
 
+def compose_hero_compare(
+    *,
+    title_lines: list[str],
+    native_image: np.ndarray,
+    ffs_image: np.ndarray,
+    overview_inset: np.ndarray | None = None,
+    warning_text: str | None = None,
+    background_bgr: tuple[int, int, int] = (14, 16, 20),
+) -> np.ndarray:
+    gap = 18
+    padding = 18
+    native_labeled = overlay_large_panel_label(native_image, label="Native", accent_bgr=(80, 180, 255))
+    ffs_labeled = overlay_large_panel_label(ffs_image, label="FFS", accent_bgr=(120, 220, 120))
+    panel_h, panel_w = native_labeled.shape[:2]
+    body_w = padding * 2 + panel_w * 2 + gap
+    body_h = padding * 2 + panel_h
+
+    inset_w = 0
+    inset_h = 0
+    inset = None
+    if overview_inset is not None:
+        inset = fit_image_to_canvas(np.asarray(overview_inset, dtype=np.uint8), canvas_size=(260, 170), background_bgr=background_bgr)
+        inset_h, inset_w = inset.shape[:2]
+    title_h = max(92, inset_h + 20)
+    canvas = np.full((title_h + body_h, body_w, 3), background_bgr, dtype=np.uint8)
+
+    cv2.rectangle(canvas, (0, 0), (body_w - 1, title_h - 1), (10, 12, 16), -1)
+    cv2.putText(
+        canvas,
+        title_lines[0] if title_lines else "",
+        (20, 34),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.96,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    if len(title_lines) > 1:
+        cv2.putText(
+            canvas,
+            title_lines[1],
+            (20, 68),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.62,
+            (220, 224, 230),
+            1,
+            cv2.LINE_AA,
+        )
+    if warning_text:
+        text_size, baseline = cv2.getTextSize(warning_text, cv2.FONT_HERSHEY_SIMPLEX, 0.56, 1)
+        box_w = text_size[0] + 20
+        box_h = text_size[1] + baseline + 14
+        box_x = max(20, body_w - box_w - 20 - inset_w)
+        box_y = 18
+        cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), (58, 56, 118), -1)
+        cv2.putText(
+            canvas,
+            warning_text,
+            (box_x + 10, box_y + box_h - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.56,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+    if inset is not None:
+        inset_x = body_w - inset_w - 18
+        inset_y = max(10, (title_h - inset_h) // 2)
+        canvas[inset_y:inset_y + inset_h, inset_x:inset_x + inset_w] = inset
+        cv2.rectangle(canvas, (inset_x - 1, inset_y - 1), (inset_x + inset_w, inset_y + inset_h), (235, 235, 235), 1, cv2.LINE_AA)
+
+    body_y = title_h + padding
+    native_x = padding
+    ffs_x = padding + panel_w + gap
+    canvas[body_y:body_y + panel_h, native_x:native_x + panel_w] = native_labeled
+    canvas[body_y:body_y + panel_h, ffs_x:ffs_x + panel_w] = ffs_labeled
+    cv2.rectangle(canvas, (native_x - 1, body_y - 1), (native_x + panel_w, body_y + panel_h), (50, 54, 62), 1, cv2.LINE_AA)
+    cv2.rectangle(canvas, (ffs_x - 1, body_y - 1), (ffs_x + panel_w, body_y + panel_h), (50, 54, 62), 1, cv2.LINE_AA)
+    return canvas
+
+
 def compose_side_by_side_large(
     *,
     title_lines: list[str],

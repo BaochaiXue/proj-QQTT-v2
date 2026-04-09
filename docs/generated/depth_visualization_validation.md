@@ -85,6 +85,8 @@ Fused cloud comparison:
 
 Single-frame object-centric coverage-aware side-by-side orbit comparison:
 
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/hero_compare_geom.png`
+- `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/hero_compare_rgb.png`
 - `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/scene_overview_with_cameras.png`
 - `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/frames_geom/*.png`
 - `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/frames_rgb/*.png`
@@ -120,6 +122,9 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
   - the current preset uses `color_by_height` and `orthographic` projection as the most robust readable configuration
 - The new turntable workflow now supports:
   - a single selected frame as the primary comparison unit
+  - clean slide-ready hero stills:
+    - `hero_compare_geom.png`
+    - `hero_compare_rgb.png`
   - explicit camera-frusta visualization from real `calibrate.pkl` `c2w`
   - object-centric ROI extraction above the tabletop plane
   - optional per-camera RGB-box filtering via `--manual_image_roi_json` when professor-facing renders should suppress the tabletop and fuse only object pixels
@@ -155,6 +160,7 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
 
 - Tabletop crop prevents the full room bounds from dominating the frame.
 - The new default gives each depth source a much larger panel than the prior 2x3 board.
+- The new hero stills remove the giant footer/debug block from the main slide image while keeping the same Native-vs-FFS view.
 - The default no longer pretends that unsupported backside views are equally trustworthy.
 - The geometry, RGB, and support videos are generated together, so the same orbit path can be judged in all three modes without rerunning the workflow.
 - The larger overview makes the real camera locations, supported arc, and current orbit position much easier to interpret.

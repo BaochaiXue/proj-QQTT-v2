@@ -29,5 +29,7 @@ class TurntableWorkflowSmokeTest(unittest.TestCase):
                 supersample_scale=1,
             )
             self.assertEqual(Path(result["output_dir"]), output_dir.resolve())
+            self.assertTrue((output_dir / "hero_compare_geom.png").exists())
+            self.assertTrue((output_dir / "hero_compare_rgb.png").exists())
             self.assertTrue((output_dir / "turntable_keyframes_geom.png").exists())
             self.assertTrue((output_dir / "scene_overview_with_cameras.png").exists())

@@ -207,6 +207,9 @@ The turntable workflow:
 - renders a large side-by-side compare:
   - left = Native
   - right = FFS
+- writes clean slide-ready hero stills first:
+  - `hero_compare_geom.png`
+  - `hero_compare_rgb.png`
 - uses the exact same orbit path for Native and FFS
 - automatically writes geometry, RGB, and support-count products in one run
 - automatically writes source-attribution and mismatch products in the same run
@@ -224,6 +227,8 @@ The turntable workflow:
   - final compare uses pass2 ROI plus pass2 masks
 - uses a larger orthographic top-view position map so the real calibrated camera positions stay readable without stretching the inset
 - produces:
+  - `hero_compare_geom.png`
+  - `hero_compare_rgb.png`
   - `scene_overview_with_cameras.png`
   - `scene_overview_calibration_frame.png`
   - `orbit_compare_geom.mp4`

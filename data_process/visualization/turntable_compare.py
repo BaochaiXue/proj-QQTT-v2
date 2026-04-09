@@ -11,6 +11,7 @@ import numpy as np
 from .calibration_frame import build_visualization_frame_contract
 from .calibration_io import build_calibration_contract_summary, infer_calibration_mapping_mode, load_calibration_transforms
 from .camera_frusta import build_camera_frustum_geometry, collect_camera_geometry_points, extract_camera_poses
+from .hero_compare import select_hero_step_index, write_hero_compare_image
 from .io_artifacts import write_image, write_json
 from .layouts import (
     compose_keyframe_sheet,
@@ -57,6 +58,7 @@ from .source_compare import (
     write_source_legend_image,
 )
 from .support_compare import compute_support_count_map, overlay_support_legend, render_support_count_map, summarize_support_counts
+from .turntable_metrics import aggregate_step_metric_series, format_angle_token, source_histogram
 from .types import CompareCaseSelection, FrameCloudBundle, RenderOutputs
 from .views import (
     angle_is_supported,
@@ -321,19 +323,6 @@ def _json_ready_crop_bounds(crop_bounds: dict[str, Any]) -> dict[str, Any]:
 
 def _write_json(output_path: Path, payload: dict[str, Any]) -> None:
     write_json(output_path, payload)
-
-
-def _source_histogram(source_camera_idx: np.ndarray) -> dict[str, int]:
-    values = np.asarray(source_camera_idx, dtype=np.int16).reshape(-1)
-    if len(values) == 0:
-        return {}
-    unique_values, counts = np.unique(values, return_counts=True)
-    return {str(int(camera_idx)): int(count) for camera_idx, count in zip(unique_values, counts, strict=False)}
-
-
-def _aggregate_step_metric_series(step_metrics: list[dict[str, Any]], *, key: str) -> float:
-    values = [float(item[key]) for item in step_metrics if key in item]
-    return float(np.mean(values)) if values else 0.0
 
 
 def _derive_bbox_by_camera(
@@ -1441,12 +1430,6 @@ def render_overview_inset(
     )
 
 
-def _format_angle_token(angle_deg: float) -> str:
-    sign = "p" if angle_deg >= 0 else "m"
-    scaled = int(round(abs(float(angle_deg)) * 10.0))
-    return f"{sign}{scaled:04d}"
-
-
 def run_turntable_compare_workflow(
     *,
     aligned_root: Path,
@@ -1712,13 +1695,16 @@ def run_turntable_compare_workflow(
     )
     main_width = 1280 if layout_mode == "side_by_side_large" else 960
     main_height = 900 if layout_mode == "side_by_side_large" else 720
+    hero_step_index = select_hero_step_index(orbit_steps) if layout_mode == "side_by_side_large" else None
+    hero_image_paths: dict[str, Path] = {}
+    hero_angle_deg: float | None = None
 
     for output_spec in output_specs:
         frames_dir = output_dir / output_spec["frames_dir_name"]
         frames_dir.mkdir(parents=True, exist_ok=True)
         frames_dir_by_output[output_spec["name"]] = frames_dir
 
-    for orbit_step in orbit_steps:
+    for step_list_idx, orbit_step in enumerate(orbit_steps):
         current_views = orbit_step["view_configs"]
         current_view = orbit_step["view_config"] if "view_config" in orbit_step else orbit_step["view_configs"][0]
         step_source_metrics_entry: dict[str, Any] | None = None
@@ -1728,6 +1714,14 @@ def run_turntable_compare_workflow(
             inset_size=(920, 560) if layout_mode == "side_by_side_large" else (420, 260),
             angle_label=f"Angle: {current_view.get('azimuth_deg', orbit_step['angle_deg']):+.1f} deg",
         )
+        hero_overview_inset = None
+        if hero_step_index is not None and step_list_idx == hero_step_index:
+            hero_overview_inset = render_overview_inset(
+                overview_state,
+                current_views=current_views,
+                inset_size=(260, 170),
+                angle_label=f"{current_view.get('azimuth_deg', orbit_step['angle_deg']):+.1f} deg",
+            )
 
         per_step_renders: dict[tuple[str, str], np.ndarray] = {}
         for output_spec in output_specs:
@@ -1901,6 +1895,27 @@ def run_turntable_compare_workflow(
                     overview_inset=overview_inset,
                 )
             per_step_renders[(mode_name, "board")] = board
+            if (
+                hero_step_index is not None
+                and step_list_idx == hero_step_index
+                and mode_name in ("geom", "rgb")
+            ):
+                hero_path = write_hero_compare_image(
+                    output_dir=output_dir,
+                    mode_name=mode_name,
+                    case_label=case_label,
+                    frame_idx=int(selection["native_frame_idx"]),
+                    angle_deg=float(orbit_step["angle_deg"]),
+                    projection_mode=projection_mode,
+                    scene_crop_mode=scene_crop_mode,
+                    native_image=native_images[0],
+                    ffs_image=ffs_images[0],
+                    overview_inset=hero_overview_inset,
+                    warning_text=current_view.get("warning_text"),
+                )
+                if hero_path is not None:
+                    hero_image_paths[mode_name] = hero_path
+                    hero_angle_deg = float(orbit_step["angle_deg"])
 
         split_view_config = orbit_step["view_config"] if "view_config" in orbit_step else orbit_step["view_configs"][0]
         split_ortho_scale = None
@@ -1944,7 +1959,7 @@ def run_turntable_compare_workflow(
             ffs_images=ffs_split_images,
             overview_inset=overview_inset,
         )
-        split_board_path = source_split_frames_dir / f"{orbit_step['step_idx']:03d}_angle_{_format_angle_token(orbit_step['angle_deg'])}.png"
+        split_board_path = source_split_frames_dir / f"{orbit_step['step_idx']:03d}_angle_{format_angle_token(orbit_step['angle_deg'])}.png"
         cv2.imwrite(str(split_board_path), source_split_board)
         source_split_frame_paths.append(split_board_path)
         source_split_boards.append(source_split_board)
@@ -1955,7 +1970,7 @@ def run_turntable_compare_workflow(
         for output_spec in output_specs:
             mode_name = output_spec["name"]
             board = per_step_renders[(mode_name, "board")]
-            board_path = frames_dir_by_output[mode_name] / f"{orbit_step['step_idx']:03d}_angle_{_format_angle_token(orbit_step['angle_deg'])}.png"
+            board_path = frames_dir_by_output[mode_name] / f"{orbit_step['step_idx']:03d}_angle_{format_angle_token(orbit_step['angle_deg'])}.png"
             cv2.imwrite(str(board_path), board)
             frame_paths_by_output[mode_name].append(board_path)
             board_images_by_output[mode_name].append(board)
@@ -1978,6 +1993,7 @@ def run_turntable_compare_workflow(
             "video_path": str(video_path) if write_mp4 and bool(output_spec.get("write_video", True)) else None,
             "gif_path": str(gif_path) if write_gif and bool(output_spec.get("write_gif", True)) else None,
             "sheet_path": str(sheet_path) if write_keyframe_sheet else None,
+            "hero_image_path": str(hero_image_paths[mode_name]) if mode_name in hero_image_paths else None,
         }
     source_split_sheet_path = output_dir / "turntable_keyframes_source_split.png"
     if write_keyframe_sheet and source_split_boards:
@@ -1988,20 +2004,21 @@ def run_turntable_compare_workflow(
         "video_path": None,
         "gif_path": None,
         "sheet_path": str(source_split_sheet_path) if write_keyframe_sheet else None,
+        "hero_image_path": None,
     }
     support_metrics_path = output_dir / "support_metrics.json"
     write_json(support_metrics_path, support_metrics)
     source_metrics_payload = {
         "source_color_map_bgr": {str(key): list(value) for key, value in SOURCE_CAMERA_COLORS_BGR.items()},
         "native": {
-            "object_source_histogram": _source_histogram(scene["native_object_source_camera_idx"]),
-            "context_source_histogram": _source_histogram(scene["native_context_source_camera_idx"]),
-            "combined_source_histogram": _source_histogram(scene["native_render_source_camera_idx"]),
+            "object_source_histogram": source_histogram(scene["native_object_source_camera_idx"]),
+            "context_source_histogram": source_histogram(scene["native_context_source_camera_idx"]),
+            "combined_source_histogram": source_histogram(scene["native_render_source_camera_idx"]),
         },
         "ffs": {
-            "object_source_histogram": _source_histogram(scene["ffs_object_source_camera_idx"]),
-            "context_source_histogram": _source_histogram(scene["ffs_context_source_camera_idx"]),
-            "combined_source_histogram": _source_histogram(scene["ffs_render_source_camera_idx"]),
+            "object_source_histogram": source_histogram(scene["ffs_object_source_camera_idx"]),
+            "context_source_histogram": source_histogram(scene["ffs_context_source_camera_idx"]),
+            "combined_source_histogram": source_histogram(scene["ffs_render_source_camera_idx"]),
         },
         "steps": source_metrics_steps,
     }
@@ -2010,14 +2027,14 @@ def run_turntable_compare_workflow(
     mismatch_metrics_payload = {
         "steps": mismatch_metrics_steps,
         "native_overall": {
-            "residual_mean_m": _aggregate_step_metric_series([item["native"]["summary"] for item in mismatch_metrics_steps], key="residual_mean_m"),
-            "residual_p90_m": _aggregate_step_metric_series([item["native"]["summary"] for item in mismatch_metrics_steps], key="residual_p90_m"),
-            "residual_max_m": _aggregate_step_metric_series([item["native"]["summary"] for item in mismatch_metrics_steps], key="residual_max_m"),
+            "residual_mean_m": aggregate_step_metric_series([item["native"]["summary"] for item in mismatch_metrics_steps], key="residual_mean_m"),
+            "residual_p90_m": aggregate_step_metric_series([item["native"]["summary"] for item in mismatch_metrics_steps], key="residual_p90_m"),
+            "residual_max_m": aggregate_step_metric_series([item["native"]["summary"] for item in mismatch_metrics_steps], key="residual_max_m"),
         },
         "ffs_overall": {
-            "residual_mean_m": _aggregate_step_metric_series([item["ffs"]["summary"] for item in mismatch_metrics_steps], key="residual_mean_m"),
-            "residual_p90_m": _aggregate_step_metric_series([item["ffs"]["summary"] for item in mismatch_metrics_steps], key="residual_p90_m"),
-            "residual_max_m": _aggregate_step_metric_series([item["ffs"]["summary"] for item in mismatch_metrics_steps], key="residual_max_m"),
+            "residual_mean_m": aggregate_step_metric_series([item["ffs"]["summary"] for item in mismatch_metrics_steps], key="residual_mean_m"),
+            "residual_p90_m": aggregate_step_metric_series([item["ffs"]["summary"] for item in mismatch_metrics_steps], key="residual_p90_m"),
+            "residual_max_m": aggregate_step_metric_series([item["ffs"]["summary"] for item in mismatch_metrics_steps], key="residual_max_m"),
         },
     }
     mismatch_metrics_path = output_dir / "mismatch_metrics.json"
@@ -2254,6 +2271,8 @@ def run_turntable_compare_workflow(
         "source_legend_path": str(source_legend_path),
         "compare_debug_metrics_path": str(compare_debug_metrics_path),
         "compare_debug_metrics_root_path": str(compare_debug_metrics_root_path),
+        "hero_outputs": {key: str(path) for key, path in hero_image_paths.items()},
+        "hero_angle_deg": hero_angle_deg,
         "outputs": output_files,
         "renderer_requested": renderer,
         "renderer_used": {
