@@ -247,3 +247,20 @@ This inventory captures the current aligned-case visualization stack before the 
 - layouts separated from rendering math
 - workflow modules mostly orchestration
 - shared contracts typed and explicit
+
+## Current Post-Refactor Additions
+
+The cleanup landed these shared modules and wrappers:
+
+- `data_process/visualization/types.py`
+- `data_process/visualization/io_case.py`
+- `data_process/visualization/io_artifacts.py`
+- `data_process/visualization/roi.py`
+- `data_process/visualization/views.py`
+- `data_process/visualization/layouts.py`
+- `data_process/visualization/renderers/__init__.py`
+- `data_process/visualization/renderers/fallback.py`
+- `data_process/visualization/workflows/merge_diagnostics.py`
+- `data_process/visualization/workflows/depth_panels.py`
+- `data_process/visualization/workflows/reprojection_compare.py`
+- `data_process/visualization/workflows/turntable_compare.py`

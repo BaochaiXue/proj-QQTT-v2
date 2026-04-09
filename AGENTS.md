@@ -11,6 +11,11 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `record_data.py`: raw RGB-D recording entrypoint
 - `data_process/record_data_align.py`: trim + align raw cases into `data/`
 - `data_process/depth_backends/`: shared FFS geometry + runner used by production alignment and harness scripts
+- `data_process/visualization/`: aligned-case visualization package
+  - `io_case.py`, `io_artifacts.py`: aligned-case loading and artifact writing
+  - `roi.py`, `views.py`, `layouts.py`, `types.py`: shared visualization contracts/math/composition
+  - `renderers/`: rendering backends
+  - `workflows/`: thin workflow-facing orchestration wrappers
 - `qqtt/env/camera/`: shared RealSense camera runtime
 - `env_install/env_install.sh`: camera-only environment setup
 - `docs/SCOPE.md`: exact in-scope vs out-of-scope boundary
@@ -21,6 +26,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `docs/envs.md`: validated local conda environments
 - `docs/exec-plans/`: first-class execution plans for non-trivial changes
 - `scripts/harness/check_scope.py`: deterministic repo scope guard
+- `scripts/harness/check_visual_architecture.py`: visualization layering / file-size guard
 - `tests/test_record_data_align_smoke.py`: smoke test for aligned-case generation
 - `scripts/harness/visual_compare_depth_video.py`: native-vs-FFS aligned comparison video workflow
 

@@ -7,8 +7,10 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .io_artifacts import write_ply_ascii
 from .object_roi import compute_object_region_mask
-from .pointcloud_compare import compute_view_config, render_point_cloud, write_ply_ascii
+from .renderers import render_point_cloud
+from .views import compute_view_config
 
 
 def deterministic_subsample(

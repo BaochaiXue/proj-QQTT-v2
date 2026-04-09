@@ -285,6 +285,35 @@ python scripts/harness/visual_compare_turntable.py --case_name my_case --layout_
 
 For teddy-bear-like cases, `auto_object_bbox` can still under-segment sparse protrusions or keep too much tabletop. Prefer a tight `--manual_image_roi_json` and inspect `debug/compare_debug_metrics.json` plus the per-camera mask overlays before treating the fused professor-facing compare as final.
 
+## Visualization Architecture
+
+The user-facing compare commands are unchanged, but the visualization implementation is now split into clearer internal layers:
+
+- `data_process/visualization/io_case.py`
+  - aligned-case metadata, depth decoding, and per-camera/fused cloud loading
+- `data_process/visualization/io_artifacts.py`
+  - json / png / ply / mp4 / gif writing
+- `data_process/visualization/roi.py`
+  - focus estimation and world-space crop bounds
+- `data_process/visualization/views.py`
+  - fixed views, camera-pose views, orbit planning, and supported-coverage math
+- `data_process/visualization/layouts.py`
+  - shared board composition, labels, and keyframe sheets
+- `data_process/visualization/renderers/`
+  - rendering-only projection/rasterization backends
+- `data_process/visualization/workflows/`
+  - thin workflow-facing wrappers and render-output planning
+- compatibility entrypoints kept in:
+  - `data_process/visualization/pointcloud_compare.py`
+  - `data_process/visualization/turntable_compare.py`
+
+This keeps the existing commands stable while making it easier to test and evolve the visualization stack without re-growing a small number of mixed-responsibility modules.
+
+Additional internal documentation:
+
+- `docs/generated/visual_stack_inventory.md`
+- `docs/generated/visual_stack_refactor_validation.md`
+
 Why the new source diagnostics matter:
 
 - `geom` shows surface readability but hides which camera contributed which points.

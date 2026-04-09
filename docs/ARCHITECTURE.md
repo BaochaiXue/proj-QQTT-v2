@@ -32,14 +32,22 @@ The repo is intentionally small.
 - `data_process/visualization/calibration_io.py`
 - `data_process/visualization/camera_frusta.py`
 - `data_process/visualization/depth_diagnostics.py`
+- `data_process/visualization/io_artifacts.py`
+- `data_process/visualization/io_case.py`
+- `data_process/visualization/layouts.py`
 - `data_process/visualization/object_compare.py`
 - `data_process/visualization/object_roi.py`
 - `data_process/visualization/panel_compare.py`
 - `data_process/visualization/pointcloud_compare.py`
 - `data_process/visualization/reprojection_compare.py`
+- `data_process/visualization/renderers/**`
+- `data_process/visualization/roi.py`
 - `data_process/visualization/source_compare.py`
 - `data_process/visualization/support_compare.py`
 - `data_process/visualization/turntable_compare.py`
+- `data_process/visualization/types.py`
+- `data_process/visualization/views.py`
+- `data_process/visualization/workflows/**`
 - `scripts/harness/visual_compare_depth_panels.py`
 - `scripts/harness/visual_compare_reprojection.py`
 - `scripts/harness/visual_compare_depth_video.py`
@@ -76,6 +84,41 @@ The visualization layer intentionally uses three different diagnostics built on 
 - per-camera panels for local depth quality
 - reprojection / warp comparison for multi-view consistency
 - fused point-cloud rendering for global geometry shape
+
+The visualization package is now split by responsibility instead of concentrating everything inside the old compare modules:
+
+- `io_case.py`
+  - aligned-case metadata loading
+  - depth decoding
+  - per-camera point-cloud generation
+  - fused-cloud loading helpers
+- `io_artifacts.py`
+  - json / png / ply / mp4 / gif writing
+- `roi.py`
+  - focus estimation
+  - table/object crop bounds
+  - world-space crop filtering
+- `views.py`
+  - fixed view configs
+  - camera-pose-derived views
+  - orbit planning and supported-coverage math
+- `layouts.py`
+  - 2x3 grids
+  - side-by-side professor-facing boards
+  - keyframe sheets
+  - shared text/label composition
+- `renderers/fallback.py`
+  - projection math
+  - rasterization
+  - fallback surfel/point rendering
+- `types.py`
+  - typed internal contracts for case selection, render specs, crops, and view config payloads
+- `workflows/merge_diagnostics.py`
+  - typed render-output planning for `geom / rgb / support / source / mismatch`
+- legacy compatibility modules:
+  - `pointcloud_compare.py`
+  - `turntable_compare.py`
+  - still provide the old import paths, but now delegate to the shared lower-level modules
 
 The fused point-cloud visualization is now split into two user-facing workflows:
 
@@ -117,6 +160,12 @@ The fused renderer also supports two layout modes:
 - debug artifact export for per-camera masks, per-camera object clouds, fused object-only clouds, and compare metrics
 - source-attribution overlay rendering and mismatch residual rendering through `source_compare.py`
 
+The turntable workflow still keeps the old public entrypoint, but the internal split is now clearer:
+
+- lower-level crop / view / layout / artifact helpers live outside the workflow module
+- `turntable_compare.py` is primarily orchestration plus a small amount of turntable-specific overview/debug logic
+- `scripts/harness/visual_compare_turntable.py` remains a thin CLI wrapper
+
 The object-ROI stack now has two distinct roles:
 
 - `object_roi.py`
@@ -138,6 +187,34 @@ This means the professor-facing compare no longer treats the initial fused world
 It also means fused object clouds no longer drop source provenance as soon as they are concatenated: `source_camera_idx` now survives object/context/fused construction so the final compare can render provenance and mismatch as first-class diagnostics.
 
 The shared fallback projection convention in `pointcloud_compare.py` maps positive view-space `y` upward on screen, so larger view-space height becomes a smaller image-row index without requiring any late image flip.
+
+## Visualization Layering
+
+The intended import layering is now:
+
+1. `scripts/harness/*.py`
+   - parse args
+   - call workflow entrypoints
+2. workflow-facing modules
+   - `panel_compare.py`
+   - `reprojection_compare.py`
+   - `turntable_compare.py`
+   - `workflows/*`
+3. shared visualization helpers
+   - `io_case.py`
+   - `io_artifacts.py`
+   - `roi.py`
+   - `views.py`
+   - `layouts.py`
+   - `types.py`
+4. specialized diagnostics
+   - `object_compare.py`
+   - `object_roi.py`
+   - `source_compare.py`
+   - `support_compare.py`
+   - `renderers/*`
+
+`scripts/harness/check_visual_architecture.py` now enforces basic layering and file-size guardrails so the visualization stack does not regress back into a small number of giant mixed-responsibility files.
 
 `calibrate.pkl` support is intentionally narrow and matches the current producer:
 

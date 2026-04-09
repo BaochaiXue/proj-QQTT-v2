@@ -5,7 +5,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from .pointcloud_compare import rasterize_point_cloud_view
+from .renderers import rasterize_point_cloud_view
 
 
 SUPPORT_COLORS_BGR = {

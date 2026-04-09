@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
-from .io_artifacts import write_gif, write_ply_ascii, write_video
+from .calibration_io import load_calibration_transforms
+from .io_artifacts import write_gif, write_json, write_ply_ascii, write_video
 from .io_case import (
     choose_depth_stream,
     decode_depth_to_meters,
@@ -34,7 +36,7 @@ from .renderers.fallback import (
     render_point_cloud_fallback,
 )
 from .roi import compute_scene_crop_bounds, crop_points_to_bounds, estimate_focus_point
-from .views import build_camera_pose_view_configs, compute_view_config
+from .views import build_camera_pose_view_configs, compute_view_config, normalize_vector as _normalize_vector
 
 
 RENDER_MODES = (
@@ -463,8 +465,8 @@ def run_depth_comparison_workflow(
         "scalar_bounds": scalar_bounds,
         "focus_point": focus_point.tolist(),
     }
-    (output_dir / "comparison_metadata.json").write_text(json.dumps(comparison_metadata, indent=2), encoding="utf-8")
-    (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    write_json(output_dir / "comparison_metadata.json", comparison_metadata)
+    write_json(output_dir / "metrics.json", metrics)
     return {
         "output_dir": str(output_dir),
         "comparison_metadata": comparison_metadata,

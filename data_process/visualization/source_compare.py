@@ -7,7 +7,7 @@ import warnings
 import cv2
 import numpy as np
 
-from .pointcloud_compare import rasterize_point_cloud_view, render_point_cloud
+from .renderers import rasterize_point_cloud_view, render_point_cloud
 
 
 SOURCE_CAMERA_COLORS_BGR = {

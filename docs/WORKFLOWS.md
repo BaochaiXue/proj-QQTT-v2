@@ -206,6 +206,17 @@ The turntable workflow:
   - per-angle `frames_source/*.png`, `frames_source_split/*.png`, and `frames_mismatch/*.png`
   - per-angle `frames_geom/*.png`, `frames_rgb/*.png`, and `frames_support/*.png`
 
+The user-facing compare commands are unchanged, but the implementation stack is now split more cleanly:
+
+- harness CLIs stay thin
+- workflow modules coordinate steps
+- shared case IO, crop math, view planning, artifact writing, and layouts live in dedicated modules under `data_process/visualization/`
+
+For the current internal map and migration notes, see:
+
+- `docs/generated/visual_stack_inventory.md`
+- `docs/generated/visual_stack_refactor_validation.md`
+
 Use `full_360` only when you explicitly want the unsupported backside visualization to appear, with warnings:
 
 ```bash

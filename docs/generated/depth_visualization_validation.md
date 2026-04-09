@@ -167,3 +167,10 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
 - Teddy-bear-like cases can still require a tighter `--manual_image_roi_json` because rectangular 2D boxes may preserve some tabletop pixels near the feet or box base.
 - Automatic projected-bbox refinement reduces but does not eliminate that limitation; manual image ROI remains the strongest override when the object sits directly on a visually similar tabletop.
 - Source-attribution overlay is honest about provenance, but it is still a point/surfel view rather than a watertight mesh; overlap artifacts can therefore look thicker than they would on a meshed surface.
+
+## Architecture Note
+
+On 2026-04-09 the visualization implementation was refactored so the user-facing workflows above keep the same product boundary, but the internal code is now split into explicit layers for case IO, artifact writing, crop/view math, layouts, renderers, and workflow wrappers. See:
+
+- `docs/generated/visual_stack_inventory.md`
+- `docs/generated/visual_stack_refactor_validation.md`
