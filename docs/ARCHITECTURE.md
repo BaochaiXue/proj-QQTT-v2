@@ -17,6 +17,7 @@ The repo is intentionally small.
 - `qqtt/env/__init__.py`
 - `qqtt/env/camera/defaults.py`
 - `qqtt/env/camera/camera_system.py`
+- `qqtt/env/camera/preflight.py`
 - `qqtt/env/camera/realsense/**`
 - `qqtt/env/camera/recording_metadata.py`
 
@@ -29,6 +30,7 @@ The repo is intentionally small.
 ### Comparison Visualization
 
 - `data_process/visualization/__init__.py`
+- `data_process/visualization/calibration_frame.py`
 - `data_process/visualization/calibration_io.py`
 - `data_process/visualization/camera_frusta.py`
 - `data_process/visualization/depth_diagnostics.py`
@@ -79,6 +81,18 @@ The repo is intentionally small.
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
 
+Record-time preflight policy is now explicit instead of being partially inlined inside `record_data.py`:
+
+- `qqtt/env/camera/preflight.py`
+  - maps capture mode to the relevant D455 stream-probe stream set
+  - distinguishes:
+    - supported
+    - blocked
+    - experimental warning
+    - probe unknown
+    - pending serial resolution
+  - produces the operator-facing summary that `record_data.py` prints before recording continues
+
 The visualization layer intentionally uses three different diagnostics built on aligned cases:
 
 - per-camera panels for local depth quality
@@ -113,6 +127,8 @@ The visualization package is now split by responsibility instead of concentratin
   - fallback surfel/point rendering
 - `types.py`
   - typed internal contracts for case selection, render specs, crops, and view config payloads
+- `calibration_frame.py`
+  - explicit distinction between raw calibration-world semantics and any future semantic-world layer
 - `workflows/merge_diagnostics.py`
   - typed render-output planning for `geom / rgb / support / source / mismatch`
 - legacy compatibility modules:
@@ -222,6 +238,15 @@ The intended import layering is now:
 - shape: `(N, 4, 4)`
 - convention: each transform is `camera -> world` (`c2w`)
 - ordering: calibration-time camera order
+
+Important frame-semantics distinction:
+
+- current visualization paths use the raw ChArUco-board calibration world as their 3D world frame
+- the turntable workflow now records this explicitly in metadata and writes:
+  - `scene_overview_with_cameras.png`
+  - `scene_overview_calibration_frame.png`
+- no semantic-world transform is silently applied today
+- the overview image may still use a readability-oriented display basis, but that display basis is not a semantic-world transform
 
 Subset capture cases rely on `metadata["calibration_reference_serials"]` to map case serials back to the full calibration order.
 

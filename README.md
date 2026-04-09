@@ -117,6 +117,14 @@ python record_data.py --case_name my_case --capture_mode both_eval --emitter on
 
 `both_eval` is intentionally gated. On the current machine it is blocked by the latest D455 stream capability probe instead of silently dropping streams.
 
+Current recording preflight policy:
+
+- `rgbd`: supported directly
+- `stereo_ir`: probe-aware, warning-only when unsupported
+- `both_eval`: probe-aware, blocked when unsupported
+
+`record_data.py` now prints an explicit preflight summary before recording continues.
+
 ## Alignment
 
 Align and trim a raw case:
@@ -308,6 +316,12 @@ The user-facing compare commands are unchanged, but the visualization implementa
   - `data_process/visualization/turntable_compare.py`
 
 This keeps the existing commands stable while making it easier to test and evolve the visualization stack without re-growing a small number of mixed-responsibility modules.
+
+Current compare frame semantics are also explicit now:
+
+- aligned-case comparison paths use the raw calibration-board `c2w` world frame
+- no semantic-world transform is silently applied by default
+- professor-facing turntable outputs now also write `scene_overview_calibration_frame.png` and record the frame contract in `turntable_metadata.json`
 
 Additional internal documentation:
 

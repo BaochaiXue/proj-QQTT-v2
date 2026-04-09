@@ -57,7 +57,7 @@ from .source_compare import (
     write_source_legend_image,
 )
 from .support_compare import compute_support_count_map, overlay_support_legend, render_support_count_map, summarize_support_counts
-from .types import CompareCaseSelection
+from .types import CompareCaseSelection, FrameCloudBundle, RenderOutputs
 from .views import (
     angle_is_supported,
     build_camera_anchored_orbit_views,
@@ -247,6 +247,28 @@ def load_single_frame_compare_clouds(
     use_float_ffs_depth_when_available: bool,
     pixel_roi_by_camera: dict[int, tuple[int, int, int, int]] | None = None,
 ) -> dict[str, Any]:
+    bundle = _load_single_frame_compare_clouds_model(
+        selection,
+        voxel_size=voxel_size,
+        max_points_per_camera=max_points_per_camera,
+        depth_min_m=depth_min_m,
+        depth_max_m=depth_max_m,
+        use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+        pixel_roi_by_camera=pixel_roi_by_camera,
+    )
+    return bundle.to_dict()
+
+
+def _load_single_frame_compare_clouds_model(
+    selection: dict[str, Any],
+    *,
+    voxel_size: float | None,
+    max_points_per_camera: int | None,
+    depth_min_m: float,
+    depth_max_m: float,
+    use_float_ffs_depth_when_available: bool,
+    pixel_roi_by_camera: dict[int, tuple[int, int, int, int]] | None = None,
+) -> FrameCloudBundle:
     native_points, native_colors, native_stats, native_camera_clouds = load_case_frame_cloud_with_sources(
         case_dir=selection["native_case_dir"],
         metadata=selection["native_metadata"],
@@ -271,16 +293,16 @@ def load_single_frame_compare_clouds(
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
     )
-    return {
-        "native_points": native_points,
-        "native_colors": native_colors,
-        "native_stats": native_stats,
-        "native_camera_clouds": native_camera_clouds,
-        "ffs_points": ffs_points,
-        "ffs_colors": ffs_colors,
-        "ffs_stats": ffs_stats,
-        "ffs_camera_clouds": ffs_camera_clouds,
-    }
+    return FrameCloudBundle(
+        native_points=native_points,
+        native_colors=native_colors,
+        native_stats=native_stats,
+        native_camera_clouds=native_camera_clouds,
+        ffs_points=ffs_points,
+        ffs_colors=ffs_colors,
+        ffs_stats=ffs_stats,
+        ffs_camera_clouds=ffs_camera_clouds,
+    )
 
 
 def _json_ready_crop_bounds(crop_bounds: dict[str, Any]) -> dict[str, Any]:
@@ -2245,7 +2267,13 @@ def run_turntable_compare_workflow(
     }
     write_json(output_dir / "turntable_metadata.json", metadata)
 
+    render_outputs = RenderOutputs(
+        output_dir=output_dir,
+        metadata=metadata,
+        output_files=output_files,
+    )
     return {
-        "output_dir": str(output_dir),
-        "metadata": metadata,
+        "output_dir": str(render_outputs.output_dir),
+        "metadata": render_outputs.metadata,
+        "output_files": render_outputs.output_files,
     }

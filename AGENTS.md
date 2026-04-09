@@ -12,11 +12,13 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `data_process/record_data_align.py`: trim + align raw cases into `data/`
 - `data_process/depth_backends/`: shared FFS geometry + runner used by production alignment and harness scripts
 - `data_process/visualization/`: aligned-case visualization package
+  - `calibration_frame.py`, `calibration_io.py`: calibration-world semantics and loader validation
   - `io_case.py`, `io_artifacts.py`: aligned-case loading and artifact writing
   - `roi.py`, `views.py`, `layouts.py`, `types.py`: shared visualization contracts/math/composition
   - `renderers/`: rendering backends
   - `workflows/`: thin workflow-facing orchestration wrappers
 - `qqtt/env/camera/`: shared RealSense camera runtime
+  - `preflight.py`: record-time probe/preflight decision table
 - `env_install/env_install.sh`: camera-only environment setup
 - `docs/SCOPE.md`: exact in-scope vs out-of-scope boundary
 - `docs/WORKFLOWS.md`: canonical operator workflows

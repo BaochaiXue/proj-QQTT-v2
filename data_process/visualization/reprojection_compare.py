@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +14,7 @@ from .depth_diagnostics import (
     resolve_camera_ids,
     warp_rgb_between_cameras,
 )
+from .io_artifacts import write_json
 from .pointcloud_compare import (
     get_case_intrinsics,
     get_frame_count,
@@ -189,9 +188,8 @@ def run_reprojection_compare_workflow(
             "metrics": pair_metrics,
         }
 
-    (output_dir / "summary_metrics.json").write_text(json.dumps(summary_metrics, indent=2), encoding="utf-8")
+    write_json(output_dir / "summary_metrics.json", summary_metrics)
     return {
         "output_dir": str(output_dir),
         "summary_metrics": summary_metrics,
     }
-

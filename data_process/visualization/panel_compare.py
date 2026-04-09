@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +19,7 @@ from .depth_diagnostics import (
     shaded_depth_map,
     valid_mask_comparison,
 )
+from .io_artifacts import write_json
 from .pointcloud_compare import (
     get_frame_count,
     load_case_metadata,
@@ -169,7 +168,7 @@ def run_depth_panel_workflow(
             "rois": resolved_rois or [],
         }
 
-    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    write_json(output_dir / "summary.json", summary)
     return {
         "output_dir": str(output_dir),
         "summary": summary,

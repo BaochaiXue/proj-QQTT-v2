@@ -91,6 +91,30 @@ class ObjectLayers:
 
 
 @dataclass(slots=True)
+class FrameCloudBundle:
+    native_points: np.ndarray
+    native_colors: np.ndarray
+    native_stats: dict[str, Any]
+    native_camera_clouds: list[dict[str, Any]]
+    ffs_points: np.ndarray
+    ffs_colors: np.ndarray
+    ffs_stats: dict[str, Any]
+    ffs_camera_clouds: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "native_points": self.native_points,
+            "native_colors": self.native_colors,
+            "native_stats": self.native_stats,
+            "native_camera_clouds": self.native_camera_clouds,
+            "ffs_points": self.ffs_points,
+            "ffs_colors": self.ffs_colors,
+            "ffs_stats": self.ffs_stats,
+            "ffs_camera_clouds": self.ffs_camera_clouds,
+        }
+
+
+@dataclass(slots=True)
 class SceneCrop:
     mode: str
     bounds_min: np.ndarray
@@ -191,6 +215,13 @@ class RenderOutputSpec:
             "write_video": bool(self.write_video),
             "write_gif": bool(self.write_gif),
         }
+
+
+@dataclass(slots=True)
+class RenderOutputs:
+    output_dir: Path
+    metadata: dict[str, Any]
+    output_files: dict[str, dict[str, str | None]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

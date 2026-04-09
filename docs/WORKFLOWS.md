@@ -50,6 +50,26 @@ Optional FFS raw capture path:
 python record_data.py --case_name my_case --capture_mode stereo_ir --emitter on
 ```
 
+Current preflight policy:
+
+- `rgbd`
+  - supported directly
+  - no D455 IR-pair probe gate
+- `stereo_ir`
+  - probe-aware
+  - unsupported profile remains allowed experimentally with a warning
+- `both_eval`
+  - probe-aware
+  - unsupported profile is blocked
+
+`record_data.py` now prints a preflight summary before recording, including:
+
+- selected or pending serials
+- requested profile
+- probe support result
+- current repo policy
+- whether recording is allowed
+
 Optional non-interactive short capture:
 
 ```bash
@@ -151,6 +171,7 @@ The turntable workflow:
 - reuses the fused native and fused FFS cloud loader
 - computes an object ROI from the cropped tabletop scene before orbit generation
 - visualizes the 3 real camera frusta from `calibrate.pkl`
+- records explicitly that the 3D world frame is the raw calibration-board `c2w` frame
 - defaults to `observed_hemisphere` instead of naive full-360
 - defaults to `object_component_mode=graph_union`
 - infers the supported viewing arc from the real camera azimuth layout
@@ -175,6 +196,7 @@ The turntable workflow:
 - uses a larger orthographic top-view position map so the real calibrated camera positions stay readable without stretching the inset
 - produces:
   - `scene_overview_with_cameras.png`
+  - `scene_overview_calibration_frame.png`
   - `orbit_compare_geom.mp4`
   - `orbit_compare_geom.gif`
   - `orbit_compare_rgb.mp4`
@@ -237,6 +259,12 @@ When teddy/head/ear regions are still incomplete, inspect the debug artifacts in
 - `debug/compare_debug_metrics.json`
 
 If the head is missing already in the per-camera overlays, tighten `--manual_image_roi_json` before rerunning. If the per-camera overlays look correct but the fused object remains weak, use the support render to confirm whether the missing region is mostly only 1-camera supported.
+
+Frame semantics note:
+
+- current compare paths do not silently convert into a semantic-world frame
+- `turntable_metadata.json` and `comparison_metadata.json` now record the calibration-world contract explicitly
+- if a future semantic-world transform is added, it must be explicit in metadata and debug artifacts rather than hidden inside the renderer
 
 Use the new merge-diagnostic outputs like this:
 
