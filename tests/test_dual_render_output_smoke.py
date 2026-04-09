@@ -11,10 +11,12 @@ class DualRenderOutputSmokeTest(unittest.TestCase):
             geom_render_mode="neutral_gray_shaded",
             render_both_modes=True,
         )
-        self.assertEqual([spec["name"] for spec in specs], ["geom", "rgb", "support"])
+        self.assertEqual([spec["name"] for spec in specs], ["geom", "rgb", "support", "source", "mismatch"])
         self.assertEqual(specs[0]["video_name"], "orbit_compare_geom.mp4")
         self.assertEqual(specs[1]["sheet_name"], "turntable_keyframes_rgb.png")
         self.assertEqual(specs[2]["video_name"], "orbit_compare_support.mp4")
+        self.assertEqual(specs[3]["video_name"], "orbit_compare_source.mp4")
+        self.assertEqual(specs[4]["video_name"], "orbit_compare_mismatch.mp4")
 
 
 if __name__ == "__main__":

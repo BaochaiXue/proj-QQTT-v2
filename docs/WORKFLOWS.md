@@ -159,6 +159,7 @@ The turntable workflow:
   - right = FFS
 - uses the exact same orbit path for Native and FFS
 - automatically writes geometry, RGB, and support-count products in one run
+- automatically writes source-attribution and mismatch products in the same run
 - optionally applies `--manual_image_roi_json` before fusion to suppress tabletop pixels when the object itself should dominate the professor-facing render
 - when `--manual_image_roi_json` is present, runs an object-first selection path:
   - full dense camera clouds are loaded first
@@ -180,10 +181,20 @@ The turntable workflow:
   - `orbit_compare_rgb.gif`
   - `orbit_compare_support.mp4`
   - `orbit_compare_support.gif`
+  - `orbit_compare_source.mp4`
+  - `orbit_compare_source.gif`
+  - `orbit_compare_mismatch.mp4`
+  - `orbit_compare_mismatch.gif`
   - `turntable_keyframes_geom.png`
   - `turntable_keyframes_rgb.png`
   - `turntable_keyframes_support.png`
+  - `turntable_keyframes_source.png`
+  - `turntable_keyframes_source_split.png`
+  - `turntable_keyframes_mismatch.png`
   - `support_metrics.json`
+  - `source_metrics.json`
+  - `mismatch_metrics.json`
+  - `source_attribution_legend.png`
   - `object_roi_pass1_world.json`
   - `object_roi_pass2_world.json`
   - `per_camera_auto_bbox/cam*.json`
@@ -192,6 +203,7 @@ The turntable workflow:
   - `debug/fused_object_only/*`
   - `debug/fused_object_context/*`
   - `debug/compare_debug_metrics.json`
+  - per-angle `frames_source/*.png`, `frames_source_split/*.png`, and `frames_mismatch/*.png`
   - per-angle `frames_geom/*.png`, `frames_rgb/*.png`, and `frames_support/*.png`
 
 Use `full_360` only when you explicitly want the unsupported backside visualization to appear, with warnings:
@@ -214,6 +226,22 @@ When teddy/head/ear regions are still incomplete, inspect the debug artifacts in
 - `debug/compare_debug_metrics.json`
 
 If the head is missing already in the per-camera overlays, tighten `--manual_image_roi_json` before rerunning. If the per-camera overlays look correct but the fused object remains weak, use the support render to confirm whether the missing region is mostly only 1-camera supported.
+
+Use the new merge-diagnostic outputs like this:
+
+- `source`:
+  - semi-transparent overlay by source camera
+  - orange = `Cam0`
+  - green = `Cam1`
+  - cyan/blue = `Cam2`
+  - use this to spot fringing and double surfaces
+- `source_split`:
+  - inspect which camera is actually providing or missing the teddy head
+- `mismatch`:
+  - high residual = poor 3-view merge agreement
+  - low residual = stable overlap
+- `support`:
+  - still useful, but it only answers “how many cameras agree,” not “which cameras disagree”
 
 Keep the older fused-cloud temporal video workflow only as a secondary diagnostic:
 

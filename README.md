@@ -218,6 +218,10 @@ This is now the primary fused-cloud diagnostic for professor-facing review. It:
   - geometry diagnostic outputs
   - RGB-colored reference outputs
   - support-count outputs
+- also writes source-provenance merge diagnostics:
+  - source-attribution overlay outputs
+  - source-split keyframe sheets
+  - mismatch residual outputs
 - can optionally apply `--manual_image_roi_json` to keep only object pixels from each real camera before fusion when the professor-facing view should exclude the tabletop as much as possible
 - when `--manual_image_roi_json` is provided, the compare now runs an object-first path:
   - load the full dense per-camera cloud first
@@ -239,6 +243,17 @@ This is now the primary fused-cloud diagnostic for professor-facing review. It:
   - `debug/fused_object_only/*`
   - `debug/fused_object_context/*`
   - `debug/compare_debug_metrics.json`
+- preserves `source_camera_idx` through the object/context/fused pipeline so the final compare also writes:
+  - `orbit_compare_source.mp4`
+  - `orbit_compare_source.gif`
+  - `turntable_keyframes_source.png`
+  - `turntable_keyframes_source_split.png`
+  - `orbit_compare_mismatch.mp4`
+  - `orbit_compare_mismatch.gif`
+  - `turntable_keyframes_mismatch.png`
+  - `source_attribution_legend.png`
+  - `source_metrics.json`
+  - `mismatch_metrics.json`
 - shows a larger orthographic top-view position map so the real camera locations stay readable without stretching the inset
 - writes:
   - `scene_overview_with_cameras.png`
@@ -269,6 +284,18 @@ python scripts/harness/visual_compare_turntable.py --case_name my_case --layout_
 ```
 
 For teddy-bear-like cases, `auto_object_bbox` can still under-segment sparse protrusions or keep too much tabletop. Prefer a tight `--manual_image_roi_json` and inspect `debug/compare_debug_metrics.json` plus the per-camera mask overlays before treating the fused professor-facing compare as final.
+
+Why the new source diagnostics matter:
+
+- `geom` shows surface readability but hides which camera contributed which points.
+- `rgb` can hide misalignment behind texture.
+- `support` shows how many cameras agree, but not which cameras created a double surface or fringe.
+- `source` colors points by camera provenance with semi-transparent overlay:
+  - `Cam0` = orange
+  - `Cam1` = green
+  - `Cam2` = cyan/blue
+- `source_split` shows each camera contribution separately on the same orbit and crop.
+- `mismatch` colors overlap residual magnitude so merge disagreement is visible even when RGB still looks plausible.
 
 4. Temporal fused point-cloud comparison video:
 

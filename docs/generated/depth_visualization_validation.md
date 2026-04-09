@@ -122,6 +122,10 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
     - geometry diagnostic video + keyframe sheet
     - RGB reference video + keyframe sheet
     - support-count video + keyframe sheet
+  - automatic merge-diagnostic outputs:
+    - source-attribution overlay video + keyframe sheet
+    - source-split keyframe sheet
+    - mismatch residual video + keyframe sheet
   - object-debug outputs:
     - `debug/per_camera_object_mask_overlay/*.png`
     - `debug/per_camera_object_cloud/*.png`
@@ -151,6 +155,9 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
   - initial world-ROI under-segmentation
   - pixel-mask recovery of protrusions
   - final fusion/support limitations
+- `source` now exposes which camera contributed which visible surface region.
+- `mismatch` now exposes where the overlapping 3-view geometry disagrees instead of only how many cameras touched it.
+- `support` remains complementary: it shows overlap quantity, while `source` and `mismatch` explain source identity and disagreement.
 
 ## Known Limitations
 
@@ -159,3 +166,4 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
 - A dedicated temporal-stability script has not been added yet; static-scene stability must currently be inferred from panel videos and reprojection consistency.
 - Teddy-bear-like cases can still require a tighter `--manual_image_roi_json` because rectangular 2D boxes may preserve some tabletop pixels near the feet or box base.
 - Automatic projected-bbox refinement reduces but does not eliminate that limitation; manual image ROI remains the strongest override when the object sits directly on a visually similar tabletop.
+- Source-attribution overlay is honest about provenance, but it is still a point/surfel view rather than a watertight mesh; overlap artifacts can therefore look thicker than they would on a meshed surface.

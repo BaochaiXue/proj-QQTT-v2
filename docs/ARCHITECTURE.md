@@ -37,6 +37,7 @@ The repo is intentionally small.
 - `data_process/visualization/panel_compare.py`
 - `data_process/visualization/pointcloud_compare.py`
 - `data_process/visualization/reprojection_compare.py`
+- `data_process/visualization/source_compare.py`
 - `data_process/visualization/support_compare.py`
 - `data_process/visualization/turntable_compare.py`
 - `scripts/harness/visual_compare_depth_panels.py`
@@ -114,6 +115,7 @@ The fused renderer also supports two layout modes:
 - automatic mp4/gif animation export from the shared per-frame PNG sequence
 - larger orthographic top-view position-map rendering with orbit path, supported arc, and crop visualization
 - debug artifact export for per-camera masks, per-camera object clouds, fused object-only clouds, and compare metrics
+- source-attribution overlay rendering and mismatch residual rendering through `source_compare.py`
 
 The object-ROI stack now has two distinct roles:
 
@@ -125,8 +127,15 @@ The object-ROI stack now has two distinct roles:
   - projected coarse bbox generation from world ROI
   - automatic per-camera foreground-mask refinement
   - pixel-mask filtering back into world-space seed clouds
+- `source_compare.py`
+  - source-camera color mapping and legend generation
+  - semi-transparent per-camera provenance overlay
+  - split per-camera source contribution renders
+  - overlap mismatch residual computation and rendering
 
 This means the professor-facing compare no longer treats the initial fused world ROI as the sole authority. Pixel-derived object evidence is allowed to expand and refine the world ROI before the final compare is rendered.
+
+It also means fused object clouds no longer drop source provenance as soon as they are concatenated: `source_camera_idx` now survives object/context/fused construction so the final compare can render provenance and mismatch as first-class diagnostics.
 
 The shared fallback projection convention in `pointcloud_compare.py` maps positive view-space `y` upward on screen, so larger view-space height becomes a smaller image-row index without requiring any late image flip.
 
