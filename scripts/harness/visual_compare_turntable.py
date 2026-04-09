@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--crop_max_z", type=float, default=0.35)
     parser.add_argument("--object_height_min", type=float, default=0.02)
     parser.add_argument("--object_height_max", type=float, default=0.60)
-    parser.add_argument("--object_component_mode", choices=("union", "largest", "topk"), default="union")
+    parser.add_argument("--object_component_mode", choices=("graph_union", "union", "largest", "topk"), default="graph_union")
     parser.add_argument("--object_component_topk", type=int, default=2)
     parser.add_argument("--roi_x_min", type=float, default=None)
     parser.add_argument("--roi_x_max", type=float, default=None)

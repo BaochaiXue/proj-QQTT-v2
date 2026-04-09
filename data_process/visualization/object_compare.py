@@ -431,6 +431,110 @@ def point_mask_from_pixel_mask(
     return keep
 
 
+def world_bbox_corners(
+    object_roi_min: np.ndarray,
+    object_roi_max: np.ndarray,
+) -> np.ndarray:
+    bbox_min = np.asarray(object_roi_min, dtype=np.float32)
+    bbox_max = np.asarray(object_roi_max, dtype=np.float32)
+    corners: list[np.ndarray] = []
+    for x_value in (bbox_min[0], bbox_max[0]):
+        for y_value in (bbox_min[1], bbox_max[1]):
+            for z_value in (bbox_min[2], bbox_max[2]):
+                corners.append(np.array([x_value, y_value, z_value], dtype=np.float32))
+    return np.stack(corners, axis=0)
+
+
+def project_world_roi_to_camera_bbox(
+    camera_cloud: dict[str, Any],
+    *,
+    object_roi_min: np.ndarray,
+    object_roi_max: np.ndarray,
+    extra_world_points: np.ndarray | None = None,
+    padding_ratio: float = 0.14,
+    min_pad_px: int = 12,
+    max_pad_px: int = 56,
+) -> tuple[tuple[int, int, int, int] | None, dict[str, Any]]:
+    color_path = camera_cloud["color_path"]
+    image = cv2.imread(str(color_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(f"Missing RGB image for projected bbox: {color_path}")
+    roi_points = world_bbox_corners(object_roi_min, object_roi_max)
+    if extra_world_points is not None and len(extra_world_points) > 0:
+        roi_points = np.concatenate([roi_points, np.asarray(extra_world_points, dtype=np.float32).reshape(-1, 3)], axis=0)
+    projected = _project_world_points_to_pixels(
+        roi_points,
+        c2w=np.asarray(camera_cloud["c2w"], dtype=np.float32),
+        K_color=np.asarray(camera_cloud["K_color"], dtype=np.float32),
+        image_shape=image.shape[:2],
+    )
+    if len(projected) == 0:
+        return None, {
+            "camera_idx": int(camera_cloud["camera_idx"]),
+            "source": "projected_world_roi",
+            "visible_corner_count": 0,
+            "bbox": None,
+        }
+    x_min = int(np.min(projected[:, 0]))
+    y_min = int(np.min(projected[:, 1]))
+    x_max = int(np.max(projected[:, 0]))
+    y_max = int(np.max(projected[:, 1]))
+    width = max(1, x_max - x_min + 1)
+    height = max(1, y_max - y_min + 1)
+    pad = int(np.clip(round(max(width, height) * float(padding_ratio)), int(min_pad_px), int(max_pad_px)))
+    x_min = max(0, x_min - pad)
+    y_min = max(0, y_min - pad)
+    x_max = min(int(image.shape[1]) - 1, x_max + pad)
+    y_max = min(int(image.shape[0]) - 1, y_max + pad)
+    if x_min >= x_max or y_min >= y_max:
+        return None, {
+            "camera_idx": int(camera_cloud["camera_idx"]),
+            "source": "projected_world_roi",
+            "visible_corner_count": int(len(projected)),
+            "bbox": None,
+        }
+    bbox = (int(x_min), int(y_min), int(x_max), int(y_max))
+    return bbox, {
+        "camera_idx": int(camera_cloud["camera_idx"]),
+        "source": "projected_world_roi",
+        "visible_corner_count": int(len(projected)),
+        "bbox": [int(x_min), int(y_min), int(x_max), int(y_max)],
+    }
+
+
+def build_refined_pixel_masks_from_bboxes(
+    camera_clouds: list[dict[str, Any]],
+    *,
+    roi_by_camera: dict[int, tuple[int, int, int, int]],
+    plane_point: np.ndarray,
+    plane_normal: np.ndarray,
+    object_height_min: float,
+    object_height_max: float,
+) -> tuple[dict[int, np.ndarray], dict[int, dict[str, Any]]]:
+    pixel_masks: dict[int, np.ndarray] = {}
+    debug_by_camera: dict[int, dict[str, Any]] = {}
+    for camera_cloud in camera_clouds:
+        camera_idx = int(camera_cloud["camera_idx"])
+        roi = roi_by_camera.get(camera_idx)
+        if roi is None:
+            continue
+        mask, mask_metrics = build_geometry_constrained_foreground_mask(
+            camera_cloud,
+            roi=roi,
+            plane_point=plane_point,
+            plane_normal=plane_normal,
+            object_height_min=float(object_height_min),
+            object_height_max=float(object_height_max),
+        )
+        pixel_masks[camera_idx] = mask
+        debug_by_camera[camera_idx] = {
+            "camera_idx": camera_idx,
+            "bbox": [int(item) for item in roi],
+            **mask_metrics,
+        }
+    return pixel_masks, debug_by_camera
+
+
 def _overlay_object_pixels_on_rgb(
     color_path: str | Path,
     *,

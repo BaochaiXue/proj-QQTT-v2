@@ -128,6 +128,12 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
     - `debug/fused_object_only/*`
     - `debug/fused_object_context/*`
     - `debug/compare_debug_metrics.json`
+  - automatic pass1 -> pass2 object refinement when `--manual_image_roi_json` is absent:
+    - pass1 coarse world ROI
+    - projected per-camera coarse bbox generation
+    - per-camera foreground-mask refinement
+    - pass2 world ROI rebuilt from the masked per-camera object points
+  - `graph_union` component closure instead of only a top-component anchored union
 
 ## Why This Workflow Is Easier To Read
 
@@ -141,6 +147,10 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
   - the per-camera ROI mask
   - the object/context sampling split
   - or the final fused support pattern
+- The new pass1/pass2 ROI artifacts make it possible to distinguish:
+  - initial world-ROI under-segmentation
+  - pixel-mask recovery of protrusions
+  - final fusion/support limitations
 
 ## Known Limitations
 
@@ -148,3 +158,4 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
 - The current visualization pipeline still uses pinhole `K` matrices without explicit distortion coefficients.
 - A dedicated temporal-stability script has not been added yet; static-scene stability must currently be inferred from panel videos and reprojection consistency.
 - Teddy-bear-like cases can still require a tighter `--manual_image_roi_json` because rectangular 2D boxes may preserve some tabletop pixels near the feet or box base.
+- Automatic projected-bbox refinement reduces but does not eliminate that limitation; manual image ROI remains the strongest override when the object sits directly on a visually similar tabletop.

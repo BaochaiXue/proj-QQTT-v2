@@ -222,9 +222,12 @@ def _compute_object_component_stats(
         heights = (component_points - np.asarray(plane_point, dtype=np.float32)[None, :]) @ np.asarray(plane_normal, dtype=np.float32)
         bbox_min = component_points.min(axis=0).astype(np.float32)
         bbox_max = component_points.max(axis=0).astype(np.float32)
+        centroid = component_points.mean(axis=0).astype(np.float32)
         extent = bbox_max - bbox_min
         planar_extent = float(np.linalg.norm(extent[:2]))
         vertical_extent = float(np.max(heights) - np.min(heights))
+        min_height = float(np.min(heights))
+        max_height = float(np.max(heights))
         median_height = float(np.median(heights))
         p90_height = float(np.quantile(heights, 0.90))
         stability = float(min(vertical_extent, 0.25) + min(planar_extent, 0.35) * 0.35)
@@ -240,7 +243,12 @@ def _compute_object_component_stats(
                 "point_count": int(len(component_indices)),
                 "bbox_min": bbox_min,
                 "bbox_max": bbox_max,
+                "centroid": centroid,
                 "extent": extent.astype(np.float32),
+                "planar_extent": planar_extent,
+                "vertical_extent": vertical_extent,
+                "min_height": min_height,
+                "max_height": max_height,
                 "median_height": median_height,
                 "p90_height": p90_height,
                 "score": score,
@@ -248,6 +256,159 @@ def _compute_object_component_stats(
         )
     stats.sort(key=lambda item: item["score"], reverse=True)
     return stats
+
+
+def _bbox_gap_vector(
+    bbox_min_a: np.ndarray,
+    bbox_max_a: np.ndarray,
+    bbox_min_b: np.ndarray,
+    bbox_max_b: np.ndarray,
+) -> np.ndarray:
+    left_gap = np.maximum(bbox_min_b - bbox_max_a, 0.0)
+    right_gap = np.maximum(bbox_min_a - bbox_max_b, 0.0)
+    return np.maximum(left_gap, right_gap).astype(np.float32)
+
+
+def _bbox_overlap_with_margin(
+    bbox_min_a: np.ndarray,
+    bbox_max_a: np.ndarray,
+    bbox_min_b: np.ndarray,
+    bbox_max_b: np.ndarray,
+    *,
+    margin_xy: float,
+    margin_z: float,
+) -> bool:
+    margin = np.array([float(margin_xy), float(margin_xy), float(margin_z)], dtype=np.float32)
+    expanded_min_a = np.asarray(bbox_min_a, dtype=np.float32) - margin
+    expanded_max_a = np.asarray(bbox_max_a, dtype=np.float32) + margin
+    expanded_min_b = np.asarray(bbox_min_b, dtype=np.float32) - margin
+    expanded_max_b = np.asarray(bbox_max_b, dtype=np.float32) + margin
+    return bool(
+        np.all(expanded_max_a >= expanded_min_b) and np.all(expanded_min_a <= expanded_max_b)
+    )
+
+
+def _projected_bbox_iou(
+    bbox_a: tuple[int, int, int, int] | None,
+    bbox_b: tuple[int, int, int, int] | None,
+) -> float:
+    if bbox_a is None or bbox_b is None:
+        return 0.0
+    ax0, ay0, ax1, ay1 = bbox_a
+    bx0, by0, bx1, by1 = bbox_b
+    inter_x0 = max(ax0, bx0)
+    inter_y0 = max(ay0, by0)
+    inter_x1 = min(ax1, bx1)
+    inter_y1 = min(ay1, by1)
+    inter_w = max(0, inter_x1 - inter_x0 + 1)
+    inter_h = max(0, inter_y1 - inter_y0 + 1)
+    inter_area = float(inter_w * inter_h)
+    if inter_area <= 0.0:
+        return 0.0
+    area_a = float(max(0, ax1 - ax0 + 1) * max(0, ay1 - ay0 + 1))
+    area_b = float(max(0, bx1 - bx0 + 1) * max(0, by1 - by0 + 1))
+    denom = area_a + area_b - inter_area
+    if denom <= 1e-6:
+        return 0.0
+    return inter_area / denom
+
+
+def _components_are_graph_connected(
+    component_a: dict[str, Any],
+    component_b: dict[str, Any],
+    *,
+    projected_bboxes_by_component: dict[int, dict[int, tuple[int, int, int, int]]] | None = None,
+) -> bool:
+    bbox_min_a = np.asarray(component_a["bbox_min"], dtype=np.float32)
+    bbox_max_a = np.asarray(component_a["bbox_max"], dtype=np.float32)
+    bbox_min_b = np.asarray(component_b["bbox_min"], dtype=np.float32)
+    bbox_max_b = np.asarray(component_b["bbox_max"], dtype=np.float32)
+    extent_a = np.asarray(component_a["extent"], dtype=np.float32)
+    extent_b = np.asarray(component_b["extent"], dtype=np.float32)
+    planar_extent_a = max(float(component_a["planar_extent"]), 1e-3)
+    planar_extent_b = max(float(component_b["planar_extent"]), 1e-3)
+    vertical_extent_a = max(float(component_a["vertical_extent"]), 1e-3)
+    vertical_extent_b = max(float(component_b["vertical_extent"]), 1e-3)
+    centroid_a = np.asarray(component_a["centroid"], dtype=np.float32)
+    centroid_b = np.asarray(component_b["centroid"], dtype=np.float32)
+
+    gap_vector = _bbox_gap_vector(bbox_min_a, bbox_max_a, bbox_min_b, bbox_max_b)
+    planar_gap = float(np.linalg.norm(gap_vector[:2]))
+    vertical_gap = float(gap_vector[2])
+    centroid_planar = float(np.linalg.norm((centroid_a - centroid_b)[:2]))
+    centroid_vertical = float(abs(float(centroid_a[2] - centroid_b[2])))
+
+    margin_xy = max(0.035, min(planar_extent_a, planar_extent_b) * 0.70 + 0.02)
+    margin_z = max(0.025, max(vertical_extent_a, vertical_extent_b) * 1.25 + 0.015)
+    overlaps_expanded = _bbox_overlap_with_margin(
+        bbox_min_a,
+        bbox_max_a,
+        bbox_min_b,
+        bbox_max_b,
+        margin_xy=margin_xy,
+        margin_z=margin_z,
+    )
+    centroid_planar_threshold = max(0.08, (planar_extent_a + planar_extent_b) * 0.95)
+    centroid_vertical_threshold = max(0.05, (vertical_extent_a + vertical_extent_b) * 1.50 + 0.02)
+    height_continuity = not (
+        float(component_a["max_height"]) + margin_z < float(component_b["min_height"])
+        or float(component_b["max_height"]) + margin_z < float(component_a["min_height"])
+    )
+
+    projected_overlap = 0.0
+    if projected_bboxes_by_component is not None:
+        bboxes_a = projected_bboxes_by_component.get(int(component_a["component_idx"]), {})
+        bboxes_b = projected_bboxes_by_component.get(int(component_b["component_idx"]), {})
+        shared_camera_ids = set(bboxes_a.keys()) & set(bboxes_b.keys())
+        if shared_camera_ids:
+            projected_overlap = max(
+                _projected_bbox_iou(bboxes_a.get(camera_idx), bboxes_b.get(camera_idx))
+                for camera_idx in shared_camera_ids
+            )
+
+    return bool(
+        projected_overlap >= 0.03
+        or overlaps_expanded
+        or (
+            planar_gap <= margin_xy * 1.35
+            and vertical_gap <= margin_z * 1.15
+            and centroid_planar <= centroid_planar_threshold
+            and centroid_vertical <= centroid_vertical_threshold
+            and height_continuity
+        )
+    )
+
+
+def _select_graph_union_component_indices(
+    component_stats: list[dict[str, Any]],
+    *,
+    projected_bboxes_by_component: dict[int, dict[int, tuple[int, int, int, int]]] | None = None,
+) -> list[int]:
+    if not component_stats:
+        return []
+    component_by_idx = {int(item["component_idx"]): item for item in component_stats}
+    adjacency: dict[int, set[int]] = {int(item["component_idx"]): set() for item in component_stats}
+    ordered = [int(item["component_idx"]) for item in component_stats]
+    for left_offset, left_idx in enumerate(ordered):
+        for right_idx in ordered[left_offset + 1:]:
+            if _components_are_graph_connected(
+                component_by_idx[left_idx],
+                component_by_idx[right_idx],
+                projected_bboxes_by_component=projected_bboxes_by_component,
+            ):
+                adjacency[left_idx].add(right_idx)
+                adjacency[right_idx].add(left_idx)
+
+    seed_idx = int(component_stats[0]["component_idx"])
+    selected = {seed_idx}
+    queue = [seed_idx]
+    while queue:
+        current = queue.pop()
+        for neighbor in adjacency[current]:
+            if neighbor not in selected:
+                selected.add(neighbor)
+                queue.append(neighbor)
+    return sorted(selected)
 
 
 def _select_object_component_indices(
@@ -258,6 +419,7 @@ def _select_object_component_indices(
     object_component_topk: int,
     plane_point: np.ndarray,
     plane_normal: np.ndarray,
+    projected_bboxes_by_component: dict[int, dict[int, tuple[int, int, int, int]]] | None = None,
 ) -> tuple[np.ndarray, list[dict[str, Any]], list[int]]:
     if not components:
         fallback_indices = np.arange(len(object_points), dtype=np.int32)
@@ -277,6 +439,11 @@ def _select_object_component_indices(
     elif object_component_mode == "topk":
         topk = max(1, int(object_component_topk))
         selected_component_indices = [int(item["component_idx"]) for item in component_stats[:topk]]
+    elif object_component_mode == "graph_union":
+        selected_component_indices = _select_graph_union_component_indices(
+            component_stats,
+            projected_bboxes_by_component=projected_bboxes_by_component,
+        )
     elif object_component_mode == "union":
         largest_count = max(1, int(top_component["point_count"]))
         top_score = max(1e-6, float(top_component["score"]))
@@ -404,10 +571,11 @@ def estimate_object_roi_bounds(
     plane_reference_points: np.ndarray | None = None,
     object_height_min: float = 0.02,
     object_height_max: float = 0.30,
-    object_component_mode: str = "largest",
+    object_component_mode: str = "graph_union",
     object_component_topk: int = 2,
     roi_margin_xy: float = 0.05,
     roi_margin_z: float = 0.03,
+    projected_bboxes_by_component: dict[int, dict[int, tuple[int, int, int, int]]] | None = None,
 ) -> dict[str, Any]:
     cloud = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     if len(cloud) < 64:
@@ -447,7 +615,7 @@ def estimate_object_roi_bounds(
         }
 
     scene_extent = float(np.linalg.norm(object_points.max(axis=0) - object_points.min(axis=0)))
-    voxel_size = max(0.04, scene_extent * 0.10)
+    voxel_size = max(0.025, scene_extent * 0.08)
     components = _build_voxel_components(object_points, voxel_size=voxel_size)
     selected_indices, component_stats, selected_component_indices = _select_object_component_indices(
         object_points,
@@ -456,6 +624,7 @@ def estimate_object_roi_bounds(
         object_component_topk=object_component_topk,
         plane_point=plane["point"],
         plane_normal=plane["normal"],
+        projected_bboxes_by_component=projected_bboxes_by_component,
     )
     component_points = object_points[selected_indices]
     selected_points = component_points

@@ -11,13 +11,15 @@ import numpy as np
 from .camera_frusta import build_camera_frustum_geometry, collect_camera_geometry_points, extract_camera_poses
 from .object_compare import (
     build_object_first_layers,
-    build_geometry_constrained_foreground_mask,
+    build_refined_pixel_masks_from_bboxes,
     filter_camera_clouds_by_pixel_masks,
+    project_world_roi_to_camera_bbox,
+    world_bbox_corners,
     write_compare_debug_metrics,
     write_fused_cloud_debug_artifacts,
     write_object_debug_artifacts,
 )
-from .object_roi import estimate_table_color_bgr, fit_dominant_table_plane
+from .object_roi import estimate_table_color_bgr
 from .pointcloud_compare import (
     PROJECTION_MODES,
     RENDER_MODES,
@@ -270,6 +272,367 @@ def load_single_frame_compare_clouds(
     }
 
 
+def _json_ready_crop_bounds(crop_bounds: dict[str, Any]) -> dict[str, Any]:
+    serialized: dict[str, Any] = {}
+    for key, value in crop_bounds.items():
+        if isinstance(value, np.ndarray):
+            serialized[key] = np.asarray(value).astype(np.float32).tolist()
+        elif isinstance(value, (np.floating, np.integer)):
+            serialized[key] = float(value)
+        elif isinstance(value, list):
+            serialized[key] = value
+        else:
+            serialized[key] = value
+    return serialized
+
+
+def _write_json(output_path: Path, payload: dict[str, Any]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _derive_bbox_by_camera(
+    camera_clouds: list[dict[str, Any]],
+    *,
+    crop_bounds: dict[str, Any],
+    manual_bbox_by_camera: dict[int, tuple[int, int, int, int]] | None = None,
+    object_height_max: float | None = None,
+) -> tuple[dict[int, tuple[int, int, int, int]], dict[int, dict[str, Any]]]:
+    bbox_by_camera: dict[int, tuple[int, int, int, int]] = {}
+    debug_by_camera: dict[int, dict[str, Any]] = {}
+    object_roi_min = np.asarray(crop_bounds.get("object_roi_min", crop_bounds["min"]), dtype=np.float32)
+    object_roi_max = np.asarray(crop_bounds.get("object_roi_max", crop_bounds["max"]), dtype=np.float32)
+    extra_world_points = None
+    if object_height_max is not None and "plane_point" in crop_bounds and "plane_normal" in crop_bounds:
+        plane_point = np.asarray(crop_bounds["plane_point"], dtype=np.float32)
+        plane_normal = np.asarray(crop_bounds["plane_normal"], dtype=np.float32)
+        corners = world_bbox_corners(object_roi_min, object_roi_max)
+        current_top = float(np.max((corners - plane_point[None, :]) @ plane_normal))
+        target_top = max(current_top + 0.12, float(object_height_max))
+        extra_height = max(0.0, target_top - current_top)
+        if extra_height > 1e-6:
+            extra_world_points = corners + plane_normal[None, :] * extra_height
+    for camera_cloud in camera_clouds:
+        camera_idx = int(camera_cloud["camera_idx"])
+        if manual_bbox_by_camera is not None and camera_idx in manual_bbox_by_camera:
+            bbox = tuple(int(item) for item in manual_bbox_by_camera[camera_idx])
+            bbox_by_camera[camera_idx] = bbox
+            debug_by_camera[camera_idx] = {
+                "camera_idx": camera_idx,
+                "source": "manual_image_roi_json",
+                "bbox": list(bbox),
+            }
+            continue
+        bbox, debug = project_world_roi_to_camera_bbox(
+            camera_cloud,
+            object_roi_min=object_roi_min,
+            object_roi_max=object_roi_max,
+            extra_world_points=extra_world_points,
+        )
+        if bbox is not None:
+            bbox_by_camera[camera_idx] = bbox
+        debug_by_camera[camera_idx] = debug
+    return bbox_by_camera, debug_by_camera
+
+
+def _collect_seed_points(camera_clouds: list[dict[str, Any]]) -> list[np.ndarray]:
+    return [np.asarray(item["points"], dtype=np.float32) for item in camera_clouds if len(item["points"]) > 0]
+
+
+def _compute_seed_height_summary(
+    point_sets: list[np.ndarray],
+    *,
+    plane_point: np.ndarray,
+    plane_normal: np.ndarray,
+) -> dict[str, float]:
+    valid_sets = [np.asarray(item, dtype=np.float32) for item in point_sets if len(item) > 0]
+    if not valid_sets:
+        return {"point_count": 0.0, "max_height": 0.0, "p90_height": 0.0}
+    stacked = np.concatenate(valid_sets, axis=0)
+    heights = (stacked - np.asarray(plane_point, dtype=np.float32)[None, :]) @ np.asarray(plane_normal, dtype=np.float32)
+    return {
+        "point_count": float(len(stacked)),
+        "max_height": float(np.max(heights)) if len(heights) > 0 else 0.0,
+        "p90_height": float(np.quantile(heights, 0.90)) if len(heights) > 0 else 0.0,
+    }
+
+
+def _object_roi_volume(crop_bounds: dict[str, Any] | None) -> float:
+    if crop_bounds is None:
+        return 0.0
+    roi_min = np.asarray(crop_bounds.get("object_roi_min", crop_bounds["min"]), dtype=np.float32)
+    roi_max = np.asarray(crop_bounds.get("object_roi_max", crop_bounds["max"]), dtype=np.float32)
+    extent = np.maximum(roi_max - roi_min, 1e-6)
+    return float(np.prod(extent))
+
+
+def _build_seed_union_crop_bounds(
+    seed_points: list[np.ndarray],
+    *,
+    full_bounds_min: np.ndarray,
+    full_bounds_max: np.ndarray,
+    plane_point: np.ndarray,
+    plane_normal: np.ndarray,
+    crop_margin_xy: float,
+    crop_min_z: float,
+    crop_max_z: float,
+) -> dict[str, Any] | None:
+    valid_sets = [np.asarray(item, dtype=np.float32) for item in seed_points if len(item) > 0]
+    if not valid_sets:
+        return None
+    stacked = np.concatenate(valid_sets, axis=0)
+    object_roi_min = stacked.min(axis=0).astype(np.float32)
+    object_roi_max = stacked.max(axis=0).astype(np.float32)
+    roi_margin_xy = max(0.02, float(crop_margin_xy) * 0.45)
+    roi_margin_z = max(0.015, abs(float(crop_max_z) - float(crop_min_z)) * 0.08)
+    crop_min = np.maximum(
+        np.asarray(full_bounds_min, dtype=np.float32),
+        object_roi_min - np.array([roi_margin_xy, roi_margin_xy, roi_margin_z], dtype=np.float32),
+    ).astype(np.float32)
+    crop_max = np.minimum(
+        np.asarray(full_bounds_max, dtype=np.float32),
+        object_roi_max + np.array([roi_margin_xy, roi_margin_xy, roi_margin_z], dtype=np.float32),
+    ).astype(np.float32)
+    return {
+        "mode": "auto_object_bbox",
+        "min": crop_min,
+        "max": crop_max,
+        "object_roi_min": object_roi_min,
+        "object_roi_max": object_roi_max,
+        "plane_point": np.asarray(plane_point, dtype=np.float32),
+        "plane_normal": np.asarray(plane_normal, dtype=np.float32),
+        "object_point_count": int(len(stacked)),
+        "component_point_count": int(len(stacked)),
+        "selected_object_point_count": int(len(stacked)),
+        "component_count": 1,
+        "selected_component_indices": [0],
+        "component_scores": [],
+        "seed_bbox_used": True,
+        "manual_seed_union_used": True,
+        "fallback_used": False,
+    }
+
+
+def prepare_object_roi_refinement(
+    *,
+    raw_scene: dict[str, Any],
+    focus_mode: str,
+    scene_crop_mode: str,
+    crop_margin_xy: float,
+    crop_min_z: float,
+    crop_max_z: float,
+    manual_xyz_roi: dict[str, float] | None,
+    manual_image_roi_by_camera: dict[int, tuple[int, int, int, int]] | None,
+    object_height_min: float,
+    object_height_max: float,
+    object_component_mode: str,
+    object_component_topk: int,
+) -> dict[str, Any]:
+    raw_bounds_min, raw_bounds_max = _compute_bounds([raw_scene["native_points"], raw_scene["ffs_points"]])
+    focus_point = estimate_focus_point(
+        [raw_scene["native_points"], raw_scene["ffs_points"]],
+        bounds_min=raw_bounds_min,
+        bounds_max=raw_bounds_max,
+        focus_mode=focus_mode,
+    )
+    if scene_crop_mode != "auto_object_bbox":
+        return {
+            "focus_point": focus_point,
+            "pass1_crop": None,
+            "pass2_crop": None,
+            "native_pass1_masks": None,
+            "ffs_pass1_masks": None,
+            "native_pass2_masks": None,
+            "ffs_pass2_masks": None,
+            "native_pass1_seed_metrics": [],
+            "ffs_pass1_seed_metrics": [],
+            "native_pass2_seed_metrics": [],
+            "ffs_pass2_seed_metrics": [],
+            "bbox_debug_by_camera": {},
+            "pass1_mask_debug": {"native": {}, "ffs": {}},
+            "pass2_mask_debug": {"native": {}, "ffs": {}},
+            "pass1_seed_height_summary": {"point_count": 0.0, "max_height": 0.0, "p90_height": 0.0},
+            "pass2_seed_height_summary": {"point_count": 0.0, "max_height": 0.0, "p90_height": 0.0},
+        }
+
+    pass1_crop = compute_scene_crop_bounds(
+        [raw_scene["native_points"], raw_scene["ffs_points"]],
+        focus_point=focus_point,
+        scene_crop_mode=scene_crop_mode,
+        crop_margin_xy=float(crop_margin_xy),
+        crop_min_z=float(crop_min_z),
+        crop_max_z=float(crop_max_z),
+        manual_xyz_roi=manual_xyz_roi,
+        object_seed_point_sets=None,
+        object_height_min=float(object_height_min),
+        object_height_max=float(object_height_max),
+        object_component_mode=object_component_mode,
+        object_component_topk=int(object_component_topk),
+    )
+    pass1_bbox_by_camera, pass1_bbox_debug = _derive_bbox_by_camera(
+        raw_scene["native_camera_clouds"],
+        crop_bounds=pass1_crop,
+        manual_bbox_by_camera=manual_image_roi_by_camera,
+        object_height_max=float(object_height_max),
+    )
+    native_pass1_masks, native_pass1_mask_debug = build_refined_pixel_masks_from_bboxes(
+        raw_scene["native_camera_clouds"],
+        roi_by_camera=pass1_bbox_by_camera,
+        plane_point=np.asarray(pass1_crop.get("plane_point", focus_point), dtype=np.float32),
+        plane_normal=np.asarray(pass1_crop.get("plane_normal", np.array([0.0, 0.0, 1.0], dtype=np.float32)), dtype=np.float32),
+        object_height_min=float(object_height_min),
+        object_height_max=max(0.60, float(object_height_max)),
+    )
+    ffs_pass1_masks, ffs_pass1_mask_debug = build_refined_pixel_masks_from_bboxes(
+        raw_scene["ffs_camera_clouds"],
+        roi_by_camera=pass1_bbox_by_camera,
+        plane_point=np.asarray(pass1_crop.get("plane_point", focus_point), dtype=np.float32),
+        plane_normal=np.asarray(pass1_crop.get("plane_normal", np.array([0.0, 0.0, 1.0], dtype=np.float32)), dtype=np.float32),
+        object_height_min=float(object_height_min),
+        object_height_max=max(0.60, float(object_height_max)),
+    )
+    native_pass1_seed_clouds, native_pass1_seed_metrics = filter_camera_clouds_by_pixel_masks(
+        raw_scene["native_camera_clouds"],
+        pixel_mask_by_camera=native_pass1_masks,
+    )
+    ffs_pass1_seed_clouds, ffs_pass1_seed_metrics = filter_camera_clouds_by_pixel_masks(
+        raw_scene["ffs_camera_clouds"],
+        pixel_mask_by_camera=ffs_pass1_masks,
+    )
+    pass1_seed_points = _collect_seed_points(native_pass1_seed_clouds) + _collect_seed_points(ffs_pass1_seed_clouds)
+    if manual_image_roi_by_camera is not None:
+        pass2_crop = _build_seed_union_crop_bounds(
+            pass1_seed_points,
+            full_bounds_min=raw_bounds_min,
+            full_bounds_max=raw_bounds_max,
+            plane_point=np.asarray(pass1_crop.get("plane_point", focus_point), dtype=np.float32),
+            plane_normal=np.asarray(pass1_crop.get("plane_normal", np.array([0.0, 0.0, 1.0], dtype=np.float32)), dtype=np.float32),
+            crop_margin_xy=float(crop_margin_xy),
+            crop_min_z=float(crop_min_z),
+            crop_max_z=float(crop_max_z),
+        )
+    else:
+        pass2_crop = compute_scene_crop_bounds(
+            [raw_scene["native_points"], raw_scene["ffs_points"]],
+            focus_point=focus_point,
+            scene_crop_mode=scene_crop_mode,
+            crop_margin_xy=float(crop_margin_xy),
+            crop_min_z=float(crop_min_z),
+            crop_max_z=float(crop_max_z),
+            manual_xyz_roi=manual_xyz_roi,
+            object_seed_point_sets=pass1_seed_points,
+            object_height_min=float(object_height_min),
+            object_height_max=float(object_height_max),
+            object_component_mode=object_component_mode,
+            object_component_topk=int(object_component_topk),
+        )
+    if pass2_crop is None:
+        pass2_crop = pass1_crop
+    pass2_bbox_by_camera, pass2_bbox_debug = _derive_bbox_by_camera(
+        raw_scene["native_camera_clouds"],
+        crop_bounds=pass2_crop,
+        manual_bbox_by_camera=None,
+        object_height_max=float(object_height_max),
+    )
+    native_pass2_masks, native_pass2_mask_debug = build_refined_pixel_masks_from_bboxes(
+        raw_scene["native_camera_clouds"],
+        roi_by_camera=pass2_bbox_by_camera,
+        plane_point=np.asarray(pass2_crop.get("plane_point", focus_point), dtype=np.float32),
+        plane_normal=np.asarray(pass2_crop.get("plane_normal", np.array([0.0, 0.0, 1.0], dtype=np.float32)), dtype=np.float32),
+        object_height_min=float(object_height_min),
+        object_height_max=max(0.60, float(object_height_max)),
+    )
+    ffs_pass2_masks, ffs_pass2_mask_debug = build_refined_pixel_masks_from_bboxes(
+        raw_scene["ffs_camera_clouds"],
+        roi_by_camera=pass2_bbox_by_camera,
+        plane_point=np.asarray(pass2_crop.get("plane_point", focus_point), dtype=np.float32),
+        plane_normal=np.asarray(pass2_crop.get("plane_normal", np.array([0.0, 0.0, 1.0], dtype=np.float32)), dtype=np.float32),
+        object_height_min=float(object_height_min),
+        object_height_max=max(0.60, float(object_height_max)),
+    )
+    native_pass2_seed_clouds, native_pass2_seed_metrics = filter_camera_clouds_by_pixel_masks(
+        raw_scene["native_camera_clouds"],
+        pixel_mask_by_camera=native_pass2_masks,
+    )
+    ffs_pass2_seed_clouds, ffs_pass2_seed_metrics = filter_camera_clouds_by_pixel_masks(
+        raw_scene["ffs_camera_clouds"],
+        pixel_mask_by_camera=ffs_pass2_masks,
+    )
+    pass2_seed_points = _collect_seed_points(native_pass2_seed_clouds) + _collect_seed_points(ffs_pass2_seed_clouds)
+    pass1_selected_count = int(pass1_crop.get("selected_object_point_count", pass1_crop.get("object_point_count", 0))) if pass1_crop is not None else 0
+    pass2_selected_count = int(pass2_crop.get("selected_object_point_count", pass2_crop.get("object_point_count", 0))) if pass2_crop is not None else 0
+    pass1_volume = _object_roi_volume(pass1_crop)
+    pass2_volume = _object_roi_volume(pass2_crop)
+    pass2_valid_camera_count = int(
+        np.count_nonzero(
+            [
+                int(native_pass2_mask_debug.get(camera_idx, {}).get("refined_mask_pixels", 0)) > 256
+                for camera_idx in pass2_bbox_by_camera
+            ]
+        )
+    )
+    pass2_refinement_valid = bool(
+        pass2_selected_count >= max(64, int(round(max(pass1_selected_count, 1) * 0.02)))
+        and pass2_valid_camera_count >= 2
+        and pass2_volume >= max(1e-6, pass1_volume * 0.02)
+    )
+    final_crop = pass2_crop if pass2_refinement_valid else pass1_crop
+    final_native_masks = native_pass2_masks if pass2_refinement_valid else native_pass1_masks
+    final_ffs_masks = ffs_pass2_masks if pass2_refinement_valid else ffs_pass1_masks
+    final_seed_metrics_native = native_pass2_seed_metrics if pass2_refinement_valid else native_pass1_seed_metrics
+    final_seed_metrics_ffs = ffs_pass2_seed_metrics if pass2_refinement_valid else ffs_pass1_seed_metrics
+    final_mask_debug = {
+        "native": native_pass2_mask_debug if pass2_refinement_valid else native_pass1_mask_debug,
+        "ffs": ffs_pass2_mask_debug if pass2_refinement_valid else ffs_pass1_mask_debug,
+    }
+    bbox_debug_by_camera: dict[int, dict[str, Any]] = {}
+    for camera_idx in sorted(set(pass1_bbox_debug.keys()) | set(pass2_bbox_debug.keys())):
+        bbox_debug_by_camera[camera_idx] = {
+            "camera_idx": int(camera_idx),
+            "pass1": pass1_bbox_debug.get(camera_idx),
+            "pass2": pass2_bbox_debug.get(camera_idx),
+        }
+    return {
+        "focus_point": focus_point.astype(np.float32),
+        "pass1_crop": pass1_crop,
+        "pass2_crop": pass2_crop,
+        "native_pass1_masks": native_pass1_masks,
+        "ffs_pass1_masks": ffs_pass1_masks,
+        "native_pass2_masks": native_pass2_masks,
+        "ffs_pass2_masks": ffs_pass2_masks,
+        "native_pass1_seed_metrics": native_pass1_seed_metrics,
+        "ffs_pass1_seed_metrics": ffs_pass1_seed_metrics,
+        "native_pass2_seed_metrics": native_pass2_seed_metrics,
+        "ffs_pass2_seed_metrics": ffs_pass2_seed_metrics,
+        "pass2_seed_point_sets": pass2_seed_points,
+        "final_crop": final_crop,
+        "final_native_masks": final_native_masks,
+        "final_ffs_masks": final_ffs_masks,
+        "final_seed_metrics_native": final_seed_metrics_native,
+        "final_seed_metrics_ffs": final_seed_metrics_ffs,
+        "final_mask_debug": final_mask_debug,
+        "pass2_refinement_valid": bool(pass2_refinement_valid),
+        "pass2_valid_camera_count": int(pass2_valid_camera_count),
+        "pass1_object_point_count": int(pass1_selected_count),
+        "pass2_object_point_count": int(pass2_selected_count),
+        "pass1_object_volume": float(pass1_volume),
+        "pass2_object_volume": float(pass2_volume),
+        "bbox_debug_by_camera": bbox_debug_by_camera,
+        "pass1_mask_debug": {"native": native_pass1_mask_debug, "ffs": ffs_pass1_mask_debug},
+        "pass2_mask_debug": {"native": native_pass2_mask_debug, "ffs": ffs_pass2_mask_debug},
+        "pass1_seed_height_summary": _compute_seed_height_summary(
+            pass1_seed_points,
+            plane_point=np.asarray(pass1_crop.get("plane_point", focus_point), dtype=np.float32),
+            plane_normal=np.asarray(pass1_crop.get("plane_normal", np.array([0.0, 0.0, 1.0], dtype=np.float32)), dtype=np.float32),
+        ),
+        "pass2_seed_height_summary": _compute_seed_height_summary(
+            pass2_seed_points,
+            plane_point=np.asarray(pass2_crop.get("plane_point", focus_point), dtype=np.float32),
+            plane_normal=np.asarray(pass2_crop.get("plane_normal", np.array([0.0, 0.0, 1.0], dtype=np.float32)), dtype=np.float32),
+        ),
+    }
+
+
 def build_single_frame_scene(
     *,
     native_points: np.ndarray,
@@ -292,6 +655,7 @@ def build_single_frame_scene(
     object_component_mode: str,
     object_component_topk: int,
     context_max_points_per_camera: int | None,
+    crop_bounds_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     raw_bounds_min, raw_bounds_max = _compute_bounds([native_points, ffs_points])
     focus_point = estimate_focus_point(
@@ -300,7 +664,7 @@ def build_single_frame_scene(
         bounds_max=raw_bounds_max,
         focus_mode=focus_mode,
     )
-    crop_bounds = compute_scene_crop_bounds(
+    crop_bounds = crop_bounds_override if crop_bounds_override is not None else compute_scene_crop_bounds(
         [native_points, ffs_points],
         focus_point=focus_point,
         scene_crop_mode=scene_crop_mode,
@@ -1572,7 +1936,7 @@ def run_turntable_compare_workflow(
     crop_max_z: float = 0.35,
     object_height_min: float = 0.02,
     object_height_max: float = 0.60,
-    object_component_mode: str = "union",
+    object_component_mode: str = "graph_union",
     object_component_topk: int = 2,
     roi_x_min: float | None = None,
     roi_x_max: float | None = None,
@@ -1639,64 +2003,20 @@ def run_turntable_compare_workflow(
         roi_z_min=roi_z_min,
         roi_z_max=roi_z_max,
     )
-    native_seed_mask_metrics: list[dict[str, Any]] = []
-    ffs_seed_mask_metrics: list[dict[str, Any]] = []
-    object_seed_point_sets: list[np.ndarray] | None = None
-    native_pixel_masks: dict[int, np.ndarray] | None = None
-    ffs_pixel_masks: dict[int, np.ndarray] | None = None
-    native_mask_debug: dict[int, dict[str, int]] = {}
-    ffs_mask_debug: dict[int, dict[str, int]] = {}
-    if manual_image_roi_by_camera:
-        raw_seed_points = [
-            np.asarray(points, dtype=np.float32)
-            for points in (raw_scene["native_points"], raw_scene["ffs_points"])
-            if len(points) > 0
-        ]
-        coarse_plane = fit_dominant_table_plane(
-            np.concatenate(raw_seed_points, axis=0) if raw_seed_points else np.zeros((0, 3), dtype=np.float32)
-        )
-        native_pixel_masks = {}
-        for camera_cloud in raw_scene["native_camera_clouds"]:
-            camera_idx = int(camera_cloud["camera_idx"])
-            if camera_idx not in manual_image_roi_by_camera:
-                continue
-            mask, mask_metrics = build_geometry_constrained_foreground_mask(
-                camera_cloud,
-                roi=manual_image_roi_by_camera[camera_idx],
-                plane_point=coarse_plane["point"],
-                plane_normal=coarse_plane["normal"],
-                object_height_min=float(object_height_min),
-                object_height_max=max(0.60, float(object_height_max)),
-            )
-            native_pixel_masks[camera_idx] = mask
-            native_mask_debug[camera_idx] = mask_metrics
-        ffs_pixel_masks = {}
-        for camera_cloud in raw_scene["ffs_camera_clouds"]:
-            camera_idx = int(camera_cloud["camera_idx"])
-            if camera_idx not in manual_image_roi_by_camera:
-                continue
-            mask, mask_metrics = build_geometry_constrained_foreground_mask(
-                camera_cloud,
-                roi=manual_image_roi_by_camera[camera_idx],
-                plane_point=coarse_plane["point"],
-                plane_normal=coarse_plane["normal"],
-                object_height_min=float(object_height_min),
-                object_height_max=max(0.60, float(object_height_max)),
-            )
-            ffs_pixel_masks[camera_idx] = mask
-            ffs_mask_debug[camera_idx] = mask_metrics
-        native_seed_camera_clouds, native_seed_mask_metrics = filter_camera_clouds_by_pixel_masks(
-            raw_scene["native_camera_clouds"],
-            pixel_mask_by_camera=native_pixel_masks,
-        )
-        ffs_seed_camera_clouds, ffs_seed_mask_metrics = filter_camera_clouds_by_pixel_masks(
-            raw_scene["ffs_camera_clouds"],
-            pixel_mask_by_camera=ffs_pixel_masks,
-        )
-        native_seed_points = [item["points"] for item in native_seed_camera_clouds if len(item["points"]) > 0]
-        ffs_seed_points = [item["points"] for item in ffs_seed_camera_clouds if len(item["points"]) > 0]
-        if native_seed_points or ffs_seed_points:
-            object_seed_point_sets = native_seed_points + ffs_seed_points
+    refinement = prepare_object_roi_refinement(
+        raw_scene=raw_scene,
+        focus_mode=focus_mode,
+        scene_crop_mode=scene_crop_mode,
+        crop_margin_xy=crop_margin_xy,
+        crop_min_z=crop_min_z,
+        crop_max_z=crop_max_z,
+        manual_xyz_roi=manual_xyz_roi,
+        manual_image_roi_by_camera=manual_image_roi_by_camera,
+        object_height_min=object_height_min,
+        object_height_max=object_height_max,
+        object_component_mode=object_component_mode,
+        object_component_topk=object_component_topk,
+    )
     scene = build_single_frame_scene(
         native_points=raw_scene["native_points"],
         native_colors=raw_scene["native_colors"],
@@ -1710,14 +2030,15 @@ def run_turntable_compare_workflow(
         crop_min_z=crop_min_z,
         crop_max_z=crop_max_z,
         manual_xyz_roi=manual_xyz_roi,
-        object_seed_point_sets=object_seed_point_sets,
-        native_pixel_mask_by_camera=native_pixel_masks,
-        ffs_pixel_mask_by_camera=ffs_pixel_masks,
+        object_seed_point_sets=refinement["pass2_seed_point_sets"],
+        native_pixel_mask_by_camera=refinement["final_native_masks"],
+        ffs_pixel_mask_by_camera=refinement["final_ffs_masks"],
         object_height_min=object_height_min,
         object_height_max=object_height_max,
         object_component_mode=object_component_mode,
         object_component_topk=object_component_topk,
         context_max_points_per_camera=max_points_per_camera,
+        crop_bounds_override=refinement["final_crop"],
     )
 
     camera_poses = extract_camera_poses(
@@ -1981,6 +2302,13 @@ def run_turntable_compare_workflow(
         }
     support_metrics_path = output_dir / "support_metrics.json"
     support_metrics_path.write_text(json.dumps(support_metrics, indent=2), encoding="utf-8")
+    if refinement["pass1_crop"] is not None:
+        _write_json(output_dir / "object_roi_pass1_world.json", _json_ready_crop_bounds(refinement["pass1_crop"]))
+    if refinement["pass2_crop"] is not None:
+        _write_json(output_dir / "object_roi_pass2_world.json", _json_ready_crop_bounds(refinement["pass2_crop"]))
+    per_camera_auto_bbox_dir = output_dir / "per_camera_auto_bbox"
+    for camera_idx, bbox_payload in refinement["bbox_debug_by_camera"].items():
+        _write_json(per_camera_auto_bbox_dir / f"cam{camera_idx}.json", bbox_payload)
 
     debug_dir = output_dir / "debug"
     native_debug = write_object_debug_artifacts(
@@ -2027,42 +2355,91 @@ def run_turntable_compare_workflow(
         focus_point=scene["focus_point"],
         renderer=renderer,
     )
+    root_native_object_png = output_dir / "fused_object_only_native.png"
+    root_ffs_object_png = output_dir / "fused_object_only_ffs.png"
+    root_native_object_png.write_bytes(Path(native_fused_debug["object_png"]).read_bytes())
+    root_ffs_object_png.write_bytes(Path(ffs_fused_debug["object_png"]).read_bytes())
+
+    def _aggregate_support(source_name: str) -> dict[str, float]:
+        relevant = [item[source_name] for item in support_metrics if source_name in item]
+        if not relevant:
+            return {"valid_pixels_mean": 0.0, "single_camera_ratio_mean": 0.0, "two_camera_ratio_mean": 0.0, "three_camera_ratio_mean": 0.0}
+        return {
+            "valid_pixels_mean": float(np.mean([entry["valid_pixel_count"] for entry in relevant])),
+            "single_camera_ratio_mean": float(np.mean([entry["support_ratio_1"] for entry in relevant])),
+            "two_camera_ratio_mean": float(np.mean([entry["support_ratio_2"] for entry in relevant])),
+            "three_camera_ratio_mean": float(np.mean([entry["support_ratio_3"] for entry in relevant])),
+        }
+
+    head_like_recovered = bool(
+        refinement["pass2_seed_height_summary"]["max_height"] > refinement["pass1_seed_height_summary"]["max_height"] + 0.01
+        or refinement["pass2_seed_height_summary"]["point_count"] > refinement["pass1_seed_height_summary"]["point_count"] * 1.08
+    )
+
     compare_debug_metrics_path = debug_dir / "compare_debug_metrics.json"
+    compare_debug_metrics_root_path = output_dir / "compare_debug_metrics.json"
+    compare_debug_payload = {
+        "scene_crop_mode": scene_crop_mode,
+        "object_component_mode": object_component_mode,
+        "object_component_topk": int(object_component_topk),
+        "object_height_min": float(object_height_min),
+        "object_height_max": float(object_height_max),
+        "manual_image_roi_by_camera": None
+        if manual_image_roi_by_camera is None
+        else {str(key): list(value) for key, value in manual_image_roi_by_camera.items()},
+        "context_max_points_per_camera": None if max_points_per_camera is None else int(max_points_per_camera),
+        "world_roi_pass1": None if refinement["pass1_crop"] is None else _json_ready_crop_bounds(refinement["pass1_crop"]),
+        "world_roi_pass2": None if refinement["pass2_crop"] is None else _json_ready_crop_bounds(refinement["pass2_crop"]),
+        "per_camera_auto_bbox_dir": str(per_camera_auto_bbox_dir),
+        "crop_metadata": scene["crop_metadata"],
+        "head_like_protrusion_recovered_heuristic": bool(head_like_recovered),
+        "pass2_refinement_valid": bool(refinement["pass2_refinement_valid"]),
+        "final_compare_source": "pass2" if refinement["pass2_refinement_valid"] else "pass1",
+        "pass2_valid_camera_count": int(refinement["pass2_valid_camera_count"]),
+        "pass1_object_point_count": int(refinement["pass1_object_point_count"]),
+        "pass2_object_point_count": int(refinement["pass2_object_point_count"]),
+        "pass1_object_volume": float(refinement["pass1_object_volume"]),
+        "pass2_object_volume": float(refinement["pass2_object_volume"]),
+        "pass1_seed_height_summary": refinement["pass1_seed_height_summary"],
+        "pass2_seed_height_summary": refinement["pass2_seed_height_summary"],
+        "final_support_summary": {
+            "native": _aggregate_support("native"),
+            "ffs": _aggregate_support("ffs"),
+        },
+        "native": {
+            "pass1_seed_mask_metrics": refinement["native_pass1_seed_metrics"],
+            "pass2_seed_mask_metrics": refinement["native_pass2_seed_metrics"],
+            "final_seed_mask_metrics": refinement["final_seed_metrics_native"],
+            "pass1_mask_debug": {str(key): value for key, value in refinement["pass1_mask_debug"]["native"].items()},
+            "pass2_mask_debug": {str(key): value for key, value in refinement["pass2_mask_debug"]["native"].items()},
+            "final_mask_debug": {str(key): value for key, value in refinement["final_mask_debug"]["native"].items()},
+            "per_camera": native_debug["per_camera_metrics"],
+            "fused_object_point_count": int(len(scene["native_object_points"])),
+            "fused_context_point_count": int(len(scene["native_context_points"])),
+            "overlay_paths": native_debug["overlay_paths"],
+            "preview_paths": native_debug["preview_paths"],
+            **native_fused_debug,
+        },
+        "ffs": {
+            "pass1_seed_mask_metrics": refinement["ffs_pass1_seed_metrics"],
+            "pass2_seed_mask_metrics": refinement["ffs_pass2_seed_metrics"],
+            "final_seed_mask_metrics": refinement["final_seed_metrics_ffs"],
+            "pass1_mask_debug": {str(key): value for key, value in refinement["pass1_mask_debug"]["ffs"].items()},
+            "pass2_mask_debug": {str(key): value for key, value in refinement["pass2_mask_debug"]["ffs"].items()},
+            "final_mask_debug": {str(key): value for key, value in refinement["final_mask_debug"]["ffs"].items()},
+            "per_camera": ffs_debug["per_camera_metrics"],
+            "fused_object_point_count": int(len(scene["ffs_object_points"])),
+            "fused_context_point_count": int(len(scene["ffs_context_points"])),
+            "overlay_paths": ffs_debug["overlay_paths"],
+            "preview_paths": ffs_debug["preview_paths"],
+            **ffs_fused_debug,
+        },
+    }
     write_compare_debug_metrics(
         compare_debug_metrics_path,
-        debug_payload={
-            "scene_crop_mode": scene_crop_mode,
-            "object_component_mode": object_component_mode,
-            "object_component_topk": int(object_component_topk),
-            "object_height_min": float(object_height_min),
-            "object_height_max": float(object_height_max),
-            "manual_image_roi_by_camera": None
-            if manual_image_roi_by_camera is None
-            else {str(key): list(value) for key, value in manual_image_roi_by_camera.items()},
-            "context_max_points_per_camera": None if max_points_per_camera is None else int(max_points_per_camera),
-            "crop_metadata": scene["crop_metadata"],
-            "native": {
-                "seed_mask_metrics": native_seed_mask_metrics,
-                "mask_debug": {str(key): value for key, value in native_mask_debug.items()},
-                "per_camera": native_debug["per_camera_metrics"],
-                "fused_object_point_count": int(len(scene["native_object_points"])),
-                "fused_context_point_count": int(len(scene["native_context_points"])),
-                "overlay_paths": native_debug["overlay_paths"],
-                "preview_paths": native_debug["preview_paths"],
-                **native_fused_debug,
-            },
-            "ffs": {
-                "seed_mask_metrics": ffs_seed_mask_metrics,
-                "mask_debug": {str(key): value for key, value in ffs_mask_debug.items()},
-                "per_camera": ffs_debug["per_camera_metrics"],
-                "fused_object_point_count": int(len(scene["ffs_object_points"])),
-                "fused_context_point_count": int(len(scene["ffs_context_points"])),
-                "overlay_paths": ffs_debug["overlay_paths"],
-                "preview_paths": ffs_debug["preview_paths"],
-                **ffs_fused_debug,
-            },
-        },
+        debug_payload=compare_debug_payload,
     )
+    write_compare_debug_metrics(compare_debug_metrics_root_path, debug_payload=compare_debug_payload)
 
     metadata = {
         "same_case_mode": selection["same_case_mode"],
@@ -2112,6 +2489,10 @@ def run_turntable_compare_workflow(
         "max_points_per_camera": max_points_per_camera,
         "use_float_ffs_depth_when_available": bool(use_float_ffs_depth_when_available),
         "scene_overview_with_cameras": str(overview_image_path),
+        "object_roi_pass1_world": None if refinement["pass1_crop"] is None else str((output_dir / "object_roi_pass1_world.json").resolve()),
+        "object_roi_pass2_world": None if refinement["pass2_crop"] is None else str((output_dir / "object_roi_pass2_world.json").resolve()),
+        "per_camera_auto_bbox_dir": str((output_dir / "per_camera_auto_bbox").resolve()),
+        "final_compare_source": "pass2" if refinement["pass2_refinement_valid"] else "pass1",
         "orbit_path_point_count": int(len(orbit_path_points)),
         "object_roi_bounds": {
             "min": scene["object_roi_bounds"]["min"].tolist(),
@@ -2136,6 +2517,7 @@ def run_turntable_compare_workflow(
         "crop_metadata": scene["crop_metadata"],
         "support_metrics_path": str(support_metrics_path),
         "compare_debug_metrics_path": str(compare_debug_metrics_path),
+        "compare_debug_metrics_root_path": str(compare_debug_metrics_root_path),
         "outputs": output_files,
         "renderer_requested": renderer,
         "renderer_used": {

@@ -105,6 +105,7 @@ The fused renderer also supports two layout modes:
 - optional per-camera image-ROI filtering before fusion for object-only review
 - object-first dense/context splitting through `object_compare.py`
 - seeded object-union bbox crop when manual image ROI masks are available
+- default automatic pass1 -> pass2 object ROI refinement when manual image ROI is absent
 - camera-frustum geometry extraction
 - object-centric ROI extraction from the tabletop scene
 - coverage-aware orbit planning informed by the real camera layout
@@ -113,6 +114,19 @@ The fused renderer also supports two layout modes:
 - automatic mp4/gif animation export from the shared per-frame PNG sequence
 - larger orthographic top-view position-map rendering with orbit path, supported arc, and crop visualization
 - debug artifact export for per-camera masks, per-camera object clouds, fused object-only clouds, and compare metrics
+
+The object-ROI stack now has two distinct roles:
+
+- `object_roi.py`
+  - table-plane estimation
+  - component scoring
+  - `graph_union` component closure for torso + protrusion recovery
+- `object_compare.py`
+  - projected coarse bbox generation from world ROI
+  - automatic per-camera foreground-mask refinement
+  - pixel-mask filtering back into world-space seed clouds
+
+This means the professor-facing compare no longer treats the initial fused world ROI as the sole authority. Pixel-derived object evidence is allowed to expand and refine the world ROI before the final compare is rendered.
 
 The shared fallback projection convention in `pointcloud_compare.py` maps positive view-space `y` upward on screen, so larger view-space height becomes a smaller image-row index without requiring any late image flip.
 

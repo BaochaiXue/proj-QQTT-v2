@@ -430,7 +430,7 @@ def compute_scene_crop_bounds(
     object_seed_point_sets: list[np.ndarray] | None = None,
     object_height_min: float = 0.02,
     object_height_max: float = 0.30,
-    object_component_mode: str = "largest",
+    object_component_mode: str = "graph_union",
     object_component_topk: int = 2,
 ) -> dict[str, np.ndarray]:
     points = [np.asarray(item, dtype=np.float32) for item in point_sets if len(item) > 0]
@@ -492,36 +492,21 @@ def compute_scene_crop_bounds(
                 )
                 seed_points = seed_stacked[seed_valid]
         if seed_points is not None and len(seed_points) >= 32:
-            plane = fit_dominant_table_plane(table_points if len(table_points) > 0 else stacked)
-            roi_margin_xy = max(0.02, float(crop_margin_xy) * 0.45)
-            roi_margin_z = max(0.015, abs(float(crop_max_z) - float(crop_min_z)) * 0.08)
-            object_roi_min = seed_points.min(axis=0).astype(np.float32)
-            object_roi_max = seed_points.max(axis=0).astype(np.float32)
-            crop_min = np.maximum(
-                table_bounds["min"],
-                object_roi_min - np.array([roi_margin_xy, roi_margin_xy, roi_margin_z], dtype=np.float32),
-            ).astype(np.float32)
-            crop_max = np.minimum(
-                table_bounds["max"],
-                object_roi_max + np.array([roi_margin_xy, roi_margin_xy, roi_margin_z], dtype=np.float32),
-            ).astype(np.float32)
-            return {
-                "mode": "auto_object_bbox",
-                "min": crop_min,
-                "max": crop_max,
-                "object_roi_min": object_roi_min,
-                "object_roi_max": object_roi_max,
-                "plane_point": plane["point"],
-                "plane_normal": plane["normal"],
-                "object_point_count": int(len(seed_points)),
-                "component_point_count": int(len(seed_points)),
-                "selected_object_point_count": int(len(seed_points)),
-                "component_count": 1,
-                "selected_component_indices": [0],
-                "component_scores": [],
-                "seed_bbox_used": True,
-                "fallback_used": False,
-            }
+            seed_object_roi = estimate_object_roi_bounds(
+                seed_points,
+                fallback_bounds=table_bounds,
+                full_bounds={"min": full_min.astype(np.float32), "max": full_max.astype(np.float32)},
+                plane_reference_points=table_points if len(table_points) > 0 else stacked,
+                object_height_min=float(object_height_min),
+                object_height_max=max(0.40, float(object_height_max)),
+                object_component_mode=object_component_mode,
+                object_component_topk=int(object_component_topk),
+                roi_margin_xy=max(0.02, float(crop_margin_xy) * 0.45),
+                roi_margin_z=max(0.015, abs(float(crop_max_z) - float(crop_min_z)) * 0.08),
+            )
+            seed_object_roi["seed_bbox_used"] = True
+            seed_object_roi["seed_source_point_count"] = int(len(seed_points))
+            return seed_object_roi
         object_roi = estimate_object_roi_bounds(
             seed_points if seed_points is not None and len(seed_points) > 0 else (table_points if len(table_points) > 0 else stacked),
             fallback_bounds=table_bounds,

@@ -209,6 +209,7 @@ This is now the primary fused-cloud diagnostic for professor-facing review. It:
 - computes an object ROI rather than only a tabletop crop
 - defaults to `observed_hemisphere` instead of naive full-360
 - limits the default orbit to the supported viewing arc inferred from the real camera layout
+- defaults to `object_component_mode=graph_union` so sparse protrusions are recovered through a transitive component graph instead of only a top-component anchor
 - renders one large left-right comparison:
   - left = Native
   - right = FFS
@@ -223,7 +224,16 @@ This is now the primary fused-cloud diagnostic for professor-facing review. It:
   - derive per-camera object masks before context subsampling
   - use the seeded object union bbox to drive crop / focus / orbit
   - keep object points dense while treating `--max_points_per_camera` as the context-layer cap
+- when `--manual_image_roi_json` is not provided, the default auto-object flow now does:
+  - pass1 coarse world ROI from fused points
+  - project that ROI into each real camera to get coarse 2D bboxes
+  - refine per-camera foreground masks automatically
+  - rebuild pass2 world ROI from the pixel-derived object evidence
+  - use pass2 ROI plus pass2 masks for the final compare
 - writes debug artifacts that show where object detail is lost or preserved:
+  - `object_roi_pass1_world.json`
+  - `object_roi_pass2_world.json`
+  - `per_camera_auto_bbox/cam*.json`
   - `debug/per_camera_object_mask_overlay/*.png`
   - `debug/per_camera_object_cloud/*.png`
   - `debug/fused_object_only/*`

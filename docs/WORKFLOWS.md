@@ -152,6 +152,7 @@ The turntable workflow:
 - computes an object ROI from the cropped tabletop scene before orbit generation
 - visualizes the 3 real camera frusta from `calibrate.pkl`
 - defaults to `observed_hemisphere` instead of naive full-360
+- defaults to `object_component_mode=graph_union`
 - infers the supported viewing arc from the real camera azimuth layout
 - renders a large side-by-side compare:
   - left = Native
@@ -164,6 +165,12 @@ The turntable workflow:
   - per-camera object masks are built before context subsampling
   - a seeded object union bbox drives crop / focus / orbit
   - `--max_points_per_camera` becomes the context-layer cap instead of an early object-point cap
+- when `--manual_image_roi_json` is absent, the default auto-object path now adds an explicit refinement loop:
+  - pass1 coarse world ROI from fused object-above-table points
+  - projected per-camera coarse bbox generation
+  - automatic per-camera foreground-mask refinement
+  - pass2 world ROI rebuilt from those per-camera masked object points
+  - final compare uses pass2 ROI plus pass2 masks
 - uses a larger orthographic top-view position map so the real calibrated camera positions stay readable without stretching the inset
 - produces:
   - `scene_overview_with_cameras.png`
@@ -177,6 +184,9 @@ The turntable workflow:
   - `turntable_keyframes_rgb.png`
   - `turntable_keyframes_support.png`
   - `support_metrics.json`
+  - `object_roi_pass1_world.json`
+  - `object_roi_pass2_world.json`
+  - `per_camera_auto_bbox/cam*.json`
   - `debug/per_camera_object_mask_overlay/*.png`
   - `debug/per_camera_object_cloud/*.png`
   - `debug/fused_object_only/*`
