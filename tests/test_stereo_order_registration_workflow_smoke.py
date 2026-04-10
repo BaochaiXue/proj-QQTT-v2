@@ -6,12 +6,13 @@ import tempfile
 import unittest
 from unittest import mock
 
+import cv2
 import numpy as np
 
 from data_process.visualization.stereo_audit import run_stereo_order_registration_workflow
 
 
-def _make_camera_cloud(camera_idx: int, points: np.ndarray, colors: np.ndarray) -> dict:
+def _make_camera_cloud(camera_idx: int, points: np.ndarray, colors: np.ndarray, *, color_path: Path) -> dict:
     return {
         "camera_idx": int(camera_idx),
         "serial": f"serial-{camera_idx}",
@@ -21,11 +22,11 @@ def _make_camera_cloud(camera_idx: int, points: np.ndarray, colors: np.ndarray) 
         "source_serial": np.full((len(points),), f"serial-{camera_idx}", dtype=object),
         "K_color": np.array([[120.0, 0.0, 32.0], [0.0, 120.0, 24.0], [0.0, 0.0, 1.0]], dtype=np.float32),
         "c2w": np.eye(4, dtype=np.float32),
-        "color_path": "synthetic.png",
+        "color_path": str(color_path),
     }
 
 
-def _synthetic_turntable_state() -> tuple[dict, list[dict]]:
+def _synthetic_turntable_state(tmp_root: Path) -> tuple[dict, list[dict]]:
     table = np.array(
         [
             [-0.15, -0.15, 0.0],
@@ -51,14 +52,16 @@ def _synthetic_turntable_state() -> tuple[dict, list[dict]]:
     ffs_camera_clouds = []
     swapped_camera_clouds = []
     for camera_idx, x_jitter in enumerate((0.0, 0.004, -0.003)):
+        color_path = tmp_root / f"cam{camera_idx}.png"
+        cv2.imwrite(str(color_path), np.full((48, 64, 3), 160, dtype=np.uint8))
         jitter = np.array([x_jitter, 0.002 * camera_idx, 0.0], dtype=np.float32)
         native_points = np.concatenate([table, object_points + jitter], axis=0)
         ffs_points = np.concatenate([table, object_points + jitter * 1.4], axis=0)
         swapped_points = np.concatenate([table, object_points + jitter * 2.4 + np.array([0.0, 0.0, 0.012], dtype=np.float32)], axis=0)
         colors = np.concatenate([table_colors, object_colors], axis=0)
-        native_camera_clouds.append(_make_camera_cloud(camera_idx, native_points, colors))
-        ffs_camera_clouds.append(_make_camera_cloud(camera_idx, ffs_points, colors))
-        swapped_camera_clouds.append(_make_camera_cloud(camera_idx, swapped_points, colors))
+        native_camera_clouds.append(_make_camera_cloud(camera_idx, native_points, colors, color_path=color_path))
+        ffs_camera_clouds.append(_make_camera_cloud(camera_idx, ffs_points, colors, color_path=color_path))
+        swapped_camera_clouds.append(_make_camera_cloud(camera_idx, swapped_points, colors, color_path=color_path))
 
     native_object_camera_clouds = [
         {**cloud, "points": np.asarray(cloud["points"], dtype=np.float32)[len(table):], "colors": np.asarray(cloud["colors"], dtype=np.uint8)[len(table):]}
@@ -103,6 +106,7 @@ def _synthetic_turntable_state() -> tuple[dict, list[dict]]:
     }
     return {
         "selection": selection,
+        "manual_image_roi_by_camera": {0: (4, 4, 60, 44), 1: (4, 4, 60, 44), 2: (4, 4, 60, 44)},
         "scene": scene,
         "refinement": refinement,
     }, swapped_camera_clouds
@@ -110,8 +114,8 @@ def _synthetic_turntable_state() -> tuple[dict, list[dict]]:
 
 class StereoOrderRegistrationWorkflowSmokeTest(unittest.TestCase):
     def test_workflow_writes_only_main_board_and_summary_by_default_and_reuses_shared_view_scales(self) -> None:
-        turntable_state, swapped_camera_clouds = _synthetic_turntable_state()
         with tempfile.TemporaryDirectory() as tmp_dir:
+            turntable_state, swapped_camera_clouds = _synthetic_turntable_state(Path(tmp_dir))
             output_dir = Path(tmp_dir) / "registration_board"
             with mock.patch("data_process.visualization.stereo_audit._build_turntable_scene", return_value=turntable_state), \
                     mock.patch("data_process.visualization.stereo_audit._build_swapped_ffs_camera_clouds", return_value=swapped_camera_clouds):
@@ -141,8 +145,8 @@ class StereoOrderRegistrationWorkflowSmokeTest(unittest.TestCase):
             self.assertEqual(summary["source_color_map_bgr"], {"0": [0, 0, 255], "1": [0, 255, 0], "2": [255, 0, 0]})
 
     def test_workflow_gates_closeup_and_debug_outputs(self) -> None:
-        turntable_state, swapped_camera_clouds = _synthetic_turntable_state()
         with tempfile.TemporaryDirectory() as tmp_dir:
+            turntable_state, swapped_camera_clouds = _synthetic_turntable_state(Path(tmp_dir))
             output_dir = Path(tmp_dir) / "registration_board"
             with mock.patch("data_process.visualization.stereo_audit._build_turntable_scene", return_value=turntable_state), \
                     mock.patch("data_process.visualization.stereo_audit._build_swapped_ffs_camera_clouds", return_value=swapped_camera_clouds):

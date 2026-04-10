@@ -25,7 +25,7 @@ from .face_quality import (
 )
 from .io_artifacts import write_image, write_json
 from .layouts import compose_depth_review_board, compose_registration_matrix_board
-from .object_compare import build_object_first_layers
+from .object_compare import build_object_first_layers, point_mask_from_pixel_mask, project_world_roi_to_camera_bbox
 from .object_roi import estimate_table_color_bgr
 from .pointcloud_compare import estimate_ortho_scale, get_frame_count, load_case_metadata, resolve_case_dirs
 from .professor_triptych import _build_turntable_scene
@@ -632,13 +632,9 @@ def _build_registration_board_rows(
     context_max_points_per_camera: int | None,
     object_height_min: float,
     object_height_max: float,
+    manual_image_roi_by_camera: dict[int, tuple[int, int, int, int]] | None,
 ) -> dict[str, Any]:
     crop_bounds = scene["crop_bounds"]
-    cropped_swapped_camera_clouds = _crop_camera_clouds_to_bounds(
-        swapped_camera_clouds,
-        bounds_min=np.asarray(crop_bounds["min"], dtype=np.float32),
-        bounds_max=np.asarray(crop_bounds["max"], dtype=np.float32),
-    )
     if len(scene["native_points"]) > 0:
         table_color_bgr = estimate_table_color_bgr(
             scene["native_points"],
@@ -655,6 +651,70 @@ def _build_registration_board_rows(
         )
     else:
         table_color_bgr = np.array([128.0, 128.0, 128.0], dtype=np.float32)
+    swapped_bbox_by_camera: dict[int, tuple[int, int, int, int]] = {}
+    for camera_cloud in swapped_camera_clouds:
+        camera_idx = int(camera_cloud["camera_idx"])
+        if manual_image_roi_by_camera is not None and camera_idx in manual_image_roi_by_camera:
+            swapped_bbox_by_camera[camera_idx] = tuple(int(item) for item in manual_image_roi_by_camera[camera_idx])
+            continue
+        bbox, _ = project_world_roi_to_camera_bbox(
+            camera_cloud,
+            object_roi_min=np.asarray(scene["object_roi_bounds"]["min"], dtype=np.float32),
+            object_roi_max=np.asarray(scene["object_roi_bounds"]["max"], dtype=np.float32),
+        )
+        if bbox is not None:
+            swapped_bbox_by_camera[camera_idx] = bbox
+    swapped_pixel_masks: dict[int, np.ndarray] = {}
+    swapped_selected_clouds: list[dict[str, Any]] = []
+    for camera_cloud in swapped_camera_clouds:
+        camera_idx = int(camera_cloud["camera_idx"])
+        bbox = swapped_bbox_by_camera.get(camera_idx)
+        if bbox is None:
+            swapped_selected_clouds.append({**camera_cloud})
+            continue
+        image = cv2.imread(str(camera_cloud["color_path"]), cv2.IMREAD_COLOR)
+        if image is None:
+            swapped_selected_clouds.append({**camera_cloud})
+            continue
+        mask = np.zeros(image.shape[:2], dtype=bool)
+        x_min, y_min, x_max, y_max = [int(item) for item in bbox]
+        mask[max(0, y_min):min(image.shape[0], y_max), max(0, x_min):min(image.shape[1], x_max)] = True
+        swapped_pixel_masks[camera_idx] = mask
+        keep = point_mask_from_pixel_mask(camera_cloud, pixel_mask=mask)
+        swapped_selected_clouds.append(
+            {
+                **camera_cloud,
+                "points": np.asarray(camera_cloud["points"], dtype=np.float32)[keep],
+                "colors": np.asarray(camera_cloud["colors"], dtype=np.uint8)[keep],
+                "source_camera_idx": np.asarray(camera_cloud["source_camera_idx"], dtype=np.int16)[keep],
+                "source_serial": np.asarray(camera_cloud["source_serial"], dtype=object)[keep],
+            }
+        )
+    swapped_selected_points = [
+        np.asarray(item["points"], dtype=np.float32)
+        for item in swapped_selected_clouds
+        if len(item["points"]) > 0
+    ]
+    registration_bounds_min = np.asarray(scene["crop_bounds"]["min"], dtype=np.float32).copy()
+    registration_bounds_max = np.asarray(scene["crop_bounds"]["max"], dtype=np.float32).copy()
+    if swapped_selected_points:
+        swapped_bounds_min, swapped_bounds_max = _compute_point_bounds(swapped_selected_points, fallback_center=np.asarray(scene["focus_point"], dtype=np.float32))
+        registration_bounds_min = np.minimum(registration_bounds_min, swapped_bounds_min)
+        registration_bounds_max = np.maximum(registration_bounds_max, swapped_bounds_max)
+    swapped_registration_camera_clouds = _crop_camera_clouds_to_bounds(
+        swapped_selected_clouds if swapped_selected_points else swapped_camera_clouds,
+        bounds_min=registration_bounds_min,
+        bounds_max=registration_bounds_max,
+    )
+    swapped_registration_points = np.concatenate(
+        [np.asarray(item["points"], dtype=np.float32) for item in swapped_registration_camera_clouds if len(item["points"]) > 0],
+        axis=0,
+    ) if any(len(item["points"]) > 0 for item in swapped_registration_camera_clouds) else np.empty((0, 3), dtype=np.float32)
+    cropped_swapped_camera_clouds = _crop_camera_clouds_to_bounds(
+        swapped_camera_clouds,
+        bounds_min=np.asarray(crop_bounds["min"], dtype=np.float32),
+        bounds_max=np.asarray(crop_bounds["max"], dtype=np.float32),
+    )
     swapped_layers = build_object_first_layers(
         cropped_swapped_camera_clouds,
         object_roi_min=np.asarray(scene["object_roi_bounds"]["min"], dtype=np.float32),
@@ -665,15 +725,18 @@ def _build_registration_board_rows(
         object_height_min=float(object_height_min),
         object_height_max=float(object_height_max),
         context_max_points_per_camera=context_max_points_per_camera,
-        pixel_mask_by_camera=refinement.get("final_ffs_masks"),
+        pixel_mask_by_camera=swapped_pixel_masks if swapped_pixel_masks else None,
     )
     return {
         "native_object_camera_clouds": scene["native_object_camera_clouds"],
         "ffs_object_camera_clouds": scene["ffs_object_camera_clouds"],
-        "swapped_object_camera_clouds": swapped_layers["object_camera_clouds"],
-        "swapped_object_points": swapped_layers["object_points"],
+        "swapped_object_camera_clouds": swapped_registration_camera_clouds,
+        "swapped_object_points": swapped_registration_points,
         "swapped_object_colors": swapped_layers["object_colors"],
         "swapped_metrics": swapped_layers["per_camera_metrics"],
+        "swapped_bbox_by_camera": {str(key): list(value) for key, value in swapped_bbox_by_camera.items()},
+        "registration_bounds_min": registration_bounds_min.tolist(),
+        "registration_bounds_max": registration_bounds_max.tolist(),
     }
 
 
@@ -772,6 +835,7 @@ def run_stereo_order_registration_workflow(
         context_max_points_per_camera=max_points_per_camera,
         object_height_min=object_height_min,
         object_height_max=object_height_max,
+        manual_image_roi_by_camera=turntable_state["manual_image_roi_by_camera"],
     )
     focus_point = np.asarray(scene["focus_point"], dtype=np.float32)
     all_object_points = [
@@ -894,6 +958,10 @@ def run_stereo_order_registration_workflow(
             "min": np.asarray(scene["crop_bounds"]["min"], dtype=np.float32).tolist(),
             "max": np.asarray(scene["crop_bounds"]["max"], dtype=np.float32).tolist(),
         },
+        "registration_bounds": {
+            "min": row_state["registration_bounds_min"],
+            "max": row_state["registration_bounds_max"],
+        },
         "render_settings": {
             "panel_width": int(panel_width),
             "panel_height": int(panel_height),
@@ -924,6 +992,7 @@ def run_stereo_order_registration_workflow(
             debug_dir / "registration_board_debug.json",
             {
                 "swapped_object_metrics": row_state["swapped_metrics"],
+                "swapped_bbox_by_camera": row_state["swapped_bbox_by_camera"],
                 "refinement_valid": bool(refinement["pass2_refinement_valid"]),
                 "final_compare_source": "pass2" if refinement["pass2_refinement_valid"] else "pass1",
                 "closeup_metrics": closeup_metrics,

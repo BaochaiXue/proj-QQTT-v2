@@ -53,6 +53,12 @@ Professor-facing point-cloud match board:
 python scripts/harness/visual_make_match_board.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\match_board_native_30_static_vs_ffs_30_static_frame_0000
 ```
 
+Stereo-order registration board:
+
+```bash
+python scripts/harness/visual_compare_stereo_order_pcd.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\stereo_order_registration_native_30_static_vs_ffs_30_static_frame_0000 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --scene_crop_mode auto_object_bbox --manual_image_roi_json C:\Users\zhang\proj-QQTT\docs\generated\object_only_manual_image_roi_fullhead_native_30_static_frame_0000.json
+```
+
 Focused FFS left/right audit:
 
 ```bash
@@ -122,6 +128,11 @@ Professor-facing point-cloud match board:
 
 - `data/match_board_native_30_static_vs_ffs_30_static_frame_0000/01_pointcloud_match_board.png`
 - `data/match_board_native_30_static_vs_ffs_30_static_frame_0000/match_board_summary.json`
+
+Stereo-order registration board:
+
+- `data/stereo_order_registration_native_30_static_vs_ffs_30_static_frame_0000/01_stereo_order_registration_board.png`
+- `data/stereo_order_registration_native_30_static_vs_ffs_30_static_frame_0000/match_board_summary.json`
 
 Focused FFS left/right audit:
 
@@ -196,6 +207,19 @@ Face-patch smoothness comparison:
     - silhouette penalty
   - it writes only one top-level figure plus one compact summary file by default
   - it keeps selection debug artifacts gated behind an explicit flag
+- The stereo-order registration board now provides a stricter left/right-ordering visual test:
+  - it does not use 2D depth panels as the main evidence
+  - it reuses the current object-first world-frame compare path
+  - it renders one `3 x 4` point-cloud-only board:
+    - rows = `Native / FFS-current / FFS-swapped`
+    - columns = `Oblique / Top / Front / Side`
+  - it colors points only by source camera:
+    - `Cam0 = red`
+    - `Cam1 = green`
+    - `Cam2 = blue`
+  - it keeps one shared frame, one shared object ROI, and one shared registration crop across all panels
+  - it is intended to answer only:
+    - whether current ordering or swapped ordering collapses the 3 camera clouds more tightly in 3D
 
 ## Why This Workflow Is Easier To Read
 
@@ -204,6 +228,10 @@ Face-patch smoothness comparison:
 - The new hero stills remove the giant footer/debug block from the main slide image while keeping the same Native-vs-FFS view.
 - The new match board reduces the default deliverable to one 2x3 figure that directly answers whether the 3-view fused point clouds actually match well.
 - It is intentionally not a hero aesthetic figure and not a reprojection truth board.
+- The stereo-order registration board is even narrower:
+  - it is not a hero board
+  - it is not a support/mismatch dashboard
+  - it is a single source-colored 3D registration board for judging current vs swapped ordering by eye
 - The new focused stereo audits now also support:
   - explicit normal-vs-swapped FFS ordering checks on one aligned stereo pair
   - fixed planar face-patch smoothness/noise comparison without pretending to have ground-truth geometry

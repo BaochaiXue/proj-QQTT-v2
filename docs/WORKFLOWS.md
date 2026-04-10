@@ -343,6 +343,48 @@ If the head is missing already in the per-camera overlays, tighten `--manual_ima
 
 Focused stereo-depth audits:
 
+Use the point-cloud-only stereo-order registration board when the main question is not “which one looks prettier,” but “does current left/right or swapped left/right produce tighter 3-view 3D alignment?”:
+
+```bash
+python scripts/harness/visual_compare_stereo_order_pcd.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth
+```
+
+Default top-level outputs are only:
+
+- `01_stereo_order_registration_board.png`
+- `match_board_summary.json`
+
+This board is intentionally narrow:
+
+- rows:
+  - `Native`
+  - `FFS-current`
+  - `FFS-swapped`
+- columns:
+  - `Oblique`
+  - `Top`
+  - `Front`
+  - `Side`
+
+Interpret it like this:
+
+- thinner, tighter, less color-separated surfaces = better 3-camera registration
+- thicker shells and stronger red/green/blue fringing = worse registration
+- if `FFS-swapped` collapses more tightly than `FFS-current`, current left/right ordering stays suspicious
+
+All panels are:
+
+- point-cloud-only
+- colored only by source camera
+- rendered in the same world frame
+- rendered with the same frame / ROI / crop / view scaling semantics
+
+Optional closeup/debug outputs stay gated:
+
+```bash
+python scripts/harness/visual_compare_stereo_order_pcd.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --write_closeup --write_debug
+```
+
 Use a left/right audit on one aligned FFS case, one camera, and one frame when you want to verify that the repo is really feeding Fast-FoundationStereo the correct IR ordering:
 
 ```bash
