@@ -341,6 +341,36 @@ When teddy/head/ear regions are still incomplete, inspect the debug artifacts in
 
 If the head is missing already in the per-camera overlays, tighten `--manual_image_roi_json` before rerunning. If the per-camera overlays look correct but the fused object remains weak, use the support render to confirm whether the missing region is mostly only 1-camera supported.
 
+Focused stereo-depth audits:
+
+Use a left/right audit on one aligned FFS case, one camera, and one frame when you want to verify that the repo is really feeding Fast-FoundationStereo the correct IR ordering:
+
+```bash
+python scripts/harness/audit_ffs_left_right.py --aligned_root ./data --ffs_case ffs_case --frame_idx 0 --camera_idx 0 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --face_patches_json docs/generated/box_face_patches_static_frame_0000.json
+```
+
+This writes:
+
+- `left_right_audit.json`
+- `left_right_audit_board.png`
+
+Use fixed face patches when you want to compare smoothness / noise on planar surfaces rather than on the whole scene:
+
+```bash
+python scripts/harness/compare_face_smoothness.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --face_patches_json docs/generated/box_face_patches_static_frame_0000.json --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth
+```
+
+This writes:
+
+- `face_quality_board.png`
+
+Interpret these face-patch metrics as:
+
+- better = higher valid depth ratio
+- better = lower plane-fit RMSE
+- better = lower MAD
+- better = lower p90 point-to-plane residual
+
 Frame semantics note:
 
 - current compare paths do not silently convert into a semantic-world frame

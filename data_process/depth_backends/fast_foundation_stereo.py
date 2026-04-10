@@ -20,6 +20,76 @@ def _disable_torch_compile(torch_module) -> None:
     torch_module.compile = identity_compile
 
 
+def compute_disparity_audit_stats(disparity_raw: np.ndarray) -> dict[str, float]:
+    disparity = np.asarray(disparity_raw, dtype=np.float32)
+    finite = np.isfinite(disparity)
+    finite_values = disparity[finite]
+    total_count = int(disparity.size)
+    finite_count = int(np.count_nonzero(finite))
+    positive = finite & (disparity > 0)
+    nonpositive = finite & (disparity <= 0)
+    stats = {
+        "pixel_count": float(total_count),
+        "finite_ratio": float(finite_count / max(1, total_count)),
+        "positive_ratio": float(np.count_nonzero(positive) / max(1, total_count)),
+        "nonpositive_ratio": float(np.count_nonzero(nonpositive) / max(1, total_count)),
+        "positive_fraction_of_finite": 0.0,
+        "nonpositive_fraction_of_finite": 0.0,
+        "min_disparity": 0.0,
+        "max_disparity": 0.0,
+        "mean_disparity": 0.0,
+        "mean_abs_disparity": 0.0,
+        "p50_abs_disparity": 0.0,
+        "p90_abs_disparity": 0.0,
+    }
+    if finite_count <= 0:
+        return stats
+    stats["positive_fraction_of_finite"] = float(np.count_nonzero(positive) / finite_count)
+    stats["nonpositive_fraction_of_finite"] = float(np.count_nonzero(nonpositive) / finite_count)
+    stats["min_disparity"] = float(np.min(finite_values))
+    stats["max_disparity"] = float(np.max(finite_values))
+    stats["mean_disparity"] = float(np.mean(finite_values))
+    abs_values = np.abs(finite_values)
+    stats["mean_abs_disparity"] = float(np.mean(abs_values))
+    stats["p50_abs_disparity"] = float(np.quantile(abs_values, 0.50))
+    stats["p90_abs_disparity"] = float(np.quantile(abs_values, 0.90))
+    return stats
+
+
+def build_disparity_products(
+    disparity_raw: np.ndarray,
+    *,
+    K_ir_left: np.ndarray,
+    baseline_m: float,
+    scale: float,
+    valid_iters: int,
+    max_disp: int,
+    audit_mode: bool,
+) -> dict[str, np.ndarray | float | list[list[float]]]:
+    disparity_raw = np.asarray(disparity_raw, dtype=np.float32)
+    disparity = disparity_raw.clip(0, None).astype(np.float32)
+    K_used = np.asarray(K_ir_left, dtype=np.float32).copy()
+    K_used[:2] *= float(scale)
+    depth_ir_left_m = disparity_to_metric_depth(
+        disparity,
+        fx_ir=float(K_used[0, 0]),
+        baseline_m=float(baseline_m),
+    )
+    result = {
+        "disparity": disparity,
+        "depth_ir_left_m": depth_ir_left_m,
+        "K_ir_left_used": K_used,
+        "baseline_m": float(baseline_m),
+        "scale": float(scale),
+        "valid_iters": int(valid_iters),
+        "max_disp": int(max_disp),
+    }
+    if audit_mode:
+        result["disparity_raw"] = disparity_raw
+        result["audit_stats"] = compute_disparity_audit_stats(disparity_raw)
+    return result
+
+
 class FastFoundationStereoRunner:
     def __init__(
         self,
@@ -92,6 +162,7 @@ class FastFoundationStereoRunner:
         *,
         K_ir_left: np.ndarray,
         baseline_m: float,
+        audit_mode: bool = False,
     ) -> dict[str, np.ndarray | float | list[list[float]]]:
         left = self._prepare_image(left_image)
         right = self._prepare_image(right_image)
@@ -114,22 +185,13 @@ class FastFoundationStereoRunner:
             )
 
         disparity = padder.unpad(disparity.float())
-        disparity = disparity.data.cpu().numpy().reshape(left.shape[0], left.shape[1]).clip(0, None).astype(np.float32)
-
-        K_used = np.asarray(K_ir_left, dtype=np.float32).copy()
-        K_used[:2] *= self.scale
-        depth_ir_left_m = disparity_to_metric_depth(
-            disparity,
-            fx_ir=float(K_used[0, 0]),
-            baseline_m=float(baseline_m),
+        disparity_raw = disparity.data.cpu().numpy().reshape(left.shape[0], left.shape[1]).astype(np.float32)
+        return build_disparity_products(
+            disparity_raw,
+            K_ir_left=K_ir_left,
+            baseline_m=baseline_m,
+            scale=self.scale,
+            valid_iters=self.valid_iters,
+            max_disp=self.max_disp,
+            audit_mode=audit_mode,
         )
-
-        return {
-            "disparity": disparity,
-            "depth_ir_left_m": depth_ir_left_m,
-            "K_ir_left_used": K_used,
-            "baseline_m": float(baseline_m),
-            "scale": self.scale,
-            "valid_iters": self.valid_iters,
-            "max_disp": self.max_disp,
-        }

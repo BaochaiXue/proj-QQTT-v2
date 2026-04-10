@@ -31,6 +31,8 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `scripts/harness/visual_compare_turntable.py`: current single-frame professor-facing compare
 - `scripts/harness/visual_make_professor_triptych.py`: current three-figure professor-facing summary pack
 - `scripts/harness/visual_make_match_board.py`: current professor-facing 3-view point-cloud match board
+- `scripts/harness/audit_ffs_left_right.py`: focused FFS left/right ordering audit
+- `scripts/harness/compare_face_smoothness.py`: fixed face-patch smoothness/noise comparison
 
 ## Required Workflow For Future Changes
 

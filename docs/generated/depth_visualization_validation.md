@@ -53,6 +53,18 @@ Professor-facing point-cloud match board:
 python scripts/harness/visual_make_match_board.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\match_board_native_30_static_vs_ffs_30_static_frame_0000
 ```
 
+Focused FFS left/right audit:
+
+```bash
+python scripts/harness/audit_ffs_left_right.py --aligned_root C:\Users\zhang\proj-QQTT\data --ffs_case ffs_30_static --frame_idx 0 --camera_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\ffs_left_right_audit_ffs_30_static_cam0_frame_0000 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --face_patches_json C:\Users\zhang\proj-QQTT\docs\generated\box_face_patches_static_frame_0000.json
+```
+
+Face-patch smoothness comparison:
+
+```bash
+python scripts/harness/compare_face_smoothness.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --face_patches_json C:\Users\zhang\proj-QQTT\docs\generated\box_face_patches_static_frame_0000.json --output_dir C:\Users\zhang\proj-QQTT\data\face_quality_native_30_static_vs_ffs_30_static_frame_0000 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth
+```
+
 ## Outputs Produced
 
 Per-camera diagnostic panels:
@@ -110,6 +122,15 @@ Professor-facing point-cloud match board:
 
 - `data/match_board_native_30_static_vs_ffs_30_static_frame_0000/01_pointcloud_match_board.png`
 - `data/match_board_native_30_static_vs_ffs_30_static_frame_0000/match_board_summary.json`
+
+Focused FFS left/right audit:
+
+- `data/ffs_left_right_audit_ffs_30_static_cam0_frame_0000/left_right_audit.json`
+- `data/ffs_left_right_audit_ffs_30_static_cam0_frame_0000/left_right_audit_board.png`
+
+Face-patch smoothness comparison:
+
+- `data/face_quality_native_30_static_vs_ffs_30_static_frame_0000/face_quality_board.png`
 
 ## What Was Validated
 
@@ -183,6 +204,9 @@ Professor-facing point-cloud match board:
 - The new hero stills remove the giant footer/debug block from the main slide image while keeping the same Native-vs-FFS view.
 - The new match board reduces the default deliverable to one 2x3 figure that directly answers whether the 3-view fused point clouds actually match well.
 - It is intentionally not a hero aesthetic figure and not a reprojection truth board.
+- The new focused stereo audits now also support:
+  - explicit normal-vs-swapped FFS ordering checks on one aligned stereo pair
+  - fixed planar face-patch smoothness/noise comparison without pretending to have ground-truth geometry
 - The default no longer pretends that unsupported backside views are equally trustworthy.
 - The geometry, RGB, and support videos are generated together, so the same orbit path can be judged in all three modes without rerunning the workflow.
 - The larger overview makes the real camera locations, supported arc, and current orbit position much easier to interpret.
