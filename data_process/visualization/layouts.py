@@ -354,6 +354,80 @@ def compose_turntable_board(
     return np.vstack([title_bar, header_bar, body])
 
 
+def compose_registration_matrix_board(
+    *,
+    title_lines: list[str],
+    row_headers: list[str],
+    column_headers: list[str],
+    image_rows: list[list[np.ndarray]],
+    legend_image: np.ndarray | None = None,
+    background_bgr: tuple[int, int, int] = (14, 16, 20),
+) -> np.ndarray:
+    if not image_rows or not image_rows[0]:
+        raise ValueError("compose_registration_matrix_board requires a non-empty image matrix.")
+    if len(image_rows) != len(row_headers):
+        raise ValueError("row_headers must match image row count.")
+    expected_cols = len(image_rows[0])
+    if any(len(row) != expected_cols for row in image_rows):
+        raise ValueError("All image rows must have the same column count.")
+    if len(column_headers) != expected_cols:
+        raise ValueError("column_headers must match image column count.")
+
+    panel_h, panel_w = image_rows[0][0].shape[:2]
+    row_label_w = 176
+    header_h = 42
+    gap = 10
+    padding = 12
+    body_w = row_label_w + padding * 2 + expected_cols * panel_w + gap * max(0, expected_cols - 1)
+    body_h = padding * 2 + len(image_rows) * panel_h + gap * max(0, len(image_rows) - 1)
+    title_h = 86
+    legend = None if legend_image is None else fit_image_to_canvas(legend_image, canvas_size=(250, 108), background_bgr=background_bgr)
+    if legend is not None:
+        title_h = max(title_h, int(legend.shape[0]) + 20)
+
+    body = np.full((body_h, body_w, 3), background_bgr, dtype=np.uint8)
+    for row_idx, row_images in enumerate(image_rows):
+        y0 = padding + row_idx * (panel_h + gap)
+        body[y0:y0 + panel_h, :row_label_w] = (18, 18, 20)
+        text_size = cv2.getTextSize(row_headers[row_idx], cv2.FONT_HERSHEY_SIMPLEX, 0.88, 2)[0]
+        text_x = max(10, (row_label_w - text_size[0]) // 2)
+        text_y = y0 + (panel_h + text_size[1]) // 2
+        cv2.putText(body, row_headers[row_idx], (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.88, (255, 255, 255), 2, cv2.LINE_AA)
+        for col_idx, image in enumerate(row_images):
+            x0 = row_label_w + padding + col_idx * (panel_w + gap)
+            body[y0:y0 + panel_h, x0:x0 + panel_w] = image
+            cv2.rectangle(body, (x0 - 1, y0 - 1), (x0 + panel_w, y0 + panel_h), (54, 58, 66), 1, cv2.LINE_AA)
+
+    header_bar = np.full((header_h, body_w, 3), (22, 24, 28), dtype=np.uint8)
+    header_bar[:, :row_label_w] = (18, 18, 20)
+    for col_idx, header in enumerate(column_headers):
+        x0 = row_label_w + padding + col_idx * (panel_w + gap)
+        text_size = cv2.getTextSize(header, cv2.FONT_HERSHEY_SIMPLEX, 0.78, 2)[0]
+        text_x = x0 + max(8, (panel_w - text_size[0]) // 2)
+        cv2.putText(header_bar, header, (text_x, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (255, 255, 255), 2, cv2.LINE_AA)
+
+    title_bar = np.full((title_h, body_w, 3), (10, 12, 16), dtype=np.uint8)
+    for line_idx, line in enumerate(title_lines[:2]):
+        cv2.putText(
+            title_bar,
+            line,
+            (16, 32 + line_idx * 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.84 if line_idx == 0 else 0.58,
+            (255, 255, 255) if line_idx == 0 else (224, 228, 234),
+            2 if line_idx == 0 else 1,
+            cv2.LINE_AA,
+        )
+    if legend is not None:
+        legend_h, legend_w = legend.shape[:2]
+        x0 = body_w - legend_w - 16
+        y0 = max(8, (title_h - legend_h) // 2)
+        title_bar[y0:y0 + legend_h, x0:x0 + legend_w] = legend
+        cv2.rectangle(title_bar, (x0 - 1, y0 - 1), (x0 + legend_w, y0 + legend_h), (235, 235, 235), 1, cv2.LINE_AA)
+
+    return np.vstack([title_bar, header_bar, body])
+
+
 def compose_keyframe_sheet(
     boards: list[np.ndarray],
     *,

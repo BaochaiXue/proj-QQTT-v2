@@ -92,6 +92,7 @@ def render_source_attribution_overlay(
     ortho_scale: float | None,
     alpha: float = 0.32,
     background_bgr: tuple[int, int, int] = (28, 30, 34),
+    show_legend: bool = True,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     rasters: list[dict[str, Any]] = []
     metrics_per_camera: list[dict[str, Any]] = []
@@ -142,9 +143,11 @@ def render_source_attribution_overlay(
                 color = np.asarray(raster["color_bgr"], dtype=np.float32).reshape(1, 3)
                 canvas[mask] = canvas[mask] * (1.0 - float(alpha)) + color * float(alpha)
     overlay = np.clip(canvas, 0.0, 255.0).astype(np.uint8)
-    overlay = overlay_source_legend(overlay)
+    if show_legend:
+        overlay = overlay_source_legend(overlay)
     return overlay, {
         "alpha": float(alpha),
+        "show_legend": bool(show_legend),
         "per_camera": metrics_per_camera,
     }
 

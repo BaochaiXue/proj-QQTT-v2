@@ -38,6 +38,7 @@ FILE_LENGTH_LIMITS = {
     ROOT / "scripts" / "harness" / "visual_compare_turntable.py": 260,
     ROOT / "scripts" / "harness" / "visual_make_professor_triptych.py": 260,
     ROOT / "scripts" / "harness" / "visual_make_match_board.py": 260,
+    ROOT / "scripts" / "harness" / "visual_compare_stereo_order_pcd.py": 260,
     ROOT / "scripts" / "harness" / "audit_ffs_left_right.py": 220,
     ROOT / "scripts" / "harness" / "compare_face_smoothness.py": 220,
 }
