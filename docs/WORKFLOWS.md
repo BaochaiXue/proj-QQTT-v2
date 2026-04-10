@@ -174,41 +174,54 @@ Use this to judge:
 - which source depth produces lower reprojection residuals in the target camera
 - whether failures are localized to one camera pair or happen everywhere
 
-For professor-facing delivery, start with the three-figure pack:
+For professor-facing 3-view point-cloud match diagnosis, start with the single match board:
 
 ```bash
-python scripts/harness/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0
+python scripts/harness/visual_make_match_board.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0
 ```
 
 Default top-level outputs are only:
 
-- `01_hero_compare.png`
-- `02_merge_evidence.png`
-- `03_truth_board.png`
-- `summary.json`
+- `01_pointcloud_match_board.png`
+- `match_board_summary.json`
 
-These figures are intentionally narrow:
+This board is intentionally narrow:
 
-- `01_hero_compare.png`
-  - overall Native-vs-FFS fused look
-- `02_merge_evidence.png`
-  - source attribution + support count + mismatch residual
-- `03_truth_board.png`
-  - one informative reprojection pair for multi-view truthfulness
+- rows:
+  - `Native`
+  - `FFS`
+- columns:
+  - `Source attribution`
+  - `Support count`
+  - `Mismatch residual`
+
+The match angle is object-aware and match-oriented:
+
+- supported-hemisphere only
+- prefers higher object-only multi-camera support
+- prefers lower object-only mismatch residual
+- still requires enough projected object area to stay readable
+- penalizes table/context dominance
+- penalizes thin edge-on silhouettes
 
 All clutter is gated off by default:
 
 - no debug directory
 - no videos
 - no orbit keyframe sheets
+- no extra top-level figures
 
 Enable those only when needed:
 
 ```bash
-python scripts/harness/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --write_debug --write_video --write_keyframes
+python scripts/harness/visual_make_match_board.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --write_debug
 ```
 
-Use the single-frame object-centric coverage-aware orbit compare when you need the richer fused-cloud diagnostics behind that three-figure pack:
+When `--write_debug` is enabled, selection-specific artifacts stay under `debug/`, for example:
+
+- `debug/match_angle_candidates.json`
+
+Use the single-frame object-centric coverage-aware orbit compare when you need the richer fused-cloud diagnostics behind that single board:
 
 Same-case comparison when an aligned case contains both native and FFS depth:
 
