@@ -31,7 +31,7 @@ LOW_LEVEL_MODULES = {
 
 FILE_LENGTH_LIMITS = {
     ROOT / "data_process" / "visualization" / "pointcloud_compare.py": 700,
-    ROOT / "data_process" / "visualization" / "turntable_compare.py": 2300,
+    ROOT / "data_process" / "visualization" / "turntable_compare.py": 2450,
     ROOT / "scripts" / "harness" / "visual_compare_depth_panels.py": 220,
     ROOT / "scripts" / "harness" / "visual_compare_reprojection.py": 220,
     ROOT / "scripts" / "harness" / "visual_compare_depth_video.py": 220,

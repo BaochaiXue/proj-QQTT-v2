@@ -8,7 +8,11 @@ from typing import Any
 import cv2
 import numpy as np
 
-from .calibration_frame import build_visualization_frame_contract
+from .calibration_frame import (
+    SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND,
+    SEMANTIC_WORLD_FRAME_KIND,
+    build_visualization_frame_contract,
+)
 from .calibration_io import build_calibration_contract_summary, infer_calibration_mapping_mode, load_calibration_transforms
 from .camera_frusta import build_camera_frustum_geometry, collect_camera_geometry_points, extract_camera_poses
 from .hero_compare import select_hero_step_index, write_hero_compare_image
@@ -58,6 +62,11 @@ from .source_compare import (
     write_source_legend_image,
 )
 from .support_compare import compute_support_count_map, overlay_support_legend, render_support_count_map, summarize_support_counts
+from .semantic_world import (
+    infer_semantic_world_transform,
+    transform_c2w_list_to_semantic,
+    transform_scene_to_semantic,
+)
 from .turntable_metrics import aggregate_step_metric_series, format_angle_token, source_histogram
 from .types import CompareCaseSelection, FrameCloudBundle, RenderOutputs
 from .views import (
@@ -81,6 +90,7 @@ from .workflows.merge_diagnostics import build_render_output_spec_models
 DEFAULT_CAMERA_IDS = [0, 1, 2]
 ORBIT_MODES = ("observed_hemisphere", "full_360", "camera_neighborhood")
 LAYOUT_MODES = ("side_by_side_large", "camera_neighborhood_grid")
+DISPLAY_FRAMES = ("calibration_world", "semantic_world")
 
 def _build_orbit_basis(
     *,
@@ -901,6 +911,41 @@ def build_render_output_specs(
     ]
 
 
+def infer_display_frame_state(
+    *,
+    selection: dict[str, Any],
+    scene: dict[str, Any],
+    display_frame: str,
+) -> dict[str, Any]:
+    raw_camera_c2w = list(selection["native_c2w"])
+    raw_camera_centers = np.stack([np.asarray(item, dtype=np.float32)[:3, 3] for item in raw_camera_c2w], axis=0)
+    if display_frame == "calibration_world":
+        return {
+            "display_frame": display_frame,
+            "scene": scene,
+            "camera_c2w": raw_camera_c2w,
+            "semantic_world": None,
+        }
+    semantic_world = infer_semantic_world_transform(
+        scene_points=np.concatenate(
+            [
+                np.asarray(scene.get("native_render_points", scene.get("native_points", np.empty((0, 3), dtype=np.float32))), dtype=np.float32),
+                np.asarray(scene.get("ffs_render_points", scene.get("ffs_points", np.empty((0, 3), dtype=np.float32))), dtype=np.float32),
+            ],
+            axis=0,
+        ),
+        camera_centers=raw_camera_centers,
+        plane_point=np.asarray(scene["plane_point"], dtype=np.float32),
+        plane_normal=np.asarray(scene["plane_normal"], dtype=np.float32),
+    )
+    return {
+        "display_frame": display_frame,
+        "scene": transform_scene_to_semantic(scene, semantic_world),
+        "camera_c2w": transform_c2w_list_to_semantic(raw_camera_c2w, semantic_world),
+        "semantic_world": semantic_world,
+    }
+
+
 def _build_overview_display_basis(
     camera_geometries: list[dict[str, Any]],
     focus_point: np.ndarray,
@@ -1478,6 +1523,7 @@ def run_turntable_compare_workflow(
     render_both_modes: bool = True,
     coverage_margin_deg: float = 18.0,
     show_unsupported_warning: bool = True,
+    display_frame: str = "semantic_world",
 ) -> dict[str, Any]:
     if render_mode not in RENDER_MODES:
         raise ValueError(f"Unsupported render_mode: {render_mode}")
@@ -1489,6 +1535,8 @@ def run_turntable_compare_workflow(
         raise ValueError(f"Unsupported orbit_mode: {orbit_mode}")
     if layout_mode not in LAYOUT_MODES:
         raise ValueError(f"Unsupported layout_mode: {layout_mode}")
+    if display_frame not in DISPLAY_FRAMES:
+        raise ValueError(f"Unsupported display_frame: {display_frame}")
 
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1558,9 +1606,15 @@ def run_turntable_compare_workflow(
         context_max_points_per_camera=max_points_per_camera,
         crop_bounds_override=refinement["final_crop"],
     )
+    display_state = infer_display_frame_state(
+        selection=selection,
+        scene=scene,
+        display_frame=display_frame,
+    )
+    display_scene = display_state["scene"]
 
     camera_poses = extract_camera_poses(
-        selection["native_c2w"],
+        display_state["camera_c2w"],
         serial_numbers=selection["serial_numbers"],
         camera_ids=selection["camera_ids"],
     )
@@ -1573,9 +1627,9 @@ def run_turntable_compare_workflow(
     if orbit_mode in ("observed_hemisphere", "full_360"):
         object_orbit = build_object_centered_orbit_views(
             camera_poses=camera_poses,
-            focus_point=scene["focus_point"],
-            bounds_min=scene["object_roi_bounds"]["min"],
-            bounds_max=scene["object_roi_bounds"]["max"],
+            focus_point=display_scene["focus_point"],
+            bounds_min=display_scene["object_roi_bounds"]["min"],
+            bounds_max=display_scene["object_roi_bounds"]["max"],
             orbit_axis=orbit_axis,
             num_orbit_steps=num_orbit_steps,
             orbit_degrees=orbit_degrees,
@@ -1596,7 +1650,7 @@ def run_turntable_compare_workflow(
     else:
         orbit_steps = build_camera_anchored_orbit_views(
             camera_poses=camera_poses,
-            focus_point=scene["focus_point"],
+            focus_point=display_scene["focus_point"],
             orbit_axis=orbit_axis,
             num_orbit_steps=num_orbit_steps,
             orbit_degrees=orbit_degrees,
@@ -1612,7 +1666,7 @@ def run_turntable_compare_workflow(
         camera_reference_azimuths_deg = {}
         coverage_arc = {"start_deg": 0.0, "end_deg": 360.0, "span_deg": 360.0}
 
-    scene_diagonal = float(np.linalg.norm(scene["bounds_max"] - scene["bounds_min"]))
+    scene_diagonal = float(np.linalg.norm(display_scene["bounds_max"] - display_scene["bounds_min"]))
     frustum_scale = max(0.06, scene_diagonal * 0.14)
     camera_geometries = [
         build_camera_frustum_geometry(pose, frustum_scale=frustum_scale)
@@ -1628,25 +1682,73 @@ def run_turntable_compare_workflow(
     else:
         overview_cloud_points = scene["ffs_render_points"]
         overview_cloud_colors = scene["ffs_render_colors"]
-    overview_state = build_scene_overview_state(
+    overview_state_calibration = build_scene_overview_state(
         scene_points=overview_cloud_points,
         scene_colors=overview_cloud_colors,
-        camera_geometries=camera_geometries,
+        camera_geometries=[
+            build_camera_frustum_geometry(pose, frustum_scale=frustum_scale)
+            for pose in extract_camera_poses(
+                selection["native_c2w"],
+                serial_numbers=selection["serial_numbers"],
+                camera_ids=selection["camera_ids"],
+            )
+        ],
         focus_point=scene["focus_point"],
         render_mode="color_by_height",
         renderer=renderer,
         scalar_bounds=scene["scalar_bounds"],
         point_radius_px=point_radius_px,
         supersample_scale=supersample_scale,
+        orbit_path_points=orbit_path_points if display_frame == "calibration_world" else None,
+        orbit_path_supported=orbit_path_supported if display_frame == "calibration_world" else None,
+        crop_bounds=scene["object_roi_bounds"] if scene_crop_mode == "auto_object_bbox" else scene["crop_bounds"],
+        supported_arc_label=f"Supported arc: {coverage_arc['span_deg']:.1f} deg",
+    )
+    if len(display_scene["native_render_points"]) > 0 and len(display_scene["ffs_render_points"]) > 0:
+        overview_display_points = np.concatenate([display_scene["native_render_points"], display_scene["ffs_render_points"]], axis=0)
+        overview_display_colors = np.concatenate([display_scene["native_render_colors"], display_scene["ffs_render_colors"]], axis=0)
+    elif len(display_scene["native_render_points"]) > 0:
+        overview_display_points = display_scene["native_render_points"]
+        overview_display_colors = display_scene["native_render_colors"]
+    else:
+        overview_display_points = display_scene["ffs_render_points"]
+        overview_display_colors = display_scene["ffs_render_colors"]
+    overview_state = build_scene_overview_state(
+        scene_points=overview_display_points,
+        scene_colors=overview_display_colors,
+        camera_geometries=camera_geometries,
+        focus_point=display_scene["focus_point"],
+        render_mode="color_by_height",
+        renderer=renderer,
+        scalar_bounds=display_scene["scalar_bounds"],
+        point_radius_px=point_radius_px,
+        supersample_scale=supersample_scale,
         orbit_path_points=orbit_path_points,
         orbit_path_supported=orbit_path_supported,
-        crop_bounds=scene["object_roi_bounds"] if scene_crop_mode == "auto_object_bbox" else scene["crop_bounds"],
+        crop_bounds=display_scene["object_roi_bounds"] if scene_crop_mode == "auto_object_bbox" else display_scene["crop_bounds"],
         supported_arc_label=f"Supported arc: {coverage_arc['span_deg']:.1f} deg",
     )
     overview_image_path = output_dir / "scene_overview_with_cameras.png"
     overview_calibration_frame_path = output_dir / "scene_overview_calibration_frame.png"
+    overview_semantic_frame_path = output_dir / "scene_overview_semantic_frame.png"
     write_image(overview_image_path, overview_state["image"])
-    write_image(overview_calibration_frame_path, overview_state["image"])
+    write_image(overview_calibration_frame_path, overview_state_calibration["image"])
+    write_image(overview_semantic_frame_path, overview_state["image"])
+    semantic_world_debug_path = output_dir / "semantic_world_debug.json"
+    if display_state["semantic_world"] is not None:
+        write_json(
+            semantic_world_debug_path,
+            {
+                "plane_point": np.asarray(display_state["semantic_world"]["plane_point"], dtype=np.float32).tolist(),
+                "plane_normal_raw": np.asarray(display_state["semantic_world"]["plane_normal_raw"], dtype=np.float32).tolist(),
+                "plane_normal_flipped": np.asarray(display_state["semantic_world"]["plane_normal_flipped"], dtype=np.float32).tolist(),
+                "semantic_axes": {
+                    axis_name: np.asarray(axis_value, dtype=np.float32).tolist()
+                    for axis_name, axis_value in display_state["semantic_world"]["semantic_axes"].items()
+                },
+                "mean_camera_center": np.asarray(display_state["semantic_world"]["mean_camera_center"], dtype=np.float32).tolist(),
+            },
+        )
     source_legend_path = Path(write_source_legend_image(output_dir / "source_attribution_legend.png"))
 
     calibration_reference_serials = selection["native_metadata"].get(
@@ -1664,13 +1766,19 @@ def run_turntable_compare_workflow(
         ),
     )
     frame_contract = build_visualization_frame_contract(
-        uses_semantic_world=False,
-        semantic_world_frame_kind=None,
+        uses_semantic_world=display_frame == "semantic_world",
+        semantic_world_frame_kind=SEMANTIC_WORLD_FRAME_KIND if display_frame == "semantic_world" else None,
+        overview_display_frame_kind=SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND if display_frame == "semantic_world" else "calibration_world_topdown_display",
         notes=[
-            "Professor-facing compare uses the raw calibration-board c2w world frame.",
-            "Overview display applies a readability-oriented top-down display basis but does not convert into a semantic world frame.",
+            "calibrate.pkl remains raw calibration-board c2w and is not modified on disk.",
+            (
+                "Professor-facing compare renders in a semantic-world display frame inferred from the tabletop plane and camera centers."
+                if display_frame == "semantic_world"
+                else "Professor-facing compare renders directly in the raw calibration-board c2w world frame."
+            ),
         ],
     )
+    scene = display_scene
 
     output_specs = build_render_output_specs(
         geom_render_mode=render_mode,
@@ -2202,6 +2310,7 @@ def run_turntable_compare_workflow(
         "geom_render_mode": render_mode,
         "render_both_modes": bool(render_both_modes),
         "projection_mode": projection_mode,
+        "display_frame": display_frame,
         "scene_crop_mode": scene_crop_mode,
         "focus_mode": focus_mode,
         "manual_image_roi_json": None if manual_image_roi_json is None else str(Path(manual_image_roi_json).resolve()),
@@ -2238,7 +2347,8 @@ def run_turntable_compare_workflow(
         "use_float_ffs_depth_when_available": bool(use_float_ffs_depth_when_available),
         "scene_overview_with_cameras": str(overview_image_path),
         "scene_overview_calibration_frame": str(overview_calibration_frame_path),
-        "scene_overview_semantic_frame": None,
+        "scene_overview_semantic_frame": str(overview_semantic_frame_path),
+        "semantic_world_debug": str(semantic_world_debug_path) if display_state["semantic_world"] is not None else None,
         "object_roi_pass1_world": None if refinement["pass1_crop"] is None else str((output_dir / "object_roi_pass1_world.json").resolve()),
         "object_roi_pass2_world": None if refinement["pass2_crop"] is None else str((output_dir / "object_roi_pass2_world.json").resolve()),
         "per_camera_auto_bbox_dir": str((output_dir / "per_camera_auto_bbox").resolve()),

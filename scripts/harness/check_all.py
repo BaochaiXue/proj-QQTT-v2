@@ -106,6 +106,7 @@ def main() -> int:
     run([python, "-m", "unittest", "-v", "tests.test_face_patch_json_parsing"])
     run([python, "-m", "unittest", "-v", "tests.test_plane_fit_metric_computation"])
     run([python, "-m", "unittest", "-v", "tests.test_face_quality_board_layout"])
+    run([python, "-m", "unittest", "-v", "tests.test_semantic_world_inference_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_stereo_order_registration_layout_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_stereo_order_registration_source_color_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_stereo_order_registration_workflow_smoke"])

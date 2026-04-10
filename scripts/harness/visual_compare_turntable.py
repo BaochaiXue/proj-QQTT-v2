@@ -63,6 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--roi_z_max", type=float, default=None)
     parser.add_argument("--manual_image_roi_json", type=Path, default=None)
     parser.add_argument("--projection_mode", choices=("perspective", "orthographic"), default="perspective")
+    parser.add_argument("--display_frame", choices=("calibration_world", "semantic_world"), default="semantic_world")
     parser.add_argument("--orbit_radius_scale", type=float, default=1.9)
     parser.add_argument("--view_height_offset", type=float, default=0.0)
     parser.add_argument("--coverage_margin_deg", type=float, default=18.0)
@@ -122,6 +123,7 @@ def main() -> int:
         roi_z_max=args.roi_z_max,
         manual_image_roi_json=args.manual_image_roi_json,
         projection_mode=args.projection_mode,
+        display_frame=args.display_frame,
         point_radius_px=args.point_radius_px,
         supersample_scale=args.supersample_scale,
         voxel_size=args.voxel_size,

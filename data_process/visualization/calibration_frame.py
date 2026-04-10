@@ -6,6 +6,7 @@ from typing import Any
 CALIBRATION_WORLD_FRAME_KIND = "charuco_board_world_c2w"
 SEMANTIC_WORLD_FRAME_KIND = "semantic_world"
 OVERVIEW_DISPLAY_FRAME_KIND = "calibration_world_topdown_display"
+SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND = "semantic_world_topdown_display"
 
 
 def build_visualization_frame_contract(

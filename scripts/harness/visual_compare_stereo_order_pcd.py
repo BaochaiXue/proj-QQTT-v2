@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth_max_m", type=float, default=1.5)
     parser.add_argument("--panel_width", type=int, default=380)
     parser.add_argument("--panel_height", type=int, default=300)
+    parser.add_argument("--display_frame", choices=("calibration_world", "semantic_world"), default="semantic_world")
     parser.add_argument("--alpha", type=float, default=0.34)
     parser.add_argument("--scale", type=float, default=1.0)
     parser.add_argument("--valid_iters", type=int, default=8)
@@ -105,6 +106,7 @@ def main() -> int:
         camera_ids=args.camera_ids,
         panel_width=args.panel_width,
         panel_height=args.panel_height,
+        display_frame=args.display_frame,
         alpha=args.alpha,
         scale=args.scale,
         valid_iters=args.valid_iters,

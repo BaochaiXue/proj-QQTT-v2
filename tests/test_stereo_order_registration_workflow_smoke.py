@@ -99,6 +99,8 @@ def _synthetic_turntable_state(tmp_root: Path) -> tuple[dict, list[dict]]:
         "native_frame_idx": 0,
         "ffs_frame_idx": 0,
         "camera_ids": [0, 1, 2],
+        "serial_numbers": ["serial-0", "serial-1", "serial-2"],
+        "native_c2w": [np.eye(4, dtype=np.float32) for _ in range(3)],
     }
     refinement = {
         "final_ffs_masks": None,
@@ -133,6 +135,8 @@ class StereoOrderRegistrationWorkflowSmokeTest(unittest.TestCase):
             summary = json.loads((output_dir / "match_board_summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["top_level_output"], str((output_dir / "01_stereo_order_registration_board.png").resolve()))
             self.assertIsNone(summary["closeup_output"])
+            self.assertTrue(summary["visualization_frame_contract"]["uses_semantic_world"])
+            self.assertEqual(summary["display_frame"], "semantic_world")
             self.assertEqual([item["label"] for item in summary["board_views"]], ["Oblique", "Top", "Front", "Side"])
             top_scale = summary["board_views"][1]["ortho_scale"]
             front_scale = summary["board_views"][2]["ortho_scale"]
@@ -163,6 +167,25 @@ class StereoOrderRegistrationWorkflowSmokeTest(unittest.TestCase):
 
             self.assertTrue((output_dir / "02_stereo_order_closeup_board.png").is_file())
             self.assertTrue((output_dir / "debug" / "registration_board_debug.json").is_file())
+
+    def test_workflow_can_switch_back_to_calibration_world(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            turntable_state, swapped_camera_clouds = _synthetic_turntable_state(Path(tmp_dir))
+            output_dir = Path(tmp_dir) / "registration_board"
+            with mock.patch("data_process.visualization.stereo_audit._build_turntable_scene", return_value=turntable_state), \
+                    mock.patch("data_process.visualization.stereo_audit._build_swapped_ffs_camera_clouds", return_value=swapped_camera_clouds):
+                run_stereo_order_registration_workflow(
+                    aligned_root=Path(tmp_dir),
+                    output_dir=output_dir,
+                    ffs_repo=Path("repo"),
+                    model_path=Path("model"),
+                    panel_width=200,
+                    panel_height=160,
+                    display_frame="calibration_world",
+                )
+            summary = json.loads((output_dir / "match_board_summary.json").read_text(encoding="utf-8"))
+            self.assertFalse(summary["visualization_frame_contract"]["uses_semantic_world"])
+            self.assertEqual(summary["display_frame"], "calibration_world")
 
 
 if __name__ == "__main__":

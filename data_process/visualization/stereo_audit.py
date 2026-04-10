@@ -13,7 +13,11 @@ from data_process.depth_backends import (
     summarize_left_right_audit,
 )
 
-from .calibration_frame import build_visualization_frame_contract
+from .calibration_frame import (
+    SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND,
+    SEMANTIC_WORLD_FRAME_KIND,
+    build_visualization_frame_contract,
+)
 from .depth_diagnostics import colorize_depth_map, load_depth_frame
 from .face_quality import (
     build_face_metric_tile,
@@ -31,6 +35,9 @@ from .pointcloud_compare import estimate_ortho_scale, get_frame_count, load_case
 from .professor_triptych import _build_turntable_scene
 from .source_compare import SOURCE_CAMERA_COLORS_BGR, build_source_legend_image, render_source_attribution_overlay
 from .io_case import depth_to_camera_points, transform_points
+from .semantic_world import infer_semantic_world_transform, transform_c2w_list_to_semantic, transform_scene_to_semantic, transform_camera_clouds_to_semantic
+from .turntable_compare import build_scene_overview_state, infer_display_frame_state
+from .camera_frusta import build_camera_frustum_geometry, extract_camera_poses
 
 
 def _resolve_frame_idx(*, native_metadata: dict[str, Any], ffs_metadata: dict[str, Any], frame_idx: int) -> int:
@@ -780,6 +787,7 @@ def run_stereo_order_registration_workflow(
     max_disp: int = 192,
     write_debug: bool = False,
     write_closeup: bool = False,
+    display_frame: str = "semantic_world",
     runner_factory=FastFoundationStereoRunner,
 ) -> dict[str, Any]:
     output_dir = Path(output_dir).resolve()
@@ -817,6 +825,12 @@ def run_stereo_order_registration_workflow(
     selection = turntable_state["selection"]
     scene = turntable_state["scene"]
     refinement = turntable_state["refinement"]
+    display_state = infer_display_frame_state(
+        selection=selection,
+        scene=scene,
+        display_frame=display_frame,
+    )
+    display_scene = display_state["scene"]
     swapped_camera_clouds = _build_swapped_ffs_camera_clouds(
         selection=selection,
         ffs_repo=ffs_repo,
@@ -828,8 +842,10 @@ def run_stereo_order_registration_workflow(
         max_disp=max_disp,
         runner_factory=runner_factory,
     )
+    if display_frame == "semantic_world":
+        swapped_camera_clouds = transform_camera_clouds_to_semantic(swapped_camera_clouds, display_state["semantic_world"])
     row_state = _build_registration_board_rows(
-        scene=scene,
+        scene=display_scene,
         refinement=refinement,
         swapped_camera_clouds=swapped_camera_clouds,
         context_max_points_per_camera=max_points_per_camera,
@@ -837,10 +853,10 @@ def run_stereo_order_registration_workflow(
         object_height_max=object_height_max,
         manual_image_roi_by_camera=turntable_state["manual_image_roi_by_camera"],
     )
-    focus_point = np.asarray(scene["focus_point"], dtype=np.float32)
+    focus_point = np.asarray(display_scene["focus_point"], dtype=np.float32)
     all_object_points = [
-        np.asarray(scene["native_object_points"], dtype=np.float32),
-        np.asarray(scene["ffs_object_points"], dtype=np.float32),
+        np.asarray(display_scene["native_object_points"], dtype=np.float32),
+        np.asarray(display_scene["ffs_object_points"], dtype=np.float32),
         np.asarray(row_state["swapped_object_points"], dtype=np.float32),
     ]
     object_bounds_min, object_bounds_max = _compute_point_bounds(all_object_points, fallback_center=focus_point)
@@ -940,23 +956,29 @@ def run_stereo_order_registration_workflow(
         "ffs_case_dir": str(selection["ffs_case_dir"]),
         "frame_idx": int(selection["native_frame_idx"]),
         "scene_crop_mode": scene_crop_mode,
+        "display_frame": display_frame,
         "camera_ids": [int(item) for item in selection["camera_ids"]],
         "visualization_frame_contract": build_visualization_frame_contract(
-            uses_semantic_world=False,
-            semantic_world_frame_kind=None,
+            uses_semantic_world=display_frame == "semantic_world",
+            semantic_world_frame_kind=SEMANTIC_WORLD_FRAME_KIND if display_frame == "semantic_world" else None,
+            overview_display_frame_kind=SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND if display_frame == "semantic_world" else "calibration_world_topdown_display",
             notes=[
-                "All rows are rendered in the same raw calibration-world frame.",
+                (
+                    "All rows are rendered in the same semantic-world display frame inferred from the tabletop plane and camera centers."
+                    if display_frame == "semantic_world"
+                    else "All rows are rendered in the same raw calibration-world frame."
+                ),
                 "This board is point-cloud-only and colors points by source camera.",
             ],
         ),
         "source_color_map_bgr": {str(key): list(value) for key, value in SOURCE_CAMERA_COLORS_BGR.items()},
         "object_roi_bounds": {
-            "min": np.asarray(scene["object_roi_bounds"]["min"], dtype=np.float32).tolist(),
-            "max": np.asarray(scene["object_roi_bounds"]["max"], dtype=np.float32).tolist(),
+            "min": np.asarray(display_scene["object_roi_bounds"]["min"], dtype=np.float32).tolist(),
+            "max": np.asarray(display_scene["object_roi_bounds"]["max"], dtype=np.float32).tolist(),
         },
         "crop_bounds": {
-            "min": np.asarray(scene["crop_bounds"]["min"], dtype=np.float32).tolist(),
-            "max": np.asarray(scene["crop_bounds"]["max"], dtype=np.float32).tolist(),
+            "min": np.asarray(display_scene["crop_bounds"]["min"], dtype=np.float32).tolist(),
+            "max": np.asarray(display_scene["crop_bounds"]["max"], dtype=np.float32).tolist(),
         },
         "registration_bounds": {
             "min": row_state["registration_bounds_min"],
@@ -973,8 +995,8 @@ def run_stereo_order_registration_workflow(
             "max_disp": int(max_disp),
         },
         "row_point_counts": {
-            "native_object_points": int(len(scene["native_object_points"])),
-            "ffs_current_object_points": int(len(scene["ffs_object_points"])),
+            "native_object_points": int(len(display_scene["native_object_points"])),
+            "ffs_current_object_points": int(len(display_scene["ffs_object_points"])),
             "ffs_swapped_object_points": int(len(row_state["swapped_object_points"])),
         },
         "board_views": board_metrics["views"],
@@ -988,6 +1010,70 @@ def run_stereo_order_registration_workflow(
     if write_debug:
         debug_dir = output_dir / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
+        raw_camera_poses = extract_camera_poses(
+            selection["native_c2w"],
+            serial_numbers=selection["serial_numbers"],
+            camera_ids=selection["camera_ids"],
+        )
+        raw_camera_geometries = [build_camera_frustum_geometry(pose, frustum_scale=0.12) for pose in raw_camera_poses]
+        display_camera_poses = extract_camera_poses(
+            display_state["camera_c2w"],
+            serial_numbers=selection["serial_numbers"],
+            camera_ids=selection["camera_ids"],
+        )
+        display_camera_geometries = [build_camera_frustum_geometry(pose, frustum_scale=0.12) for pose in display_camera_poses]
+        raw_native_points = np.asarray(scene.get("native_render_points", scene.get("native_points", np.empty((0, 3), dtype=np.float32))), dtype=np.float32)
+        raw_ffs_points = np.asarray(scene.get("ffs_render_points", scene.get("ffs_points", np.empty((0, 3), dtype=np.float32))), dtype=np.float32)
+        raw_native_colors = np.asarray(scene.get("native_render_colors", scene.get("native_colors", np.empty((0, 3), dtype=np.uint8))), dtype=np.uint8)
+        raw_ffs_colors = np.asarray(scene.get("ffs_render_colors", scene.get("ffs_colors", np.empty((0, 3), dtype=np.uint8))), dtype=np.uint8)
+        if len(raw_native_points) > 0 and len(raw_ffs_points) > 0:
+            raw_overview_points = np.concatenate([raw_native_points, raw_ffs_points], axis=0)
+            raw_overview_colors = np.concatenate([raw_native_colors, raw_ffs_colors], axis=0)
+        elif len(raw_native_points) > 0:
+            raw_overview_points = raw_native_points
+            raw_overview_colors = raw_native_colors
+        else:
+            raw_overview_points = raw_ffs_points
+            raw_overview_colors = raw_ffs_colors
+        semantic_native_points = np.asarray(display_scene.get("native_render_points", display_scene.get("native_points", np.empty((0, 3), dtype=np.float32))), dtype=np.float32)
+        semantic_ffs_points = np.asarray(display_scene.get("ffs_render_points", display_scene.get("ffs_points", np.empty((0, 3), dtype=np.float32))), dtype=np.float32)
+        semantic_native_colors = np.asarray(display_scene.get("native_render_colors", display_scene.get("native_colors", np.empty((0, 3), dtype=np.uint8))), dtype=np.uint8)
+        semantic_ffs_colors = np.asarray(display_scene.get("ffs_render_colors", display_scene.get("ffs_colors", np.empty((0, 3), dtype=np.uint8))), dtype=np.uint8)
+        if len(semantic_native_points) > 0 and len(semantic_ffs_points) > 0:
+            semantic_overview_points = np.concatenate([semantic_native_points, semantic_ffs_points], axis=0)
+            semantic_overview_colors = np.concatenate([semantic_native_colors, semantic_ffs_colors], axis=0)
+        elif len(semantic_native_points) > 0:
+            semantic_overview_points = semantic_native_points
+            semantic_overview_colors = semantic_native_colors
+        else:
+            semantic_overview_points = semantic_ffs_points
+            semantic_overview_colors = semantic_ffs_colors
+        raw_overview = build_scene_overview_state(
+            scene_points=raw_overview_points,
+            scene_colors=raw_overview_colors,
+            camera_geometries=raw_camera_geometries,
+            focus_point=np.asarray(scene["focus_point"], dtype=np.float32),
+            render_mode="color_by_height",
+            renderer="fallback",
+            scalar_bounds=scene.get("scalar_bounds", {"height": (-0.1, 0.1), "depth": (0.0, 1.0)}),
+            point_radius_px=3,
+            supersample_scale=2,
+            crop_bounds=scene["object_roi_bounds"],
+        )
+        semantic_overview = build_scene_overview_state(
+            scene_points=semantic_overview_points,
+            scene_colors=semantic_overview_colors,
+            camera_geometries=display_camera_geometries,
+            focus_point=np.asarray(display_scene["focus_point"], dtype=np.float32),
+            render_mode="color_by_height",
+            renderer="fallback",
+            scalar_bounds=display_scene.get("scalar_bounds", {"height": (-0.1, 0.1), "depth": (0.0, 1.0)}),
+            point_radius_px=3,
+            supersample_scale=2,
+            crop_bounds=display_scene["object_roi_bounds"],
+        )
+        write_image(debug_dir / "scene_overview_calibration_frame.png", raw_overview["image"])
+        write_image(debug_dir / "scene_overview_semantic_frame.png", semantic_overview["image"])
         write_json(
             debug_dir / "registration_board_debug.json",
             {
@@ -997,6 +1083,18 @@ def run_stereo_order_registration_workflow(
                 "final_compare_source": "pass2" if refinement["pass2_refinement_valid"] else "pass1",
                 "closeup_metrics": closeup_metrics,
                 "board_metrics": board_metrics,
+                "semantic_world_debug": None
+                if display_state["semantic_world"] is None
+                else {
+                    "plane_point": np.asarray(display_state["semantic_world"]["plane_point"], dtype=np.float32).tolist(),
+                    "plane_normal_raw": np.asarray(display_state["semantic_world"]["plane_normal_raw"], dtype=np.float32).tolist(),
+                    "plane_normal_flipped": np.asarray(display_state["semantic_world"]["plane_normal_flipped"], dtype=np.float32).tolist(),
+                    "semantic_axes": {
+                        axis_name: np.asarray(axis_value, dtype=np.float32).tolist()
+                        for axis_name, axis_value in display_state["semantic_world"]["semantic_axes"].items()
+                    },
+                    "mean_camera_center": np.asarray(display_state["semantic_world"]["mean_camera_center"], dtype=np.float32).tolist(),
+                },
             },
         )
 

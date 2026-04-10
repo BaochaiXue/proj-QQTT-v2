@@ -210,6 +210,7 @@ Face-patch smoothness comparison:
 - The stereo-order registration board now provides a stricter left/right-ordering visual test:
   - it does not use 2D depth panels as the main evidence
   - it reuses the current object-first world-frame compare path
+  - it now defaults to a visualization-only `semantic_world` display transform inferred from the tabletop plane and camera centers
   - it renders one `3 x 4` point-cloud-only board:
     - rows = `Native / FFS-current / FFS-swapped`
     - columns = `Oblique / Top / Front / Side`
@@ -220,6 +221,12 @@ Face-patch smoothness comparison:
   - it keeps one shared frame, one shared object ROI, and one shared registration crop across all panels
   - it is intended to answer only:
     - whether current ordering or swapped ordering collapses the 3 camera clouds more tightly in 3D
+- The turntable compare path now also defaults to the same visualization-only `semantic_world` display frame:
+  - `calibrate.pkl` remains raw calibration-board `c2w`
+  - the semantic transform is not written back to disk
+  - debug outputs now explicitly separate:
+    - `scene_overview_calibration_frame.png`
+    - `scene_overview_semantic_frame.png`
 
 ## Why This Workflow Is Easier To Read
 
@@ -232,6 +239,7 @@ Face-patch smoothness comparison:
   - it is not a hero board
   - it is not a support/mismatch dashboard
   - it is a single source-colored 3D registration board for judging current vs swapped ordering by eye
+  - its top/front/side columns are rebuilt in semantic world rather than by flipping 2D images after rendering
 - The new focused stereo audits now also support:
   - explicit normal-vs-swapped FFS ordering checks on one aligned stereo pair
   - fixed planar face-patch smoothness/noise comparison without pretending to have ground-truth geometry

@@ -247,7 +247,13 @@ The turntable workflow:
 - reuses the fused native and fused FFS cloud loader
 - computes an object ROI from the cropped tabletop scene before orbit generation
 - visualizes the 3 real camera frusta from `calibrate.pkl`
-- records explicitly that the 3D world frame is the raw calibration-board `c2w` frame
+- keeps `calibrate.pkl` as the raw calibration-board `c2w` frame on disk
+- now defaults to a visualization-only `semantic_world` display frame so:
+  - tabletop appears horizontal
+  - cameras appear above the object/table
+  - top/front/side views are human-readable
+- still allows raw rendering for debugging:
+  - `--display_frame calibration_world`
 - defaults to `observed_hemisphere` instead of naive full-360
 - defaults to `object_component_mode=graph_union`
 - infers the supported viewing arc from the real camera azimuth layout
@@ -376,8 +382,20 @@ All panels are:
 
 - point-cloud-only
 - colored only by source camera
-- rendered in the same world frame
+- rendered in the same display frame
 - rendered with the same frame / ROI / crop / view scaling semantics
+
+By default this board also uses `semantic_world` display coordinates for readability:
+
+- table approximately horizontal
+- cameras above the table/object
+- top/front/side columns consistent with human intuition
+
+Switch back to raw calibration display only when you explicitly want to inspect the original ChArUco world:
+
+```bash
+python scripts/harness/visual_compare_stereo_order_pcd.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --display_frame calibration_world
+```
 
 Optional closeup/debug outputs stay gated:
 
@@ -415,9 +433,13 @@ Interpret these face-patch metrics as:
 
 Frame semantics note:
 
-- current compare paths do not silently convert into a semantic-world frame
-- `turntable_metadata.json` and `comparison_metadata.json` now record the calibration-world contract explicitly
-- if a future semantic-world transform is added, it must be explicit in metadata and debug artifacts rather than hidden inside the renderer
+- `calibrate.pkl` remains raw calibration-board `c2w`
+- professor-facing turntable and stereo-order point-cloud workflows now default to a visualization-only `semantic_world` display frame inferred from:
+  - the fitted tabletop plane
+  - the current camera centers
+- this transform is applied only in memory for visualization
+- `scene_overview_calibration_frame.png` and `scene_overview_semantic_frame.png` make the distinction explicit
+- raw calibration-world display is still available through `--display_frame calibration_world`
 
 Use the new merge-diagnostic outputs like this:
 
