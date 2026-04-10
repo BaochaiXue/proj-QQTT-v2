@@ -47,6 +47,12 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
 python scripts/harness/visual_compare_turntable.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000 --renderer fallback --scene_crop_mode auto_object_bbox --orbit_mode observed_hemisphere --num_orbit_steps 24 --projection_mode perspective --fps 12
 ```
 
+Professor-facing three-figure pack:
+
+```bash
+python scripts/harness/visual_make_professor_triptych.py --aligned_root C:\Users\zhang\proj-QQTT\data --realsense_case native_30_static --ffs_case ffs_30_static --frame_idx 0 --output_dir C:\Users\zhang\proj-QQTT\data\professor_triptych_native_30_static_vs_ffs_30_static_frame_0000
+```
+
 ## Outputs Produced
 
 Per-camera diagnostic panels:
@@ -99,6 +105,13 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
 - `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/turntable_keyframes_support.png`
 - `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/support_metrics.json`
 - `data/turntable_coverage_native_30_static_vs_ffs_30_static_frame_0000/turntable_metadata.json`
+
+Professor-facing three-figure pack:
+
+- `data/professor_triptych_native_30_static_vs_ffs_30_static_frame_0000/01_hero_compare.png`
+- `data/professor_triptych_native_30_static_vs_ffs_30_static_frame_0000/02_merge_evidence.png`
+- `data/professor_triptych_native_30_static_vs_ffs_30_static_frame_0000/03_truth_board.png`
+- `data/professor_triptych_native_30_static_vs_ffs_30_static_frame_0000/summary.json`
 
 ## What Was Validated
 
@@ -155,12 +168,17 @@ Single-frame object-centric coverage-aware side-by-side orbit comparison:
     - per-camera foreground-mask refinement
     - pass2 world ROI rebuilt from the masked per-camera object points
   - `graph_union` component closure instead of only a top-component anchored union
+- The professor-facing three-figure pack now sits on top of the existing turntable and reprojection engines:
+  - it deterministically selects one supported hero angle from support + mismatch evidence
+  - it writes only three top-level figures by default
+  - it keeps videos, keyframes, and raw debug artifacts gated behind explicit flags
 
 ## Why This Workflow Is Easier To Read
 
 - Tabletop crop prevents the full room bounds from dominating the frame.
 - The new default gives each depth source a much larger panel than the prior 2x3 board.
 - The new hero stills remove the giant footer/debug block from the main slide image while keeping the same Native-vs-FFS view.
+- The new professor pack reduces the default deliverable to three figures that each answer one question instead of asking readers to infer a conclusion from dozens of artifacts.
 - The default no longer pretends that unsupported backside views are equally trustworthy.
 - The geometry, RGB, and support videos are generated together, so the same orbit path can be judged in all three modes without rerunning the workflow.
 - The larger overview makes the real camera locations, supported arc, and current orbit position much easier to interpret.

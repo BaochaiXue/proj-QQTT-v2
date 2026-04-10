@@ -36,6 +36,7 @@ FILE_LENGTH_LIMITS = {
     ROOT / "scripts" / "harness" / "visual_compare_reprojection.py": 220,
     ROOT / "scripts" / "harness" / "visual_compare_depth_video.py": 220,
     ROOT / "scripts" / "harness" / "visual_compare_turntable.py": 260,
+    ROOT / "scripts" / "harness" / "visual_make_professor_triptych.py": 260,
 }
 
 

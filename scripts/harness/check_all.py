@@ -27,6 +27,7 @@ def main() -> int:
     run([python, "scripts/harness/visual_compare_reprojection.py", "--help"])
     run([python, "scripts/harness/visual_compare_depth_video.py", "--help"])
     run([python, "scripts/harness/visual_compare_turntable.py", "--help"])
+    run([python, "scripts/harness/visual_make_professor_triptych.py", "--help"])
     run([python, "scripts/harness/check_visual_architecture.py"])
     run([python, "scripts/harness/run_ffs_on_saved_pair.py", "--help"])
     run([python, "scripts/harness/reproject_ffs_to_color.py", "--help"])
@@ -90,12 +91,15 @@ def main() -> int:
     run([python, "-m", "unittest", "-v", "tests.test_turntable_view_generation_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_turntable_board_layout_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_keyframe_sheet_generation_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_professor_triptych_angle_selection_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_professor_triptych_output_contract_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_depth_panels_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_reprojection_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_fused_cloud_render_config_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_depth_video_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_depth_video_grid_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_turntable_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_visual_make_professor_triptych_smoke"])
     print("[check] all deterministic checks passed")
     return 0
 

@@ -29,6 +29,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `scripts/harness/visual_compare_reprojection.py`: aligned native-vs-FFS reprojection compare
 - `scripts/harness/visual_compare_depth_video.py`: older temporal fused compare
 - `scripts/harness/visual_compare_turntable.py`: current single-frame professor-facing compare
+- `scripts/harness/visual_make_professor_triptych.py`: current three-figure professor-facing summary pack
 
 ## Required Workflow For Future Changes
 

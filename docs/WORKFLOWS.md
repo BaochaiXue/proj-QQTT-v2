@@ -174,7 +174,41 @@ Use this to judge:
 - which source depth produces lower reprojection residuals in the target camera
 - whether failures are localized to one camera pair or happen everywhere
 
-Finally use the single-frame object-centric coverage-aware orbit compare for professor-facing fused geometry review:
+For professor-facing delivery, start with the three-figure pack:
+
+```bash
+python scripts/harness/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0
+```
+
+Default top-level outputs are only:
+
+- `01_hero_compare.png`
+- `02_merge_evidence.png`
+- `03_truth_board.png`
+- `summary.json`
+
+These figures are intentionally narrow:
+
+- `01_hero_compare.png`
+  - overall Native-vs-FFS fused look
+- `02_merge_evidence.png`
+  - source attribution + support count + mismatch residual
+- `03_truth_board.png`
+  - one informative reprojection pair for multi-view truthfulness
+
+All clutter is gated off by default:
+
+- no debug directory
+- no videos
+- no orbit keyframe sheets
+
+Enable those only when needed:
+
+```bash
+python scripts/harness/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --write_debug --write_video --write_keyframes
+```
+
+Use the single-frame object-centric coverage-aware orbit compare when you need the richer fused-cloud diagnostics behind that three-figure pack:
 
 Same-case comparison when an aligned case contains both native and FFS depth:
 

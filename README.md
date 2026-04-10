@@ -189,7 +189,43 @@ python scripts/harness/visual_compare_reprojection.py --aligned_root ./data --re
 
 This is the main multi-view consistency diagnostic. It warps source RGB into the target view using native depth and FFS depth separately, then compares each warp against the target RGB with residual heatmaps and summary metrics.
 
-3. Single-frame object-centric coverage-aware orbit compare:
+3. Professor-facing three-figure pack:
+
+Use this when you need one slide-ready conclusion pack instead of dozens of debug artifacts:
+
+```bash
+python scripts/harness/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0
+```
+
+By default it writes only:
+
+- `01_hero_compare.png`
+- `02_merge_evidence.png`
+- `03_truth_board.png`
+- `summary.json`
+
+The three figures answer three different questions:
+
+- `01_hero_compare.png`
+  - overall, which fused result looks better?
+- `02_merge_evidence.png`
+  - do source attribution, support count, and mismatch residual support that conclusion?
+- `03_truth_board.png`
+  - is the apparent winner actually more multi-view truthful, or just more filled in?
+
+Default clutter is off:
+
+- no debug dump
+- no mp4 / gif
+- no orbit keyframe sheets
+
+Enable those only when needed:
+
+```bash
+python scripts/harness/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --write_debug --write_video --write_keyframes
+```
+
+4. Single-frame object-centric coverage-aware orbit compare:
 
 Same-case comparison, when an aligned case contains both native depth and FFS depth:
 
@@ -209,7 +245,7 @@ If the automatic object crop still keeps too much tabletop, constrain the fused 
 python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --scene_crop_mode auto_object_bbox --manual_image_roi_json docs/generated/object_only_manual_image_roi_native_30_static_frame_0000.json
 ```
 
-This is now the primary fused-cloud diagnostic for professor-facing review. It:
+This is now the main fused-cloud diagnostic engine behind the professor-facing three-figure pack. It:
 
 - loads one selected aligned frame instead of a temporal frame range
 - fuses one native point cloud and one FFS point cloud
@@ -340,7 +376,7 @@ Why the new source diagnostics matter:
 - `source_split` shows each camera contribution separately on the same orbit and crop.
 - `mismatch` colors overlap residual magnitude so merge disagreement is visible even when RGB still looks plausible.
 
-4. Temporal fused point-cloud comparison video:
+5. Temporal fused point-cloud comparison video:
 
 Same-case comparison, when an aligned case contains both native depth and FFS depth:
 
@@ -465,6 +501,11 @@ data/<case_name>/
     pair_0_to_1/frames/
     pair_0_to_2/frames/
     summary_metrics.json
+  professor_triptych_frame_<idx>/ # optional professor-facing three-figure pack
+    01_hero_compare.png
+    02_merge_evidence.png
+    03_truth_board.png
+    summary.json
 ```
 
 ## Validation
