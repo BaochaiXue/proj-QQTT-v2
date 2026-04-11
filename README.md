@@ -370,6 +370,8 @@ Current compare frame semantics are also explicit now:
 
 Additional internal documentation:
 
+- `scripts/harness/README.md`
+- `docs/generated/README.md`
 - `docs/generated/visual_stack_cleanup_inventory.md`
 - `docs/generated/visual_stack_cleanup_validation.md`
 

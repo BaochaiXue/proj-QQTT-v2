@@ -338,6 +338,7 @@ The user-facing compare commands are unchanged, but the implementation stack is 
 
 For the current internal map and migration notes, see:
 
+- `docs/generated/README.md`
 - `docs/generated/visual_stack_cleanup_inventory.md`
 - `docs/generated/visual_stack_cleanup_validation.md`
 
