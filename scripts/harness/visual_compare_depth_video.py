@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--view_mode", choices=("fixed", "camera_poses_table_focus"), default="fixed")
     parser.add_argument("--focus_mode", choices=("none", "table"), default="none")
     parser.add_argument("--layout_mode", choices=("pair", "grid_2x3"), default="pair")
-    parser.add_argument("--scene_crop_mode", choices=("none", "auto_table_bbox", "manual_xyz_roi"), default="none")
+    parser.add_argument("--scene_crop_mode", choices=("none", "auto_table_bbox", "auto_object_bbox", "manual_xyz_roi"), default="none")
     parser.add_argument("--crop_margin_xy", type=float, default=0.12)
     parser.add_argument("--crop_min_z", type=float, default=-0.15)
     parser.add_argument("--crop_max_z", type=float, default=0.35)

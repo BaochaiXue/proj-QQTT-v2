@@ -370,8 +370,8 @@ Current compare frame semantics are also explicit now:
 
 Additional internal documentation:
 
-- `docs/generated/visual_stack_inventory.md`
-- `docs/generated/visual_stack_refactor_validation.md`
+- `docs/generated/visual_stack_cleanup_inventory.md`
+- `docs/generated/visual_stack_cleanup_validation.md`
 
 Why the new source diagnostics matter:
 

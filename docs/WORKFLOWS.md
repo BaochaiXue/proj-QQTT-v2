@@ -338,8 +338,8 @@ The user-facing compare commands are unchanged, but the implementation stack is 
 
 For the current internal map and migration notes, see:
 
-- `docs/generated/visual_stack_inventory.md`
-- `docs/generated/visual_stack_refactor_validation.md`
+- `docs/generated/visual_stack_cleanup_inventory.md`
+- `docs/generated/visual_stack_cleanup_validation.md`
 
 Use `full_360` only when you explicitly want the unsupported backside visualization to appear, with warnings:
 

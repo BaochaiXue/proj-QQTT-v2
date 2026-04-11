@@ -10,7 +10,7 @@ Observed results are authoritative for this machine. Official docs define expect
 
 ## Summary
 
-- Run id: `20260405T232134Z`
+- Run id: `20260411T000000Z_targeted_rgbd_ir_pair_refresh`
 - Stable serial order: `239222300433, 239222300781, 239222303506`
 - Total cases: `65`
 - Passed: `42`
@@ -93,7 +93,7 @@ Observed results are authoritative for this machine. Official docs define expect
 | 239222300433, 239222300781, 239222303506 | rgbd | 848x480@30 | auto | fail | Case started but failed delivery / fps / stall thresholds. |
 | 239222300433, 239222300781, 239222303506 | rgb_ir_pair | 848x480@30 | on | fail | Case started but failed delivery / fps / stall thresholds. |
 | 239222300433, 239222300781, 239222303506 | depth_ir_pair | 848x480@30 | on | fail | Case started but failed delivery / fps / stall thresholds. |
-| 239222300433, 239222300781, 239222303506 | rgbd_ir_pair | 848x480@30 | on | fail | Case started but failed delivery / fps / stall thresholds. |
+| 239222300433, 239222300781, 239222303506 | rgbd_ir_pair | 848x480@30 | on | fail | Case started but failed delivery / fps / stall thresholds during 30.0s targeted revalidation. |
 | 239222300433, 239222300781, 239222303506 | ir_left | 848x480@30 | off | fail | Case started but failed delivery / fps / stall thresholds. |
 | 239222300433, 239222300781, 239222303506 | ir_right | 640x480@30 | on | pass | stable |
 | 239222300433, 239222300781, 239222303506 | ir_pair | 848x480@30 | off | fail | Case started but failed delivery / fps / stall thresholds. |
@@ -161,7 +161,7 @@ Observed results are authoritative for this machine. Official docs define expect
 - `three_camera-239222300433-239222300781-239222303506-rgbd-848x480-fps30-emitter-auto`: `StabilityThresholdNotMet` - Case started but failed delivery / fps / stall thresholds.
 - `three_camera-239222300433-239222300781-239222303506-rgb_ir_pair-848x480-fps30-emitter-on`: `StabilityThresholdNotMet` - Case started but failed delivery / fps / stall thresholds.
 - `three_camera-239222300433-239222300781-239222303506-depth_ir_pair-848x480-fps30-emitter-on`: `StabilityThresholdNotMet` - Case started but failed delivery / fps / stall thresholds.
-- `three_camera-239222300433-239222300781-239222303506-rgbd_ir_pair-848x480-fps30-emitter-on`: `StabilityThresholdNotMet` - Case started but failed delivery / fps / stall thresholds.
+- `three_camera-239222300433-239222300781-239222303506-rgbd_ir_pair-848x480-fps30-emitter-on`: `StabilityThresholdNotMet` - Case started but failed delivery / fps / stall thresholds during 30.0s targeted revalidation.
 - `single-239222300433-rgbd-640x480-fps30-emitter-auto`: `StabilityThresholdNotMet` - Case started but failed delivery / fps / stall thresholds.
 - `single-239222300433-rgb_ir_pair-640x480-fps30-emitter-on`: `StabilityThresholdNotMet` - Case started but failed delivery / fps / stall thresholds.
 - `single-239222300433-rgbd_ir_pair-640x480-fps30-emitter-on`: `StabilityThresholdNotMet` - Case started but failed delivery / fps / stall thresholds.
@@ -179,6 +179,7 @@ Observed results are authoritative for this machine. Official docs define expect
 ## Key Errors
 
 - `StabilityThresholdNotMet`: Case started but failed delivery / fps / stall thresholds.
+- `StabilityThresholdNotMet`: Case started but failed delivery / fps / stall thresholds during 30.0s targeted revalidation.
 
 ## Recommended Next Move
 

@@ -1,5 +1,7 @@
 # Visual Stack Cleanup Validation
 
+This file supersedes the older `visual_stack_refactor_validation.md` notes and records the current validated cleanup state of the visualization stack.
+
 Date: 2026-04-10
 
 ## What Was Wrong Before

@@ -1,5 +1,7 @@
 # Visual Stack Cleanup Inventory
 
+This file supersedes the older `visual_stack_inventory.md` snapshot and is the current source of truth for visualization ownership and artifact layout.
+
 Date: 2026-04-10
 
 ## Current CLI Entrypoints

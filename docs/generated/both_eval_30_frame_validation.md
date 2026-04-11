@@ -113,23 +113,50 @@ Saved-frame counts before cleanup:
 }
 ```
 
-## Conclusion
+## 3. Longer-Duration Stability Probe
 
-- **Yes, this machine was able to record native depth and IR images simultaneously for a 30-frame 3-camera short run.**
-- **No, the current repo policy does not allow that through `record_data.py --capture_mode both_eval` yet**, because the latest persisted D455 stream probe still marks the profile unsupported.
+Targeted long-duration probe:
+
+- topology: `three_camera`
+- stream set: `rgbd_ir_pair`
+- profile: `848x480@30`
+- emitter: `on`
+- warmup: `2.0s`
+- duration: `30.0s`
+
+Observed result:
+
+- the case started successfully
+- all requested streams were delivered on all 3 cameras
+- the case still failed the probe's stability thresholds
+- failure type:
+  - `StabilityThresholdNotMet`
+- updated long-duration note:
+  - the refreshed probe case is now recorded in `docs/generated/d455_stream_probe_results.*`
+
+Key failure details:
+
+- camera `239222300433`
+  - max timestamp gap reached about `603 ms`
+- camera `239222300781`
+  - max timestamp gap reached about `889 ms`
+- camera `239222303506`
+  - max timestamp gap reached about `442 ms`
+
+Those gaps are far above the probe's allowed `max_timestamp_gap_factor`, so the long-duration run remains unstable even though the short 30-frame burst completed.
+
+## Final Conclusion
+
+- **Yes, this machine can complete a short 30-frame 3-camera `both_eval` burst and save `color + depth + ir_left + ir_right`.**
+- **No, this machine still does not pass a longer 30-second `rgbd_ir_pair` stability probe.**
+- **Therefore the default repo strategy should remain probe-gated and blocked for `record_data.py --capture_mode both_eval` on this machine/profile.**
 
 Interpretation:
 
-- this experiment proves short-run feasibility for `30` frames on the current hardware state
-- it does **not** prove long-run stability
-- the discrepancy is between:
-  - old probe-based policy: still blocks
-  - current short runtime experiment: succeeded
-
-Most likely reason:
-
-- the saved probe result is now stale or stricter than the current short-run requirement
-- alternatively, the profile may still be fragile over longer durations even though a 30-frame burst succeeds
+- short-burst feasibility is now proven
+- long-duration stability is still not proven
+- for repo policy, long-duration stability remains the deciding requirement
+- the previous conservative `both_eval` gate remains the correct default behavior after this revalidation
 
 ## Cleanup
 
@@ -137,3 +164,4 @@ Experimental raw data was removed after validation:
 
 - `data_collect/tmp_both_eval_30f_direct/`
 - no retained `tmp_both_eval_30f_policy_check/` directory remained
+- temporary targeted probe artifacts under `%TEMP%\\qqtt_both_eval_long_probe\\` were removed after the case result was merged into docs

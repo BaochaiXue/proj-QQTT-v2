@@ -1,7 +1,7 @@
 {
   "schema_version": "d455_stream_probe_run_v1",
-  "generated_at": "2026-04-05T23:39:55.795746+00:00",
-  "run_id": "20260405T232134Z",
+  "generated_at": "2026-04-11T06:58:34.427876+00:00",
+  "run_id": "20260411T000000Z_targeted_rgbd_ir_pair_refresh",
   "host": {
     "hostname": "XinjieZhang",
     "platform": "Windows-10-10.0.26100-SP0",
@@ -5634,16 +5634,16 @@
       "fps": 30,
       "emitter_request": "on",
       "warmup_s": 2.0,
-      "duration_s": 10.0,
+      "duration_s": 30.0,
       "start_success": true,
       "success": false,
       "status": "fail",
-      "time_to_first_frame_s": 3.3716509000005317,
+      "time_to_first_frame_s": 2.8791866000101436,
       "all_requested_streams_delivered": true,
-      "sample_frame_dir": "C:\\Users\\zhang\\proj-QQTT\\data\\ffs_proof_of_life\\d455_stream_probe\\runs\\20260405T232134Z\\sample_frames\\three_camera-239222300433-239222300781-239222303506-rgbd_ir_pair-848x480-fps30-emitter-on",
-      "log_path": "C:\\Users\\zhang\\proj-QQTT\\data\\ffs_proof_of_life\\d455_stream_probe\\runs\\20260405T232134Z\\logs\\three_camera-239222300433-239222300781-239222303506-rgbd_ir_pair-848x480-fps30-emitter-on.json",
+      "sample_frame_dir": null,
+      "log_path": null,
       "error_type": "StabilityThresholdNotMet",
-      "error_message": "Case started but failed delivery / fps / stall thresholds.",
+      "error_message": "Case started but failed delivery / fps / stall thresholds during 30.0s targeted revalidation.",
       "per_camera": [
         {
           "camera_index": 0,
@@ -5657,10 +5657,10 @@
             "physical_port": "\\\\?\\usb#vid_8086&pid_0b5c&mi_00#9&235116f7&0&0000#{e5323777-f976-4f5b-9b55-b94699c46e44}\\global"
           },
           "emitter_actual": 1.0,
-          "time_to_first_frame_s": 2.7297408999984327,
+          "time_to_first_frame_s": 2.2961309000093024,
           "timeouts": 0,
           "timeouts_after_first_frame": 0,
-          "complete_framesets": 260,
+          "complete_framesets": 875,
           "all_requested_streams_delivered": true,
           "streams": {
             "color": {
@@ -5678,12 +5678,12 @@
                 3
               ],
               "image_dtype": "uint8",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873290.673,
-              "last_timestamp_ms": 1775431882517.943,
+              "frame_count": 875,
+              "first_timestamp_ms": 1775890568215.1538,
+              "last_timestamp_ms": 1775890597887.7236,
               "timestamp_monotonic": true,
-              "max_timestamp_gap_ms": 663.4833984375,
-              "observed_fps": 28.06897375407654,
+              "max_timestamp_gap_ms": 602.96728515625,
+              "observed_fps": 29.454813154964462,
               "stalled_mid_run": true,
               "stable": false
             },
@@ -5701,12 +5701,12 @@
                 848
               ],
               "image_dtype": "uint16",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873276.242,
-              "last_timestamp_ms": 1775431882511.7205,
+              "frame_count": 875,
+              "first_timestamp_ms": 1775890568207.1726,
+              "last_timestamp_ms": 1775890597880.6484,
               "timestamp_monotonic": false,
-              "max_timestamp_gap_ms": 667.229736328125,
-              "observed_fps": 28.04402604172725,
+              "max_timestamp_gap_ms": 600.193359375,
+              "observed_fps": 29.453913825426596,
               "stalled_mid_run": true,
               "stable": false
             },
@@ -5724,12 +5724,12 @@
                 848
               ],
               "image_dtype": "uint8",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873275.9268,
-              "last_timestamp_ms": 1775431882511.3809,
+              "frame_count": 875,
+              "first_timestamp_ms": 1775890568207.2937,
+              "last_timestamp_ms": 1775890597880.3108,
               "timestamp_monotonic": false,
-              "max_timestamp_gap_ms": 666.866455078125,
-              "observed_fps": 28.04410017653394,
+              "max_timestamp_gap_ms": 599.73828125,
+              "observed_fps": 29.45436917835854,
               "stalled_mid_run": true,
               "stable": false
             },
@@ -5747,12 +5747,12 @@
                 848
               ],
               "image_dtype": "uint8",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873275.9268,
-              "last_timestamp_ms": 1775431882511.3809,
+              "frame_count": 875,
+              "first_timestamp_ms": 1775890568207.2937,
+              "last_timestamp_ms": 1775890597880.3108,
               "timestamp_monotonic": false,
-              "max_timestamp_gap_ms": 666.866455078125,
-              "observed_fps": 28.04410017653394,
+              "max_timestamp_gap_ms": 599.73828125,
+              "observed_fps": 29.45436917835854,
               "stalled_mid_run": true,
               "stable": false
             }
@@ -5804,10 +5804,10 @@
             "physical_port": "\\\\?\\usb#vid_8086&pid_0b5c&mi_00#6&35a5b47a&0&0000#{e5323777-f976-4f5b-9b55-b94699c46e44}\\global"
           },
           "emitter_actual": 1.0,
-          "time_to_first_frame_s": 2.7618892999998934,
+          "time_to_first_frame_s": 2.469523899984779,
           "timeouts": 0,
           "timeouts_after_first_frame": 0,
-          "complete_framesets": 260,
+          "complete_framesets": 875,
           "all_requested_streams_delivered": true,
           "streams": {
             "color": {
@@ -5825,12 +5825,12 @@
                 3
               ],
               "image_dtype": "uint8",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873302.8208,
-              "last_timestamp_ms": 1775431882539.9836,
+              "frame_count": 875,
+              "first_timestamp_ms": 1775890568364.102,
+              "last_timestamp_ms": 1775890597943.1313,
               "timestamp_monotonic": true,
-              "max_timestamp_gap_ms": 634.085693359375,
-              "observed_fps": 28.03891242753252,
+              "max_timestamp_gap_ms": 466.76953125,
+              "observed_fps": 29.54796086199953,
               "stalled_mid_run": true,
               "stable": false
             },
@@ -5848,12 +5848,12 @@
                 848
               ],
               "image_dtype": "uint16",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873296.383,
-              "last_timestamp_ms": 1775431882532.1433,
+              "frame_count": 875,
+              "first_timestamp_ms": 1775890568360.3535,
+              "last_timestamp_ms": 1775890597933.8674,
               "timestamp_monotonic": true,
-              "max_timestamp_gap_ms": 633.715087890625,
-              "observed_fps": 28.04317055441715,
+              "max_timestamp_gap_ms": 466.62158203125,
+              "observed_fps": 29.55347147728301,
               "stalled_mid_run": true,
               "stable": false
             },
@@ -5871,12 +5871,12 @@
                 848
               ],
               "image_dtype": "uint8",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873296.4973,
-              "last_timestamp_ms": 1775431882531.7908,
+              "frame_count": 875,
+              "first_timestamp_ms": 1775890567938.2434,
+              "last_timestamp_ms": 1775890597933.5186,
               "timestamp_monotonic": true,
-              "max_timestamp_gap_ms": 633.250244140625,
-              "observed_fps": 28.044587993336744,
+              "max_timestamp_gap_ms": 888.853271484375,
+              "observed_fps": 29.137922413838503,
               "stalled_mid_run": true,
               "stable": false
             },
@@ -5894,12 +5894,12 @@
                 848
               ],
               "image_dtype": "uint8",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873296.4973,
-              "last_timestamp_ms": 1775431882531.7908,
+              "frame_count": 875,
+              "first_timestamp_ms": 1775890567938.2434,
+              "last_timestamp_ms": 1775890597933.5186,
               "timestamp_monotonic": true,
-              "max_timestamp_gap_ms": 633.250244140625,
-              "observed_fps": 28.044587993336744,
+              "max_timestamp_gap_ms": 888.853271484375,
+              "observed_fps": 29.137922413838503,
               "stalled_mid_run": true,
               "stable": false
             }
@@ -5951,10 +5951,10 @@
             "physical_port": "\\\\?\\usb#vid_8086&pid_0b5c&mi_03#9&1e0885fb&0&0003#{e5323777-f976-4f5b-9b55-b94699c46e44}\\global"
           },
           "emitter_actual": 1.0,
-          "time_to_first_frame_s": 3.3716509000005317,
+          "time_to_first_frame_s": 2.8791866000101436,
           "timeouts": 0,
           "timeouts_after_first_frame": 0,
-          "complete_framesets": 260,
+          "complete_framesets": 874,
           "all_requested_streams_delivered": true,
           "streams": {
             "color": {
@@ -5972,14 +5972,14 @@
                 3
               ],
               "image_dtype": "uint8",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873940.837,
-              "last_timestamp_ms": 1775431882577.6528,
-              "timestamp_monotonic": true,
-              "max_timestamp_gap_ms": 34.03076171875,
-              "observed_fps": 29.987903234241088,
-              "stalled_mid_run": false,
-              "stable": true
+              "frame_count": 874,
+              "first_timestamp_ms": 1775890568569.3457,
+              "last_timestamp_ms": 1775890597881.6963,
+              "timestamp_monotonic": false,
+              "max_timestamp_gap_ms": 266.821044921875,
+              "observed_fps": 29.78266780211133,
+              "stalled_mid_run": true,
+              "stable": false
             },
             "depth": {
               "requested_stream": {
@@ -5995,14 +5995,14 @@
                 848
               ],
               "image_dtype": "uint16",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873932.4932,
-              "last_timestamp_ms": 1775431882567.858,
-              "timestamp_monotonic": true,
-              "max_timestamp_gap_ms": 34.437255859375,
-              "observed_fps": 29.992942697314547,
-              "stalled_mid_run": false,
-              "stable": true
+              "frame_count": 874,
+              "first_timestamp_ms": 1775890568513.012,
+              "last_timestamp_ms": 1775890597895.145,
+              "timestamp_monotonic": false,
+              "max_timestamp_gap_ms": 408.687255859375,
+              "observed_fps": 29.71193406268692,
+              "stalled_mid_run": true,
+              "stable": false
             },
             "ir_left": {
               "requested_stream": {
@@ -6018,12 +6018,12 @@
                 848
               ],
               "image_dtype": "uint8",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873595.6353,
-              "last_timestamp_ms": 1775431882567.5127,
+              "frame_count": 874,
+              "first_timestamp_ms": 1775890568512.6665,
+              "last_timestamp_ms": 1775890597894.788,
               "timestamp_monotonic": false,
-              "max_timestamp_gap_ms": 436.768310546875,
-              "observed_fps": 28.867982391810784,
+              "max_timestamp_gap_ms": 442.190673828125,
+              "observed_fps": 29.71194566609807,
               "stalled_mid_run": true,
               "stable": false
             },
@@ -6041,12 +6041,12 @@
                 848
               ],
               "image_dtype": "uint8",
-              "frame_count": 260,
-              "first_timestamp_ms": 1775431873595.6353,
-              "last_timestamp_ms": 1775431882567.5127,
+              "frame_count": 874,
+              "first_timestamp_ms": 1775890568512.6665,
+              "last_timestamp_ms": 1775890597894.788,
               "timestamp_monotonic": false,
-              "max_timestamp_gap_ms": 436.768310546875,
-              "observed_fps": 28.867982391810784,
+              "max_timestamp_gap_ms": 442.190673828125,
+              "observed_fps": 29.71194566609807,
               "stalled_mid_run": true,
               "stable": false
             }
@@ -6087,7 +6087,9 @@
           }
         }
       ],
-      "notes": []
+      "notes": [
+        "2026-04-11 targeted 30.0s revalidation refreshed this case; temporary probe artifacts were cleaned after capture."
+      ]
     },
     {
       "schema_version": "d455_stream_probe_case_v1",
@@ -11661,5 +11663,9 @@
     "evidence_case_ids": [
       "three_camera-239222300433-239222300781-239222303506-ir_pair-848x480-fps30-emitter-on"
     ]
-  }
+  },
+  "refresh_notes": [
+    "2026-04-11: refreshed the three-camera rgbd_ir_pair 848x480@30 emitter=on case with a targeted 30.0s revalidation run.",
+    "Temporary targeted probe sample/log artifacts were cleaned after the run."
+  ]
 }

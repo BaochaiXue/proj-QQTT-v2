@@ -271,7 +271,7 @@ Face-patch smoothness comparison:
 
 ## Architecture Note
 
-On 2026-04-09 the visualization implementation was refactored so the user-facing workflows above keep the same product boundary, but the internal code is now split into explicit layers for case IO, artifact writing, crop/view math, layouts, renderers, and workflow wrappers. See:
+On 2026-04-09 and 2026-04-10 the visualization implementation was refactored and then cleaned up so the user-facing workflows above keep the same product boundary, but the internal code is now split into explicit layers for case IO, artifact writing, crop/view math, layouts, renderers, and workflow wrappers. See:
 
-- `docs/generated/visual_stack_inventory.md`
-- `docs/generated/visual_stack_refactor_validation.md`
+- `docs/generated/visual_stack_cleanup_inventory.md`
+- `docs/generated/visual_stack_cleanup_validation.md`
