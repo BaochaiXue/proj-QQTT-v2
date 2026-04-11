@@ -22,6 +22,8 @@ LOW_LEVEL_MODULES = {
     "data_process.visualization.renderers.__init__",
     "data_process.visualization.renderers.fallback",
     "data_process.visualization.roi",
+    "data_process.visualization.selection_contracts",
+    "data_process.visualization.semantic_world",
     "data_process.visualization.source_compare",
     "data_process.visualization.support_compare",
     "data_process.visualization.types",

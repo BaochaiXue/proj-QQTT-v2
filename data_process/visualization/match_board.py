@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 
+from .calibration_frame import SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND, SEMANTIC_WORLD_FRAME_KIND, build_visualization_frame_contract
 from .io_artifacts import build_artifact_sets, write_image, write_json
 from .layouts import compose_turntable_board
 from .compare_scene import (
@@ -141,6 +142,7 @@ def run_match_board_workflow(
     angle_mode: str = "auto",
     angle_deg: float | None = None,
     write_debug: bool = False,
+    display_frame: str = "semantic_world",
 ) -> dict[str, Any]:
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -173,6 +175,7 @@ def run_match_board_workflow(
         roi_z_min=roi_z_min,
         roi_z_max=roi_z_max,
         manual_image_roi_json=manual_image_roi_json,
+        display_frame=display_frame,
     )
     selection = state["selection"]
     scene = state["scene"]
@@ -285,8 +288,18 @@ def run_match_board_workflow(
         "native_case_dir": str(selection["native_case_dir"]),
         "ffs_case_dir": str(selection["ffs_case_dir"]),
         "frame_idx": int(selection["native_frame_idx"]),
+        "display_frame": display_frame,
         "projection_mode": projection_mode,
         "scene_crop_mode": scene_crop_mode,
+        "visualization_frame_contract": build_visualization_frame_contract(
+            display_frame=display_frame,
+            uses_semantic_world=display_frame == "semantic_world",
+            semantic_world_frame_kind=SEMANTIC_WORLD_FRAME_KIND if display_frame == "semantic_world" else None,
+            overview_display_frame_kind=SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND if display_frame == "semantic_world" else "calibration_world_topdown_display",
+            notes=[
+                "This board reuses the shared single-frame compare scene and angle-selection contract.",
+            ],
+        ),
         "match_angle_selection": build_angle_selection_summary(
             mode=angle_mode,
             selected_step=selected_step,

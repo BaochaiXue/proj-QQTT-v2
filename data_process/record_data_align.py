@@ -323,6 +323,9 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     if args.depth_backend in {"ffs", "both"}:
         from data_process.depth_backends import FastFoundationStereoRunner, align_depth_to_color, quantize_depth_with_invalid_zero
 
+        # This is the production entrypoint for FFS inside the repo.
+        # We load the external Fast-FoundationStereo model once here,
+        # then reuse it for every aligned frame/camera pair below.
         runner_cls = runner_factory or FastFoundationStereoRunner
         runner = runner_cls(
             ffs_repo=args.ffs_repo,
@@ -366,6 +369,9 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
                 if left_image is None or right_image is None:
                     raise RuntimeError(f"Failed to load IR stereo pair for camera={camera_idx} step={src_step}")
 
+                # This is the actual FFS call: feed this camera's own
+                # IR-left / IR-right pair into the external model and get
+                # disparity + IR-left metric depth back.
                 ffs_output = runner.run_pair(
                     left_image,
                     right_image,

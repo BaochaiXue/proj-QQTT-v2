@@ -42,6 +42,7 @@ class VisualMakeMatchBoardSmokeTest(unittest.TestCase):
             self.assertTrue((output_dir / "01_pointcloud_match_board.png").is_file())
             summary = json.loads((output_dir / "match_board_summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["top_level_output"], str((output_dir / "01_pointcloud_match_board.png").resolve()))
+            self.assertEqual(summary["display_frame"], "semantic_world")
 
 
 if __name__ == "__main__":

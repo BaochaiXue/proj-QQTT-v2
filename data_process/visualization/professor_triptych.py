@@ -6,6 +6,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .calibration_frame import SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND, SEMANTIC_WORLD_FRAME_KIND, build_visualization_frame_contract
 from .compare_scene import (
     bbox_area as _bbox_area,
     build_orbit_state as _build_orbit_state,
@@ -629,6 +630,7 @@ def run_professor_triptych_workflow(
     write_debug: bool = False,
     write_video: bool = False,
     write_keyframes: bool = False,
+    display_frame: str = "semantic_world",
 ) -> dict[str, Any]:
     if render_mode not in RENDER_MODES:
         raise ValueError(f"Unsupported render_mode: {render_mode}")
@@ -670,6 +672,7 @@ def run_professor_triptych_workflow(
         roi_z_min=roi_z_min,
         roi_z_max=roi_z_max,
         manual_image_roi_json=manual_image_roi_json,
+        display_frame=display_frame,
     )
     selection = turntable_state["selection"]
     scene = turntable_state["scene"]
@@ -764,9 +767,19 @@ def run_professor_triptych_workflow(
         "native_case_dir": str(selection["native_case_dir"]),
         "ffs_case_dir": str(selection["ffs_case_dir"]),
         "frame_idx": int(selection["native_frame_idx"]),
+        "display_frame": display_frame,
         "projection_mode": projection_mode,
         "scene_crop_mode": scene_crop_mode,
         "render_mode": render_mode,
+        "visualization_frame_contract": build_visualization_frame_contract(
+            display_frame=display_frame,
+            uses_semantic_world=display_frame == "semantic_world",
+            semantic_world_frame_kind=SEMANTIC_WORLD_FRAME_KIND if display_frame == "semantic_world" else None,
+            overview_display_frame_kind=SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND if display_frame == "semantic_world" else "calibration_world_topdown_display",
+            notes=[
+                "This workflow reuses the shared single-frame compare scene, display-frame, and angle-selection contracts.",
+            ],
+        ),
         "hero_angle_selection": build_angle_selection_summary(
             mode=angle_mode,
             selected_step=selected_step,

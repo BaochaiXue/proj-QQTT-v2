@@ -76,6 +76,10 @@ Full deterministic validation:
 
 - `python scripts/harness/check_all.py`
 
+Outcome:
+
+- passed
+
 ## Result
 
 - shared display-frame semantics are now owned by one focused module

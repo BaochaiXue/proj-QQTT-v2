@@ -34,6 +34,7 @@ class MatchBoardOutputContractSmokeTest(unittest.TestCase):
             summary = json.loads((output_dir / "match_board_summary.json").read_text(encoding="utf-8"))
             self.assertIn("match_angle_selection", summary)
             self.assertIn("top_level_output", summary)
+            self.assertEqual(summary["display_frame"], "semantic_world")
             self.assertIn("product_artifacts", summary)
             self.assertIn("debug_artifacts", summary)
             self.assertFalse(summary["debug_artifacts"]["enabled"])

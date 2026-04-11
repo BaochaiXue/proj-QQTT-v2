@@ -33,6 +33,7 @@ class ProfessorTriptychOutputContractSmokeTest(unittest.TestCase):
             )
             summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["frame_idx"], 0)
+            self.assertEqual(summary["display_frame"], "semantic_world")
             self.assertFalse(summary["debug_written"])
             self.assertIn("hero_angle_selection", summary)
             self.assertIn("truth_camera_pair", summary)

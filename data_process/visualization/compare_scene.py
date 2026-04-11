@@ -8,6 +8,7 @@ import numpy as np
 
 from .camera_frusta import build_camera_frustum_geometry, extract_camera_poses
 from .pointcloud_compare import estimate_ortho_scale
+from .semantic_world import infer_display_frame_state
 from .source_compare import render_mismatch_residual
 from .support_compare import compute_support_count_map, summarize_support_counts
 from .turntable_compare import (
@@ -93,6 +94,7 @@ def build_turntable_scene_state(
     roi_z_min: float | None,
     roi_z_max: float | None,
     manual_image_roi_json: str | Path | None,
+    display_frame: str = "semantic_world",
 ) -> dict[str, Any]:
     selection_model = _resolve_single_frame_case_selection_model(
         aligned_root=Path(aligned_root).resolve(),
@@ -159,11 +161,22 @@ def build_turntable_scene_state(
         context_max_points_per_camera=max_points_per_camera,
         crop_bounds_override=refinement["final_crop"],
     )
+    display_state = infer_display_frame_state(
+        selection=selection,
+        scene=scene,
+        display_frame=display_frame,
+    )
+    selection = {
+        **selection,
+        "display_frame": display_frame,
+        "display_camera_c2w": display_state["camera_c2w"],
+    }
     return {
         "selection": selection,
         "manual_image_roi_by_camera": manual_image_roi_by_camera,
-        "scene": scene,
+        "scene": display_state["scene"],
         "refinement": refinement,
+        "display_state": display_state,
     }
 
 
@@ -183,7 +196,7 @@ def build_orbit_state(
     projection_mode: str,
 ) -> dict[str, Any]:
     camera_poses = extract_camera_poses(
-        selection["native_c2w"],
+        selection.get("display_camera_c2w", selection["native_c2w"]),
         serial_numbers=selection["serial_numbers"],
         camera_ids=selection["camera_ids"],
     )

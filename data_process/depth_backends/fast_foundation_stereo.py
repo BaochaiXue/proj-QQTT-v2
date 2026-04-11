@@ -176,6 +176,8 @@ class FastFoundationStereoRunner:
         left_tensor, right_tensor = padder.pad(left_tensor, right_tensor)
 
         with torch.amp.autocast("cuda", enabled=True, dtype=self.AMP_DTYPE):
+            # This is the external Fast-FoundationStereo network forward pass.
+            # Input: this camera's left/right stereo images. Output: disparity.
             disparity = self.model.forward(
                 left_tensor,
                 right_tensor,

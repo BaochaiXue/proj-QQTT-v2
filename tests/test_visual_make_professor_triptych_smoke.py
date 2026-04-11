@@ -44,6 +44,7 @@ class VisualMakeProfessorTriptychSmokeTest(unittest.TestCase):
             self.assertTrue((output_dir / "03_truth_board.png").is_file())
             summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["top_level_outputs"]["hero_compare"], str((output_dir / "01_hero_compare.png").resolve()))
+            self.assertEqual(summary["display_frame"], "semantic_world")
 
 
 if __name__ == "__main__":

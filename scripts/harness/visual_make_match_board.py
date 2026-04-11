@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=Path, default=None)
     parser.add_argument("--renderer", choices=("auto", "open3d", "fallback"), default="fallback")
     parser.add_argument("--projection_mode", choices=("perspective", "orthographic"), default="perspective")
+    parser.add_argument("--display_frame", choices=("calibration_world", "semantic_world"), default="semantic_world")
     parser.add_argument("--scene_crop_mode", choices=("none", "auto_table_bbox", "auto_object_bbox", "manual_xyz_roi"), default="auto_object_bbox")
     parser.add_argument("--crop_margin_xy", type=float, default=0.12)
     parser.add_argument("--crop_min_z", type=float, default=-0.15)
@@ -81,6 +82,7 @@ def main() -> int:
         frame_idx=args.frame_idx,
         renderer=args.renderer,
         projection_mode=args.projection_mode,
+        display_frame=args.display_frame,
         scene_crop_mode=args.scene_crop_mode,
         crop_margin_xy=args.crop_margin_xy,
         crop_min_z=args.crop_min_z,
