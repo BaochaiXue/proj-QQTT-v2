@@ -8,11 +8,13 @@ import numpy as np
 import pyrealsense2 as rs
 from .single_realsense import SingleRealsense
 
+
 class MultiRealsense:
-    def __init__(self,
-        serial_numbers: Optional[List[str]]=None,
-        shm_manager: Optional[SharedMemoryManager]=None,
-        resolution=(1280,720),
+    def __init__(
+        self,
+        serial_numbers: Optional[List[str]] = None,
+        shm_manager: Optional[SharedMemoryManager] = None,
+        resolution=(1280, 720),
         capture_fps=30,
         put_fps=None,
         put_downsample=True,
@@ -21,13 +23,13 @@ class MultiRealsense:
         process_depth=False,
         enable_ir_left=False,
         enable_ir_right=False,
-        emitter='auto',
+        emitter="auto",
         get_max_k=30,
-        advanced_mode_config: Optional[Union[dict, List[dict]]]=None,
-        transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]]=None,
-        vis_transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]]=None,
-        verbose=False
-        ):
+        advanced_mode_config: Optional[Union[dict, List[dict]]] = None,
+        transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]] = None,
+        vis_transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]] = None,
+        verbose=False,
+    ):
         if shm_manager is None:
             shm_manager = SharedMemoryManager()
             shm_manager.start()
@@ -35,12 +37,9 @@ class MultiRealsense:
             serial_numbers = SingleRealsense.get_connected_devices_serial()
         n_cameras = len(serial_numbers)
 
-        advanced_mode_config = repeat_to_list(
-            advanced_mode_config, n_cameras, dict)
-        transform = repeat_to_list(
-            transform, n_cameras, Callable)
-        vis_transform = repeat_to_list(
-            vis_transform, n_cameras, Callable)
+        advanced_mode_config = repeat_to_list(advanced_mode_config, n_cameras, dict)
+        transform = repeat_to_list(transform, n_cameras, Callable)
+        vis_transform = repeat_to_list(vis_transform, n_cameras, Callable)
 
         cameras = dict()
         for i, serial in enumerate(serial_numbers):
@@ -62,9 +61,9 @@ class MultiRealsense:
                 transform=transform[i],
                 vis_transform=vis_transform[i],
                 is_master=(i == 0),
-                verbose=verbose
+                verbose=verbose,
             )
-        
+
         self.cameras = cameras
         self.serial_numbers = serial_numbers
         self.shm_manager = shm_manager
@@ -74,14 +73,14 @@ class MultiRealsense:
     def __enter__(self):
         self.start()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
-    
+
     @property
     def n_cameras(self):
         return len(self.cameras)
-    
+
     @property
     def is_ready(self):
         is_ready = True
@@ -89,7 +88,7 @@ class MultiRealsense:
             if not camera.is_ready:
                 is_ready = False
         return is_ready
-    
+
     def start(self, wait=True, put_start_time=None):
         if put_start_time is None:
             put_start_time = time.time()
@@ -98,23 +97,23 @@ class MultiRealsense:
 
         if wait:
             self.start_wait()
-    
+
     def stop(self, wait=True):
         for camera in self.cameras.values():
             camera.stop(wait=False)
-        
+
         if wait:
             self.stop_wait()
 
     def start_wait(self):
         for camera in self.cameras.values():
-            print('processing camera {}'.format(camera.serial_number))
+            print("processing camera {}".format(camera.serial_number))
             camera.start_wait()
 
     def stop_wait(self):
         for camera in self.cameras.values():
             camera.join()
-    
+
     def get(self, k=None, index=None, out=None) -> Dict[int, Dict[str, np.ndarray]]:
         """
         Return order T,H,W,C
@@ -139,7 +138,7 @@ class MultiRealsense:
             this_out = camera.get(k=k, out=this_out)
             out[i] = this_out
         return out
-    
+
     def set_color_option(self, option, value):
         n_camera = len(self.cameras)
         value = repeat_to_list(value, n_camera, numbers.Number)
@@ -161,7 +160,7 @@ class MultiRealsense:
                 self.set_color_option(rs.option.exposure, exposure)
             if gain is not None:
                 self.set_color_option(rs.option.gain, gain)
-    
+
     def set_white_balance(self, white_balance=None):
         if white_balance is None:
             self.set_color_option(rs.option.enable_auto_white_balance, 1.0)
@@ -177,7 +176,7 @@ class MultiRealsense:
 
     def get_stream_metadata(self):
         return [c.get_stream_metadata() for c in self.cameras.values()]
-    
+
     def restart_put(self, start_time):
         for camera in self.cameras.values():
             camera.restart_put(start_time)

@@ -22,6 +22,8 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `docs/external-deps.md`: external repo / checkpoint source of truth
 - `docs/envs.md`: validated local conda environments
 - `docs/exec-plans/`: first-class execution plans for non-trivial changes
+- `docs/generated/visual_stack_cleanup_inventory.md`: current visualization ownership / artifact inventory
+- `docs/generated/visual_stack_cleanup_validation.md`: latest cleanup-pass validation notes
 - `scripts/harness/check_scope.py`: deterministic repo scope guard
 - `scripts/harness/check_visual_architecture.py`: visualization layering / file-size guard
 - `tests/test_record_data_align_smoke.py`: smoke test for aligned-case generation

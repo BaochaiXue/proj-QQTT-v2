@@ -299,6 +299,8 @@ class SingleRealsense(mp.Process):
             rs_config.enable_stream(rs.stream.color, w, h, rs.format.bgr8, fps)
         if self.enable_depth:
             rs_config.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)
+        # FFS consumes the D455's native stereo pair, so we open infrared
+        # stream index 1 as IR-left and index 2 as IR-right explicitly.
         if self.enable_ir_left:
             rs_config.enable_stream(rs.stream.infrared, 1, w, h, rs.format.y8, fps)
         if self.enable_ir_right:
@@ -514,6 +516,9 @@ class SingleRealsense(mp.Process):
                         data["depth"] = self.depth_process(depth_frame).get_data()
                     else:
                         data["depth"] = np.asarray(depth_frame.get_data())
+                # Read IR from the raw frameset before color alignment.
+                # The aligned frameset is only for the hardware depth/color path;
+                # FFS must use the original left/right stereo images.
                 if self.enable_ir_left:
                     data["ir_left"] = np.asarray(
                         raw_frameset.get_infrared_frame(1).get_data()
