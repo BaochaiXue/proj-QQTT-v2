@@ -223,7 +223,7 @@ Optional raw Rerun diagnostic:
 
 ```bash
 python -m pip install rerun-sdk
-python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --rerun_output viewer_and_rrd
+python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --rerun_output viewer_and_rrd --viewer_layout horizontal_triple
 ```
 
 This raw workflow keeps calibration-world coordinates, logs multi-frame `native / ffs_remove_1 / ffs_remove_0` fused point clouds to a Rerun timeline, and writes fused full-scene PLYs for each frame.
@@ -421,12 +421,13 @@ The temporal fused-cloud utility remains available as a secondary diagnostic. It
 
 ```bash
 python -m pip install rerun-sdk
-python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --rerun_output viewer_and_rrd
+python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --rerun_output viewer_and_rrd --viewer_layout horizontal_triple
 ```
 
 This workflow:
 
 - uses the full shared aligned frame range by default
+- can pin the viewer to a `1x3` layout through `--viewer_layout horizontal_triple`
 - keeps raw calibration-world coordinates
 - fuses 3 cameras into one full-scene point cloud for each variant
 - re-runs FFS from aligned `ir_left` / `ir_right`

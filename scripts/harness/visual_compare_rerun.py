@@ -28,6 +28,11 @@ def parse_args() -> argparse.Namespace:
         choices=("viewer_and_rrd", "viewer_only", "rrd_only"),
         default="viewer_and_rrd",
     )
+    parser.add_argument(
+        "--viewer_layout",
+        choices=("default", "horizontal_triple"),
+        default="default",
+    )
     parser.add_argument("--voxel_size", type=float, default=None)
     parser.add_argument("--max_points_per_camera", type=int, default=None)
     parser.add_argument("--depth_min_m", type=float, default=0.1)
@@ -54,6 +59,7 @@ def main() -> int:
         ffs_repo=args.ffs_repo,
         ffs_model_path=args.ffs_model_path,
         rerun_output=args.rerun_output,
+        viewer_layout=args.viewer_layout,
         voxel_size=args.voxel_size,
         max_points_per_camera=args.max_points_per_camera,
         depth_min_m=args.depth_min_m,

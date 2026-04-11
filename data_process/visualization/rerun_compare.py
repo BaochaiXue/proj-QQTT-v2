@@ -28,6 +28,7 @@ from .io_case import (
 
 
 RERUN_OUTPUT_MODES = ("viewer_and_rrd", "viewer_only", "rrd_only")
+VIEWER_LAYOUT_MODES = ("default", "horizontal_triple")
 
 
 def _import_rerun():
@@ -53,6 +54,23 @@ def _set_rerun_frame_time(rr: Any, frame_idx: int) -> None:
         rr.set_time_sequence("frame", int(frame_idx))
         return
     rr.set_time("frame", sequence=int(frame_idx))
+
+
+def _build_viewer_blueprint(rr: Any, *, viewer_layout: str) -> Any | None:
+    if viewer_layout == "default":
+        return None
+    if viewer_layout != "horizontal_triple":
+        raise ValueError(f"Unsupported viewer_layout: {viewer_layout}")
+
+    rrb = rr.blueprint
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(origin="/", contents=["native"], name="Native"),
+            rrb.Spatial3DView(origin="/", contents=["ffs_remove_1"], name="FFS remove_invisible=1"),
+            rrb.Spatial3DView(origin="/", contents=["ffs_remove_0"], name="FFS remove_invisible=0"),
+            name="Point Cloud Compare 1x3",
+        )
+    )
 
 
 def _resolve_ffs_runtime_config(
@@ -274,6 +292,7 @@ def run_rerun_compare_workflow(
     ffs_repo: str | Path | None = None,
     ffs_model_path: str | Path | None = None,
     rerun_output: str = "viewer_and_rrd",
+    viewer_layout: str = "default",
     voxel_size: float | None = None,
     max_points_per_camera: int | None = None,
     depth_min_m: float = 0.1,
@@ -283,6 +302,8 @@ def run_rerun_compare_workflow(
 ) -> dict[str, Any]:
     if rerun_output not in RERUN_OUTPUT_MODES:
         raise ValueError(f"Unsupported rerun_output: {rerun_output}")
+    if viewer_layout not in VIEWER_LAYOUT_MODES:
+        raise ValueError(f"Unsupported viewer_layout: {viewer_layout}")
 
     native_case_dir = aligned_root / realsense_case
     ffs_case_dir = aligned_root / ffs_case
@@ -319,8 +340,14 @@ def run_rerun_compare_workflow(
     spawn_viewer = rerun_output in ("viewer_and_rrd", "viewer_only")
     rrd_path = output_dir / "pointcloud_compare.rrd"
     rr.init("qqtt_pointcloud_compare", spawn=spawn_viewer)
+    blueprint = _build_viewer_blueprint(rr, viewer_layout=viewer_layout)
+    if blueprint is not None and spawn_viewer and hasattr(rr, "send_blueprint"):
+        rr.send_blueprint(blueprint)
     if rerun_output in ("viewer_and_rrd", "rrd_only"):
-        rr.save(str(rrd_path))
+        if blueprint is not None:
+            rr.save(str(rrd_path), default_blueprint=blueprint)
+        else:
+            rr.save(str(rrd_path))
 
     summary_frames = []
     for time_idx, (native_frame_idx, ffs_frame_idx) in enumerate(frame_pairs):
@@ -383,6 +410,7 @@ def run_rerun_compare_workflow(
         "aligned_root": str(aligned_root.resolve()),
         "output_dir": str(output_dir.resolve()),
         "rerun_output": rerun_output,
+        "viewer_layout": viewer_layout,
         "rrd_path": str(rrd_path.resolve()) if rerun_output in ("viewer_and_rrd", "rrd_only") else None,
         "ffs_runner": {
             "ffs_repo": str(Path(str(ffs_runtime["ffs_repo"])).resolve()),

@@ -367,12 +367,13 @@ Raw multi-frame Rerun remove-invisible compare:
 Use this when the main question is not slide composition, but “how do the fused full-scene point clouds evolve over time, and what exactly changes when `remove_invisible` is on vs off?”:
 
 ```bash
-python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --rerun_output viewer_and_rrd
+python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --rerun_output viewer_and_rrd --viewer_layout horizontal_triple
 ```
 
 This workflow:
 
 - uses the full shared aligned frame range by default
+- can force a `1x3` horizontal viewer layout so `native`, `ffs_remove_1`, and `ffs_remove_0` stay side by side while you scrub time
 - keeps raw calibration-world coordinates
 - fuses all 3 cameras into one full-scene cloud for each variant
 - re-runs FFS from aligned `ir_left` / `ir_right` instead of reusing the aligned `depth/` output
