@@ -119,7 +119,7 @@ class StereoOrderRegistrationWorkflowSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             turntable_state, swapped_camera_clouds = _synthetic_turntable_state(Path(tmp_dir))
             output_dir = Path(tmp_dir) / "registration_board"
-            with mock.patch("data_process.visualization.stereo_audit._build_turntable_scene", return_value=turntable_state), \
+            with mock.patch("data_process.visualization.stereo_audit.build_turntable_scene_state", return_value=turntable_state), \
                     mock.patch("data_process.visualization.stereo_audit._build_swapped_ffs_camera_clouds", return_value=swapped_camera_clouds):
                 run_stereo_order_registration_workflow(
                     aligned_root=Path(tmp_dir),
@@ -152,7 +152,7 @@ class StereoOrderRegistrationWorkflowSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             turntable_state, swapped_camera_clouds = _synthetic_turntable_state(Path(tmp_dir))
             output_dir = Path(tmp_dir) / "registration_board"
-            with mock.patch("data_process.visualization.stereo_audit._build_turntable_scene", return_value=turntable_state), \
+            with mock.patch("data_process.visualization.stereo_audit.build_turntable_scene_state", return_value=turntable_state), \
                     mock.patch("data_process.visualization.stereo_audit._build_swapped_ffs_camera_clouds", return_value=swapped_camera_clouds):
                 run_stereo_order_registration_workflow(
                     aligned_root=Path(tmp_dir),
@@ -172,7 +172,7 @@ class StereoOrderRegistrationWorkflowSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             turntable_state, swapped_camera_clouds = _synthetic_turntable_state(Path(tmp_dir))
             output_dir = Path(tmp_dir) / "registration_board"
-            with mock.patch("data_process.visualization.stereo_audit._build_turntable_scene", return_value=turntable_state), \
+            with mock.patch("data_process.visualization.stereo_audit.build_turntable_scene_state", return_value=turntable_state), \
                     mock.patch("data_process.visualization.stereo_audit._build_swapped_ffs_camera_clouds", return_value=swapped_camera_clouds):
                 run_stereo_order_registration_workflow(
                     aligned_root=Path(tmp_dir),

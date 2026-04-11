@@ -5,14 +5,15 @@ from typing import Any
 
 import numpy as np
 
-from .io_artifacts import write_image, write_json
+from .io_artifacts import build_artifact_sets, write_image, write_json
 from .layouts import compose_turntable_board
-from .professor_triptych import (
-    _build_orbit_state,
-    _build_turntable_scene,
-    _compute_object_view_stats,
-    _ortho_scale_for_view,
+from .compare_scene import (
+    build_orbit_state,
+    build_turntable_scene_state,
+    compute_object_view_stats,
+    ortho_scale_for_view,
 )
+from .selection_contracts import build_angle_selection_summary, select_angle_candidate
 from .source_compare import render_mismatch_residual, render_source_attribution_overlay
 from .support_compare import compute_support_count_map, overlay_support_legend, render_support_count_map, summarize_support_counts
 
@@ -34,23 +35,11 @@ def select_match_angle(
     angle_mode: str,
     angle_deg: float | None,
 ) -> dict[str, Any]:
-    if not step_metrics:
-        raise ValueError("No step metrics available for match-angle selection.")
-    if angle_mode == "explicit":
-        if angle_deg is None:
-            raise ValueError("angle_mode=explicit requires angle_deg.")
-        return min(
-            step_metrics,
-            key=lambda item: (
-                abs(float(item["angle_deg"]) - float(angle_deg)),
-                int(item["step_idx"]),
-            ),
-        )
-    supported = [item for item in step_metrics if bool(item["is_supported"])]
-    candidates = supported if supported else step_metrics
-    ranked = sorted(
-        candidates,
-        key=lambda item: (
+    return select_angle_candidate(
+        step_metrics,
+        angle_mode=angle_mode,
+        angle_deg=angle_deg,
+        ranking_key=lambda item: (
             -float(item["final_score"]),
             -float(item["object_multi_camera_support_ratio"]),
             float(item["object_mismatch_residual_m"]),
@@ -61,7 +50,6 @@ def select_match_angle(
             int(item["step_idx"]),
         ),
     )
-    return ranked[0]
 
 
 def _compute_match_step_metrics(
@@ -75,8 +63,8 @@ def _compute_match_step_metrics(
     metrics: list[dict[str, Any]] = []
     for orbit_step in orbit_steps:
         view_config = orbit_step["view_config"]
-        ortho_scale = _ortho_scale_for_view(scene=scene, view_config=view_config, projection_mode=projection_mode)
-        native_metrics = _compute_object_view_stats(
+        ortho_scale = ortho_scale_for_view(scene=scene, view_config=view_config, projection_mode=projection_mode)
+        native_metrics = compute_object_view_stats(
             object_camera_clouds=scene["native_object_camera_clouds"],
             combined_camera_clouds=scene["native_render_camera_clouds"],
             view_config=view_config,
@@ -85,7 +73,7 @@ def _compute_match_step_metrics(
             width=width,
             height=height,
         )
-        ffs_metrics = _compute_object_view_stats(
+        ffs_metrics = compute_object_view_stats(
             object_camera_clouds=scene["ffs_object_camera_clouds"],
             combined_camera_clouds=scene["ffs_render_camera_clouds"],
             view_config=view_config,
@@ -157,7 +145,7 @@ def run_match_board_workflow(
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    state = _build_turntable_scene(
+    state = build_turntable_scene_state(
         aligned_root=Path(aligned_root).resolve(),
         case_name=case_name,
         realsense_case=realsense_case,
@@ -188,7 +176,7 @@ def run_match_board_workflow(
     )
     selection = state["selection"]
     scene = state["scene"]
-    orbit_state = _build_orbit_state(
+    orbit_state = build_orbit_state(
         selection=selection,
         scene=scene,
         renderer=renderer,
@@ -211,7 +199,7 @@ def run_match_board_workflow(
     )
     selected_step = select_match_angle(step_metrics, angle_mode=angle_mode, angle_deg=angle_deg)
     selected_view = orbit_state["orbit_steps"][int(selected_step["step_idx"])]["view_config"]
-    ortho_scale = _ortho_scale_for_view(scene=scene, view_config=selected_view, projection_mode=projection_mode)
+    ortho_scale = ortho_scale_for_view(scene=scene, view_config=selected_view, projection_mode=projection_mode)
 
     native_source, _ = render_source_attribution_overlay(
         scene["native_object_camera_clouds"],
@@ -282,6 +270,15 @@ def run_match_board_workflow(
     )
     output_path = output_dir / "01_pointcloud_match_board.png"
     write_image(output_path, board)
+    summary_path = output_dir / "match_board_summary.json"
+    product_artifacts, debug_artifacts = build_artifact_sets(
+        output_dir=output_dir,
+        product_paths={"pointcloud_match_board": output_path},
+        summary_paths={"match_board_summary": summary_path},
+        debug_enabled=bool(write_debug),
+        debug_dir=output_dir / "debug" if write_debug else None,
+        debug_paths={"match_angle_candidates": output_dir / "debug" / "match_angle_candidates.json"} if write_debug else None,
+    )
 
     summary = {
         "same_case_mode": bool(selection["same_case_mode"]),
@@ -290,20 +287,11 @@ def run_match_board_workflow(
         "frame_idx": int(selection["native_frame_idx"]),
         "projection_mode": projection_mode,
         "scene_crop_mode": scene_crop_mode,
-        "match_angle_selection": {
-            "mode": angle_mode,
-            "selected_step_idx": int(selected_step["step_idx"]),
-            "selected_angle_deg": float(selected_step["angle_deg"]),
-            "selected_is_supported": bool(selected_step["is_supported"]),
-            "object_projected_area_ratio": float(selected_step["object_projected_area_ratio"]),
-            "object_bbox_fill_ratio": float(selected_step["object_bbox_fill_ratio"]),
-            "object_multi_camera_support_ratio": float(selected_step["object_multi_camera_support_ratio"]),
-            "object_mismatch_residual_m": float(selected_step["object_mismatch_residual_m"]),
-            "context_dominance_penalty": float(selected_step["context_dominance_penalty"]),
-            "silhouette_penalty": float(selected_step["silhouette_penalty"]),
-            "final_score": float(selected_step["final_score"]),
-            "candidate_count": int(len(step_metrics)),
-        },
+        "match_angle_selection": build_angle_selection_summary(
+            mode=angle_mode,
+            selected_step=selected_step,
+            candidate_count=len(step_metrics),
+        ),
         "native_support_summary": {
             **summarize_support_counts(native_support_map["support_count"], native_support_map["valid"]),
             **native_mismatch_metrics["summary"],
@@ -314,8 +302,10 @@ def run_match_board_workflow(
         },
         "top_level_output": str(output_path),
         "debug_written": bool(write_debug),
+        "product_artifacts": product_artifacts.to_dict(),
+        "debug_artifacts": debug_artifacts.to_dict(),
     }
-    write_json(output_dir / "match_board_summary.json", summary)
+    write_json(summary_path, summary)
 
     if write_debug:
         debug_dir = output_dir / "debug"

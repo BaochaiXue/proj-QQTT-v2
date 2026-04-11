@@ -221,6 +221,21 @@ When `--write_debug` is enabled, selection-specific artifacts stay under `debug/
 
 - `debug/match_angle_candidates.json`
 
+For a three-figure slide pack that reuses the same object-first compare stack but answers a broader presentation question, use:
+
+```bash
+python scripts/harness/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0
+```
+
+Default top-level outputs are only:
+
+- `01_hero_compare.png`
+- `02_merge_evidence.png`
+- `03_truth_board.png`
+- `summary.json`
+
+Selection/debug artifacts stay under `debug/` only when requested.
+
 Use the single-frame object-centric coverage-aware orbit compare when you need the richer fused-cloud diagnostics behind that single board:
 
 Same-case comparison when an aligned case contains both native and FFS depth:
@@ -402,6 +417,12 @@ Optional closeup/debug outputs stay gated:
 ```bash
 python scripts/harness/visual_compare_stereo_order_pcd.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --write_closeup --write_debug
 ```
+
+Across the current professor-facing workflows, the output rule is now explicit:
+
+- top-level directory contains only the intended product artifacts for that workflow
+- optional diagnostics go under `debug/`
+- selection summaries use shared typed contracts for display-frame, angle-selection, and product/debug artifact sets
 
 Use a left/right audit on one aligned FFS case, one camera, and one frame when you want to verify that the repo is really feeding Fast-FoundationStereo the correct IR ordering:
 

@@ -34,6 +34,9 @@ class MatchBoardOutputContractSmokeTest(unittest.TestCase):
             summary = json.loads((output_dir / "match_board_summary.json").read_text(encoding="utf-8"))
             self.assertIn("match_angle_selection", summary)
             self.assertIn("top_level_output", summary)
+            self.assertIn("product_artifacts", summary)
+            self.assertIn("debug_artifacts", summary)
+            self.assertFalse(summary["debug_artifacts"]["enabled"])
             self.assertFalse(summary["debug_written"])
 
     def test_debug_gating_writes_debug_dir_only_when_requested(self) -> None:
@@ -59,6 +62,8 @@ class MatchBoardOutputContractSmokeTest(unittest.TestCase):
             self.assertIn("01_pointcloud_match_board.png", top_level_names)
             self.assertIn("match_board_summary.json", top_level_names)
             self.assertIn("debug", top_level_names)
+            summary = json.loads((output_dir / "match_board_summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(summary["debug_artifacts"]["enabled"])
 
 
 if __name__ == "__main__":

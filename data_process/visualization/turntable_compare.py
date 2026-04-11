@@ -63,9 +63,8 @@ from .source_compare import (
 )
 from .support_compare import compute_support_count_map, overlay_support_legend, render_support_count_map, summarize_support_counts
 from .semantic_world import (
-    infer_semantic_world_transform,
-    transform_c2w_list_to_semantic,
-    transform_scene_to_semantic,
+    DISPLAY_FRAMES,
+    infer_display_frame_state,
 )
 from .turntable_metrics import aggregate_step_metric_series, format_angle_token, source_histogram
 from .types import CompareCaseSelection, FrameCloudBundle, RenderOutputs
@@ -90,7 +89,6 @@ from .workflows.merge_diagnostics import build_render_output_spec_models
 DEFAULT_CAMERA_IDS = [0, 1, 2]
 ORBIT_MODES = ("observed_hemisphere", "full_360", "camera_neighborhood")
 LAYOUT_MODES = ("side_by_side_large", "camera_neighborhood_grid")
-DISPLAY_FRAMES = ("calibration_world", "semantic_world")
 
 def _build_orbit_basis(
     *,
@@ -909,41 +907,6 @@ def build_render_output_specs(
             render_both_modes=render_both_modes,
         )
     ]
-
-
-def infer_display_frame_state(
-    *,
-    selection: dict[str, Any],
-    scene: dict[str, Any],
-    display_frame: str,
-) -> dict[str, Any]:
-    raw_camera_c2w = list(selection["native_c2w"])
-    raw_camera_centers = np.stack([np.asarray(item, dtype=np.float32)[:3, 3] for item in raw_camera_c2w], axis=0)
-    if display_frame == "calibration_world":
-        return {
-            "display_frame": display_frame,
-            "scene": scene,
-            "camera_c2w": raw_camera_c2w,
-            "semantic_world": None,
-        }
-    semantic_world = infer_semantic_world_transform(
-        scene_points=np.concatenate(
-            [
-                np.asarray(scene.get("native_render_points", scene.get("native_points", np.empty((0, 3), dtype=np.float32))), dtype=np.float32),
-                np.asarray(scene.get("ffs_render_points", scene.get("ffs_points", np.empty((0, 3), dtype=np.float32))), dtype=np.float32),
-            ],
-            axis=0,
-        ),
-        camera_centers=raw_camera_centers,
-        plane_point=np.asarray(scene["plane_point"], dtype=np.float32),
-        plane_normal=np.asarray(scene["plane_normal"], dtype=np.float32),
-    )
-    return {
-        "display_frame": display_frame,
-        "scene": transform_scene_to_semantic(scene, semantic_world),
-        "camera_c2w": transform_c2w_list_to_semantic(raw_camera_c2w, semantic_world),
-        "semantic_world": semantic_world,
-    }
 
 
 def _build_overview_display_basis(
@@ -1766,6 +1729,7 @@ def run_turntable_compare_workflow(
         ),
     )
     frame_contract = build_visualization_frame_contract(
+        display_frame=display_frame,
         uses_semantic_world=display_frame == "semantic_world",
         semantic_world_frame_kind=SEMANTIC_WORLD_FRAME_KIND if display_frame == "semantic_world" else None,
         overview_display_frame_kind=SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND if display_frame == "semantic_world" else "calibration_world_topdown_display",

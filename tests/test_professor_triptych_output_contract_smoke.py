@@ -36,6 +36,9 @@ class ProfessorTriptychOutputContractSmokeTest(unittest.TestCase):
             self.assertFalse(summary["debug_written"])
             self.assertIn("hero_angle_selection", summary)
             self.assertIn("truth_camera_pair", summary)
+            self.assertIn("product_artifacts", summary)
+            self.assertIn("debug_artifacts", summary)
+            self.assertFalse(summary["debug_artifacts"]["enabled"])
             self.assertIn("object_projected_area_ratio", summary["hero_angle_selection"])
             self.assertIn("object_bbox_fill_ratio", summary["hero_angle_selection"])
             self.assertIn("object_multi_camera_support_ratio", summary["hero_angle_selection"])
@@ -77,6 +80,8 @@ class ProfessorTriptychOutputContractSmokeTest(unittest.TestCase):
             self.assertIn("03_truth_board.png", top_level_names)
             self.assertIn("summary.json", top_level_names)
             self.assertIn("debug", top_level_names)
+            summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(summary["debug_artifacts"]["enabled"])
 
 
 if __name__ == "__main__":

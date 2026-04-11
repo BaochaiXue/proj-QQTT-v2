@@ -79,6 +79,7 @@ def main() -> int:
     run([python, "-m", "unittest", "-v", "tests.test_source_legend_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_import_graph_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_types_contract_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_selection_contracts_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_artifact_writer_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_layout_builder_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_merge_diagnostics_workflow_smoke"])

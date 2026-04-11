@@ -4,6 +4,8 @@ from typing import Any
 
 import numpy as np
 
+DISPLAY_FRAMES = ("calibration_world", "semantic_world")
+
 
 def _normalize(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
     vec = np.asarray(vector, dtype=np.float32).reshape(3)
@@ -270,3 +272,40 @@ def transform_scene_to_semantic(scene: dict[str, Any], frame: dict[str, Any]) ->
         "depth": depth_bounds,
     }
     return transformed
+
+
+def infer_display_frame_state(
+    *,
+    selection: dict[str, Any],
+    scene: dict[str, Any],
+    display_frame: str,
+) -> dict[str, Any]:
+    if display_frame not in DISPLAY_FRAMES:
+        raise ValueError(f"Unsupported display_frame: {display_frame}")
+    raw_camera_c2w = list(selection["native_c2w"])
+    raw_camera_centers = np.stack([np.asarray(item, dtype=np.float32)[:3, 3] for item in raw_camera_c2w], axis=0)
+    if display_frame == "calibration_world":
+        return {
+            "display_frame": display_frame,
+            "scene": scene,
+            "camera_c2w": raw_camera_c2w,
+            "semantic_world": None,
+        }
+    semantic_world = infer_semantic_world_transform(
+        scene_points=np.concatenate(
+            [
+                np.asarray(scene.get("native_render_points", scene.get("native_points", np.empty((0, 3), dtype=np.float32))), dtype=np.float32),
+                np.asarray(scene.get("ffs_render_points", scene.get("ffs_points", np.empty((0, 3), dtype=np.float32))), dtype=np.float32),
+            ],
+            axis=0,
+        ),
+        camera_centers=raw_camera_centers,
+        plane_point=np.asarray(scene["plane_point"], dtype=np.float32),
+        plane_normal=np.asarray(scene["plane_normal"], dtype=np.float32),
+    )
+    return {
+        "display_frame": display_frame,
+        "scene": transform_scene_to_semantic(scene, semantic_world),
+        "camera_c2w": transform_c2w_list_to_semantic(raw_camera_c2w, semantic_world),
+        "semantic_world": semantic_world,
+    }

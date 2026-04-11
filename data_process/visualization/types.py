@@ -225,11 +225,161 @@ class RenderOutputs:
 
 
 @dataclass(slots=True)
+class DisplayFrameContract:
+    display_frame: str
+    calibration_world_frame_kind: str
+    uses_semantic_world: bool
+    semantic_world_frame_kind: str | None
+    overview_display_frame_kind: str
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "display_frame": self.display_frame,
+            "calibration_world_frame_kind": self.calibration_world_frame_kind,
+            "uses_semantic_world": bool(self.uses_semantic_world),
+            "semantic_world_frame_kind": self.semantic_world_frame_kind,
+            "overview_display_frame_kind": self.overview_display_frame_kind,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(slots=True)
+class AngleSelectionSummary:
+    mode: str
+    selected_step_idx: int
+    selected_angle_deg: float
+    selected_is_supported: bool
+    object_projected_area_ratio: float
+    object_bbox_fill_ratio: float
+    object_multi_camera_support_ratio: float
+    object_mismatch_residual_m: float
+    context_dominance_penalty: float
+    silhouette_penalty: float
+    final_score: float
+    candidate_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "selected_step_idx": int(self.selected_step_idx),
+            "selected_angle_deg": float(self.selected_angle_deg),
+            "selected_is_supported": bool(self.selected_is_supported),
+            "object_projected_area_ratio": float(self.object_projected_area_ratio),
+            "object_bbox_fill_ratio": float(self.object_bbox_fill_ratio),
+            "object_multi_camera_support_ratio": float(self.object_multi_camera_support_ratio),
+            "object_mismatch_residual_m": float(self.object_mismatch_residual_m),
+            "context_dominance_penalty": float(self.context_dominance_penalty),
+            "silhouette_penalty": float(self.silhouette_penalty),
+            "final_score": float(self.final_score),
+            "candidate_count": int(self.candidate_count),
+        }
+
+
+@dataclass(slots=True)
+class TruthPairSelectionSummary:
+    src_camera_idx: int
+    dst_camera_idx: int
+    mean_valid_ratio: float
+    residual_gap: float
+    object_warp_valid_ratio_native: float
+    object_warp_valid_ratio_ffs: float
+    object_residual_mean_native: float
+    object_residual_mean_ffs: float
+    object_edge_weighted_residual_mean_native: float
+    object_edge_weighted_residual_mean_ffs: float
+    object_overlap_area: float
+    pair_object_visibility_score: float
+    native: dict[str, Any] = field(default_factory=dict)
+    ffs: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "src_camera_idx": int(self.src_camera_idx),
+            "dst_camera_idx": int(self.dst_camera_idx),
+            "mean_valid_ratio": float(self.mean_valid_ratio),
+            "residual_gap": float(self.residual_gap),
+            "object_warp_valid_ratio_native": float(self.object_warp_valid_ratio_native),
+            "object_warp_valid_ratio_ffs": float(self.object_warp_valid_ratio_ffs),
+            "object_residual_mean_native": float(self.object_residual_mean_native),
+            "object_residual_mean_ffs": float(self.object_residual_mean_ffs),
+            "object_edge_weighted_residual_mean_native": float(self.object_edge_weighted_residual_mean_native),
+            "object_edge_weighted_residual_mean_ffs": float(self.object_edge_weighted_residual_mean_ffs),
+            "object_overlap_area": float(self.object_overlap_area),
+            "pair_object_visibility_score": float(self.pair_object_visibility_score),
+            "native": self.native,
+            "ffs": self.ffs,
+        }
+
+
+@dataclass(slots=True)
+class SourceSummary:
+    object_source_histogram: dict[str, int] = field(default_factory=dict)
+    context_source_histogram: dict[str, int] = field(default_factory=dict)
+    combined_source_histogram: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "object_source_histogram": dict(self.object_source_histogram),
+            "context_source_histogram": dict(self.context_source_histogram),
+            "combined_source_histogram": dict(self.combined_source_histogram),
+        }
+
+
+@dataclass(slots=True)
 class SupportSummary:
-    histogram: dict[str, int]
-    mean_support: float
-    max_support: int
-    point_count: int
+    valid_pixel_count: int = 0
+    support_ratio_1: float = 0.0
+    support_ratio_2: float = 0.0
+    support_ratio_3: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "valid_pixel_count": int(self.valid_pixel_count),
+            "support_ratio_1": float(self.support_ratio_1),
+            "support_ratio_2": float(self.support_ratio_2),
+            "support_ratio_3": float(self.support_ratio_3),
+        }
+
+
+@dataclass(slots=True)
+class MismatchSummary:
+    overlap_pixel_count: int = 0
+    residual_mean_m: float = 0.0
+    residual_p90_m: float = 0.0
+    residual_max_m: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "overlap_pixel_count": int(self.overlap_pixel_count),
+            "residual_mean_m": float(self.residual_mean_m),
+            "residual_p90_m": float(self.residual_p90_m),
+            "residual_max_m": float(self.residual_max_m),
+        }
+
+
+@dataclass(slots=True)
+class RoiPassSummary:
+    mode: str | None
+    bounds_min: list[float]
+    bounds_max: list[float]
+    object_roi_min: list[float] | None = None
+    object_roi_max: list[float] | None = None
+    object_point_count: int = 0
+    object_volume: float = 0.0
+    valid_camera_count: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "min": list(self.bounds_min),
+            "max": list(self.bounds_max),
+            "object_roi_min": None if self.object_roi_min is None else list(self.object_roi_min),
+            "object_roi_max": None if self.object_roi_max is None else list(self.object_roi_max),
+            "object_point_count": int(self.object_point_count),
+            "object_volume": float(self.object_volume),
+            "valid_camera_count": None if self.valid_camera_count is None else int(self.valid_camera_count),
+        }
 
 
 @dataclass(slots=True)
@@ -247,3 +397,31 @@ class DebugArtifactPlan:
     image_paths: list[Path] = field(default_factory=list)
     video_paths: list[Path] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ProductArtifactSet:
+    output_dir: Path
+    top_level_paths: dict[str, str] = field(default_factory=dict)
+    summary_paths: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "output_dir": str(self.output_dir),
+            "top_level_paths": dict(self.top_level_paths),
+            "summary_paths": dict(self.summary_paths),
+        }
+
+
+@dataclass(slots=True)
+class DebugArtifactSet:
+    enabled: bool
+    debug_dir: Path | None = None
+    paths: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": bool(self.enabled),
+            "debug_dir": None if self.debug_dir is None else str(self.debug_dir),
+            "paths": dict(self.paths),
+        }

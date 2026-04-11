@@ -18,6 +18,7 @@ from .calibration_frame import (
     SEMANTIC_WORLD_FRAME_KIND,
     build_visualization_frame_contract,
 )
+from .compare_scene import build_turntable_scene_state
 from .depth_diagnostics import colorize_depth_map, load_depth_frame
 from .face_quality import (
     build_face_metric_tile,
@@ -27,16 +28,15 @@ from .face_quality import (
     draw_face_patch_overlay,
     parse_face_patches_json,
 )
-from .io_artifacts import write_image, write_json
+from .io_artifacts import build_artifact_sets, write_image, write_json
 from .layouts import compose_depth_review_board, compose_registration_matrix_board
 from .object_compare import build_object_first_layers, point_mask_from_pixel_mask, project_world_roi_to_camera_bbox
 from .object_roi import estimate_table_color_bgr
 from .pointcloud_compare import estimate_ortho_scale, get_frame_count, load_case_metadata, resolve_case_dirs
-from .professor_triptych import _build_turntable_scene
 from .source_compare import SOURCE_CAMERA_COLORS_BGR, build_source_legend_image, render_source_attribution_overlay
 from .io_case import depth_to_camera_points, transform_points
-from .semantic_world import infer_semantic_world_transform, transform_c2w_list_to_semantic, transform_scene_to_semantic, transform_camera_clouds_to_semantic
-from .turntable_compare import build_scene_overview_state, infer_display_frame_state
+from .semantic_world import infer_display_frame_state, transform_camera_clouds_to_semantic
+from .turntable_compare import build_scene_overview_state
 from .camera_frusta import build_camera_frustum_geometry, extract_camera_poses
 
 
@@ -793,7 +793,7 @@ def run_stereo_order_registration_workflow(
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    turntable_state = _build_turntable_scene(
+    turntable_state = build_turntable_scene_state(
         aligned_root=Path(aligned_root).resolve(),
         case_name=case_name,
         realsense_case=realsense_case,
@@ -950,6 +950,22 @@ def run_stereo_order_registration_workflow(
         closeup_path = output_dir / "02_stereo_order_closeup_board.png"
         write_image(closeup_path, closeup_board)
 
+    summary_path = output_dir / "match_board_summary.json"
+    product_artifacts, debug_artifacts = build_artifact_sets(
+        output_dir=output_dir,
+        product_paths={
+            "stereo_order_registration_board": board_path,
+            "stereo_order_closeup_board": closeup_path,
+        },
+        summary_paths={"stereo_order_registration_summary": summary_path},
+        debug_enabled=bool(write_debug),
+        debug_dir=output_dir / "debug" if write_debug else None,
+        debug_paths={
+            "registration_board_debug": output_dir / "debug" / "registration_board_debug.json",
+            "scene_overview_calibration_frame": output_dir / "debug" / "scene_overview_calibration_frame.png",
+            "scene_overview_semantic_frame": output_dir / "debug" / "scene_overview_semantic_frame.png",
+        } if write_debug else None,
+    )
     summary = {
         "same_case_mode": bool(selection["same_case_mode"]),
         "native_case_dir": str(selection["native_case_dir"]),
@@ -959,6 +975,7 @@ def run_stereo_order_registration_workflow(
         "display_frame": display_frame,
         "camera_ids": [int(item) for item in selection["camera_ids"]],
         "visualization_frame_contract": build_visualization_frame_contract(
+            display_frame=display_frame,
             uses_semantic_world=display_frame == "semantic_world",
             semantic_world_frame_kind=SEMANTIC_WORLD_FRAME_KIND if display_frame == "semantic_world" else None,
             overview_display_frame_kind=SEMANTIC_OVERVIEW_DISPLAY_FRAME_KIND if display_frame == "semantic_world" else "calibration_world_topdown_display",
@@ -1004,8 +1021,10 @@ def run_stereo_order_registration_workflow(
         "top_level_output": str(board_path),
         "closeup_output": None if closeup_path is None else str(closeup_path),
         "debug_written": bool(write_debug),
+        "product_artifacts": product_artifacts.to_dict(),
+        "debug_artifacts": debug_artifacts.to_dict(),
     }
-    write_json(output_dir / "match_board_summary.json", summary)
+    write_json(summary_path, summary)
 
     if write_debug:
         debug_dir = output_dir / "debug"

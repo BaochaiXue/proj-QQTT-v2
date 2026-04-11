@@ -479,6 +479,7 @@ def run_depth_comparison_workflow(
         "focus_point": focus_point.tolist(),
         "calibration_contract": calibration_contract,
         "frame_contract": build_visualization_frame_contract(
+            display_frame="calibration_world",
             uses_semantic_world=False,
             semantic_world_frame_kind=None,
             notes=[

@@ -34,6 +34,7 @@ The repo is intentionally small.
 - `data_process/visualization/calibration_io.py`
 - `data_process/visualization/camera_frusta.py`
 - `data_process/visualization/depth_diagnostics.py`
+- `data_process/visualization/compare_scene.py`
 - `data_process/visualization/io_artifacts.py`
 - `data_process/visualization/io_case.py`
 - `data_process/visualization/layouts.py`
@@ -44,7 +45,10 @@ The repo is intentionally small.
 - `data_process/visualization/reprojection_compare.py`
 - `data_process/visualization/renderers/**`
 - `data_process/visualization/roi.py`
+- `data_process/visualization/selection_contracts.py`
+- `data_process/visualization/semantic_world.py`
 - `data_process/visualization/source_compare.py`
+- `data_process/visualization/stereo_audit.py`
 - `data_process/visualization/support_compare.py`
 - `data_process/visualization/turntable_compare.py`
 - `data_process/visualization/types.py`
@@ -53,6 +57,7 @@ The repo is intentionally small.
 - `scripts/harness/visual_compare_depth_panels.py`
 - `scripts/harness/visual_compare_reprojection.py`
 - `scripts/harness/visual_compare_depth_video.py`
+- `scripts/harness/visual_compare_stereo_order_pcd.py`
 - `scripts/harness/visual_compare_turntable.py`
 
 ### Tooling / Harness
@@ -127,8 +132,17 @@ The visualization package is now split by responsibility instead of concentratin
   - fallback surfel/point rendering
 - `types.py`
   - typed internal contracts for case selection, render specs, crops, and view config payloads
+- `selection_contracts.py`
+  - shared angle-selection ranking and summary contracts
+- `compare_scene.py`
+  - shared single-frame turntable scene assembly
+  - shared orbit-state construction
+  - shared object-view metric computation used by multiple workflows
 - `calibration_frame.py`
   - explicit distinction between raw calibration-world semantics and any future semantic-world layer
+- `semantic_world.py`
+  - visualization-only semantic display transform inference
+  - shared calibration-world vs semantic-world display selection
 - `workflows/merge_diagnostics.py`
   - typed render-output planning for `geom / rgb / support / source / mismatch`
 - legacy compatibility modules:
@@ -197,6 +211,8 @@ The object-ROI stack now has two distinct roles:
   - semi-transparent per-camera provenance overlay
   - split per-camera source contribution renders
   - overlap mismatch residual computation and rendering
+- `io_artifacts.py`
+  - shared product/debug artifact-set helpers so workflows stop hand-rolling output contracts
 
 This means the professor-facing compare no longer treats the initial fused world ROI as the sole authority. Pixel-derived object evidence is allowed to expand and refine the world ROI before the final compare is rendered.
 
@@ -241,12 +257,20 @@ The intended import layering is now:
 
 Important frame-semantics distinction:
 
-- current visualization paths use the raw ChArUco-board calibration world as their 3D world frame
-- the turntable workflow now records this explicitly in metadata and writes:
-  - `scene_overview_with_cameras.png`
-  - `scene_overview_calibration_frame.png`
-- no semantic-world transform is silently applied today
-- the overview image may still use a readability-oriented display basis, but that display basis is not a semantic-world transform
+- `calibrate.pkl` remains raw ChArUco-board calibration-world `c2w`
+- professor-facing turntable and stereo-order workflows now default to a visualization-only `semantic_world` display frame
+- that display frame is inferred from:
+  - the tabletop plane
+  - current camera centers
+- it is applied only in memory for visualization
+- raw calibration display remains available explicitly through `display_frame=calibration_world`
+- both workflows now keep the distinction explicit in metadata/debug outputs instead of burying it inside the renderer
+
+Important selection/artifact-contract distinction:
+
+- angle-selection ranking and summary contracts are now shared through `selection_contracts.py`
+- product-vs-debug output sets are now built through `io_artifacts.py` helpers and typed artifact contracts
+- this does not force every workflow to emit the same files, but it does stop each workflow from inventing its own implicit output schema from scratch
 
 Subset capture cases rely on `metadata["calibration_reference_serials"]` to map case serials back to the full calibration order.
 

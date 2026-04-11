@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from .types import DebugArtifactSet, ProductArtifactSet
+
 
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,3 +76,37 @@ def write_gif(gif_path: Path, frame_paths: list[Path], fps: int) -> None:
         loop=0,
         optimize=False,
     )
+
+
+def build_artifact_sets(
+    *,
+    output_dir: Path,
+    product_paths: dict[str, str | Path | None],
+    summary_paths: dict[str, str | Path | None] | None = None,
+    debug_enabled: bool = False,
+    debug_dir: Path | None = None,
+    debug_paths: dict[str, str | Path | None] | None = None,
+) -> tuple[ProductArtifactSet, DebugArtifactSet]:
+    product_set = ProductArtifactSet(
+        output_dir=Path(output_dir).resolve(),
+        top_level_paths={
+            str(key): str(Path(value).resolve())
+            for key, value in product_paths.items()
+            if value is not None
+        },
+        summary_paths={
+            str(key): str(Path(value).resolve())
+            for key, value in (summary_paths or {}).items()
+            if value is not None
+        },
+    )
+    debug_set = DebugArtifactSet(
+        enabled=bool(debug_enabled),
+        debug_dir=None if debug_dir is None else Path(debug_dir).resolve(),
+        paths={
+            str(key): str(Path(value).resolve())
+            for key, value in (debug_paths or {}).items()
+            if value is not None
+        },
+    )
+    return product_set, debug_set
