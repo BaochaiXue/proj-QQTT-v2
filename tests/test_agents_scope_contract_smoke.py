@@ -15,3 +15,4 @@ class AgentsScopeContractSmokeTest(unittest.TestCase):
         self.assertIn("scripts/harness/visual_compare_turntable.py", content)
         self.assertIn("scripts/harness/visual_compare_depth_panels.py", content)
         self.assertIn("scripts/harness/visual_compare_reprojection.py", content)
+        self.assertIn("scripts/harness/visual_compare_rerun.py", content)

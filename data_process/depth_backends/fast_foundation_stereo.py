@@ -56,6 +56,26 @@ def compute_disparity_audit_stats(disparity_raw: np.ndarray) -> dict[str, float]
     return stats
 
 
+def apply_remove_invisible_mask(disparity_raw: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
+    disparity = np.asarray(disparity_raw, dtype=np.float32).clip(0, None)
+    if disparity.ndim != 2:
+        raise ValueError(f"Expected 2D disparity map, got shape={disparity.shape}.")
+
+    _, width = disparity.shape
+    xx = np.broadcast_to(np.arange(width, dtype=np.float32)[None, :], disparity.shape)
+    remove_mask = np.isfinite(disparity) & (disparity > 0) & ((xx - disparity) < 0)
+    masked = disparity.copy()
+    masked[remove_mask] = np.inf
+
+    pixel_count = int(disparity.size)
+    removed_count = int(np.count_nonzero(remove_mask))
+    return masked, {
+        "pixel_count": float(pixel_count),
+        "remove_invisible_pixel_count": float(removed_count),
+        "remove_invisible_ratio": float(removed_count / max(1, pixel_count)),
+    }
+
+
 def build_disparity_products(
     disparity_raw: np.ndarray,
     *,

@@ -9,11 +9,12 @@ from .geometry import (
     unproject_ir_depth,
     write_ffs_intrinsic_file,
 )
-from .fast_foundation_stereo import FastFoundationStereoRunner
+from .fast_foundation_stereo import FastFoundationStereoRunner, apply_remove_invisible_mask
 from .ffs_audit import compute_disparity_audit_stats, derive_ir_right_to_color, summarize_left_right_audit
 
 __all__ = [
     "FastFoundationStereoRunner",
+    "apply_remove_invisible_mask",
     "align_depth_to_color",
     "compute_disparity_audit_stats",
     "disparity_to_metric_depth",

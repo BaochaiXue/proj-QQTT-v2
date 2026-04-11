@@ -66,6 +66,103 @@ def make_visualization_case(
     (case_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
 
 
+def make_rerun_compare_cases(
+    aligned_root: Path,
+    *,
+    native_case_name: str = "native_case",
+    ffs_case_name: str = "ffs_case",
+    frame_num: int = 2,
+) -> tuple[Path, Path]:
+    native_case_dir = aligned_root / native_case_name
+    ffs_case_dir = aligned_root / ffs_case_name
+    native_case_dir.mkdir(parents=True, exist_ok=True)
+    ffs_case_dir.mkdir(parents=True, exist_ok=True)
+
+    for stream_root, streams in (
+        (native_case_dir, ["color", "depth"]),
+        (ffs_case_dir, ["color", "ir_left", "ir_right"]),
+    ):
+        for stream in streams:
+            for cam in range(3):
+                (stream_root / stream / str(cam)).mkdir(parents=True, exist_ok=True)
+
+    transforms = [
+        np.eye(4, dtype=np.float32),
+        np.array([[1, 0, 0, 0.25], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=np.float32),
+        np.array([[1, 0, 0, 0], [0, 1, 0, 0.25], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=np.float32),
+    ]
+    for case_dir in (native_case_dir, ffs_case_dir):
+        with (case_dir / "calibrate.pkl").open("wb") as handle:
+            pickle.dump(transforms, handle)
+
+    height, width = 8, 10
+    yy, xx = np.indices((height, width), dtype=np.float32)
+    k_color = [[[6.0, 0.0, 4.5], [0.0, 6.0, 3.5], [0.0, 0.0, 1.0]] for _ in range(3)]
+    t_ir_left_to_color = [
+        [[1.0, 0.0, 0.0, 0.01], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+        for _ in range(3)
+    ]
+
+    for frame_idx in range(frame_num):
+        for cam in range(3):
+            color = np.zeros((height, width, 3), dtype=np.uint8)
+            color[..., 0] = np.clip(xx * 14 + cam * 25, 0, 255).astype(np.uint8)
+            color[..., 1] = np.clip(yy * 20 + frame_idx * 18, 0, 255).astype(np.uint8)
+            color[..., 2] = np.clip((xx + yy) * 16 + cam * 10, 0, 255).astype(np.uint8)
+            depth_mm = (900 + cam * 40 + frame_idx * 15 + xx * 3 + yy * 2).astype(np.uint16)
+            depth_mm[0, 0] = 0
+            ir_left = np.clip(80 + xx * 7 + frame_idx * 5 + cam * 4, 0, 255).astype(np.uint8)
+            ir_right = np.clip(70 + xx * 6 + frame_idx * 5 + cam * 3, 0, 255).astype(np.uint8)
+
+            cv2.imwrite(str(native_case_dir / "color" / str(cam) / f"{frame_idx}.png"), color)
+            np.save(native_case_dir / "depth" / str(cam) / f"{frame_idx}.npy", depth_mm)
+
+            cv2.imwrite(str(ffs_case_dir / "color" / str(cam) / f"{frame_idx}.png"), color)
+            cv2.imwrite(str(ffs_case_dir / "ir_left" / str(cam) / f"{frame_idx}.png"), ir_left)
+            cv2.imwrite(str(ffs_case_dir / "ir_right" / str(cam) / f"{frame_idx}.png"), ir_right)
+
+    native_metadata = {
+        "schema_version": "qqtt_aligned_case_v2",
+        "serial_numbers": ["239222300433", "239222300781", "239222303506"],
+        "calibration_reference_serials": ["239222300433", "239222300781", "239222303506"],
+        "frame_num": frame_num,
+        "depth_scale_m_per_unit": [0.001, 0.001, 0.001],
+        "intrinsics": k_color,
+        "K_color": k_color,
+        "depth_backend_used": "realsense",
+        "depth_source_for_depth_dir": "realsense",
+    }
+    (native_case_dir / "metadata.json").write_text(json.dumps(native_metadata), encoding="utf-8")
+
+    ffs_metadata = {
+        "schema_version": "qqtt_aligned_case_v2",
+        "serial_numbers": ["239222300433", "239222300781", "239222303506"],
+        "calibration_reference_serials": ["239222300433", "239222300781", "239222303506"],
+        "frame_num": frame_num,
+        "intrinsics": k_color,
+        "K_color": k_color,
+        "K_ir_left": k_color,
+        "K_ir_right": k_color,
+        "T_ir_left_to_color": t_ir_left_to_color,
+        "T_ir_left_to_right": [
+            [[1.0, 0.0, 0.0, -0.095], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+            for _ in range(3)
+        ],
+        "ir_baseline_m": [0.095, 0.095, 0.095],
+        "depth_backend_used": "ffs",
+        "depth_source_for_depth_dir": "ffs",
+        "ffs_config": {
+            "ffs_repo": "C:/external/fake",
+            "model_path": "C:/external/fake/model.pth",
+            "scale": 1.0,
+            "valid_iters": 8,
+            "max_disp": 192,
+        },
+    }
+    (ffs_case_dir / "metadata.json").write_text(json.dumps(ffs_metadata), encoding="utf-8")
+    return native_case_dir, ffs_case_dir
+
+
 def _look_at_c2w(camera_position: np.ndarray, center: np.ndarray, up: np.ndarray) -> np.ndarray:
     eye = np.asarray(camera_position, dtype=np.float32)
     target = np.asarray(center, dtype=np.float32)

@@ -44,6 +44,7 @@ The repo is intentionally small.
 - `data_process/visualization/pointcloud_compare.py`
 - `data_process/visualization/reprojection_compare.py`
 - `data_process/visualization/renderers/**`
+- `data_process/visualization/rerun_compare.py`
 - `data_process/visualization/roi.py`
 - `data_process/visualization/selection_contracts.py`
 - `data_process/visualization/semantic_world.py`
@@ -57,6 +58,7 @@ The repo is intentionally small.
 - `scripts/harness/visual_compare_depth_panels.py`
 - `scripts/harness/visual_compare_reprojection.py`
 - `scripts/harness/visual_compare_depth_video.py`
+- `scripts/harness/visual_compare_rerun.py`
 - `scripts/harness/visual_compare_stereo_order_pcd.py`
 - `scripts/harness/visual_compare_turntable.py`
 
@@ -145,12 +147,15 @@ The visualization package is now split by responsibility instead of concentratin
   - shared calibration-world vs semantic-world display selection
 - `workflows/merge_diagnostics.py`
   - typed render-output planning for `geom / rgb / support / source / mismatch`
+- `rerun_compare.py`
+  - multi-frame native-vs-FFS raw point-cloud export to Rerun
+  - shared full-scene fused PLY writing for `native / ffs_remove_1 / ffs_remove_0`
 - legacy compatibility modules:
   - `pointcloud_compare.py`
   - `turntable_compare.py`
   - still provide the old import paths, but now delegate to the shared lower-level modules
 
-The fused point-cloud visualization is now split into two user-facing workflows:
+The fused point-cloud visualization is now split into three user-facing workflows:
 
 - `visual_compare_turntable.py`
   - primary single-frame object-centric coverage-aware compare
@@ -161,6 +166,11 @@ The fused point-cloud visualization is now split into two user-facing workflows:
 - `visual_compare_depth_video.py`
   - older temporal fused compare over a frame range
   - still useful as a secondary motion/consistency diagnostic
+- `visual_compare_rerun.py`
+  - raw multi-frame remove-invisible diagnostic for aligned `native` and aligned `ffs`
+  - reruns FFS from aligned `ir_left` / `ir_right`, then derives both `remove_1` and `remove_0` from the same disparity
+  - writes fused full-scene PLYs and streams the same variants into a Rerun timeline
+  - lazily imports `rerun-sdk` so `--help` remains cheap when the optional dependency is absent
 
 The fused point-cloud renderer now supports two view-selection modes:
 

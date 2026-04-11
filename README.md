@@ -219,6 +219,15 @@ Default clutter is off:
 - no mp4 / gif
 - no orbit keyframe sheets
 
+Optional raw Rerun diagnostic:
+
+```bash
+python -m pip install rerun-sdk
+python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --rerun_output viewer_and_rrd
+```
+
+This raw workflow keeps calibration-world coordinates, logs multi-frame `native / ffs_remove_1 / ffs_remove_0` fused point clouds to a Rerun timeline, and writes fused full-scene PLYs for each frame.
+
 Enable those only when needed:
 
 ```bash
@@ -407,6 +416,27 @@ The temporal fused-cloud utility remains available as a secondary diagnostic. It
 - the `tabletop_compare_2x3` preset now uses `color_by_height` plus orthographic tabletop framing for readability
 - keeps `color_by_rgb` as a secondary reference mode
 - writes per-view frame sequences and optional videos, plus `grid_2x3_frames/` and `videos/grid_2x3.mp4` when requested
+
+6. Raw multi-frame Rerun remove-invisible compare:
+
+```bash
+python -m pip install rerun-sdk
+python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --rerun_output viewer_and_rrd
+```
+
+This workflow:
+
+- uses the full shared aligned frame range by default
+- keeps raw calibration-world coordinates
+- fuses 3 cameras into one full-scene point cloud for each variant
+- re-runs FFS from aligned `ir_left` / `ir_right`
+- derives both `ffs_remove_1` and `ffs_remove_0` from the same disparity
+- writes:
+  - `pointcloud_compare.rrd`
+  - `ply_fullscene/native_frame_<idx>_fused_fullscene.ply`
+  - `ply_fullscene/ffs_remove_1_frame_<idx>_fused_fullscene.ply`
+  - `ply_fullscene/ffs_remove_0_frame_<idx>_fused_fullscene.ply`
+  - `summary.json`
 
 ## Output Layout
 

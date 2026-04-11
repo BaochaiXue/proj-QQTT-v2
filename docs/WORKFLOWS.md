@@ -362,6 +362,34 @@ When teddy/head/ear regions are still incomplete, inspect the debug artifacts in
 
 If the head is missing already in the per-camera overlays, tighten `--manual_image_roi_json` before rerunning. If the per-camera overlays look correct but the fused object remains weak, use the support render to confirm whether the missing region is mostly only 1-camera supported.
 
+Raw multi-frame Rerun remove-invisible compare:
+
+Use this when the main question is not slide composition, but “how do the fused full-scene point clouds evolve over time, and what exactly changes when `remove_invisible` is on vs off?”:
+
+```bash
+python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --rerun_output viewer_and_rrd
+```
+
+This workflow:
+
+- uses the full shared aligned frame range by default
+- keeps raw calibration-world coordinates
+- fuses all 3 cameras into one full-scene cloud for each variant
+- re-runs FFS from aligned `ir_left` / `ir_right` instead of reusing the aligned `depth/` output
+- derives both `ffs_remove_1` and `ffs_remove_0` from the same disparity so the only intended delta is the overlap invalidation
+- logs only 3 entity paths to Rerun:
+  - `native`
+  - `ffs_remove_1`
+  - `ffs_remove_0`
+- writes:
+  - `pointcloud_compare.rrd`
+  - `ply_fullscene/native_frame_<idx>_fused_fullscene.ply`
+  - `ply_fullscene/ffs_remove_1_frame_<idx>_fused_fullscene.ply`
+  - `ply_fullscene/ffs_remove_0_frame_<idx>_fused_fullscene.ply`
+  - `summary.json`
+
+Use `--rerun_output rrd_only` when you want a non-interactive run that still saves the timeline for later replay.
+
 Focused stereo-depth audits:
 
 Use the point-cloud-only stereo-order registration board when the main question is not “which one looks prettier,” but “does current left/right or swapped left/right produce tighter 3-view 3D alignment?”:
