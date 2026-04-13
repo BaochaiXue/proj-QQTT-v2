@@ -179,6 +179,66 @@ def choose_depth_stream(
     return "depth", False
 
 
+def load_depth_frame(
+    *,
+    case_dir: Path,
+    metadata: dict[str, Any],
+    camera_idx: int,
+    frame_idx: int,
+    depth_source: str,
+    use_float_ffs_depth_when_available: bool,
+    ffs_native_like_postprocess: bool = False,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    depth_dir_name, use_float = choose_depth_stream(
+        case_dir,
+        metadata,
+        depth_source,
+        use_float_ffs_depth_when_available,
+        ffs_native_like_postprocess=ffs_native_like_postprocess,
+    )
+    depth_path = case_dir / depth_dir_name / str(camera_idx) / f"{frame_idx}.npy"
+    if not depth_path.exists():
+        raise FileNotFoundError(f"Missing depth frame: {depth_path}")
+
+    depth_raw = np.load(depth_path)
+    depth_scales = get_depth_scale_list(metadata, len(metadata["serial_numbers"]))
+    depth_m = decode_depth_to_meters(depth_raw, None if use_float else depth_scales[camera_idx])
+
+    postprocess_applied = False
+    postprocess_origin = "none"
+    raw_depth_dir_name = depth_dir_name
+    if depth_source == "ffs" and ffs_native_like_postprocess and not depth_dir_name.startswith("depth_ffs_native_like_postprocess"):
+        from qqtt.env.camera.realsense.depth_postprocess import (
+            FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_ON_THE_FLY_SUFFIX,
+            apply_ffs_native_like_depth_postprocess_float_m,
+        )
+
+        filtered_u16, filtered_m = apply_ffs_native_like_depth_postprocess_float_m(
+            depth_m,
+            depth_scale_m_per_unit=float(depth_scales[camera_idx]),
+            fps=int(metadata.get("fps", 30)),
+            frame_number=int(frame_idx) + 1,
+        )
+        depth_raw = filtered_m if use_float else filtered_u16
+        depth_m = filtered_m
+        depth_dir_name = f"{raw_depth_dir_name}+{FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_ON_THE_FLY_SUFFIX}"
+        postprocess_applied = True
+        postprocess_origin = "on_the_fly"
+    elif depth_source == "ffs" and ffs_native_like_postprocess:
+        postprocess_applied = True
+        postprocess_origin = "aligned_auxiliary"
+
+    return depth_raw, depth_m, {
+        "depth_dir_used": depth_dir_name,
+        "source_depth_dir_used": raw_depth_dir_name,
+        "used_float_depth": bool(use_float),
+        "depth_path": str(depth_path),
+        "ffs_native_like_postprocess_enabled": bool(ffs_native_like_postprocess if depth_source == "ffs" else False),
+        "ffs_native_like_postprocess_applied": bool(postprocess_applied),
+        "ffs_native_like_postprocess_origin": postprocess_origin,
+    }
+
+
 def load_case_frame_camera_clouds(
     *,
     case_dir: Path,
@@ -190,35 +250,32 @@ def load_case_frame_camera_clouds(
     max_points_per_camera: int | None,
     depth_min_m: float,
     depth_max_m: float,
+    ffs_native_like_postprocess: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     serials = metadata["serial_numbers"]
     intrinsics = get_case_intrinsics(metadata)
-    depth_scales = get_depth_scale_list(metadata, len(serials))
     calibration_reference_serials = metadata.get("calibration_reference_serials", metadata["serial_numbers"])
     c2w_list = load_calibration_transforms(
         case_dir / "calibrate.pkl",
         serial_numbers=serials,
         calibration_reference_serials=calibration_reference_serials,
     )
-    depth_dir_name, use_float = choose_depth_stream(
-        case_dir,
-        metadata,
-        depth_source,
-        use_float_ffs_depth_when_available,
-    )
-
     per_camera_clouds: list[dict[str, Any]] = []
     per_camera_stats = []
     for camera_idx, serial in enumerate(serials):
         color_path = case_dir / "color" / str(camera_idx) / f"{frame_idx}.png"
-        depth_path = case_dir / depth_dir_name / str(camera_idx) / f"{frame_idx}.npy"
         color_image = cv2.imread(str(color_path), cv2.IMREAD_COLOR)
         if color_image is None:
             raise FileNotFoundError(f"Missing color frame: {color_path}")
-        if not depth_path.exists():
-            raise FileNotFoundError(f"Missing depth frame: {depth_path}")
-        depth_raw = np.load(depth_path)
-        depth_m = decode_depth_to_meters(depth_raw, None if use_float else depth_scales[camera_idx])
+        _, depth_m, depth_info = load_depth_frame(
+            case_dir=case_dir,
+            metadata=metadata,
+            camera_idx=camera_idx,
+            frame_idx=frame_idx,
+            depth_source=depth_source,
+            use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+            ffs_native_like_postprocess=ffs_native_like_postprocess,
+        )
         camera_points, camera_colors, stats = depth_to_camera_points(
             depth_m,
             intrinsics[camera_idx],
@@ -233,8 +290,6 @@ def load_case_frame_camera_clouds(
             {
                 "camera_idx": int(camera_idx),
                 "serial": serial,
-                "depth_dir_used": depth_dir_name,
-                "used_float_depth": bool(use_float),
                 "K_color": intrinsics[camera_idx],
                 "c2w": c2w_list[camera_idx],
                 "color_path": str(color_path),
@@ -242,14 +297,14 @@ def load_case_frame_camera_clouds(
                 "colors": camera_colors,
                 "source_camera_idx": np.full((len(world_points),), int(camera_idx), dtype=np.int16),
                 "source_serial": np.full((len(world_points),), serial, dtype=object),
+                **depth_info,
             }
         )
         per_camera_stats.append(
             {
                 "camera_idx": camera_idx,
                 "serial": serial,
-                "depth_dir_used": depth_dir_name,
-                "used_float_depth": bool(use_float),
+                **depth_info,
                 **stats,
             }
         )
@@ -268,6 +323,7 @@ def load_case_frame_cloud(
     max_points_per_camera: int | None,
     depth_min_m: float,
     depth_max_m: float,
+    ffs_native_like_postprocess: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     per_camera_clouds, camera_stats = load_case_frame_camera_clouds(
         case_dir=case_dir,
@@ -279,6 +335,7 @@ def load_case_frame_cloud(
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
+        ffs_native_like_postprocess=ffs_native_like_postprocess,
     )
     fused_points = [item["points"] for item in per_camera_clouds]
     fused_colors = [item["colors"] for item in per_camera_clouds]
@@ -308,6 +365,7 @@ def load_case_frame_cloud_with_sources(
     max_points_per_camera: int | None,
     depth_min_m: float,
     depth_max_m: float,
+    ffs_native_like_postprocess: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any], list[dict[str, Any]]]:
     per_camera_clouds, camera_stats = load_case_frame_camera_clouds(
         case_dir=case_dir,
@@ -319,6 +377,7 @@ def load_case_frame_cloud_with_sources(
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
+        ffs_native_like_postprocess=ffs_native_like_postprocess,
     )
     fused_points = [item["points"] for item in per_camera_clouds]
     fused_colors = [item["colors"] for item in per_camera_clouds]

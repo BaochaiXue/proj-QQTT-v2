@@ -11,6 +11,7 @@ Primary compare entrypoints:
 - `scripts/harness/visual_compare_depth_panels.py`
 - `scripts/harness/visual_compare_reprojection.py`
 - `scripts/harness/visual_compare_depth_video.py`
+- `scripts/harness/visual_compare_depth_triplet_ply.py`
 - `scripts/harness/visual_compare_turntable.py`
 - `scripts/harness/visual_make_match_board.py`
 - `scripts/harness/visual_make_professor_triptych.py`
@@ -50,6 +51,17 @@ All of these are intended to stay thin wrappers around visualization workflow mo
   - older temporal fused-cloud videos
 - main question:
   - secondary motion/consistency inspection
+
+### Single-frame triplet fused PLY compare
+
+- owner:
+  - `data_process/visualization/triplet_ply_compare.py`
+  - `data_process/visualization/workflows/triplet_ply_compare.py`
+- product:
+  - 3 fused full-scene PLYs
+  - compact summary
+- main question:
+  - how `Native`, `FFS raw`, and `FFS postprocess` differ in fused 3D for one aligned frame
 
 ### Turntable compare
 

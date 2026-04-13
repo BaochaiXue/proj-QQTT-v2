@@ -30,6 +30,7 @@ Rule of thumb:
 - `visual_compare_depth_panels.py`
 - `visual_compare_reprojection.py`
 - `visual_compare_depth_video.py`
+- `visual_compare_depth_triplet_ply.py`
 - `visual_compare_turntable.py`
 - `visual_compare_rerun.py`
 - `visual_make_match_board.py`

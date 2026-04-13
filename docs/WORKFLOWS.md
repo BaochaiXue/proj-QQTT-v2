@@ -386,6 +386,32 @@ When teddy/head/ear regions are still incomplete, inspect the debug artifacts in
 
 If the head is missing already in the per-camera overlays, tighten `--manual_image_roi_json` before rerunning. If the per-camera overlays look correct but the fused object remains weak, use the support render to confirm whether the missing region is mostly only 1-camera supported.
 
+Single-frame triplet fused PLY compare:
+
+Use this when the question is specifically “for one aligned frame, how do `Native`, `FFS raw`, and `FFS postprocess` differ after fusing all 3 cameras into calibration-world point clouds?”, and you only need `.ply` outputs plus a compact summary:
+
+```bash
+python scripts/harness/visual_compare_depth_triplet_ply.py --aligned_root ./data --realsense_case native_30_static_20260410_235202 --ffs_case ffs_30_static_20260410_235202 --frame_idx 0
+```
+
+This workflow:
+
+- selects one aligned frame only
+- keeps raw `calibration_world` coordinates
+- fuses all 3 cameras for exactly 3 variants:
+  - `native`
+  - `ffs_raw`
+  - `ffs_postprocess`
+- reuses aligned `depth/` for Native
+- reuses aligned `depth_ffs*` for `ffs_raw`
+- prefers aligned `depth_ffs_native_like_postprocess*` for `ffs_postprocess`
+- otherwise applies the same native-like depth postprocess on the fly before fusion
+- writes:
+  - `ply_fullscene/native_frame_<idx>_fused_fullscene.ply`
+  - `ply_fullscene/ffs_raw_frame_<idx>_fused_fullscene.ply`
+  - `ply_fullscene/ffs_postprocess_frame_<idx>_fused_fullscene.ply`
+  - `summary.json`
+
 Raw multi-frame Rerun remove-invisible compare:
 
 Use this when the main question is not slide composition, but “how do the fused full-scene point clouds evolve over time, and what exactly changes when `remove_invisible` is on vs off?”:

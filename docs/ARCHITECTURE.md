@@ -53,9 +53,11 @@ The repo is intentionally small.
 - `data_process/visualization/stereo_audit.py`
 - `data_process/visualization/support_compare.py`
 - `data_process/visualization/turntable_compare.py`
+- `data_process/visualization/triplet_ply_compare.py`
 - `data_process/visualization/types.py`
 - `data_process/visualization/views.py`
 - `data_process/visualization/workflows/**`
+- `scripts/harness/visual_compare_depth_triplet_ply.py`
 - `scripts/harness/visual_compare_depth_panels.py`
 - `scripts/harness/visual_compare_reprojection.py`
 - `scripts/harness/visual_compare_depth_video.py`
@@ -119,6 +121,7 @@ The visualization package is now split by responsibility instead of concentratin
 
 - `io_case.py`
   - aligned-case metadata loading
+  - aligned depth-frame loading and FFS native-like postprocess selection/fallback
   - depth decoding
   - per-camera point-cloud generation
   - fused-cloud loading helpers
@@ -159,19 +162,28 @@ The visualization package is now split by responsibility instead of concentratin
 - `rerun_compare.py`
   - multi-frame native-vs-FFS raw point-cloud export to Rerun
   - shared full-scene fused PLY writing for `native / ffs_remove_1 / ffs_remove_0`
+- `triplet_ply_compare.py`
+  - single-frame fused PLY compare for `native / ffs_raw / ffs_postprocess`
+  - aligned auxiliary postprocess preference plus on-the-fly fallback
 - legacy compatibility modules:
   - `pointcloud_compare.py`
   - `turntable_compare.py`
   - still provide the old import paths, but now delegate to the shared lower-level modules
 
-The fused point-cloud visualization is now split into three user-facing workflows:
+The fused point-cloud visualization is now split into four user-facing workflows:
 
+- `visual_compare_depth_triplet_ply.py`
+  - single-frame fused PLY-only compare for `Native`, `FFS raw`, and `FFS postprocess`
+  - keeps raw calibration-world coordinates
+  - prefers aligned postprocessed FFS depth when present and otherwise falls back to on-the-fly postprocessing
+  - writes exactly 3 fused PLYs plus one compact summary
 - `visual_compare_turntable.py`
   - primary single-frame object-centric coverage-aware compare
   - explicit camera-frusta visualization from real `c2w`
   - large side-by-side Native vs FFS panels
   - automatic geometry + RGB + support videos and keyframe sheets
   - old 2x3 near-camera board retained only as a secondary mode
+
 - `visual_compare_depth_video.py`
   - older temporal fused compare over a frame range
   - still useful as a secondary motion/consistency diagnostic

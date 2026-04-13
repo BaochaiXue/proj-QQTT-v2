@@ -5,6 +5,7 @@ from .professor_triptych import run_professor_triptych_workflow
 from .reprojection_compare import run_reprojection_compare_workflow
 from .rerun_compare import run_rerun_compare_workflow
 from .turntable_compare import run_turntable_compare_workflow
+from .triplet_ply_compare import run_triplet_ply_compare_workflow
 
 __all__ = [
     "CalibrationLoadError",
@@ -16,4 +17,5 @@ __all__ = [
     "run_reprojection_compare_workflow",
     "run_rerun_compare_workflow",
     "run_turntable_compare_workflow",
+    "run_triplet_ply_compare_workflow",
 ]
