@@ -74,6 +74,7 @@ def run_depth_panel_workflow(
     write_mp4: bool = False,
     fps: int = 10,
     use_float_ffs_depth_when_available: bool = True,
+    ffs_native_like_postprocess: bool = False,
     preset: str | None = None,
     show_edge_overlay: bool = False,
 ) -> dict[str, Any]:
@@ -111,6 +112,7 @@ def run_depth_panel_workflow(
         "depth_min_m": float(depth_min_m),
         "depth_max_m": float(depth_max_m),
         "use_float_ffs_depth_when_available": bool(use_float_ffs_depth_when_available),
+        "ffs_native_like_postprocess_enabled": bool(ffs_native_like_postprocess),
         "preset": preset,
         "show_edge_overlay": bool(show_edge_overlay),
         "per_camera": {},
@@ -134,6 +136,7 @@ def run_depth_panel_workflow(
                 frame_idx=native_frame_idx,
                 depth_source="realsense",
                 use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+                ffs_native_like_postprocess=False,
             )
             _, ffs_depth_m, ffs_info = load_depth_frame(
                 case_dir=ffs_case_dir,
@@ -142,6 +145,7 @@ def run_depth_panel_workflow(
                 frame_idx=ffs_frame_idx,
                 depth_source="ffs",
                 use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+                ffs_native_like_postprocess=ffs_native_like_postprocess,
             )
 
             camera_rois = rois or default_rois(native_rgb.shape[:2])
@@ -168,6 +172,11 @@ def run_depth_panel_workflow(
                     "panel_frame_idx": int(panel_idx),
                     "native_frame_idx": int(native_frame_idx),
                     "ffs_frame_idx": int(ffs_frame_idx),
+                    "native_depth_dir_used": native_info["depth_dir_used"],
+                    "ffs_depth_dir_used": ffs_info["depth_dir_used"],
+                    "ffs_native_like_postprocess_enabled": bool(ffs_info.get("ffs_native_like_postprocess_enabled", False)),
+                    "ffs_native_like_postprocess_applied": bool(ffs_info.get("ffs_native_like_postprocess_applied", False)),
+                    "ffs_native_like_postprocess_origin": ffs_info.get("ffs_native_like_postprocess_origin", "none"),
                     "depth_range_m": [float(depth_min_m), float(depth_max_m)],
                     "diff_range_m": [0.0, float(diff_scale_m)],
                 }

@@ -150,6 +150,17 @@ Optional FFS alignment backend:
 python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --write_ffs_float_m
 ```
 
+Optional FFS native-like postprocess during alignment:
+
+```bash
+python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --ffs_native_like_postprocess
+```
+
+This keeps canonical `depth/` unchanged and additionally writes:
+
+- `depth_ffs_native_like_postprocess/`
+- `depth_ffs_native_like_postprocess_float_m/`
+
 Optional comparison backend:
 
 ```bash
@@ -171,6 +182,14 @@ The repo now provides three complementary comparison views. Use them together:
 ```bash
 python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --write_mp4 --use_float_ffs_depth_when_available
 ```
+
+Optional FFS native-like postprocess in the panel workflow:
+
+```bash
+python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --use_float_ffs_depth_when_available --ffs_native_like_postprocess
+```
+
+When enabled, the panel workflow prefers aligned `depth_ffs_native_like_postprocess*` streams when they exist and otherwise computes the same FFS native-like postprocess on the fly.
 
 This is the primary first-pass diagnostic. It shows:
 

@@ -57,6 +57,10 @@ def build_parser() -> ArgumentParser:
     parser.add_argument("--ffs_scale", type=float, default=1.0)
     parser.add_argument("--ffs_valid_iters", type=int, default=8)
     parser.add_argument("--ffs_max_disp", type=int, default=192)
+    parser.add_argument(
+        "--ffs_native_like_postprocess",
+        action="store_true",
+    )
     parser.add_argument("--write_ffs_float_m", action="store_true")
     parser.add_argument("--fail_if_no_ir_stereo", action="store_true")
     return parser
@@ -279,6 +283,8 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
         streams_to_write.extend(["depth", "depth_ffs"])
         if args.write_ffs_float_m:
             streams_to_write.append("depth_ffs_float_m")
+    if args.depth_backend in {"ffs", "both"} and bool(getattr(args, "ffs_native_like_postprocess", False)):
+        streams_to_write.extend(["depth_ffs_native_like_postprocess", "depth_ffs_native_like_postprocess_float_m"])
 
     print(f"[align] base_path={base_path}")
     print(f"[align] case_name={args.case_name}")
@@ -287,6 +293,7 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     print(f"[align] num_cameras={num_cameras}")
     print(f"[align] matched frames={len(final_frames)}")
     print(f"[align] depth_backend={args.depth_backend}")
+    print(f"[align] ffs_native_like_postprocess={bool(getattr(args, 'ffs_native_like_postprocess', False))}")
 
     prepare_output_case(output_case_dir, num_cameras, streams_to_write)
     shutil.copy2(case_dir / "calibrate.pkl", output_case_dir / "calibrate.pkl")
@@ -307,6 +314,7 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
         "streams_present": streams_to_write,
         "depth_backend_used": args.depth_backend,
         "depth_source_for_depth_dir": "realsense" if args.depth_backend != "ffs" else "ffs",
+        "ffs_native_like_postprocess_enabled": bool(getattr(args, "ffs_native_like_postprocess", False)),
         "depth_scale_m_per_unit": get_metadata_list(metadata, "depth_scale_m_per_unit", num_cameras),
         "depth_encoding": metadata.get("depth_encoding") or "uint16_meters_scaled_invalid_zero",
         "intrinsics": color_intrinsics,
@@ -322,6 +330,11 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     runner = None
     if args.depth_backend in {"ffs", "both"}:
         from data_process.depth_backends import FastFoundationStereoRunner, align_depth_to_color, quantize_depth_with_invalid_zero
+        from qqtt.env.camera.realsense.depth_postprocess import (
+            FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_DIR,
+            FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_FLOAT_DIR,
+            apply_ffs_native_like_depth_postprocess_float_m,
+        )
 
         # This is the production entrypoint for FFS inside the repo.
         # We load the external Fast-FoundationStereo model once here,
@@ -396,6 +409,16 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
 
                 if args.write_ffs_float_m:
                     np.save(output_case_dir / "depth_ffs_float_m" / str(camera_idx) / f"{output_idx}.npy", depth_color)
+
+                if bool(getattr(args, "ffs_native_like_postprocess", False)):
+                    filtered_depth_u16, filtered_depth_m = apply_ffs_native_like_depth_postprocess_float_m(
+                        depth_color,
+                        depth_scale_m_per_unit=scale_m,
+                        fps=int(fps),
+                        frame_number=int(output_idx) + 1,
+                    )
+                    np.save(output_case_dir / FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_DIR / str(camera_idx) / f"{output_idx}.npy", filtered_depth_u16)
+                    np.save(output_case_dir / FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_FLOAT_DIR / str(camera_idx) / f"{output_idx}.npy", filtered_depth_m)
 
     with (output_case_dir / "metadata.json").open("w", encoding="utf-8") as f:
         json.dump(aligned_metadata, f)

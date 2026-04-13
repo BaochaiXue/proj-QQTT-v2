@@ -19,6 +19,7 @@ The repo is intentionally small.
 - `qqtt/env/camera/camera_system.py`
 - `qqtt/env/camera/preflight.py`
 - `qqtt/env/camera/realsense/**`
+- `qqtt/env/camera/realsense/depth_postprocess.py`
 - `qqtt/env/camera/recording_metadata.py`
 
 ### Optional FFS Depth Backend
@@ -85,8 +86,16 @@ The repo is intentionally small.
 - stays stdlib-only at import time so `--help` remains cheap
 - lazily imports `data_process/depth_backends/*` only when `--depth_backend ffs|both` is requested
 - keeps `realsense` as the default backend
+- can optionally write auxiliary `depth_ffs_native_like_postprocess*` streams without changing canonical aligned depth outputs
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
+
+The native RealSense depth filter contract is now centralized in:
+
+- `qqtt/env/camera/realsense/depth_postprocess.py`
+  - source-of-truth chain and parameters for native depth postprocessing
+  - live-frame application for `SingleRealsense.depth_process`
+  - software-frame application for optional FFS native-like depth postprocessing during alignment and comparison
 
 Record-time preflight policy is now explicit instead of being partially inlined inside `record_data.py`:
 

@@ -36,6 +36,7 @@ class RecordDataAlignBothSmokeTest(unittest.TestCase):
                 ffs_scale=1.0,
                 ffs_valid_iters=4,
                 ffs_max_disp=64,
+                ffs_native_like_postprocess=False,
                 write_ffs_float_m=True,
                 fail_if_no_ir_stereo=True,
             )
@@ -57,6 +58,45 @@ class RecordDataAlignBothSmokeTest(unittest.TestCase):
             metadata = json.loads((aligned_case / "metadata.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["depth_backend_used"], "both")
             self.assertEqual(metadata["depth_source_for_depth_dir"], "realsense")
+            self.assertFalse(metadata["ffs_native_like_postprocess_enabled"])
+            self.assertFalse((aligned_case / "depth_ffs_native_like_postprocess").exists())
+
+    def test_aligns_case_with_both_backend_and_ffs_native_like_aux_streams(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            base_path = tmp_root / "data_collect"
+            case_dir = base_path / "sample_case"
+            make_v2_case(case_dir)
+
+            output_path = tmp_root / "data"
+            args = Namespace(
+                base_path=base_path,
+                case_name="sample_case",
+                output_path=output_path,
+                start=10,
+                end=11,
+                fps=None,
+                write_mp4=False,
+                depth_backend="both",
+                ffs_repo="C:/external/fake",
+                ffs_model_path="C:/external/fake/model.pth",
+                ffs_scale=1.0,
+                ffs_valid_iters=4,
+                ffs_max_disp=64,
+                ffs_native_like_postprocess=True,
+                write_ffs_float_m=False,
+                fail_if_no_ir_stereo=True,
+            )
+            align_case(args, runner_factory=FakeRunner)
+
+            aligned_case = output_path / "sample_case"
+            self.assertTrue((aligned_case / "depth" / "0" / "0.npy").is_file())
+            self.assertTrue((aligned_case / "depth_ffs" / "0" / "0.npy").is_file())
+            self.assertTrue((aligned_case / "depth_ffs_native_like_postprocess" / "0" / "0.npy").is_file())
+            self.assertTrue((aligned_case / "depth_ffs_native_like_postprocess_float_m" / "0" / "0.npy").is_file())
+
+            metadata = json.loads((aligned_case / "metadata.json").read_text(encoding="utf-8"))
+            self.assertTrue(metadata["ffs_native_like_postprocess_enabled"])
 
 
 if __name__ == "__main__":

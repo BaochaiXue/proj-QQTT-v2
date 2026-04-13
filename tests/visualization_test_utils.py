@@ -14,10 +14,20 @@ def make_visualization_case(
     *,
     include_depth_ffs: bool = False,
     include_depth_ffs_float_m: bool = False,
+    include_depth_ffs_native_like_postprocess: bool = False,
+    include_depth_ffs_native_like_postprocess_float_m: bool = False,
     frame_num: int = 2,
 ) -> None:
     case_dir.mkdir(parents=True, exist_ok=True)
-    streams = ["color", "depth"] + (["depth_ffs"] if include_depth_ffs else []) + (["depth_ffs_float_m"] if include_depth_ffs_float_m else [])
+    streams = ["color", "depth"]
+    if include_depth_ffs:
+        streams.append("depth_ffs")
+    if include_depth_ffs_float_m:
+        streams.append("depth_ffs_float_m")
+    if include_depth_ffs_native_like_postprocess:
+        streams.append("depth_ffs_native_like_postprocess")
+    if include_depth_ffs_native_like_postprocess_float_m:
+        streams.append("depth_ffs_native_like_postprocess_float_m")
     for stream in streams:
         for cam in range(3):
             (case_dir / stream / str(cam)).mkdir(parents=True, exist_ok=True)
@@ -51,6 +61,19 @@ def make_visualization_case(
                 depth_ffs_float = depth_mm.astype(np.float32) * 0.001 - 0.03
                 depth_ffs_float[depth_mm == 0] = 0.0
                 np.save(case_dir / "depth_ffs_float_m" / str(cam) / f"{frame_idx}.npy", depth_ffs_float.astype(np.float32))
+            if include_depth_ffs_native_like_postprocess:
+                depth_ffs_native_like_postprocess_mm = np.clip(depth_mm.astype(np.int32) - 20 + cam * 3, 0, 65535).astype(np.uint16)
+                np.save(
+                    case_dir / "depth_ffs_native_like_postprocess" / str(cam) / f"{frame_idx}.npy",
+                    depth_ffs_native_like_postprocess_mm,
+                )
+            if include_depth_ffs_native_like_postprocess_float_m:
+                depth_ffs_native_like_postprocess_float = depth_mm.astype(np.float32) * 0.001 - 0.01
+                depth_ffs_native_like_postprocess_float[depth_mm == 0] = 0.0
+                np.save(
+                    case_dir / "depth_ffs_native_like_postprocess_float_m" / str(cam) / f"{frame_idx}.npy",
+                    depth_ffs_native_like_postprocess_float.astype(np.float32),
+                )
 
     metadata = {
         "schema_version": "qqtt_aligned_case_v2",

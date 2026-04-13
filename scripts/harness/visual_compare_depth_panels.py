@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--write_mp4", action="store_true")
     parser.add_argument("--fps", type=int, default=10)
     parser.add_argument("--use_float_ffs_depth_when_available", action="store_true")
+    parser.add_argument("--ffs_native_like_postprocess", action="store_true")
     parser.set_defaults(show_edge_overlay=None)
     return parser.parse_args()
 
@@ -73,6 +74,7 @@ def main() -> int:
         write_mp4=args.write_mp4,
         fps=args.fps,
         use_float_ffs_depth_when_available=args.use_float_ffs_depth_when_available,
+        ffs_native_like_postprocess=bool(args.ffs_native_like_postprocess),
         preset=args.preset,
         show_edge_overlay=bool(args.show_edge_overlay),
     )

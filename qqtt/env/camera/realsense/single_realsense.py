@@ -12,6 +12,7 @@ import cv2
 from threadpoolctl import threadpool_limits
 from multiprocessing.managers import SharedMemoryManager
 
+from .depth_postprocess import apply_native_depth_postprocess_frame
 from .utils import get_accumulate_timestamp_idxs
 from .shared_memory.shared_ndarray import SharedNDArray
 from .shared_memory.shared_memory_ring_buffer import SharedMemoryRingBuffer
@@ -261,24 +262,7 @@ class SingleRealsense(mp.Process):
         return self.metadata_cache
 
     def depth_process(self, depth_frame):
-        depth_to_disparity = rs.disparity_transform(True)
-        disparity_to_depth = rs.disparity_transform(False)
-
-        spatial = rs.spatial_filter()
-        spatial.set_option(rs.option.filter_magnitude, 5)
-        spatial.set_option(rs.option.filter_smooth_alpha, 0.75)
-        spatial.set_option(rs.option.filter_smooth_delta, 1)
-        spatial.set_option(rs.option.holes_fill, 1)
-
-        temporal = rs.temporal_filter()
-        temporal.set_option(rs.option.filter_smooth_alpha, 0.75)
-        temporal.set_option(rs.option.filter_smooth_delta, 1)
-
-        filtered_depth = depth_to_disparity.process(depth_frame)
-        filtered_depth = spatial.process(filtered_depth)
-        filtered_depth = temporal.process(filtered_depth)
-        filtered_depth = disparity_to_depth.process(filtered_depth)
-        return filtered_depth
+        return apply_native_depth_postprocess_frame(depth_frame, rs_module=rs)
 
     def restart_put(self, start_time):
         self.command_queue.put(

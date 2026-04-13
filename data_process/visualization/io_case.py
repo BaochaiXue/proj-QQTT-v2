@@ -156,9 +156,21 @@ def get_depth_scale_list(metadata: dict[str, Any], num_cameras: int) -> list[flo
     return scales
 
 
-def choose_depth_stream(case_dir: Path, metadata: dict[str, Any], source: str, use_float_ffs_depth_when_available: bool) -> tuple[str, bool]:
+def choose_depth_stream(
+    case_dir: Path,
+    metadata: dict[str, Any],
+    source: str,
+    use_float_ffs_depth_when_available: bool,
+    ffs_native_like_postprocess: bool = False,
+) -> tuple[str, bool]:
     if source == "realsense":
         return "depth", False
+
+    if ffs_native_like_postprocess:
+        if use_float_ffs_depth_when_available and (case_dir / "depth_ffs_native_like_postprocess_float_m").is_dir():
+            return "depth_ffs_native_like_postprocess_float_m", True
+        if (case_dir / "depth_ffs_native_like_postprocess").is_dir():
+            return "depth_ffs_native_like_postprocess", False
 
     if use_float_ffs_depth_when_available and (case_dir / "depth_ffs_float_m").is_dir():
         return "depth_ffs_float_m", True
@@ -188,7 +200,12 @@ def load_case_frame_camera_clouds(
         serial_numbers=serials,
         calibration_reference_serials=calibration_reference_serials,
     )
-    depth_dir_name, use_float = choose_depth_stream(case_dir, metadata, depth_source, use_float_ffs_depth_when_available)
+    depth_dir_name, use_float = choose_depth_stream(
+        case_dir,
+        metadata,
+        depth_source,
+        use_float_ffs_depth_when_available,
+    )
 
     per_camera_clouds: list[dict[str, Any]] = []
     per_camera_stats = []

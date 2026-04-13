@@ -116,6 +116,17 @@ Optional FFS backend:
 python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --write_ffs_float_m
 ```
 
+Optional FFS native-like postprocess during alignment:
+
+```bash
+python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --ffs_native_like_postprocess
+```
+
+This keeps canonical FFS compatibility depth unchanged and additionally writes:
+
+- `depth_ffs_native_like_postprocess/`
+- `depth_ffs_native_like_postprocess_float_m/`
+
 Experimental comparison backend:
 
 ```bash
@@ -136,12 +147,24 @@ Start with single-camera panels:
 python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --write_mp4 --use_float_ffs_depth_when_available
 ```
 
+Optional FFS native-like postprocess in the panel workflow:
+
+```bash
+python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --use_float_ffs_depth_when_available --ffs_native_like_postprocess
+```
+
 Use this to judge:
 
 - per-camera holes / invalid regions
 - depth edge quality
 - local surface smoothness
 - ROI crops on the same spatial region
+
+When `--ffs_native_like_postprocess` is enabled:
+
+- the workflow prefers aligned `depth_ffs_native_like_postprocess*` streams when present
+- otherwise it computes the same FFS native-like postprocess on the fly before rendering the panels
+- `summary.json` records whether FFS native-like postprocessing was enabled and which FFS depth source was used per frame
 
 For professor-/review-quality static boards, use the publication-style preset:
 
