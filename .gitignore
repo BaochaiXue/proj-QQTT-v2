@@ -75,6 +75,7 @@ wandb/
 /past_exps/
 /outcmaes/
 /results/
+/result/
 /exp_results/
 /test_output/
 /visualization/
