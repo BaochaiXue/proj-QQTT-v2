@@ -39,7 +39,9 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 
 - `python data_process/record_data_align.py --case_name smoke_case --start <start> --end <end> --depth_backend realsense` completes
 - aligned case exists under `data/smoke_case/`
+- grouped aligned layouts such as `data/static/smoke_case/` are also valid when `--output_path` points at a grouped aligned root
 - aligned `metadata.json` exists
+- aligned `metadata_ext.json` exists for QQTT extension fields
 - aligned `color/` exists
 - aligned `depth/` exists for `realsense` and `ffs`
 - aligned `depth_ffs/` exists only for `both`

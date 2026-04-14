@@ -8,6 +8,11 @@ import sys
 import tempfile
 import unittest
 
+from data_process.aligned_case_metadata import (
+    ALIGNED_METADATA_EXT_FILENAME,
+    LEGACY_ALIGNED_METADATA_KEYS,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "record_data_align_minimal"
@@ -42,12 +47,18 @@ class RecordDataAlignSmokeTest(unittest.TestCase):
             aligned_case = output_path / "sample_case"
             self.assertTrue((aligned_case / "calibrate.pkl").is_file())
             self.assertTrue((aligned_case / "metadata.json").is_file())
+            self.assertTrue((aligned_case / ALIGNED_METADATA_EXT_FILENAME).is_file())
 
             metadata = json.loads((aligned_case / "metadata.json").read_text(encoding="utf-8"))
+            metadata_ext = json.loads((aligned_case / ALIGNED_METADATA_EXT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(set(metadata.keys()), set(LEGACY_ALIGNED_METADATA_KEYS))
             self.assertEqual(metadata["frame_num"], 2)
             self.assertEqual(metadata["start_step"], 10)
             self.assertEqual(metadata["end_step"], 11)
             self.assertEqual(len(metadata["serial_numbers"]), 3)
+            self.assertEqual(metadata_ext["depth_backend_used"], "realsense")
+            self.assertEqual(metadata_ext["depth_source_for_depth_dir"], "realsense")
+            self.assertEqual(metadata_ext["streams_present"], ["color", "depth"])
 
             for camera_idx in range(3):
                 color_dir = aligned_case / "color" / str(camera_idx)

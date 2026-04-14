@@ -9,6 +9,10 @@ import unittest
 
 import numpy as np
 
+from data_process.aligned_case_metadata import (
+    ALIGNED_METADATA_EXT_FILENAME,
+    LEGACY_ALIGNED_METADATA_KEYS,
+)
 from data_process.record_data_align import align_case
 
 
@@ -105,6 +109,7 @@ class RecordDataAlignFfsSmokeTest(unittest.TestCase):
             self.assertTrue((aligned_case / "depth_ffs_float_m" / "0" / "0.npy").is_file())
             self.assertTrue((aligned_case / "ir_left" / "0" / "0.png").is_file())
             self.assertTrue((aligned_case / "ir_right" / "0" / "0.png").is_file())
+            self.assertTrue((aligned_case / ALIGNED_METADATA_EXT_FILENAME).is_file())
 
             depth = np.load(aligned_case / "depth" / "0" / "0.npy")
             self.assertEqual(depth.dtype, np.uint16)
@@ -112,10 +117,13 @@ class RecordDataAlignFfsSmokeTest(unittest.TestCase):
             self.assertGreaterEqual(int((depth == 0).sum()), 0)
 
             metadata = json.loads((aligned_case / "metadata.json").read_text(encoding="utf-8"))
-            self.assertEqual(metadata["depth_backend_used"], "ffs")
-            self.assertEqual(metadata["depth_source_for_depth_dir"], "ffs")
-            self.assertIn("ffs_config", metadata)
-            self.assertFalse(metadata["ffs_native_like_postprocess_enabled"])
+            metadata_ext = json.loads((aligned_case / ALIGNED_METADATA_EXT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(set(metadata.keys()), set(LEGACY_ALIGNED_METADATA_KEYS))
+            self.assertEqual(metadata_ext["depth_backend_used"], "ffs")
+            self.assertEqual(metadata_ext["depth_source_for_depth_dir"], "ffs")
+            self.assertIn("ffs_config", metadata_ext)
+            self.assertFalse(metadata_ext["ffs_native_like_postprocess_enabled"])
+            self.assertEqual(metadata_ext["streams_present"], ["color", "ir_left", "ir_right", "depth", "depth_ffs_float_m"])
 
     def test_aligns_case_with_ffs_native_like_aux_streams(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -149,9 +157,12 @@ class RecordDataAlignFfsSmokeTest(unittest.TestCase):
             self.assertTrue((aligned_case / "depth" / "0" / "0.npy").is_file())
             self.assertTrue((aligned_case / "depth_ffs_native_like_postprocess" / "0" / "0.npy").is_file())
             self.assertTrue((aligned_case / "depth_ffs_native_like_postprocess_float_m" / "0" / "0.npy").is_file())
+            self.assertTrue((aligned_case / ALIGNED_METADATA_EXT_FILENAME).is_file())
 
             metadata = json.loads((aligned_case / "metadata.json").read_text(encoding="utf-8"))
-            self.assertTrue(metadata["ffs_native_like_postprocess_enabled"])
+            metadata_ext = json.loads((aligned_case / ALIGNED_METADATA_EXT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(set(metadata.keys()), set(LEGACY_ALIGNED_METADATA_KEYS))
+            self.assertTrue(metadata_ext["ffs_native_like_postprocess_enabled"])
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ import unittest
 import cv2
 import numpy as np
 
+from data_process.aligned_case_metadata import write_split_aligned_metadata
+from data_process.visualization.io_case import load_case_metadata
 from data_process.visualization.pointcloud_compare import load_case_frame_cloud
 
 
@@ -41,12 +43,16 @@ def make_aligned_case(case_dir: Path, *, include_depth_ffs: bool = False) -> Non
     metadata = {
         "serial_numbers": ["239222300433", "239222300781", "239222303506"],
         "calibration_reference_serials": ["239222300433", "239222300781", "239222303506"],
+        "fps": 30,
+        "WH": [2, 2],
         "frame_num": 1,
+        "start_step": 0,
+        "end_step": 0,
         "depth_scale_m_per_unit": [0.001, 0.001, 0.001],
         "intrinsics": K,
         "K_color": K,
     }
-    (case_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    write_split_aligned_metadata(case_dir, metadata)
 
 
 class PointcloudFusionSmokeTest(unittest.TestCase):
@@ -55,7 +61,7 @@ class PointcloudFusionSmokeTest(unittest.TestCase):
             case_dir = Path(tmp_dir) / "case"
             make_aligned_case(case_dir, include_depth_ffs=True)
 
-            metadata = json.loads((case_dir / "metadata.json").read_text(encoding="utf-8"))
+            metadata = load_case_metadata(case_dir)
             points, colors, stats = load_case_frame_cloud(
                 case_dir=case_dir,
                 metadata=metadata,

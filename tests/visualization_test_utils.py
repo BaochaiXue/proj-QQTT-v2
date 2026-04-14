@@ -8,6 +8,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+from data_process.aligned_case_metadata import write_split_aligned_metadata
+
 
 def make_visualization_case(
     case_dir: Path,
@@ -79,14 +81,18 @@ def make_visualization_case(
         "schema_version": "qqtt_aligned_case_v2",
         "serial_numbers": ["239222300433", "239222300781", "239222303506"],
         "calibration_reference_serials": ["239222300433", "239222300781", "239222303506"],
+        "fps": 30,
+        "WH": [width, height],
         "frame_num": frame_num,
+        "start_step": 0,
+        "end_step": frame_num - 1,
         "depth_scale_m_per_unit": [0.001, 0.001, 0.001],
         "intrinsics": K,
         "K_color": K,
         "depth_backend_used": "both" if include_depth_ffs else "realsense",
         "depth_source_for_depth_dir": "realsense",
     }
-    (case_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    write_split_aligned_metadata(case_dir, metadata)
 
 
 def make_rerun_compare_cases(
@@ -148,20 +154,28 @@ def make_rerun_compare_cases(
         "schema_version": "qqtt_aligned_case_v2",
         "serial_numbers": ["239222300433", "239222300781", "239222303506"],
         "calibration_reference_serials": ["239222300433", "239222300781", "239222303506"],
+        "fps": 30,
+        "WH": [width, height],
         "frame_num": frame_num,
+        "start_step": 0,
+        "end_step": frame_num - 1,
         "depth_scale_m_per_unit": [0.001, 0.001, 0.001],
         "intrinsics": k_color,
         "K_color": k_color,
         "depth_backend_used": "realsense",
         "depth_source_for_depth_dir": "realsense",
     }
-    (native_case_dir / "metadata.json").write_text(json.dumps(native_metadata), encoding="utf-8")
+    write_split_aligned_metadata(native_case_dir, native_metadata)
 
     ffs_metadata = {
         "schema_version": "qqtt_aligned_case_v2",
         "serial_numbers": ["239222300433", "239222300781", "239222303506"],
         "calibration_reference_serials": ["239222300433", "239222300781", "239222303506"],
+        "fps": 30,
+        "WH": [width, height],
         "frame_num": frame_num,
+        "start_step": 0,
+        "end_step": frame_num - 1,
         "intrinsics": k_color,
         "K_color": k_color,
         "K_ir_left": k_color,
@@ -182,7 +196,7 @@ def make_rerun_compare_cases(
             "max_disp": 192,
         },
     }
-    (ffs_case_dir / "metadata.json").write_text(json.dumps(ffs_metadata), encoding="utf-8")
+    write_split_aligned_metadata(ffs_case_dir, ffs_metadata)
     return native_case_dir, ffs_case_dir
 
 

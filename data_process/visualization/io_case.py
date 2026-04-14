@@ -1,21 +1,19 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
+from data_process.aligned_case_metadata import load_aligned_metadata
 from .calibration_io import load_calibration_transforms
 from .io_artifacts import write_ply_ascii
 
 
 def load_case_metadata(case_dir: Path) -> dict[str, Any]:
-    metadata_path = case_dir / "metadata.json"
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Missing metadata.json: {metadata_path}")
-    return json.loads(metadata_path.read_text(encoding="utf-8"))
+    _, _, merged_metadata = load_aligned_metadata(case_dir)
+    return merged_metadata
 
 
 def decode_depth_to_meters(depth: np.ndarray, depth_scale_m_per_unit: float | None) -> np.ndarray:
@@ -116,12 +114,43 @@ def resolve_case_dirs(
     realsense_case: str | None,
     ffs_case: str | None,
 ) -> tuple[Path, Path, bool]:
+    aligned_root = Path(aligned_root).resolve()
     if case_name:
-        case_dir = aligned_root / case_name
+        case_dir = resolve_case_dir(aligned_root=aligned_root, case_ref=case_name)
         return case_dir, case_dir, True
     if realsense_case and ffs_case:
-        return aligned_root / realsense_case, aligned_root / ffs_case, False
+        return (
+            resolve_case_dir(aligned_root=aligned_root, case_ref=realsense_case),
+            resolve_case_dir(aligned_root=aligned_root, case_ref=ffs_case),
+            False,
+        )
     raise ValueError("Use either --case_name or both --realsense_case and --ffs_case.")
+
+
+def resolve_case_dir(*, aligned_root: Path, case_ref: str) -> Path:
+    root = Path(aligned_root).resolve()
+    candidate = (root / case_ref).resolve()
+    if candidate.is_dir():
+        return candidate
+
+    case_name = Path(str(case_ref)).name
+    matches = sorted(
+        {
+            metadata_path.parent.resolve()
+            for metadata_path in root.rglob("metadata.json")
+            if metadata_path.parent.name == case_name
+        },
+        key=lambda path: str(path),
+    )
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        relative_matches = ", ".join(str(path.relative_to(root)) for path in matches)
+        raise ValueError(
+            f"Ambiguous case reference {case_ref!r} under {root}. "
+            f"Use a relative subpath such as one of: {relative_matches}"
+        )
+    raise FileNotFoundError(f"Could not resolve case {case_ref!r} under {root}")
 
 
 def get_frame_count(metadata: dict[str, Any]) -> int:

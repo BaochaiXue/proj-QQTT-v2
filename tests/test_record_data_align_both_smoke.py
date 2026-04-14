@@ -9,6 +9,10 @@ import unittest
 
 import numpy as np
 
+from data_process.aligned_case_metadata import (
+    ALIGNED_METADATA_EXT_FILENAME,
+    LEGACY_ALIGNED_METADATA_KEYS,
+)
 from data_process.record_data_align import align_case
 from tests.test_record_data_align_ffs_smoke import FIXTURE, FakeRunner, make_v2_case
 
@@ -46,6 +50,7 @@ class RecordDataAlignBothSmokeTest(unittest.TestCase):
             self.assertTrue((aligned_case / "depth" / "0" / "0.npy").is_file())
             self.assertTrue((aligned_case / "depth_ffs" / "0" / "0.npy").is_file())
             self.assertTrue((aligned_case / "depth_ffs_float_m" / "0" / "0.npy").is_file())
+            self.assertTrue((aligned_case / ALIGNED_METADATA_EXT_FILENAME).is_file())
 
             copied_depth = np.load(aligned_case / "depth" / "0" / "0.npy")
             original_depth = np.load(case_dir / "depth" / "0" / "10.npy")
@@ -56,9 +61,11 @@ class RecordDataAlignBothSmokeTest(unittest.TestCase):
             self.assertGreater(int((ffs_depth > 0).sum()), 0)
 
             metadata = json.loads((aligned_case / "metadata.json").read_text(encoding="utf-8"))
-            self.assertEqual(metadata["depth_backend_used"], "both")
-            self.assertEqual(metadata["depth_source_for_depth_dir"], "realsense")
-            self.assertFalse(metadata["ffs_native_like_postprocess_enabled"])
+            metadata_ext = json.loads((aligned_case / ALIGNED_METADATA_EXT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(set(metadata.keys()), set(LEGACY_ALIGNED_METADATA_KEYS))
+            self.assertEqual(metadata_ext["depth_backend_used"], "both")
+            self.assertEqual(metadata_ext["depth_source_for_depth_dir"], "realsense")
+            self.assertFalse(metadata_ext["ffs_native_like_postprocess_enabled"])
             self.assertFalse((aligned_case / "depth_ffs_native_like_postprocess").exists())
 
     def test_aligns_case_with_both_backend_and_ffs_native_like_aux_streams(self) -> None:
@@ -94,9 +101,12 @@ class RecordDataAlignBothSmokeTest(unittest.TestCase):
             self.assertTrue((aligned_case / "depth_ffs" / "0" / "0.npy").is_file())
             self.assertTrue((aligned_case / "depth_ffs_native_like_postprocess" / "0" / "0.npy").is_file())
             self.assertTrue((aligned_case / "depth_ffs_native_like_postprocess_float_m" / "0" / "0.npy").is_file())
+            self.assertTrue((aligned_case / ALIGNED_METADATA_EXT_FILENAME).is_file())
 
             metadata = json.loads((aligned_case / "metadata.json").read_text(encoding="utf-8"))
-            self.assertTrue(metadata["ffs_native_like_postprocess_enabled"])
+            metadata_ext = json.loads((aligned_case / ALIGNED_METADATA_EXT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(set(metadata.keys()), set(LEGACY_ALIGNED_METADATA_KEYS))
+            self.assertTrue(metadata_ext["ffs_native_like_postprocess_enabled"])
 
 
 if __name__ == "__main__":

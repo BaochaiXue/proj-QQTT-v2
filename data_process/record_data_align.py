@@ -18,6 +18,8 @@ _PROJECT_ROOT = next(
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from data_process.aligned_case_metadata import write_split_aligned_metadata
+
 RAW_IMAGE_STREAMS = ("color", "ir_left", "ir_right")
 
 
@@ -420,8 +422,7 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
                     np.save(output_case_dir / FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_DIR / str(camera_idx) / f"{output_idx}.npy", filtered_depth_u16)
                     np.save(output_case_dir / FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_FLOAT_DIR / str(camera_idx) / f"{output_idx}.npy", filtered_depth_m)
 
-    with (output_case_dir / "metadata.json").open("w", encoding="utf-8") as f:
-        json.dump(aligned_metadata, f)
+    write_split_aligned_metadata(output_case_dir, aligned_metadata)
 
     if args.write_mp4:
         ffmpeg_bin = find_ffmpeg()

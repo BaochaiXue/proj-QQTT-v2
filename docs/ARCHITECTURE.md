@@ -89,6 +89,9 @@ The repo is intentionally small.
 - lazily imports `data_process/depth_backends/*` only when `--depth_backend ffs|both` is requested
 - keeps `realsense` as the default backend
 - can optionally write auxiliary `depth_ffs_native_like_postprocess*` streams without changing canonical aligned depth outputs
+- now writes aligned metadata in two files:
+  - `metadata.json` for legacy `proj-QQTT` compatibility
+  - `metadata_ext.json` for QQTT-only aligned metadata extensions
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
 
@@ -121,6 +124,8 @@ The visualization package is now split by responsibility instead of concentratin
 
 - `io_case.py`
   - aligned-case metadata loading
+  - merged loading of `metadata.json` + optional `metadata_ext.json`
+  - grouped aligned-case resolution under `data/<type>/<case_name>/`
   - aligned depth-frame loading and FFS native-like postprocess selection/fallback
   - depth decoding
   - per-camera point-cloud generation

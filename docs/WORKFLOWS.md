@@ -110,6 +110,29 @@ Optional output location override:
 python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --output_path ./data
 ```
 
+The grouped `data/<type>/<case_name>/` layout applies to aligned cases under `data/`, not to raw recordings under `data_collect/`.
+
+Grouped aligned layouts are supported by choosing a grouped output root. For example:
+
+```bash
+python record_data.py --case_name my_case --capture_mode rgbd
+python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend realsense --output_path ./data/static
+```
+
+This keeps the aligned case under `data/static/my_case/` while the raw recording remains under `data_collect/my_case/`.
+
+Future aligned cases now write:
+
+- `metadata.json`
+  - old `proj-QQTT` compatible aligned fields only
+- `metadata_ext.json`
+  - QQTT extension fields such as depth backend, stream layout, calibration-reference serials, and FFS geometry/config metadata
+
+Visualization case resolution now accepts either:
+
+- a relative grouped ref such as `static/my_case`
+- a unique bare case name such as `my_case` when it appears only once under `aligned_root`
+
 Optional FFS backend:
 
 ```bash
@@ -138,13 +161,14 @@ Important:
 - `realsense` remains the default backend.
 - `ffs` requires raw `ir_left` / `ir_right` plus runtime geometry metadata.
 - `both` is experimental and should only be used when the hardware probe says the same-take stream set is supported.
+- current repo visualization loaders merge `metadata.json` and `metadata_ext.json` automatically when both are present
 
 ## 5. Compare
 
 Start with single-camera panels:
 
 ```bash
-python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --write_mp4 --use_float_ffs_depth_when_available
+python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case static/native_case --ffs_case static/ffs_case --write_mp4 --use_float_ffs_depth_when_available
 ```
 
 Optional FFS native-like postprocess in the panel workflow:
