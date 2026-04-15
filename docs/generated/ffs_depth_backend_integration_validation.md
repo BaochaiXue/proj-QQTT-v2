@@ -88,6 +88,7 @@ Probe status:
 
 - latest D455 stream capability probe concluded `Case E`
 - same-take `depth_ir_pair` / `rgbd_ir_pair` are not stable enough to promise on this machine
+- current repo policy now warning-allows `both_eval` experimentally instead of hard-blocking it
 
 Validation command:
 
@@ -101,9 +102,14 @@ Observed result:
 - error text:
   - `RuntimeError: both_eval is blocked by the latest D455 stream probe on this machine for serials=['239222300781'], 848x480@30, emitter=on.`
 
+Historical note:
+
+- the blocked result above came from the earlier hard-block policy
+- current repo policy now allows the same profile to proceed experimentally with a warning, but that does not change the underlying long-duration instability evidence
+
 ## Current Conclusion
 
 - Existing RealSense RGB-D workflow still works.
 - Integrated FFS alignment backend works on a real recorded case when raw `stereo_ir` data is available.
-- On this machine, `both_eval` should remain blocked.
+- On this machine, `both_eval` should remain explicitly experimental rather than treated as supported.
 - On this machine, 3-camera `stereo_ir` should still be treated as unstable until a new probe proves otherwise.

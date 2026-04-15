@@ -60,7 +60,7 @@ Current preflight policy:
   - unsupported profile remains allowed experimentally with a warning
 - `both_eval`
   - probe-aware
-  - unsupported profile is blocked
+  - unsupported profile remains allowed experimentally with a warning
 
 `record_data.py` now prints a preflight summary before recording, including:
 
@@ -81,6 +81,8 @@ After `CameraSystem` resolves the actual camera serials, `record_data.py` prints
 - final support / blocked / experimental / unknown status for the discovered serial set
 
 When `--max_frames` is used, recording now fails fast if one or more cameras stop making progress while others continue, instead of waiting indefinitely for the slowest camera to catch up.
+
+If a camera drops during or immediately after stop, the worker now exits cleanly instead of emitting a secondary inactive-pipeline traceback during reconnect handling.
 
 Optional non-interactive short capture:
 

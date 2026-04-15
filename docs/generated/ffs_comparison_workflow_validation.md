@@ -33,8 +33,9 @@ to map the case serials back to the full calibration order.
 
 ### Current machine truth
 
-- `both_eval` is still blocked by the latest D455 capability probe
-- comparison validation therefore used the required two-case fallback workflow
+- the latest D455 capability probe still marks `both_eval` unstable on this machine
+- current repo policy now warning-allows `both_eval` experimentally instead of hard-blocking it
+- comparison validation still used the two-case fallback workflow as the honest stable path
 
 ### Native aligned case
 
@@ -97,4 +98,5 @@ Frame mapping used:
 
 - The repo now supports a real user-facing native-vs-FFS comparison workflow.
 - Same-case comparison remains dependent on whether `both_eval` is truly supported by the current D455 profile.
-- On this machine, the honest supported path is the two-case fallback comparison workflow.
+- On this machine, the honest stable path is still the two-case fallback comparison workflow.
+- `both_eval` can now be attempted experimentally with a warning, but it should not be treated as a proven stable default.

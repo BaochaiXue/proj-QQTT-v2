@@ -28,9 +28,9 @@ CAPTURE_PREFLIGHT_POLICY = {
     },
     "both_eval": {
         "probe_stream_set": "rgbd_ir_pair",
-        "unsupported_behavior": "block",
-        "operator_status": "blocked",
-        "policy_label": "block_if_probe_fails",
+        "unsupported_behavior": "warn",
+        "operator_status": "experimental_warning",
+        "policy_label": "warn_if_probe_fails",
     },
 }
 

@@ -12,7 +12,8 @@ for the 3-camera D455 setup, using the repo's `both_eval` capture mode.
 
 ## Current Hardware Context
 
-- date: `2026-04-11`
+- latest short-burst rerun date: `2026-04-14`
+- latest retained long-duration probe date: `2026-04-11`
 - serials:
   - `239222300433`
   - `239222300781`
@@ -30,31 +31,31 @@ capture_mode = both_eval
 topology = three_camera
 stream_set = rgbd_ir_pair
 probe_support = False
-policy = block_if_probe_fails
-allowed_to_record = False
+policy = warn_if_probe_fails
+allowed_to_record = True
 ```
 
 Official recording command:
 
 ```text
-C:\Users\zhang\miniconda3\envs\qqtt-ffs-compat\python.exe record_data.py --case_name tmp_both_eval_30f_policy_check --capture_mode both_eval --emitter on --max_frames 30 --disable-keyboard-listener
+C:\Users\zhang\miniconda3\envs\qqtt-ffs-compat\python.exe record_data.py --case_name tmp_both_eval_policy_20260414 --capture_mode both_eval --emitter on --max_frames 30 --disable-keyboard-listener
 ```
 
 Observed result:
 
-- `record_data.py` enumerated all 3 cameras
-- `Camera system is ready.`
-- recording was then blocked by preflight after camera discovery
-- no experimental raw case was kept
-
-Blocking reason:
-
 - current repo policy still trusts `docs/generated/d455_stream_probe_results.*`
-- that probe marked 3-camera `rgbd_ir_pair` unsupported / unstable on this machine
+- that probe still marks 3-camera `rgbd_ir_pair` unsupported / unstable on this machine
+- however, repo policy now allows `both_eval` to proceed experimentally with a warning instead of blocking it outright
 
 ## 2. Direct Runtime Experiment (Bypassing Preflight)
 
-Because the user asked whether simultaneous capture can actually work now, I ran a direct `CameraSystem(capture_mode='both_eval')` experiment outside `record_data.py` policy gating.
+Because the user asked on `2026-04-14` whether simultaneous capture can actually work now, I re-ran a direct `CameraSystem(capture_mode='both_eval')` experiment outside `record_data.py` policy gating.
+
+Direct experiment command:
+
+```text
+C:\Users\zhang\miniconda3\envs\qqtt-ffs-compat\python.exe scripts\harness\_tmp_both_eval_direct_check.py
+```
 
 Initialization probe result:
 
@@ -70,13 +71,18 @@ Short recording experiment:
 - mode: direct `CameraSystem(..., capture_mode='both_eval', emitter='on')`
 - target: `max_frames=30`
 - raw output path used during the experiment:
-  - `data_collect/tmp_both_eval_30f_direct/`
+  - `data_collect/tmp_both_eval_direct_20260414/`
 
 Observed result:
 
 - success
 - the recorder exited normally
 - all 3 cameras reached `30` saved frames for every requested stream
+- each synchronized observation contained:
+  - `color`
+  - `depth`
+  - `ir_left`
+  - `ir_right`
 
 Saved-frame counts before cleanup:
 
@@ -115,6 +121,8 @@ Saved-frame counts before cleanup:
 
 ## 3. Longer-Duration Stability Probe
 
+This longer `30s` probe was **not** re-run in the `2026-04-14` session below. The latest retained long-duration evidence remains the targeted `2026-04-11` revalidation and is included here because repo policy still depends on it.
+
 Targeted long-duration probe:
 
 - topology: `three_camera`
@@ -149,19 +157,20 @@ Those gaps are far above the probe's allowed `max_timestamp_gap_factor`, so the 
 
 - **Yes, this machine can complete a short 30-frame 3-camera `both_eval` burst and save `color + depth + ir_left + ir_right`.**
 - **No, this machine still does not pass a longer 30-second `rgbd_ir_pair` stability probe.**
-- **Therefore the default repo strategy should remain probe-gated and blocked for `record_data.py --capture_mode both_eval` on this machine/profile.**
+- **Therefore the default repo strategy should remain probe-gated and explicitly experimental for `record_data.py --capture_mode both_eval` on this machine/profile.**
 
 Interpretation:
 
 - short-burst feasibility is now proven
 - long-duration stability is still not proven
-- for repo policy, long-duration stability remains the deciding requirement
-- the previous conservative `both_eval` gate remains the correct default behavior after this revalidation
+- for repo policy, long-duration stability still matters and must remain visible to the operator
+- the repo now exposes that risk as an experimental warning instead of a hard block
 
 ## Cleanup
 
 Experimental raw data was removed after validation:
 
-- `data_collect/tmp_both_eval_30f_direct/`
-- no retained `tmp_both_eval_30f_policy_check/` directory remained
+- `data_collect/tmp_both_eval_direct_20260414/`
+- no retained `tmp_both_eval_policy_20260414/` directory remained
+- `scripts/harness/_tmp_both_eval_direct_check.py` was deleted after the experiment
 - temporary targeted probe artifacts under `%TEMP%\\qqtt_both_eval_long_probe\\` were removed after the case result was merged into docs

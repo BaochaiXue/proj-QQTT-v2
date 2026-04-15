@@ -269,6 +269,56 @@ class SingleRealsense(mp.Process):
             {"cmd": Command.RESTART_PUT.value, "put_start_time": start_time}
         )
 
+    def _stop_pipeline_safely(self):
+        pipeline = getattr(self, "pipeline", None)
+        if pipeline is None:
+            return
+        try:
+            pipeline.stop()
+        except Exception:
+            pass
+
+    def _handle_wait_for_frames_error(self, error: RuntimeError, init_device) -> bool:
+        if self.stop_event.is_set():
+            if self.verbose:
+                print(
+                    f"[SingleRealsense {self.serial_number}] Stop requested after frame wait "
+                    f"error: {error}. Exiting worker without restart."
+                )
+            return False
+
+        print(
+            f"[SingleRealsense {self.serial_number}] Error: {error}. "
+            f"Ready state: {self.ready_event.is_set()}, Restarting device."
+        )
+
+        try:
+            device = self.pipeline.get_active_profile().get_device()
+        except Exception as profile_error:
+            print(
+                f"[SingleRealsense {self.serial_number}] Warning: failed to fetch active "
+                f"profile during recovery: {profile_error}."
+            )
+            self._stop_pipeline_safely()
+            if self.stop_event.is_set():
+                return False
+            init_device()
+            return True
+
+        try:
+            device.hardware_reset()
+        except Exception as reset_error:
+            print(
+                f"[SingleRealsense {self.serial_number}] Warning: hardware reset failed "
+                f"during recovery: {reset_error}."
+            )
+
+        self._stop_pipeline_safely()
+        if self.stop_event.is_set():
+            return False
+        init_device()
+        return True
+
     # ========= interval API ===========
     def run(self):
         # limit threads
@@ -457,18 +507,15 @@ class SingleRealsense(mp.Process):
             while not self.stop_event.is_set():
                 # wait for frames to come in
                 frameset = None
-                while frameset is None:
+                while frameset is None and not self.stop_event.is_set():
                     try:
                         frameset = self.pipeline.wait_for_frames()
                     except RuntimeError as e:
-                        print(
-                            f"[SingleRealsense {self.serial_number}] Error: {e}. Ready state: {self.ready_event.is_set()}, Restarting device."
-                        )
-                        device = self.pipeline.get_active_profile().get_device()
-                        device.hardware_reset()
-                        self.pipeline.stop()
-                        init_device()
+                        if not self._handle_wait_for_frames_error(e, init_device):
+                            break
                         continue
+                if frameset is None:
+                    break
                 receive_time = time.time()
                 raw_frameset = frameset
                 aligned_frameset = (
@@ -614,6 +661,7 @@ class SingleRealsense(mp.Process):
 
                 iter_idx += 1
         finally:
+            self._stop_pipeline_safely()
             rs_config.disable_all_streams()
             self.ready_event.set()
 

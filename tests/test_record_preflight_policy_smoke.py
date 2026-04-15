@@ -50,7 +50,7 @@ class RecordPreflightPolicySmokeTest(unittest.TestCase):
         self.assertTrue(decision.allowed_to_record)
         self.assertEqual(decision.operator_status, "supported")
 
-    def test_both_eval_is_blocked_when_probe_failed(self) -> None:
+    def test_both_eval_warns_but_is_allowed_when_probe_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             probe_path = self._write_probe_results(Path(tmp_dir))
             decision = evaluate_capture_preflight(
@@ -63,8 +63,8 @@ class RecordPreflightPolicySmokeTest(unittest.TestCase):
                 probe_results_path=probe_path,
                 probe_results_md_path=probe_path.with_suffix(".md"),
             )
-        self.assertFalse(decision.allowed_to_record)
-        self.assertEqual(decision.operator_status, "blocked")
+        self.assertTrue(decision.allowed_to_record)
+        self.assertEqual(decision.operator_status, "experimental_warning")
 
     def test_stereo_ir_warns_but_is_allowed_when_probe_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

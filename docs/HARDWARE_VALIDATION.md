@@ -54,6 +54,7 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - latest stream probe result: `rgb_ir_pair` is not stable on all 3 cameras
 - latest targeted `30s` revalidation still failed stability thresholds for 3-camera `rgbd_ir_pair` at `848x480@30`, emitter `on`
 - short `30`-frame `both_eval` bursts can succeed, but long-duration stability is still not proven
+- `record_data.py --capture_mode both_eval` is now warning-allowed experimentally rather than blocked by default
 - same-take `rgbd_ir_pair` should still not be promised as a default supported workflow on this machine
 - integrated `stereo_ir -> ffs` path has been validated on serial `239222300781`
 - fallback two-case comparison video workflow has been validated on serial `239222300781`

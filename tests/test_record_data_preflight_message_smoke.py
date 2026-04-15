@@ -32,7 +32,7 @@ def _decision(
         stream_set={"both_eval": "rgbd_ir_pair", "stereo_ir": "rgb_ir_pair"}.get(capture_mode),
         probe_support=None if operator_status in {"pending_serial_resolution", "unknown"} else allowed_to_record,
         policy_label="test_policy",
-        unsupported_behavior="block" if capture_mode == "both_eval" else "warn",
+        unsupported_behavior="warn" if capture_mode in {"both_eval", "stereo_ir"} else "allow",
         operator_status=operator_status,
         allowed_to_record=allowed_to_record,
         requires_probe=True,
@@ -65,13 +65,13 @@ class _FakeCameraSystem:
 
 
 class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
-    def test_explicit_serials_block_both_eval_before_camera_startup(self) -> None:
+    def test_explicit_serials_allow_both_eval_with_warning(self) -> None:
         _FakeCameraSystem.last_instance = None
         with tempfile.TemporaryDirectory() as tmp_dir:
             argv = [
                 "record_data.py",
                 "--case_name",
-                "blocked_case",
+                "warning_case",
                 "--output_dir",
                 tmp_dir,
                 "--capture_mode",
@@ -88,28 +88,39 @@ class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
             with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch.object(
                 record_data,
                 "evaluate_capture_preflight",
-                return_value=_decision(
-                    capture_mode="both_eval",
-                    operator_status="blocked",
-                    allowed_to_record=False,
-                    serials=["a", "b", "c"],
-                    reason="blocked by test preflight",
-                ),
+                side_effect=[
+                    _decision(
+                        capture_mode="both_eval",
+                        operator_status="experimental_warning",
+                        allowed_to_record=True,
+                        serials=["a", "b", "c"],
+                        reason="warning before startup",
+                    ),
+                    _decision(
+                        capture_mode="both_eval",
+                        operator_status="experimental_warning",
+                        allowed_to_record=True,
+                        serials=["a", "b", "c"],
+                        reason="warning after discovery",
+                    ),
+                ],
             ), patch("sys.argv", argv), redirect_stdout(stdout):
-                with self.assertRaises(RuntimeError):
-                    record_data.main()
-            self.assertIsNone(_FakeCameraSystem.last_instance)
+                self.assertEqual(record_data.main(), 0)
+            self.assertIsNotNone(_FakeCameraSystem.last_instance)
+            self.assertEqual(len(_FakeCameraSystem.last_instance.record_calls), 1)
             output = stdout.getvalue()
             self.assertIn("stage: before camera startup", output)
-            self.assertIn("operator_status: blocked", output)
+            self.assertIn("stage: after camera discovery", output)
+            self.assertIn("operator_status: experimental_warning", output)
+            self.assertIn("recording will still be attempted", output)
 
-    def test_discovered_serials_block_both_eval_after_camera_discovery(self) -> None:
+    def test_discovered_serials_allow_both_eval_with_warning_after_camera_discovery(self) -> None:
         _FakeCameraSystem.last_instance = None
         with tempfile.TemporaryDirectory() as tmp_dir:
             argv = [
                 "record_data.py",
                 "--case_name",
-                "blocked_after_discovery",
+                "warning_after_discovery",
                 "--output_dir",
                 tmp_dir,
                 "--capture_mode",
@@ -132,21 +143,22 @@ class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
                     ),
                     _decision(
                         capture_mode="both_eval",
-                        operator_status="blocked",
-                        allowed_to_record=False,
+                        operator_status="experimental_warning",
+                        allowed_to_record=True,
                         serials=["a", "b", "c"],
-                        reason="blocked after discovery",
+                        reason="warning after discovery",
                     ),
                 ],
             ), patch("sys.argv", argv), redirect_stdout(stdout):
-                with self.assertRaises(RuntimeError):
-                    record_data.main()
+                self.assertEqual(record_data.main(), 0)
             self.assertIsNotNone(_FakeCameraSystem.last_instance)
-            self.assertTrue(_FakeCameraSystem.last_instance.realsense.stop_called)
+            self.assertFalse(_FakeCameraSystem.last_instance.realsense.stop_called)
+            self.assertEqual(len(_FakeCameraSystem.last_instance.record_calls), 1)
             output = stdout.getvalue()
             self.assertIn("stage: before camera discovery", output)
             self.assertIn("stage: after camera discovery", output)
-            self.assertIn("operator_status: blocked", output)
+            self.assertIn("operator_status: experimental_warning", output)
+            self.assertIn("recording will still be attempted", output)
 
     def test_discovered_serials_warn_for_stereo_ir(self) -> None:
         _FakeCameraSystem.last_instance = None

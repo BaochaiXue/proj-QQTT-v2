@@ -115,13 +115,13 @@ Optional experimental comparison path:
 python record_data.py --case_name my_case --capture_mode both_eval --emitter on
 ```
 
-`both_eval` is intentionally gated. On the current machine it is blocked by the latest D455 stream capability probe instead of silently dropping streams.
+`both_eval` is intentionally gated. On the current machine it is now warning-allowed experimentally even though the latest long-duration D455 stream capability probe still marks the profile unstable.
 
 Current recording preflight policy:
 
 - `rgbd`: supported directly
 - `stereo_ir`: probe-aware, warning-only when unsupported
-- `both_eval`: probe-aware, blocked when unsupported
+- `both_eval`: probe-aware, warning-only when unsupported
 
 `record_data.py` now prints an explicit preflight summary before recording continues.
 
