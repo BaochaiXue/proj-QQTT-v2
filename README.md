@@ -247,6 +247,8 @@ python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense
 
 This raw workflow keeps calibration-world coordinates, logs multi-frame `native / ffs_remove_1 / ffs_remove_0` fused point clouds to a Rerun timeline, and writes fused full-scene PLYs for each frame.
 
+Generic fused point-cloud workflows now default to a tabletop-oriented depth filter: valid depth must stay `> 0m` and points farther than `1.5m` are dropped unless you override `--depth_min_m` / `--depth_max_m`.
+
 Enable those only when needed:
 
 ```bash
@@ -437,6 +439,8 @@ The temporal fused-cloud utility remains available as a secondary diagnostic. It
 - the `tabletop_compare_2x3` preset now uses `color_by_height` plus orthographic tabletop framing for readability
 - keeps `color_by_rgb` as a secondary reference mode
 - writes per-view frame sequences and optional videos, plus `grid_2x3_frames/` and `videos/grid_2x3.mp4` when requested
+
+By default, this generic fused point-cloud path now clips farther-background geometry at `1.5m`; pass explicit depth limits if you need a wider full-scene export.
 
 6. Raw multi-frame Rerun remove-invisible compare:
 

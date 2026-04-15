@@ -27,6 +27,7 @@ from .io_case import (
     transform_points,
     voxel_downsample,
 )
+from .pointcloud_defaults import DEFAULT_POINTCLOUD_DEPTH_MAX_M, DEFAULT_POINTCLOUD_DEPTH_MIN_M
 from .layouts import compose_grid_2x3, overlay_panel_label
 from .renderers.fallback import (
     apply_image_flip,
@@ -76,8 +77,8 @@ def run_depth_comparison_workflow(
     frame_stride: int = 1,
     voxel_size: float | None = None,
     max_points_per_camera: int | None = None,
-    depth_min_m: float = 0.1,
-    depth_max_m: float = 3.0,
+    depth_min_m: float = DEFAULT_POINTCLOUD_DEPTH_MIN_M,
+    depth_max_m: float = DEFAULT_POINTCLOUD_DEPTH_MAX_M,
     renderer: str = "auto",
     write_ply: bool = False,
     write_mp4: bool = False,

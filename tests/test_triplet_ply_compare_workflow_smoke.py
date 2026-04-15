@@ -35,6 +35,10 @@ class TripletPlyCompareWorkflowSmokeTest(unittest.TestCase):
 
             on_disk_summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
             self.assertFalse(summary["same_case_mode"])
+            self.assertEqual(summary["depth_min_m"], 0.0)
+            self.assertEqual(summary["depth_max_m"], 1.5)
+            self.assertEqual(on_disk_summary["depth_min_m"], 0.0)
+            self.assertEqual(on_disk_summary["depth_max_m"], 1.5)
             self.assertEqual(on_disk_summary["variants"]["ffs_postprocess"]["ffs_native_like_postprocess_origin"], "on_the_fly")
             self.assertEqual(on_disk_summary["variants"]["ffs_raw"]["depth_dirs_used"], ["depth_ffs_float_m"])
             self.assertEqual(
@@ -65,6 +69,8 @@ class TripletPlyCompareWorkflowSmokeTest(unittest.TestCase):
             )
 
             self.assertTrue(summary["same_case_mode"])
+            self.assertEqual(summary["depth_min_m"], 0.0)
+            self.assertEqual(summary["depth_max_m"], 1.5)
             self.assertEqual(summary["variants"]["ffs_postprocess"]["ffs_native_like_postprocess_origin"], "aligned_auxiliary")
             self.assertEqual(
                 summary["variants"]["ffs_postprocess"]["depth_dirs_used"],

@@ -10,6 +10,7 @@ from .io_case import (
     load_case_metadata,
     resolve_case_dirs,
 )
+from .pointcloud_defaults import DEFAULT_POINTCLOUD_DEPTH_MAX_M, DEFAULT_POINTCLOUD_DEPTH_MIN_M
 
 
 RAW_FFS_DEPTH_DIRS = ("depth_ffs_float_m", "depth_ffs")
@@ -122,8 +123,8 @@ def run_triplet_ply_compare_workflow(
     frame_idx: int = 0,
     voxel_size: float | None = None,
     max_points_per_camera: int | None = None,
-    depth_min_m: float = 0.1,
-    depth_max_m: float = 3.0,
+    depth_min_m: float = DEFAULT_POINTCLOUD_DEPTH_MIN_M,
+    depth_max_m: float = DEFAULT_POINTCLOUD_DEPTH_MAX_M,
     use_float_ffs_depth_when_available: bool = True,
 ) -> dict[str, Any]:
     aligned_root = Path(aligned_root).resolve()

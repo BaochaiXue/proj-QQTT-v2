@@ -25,6 +25,7 @@ from .io_case import (
     transform_points,
     voxel_downsample,
 )
+from .pointcloud_defaults import DEFAULT_POINTCLOUD_DEPTH_MAX_M, DEFAULT_POINTCLOUD_DEPTH_MIN_M
 
 
 RERUN_OUTPUT_MODES = ("viewer_and_rrd", "viewer_only", "rrd_only")
@@ -295,8 +296,8 @@ def run_rerun_compare_workflow(
     viewer_layout: str = "default",
     voxel_size: float | None = None,
     max_points_per_camera: int | None = None,
-    depth_min_m: float = 0.1,
-    depth_max_m: float = 3.0,
+    depth_min_m: float = DEFAULT_POINTCLOUD_DEPTH_MIN_M,
+    depth_max_m: float = DEFAULT_POINTCLOUD_DEPTH_MAX_M,
     runner_factory: Callable[..., Any] = FastFoundationStereoRunner,
     rerun_module: Any | None = None,
 ) -> dict[str, Any]:
@@ -412,6 +413,8 @@ def run_rerun_compare_workflow(
         "rerun_output": rerun_output,
         "viewer_layout": viewer_layout,
         "rrd_path": str(rrd_path.resolve()) if rerun_output in ("viewer_and_rrd", "rrd_only") else None,
+        "depth_min_m": float(depth_min_m),
+        "depth_max_m": float(depth_max_m),
         "ffs_runner": {
             "ffs_repo": str(Path(str(ffs_runtime["ffs_repo"])).resolve()),
             "model_path": str(Path(str(ffs_runtime["model_path"])).resolve()),

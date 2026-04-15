@@ -9,6 +9,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from data_process.visualization.pointcloud_defaults import (
+    DEFAULT_POINTCLOUD_DEPTH_MAX_M,
+    DEFAULT_POINTCLOUD_DEPTH_MIN_M,
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -22,8 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=Path, default=None)
     parser.add_argument("--voxel_size", type=float, default=None)
     parser.add_argument("--max_points_per_camera", type=int, default=None)
-    parser.add_argument("--depth_min_m", type=float, default=0.1)
-    parser.add_argument("--depth_max_m", type=float, default=3.0)
+    parser.add_argument("--depth_min_m", type=float, default=DEFAULT_POINTCLOUD_DEPTH_MIN_M)
+    parser.add_argument("--depth_max_m", type=float, default=DEFAULT_POINTCLOUD_DEPTH_MAX_M)
     parser.add_argument(
         "--use_float_ffs_depth_when_available",
         dest="use_float_ffs_depth_when_available",

@@ -45,6 +45,8 @@ class VisualCompareDepthVideoSmokeTest(unittest.TestCase):
 
             comparison_metadata = json.loads((output_dir / "comparison_metadata.json").read_text(encoding="utf-8"))
             self.assertTrue(comparison_metadata["same_case_mode"])
+            self.assertEqual(comparison_metadata["depth_min_m"], 0.0)
+            self.assertEqual(comparison_metadata["depth_max_m"], 1.5)
 
 
 if __name__ == "__main__":

@@ -80,6 +80,8 @@ After `CameraSystem` resolves the actual camera serials, `record_data.py` prints
 - stage = `after camera discovery`
 - final support / blocked / experimental / unknown status for the discovered serial set
 
+When `--max_frames` is used, recording now fails fast if one or more cameras stop making progress while others continue, instead of waiting indefinitely for the slowest camera to catch up.
+
 Optional non-interactive short capture:
 
 ```bash
@@ -436,6 +438,8 @@ This workflow:
   - `ply_fullscene/ffs_postprocess_frame_<idx>_fused_fullscene.ply`
   - `summary.json`
 
+Default point-cloud filtering in this generic triplet workflow now keeps only valid depth `> 0m` and clips points beyond `1.5m`. Override `--depth_min_m` / `--depth_max_m` if you need a wider export.
+
 Raw multi-frame Rerun remove-invisible compare:
 
 Use this when the main question is not slide composition, but “how do the fused full-scene point clouds evolve over time, and what exactly changes when `remove_invisible` is on vs off?”:
@@ -462,6 +466,8 @@ This workflow:
   - `ply_fullscene/ffs_remove_1_frame_<idx>_fused_fullscene.ply`
   - `ply_fullscene/ffs_remove_0_frame_<idx>_fused_fullscene.ply`
   - `summary.json`
+
+Default point-cloud filtering in this generic Rerun workflow now keeps only valid depth `> 0m` and clips points beyond `1.5m`. Override `--depth_min_m` / `--depth_max_m` if you need a wider export.
 
 Use `--rerun_output rrd_only` when you want a non-interactive run that still saves the timeline for later replay.
 
@@ -607,6 +613,8 @@ The temporal comparison workflow:
 - supports `perspective` and `orthographic` projection in the fallback renderer
 - uses denser splat-like fallback rendering for tabletop inspection
 - can compose a single `2x3` output:
+
+This generic fused point-cloud compare path now defaults to valid depth `> 0m` and a `1.5m` far clip so tabletop scenes shed distant background geometry by default. Override `--depth_min_m` / `--depth_max_m` when you need a wider range.
   - row 1 = Native
   - row 2 = FFS
   - columns = camera 0 / 1 / 2 viewpoints

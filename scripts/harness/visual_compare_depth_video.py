@@ -9,6 +9,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from data_process.visualization.pointcloud_defaults import (
+    DEFAULT_POINTCLOUD_DEPTH_MAX_M,
+    DEFAULT_POINTCLOUD_DEPTH_MIN_M,
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render native-vs-FFS fused point-cloud comparison frames and videos.")
@@ -22,8 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame_stride", type=int, default=1)
     parser.add_argument("--voxel_size", type=float, default=None)
     parser.add_argument("--max_points_per_camera", type=int, default=50000)
-    parser.add_argument("--depth_min_m", type=float, default=0.1)
-    parser.add_argument("--depth_max_m", type=float, default=3.0)
+    parser.add_argument("--depth_min_m", type=float, default=DEFAULT_POINTCLOUD_DEPTH_MIN_M)
+    parser.add_argument("--depth_max_m", type=float, default=DEFAULT_POINTCLOUD_DEPTH_MAX_M)
     parser.add_argument("--renderer", choices=("auto", "open3d", "fallback"), default="auto")
     parser.add_argument("--preset", choices=("tabletop_compare_2x3",), default=None)
     parser.add_argument("--render_mode", choices=("color_by_rgb", "color_by_depth", "color_by_height", "color_by_normals", "neutral_gray_shaded"), default="neutral_gray_shaded")
