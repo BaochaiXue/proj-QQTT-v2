@@ -103,6 +103,9 @@ Downstream-facing formal exports under `data/different_types/` may be narrowed f
   - in-place removal of IR streams, FFS auxiliary depth streams, and `metadata_ext.json`
   - preserves the minimal downstream structure expected by external consumers, plus optional `color/<camera>.mp4` RGB sidecars
 
+Aligned exports written directly under `data/different_types/<case_name>/` auto-generate `color/0.mp4`, `1.mp4`, and `2.mp4` sidecars because downstream formal pipelines consume them.
+Those formal exports also rewrite `calibrate.pkl` into case camera order so old downstream code that indexes `c2ws[cam_idx]` remains compatible.
+
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
 
 The native RealSense depth filter contract is now centralized in:

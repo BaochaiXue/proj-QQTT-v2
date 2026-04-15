@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from data_process.aligned_case_metadata import write_split_aligned_metadata
+from data_process.visualization.calibration_io import load_calibration_transforms
 
 RAW_IMAGE_STREAMS = ("color", "ir_left", "ir_right")
 
@@ -105,6 +107,24 @@ def find_ffmpeg() -> str | None:
         if candidate.exists():
             return str(candidate)
     return None
+
+
+def is_formal_different_types_export(output_case_dir: Path) -> bool:
+    return output_case_dir.parent.name == "different_types"
+
+
+def write_aligned_calibration_file(*, case_dir: Path, output_case_dir: Path, metadata: dict[str, Any]) -> None:
+    output_path = output_case_dir / "calibrate.pkl"
+    if is_formal_different_types_export(output_case_dir):
+        transforms = load_calibration_transforms(
+            case_dir / "calibrate.pkl",
+            serial_numbers=list(metadata["serial_numbers"]),
+            calibration_reference_serials=metadata.get("calibration_reference_serials", metadata["serial_numbers"]),
+        )
+        with output_path.open("wb") as handle:
+            pickle.dump(transforms, handle)
+        return
+    shutil.copy2(case_dir / "calibrate.pkl", output_path)
 
 
 def load_metadata(case_dir: Path) -> dict[str, Any]:
@@ -220,6 +240,12 @@ def write_mp4s(ffmpeg_bin: str, output_case_dir: Path, num_cameras: int, fps: in
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
 
+def should_write_color_mp4_sidecars(*, output_case_dir: Path, explicit_write_mp4: bool) -> bool:
+    if bool(explicit_write_mp4):
+        return True
+    return output_case_dir.parent.name == "different_types"
+
+
 def copy_image_stream(case_dir: Path, output_case_dir: Path, stream_name: str, camera_idx: int, src_step: int, dst_idx: int) -> None:
     src_path = case_dir / stream_name / str(camera_idx) / f"{src_step}.png"
     require_file(src_path, f"{stream_name} frame camera={camera_idx} step={src_step}")
@@ -298,7 +324,11 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     print(f"[align] ffs_native_like_postprocess={bool(getattr(args, 'ffs_native_like_postprocess', False))}")
 
     prepare_output_case(output_case_dir, num_cameras, streams_to_write)
-    shutil.copy2(case_dir / "calibrate.pkl", output_case_dir / "calibrate.pkl")
+    write_aligned_calibration_file(
+        case_dir=case_dir,
+        output_case_dir=output_case_dir,
+        metadata=metadata,
+    )
 
     color_intrinsics = get_color_intrinsics(metadata, num_cameras)
     aligned_metadata = {
@@ -424,10 +454,14 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
 
     write_split_aligned_metadata(output_case_dir, aligned_metadata)
 
-    if args.write_mp4:
+    write_color_mp4_sidecars = should_write_color_mp4_sidecars(
+        output_case_dir=output_case_dir,
+        explicit_write_mp4=bool(args.write_mp4),
+    )
+    if write_color_mp4_sidecars:
         ffmpeg_bin = find_ffmpeg()
         if ffmpeg_bin is None:
-            raise RuntimeError("ffmpeg not found but --write_mp4 was requested")
+            raise RuntimeError("ffmpeg not found but color mp4 sidecars are required for this aligned export")
         print(f"[align] ffmpeg={ffmpeg_bin}")
         write_mp4s(ffmpeg_bin, output_case_dir, num_cameras, fps)
 
