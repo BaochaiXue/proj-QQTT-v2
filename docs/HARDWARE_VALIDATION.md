@@ -34,6 +34,7 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - per-camera `ir_left/<camera>/<step>.png` and `ir_right/<camera>/<step>.png` are written for `stereo_ir`
 - `metadata.json` exists
 - `calibrate.pkl` is copied into the case if available
+- short `--max_frames` runs fail quickly instead of hanging forever when one camera stalls and the others keep advancing
 
 ### Alignment
 

@@ -79,6 +79,32 @@ class PointcloudFusionSmokeTest(unittest.TestCase):
             self.assertTrue(np.any(points[:, 0] > 0.5))
             self.assertTrue(np.any(points[:, 1] > 0.5))
 
+    def test_filters_out_points_beyond_default_tabletop_far_clip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            case_dir = Path(tmp_dir) / "case"
+            make_aligned_case(case_dir, include_depth_ffs=True)
+
+            far_depth_mm = np.array([[1000, 2000], [1000, 0]], dtype=np.uint16)
+            for cam in range(3):
+                np.save(case_dir / "depth" / str(cam) / "0.npy", far_depth_mm)
+
+            metadata = load_case_metadata(case_dir)
+            points, colors, stats = load_case_frame_cloud(
+                case_dir=case_dir,
+                metadata=metadata,
+                frame_idx=0,
+                depth_source="realsense",
+                use_float_ffs_depth_when_available=False,
+                voxel_size=None,
+                max_points_per_camera=None,
+                depth_min_m=0.0,
+                depth_max_m=1.5,
+            )
+            self.assertGreater(len(points), 0)
+            self.assertEqual(len(points), 6)
+            self.assertTrue(np.all(points[:, 2] < 1.5))
+            self.assertTrue(all(item["valid_depth_pixels"] == 2 for item in stats["per_camera"]))
+
 
 if __name__ == "__main__":
     unittest.main()

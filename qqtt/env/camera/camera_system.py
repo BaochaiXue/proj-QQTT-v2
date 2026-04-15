@@ -220,6 +220,7 @@ class CameraSystem:
         progress_interval_s = 1.0
         stall_timeout_s = 15.0 if max_frames is not None else None
         last_progress_time = time.time()
+        last_progress_time_by_camera = [last_progress_time] * self.num_cam
         last_log_time = last_progress_time
 
         try:
@@ -257,6 +258,7 @@ class CameraSystem:
                                     cv2.imwrite(f"{output_path}/{stream_name}/{i}/{step_idx}.png", stream_value)
                             last_step_idxs[i] = step_idx
                             frame_counts[i] = len(metadata["recording"][i])
+                            last_progress_time_by_camera[i] = time.time()
                             any_progress = True
 
                 now = time.time()
@@ -274,6 +276,26 @@ class CameraSystem:
 
                 if max_frames is not None and min(frame_counts) >= int(max_frames):
                     self.end = True
+
+                if stall_timeout_s is not None and not self.end:
+                    lagging_camera_idxs = [
+                        i
+                        for i in range(self.num_cam)
+                        if frame_counts[i] < int(max_frames)
+                        and (now - last_progress_time_by_camera[i]) >= stall_timeout_s
+                    ]
+                    if lagging_camera_idxs:
+                        lagging_serials = [
+                            self.serial_numbers[i] if i < len(self.serial_numbers) else f"cam{i}"
+                            for i in lagging_camera_idxs
+                        ]
+                        raise RuntimeError(
+                            "Recording partially stalled before every camera reached the requested "
+                            "frame target. "
+                            f"lagging_camera_idxs={lagging_camera_idxs}, "
+                            f"lagging_serials={lagging_serials}, "
+                            f"counts={frame_counts}, steps={last_step_idxs}"
+                        )
 
                 if (
                     stall_timeout_s is not None
