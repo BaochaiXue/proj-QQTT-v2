@@ -326,7 +326,7 @@ Important selection/artifact-contract distinction:
 - product-vs-debug output sets are now built through `io_artifacts.py` helpers and typed artifact contracts
 - this does not force every workflow to emit the same files, but it does stop each workflow from inventing its own implicit output schema from scratch
 
-Subset capture cases rely on `metadata["calibration_reference_serials"]` to map case serials back to the full calibration order.
+Aligned cases rely on `metadata["calibration_reference_serials"]` whenever the case serial order differs from the calibration order, including same-length captures whose camera order changed and true subset captures.
 
 ## Architectural Invariants
 

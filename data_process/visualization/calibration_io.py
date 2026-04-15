@@ -83,15 +83,14 @@ def load_calibration_transforms(
     if serial_numbers is None:
         return transforms
 
-    if len(transforms) == len(serial_numbers):
-        return transforms
-
     if calibration_reference_serials is not None:
         if len(calibration_reference_serials) != len(transforms):
             raise CalibrationLoadError(
                 "Calibration transform count does not match calibration_reference_serials length. "
                 f"transform_count={len(transforms)}, calibration_reference_serials={len(calibration_reference_serials)}"
             )
+        if list(serial_numbers) == list(calibration_reference_serials):
+            return transforms
         index_by_serial = {serial: idx for idx, serial in enumerate(calibration_reference_serials)}
         missing = [serial for serial in serial_numbers if serial not in index_by_serial]
         if missing:
@@ -106,9 +105,12 @@ def load_calibration_transforms(
                 raise CalibrationLoadError(
                     "Calibration transform count does not match calibration_reference_serials. "
                     f"idx={idx}, transform_count={len(transforms)}"
-                )
+            )
             selected.append(transforms[idx])
         return selected
+
+    if len(transforms) == len(serial_numbers):
+        return transforms
 
     raise CalibrationLoadError(
         "Cannot map calibrate.pkl transforms to this case because the file does not embed serials and "
@@ -148,4 +150,6 @@ def infer_calibration_mapping_mode(
         return "direct_length_match"
     if len(serial_numbers) == len(calibration_reference_serials) and list(serial_numbers) == list(calibration_reference_serials):
         return "direct_length_match"
+    if len(serial_numbers) == len(calibration_reference_serials):
+        return "calibration_reference_serials_reordered"
     return "calibration_reference_serials_subset"

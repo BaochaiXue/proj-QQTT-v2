@@ -53,3 +53,10 @@ class CalibrationContractHardeningTest(unittest.TestCase):
         )
         self.assertEqual(summary["world_frame_kind"], CALIBRATION_WORLD_FRAME_KIND)
         self.assertEqual(summary["transform_convention"], "camera_to_world_c2w")
+
+    def test_infers_reordered_mapping_mode_for_same_length_different_order(self) -> None:
+        mode = infer_calibration_mapping_mode(
+            serial_numbers=["cam0", "cam2", "cam1"],
+            calibration_reference_serials=["cam0", "cam1", "cam2"],
+        )
+        self.assertEqual(mode, "calibration_reference_serials_reordered")
