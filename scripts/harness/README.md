@@ -30,7 +30,7 @@ Rule of thumb:
 - `cleanup_different_types_cases.py`
 
 This script is for downstream-facing final-case cleanup under `data/different_types/` and is intentionally separate from the repo-internal aligned-case visualization workflows.
-It preserves the canonical `color/` and `depth/` frame trees plus optional `color/0.mp4`, `1.mp4`, and `2.mp4` RGB sidecars when present.
+It preserves the canonical `color/` and `depth/` frame trees plus optional `color/0.mp4`, `1.mp4`, and `2.mp4` RGB sidecars when present. Execute mode also backfills those color mp4 sidecars from `color/<camera>/*.png` if they are missing.
 
 ### Current User-Facing Compare CLIs
 

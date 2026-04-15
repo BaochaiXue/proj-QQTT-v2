@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 from typing import Any
 
@@ -43,10 +44,66 @@ def _remove_path(path: Path) -> None:
         path.unlink()
 
 
+def _find_ffmpeg() -> str | None:
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if ffmpeg_bin is not None:
+        return ffmpeg_bin
+
+    local_appdata = Path.home() / "AppData" / "Local"
+    user_bin = Path.home() / "bin" / "ffmpeg.exe"
+    candidates = [user_bin]
+    winget_root = local_appdata / "Microsoft" / "WinGet" / "Packages"
+    if winget_root.exists():
+        candidates.extend(winget_root.glob("Gyan.FFmpeg.Essentials_*/*/bin/ffmpeg.exe"))
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _load_case_metadata(case_dir: Path) -> dict[str, Any]:
+    return json.loads((case_dir / "metadata.json").read_text(encoding="utf-8"))
+
+
+def _generate_missing_color_mp4s(*, case_dir: Path, camera_ids: list[str], fps: int, ffmpeg_bin: str) -> list[str]:
+    generated_paths: list[str] = []
+    for camera_id in camera_ids:
+        frame_dir = case_dir / "color" / camera_id
+        if not frame_dir.is_dir():
+            raise FileNotFoundError(f"Missing color frame directory for camera {camera_id}: {frame_dir}")
+        if not any(frame_dir.glob("*.png")):
+            raise RuntimeError(f"Cannot generate color/{camera_id}.mp4 because {frame_dir} contains no PNG frames.")
+        output_path = case_dir / "color" / f"{camera_id}.mp4"
+        cmd = [
+            ffmpeg_bin,
+            "-y",
+            "-r",
+            str(int(fps)),
+            "-start_number",
+            "0",
+            "-f",
+            "image2",
+            "-i",
+            str(frame_dir / "%d.png"),
+            "-vcodec",
+            "libx264",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            str(output_path),
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        generated_paths.append(str(output_path.resolve()))
+    return generated_paths
+
+
 def _inspect_case(case_dir: Path) -> dict[str, Any]:
     root_items = sorted(case_dir.iterdir(), key=lambda item: item.name)
     keep_paths: list[str] = []
     delete_paths: list[str] = []
+    generate_paths: list[str] = []
     errors: list[str] = []
 
     for required_dir in REQUIRED_TOP_LEVEL_DIRS:
@@ -76,6 +133,11 @@ def _inspect_case(case_dir: Path) -> dict[str, Any]:
                     continue
                 if child.name not in REQUIRED_CAMERA_DIRS:
                     delete_paths.append(str(child))
+            if required_dir == "color":
+                for mp4_name in OPTIONAL_COLOR_MP4_FILES:
+                    mp4_path = path / mp4_name
+                    if not mp4_path.exists():
+                        generate_paths.append(str(mp4_path))
 
     for required_file in REQUIRED_TOP_LEVEL_FILES:
         path = case_dir / required_file
@@ -98,6 +160,7 @@ def _inspect_case(case_dir: Path) -> dict[str, Any]:
         "case_dir": str(case_dir.resolve()),
         "kept_paths": seen_keep,
         "delete_paths": seen_delete,
+        "generate_paths": sorted(dict.fromkeys(generate_paths)),
         "errors": errors,
         "status": "error" if errors else "ready",
     }
@@ -130,12 +193,28 @@ def cleanup_cases(*, root: Path, case_names: list[str] | None, execute: bool) ->
     for case_dir in cases:
         summary = _inspect_case(case_dir)
         deleted_paths: list[str] = []
+        generated_paths: list[str] = []
         if execute and not summary["errors"]:
-            for path_str in summary["delete_paths"]:
-                target = _resolved_within_root(Path(path_str), root)
-                _remove_path(target)
-                deleted_paths.append(str(target))
+            if summary["generate_paths"]:
+                ffmpeg_bin = _find_ffmpeg()
+                if ffmpeg_bin is None:
+                    summary["errors"].append("Missing ffmpeg required to generate color/*.mp4 sidecars.")
+                else:
+                    metadata = _load_case_metadata(case_dir)
+                    generated_paths = _generate_missing_color_mp4s(
+                        case_dir=case_dir,
+                        camera_ids=[Path(path_str).stem for path_str in summary["generate_paths"]],
+                        fps=int(metadata.get("fps", 30)),
+                        ffmpeg_bin=ffmpeg_bin,
+                    )
+                    summary["kept_paths"] = sorted(dict.fromkeys([*summary["kept_paths"], *generated_paths]))
+            if not summary["errors"]:
+                for path_str in summary["delete_paths"]:
+                    target = _resolved_within_root(Path(path_str), root)
+                    _remove_path(target)
+                    deleted_paths.append(str(target))
         summary["deleted_paths"] = deleted_paths
+        summary["generated_paths"] = generated_paths
         summary["mode"] = "execute" if execute else "dry-run"
         if execute and summary["errors"]:
             summary["status"] = "error"

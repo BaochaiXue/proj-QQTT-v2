@@ -102,6 +102,7 @@ Downstream-facing formal exports under `data/different_types/` may be narrowed f
   - default dry-run
   - in-place removal of IR streams, FFS auxiliary depth streams, and `metadata_ext.json`
   - preserves the minimal downstream structure expected by external consumers, plus optional `color/<camera>.mp4` RGB sidecars
+  - execute mode backfills missing color mp4 sidecars from `color/<camera>/*.png` before cleanup
 
 Aligned exports written directly under `data/different_types/<case_name>/` auto-generate `color/0.mp4`, `1.mp4`, and `2.mp4` sidecars because downstream formal pipelines consume them.
 Those formal exports also rewrite `calibrate.pkl` into case camera order so old downstream code that indexes `c2ws[cam_idx]` remains compatible.
