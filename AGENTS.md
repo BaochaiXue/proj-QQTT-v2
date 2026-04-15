@@ -31,6 +31,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `scripts/harness/visual_compare_reprojection.py`: aligned native-vs-FFS reprojection compare
 - `scripts/harness/visual_compare_depth_video.py`: older temporal fused compare
 - `scripts/harness/visual_compare_depth_triplet_ply.py`: single-frame native / FFS raw / FFS postprocess fused PLY compare
+- `scripts/harness/visual_compare_depth_triplet_video.py`: multi-frame native / FFS raw / FFS postprocess point-cloud video compare
 - `scripts/harness/visual_compare_rerun.py`: multi-frame native-vs-FFS remove-invisible point-cloud export to Rerun + fused PLYs
 - `scripts/harness/visual_compare_turntable.py`: current single-frame professor-facing compare
 - `scripts/harness/visual_make_professor_triptych.py`: current three-figure professor-facing summary pack

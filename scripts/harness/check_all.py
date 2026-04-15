@@ -27,6 +27,7 @@ def main() -> int:
     run([python, "scripts/harness/visual_compare_reprojection.py", "--help"])
     run([python, "scripts/harness/visual_compare_depth_video.py", "--help"])
     run([python, "scripts/harness/visual_compare_depth_triplet_ply.py", "--help"])
+    run([python, "scripts/harness/visual_compare_depth_triplet_video.py", "--help"])
     run([python, "scripts/harness/visual_compare_rerun.py", "--help"])
     run([python, "scripts/harness/visual_compare_turntable.py", "--help"])
     run([python, "scripts/harness/visual_compare_stereo_order_pcd.py", "--help"])
@@ -37,6 +38,7 @@ def main() -> int:
     run([python, "scripts/harness/check_visual_architecture.py"])
     run([python, "scripts/harness/run_ffs_on_saved_pair.py", "--help"])
     run([python, "scripts/harness/reproject_ffs_to_color.py", "--help"])
+    run([python, "scripts/harness/cleanup_different_types_cases.py", "--help"])
     run([python, "-m", "scripts.harness.check_scope"])
     run([python, "-m", "unittest", "-v", "tests.test_agents_scope_contract_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_record_data_align_smoke"])
@@ -126,10 +128,12 @@ def main() -> int:
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_depth_video_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_depth_video_grid_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_triplet_ply_compare_workflow_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_triplet_video_compare_workflow_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_rerun_compare_workflow_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_compare_turntable_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_make_professor_triptych_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_visual_make_match_board_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_cleanup_different_types_cases_smoke"])
     print("[check] all deterministic checks passed")
     return 0
 

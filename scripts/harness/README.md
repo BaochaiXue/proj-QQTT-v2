@@ -25,12 +25,19 @@ Rule of thumb:
 - `run_ffs_on_saved_pair.py`
 - `reproject_ffs_to_color.py`
 
+### Data Cleanup
+
+- `cleanup_different_types_cases.py`
+
+This script is for downstream-facing final-case cleanup under `data/different_types/` and is intentionally separate from the repo-internal aligned-case visualization workflows.
+
 ### Current User-Facing Compare CLIs
 
 - `visual_compare_depth_panels.py`
 - `visual_compare_reprojection.py`
 - `visual_compare_depth_video.py`
 - `visual_compare_depth_triplet_ply.py`
+- `visual_compare_depth_triplet_video.py`
 - `visual_compare_turntable.py`
 - `visual_compare_rerun.py`
 - `visual_make_match_board.py`

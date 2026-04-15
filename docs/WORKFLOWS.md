@@ -167,6 +167,23 @@ Important:
 - `both` is experimental and should only be used when the hardware probe says the same-take stream set is supported.
 - current repo visualization loaders merge `metadata.json` and `metadata_ext.json` automatically when both are present
 
+For downstream-facing formal exports under `data/different_types/`, use the cleanup script after alignment:
+
+```bash
+python scripts/harness/cleanup_different_types_cases.py --root ./data/different_types --case_name sloth_base_motion_native --case_name sloth_base_motion_ffs
+```
+
+Default behavior is `dry-run`. Add `--execute` to apply the cleanup in place.
+
+After cleanup, each case keeps only:
+
+- `color/0|1|2`
+- `depth/0|1|2`
+- `calibrate.pkl`
+- `metadata.json`
+
+This formal downstream export is intentionally narrower than the repo's internal aligned-case comparison contract and deletes `metadata_ext.json`, IR streams, and FFS auxiliary depth directories.
+
 ## 5. Compare
 
 Start with single-camera panels:
@@ -220,10 +237,22 @@ python scripts/harness/visual_compare_reprojection.py --aligned_root ./data --re
 ```
 
 Use this to judge:
-
 - which depth is more multi-view consistent
 - which source depth produces lower reprojection residuals in the target camera
 - whether failures are localized to one camera pair or happen everywhere
+
+For triplet time-axis point-cloud videos across `Native`, `FFS raw`, and `FFS postprocess`:
+
+```bash
+python scripts/harness/visual_compare_depth_triplet_video.py --aligned_root ./data --realsense_case dynamics/native_case --ffs_case dynamics/ffs_case
+```
+
+This workflow:
+
+- writes `native_open3d.mp4`, `ffs_raw_open3d.mp4`, and `ffs_postprocess_open3d.mp4`
+- uses aligned RGB colors for all 3 videos
+- keeps one shared `auto_table_bbox` crop and one shared `oblique` view across all variants
+- applies a vertical image flip to correct the Open3D hidden-window capture orientation
 
 For professor-facing 3-view point-cloud match diagnosis, start with the single match board:
 

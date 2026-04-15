@@ -54,10 +54,12 @@ The repo is intentionally small.
 - `data_process/visualization/support_compare.py`
 - `data_process/visualization/turntable_compare.py`
 - `data_process/visualization/triplet_ply_compare.py`
+- `data_process/visualization/triplet_video_compare.py`
 - `data_process/visualization/types.py`
 - `data_process/visualization/views.py`
 - `data_process/visualization/workflows/**`
 - `scripts/harness/visual_compare_depth_triplet_ply.py`
+- `scripts/harness/visual_compare_depth_triplet_video.py`
 - `scripts/harness/visual_compare_depth_panels.py`
 - `scripts/harness/visual_compare_reprojection.py`
 - `scripts/harness/visual_compare_depth_video.py`
@@ -70,6 +72,7 @@ The repo is intentionally small.
 - `env_install/env_install.sh`
 - `scripts/harness/check_scope.py`
 - `scripts/harness/check_all.py`
+- `scripts/harness/cleanup_different_types_cases.py`
 - `tests/test_record_data_align_smoke.py`
 - `docs/*`
 
@@ -92,6 +95,13 @@ The repo is intentionally small.
 - now writes aligned metadata in two files:
   - `metadata.json` for legacy `proj-QQTT` compatibility
   - `metadata_ext.json` for QQTT-only aligned metadata extensions
+
+Downstream-facing formal exports under `data/different_types/` may be narrowed further with the cleanup harness:
+
+- `cleanup_different_types_cases.py`
+  - default dry-run
+  - in-place removal of IR streams, FFS auxiliary depth streams, and `metadata_ext.json`
+  - preserves only the minimal downstream structure expected by external consumers
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
 
@@ -170,6 +180,10 @@ The visualization package is now split by responsibility instead of concentratin
 - `triplet_ply_compare.py`
   - single-frame fused PLY compare for `native / ffs_raw / ffs_postprocess`
   - aligned auxiliary postprocess preference plus on-the-fly fallback
+- `triplet_video_compare.py`
+  - multi-frame point-cloud video compare for `native / ffs_raw / ffs_postprocess`
+  - fixed RGB coloring from aligned `color/`
+  - local vertical image flip for the Open3D hidden-window capture path
 - legacy compatibility modules:
   - `pointcloud_compare.py`
   - `turntable_compare.py`
@@ -182,6 +196,10 @@ The fused point-cloud visualization is now split into four user-facing workflows
   - keeps raw calibration-world coordinates
   - prefers aligned postprocessed FFS depth when present and otherwise falls back to on-the-fly postprocessing
   - writes exactly 3 fused PLYs plus one compact summary
+- `visual_compare_depth_triplet_video.py`
+  - multi-frame RGB-colored point-cloud videos for `Native`, `FFS raw`, and `FFS postprocess`
+  - shares one crop/view contract across all 3 outputs
+  - uses the Open3D hidden-window path with an explicit vertical flip before writing frames
 - `visual_compare_turntable.py`
   - primary single-frame object-centric coverage-aware compare
   - explicit camera-frusta visualization from real `c2w`
