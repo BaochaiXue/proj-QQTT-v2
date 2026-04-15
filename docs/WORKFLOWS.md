@@ -175,6 +175,8 @@ python scripts/harness/cleanup_different_types_cases.py --root ./data/different_
 
 Default behavior is `dry-run`. Add `--execute` to apply the cleanup in place.
 
+The cleanup keeps the formal downstream layout minimal, but it may also preserve optional `color/0.mp4`, `color/1.mp4`, and `color/2.mp4` sidecars for consumers that require per-camera RGB videos.
+
 After cleanup, each case keeps only:
 
 - `color/0|1|2`

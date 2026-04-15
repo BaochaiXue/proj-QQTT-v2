@@ -101,7 +101,7 @@ Downstream-facing formal exports under `data/different_types/` may be narrowed f
 - `cleanup_different_types_cases.py`
   - default dry-run
   - in-place removal of IR streams, FFS auxiliary depth streams, and `metadata_ext.json`
-  - preserves only the minimal downstream structure expected by external consumers
+  - preserves the minimal downstream structure expected by external consumers, plus optional `color/<camera>.mp4` RGB sidecars
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
 

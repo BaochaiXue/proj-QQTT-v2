@@ -16,6 +16,8 @@ def _write_case(root: Path, case_name: str) -> Path:
             stream_dir.mkdir(parents=True, exist_ok=True)
             suffix = ".png" if stream in {"color", "ir_left", "ir_right"} else ".npy"
             (stream_dir / f"0{suffix}").write_bytes(b"fixture")
+    for camera_idx in range(3):
+        (case_dir / "color" / f"{camera_idx}.mp4").write_bytes(b"mp4fixture")
     (case_dir / "metadata.json").write_text(
         json.dumps(
             {
@@ -68,7 +70,7 @@ class CleanupDifferentTypesCasesSmokeTest(unittest.TestCase):
             self.assertFalse((case_dir / "ir_left").exists())
             self.assertFalse((case_dir / "depth_ffs_float_m").exists())
             self.assertEqual((case_dir / "metadata.json").read_text(encoding="utf-8"), metadata_before)
-            self.assertEqual(sorted(item.name for item in (case_dir / "color").iterdir()), ["0", "1", "2"])
+            self.assertEqual(sorted(item.name for item in (case_dir / "color").iterdir()), ["0", "0.mp4", "1", "1.mp4", "2", "2.mp4"])
             self.assertEqual(sorted(item.name for item in (case_dir / "depth").iterdir()), ["0", "1", "2"])
 
     def test_case_filter_only_cleans_selected_case(self) -> None:

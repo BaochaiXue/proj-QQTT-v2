@@ -13,6 +13,7 @@ DEFAULT_ROOT = ROOT / "data" / "different_types"
 REQUIRED_TOP_LEVEL_DIRS = ("color", "depth")
 REQUIRED_TOP_LEVEL_FILES = ("calibrate.pkl", "metadata.json")
 REQUIRED_CAMERA_DIRS = ("0", "1", "2")
+OPTIONAL_COLOR_MP4_FILES = tuple(f"{camera_idx}.mp4" for camera_idx in REQUIRED_CAMERA_DIRS)
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,6 +66,14 @@ def _inspect_case(case_dir: Path) -> dict[str, Any]:
                 else:
                     keep_paths.append(str(child))
             for child in sorted(path.iterdir(), key=lambda item: item.name):
+                if child.name in REQUIRED_CAMERA_DIRS:
+                    continue
+                if required_dir == "color" and child.name in OPTIONAL_COLOR_MP4_FILES:
+                    if not child.is_file():
+                        errors.append(f"Optional color mp4 path is not a file: {required_dir}/{child.name}")
+                    else:
+                        keep_paths.append(str(child))
+                    continue
                 if child.name not in REQUIRED_CAMERA_DIRS:
                     delete_paths.append(str(child))
 
