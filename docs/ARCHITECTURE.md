@@ -35,6 +35,7 @@ The repo is intentionally small.
 - `data_process/visualization/calibration_io.py`
 - `data_process/visualization/camera_frusta.py`
 - `data_process/visualization/depth_diagnostics.py`
+- `data_process/visualization/floating_point_diagnostics.py`
 - `data_process/visualization/compare_scene.py`
 - `data_process/visualization/io_artifacts.py`
 - `data_process/visualization/io_case.py`
@@ -61,6 +62,7 @@ The repo is intentionally small.
 - `scripts/harness/visual_compare_depth_triplet_ply.py`
 - `scripts/harness/visual_compare_depth_triplet_video.py`
 - `scripts/harness/visual_compare_depth_panels.py`
+- `scripts/harness/diagnose_floating_point_sources.py`
 - `scripts/harness/visual_compare_reprojection.py`
 - `scripts/harness/visual_compare_depth_video.py`
 - `scripts/harness/visual_compare_rerun.py`

@@ -19,6 +19,7 @@ def make_visualization_case(
     include_depth_ffs_native_like_postprocess: bool = False,
     include_depth_ffs_native_like_postprocess_float_m: bool = False,
     frame_num: int = 2,
+    include_sparse_outlier: bool = False,
 ) -> None:
     case_dir.mkdir(parents=True, exist_ok=True)
     streams = ["color", "depth"]
@@ -54,6 +55,9 @@ def make_visualization_case(
             depth_mm = (900 + cam * 60 + frame_idx * 10 + xx * 4 + yy * 3).astype(np.uint16)
             depth_mm[0, 0] = 0
             depth_mm[-1, -1] = 0
+            if include_sparse_outlier and cam == 0:
+                depth_mm[1, 1] = 250
+                color[0:3, 0:3] = 0
             cv2.imwrite(str(case_dir / "color" / str(cam) / f"{frame_idx}.png"), color)
             np.save(case_dir / "depth" / str(cam) / f"{frame_idx}.npy", depth_mm)
             if include_depth_ffs:

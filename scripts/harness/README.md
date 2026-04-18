@@ -24,6 +24,7 @@ Rule of thumb:
 - `render_d455_stream_probe_report.py`
 - `run_ffs_on_saved_pair.py`
 - `reproject_ffs_to_color.py`
+- `generate_sam31_masks.py`
 
 ### Data Cleanup
 
@@ -53,6 +54,19 @@ These should stay thin wrappers around workflow modules under `data_process/visu
 - `visual_compare_stereo_order_pcd.py`
 
 These remain in harness because they are bounded, investigation-oriented tools rather than core product workflows.
+
+### External Sidecars
+
+- `generate_sam31_masks.py`
+
+This is a workspace-local helper for running external `SAM 3.1` segmentation against QQTT case assets.
+It is intentionally kept out of `data_process/segment*.py` because the repo scope guard bans reintroducing that PhysTwin-era file surface.
+Use it only as an operator-side sidecar:
+
+- it reads `color/<camera>.mp4` when present, otherwise `color/<camera>/*.png`
+- it writes mask artifacts under a caller-selected output directory, defaulting to `<case_root>/sam31_masks/`
+- it expects `sam3` to be installed in the active environment and Hugging Face auth/checkpoint access to be handled outside the repo
+- checkpoints remain external and should be passed by path or resolved from Hugging Face cache via login / `QQTT_SAM31_CHECKPOINT`
 
 ## Do Not Grow Here
 
