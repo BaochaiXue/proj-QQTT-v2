@@ -16,6 +16,19 @@ The viewer uses the same `TURBO` metric-depth colormap as the aligned-case depth
 python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
 ```
 
+FFS preview for live RGB plus color-aligned FFS depth:
+
+```bash
+python cameras_viewer_FFS.py --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth
+```
+
+Use this as a debug viewer only:
+
+- top = live RGB
+- bottom = latest available color-aligned FFS depth
+- overlay = negotiated stream profile plus live `capture` and `ffs` fps
+- preview favors freshness over completeness and may drop stale stereo work while FFS catches up
+
 ## 2. Calibrate
 
 ```bash

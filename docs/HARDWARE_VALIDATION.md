@@ -20,6 +20,9 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - `python cameras_viewer.py` launches successfully
 - each camera shows live color and depth
 - each panel reports negotiated `configured fps` plus live `measured fps`
+- `python cameras_viewer_FFS.py --ffs_repo <repo> --ffs_model_path <weights>` launches successfully
+- each FFS panel shows live RGB on top and color-aligned FFS depth on bottom
+- each FFS panel reports negotiated profile plus live `capture` and `ffs` fps
 
 ### Calibration
 

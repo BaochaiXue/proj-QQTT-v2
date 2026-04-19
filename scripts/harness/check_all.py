@@ -16,6 +16,7 @@ def run(cmd: list[str]) -> None:
 def main() -> int:
     python = sys.executable
     run([python, "cameras_viewer.py", "--help"])
+    run([python, "cameras_viewer_FFS.py", "--help"])
     run([python, "cameras_calibrate.py", "--help"])
     run([python, "record_data.py", "--help"])
     run([python, "data_process/record_data_align.py", "--help"])
@@ -44,6 +45,7 @@ def main() -> int:
     run([python, "-m", "scripts.harness.check_scope"])
     run([python, "-m", "unittest", "-v", "tests.test_agents_scope_contract_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_cameras_viewer_fps_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_cameras_viewer_ffs_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_record_data_align_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_ffs_intrinsic_file_format"])
     run([python, "-m", "unittest", "-v", "tests.test_ffs_reprojection_smoke"])

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Simple GUI viewer for the camera-only RealSense workflow.
+"""Live preview for RGB + Fast-FoundationStereo depth.
 
-Shows color (top) + depth colormap (bottom) per camera, tiled in a grid.
+Shows live RGB (top) and color-aligned FFS depth colormap (bottom) per camera.
 Press `q` or `Esc` to exit.
 """
 
@@ -9,82 +9,93 @@ from __future__ import annotations
 
 import argparse
 import math
+import multiprocessing as mp
+import queue
+import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+import numpy as np
+
+from cameras_viewer import (
+    DEFAULT_EXPOSURE_OVERRIDES,
+    MIN_MEASURED_FPS_SAMPLES,
+    _apply_color_controls,
+    _build_profiles,
+    _compute_measured_fps,
+    _enumerate_d400_devices,
+    _fit_to_canvas,
+    _runtime_imports,
+    _tile_panels,
+    _update_recent_frame_times,
+)
+from data_process.depth_backends import FastFoundationStereoRunner, align_depth_to_color
 from data_process.visualization.depth_colormap import (
     DEFAULT_DEPTH_VIS_MAX_M,
     DEFAULT_DEPTH_VIS_MIN_M,
-    colorize_depth_units,
+    colorize_depth_meters,
 )
 from qqtt.env.camera.defaults import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_NUM_CAM, DEFAULT_WIDTH
 
 if TYPE_CHECKING:
     import cv2
-    import numpy as np
     import pyrealsense2 as rs
 
 
-def _runtime_imports():
-    import cv2
-    import numpy as np
-    import pyrealsense2 as rs
-
-    return cv2, np, rs
-
-DEFAULT_EXPOSURE_OVERRIDES = {
-    "239222303506": 156.0,
-    "239222300781": 156.0,
-}
-MEASURED_FPS_WINDOW_S = 1.0
-MIN_MEASURED_FPS_SAMPLES = 2
+LATEST_QUEUE_SIZE = 1
+CAPTURE_QUEUE_TIMEOUT_MS = 100
+RESULT_QUEUE_TIMEOUT_S = 0.1
 
 
-def _apply_color_controls(
-    *,
-    pipeline: Any,
-    auto_exposure: bool,
-    exposure: float,
-    gain: float,
-) -> Tuple[float, float, float]:
-    """
-    Apply color exposure settings and return (auto_exposure, exposure, gain).
-    """
-    auto_val = float("nan")
-    exp_val = float("nan")
-    gain_val = float("nan")
+def _intrinsics_to_matrix(intrinsics: Any) -> list[list[float]]:
+    return [
+        [float(intrinsics.fx), 0.0, float(intrinsics.ppx)],
+        [0.0, float(intrinsics.fy), float(intrinsics.ppy)],
+        [0.0, 0.0, 1.0],
+    ]
+
+
+def _extrinsics_to_matrix(extrinsics: Any) -> list[list[float]]:
+    rotation = list(map(float, extrinsics.rotation))
+    translation = list(map(float, extrinsics.translation))
+    return [
+        [rotation[0], rotation[1], rotation[2], translation[0]],
+        [rotation[3], rotation[4], rotation[5], translation[1]],
+        [rotation[6], rotation[7], rotation[8], translation[2]],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
+def _translation_norm(extrinsics: Any) -> float:
+    tx, ty, tz = map(float, extrinsics.translation)
+    return float(math.sqrt(tx * tx + ty * ty + tz * tz))
+
+
+def _extract_runtime_geometry(pipeline: Any) -> dict[str, Any]:
     _, _, rs = _runtime_imports()
-    try:
-        color_sensor = pipeline.get_active_profile().get_device().first_color_sensor()
-        if color_sensor.supports(rs.option.enable_auto_exposure):
-            color_sensor.set_option(
-                rs.option.enable_auto_exposure, 1.0 if auto_exposure else 0.0
-            )
-            auto_val = color_sensor.get_option(rs.option.enable_auto_exposure)
-        if not auto_exposure:
-            if color_sensor.supports(rs.option.exposure):
-                color_sensor.set_option(rs.option.exposure, float(exposure))
-                exp_val = color_sensor.get_option(rs.option.exposure)
-            if color_sensor.supports(rs.option.gain):
-                color_sensor.set_option(rs.option.gain, float(gain))
-                gain_val = color_sensor.get_option(rs.option.gain)
-        else:
-            if color_sensor.supports(rs.option.exposure):
-                exp_val = color_sensor.get_option(rs.option.exposure)
-            if color_sensor.supports(rs.option.gain):
-                gain_val = color_sensor.get_option(rs.option.gain)
-    except Exception:
-        pass
-    return auto_val, exp_val, gain_val
+    profile = pipeline.get_active_profile()
+    color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
+    ir_left_profile = profile.get_stream(rs.stream.infrared, 1).as_video_stream_profile()
+    ir_right_profile = profile.get_stream(rs.stream.infrared, 2).as_video_stream_profile()
+    ir_left_to_color = ir_left_profile.get_extrinsics_to(color_profile)
+    ir_left_to_right = ir_left_profile.get_extrinsics_to(ir_right_profile)
+    return {
+        "K_color": _intrinsics_to_matrix(color_profile.get_intrinsics()),
+        "K_ir_left": _intrinsics_to_matrix(ir_left_profile.get_intrinsics()),
+        "T_ir_left_to_color": _extrinsics_to_matrix(ir_left_to_color),
+        "T_ir_left_to_right": _extrinsics_to_matrix(ir_left_to_right),
+        "ir_baseline_m": _translation_norm(ir_left_to_right),
+    }
 
 
-def _start_pipeline(
+def _start_pipeline_ffs(
     *,
     ctx: Any,
     serial: str,
     profiles: Tuple[Tuple[int, int, int], ...],
-) -> Tuple[Any, Tuple[int, int, int]]:
+) -> Tuple[Any, Tuple[int, int, int], dict[str, Any]]:
     _, _, rs = _runtime_imports()
     last_err: Optional[BaseException] = None
     for width, height, fps in profiles:
@@ -92,7 +103,8 @@ def _start_pipeline(
         config = rs.config()
         config.enable_device(serial)
         config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
-        config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
+        config.enable_stream(rs.stream.infrared, 1, width, height, rs.format.y8, fps)
+        config.enable_stream(rs.stream.infrared, 2, width, height, rs.format.y8, fps)
         try:
             pipeline.start(config)
             ok = False
@@ -107,7 +119,8 @@ def _start_pipeline(
                 raise RuntimeError(
                     f"Frame did not arrive after starting {width}x{height}@{fps}"
                 )
-            return pipeline, (width, height, fps)
+            geometry = _extract_runtime_geometry(pipeline)
+            return pipeline, (width, height, fps), geometry
         except Exception as e:
             last_err = e
             try:
@@ -123,105 +136,10 @@ def _start_pipeline(
     raise RuntimeError(f"Failed to start pipeline with candidates={profiles}: {last_err}")
 
 
-def _build_profiles(
-    *,
-    req_width: int,
-    req_height: int,
-    req_fps: int,
-    usb_desc: str,
-    total_cams: int,
-) -> Tuple[Tuple[int, int, int], ...]:
-    profiles: List[Tuple[int, int, int]] = []
-
-    if total_cams >= 3:
-        # Match calibrate defaults first: requested WH/FPS.
-        profiles.extend(
-            [
-                (req_width, req_height, req_fps),
-                (req_width, req_height, 5),
-                (req_width, req_height, 15),
-                (848, 480, 15),
-                (640, 480, 15),
-                (640, 480, 5),
-                (848, 480, 30),
-            ]
-        )
-    else:
-        if usb_desc.startswith("2"):
-            profiles.append((req_width, req_height, min(req_fps, 15)))
-        else:
-            profiles.append((req_width, req_height, req_fps))
-        profiles.extend(
-            [
-                (848, 480, 15),
-                (848, 480, 5),
-                (640, 480, 30),
-                (640, 480, 15),
-                (640, 480, 5),
-            ]
-        )
-
-    seen = set()
-    uniq: List[Tuple[int, int, int]] = []
-    for p in profiles:
-        if p not in seen:
-            uniq.append(p)
-            seen.add(p)
-    return tuple(uniq)
-
-
-def _safe_wait_frames(
-    pipeline: Any,
-    timeout_ms: int = 100,
-) -> Optional[Any]:
-    try:
-        return pipeline.wait_for_frames(timeout_ms)
-    except RuntimeError:
-        return None
-
-
-def _make_panel(
-    *,
-    color: Any,
-    depth: Any,
-    depth_scale_m_per_unit: float,
-    depth_vis_min_m: float,
-    depth_vis_max_m: float,
-    label_lines: Tuple[str, str],
-) -> Any:
-    cv2, np, _ = _runtime_imports()
-    depth_colormap = colorize_depth_units(
-        depth,
-        depth_scale_m_per_unit=float(depth_scale_m_per_unit),
-        depth_min_m=float(depth_vis_min_m),
-        depth_max_m=float(depth_vis_max_m),
-    )
-    panel = np.vstack([color, depth_colormap])
-    _draw_panel_label(panel, label_lines=label_lines, color_bgr=(255, 255, 255))
-    return panel
-
-
-def _update_recent_frame_times(
-    frame_times: deque[float],
-    *,
-    now_s: float,
-    frame_received: bool,
-    window_s: float = MEASURED_FPS_WINDOW_S,
-) -> None:
-    if frame_received:
-        frame_times.append(float(now_s))
-    cutoff = float(now_s) - float(window_s)
-    while frame_times and frame_times[0] < cutoff:
-        frame_times.popleft()
-
-
-def _compute_measured_fps(frame_times: deque[float]) -> float:
-    if len(frame_times) < MIN_MEASURED_FPS_SAMPLES:
-        return 0.0
-    elapsed_s = float(frame_times[-1] - frame_times[0])
-    if elapsed_s <= 1e-6:
-        return 0.0
-    return float((len(frame_times) - 1) / elapsed_s)
+def _rate_label(*, fps_value: float, sample_count: int) -> str:
+    if int(sample_count) < MIN_MEASURED_FPS_SAMPLES:
+        return "warming"
+    return f"{float(fps_value):.1f}"
 
 
 def _format_panel_label_lines(
@@ -231,17 +149,17 @@ def _format_panel_label_lines(
     stream_w: int,
     stream_h: int,
     configured_fps: float,
-    measured_fps: float,
-    measured_sample_count: int,
+    capture_fps: float,
+    capture_sample_count: int,
+    ffs_fps: float,
+    ffs_sample_count: int,
 ) -> Tuple[str, str]:
     usb_label = usb_desc or "unknown"
     line1 = f"{serial} usb={usb_label} {stream_w}x{stream_h}@{float(configured_fps):.1f}fps"
-    measured_label = (
-        f"{float(measured_fps):.1f}"
-        if int(measured_sample_count) >= MIN_MEASURED_FPS_SAMPLES
-        else "warming"
+    line2 = (
+        f"capture: {_rate_label(fps_value=capture_fps, sample_count=capture_sample_count)}"
+        f" | ffs: {_rate_label(fps_value=ffs_fps, sample_count=ffs_sample_count)}"
     )
-    line2 = f"configured: {float(configured_fps):.1f} | measured: {measured_label}"
     return line1, line2
 
 
@@ -269,110 +187,409 @@ def _draw_panel_label(
         )
 
 
-def _fit_to_canvas(
-    image: Any,
-    target_width: int,
-    target_height: int,
+def _make_waiting_bottom(
+    width: int,
+    height: int,
     *,
-    interpolation: int,
-    fill_value: int = 0,
-) -> Any:
-    cv2, np, _ = _runtime_imports()
-    src_height, src_width = image.shape[:2]
-    if src_width <= 0 or src_height <= 0:
-        raise ValueError(f"Invalid image shape: {image.shape}")
-
-    scale = min(target_width / src_width, target_height / src_height)
-    scaled_width = max(1, int(round(src_width * scale)))
-    scaled_height = max(1, int(round(src_height * scale)))
-    resized = cv2.resize(image, (scaled_width, scaled_height), interpolation=interpolation)
-
-    if image.ndim == 2:
-        canvas = np.full((target_height, target_width), fill_value, dtype=image.dtype)
-    else:
-        channels = image.shape[2]
-        canvas = np.full((target_height, target_width, channels), fill_value, dtype=image.dtype)
-
-    y0 = (target_height - scaled_height) // 2
-    x0 = (target_width - scaled_width) // 2
-    canvas[y0:y0 + scaled_height, x0:x0 + scaled_width] = resized
+    message: str,
+    color_bgr: Tuple[int, int, int] = (180, 180, 180),
+) -> np.ndarray:
+    cv2, _, _ = _runtime_imports()
+    canvas = np.zeros((height, width, 3), dtype=np.uint8)
+    text_size = cv2.getTextSize(message, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+    text_x = max(8, (width - text_size[0]) // 2)
+    text_y = max(24, (height + text_size[1]) // 2)
+    cv2.putText(
+        canvas,
+        message,
+        (text_x, text_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        color_bgr,
+        2,
+        cv2.LINE_AA,
+    )
     return canvas
 
 
-def _get_screen_size() -> tuple[int, int]:
-    try:
-        import tkinter as tk
-
-        root = tk.Tk()
-        root.withdraw()
-        width = int(root.winfo_screenwidth())
-        height = int(root.winfo_screenheight())
-        root.destroy()
-        return width, height
-    except Exception:
-        return 1920, 1080
-
-
-def _fit_grid_for_display(grid: Any) -> Any:
-    cv2, _, _ = _runtime_imports()
-    screen_width, screen_height = _get_screen_size()
-    max_width = max(640, screen_width - 120)
-    max_height = max(480, screen_height - 180)
-    grid_height, grid_width = grid.shape[:2]
-    scale = min(max_width / grid_width, max_height / grid_height, 1.0)
-    if scale >= 1.0:
-        return grid
-    resized_width = max(1, int(round(grid_width * scale)))
-    resized_height = max(1, int(round(grid_height * scale)))
-    return cv2.resize(grid, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
-
-
-def _empty_panel(width: int, height: int, label_lines: Tuple[str, str]) -> np.ndarray:
+def _compose_panel(
+    *,
+    color: Any,
+    bottom_image: Any,
+    label_lines: Tuple[str, str],
+) -> Any:
     cv2, np, _ = _runtime_imports()
-    panel = np.zeros((height * 2, width, 3), dtype=np.uint8)
-    _draw_panel_label(panel, label_lines=label_lines, color_bgr=(0, 0, 255))
+    color_image = np.asarray(color, dtype=np.uint8)
+    lower = np.asarray(bottom_image, dtype=np.uint8)
+    if lower.ndim == 2:
+        lower = cv2.cvtColor(lower, cv2.COLOR_GRAY2BGR)
+    panel = np.vstack([color_image, lower])
+    _draw_panel_label(panel, label_lines=label_lines, color_bgr=(255, 255, 255))
     return panel
 
 
-def _tile_panels(
-    panels: List[Any],
-    panel_h: int,
-    panel_w: int,
-) -> Any:
-    _, np, _ = _runtime_imports()
-    if not panels:
-        return np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-    cols = 2
-    rows = int(math.ceil(len(panels) / cols))
-    grid = np.zeros((rows * panel_h, cols * panel_w, 3), dtype=np.uint8)
-    for idx, panel in enumerate(panels):
-        r = idx // cols
-        c = idx % cols
-        y0, y1 = r * panel_h, (r + 1) * panel_h
-        x0, x1 = c * panel_w, (c + 1) * panel_w
-        grid[y0:y1, x0:x1] = panel
-    return grid
+def _empty_panel(width: int, height: int, label_lines: Tuple[str, str]) -> np.ndarray:
+    panel = _compose_panel(
+        color=np.zeros((height, width, 3), dtype=np.uint8),
+        bottom_image=_make_waiting_bottom(width, height, message="Waiting for color + IR"),
+        label_lines=label_lines,
+    )
+    return panel
 
 
-def _enumerate_d400_devices(ctx: Any) -> List[Any]:
-    _, _, rs = _runtime_imports()
-    devices: List[Any] = []
-    for dev in ctx.query_devices():
+def _fit_grid_for_window(grid: Any, *, window_name: str) -> Any:
+    cv2, _, _ = _runtime_imports()
+    target_width = int(grid.shape[1])
+    target_height = int(grid.shape[0])
+    if hasattr(cv2, "getWindowImageRect"):
         try:
-            name = dev.get_info(rs.camera_info.name).lower()
-            product_line = dev.get_info(rs.camera_info.product_line)
+            _, _, current_width, current_height = cv2.getWindowImageRect(window_name)
+            if int(current_width) > 0 and int(current_height) > 0:
+                target_width = int(current_width)
+                target_height = int(current_height)
         except Exception:
-            continue
-        if name == "platform camera":
-            continue
-        if product_line != "D400":
-            continue
-        devices.append(dev)
-    return devices
+            pass
+    if target_width == int(grid.shape[1]) and target_height == int(grid.shape[0]):
+        return grid
+    interpolation = (
+        cv2.INTER_AREA
+        if target_width < int(grid.shape[1]) or target_height < int(grid.shape[0])
+        else cv2.INTER_LINEAR
+    )
+    return _fit_to_canvas(
+        grid,
+        target_width,
+        target_height,
+        interpolation=interpolation,
+    )
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
+def _put_latest(queue_obj: Any, item: Any) -> None:
+    try:
+        queue_obj.put_nowait(item)
+        return
+    except queue.Full:
+        pass
+    try:
+        while True:
+            queue_obj.get_nowait()
+    except queue.Empty:
+        pass
+    try:
+        queue_obj.put_nowait(item)
+    except queue.Full:
+        pass
+
+
+def _reproject_ffs_depth_to_color(
+    depth_ir_left_m: np.ndarray,
+    *,
+    K_ir_left: np.ndarray,
+    T_ir_left_to_color: np.ndarray,
+    K_color: np.ndarray,
+    output_shape: tuple[int, int],
+) -> np.ndarray:
+    return align_depth_to_color(
+        np.asarray(depth_ir_left_m, dtype=np.float32),
+        np.asarray(K_ir_left, dtype=np.float32),
+        np.asarray(T_ir_left_to_color, dtype=np.float32),
+        np.asarray(K_color, dtype=np.float32),
+        output_shape=output_shape,
+        invalid_value=0.0,
+    )
+
+
+def _capture_loop(
+    cam_state: dict[str, Any],
+    *,
+    target_width: int,
+    target_height: int,
+    stop_event: threading.Event,
+) -> None:
+    cv2, np, _ = _runtime_imports()
+    while not stop_event.is_set():
+        now_s = time.perf_counter()
+        frame_received = False
+        try:
+            frames = cam_state["pipeline"].wait_for_frames(CAPTURE_QUEUE_TIMEOUT_MS)
+            color_frame = frames.get_color_frame() if frames else None
+            ir_left_frame = frames.get_infrared_frame(1) if frames else None
+            ir_right_frame = frames.get_infrared_frame(2) if frames else None
+            if color_frame and ir_left_frame and ir_right_frame:
+                color_np = np.asanyarray(color_frame.get_data())
+                ir_left_np = np.asanyarray(ir_left_frame.get_data())
+                ir_right_np = np.asanyarray(ir_right_frame.get_data())
+                if color_np.shape[1] != target_width or color_np.shape[0] != target_height:
+                    color_np = _fit_to_canvas(
+                        color_np,
+                        target_width,
+                        target_height,
+                        interpolation=cv2.INTER_LINEAR,
+                    )
+                if ir_left_np.shape[1] != target_width or ir_left_np.shape[0] != target_height:
+                    ir_left_np = _fit_to_canvas(
+                        ir_left_np,
+                        target_width,
+                        target_height,
+                        interpolation=cv2.INTER_NEAREST,
+                    )
+                if ir_right_np.shape[1] != target_width or ir_right_np.shape[0] != target_height:
+                    ir_right_np = _fit_to_canvas(
+                        ir_right_np,
+                        target_width,
+                        target_height,
+                        interpolation=cv2.INTER_NEAREST,
+                    )
+                with cam_state["lock"]:
+                    next_seq = int(cam_state["capture_seq"]) + 1
+                    cam_state["capture_seq"] = next_seq
+                    cam_state["latest_color"] = color_np
+                    cam_state["latest_ir_left"] = ir_left_np
+                    cam_state["latest_ir_right"] = ir_right_np
+                    _update_recent_frame_times(
+                        cam_state["capture_frame_times"],
+                        now_s=now_s,
+                        frame_received=True,
+                    )
+                    cam_state["capture_fps"] = _compute_measured_fps(cam_state["capture_frame_times"])
+                _put_latest(
+                    cam_state["request_queue"],
+                    {
+                        "capture_seq": next_seq,
+                        "ir_left": ir_left_np,
+                        "ir_right": ir_right_np,
+                    },
+                )
+                frame_received = True
+        except RuntimeError:
+            pass
+
+        if not frame_received:
+            with cam_state["lock"]:
+                _update_recent_frame_times(
+                    cam_state["capture_frame_times"],
+                    now_s=now_s,
+                    frame_received=False,
+                )
+                cam_state["capture_fps"] = _compute_measured_fps(cam_state["capture_frame_times"])
+
+
+def _ffs_worker_loop(
+    *,
+    camera_idx: int,
+    serial: str,
+    request_queue: Any,
+    result_queue: Any,
+    ffs_repo: str,
+    model_path: str,
+    ffs_scale: float,
+    ffs_valid_iters: int,
+    ffs_max_disp: int,
+    geometry: dict[str, Any],
+    output_shape: tuple[int, int],
+) -> None:
+    result_frame_times: deque[float] = deque()
+    try:
+        runner = FastFoundationStereoRunner(
+            ffs_repo=ffs_repo,
+            model_path=model_path,
+            scale=ffs_scale,
+            valid_iters=ffs_valid_iters,
+            max_disp=ffs_max_disp,
+        )
+    except Exception as exc:
+        _put_latest(
+            result_queue,
+            {
+                "camera_idx": int(camera_idx),
+                "serial": serial,
+                "fatal_error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+        return
+
+    while True:
+        try:
+            payload = request_queue.get(timeout=RESULT_QUEUE_TIMEOUT_S)
+        except queue.Empty:
+            continue
+        if payload is None:
+            return
+        try:
+            infer_start_s = time.perf_counter()
+            run_output = runner.run_pair(
+                payload["ir_left"],
+                payload["ir_right"],
+                K_ir_left=np.asarray(geometry["K_ir_left"], dtype=np.float32),
+                baseline_m=float(geometry["ir_baseline_m"]),
+            )
+            depth_color_m = _reproject_ffs_depth_to_color(
+                np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
+                K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
+                T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
+                K_color=np.asarray(geometry["K_color"], dtype=np.float32),
+                output_shape=output_shape,
+            )
+            result_time_s = time.perf_counter()
+            _update_recent_frame_times(
+                result_frame_times,
+                now_s=result_time_s,
+                frame_received=True,
+            )
+            _put_latest(
+                result_queue,
+                {
+                    "camera_idx": int(camera_idx),
+                    "serial": serial,
+                    "capture_seq": int(payload["capture_seq"]),
+                    "depth_color_m": depth_color_m,
+                    "worker_ffs_fps": _compute_measured_fps(result_frame_times),
+                    "inference_s": float(result_time_s - infer_start_s),
+                    "result_time_s": result_time_s,
+                },
+            )
+        except Exception as exc:
+            _put_latest(
+                result_queue,
+                {
+                    "camera_idx": int(camera_idx),
+                    "serial": serial,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+
+
+def _result_loop(cam_state: dict[str, Any], *, stop_event: threading.Event) -> None:
+    while True:
+        now_s = time.perf_counter()
+        got_result = False
+        try:
+            payload = cam_state["result_queue"].get(timeout=RESULT_QUEUE_TIMEOUT_S)
+            got_result = True
+        except queue.Empty:
+            payload = None
+
+        with cam_state["lock"]:
+            if payload is not None:
+                if "fatal_error" in payload:
+                    cam_state["worker_error"] = str(payload["fatal_error"])
+                elif "error" in payload:
+                    cam_state["worker_error"] = str(payload["error"])
+                else:
+                    cam_state["worker_error"] = None
+                    cam_state["latest_ffs_depth_m"] = payload["depth_color_m"]
+                    cam_state["latest_ffs_capture_seq"] = int(payload["capture_seq"])
+                    cam_state["last_worker_ffs_fps"] = float(payload["worker_ffs_fps"])
+                    cam_state["last_inference_s"] = float(payload["inference_s"])
+            _update_recent_frame_times(
+                cam_state["ffs_frame_times"],
+                now_s=now_s,
+                frame_received=got_result and payload is not None and "depth_color_m" in payload,
+            )
+            cam_state["ffs_fps"] = _compute_measured_fps(cam_state["ffs_frame_times"])
+        if stop_event.is_set() and not cam_state["worker_process"].is_alive() and not got_result:
+            break
+
+
+def _build_camera_state(
+    *,
+    serial: str,
+    usb_desc: str,
+    pipeline: Any,
+    stream_w: int,
+    stream_h: int,
+    fps_used: int,
+    geometry: dict[str, Any],
+    request_queue: Any,
+    result_queue: Any,
+    worker_process: mp.Process,
+) -> dict[str, Any]:
+    return {
+        "serial": serial,
+        "usb": usb_desc,
+        "pipeline": pipeline,
+        "stream_w": int(stream_w),
+        "stream_h": int(stream_h),
+        "fps": float(fps_used),
+        "geometry": geometry,
+        "request_queue": request_queue,
+        "result_queue": result_queue,
+        "worker_process": worker_process,
+        "lock": threading.Lock(),
+        "capture_seq": 0,
+        "latest_ffs_capture_seq": -1,
+        "latest_color": None,
+        "latest_ir_left": None,
+        "latest_ir_right": None,
+        "latest_ffs_depth_m": None,
+        "worker_error": None,
+        "last_worker_ffs_fps": 0.0,
+        "last_inference_s": 0.0,
+        "capture_frame_times": deque(),
+        "ffs_frame_times": deque(),
+        "capture_fps": 0.0,
+        "ffs_fps": 0.0,
+    }
+
+
+def _render_panel(cam_state: dict[str, Any], *, width: int, height: int, depth_vis_min_m: float, depth_vis_max_m: float) -> Any:
+    with cam_state["lock"]:
+        serial = str(cam_state["serial"])
+        usb_desc = str(cam_state["usb"])
+        stream_w = int(cam_state["stream_w"])
+        stream_h = int(cam_state["stream_h"])
+        configured_fps = float(cam_state["fps"])
+        capture_fps = float(cam_state["capture_fps"])
+        capture_sample_count = len(cam_state["capture_frame_times"])
+        ffs_fps = float(cam_state["ffs_fps"])
+        ffs_sample_count = len(cam_state["ffs_frame_times"])
+        latest_color = None if cam_state["latest_color"] is None else np.asarray(cam_state["latest_color"]).copy()
+        latest_ffs_depth_m = None if cam_state["latest_ffs_depth_m"] is None else np.asarray(cam_state["latest_ffs_depth_m"]).copy()
+        worker_error = cam_state["worker_error"]
+
+    label_lines = _format_panel_label_lines(
+        serial=serial,
+        usb_desc=usb_desc,
+        stream_w=stream_w,
+        stream_h=stream_h,
+        configured_fps=configured_fps,
+        capture_fps=capture_fps,
+        capture_sample_count=capture_sample_count,
+        ffs_fps=ffs_fps,
+        ffs_sample_count=ffs_sample_count,
+    )
+    if latest_color is None:
+        return _empty_panel(width, height, label_lines)
+    render_width = stream_w
+    render_height = stream_h
+    if latest_ffs_depth_m is None:
+        lower = _make_waiting_bottom(
+            render_width,
+            render_height,
+            message="FFS error" if worker_error else "FFS warming...",
+            color_bgr=(0, 0, 255) if worker_error else (180, 180, 180),
+        )
+    else:
+        lower = colorize_depth_meters(
+            latest_ffs_depth_m,
+            depth_min_m=float(depth_vis_min_m),
+            depth_max_m=float(depth_vis_max_m),
+        )
+    panel = _compose_panel(color=latest_color, bottom_image=lower, label_lines=label_lines)
+    if panel.shape[0] != height * 2 or panel.shape[1] != width:
+        panel = _fit_to_canvas(
+            panel,
+            width,
+            height * 2,
+            interpolation=_runtime_imports()[0].INTER_LINEAR,
+        )
+    return panel
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Live RGB + Fast-FoundationStereo viewer with color-aligned FFS depth."
+    )
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
@@ -382,13 +599,27 @@ def main() -> int:
     parser.add_argument("--gain", type=float, default=60.0)
     parser.add_argument("--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M)
     parser.add_argument("--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M)
-    args = parser.parse_args()
+    parser.add_argument("--ffs_repo", type=Path, required=True)
+    parser.add_argument("--ffs_model_path", type=Path, required=True)
+    parser.add_argument("--ffs_scale", type=float, default=1.0)
+    parser.add_argument("--ffs_valid_iters", type=int, default=8)
+    parser.add_argument("--ffs_max_disp", type=int, default=192)
+    return parser.parse_args()
+
+
+def main() -> int:
+    mp.freeze_support()
+    args = parse_args()
     cv2, np, rs = _runtime_imports()
     if float(args.depth_vis_max_m) <= float(args.depth_vis_min_m):
         raise ValueError(
             f"--depth-vis-max-m must be greater than --depth-vis-min-m. "
             f"Got {args.depth_vis_min_m=} {args.depth_vis_max_m=}"
         )
+    if not args.ffs_repo.exists():
+        raise FileNotFoundError(f"Missing --ffs_repo: {args.ffs_repo}")
+    if not args.ffs_model_path.exists():
+        raise FileNotFoundError(f"Missing --ffs_model_path: {args.ffs_model_path}")
 
     ctx = rs.context()
     devices = _enumerate_d400_devices(ctx)
@@ -400,8 +631,11 @@ def main() -> int:
     serials = [dev.get_info(rs.camera_info.serial_number) for dev in devices]
     print(f"Detected {len(devices)} camera(s): {', '.join(serials)}", flush=True)
 
-    cams: List[Dict[str, object]] = []
-    for dev in devices:
+    mp_ctx = mp.get_context("spawn")
+    stop_event = threading.Event()
+    cams: List[Dict[str, Any]] = []
+
+    for camera_idx, dev in enumerate(devices):
         serial = dev.get_info(rs.camera_info.serial_number)
         try:
             usb_desc = dev.get_info(rs.camera_info.usb_type_descriptor)
@@ -416,13 +650,13 @@ def main() -> int:
             total_cams=len(devices),
         )
         try:
-            pipeline, (stream_w, stream_h, fps_used) = _start_pipeline(
+            pipeline, (stream_w, stream_h, fps_used), geometry = _start_pipeline_ffs(
                 ctx=ctx,
                 serial=serial,
                 profiles=profiles,
             )
-        except Exception as e:
-            print(f"[ERROR] Could not start {serial}: {type(e).__name__}: {e}", flush=True)
+        except Exception as exc:
+            print(f"[ERROR] Could not start {serial}: {type(exc).__name__}: {exc}", flush=True)
             continue
 
         target_exposure = float(DEFAULT_EXPOSURE_OVERRIDES.get(serial, args.exposure))
@@ -432,21 +666,62 @@ def main() -> int:
             exposure=target_exposure,
             gain=args.gain,
         )
-        cams.append(
-            {
+
+        request_queue = mp_ctx.Queue(maxsize=LATEST_QUEUE_SIZE)
+        result_queue = mp_ctx.Queue(maxsize=LATEST_QUEUE_SIZE)
+        worker_process = mp_ctx.Process(
+            target=_ffs_worker_loop,
+            kwargs={
+                "camera_idx": camera_idx,
                 "serial": serial,
-                "usb": usb_desc,
-                "pipeline": pipeline,
-                "align": rs.align(rs.stream.color),
-                "fps": fps_used,
-                "stream_w": stream_w,
-                "stream_h": stream_h,
-                "frame_times": deque(),
-                "last_color": None,
-                "last_depth": None,
-                "last_depth_scale_m_per_unit": 0.001,
-            }
+                "request_queue": request_queue,
+                "result_queue": result_queue,
+                "ffs_repo": str(args.ffs_repo.resolve()),
+                "model_path": str(args.ffs_model_path.resolve()),
+                "ffs_scale": float(args.ffs_scale),
+                "ffs_valid_iters": int(args.ffs_valid_iters),
+                "ffs_max_disp": int(args.ffs_max_disp),
+                "geometry": geometry,
+                "output_shape": (int(stream_h), int(stream_w)),
+            },
+            daemon=True,
         )
+        worker_process.start()
+
+        cam_state = _build_camera_state(
+            serial=serial,
+            usb_desc=usb_desc,
+            pipeline=pipeline,
+            stream_w=stream_w,
+            stream_h=stream_h,
+            fps_used=fps_used,
+            geometry=geometry,
+            request_queue=request_queue,
+            result_queue=result_queue,
+            worker_process=worker_process,
+        )
+        cam_state["capture_thread"] = threading.Thread(
+            target=_capture_loop,
+            args=(cam_state,),
+            kwargs={
+                "target_width": int(stream_w),
+                "target_height": int(stream_h),
+                "stop_event": stop_event,
+            },
+            daemon=True,
+            name=f"capture-{serial}",
+        )
+        cam_state["result_thread"] = threading.Thread(
+            target=_result_loop,
+            args=(cam_state,),
+            kwargs={"stop_event": stop_event},
+            daemon=True,
+            name=f"ffs-result-{serial}",
+        )
+        cam_state["capture_thread"].start()
+        cam_state["result_thread"].start()
+        cams.append(cam_state)
+
         print(
             f"Started {serial} usb={usb_desc or 'unknown'} "
             f"at {stream_w}x{stream_h}@{fps_used} "
@@ -465,89 +740,55 @@ def main() -> int:
     window_flags = cv2.WINDOW_NORMAL
     if hasattr(cv2, "WINDOW_KEEPRATIO"):
         window_flags |= cv2.WINDOW_KEEPRATIO
-    cv2.namedWindow("RealSense Viewer", window_flags)
+    cv2.namedWindow("RealSense FFS Viewer", window_flags)
 
     try:
         while True:
             panels: List[np.ndarray] = []
-            for cam in cams:
-                now_s = time.perf_counter()
-                pipeline = cam["pipeline"]
-                frames = _safe_wait_frames(pipeline, timeout_ms=100)
-                received_valid_pair = False
-                if frames:
-                    frames = cam["align"].process(frames)
-                    depth = frames.get_depth_frame()
-                    color = frames.get_color_frame()
-                    if depth and color:
-                        color_np = np.asanyarray(color.get_data())
-                        depth_np = np.asanyarray(depth.get_data())
-                        try:
-                            depth_scale_m_per_unit = float(depth.get_units())
-                        except Exception:
-                            depth_scale_m_per_unit = 0.001
-                        if (
-                            color_np.shape[1] != args.width
-                            or color_np.shape[0] != args.height
-                        ):
-                            color_np = _fit_to_canvas(
-                                color_np,
-                                args.width,
-                                args.height,
-                                interpolation=cv2.INTER_LINEAR,
-                            )
-                        if (
-                            depth_np.shape[1] != args.width
-                            or depth_np.shape[0] != args.height
-                        ):
-                            depth_np = _fit_to_canvas(
-                                depth_np,
-                                args.width,
-                                args.height,
-                                interpolation=cv2.INTER_NEAREST,
-                            )
-                        cam["last_color"] = color_np
-                        cam["last_depth"] = depth_np
-                        cam["last_depth_scale_m_per_unit"] = depth_scale_m_per_unit
-                        received_valid_pair = True
-                _update_recent_frame_times(
-                    cam["frame_times"],
-                    now_s=now_s,
-                    frame_received=received_valid_pair,
-                )
-                measured_fps = _compute_measured_fps(cam["frame_times"])
-                label_lines = _format_panel_label_lines(
-                    serial=str(cam["serial"]),
-                    usb_desc=str(cam["usb"]),
-                    stream_w=int(cam["stream_w"]),
-                    stream_h=int(cam["stream_h"]),
-                    configured_fps=float(cam["fps"]),
-                    measured_fps=measured_fps,
-                    measured_sample_count=len(cam["frame_times"]),
-                )
-                if cam["last_color"] is None or cam["last_depth"] is None:
-                    panel = _empty_panel(args.width, args.height, label_lines)
-                else:
-                    panel = _make_panel(
-                        color=cam["last_color"],
-                        depth=cam["last_depth"],
-                        depth_scale_m_per_unit=float(cam["last_depth_scale_m_per_unit"]),
+            for cam_state in cams:
+                panels.append(
+                    _render_panel(
+                        cam_state,
+                        width=int(args.width),
+                        height=int(args.height),
                         depth_vis_min_m=float(args.depth_vis_min_m),
                         depth_vis_max_m=float(args.depth_vis_max_m),
-                        label_lines=label_lines,
                     )
-                panels.append(panel)
-
+                )
             grid = _tile_panels(panels, panel_h, panel_w)
-            display_grid = _fit_grid_for_display(grid)
-            cv2.imshow("RealSense Viewer", display_grid)
+            display_grid = _fit_grid_for_window(grid, window_name="RealSense FFS Viewer")
+            cv2.imshow("RealSense FFS Viewer", display_grid)
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 break
     finally:
-        for cam in cams:
+        stop_event.set()
+        for cam_state in cams:
             try:
-                cam["pipeline"].stop()
+                cam_state["pipeline"].stop()
+            except Exception:
+                pass
+        for cam_state in cams:
+            try:
+                cam_state["capture_thread"].join(timeout=2.0)
+            except Exception:
+                pass
+        for cam_state in cams:
+            _put_latest(cam_state["request_queue"], None)
+        for cam_state in cams:
+            proc = cam_state["worker_process"]
+            proc.join(timeout=5.0)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=2.0)
+        for cam_state in cams:
+            try:
+                cam_state["result_thread"].join(timeout=2.0)
+            except Exception:
+                pass
+            try:
+                cam_state["request_queue"].close()
+                cam_state["result_queue"].close()
             except Exception:
                 pass
         cv2.destroyAllWindows()
