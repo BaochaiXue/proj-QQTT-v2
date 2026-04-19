@@ -29,6 +29,28 @@ Use this as a debug viewer only:
 - overlay = negotiated stream profile plus live `capture` and `ffs` fps
 - preview favors freshness over completeness and may drop stale stereo work while FFS catches up
 
+Saved-pair FFS speed / tradeoff benchmark:
+
+```bash
+python scripts/harness/benchmark_ffs_configs.py --aligned_root ./data --case_ref static/ffs_30_static_round3_20260414 --camera_idx 0 --frame_idx 0 1 2 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\20-26-39\model_best_bp2_serialize.pth --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\20-30-48\model_best_bp2_serialize.pth --scale 1.0 0.75 0.5 --valid_iters 8 4 --max_disp 192 --warmup_runs 2 --repeats 4 --target_fps 15 25 30 --out_dir ./data/ffs_benchmarks/my_tradeoff_run
+```
+
+This benchmark-only workflow:
+
+- loads aligned `ir_left` / `ir_right` plus FFS geometry from one aligned case
+- sweeps checkpoint / `scale` / `valid_iters` / `max_disp`
+- reports warmup-adjusted latency, FPS, and peak GPU memory
+- compares each config against the chosen reference config after nearest-neighbor resize back to the reference depth shape
+- writes:
+  - `summary.json`
+  - `report.md`
+
+Use this first when the main question is:
+
+- can current PyTorch FFS reach online-setting FPS on our machine?
+- how much reference-depth drift appears when we lower `scale` or `valid_iters`?
+- which config is the best compromise for a target FPS threshold?
+
 ## 2. Calibrate
 
 ```bash

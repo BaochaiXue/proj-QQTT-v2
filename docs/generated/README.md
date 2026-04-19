@@ -16,6 +16,7 @@ These record what the current machine and D455 topology actually supported durin
 ## FFS / Integration Validation
 
 - `ffs_demo_validation.md`
+- `ffs_benchmark_tradeoff_validation.md`
 - `ffs_depth_backend_integration_validation.md`
 - `ffs_comparison_workflow_validation.md`
 - `ffs_left_right_codepath_audit.md`

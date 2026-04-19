@@ -11,9 +11,11 @@
   - upstream `torch==2.6.0+cu124` failed with `no kernel image is available for execution on the device`
 - Validation command:
   - `conda run -n ffs-standalone python scripts/harness/verify_ffs_demo.py`
+  - `C:\Users\zhang\miniconda3\envs\ffs-standalone\python.exe scripts/harness/benchmark_ffs_configs.py --help`
 - Expected use:
   - official FFS demo
   - checkpoint / import sanity checks
+  - saved-pair checkpoint / scale / iteration tradeoff benchmarks
 
 ## `qqtt-ffs-compat`
 

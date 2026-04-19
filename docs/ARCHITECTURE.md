@@ -25,6 +25,7 @@ The repo is intentionally small.
 ### Optional FFS Depth Backend
 
 - `data_process/depth_backends/__init__.py`
+- `data_process/depth_backends/benchmarking.py`
 - `data_process/depth_backends/geometry.py`
 - `data_process/depth_backends/fast_foundation_stereo.py`
 
@@ -74,6 +75,7 @@ The repo is intentionally small.
 - `env_install/env_install.sh`
 - `scripts/harness/check_scope.py`
 - `scripts/harness/check_all.py`
+- `scripts/harness/benchmark_ffs_configs.py`
 - `scripts/harness/cleanup_different_types_cases.py`
 - `tests/test_record_data_align_smoke.py`
 - `docs/*`
@@ -110,6 +112,20 @@ Aligned exports written directly under `data/different_types/<case_name>/` auto-
 Those formal exports also rewrite `calibrate.pkl` into case camera order so old downstream code that indexes `c2ws[cam_idx]` remains compatible.
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
+
+The FFS benchmark helper stack is intentionally split like this:
+
+- `data_process/depth_backends/benchmarking.py`
+  - pure config-grid expansion
+  - latency summary stats
+  - reference-depth agreement metrics
+  - target-FPS tradeoff selection
+- `scripts/harness/benchmark_ffs_configs.py`
+  - aligned-case stereo pair loading
+  - repeated CUDA benchmark execution
+  - JSON / markdown benchmark report writing
+
+This keeps the deterministic summary logic testable without requiring CUDA while leaving the actual model execution in the thin harness CLI.
 
 The native RealSense depth filter contract is now centralized in:
 
