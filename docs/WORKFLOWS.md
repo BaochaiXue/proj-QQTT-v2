@@ -8,6 +8,8 @@ python cameras_viewer.py
 
 Use this to verify that all 3 cameras enumerate and stream correctly before calibration or recording.
 
+Each panel now shows both the negotiated stream `configured fps` and a per-camera `measured fps` computed from the recent valid color+depth delivery rate, so fallback startup profiles and live stalls are easier to see during preview.
+
 The viewer uses the same `TURBO` metric-depth colormap as the aligned-case depth diagnostics. Keep the display range explicit when you want preview colors to match later panels:
 
 ```bash

@@ -19,6 +19,7 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - 3 D400 cameras are connected
 - `python cameras_viewer.py` launches successfully
 - each camera shows live color and depth
+- each panel reports negotiated `configured fps` plus live `measured fps`
 
 ### Calibration
 

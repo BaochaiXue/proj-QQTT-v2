@@ -43,6 +43,7 @@ def main() -> int:
     run([python, "scripts/harness/cleanup_different_types_cases.py", "--help"])
     run([python, "-m", "scripts.harness.check_scope"])
     run([python, "-m", "unittest", "-v", "tests.test_agents_scope_contract_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_cameras_viewer_fps_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_record_data_align_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_ffs_intrinsic_file_format"])
     run([python, "-m", "unittest", "-v", "tests.test_ffs_reprojection_smoke"])
