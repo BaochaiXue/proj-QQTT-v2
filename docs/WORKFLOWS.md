@@ -354,6 +354,38 @@ This workflow:
 - keeps one shared `auto_table_bbox` crop and one shared `oblique` view across all variants
 - applies a vertical image flip to correct the Open3D hidden-window capture orientation
 
+For single-frame point-cloud quality diagnosis before and after SAM 3.1 masking:
+
+```bash
+python scripts/harness/visual_compare_masked_pointcloud.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --text_prompt sloth
+```
+
+This workflow:
+
+- keeps `PhysTwin` only as a reference design; it does not import or depend on that repo
+- prefers existing `sam31_masks/` sidecars when present
+- otherwise can generate workflow-local SAM 3.1 sidecars through QQTT's own helper path
+- fuses 4 fixed-view variants under one shared crop and one shared oblique Open3D camera:
+  - `Native Unmasked`
+  - `Native Masked`
+  - `FFS Unmasked`
+  - `FFS Masked`
+- writes:
+  - `01_masked_pointcloud_board.png`
+  - `summary.json`
+  - `debug/native_mask_overlay_cam*.png`
+  - `debug/ffs_mask_overlay_cam*.png`
+  - `debug/native_unmasked_fused.ply`
+  - `debug/native_masked_fused.ply`
+  - `debug/ffs_unmasked_fused.ply`
+  - `debug/ffs_masked_fused.ply`
+
+Use this when the question is specifically:
+
+- does background suppression change the apparent Native-vs-FFS point-cloud quality?
+- do we get a cleaner object-focused compare after masking?
+- how much point count is removed by masking per camera and per source?
+
 For professor-facing 3-view point-cloud match diagnosis, start with the single match board:
 
 ```bash

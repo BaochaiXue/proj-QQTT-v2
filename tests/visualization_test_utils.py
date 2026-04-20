@@ -99,6 +99,48 @@ def make_visualization_case(
     write_split_aligned_metadata(case_dir, metadata)
 
 
+def make_sam31_masks(
+    case_dir: Path,
+    *,
+    prompt_labels_by_object: dict[int, str] | None = None,
+    camera_ids: list[int] | None = None,
+    frame_tokens: list[str] | None = None,
+) -> Path:
+    mask_root = case_dir / "sam31_masks"
+    mask_dir = mask_root / "mask"
+    mask_dir.mkdir(parents=True, exist_ok=True)
+    prompt_labels = prompt_labels_by_object or {1: "sloth", 2: "sloth"}
+    camera_ids = [0, 1, 2] if camera_ids is None else [int(item) for item in camera_ids]
+    frame_tokens = ["0"] if frame_tokens is None else [str(item) for item in frame_tokens]
+
+    for camera_idx in camera_ids:
+        sample_frame = cv2.imread(str(case_dir / "color" / str(camera_idx) / f"{frame_tokens[0]}.png"), cv2.IMREAD_COLOR)
+        if sample_frame is None:
+            raise FileNotFoundError(f"Missing color frame for mask fixture camera {camera_idx}.")
+        height, width = sample_frame.shape[:2]
+        with (mask_dir / f"mask_info_{camera_idx}.json").open("w", encoding="utf-8") as handle:
+            json.dump({str(obj_id): label for obj_id, label in sorted(prompt_labels.items())}, handle, indent=2)
+        for obj_id in prompt_labels:
+            for frame_token in frame_tokens:
+                object_dir = mask_dir / str(camera_idx) / str(int(obj_id))
+                object_dir.mkdir(parents=True, exist_ok=True)
+                mask = np.zeros((height, width), dtype=np.uint8)
+                if int(obj_id) == 1:
+                    mask[1:4, 1:4] = 255
+                else:
+                    mask[3:6, 5:8] = 255
+                cv2.imwrite(str(object_dir / f"{frame_token}.png"), mask)
+    summary = {
+        "case_root": str(case_dir.resolve()),
+        "output_dir": str(mask_root.resolve()),
+        "camera_ids": camera_ids,
+        "prompt_labels_by_object": {str(key): value for key, value in sorted(prompt_labels.items())},
+    }
+    with (mask_root / "summary.json").open("w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2)
+    return mask_root
+
+
 def make_rerun_compare_cases(
     aligned_root: Path,
     *,
