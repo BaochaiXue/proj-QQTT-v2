@@ -8,9 +8,11 @@ import numpy as np
 
 from cameras_viewer_FFS import (
     _compute_measured_fps,
+    _format_runtime_stats_lines,
     _format_panel_label_lines,
     _put_latest,
     _reproject_ffs_depth_to_color,
+    _summarize_runtime_stats,
     _update_recent_frame_times,
 )
 
@@ -75,6 +77,78 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         self.assertEqual(depth_color.shape, (3, 3))
         self.assertAlmostEqual(float(depth_color[1, 1]), 1.25, places=6)
         self.assertEqual(float(depth_color[0, 0]), 0.0)
+
+    def test_runtime_stats_summary_aggregates_per_camera_rates(self) -> None:
+        runtime_stats = _summarize_runtime_stats(
+            [
+                {
+                    "camera_idx": 0,
+                    "serial": "cam0",
+                    "capture_fps": 33.1,
+                    "capture_sample_count": 10,
+                    "ffs_fps": 2.6,
+                    "ffs_sample_count": 10,
+                    "latest_inference_ms": 381.2,
+                    "seq_gap": 14,
+                    "worker_error": None,
+                },
+                {
+                    "camera_idx": 1,
+                    "serial": "cam1",
+                    "capture_fps": 33.1,
+                    "capture_sample_count": 10,
+                    "ffs_fps": 2.7,
+                    "ffs_sample_count": 10,
+                    "latest_inference_ms": 376.8,
+                    "seq_gap": 13,
+                    "worker_error": None,
+                },
+            ]
+        )
+        self.assertEqual(runtime_stats["camera_count"], 2)
+        self.assertAlmostEqual(runtime_stats["aggregate_capture_fps"], 66.2, places=6)
+        self.assertAlmostEqual(runtime_stats["aggregate_ffs_fps"], 5.3, places=6)
+
+    def test_runtime_stats_lines_are_deterministic(self) -> None:
+        runtime_stats = {
+            "camera_count": 2,
+            "aggregate_capture_fps": 66.2,
+            "aggregate_ffs_fps": 5.3,
+            "per_camera": [
+                {
+                    "camera_idx": 0,
+                    "serial": "239222300412",
+                    "capture_fps": 33.1,
+                    "capture_sample_count": 10,
+                    "ffs_fps": 2.6,
+                    "ffs_sample_count": 10,
+                    "latest_inference_ms": 381.2,
+                    "seq_gap": 14,
+                    "worker_error": None,
+                },
+                {
+                    "camera_idx": 1,
+                    "serial": "239222303506",
+                    "capture_fps": 33.1,
+                    "capture_sample_count": 10,
+                    "ffs_fps": 2.7,
+                    "ffs_sample_count": 10,
+                    "latest_inference_ms": 376.8,
+                    "seq_gap": 13,
+                    "worker_error": "RuntimeError: sample",
+                },
+            ],
+        }
+        lines = _format_runtime_stats_lines(elapsed_s=5.0, runtime_stats=runtime_stats)
+        self.assertEqual(lines[0], "[stats t=5.0s cams=2] capture_sum=66.2 ffs_sum=5.3")
+        self.assertEqual(
+            lines[1],
+            "[stats cam0 239222300412] capture=33.1 ffs=2.6 infer_ms=381.2 seq_gap=14",
+        )
+        self.assertEqual(
+            lines[2],
+            "[stats cam1 239222303506] capture=33.1 ffs=2.7 infer_ms=376.8 seq_gap=13 error=RuntimeError: sample",
+        )
 
 
 if __name__ == "__main__":

@@ -163,6 +163,64 @@ def _format_panel_label_lines(
     return line1, line2
 
 
+def _summarize_runtime_stats(per_camera_stats: List[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "camera_count": int(len(per_camera_stats)),
+        "aggregate_capture_fps": float(sum(float(item["capture_fps"]) for item in per_camera_stats)),
+        "aggregate_ffs_fps": float(sum(float(item["ffs_fps"]) for item in per_camera_stats)),
+        "per_camera": list(per_camera_stats),
+    }
+
+
+def _format_runtime_stats_lines(*, elapsed_s: float, runtime_stats: dict[str, Any]) -> Tuple[str, ...]:
+    lines: list[str] = [
+        (
+            f"[stats t={float(elapsed_s):.1f}s cams={int(runtime_stats['camera_count'])}] "
+            f"capture_sum={float(runtime_stats['aggregate_capture_fps']):.1f} "
+            f"ffs_sum={float(runtime_stats['aggregate_ffs_fps']):.1f}"
+        )
+    ]
+    for item in runtime_stats["per_camera"]:
+        lines.append(
+            (
+                f"[stats cam{int(item['camera_idx'])} {item['serial']}] "
+                f"capture={_rate_label(fps_value=float(item['capture_fps']), sample_count=int(item['capture_sample_count']))} "
+                f"ffs={_rate_label(fps_value=float(item['ffs_fps']), sample_count=int(item['ffs_sample_count']))} "
+                f"infer_ms={float(item['latest_inference_ms']):.1f} "
+                f"seq_gap={int(item['seq_gap'])}"
+                + (f" error={item['worker_error']}" if item["worker_error"] else "")
+            )
+        )
+    return tuple(lines)
+
+
+def _collect_runtime_stats(cams: List[dict[str, Any]]) -> dict[str, Any]:
+    per_camera_stats: list[dict[str, Any]] = []
+    for cam_state in cams:
+        with cam_state["lock"]:
+            capture_seq = int(cam_state["capture_seq"])
+            latest_ffs_capture_seq = int(cam_state["latest_ffs_capture_seq"])
+            if latest_ffs_capture_seq >= 0:
+                seq_gap = max(0, capture_seq - latest_ffs_capture_seq)
+            else:
+                seq_gap = max(0, capture_seq)
+            per_camera_stats.append(
+                {
+                    "camera_idx": int(cam_state["camera_idx"]),
+                    "serial": str(cam_state["serial"]),
+                    "capture_fps": float(cam_state["capture_fps"]),
+                    "capture_sample_count": int(len(cam_state["capture_frame_times"])),
+                    "ffs_fps": float(cam_state["ffs_fps"]),
+                    "ffs_sample_count": int(len(cam_state["ffs_frame_times"])),
+                    "latest_inference_ms": float(cam_state["last_inference_s"]) * 1000.0,
+                    "seq_gap": int(seq_gap),
+                    "worker_error": None if cam_state["worker_error"] is None else str(cam_state["worker_error"]),
+                }
+            )
+    per_camera_stats.sort(key=lambda item: int(item["camera_idx"]))
+    return _summarize_runtime_stats(per_camera_stats)
+
+
 def _draw_panel_label(
     panel: Any,
     *,
@@ -493,6 +551,7 @@ def _result_loop(cam_state: dict[str, Any], *, stop_event: threading.Event) -> N
 
 def _build_camera_state(
     *,
+    camera_idx: int,
     serial: str,
     usb_desc: str,
     pipeline: Any,
@@ -505,6 +564,7 @@ def _build_camera_state(
     worker_process: mp.Process,
 ) -> dict[str, Any]:
     return {
+        "camera_idx": int(camera_idx),
         "serial": serial,
         "usb": usb_desc,
         "pipeline": pipeline,
@@ -604,6 +664,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ffs_scale", type=float, default=1.0)
     parser.add_argument("--ffs_valid_iters", type=int, default=8)
     parser.add_argument("--ffs_max_disp", type=int, default=192)
+    parser.add_argument("--duration-s", type=float, default=0.0)
+    parser.add_argument("--stats-log-interval-s", type=float, default=0.0)
     return parser.parse_args()
 
 
@@ -689,6 +751,7 @@ def main() -> int:
         worker_process.start()
 
         cam_state = _build_camera_state(
+            camera_idx=camera_idx,
             serial=serial,
             usb_desc=usb_desc,
             pipeline=pipeline,
@@ -741,6 +804,12 @@ def main() -> int:
     if hasattr(cv2, "WINDOW_KEEPRATIO"):
         window_flags |= cv2.WINDOW_KEEPRATIO
     cv2.namedWindow("RealSense FFS Viewer", window_flags)
+    loop_start_s = time.perf_counter()
+    next_stats_log_s: Optional[float]
+    if float(args.stats_log_interval_s) > 0:
+        next_stats_log_s = loop_start_s + float(args.stats_log_interval_s)
+    else:
+        next_stats_log_s = None
 
     try:
         while True:
@@ -759,6 +828,21 @@ def main() -> int:
             display_grid = _fit_grid_for_window(grid, window_name="RealSense FFS Viewer")
             cv2.imshow("RealSense FFS Viewer", display_grid)
             key = cv2.waitKey(1) & 0xFF
+            now_s = time.perf_counter()
+            if next_stats_log_s is not None and now_s >= next_stats_log_s:
+                runtime_stats = _collect_runtime_stats(cams)
+                for line in _format_runtime_stats_lines(
+                    elapsed_s=float(now_s - loop_start_s),
+                    runtime_stats=runtime_stats,
+                ):
+                    print(line, flush=True)
+                next_stats_log_s = now_s + float(args.stats_log_interval_s)
+            if float(args.duration_s) > 0 and (now_s - loop_start_s) >= float(args.duration_s):
+                print(
+                    f"Reached --duration-s={float(args.duration_s):.1f}. Stopping viewer.",
+                    flush=True,
+                )
+                break
             if key in (ord("q"), 27):
                 break
     finally:

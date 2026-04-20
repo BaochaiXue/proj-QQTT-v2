@@ -23,6 +23,9 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - `python cameras_viewer_FFS.py --ffs_repo <repo> --ffs_model_path <weights>` launches successfully
 - each FFS panel shows live RGB on top and color-aligned FFS depth on bottom
 - each FFS panel reports negotiated profile plus live `capture` and `ffs` fps
+- timed benchmark mode works:
+  - `python cameras_viewer_FFS.py --duration-s 20 --stats-log-interval-s 5 --ffs_repo <repo> --ffs_model_path <weights>`
+  - stdout prints aggregate and per-camera runtime stats during the run
 
 ### Calibration
 

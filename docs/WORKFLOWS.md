@@ -51,6 +51,37 @@ Use this first when the main question is:
 - how much reference-depth drift appears when we lower `scale` or `valid_iters`?
 - which config is the best compromise for a target FPS threshold?
 
+Realistic live 3-camera FFS benchmark:
+
+```bash
+python cameras_viewer_FFS.py --duration-s 20 --stats-log-interval-s 5 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\20-30-48\model_best_bp2_serialize.pth --ffs_scale 0.75 --ffs_valid_iters 4 --ffs_max_disp 192
+```
+
+Use this when the main question is the real online path:
+
+- 3 cameras streaming at once
+- 3 FFS workers sharing one GPU
+- latest-only queue pressure
+- actual viewer-side `capture` vs `ffs` throughput
+
+The live viewer now supports:
+
+- `--duration-s`
+  - auto-stops after the requested benchmark window
+- `--stats-log-interval-s`
+  - prints aggregate and per-camera runtime stats to stdout
+
+The logged stats include:
+
+- aggregate capture fps across all cameras
+- aggregate FFS result fps across all cameras
+- per-camera capture fps
+- per-camera FFS fps
+- latest per-camera inference ms
+- per-camera `seq_gap` between the latest captured frame id and the latest completed FFS result id
+
+Treat this live 3-camera viewer benchmark as the authoritative online-setting measurement. The saved-pair benchmark above is still useful for offline checkpoint/parameter screening, but it is not a substitute for simultaneous 3-camera runtime behavior.
+
 ## 2. Calibrate
 
 ```bash

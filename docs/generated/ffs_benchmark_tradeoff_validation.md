@@ -6,6 +6,7 @@
 - Python / Torch: `3.12.13` / `2.7.0+cu128`
 - Environment: `ffs-standalone`
 - Important scope note: this is **not** a 4090 run. These numbers are for the local 5090 Laptop GPU only.
+- Important interpretation note: this file is for **saved-pair offline screening**, not the authoritative simultaneous-3-camera online result. For the real live viewer benchmark, see `ffs_live_3cam_benchmark_validation.md`.
 
 ## Commands
 
@@ -104,3 +105,46 @@ Current understanding:
 ## TensorRT Note
 
 The upstream FFS repo keeps TensorRT in a separate ONNX / TRT workflow rather than in the default PyTorch demo path. That path was **not** validated in this repo change; only the current PyTorch integration was benchmarked here.
+
+## Viewer Runtime Smoke
+
+Checked on `2026-04-19` with the same benchmark-derived config:
+
+- model: `20-30-48`
+- `scale=1.0`
+- `valid_iters=4`
+- `max_disp=192`
+
+Single-camera smoke command:
+
+```text
+C:\Users\zhang\miniconda3\envs\qqtt-ffs-compat\python.exe cameras_viewer_FFS.py --max-cams 1 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\20-30-48\model_best_bp2_serialize.pth --ffs_scale 1.0 --ffs_valid_iters 4 --ffs_max_disp 192
+```
+
+Observed startup output:
+
+- detected camera: `239222300412`
+- started successfully at `848x480@30`
+- viewer stayed alive for a `20s` smoke window until manually terminated by the validation harness
+
+All-detected-cameras smoke command:
+
+```text
+C:\Users\zhang\miniconda3\envs\qqtt-ffs-compat\python.exe cameras_viewer_FFS.py --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\20-30-48\model_best_bp2_serialize.pth --ffs_scale 1.0 --ffs_valid_iters 4 --ffs_max_disp 192
+```
+
+Observed startup output:
+
+- detected cameras:
+  - `239222300412`
+  - `239222303506`
+  - `239222300781`
+- all 3 cameras started successfully at `848x480@30`
+- viewer stayed alive for a `20s` smoke window until manually terminated by the validation harness
+
+Captured logs:
+
+- `data\ffs_benchmarks\viewer_run_2026-04-19_stdout.log`
+- `data\ffs_benchmarks\viewer_run_2026-04-19_stderr.log`
+- `data\ffs_benchmarks\viewer_run_2026-04-19_allcams_stdout.log`
+- `data\ffs_benchmarks\viewer_run_2026-04-19_allcams_stderr.log`
