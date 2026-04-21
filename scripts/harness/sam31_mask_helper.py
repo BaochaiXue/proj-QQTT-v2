@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import shutil
 import tempfile
@@ -103,6 +104,20 @@ def _configure_torch_inference(torch_module) -> None:
     global _CUDA_AUTOCAST_CONTEXT
 
     if not torch_module.cuda.is_available():
+        return
+
+    # On this Windows + RTX 5090 path, SAM 3.1 can trip over CUDA SDPA kernel
+    # selection when global bfloat16 autocast is enabled. Force the safer math
+    # SDP path instead of relying on unavailable flash / mem-efficient kernels.
+    if platform.system() == "Windows":
+        if hasattr(torch_module.backends.cuda, "enable_flash_sdp"):
+            torch_module.backends.cuda.enable_flash_sdp(False)
+        if hasattr(torch_module.backends.cuda, "enable_mem_efficient_sdp"):
+            torch_module.backends.cuda.enable_mem_efficient_sdp(False)
+        if hasattr(torch_module.backends.cuda, "enable_cudnn_sdp"):
+            torch_module.backends.cuda.enable_cudnn_sdp(False)
+        if hasattr(torch_module.backends.cuda, "enable_math_sdp"):
+            torch_module.backends.cuda.enable_math_sdp(True)
         return
 
     if _CUDA_AUTOCAST_CONTEXT is None:
