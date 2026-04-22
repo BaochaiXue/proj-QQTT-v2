@@ -241,6 +241,7 @@ def load_depth_frame(
     frame_idx: int,
     depth_source: str,
     use_float_ffs_depth_when_available: bool,
+    native_depth_postprocess: bool = False,
     ffs_native_like_postprocess: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     depth_dir_name, use_float = choose_depth_stream(
@@ -258,10 +259,29 @@ def load_depth_frame(
     depth_scales = get_depth_scale_list(metadata, len(metadata["serial_numbers"]))
     depth_m = decode_depth_to_meters(depth_raw, None if use_float else depth_scales[camera_idx])
 
+    native_postprocess_applied = False
+    native_postprocess_origin = "none"
     postprocess_applied = False
     postprocess_origin = "none"
     raw_depth_dir_name = depth_dir_name
-    if depth_source == "ffs" and ffs_native_like_postprocess and not depth_dir_name.startswith("depth_ffs_native_like_postprocess"):
+    if depth_source == "realsense" and native_depth_postprocess:
+        from qqtt.env.camera.realsense.depth_postprocess import (
+            NATIVE_DEPTH_POSTPROCESS_CONTRACT,
+            apply_ffs_native_like_depth_postprocess_float_m,
+        )
+
+        filtered_u16, filtered_m = apply_ffs_native_like_depth_postprocess_float_m(
+            depth_m,
+            depth_scale_m_per_unit=float(depth_scales[camera_idx]),
+            fps=int(metadata.get("fps", 30)),
+            frame_number=int(frame_idx) + 1,
+        )
+        depth_raw = filtered_m if use_float else filtered_u16
+        depth_m = filtered_m
+        depth_dir_name = f"{raw_depth_dir_name}+{str(NATIVE_DEPTH_POSTPROCESS_CONTRACT['mode'])}"
+        native_postprocess_applied = True
+        native_postprocess_origin = "on_the_fly"
+    elif depth_source == "ffs" and ffs_native_like_postprocess and not depth_dir_name.startswith("depth_ffs_native_like_postprocess"):
         from qqtt.env.camera.realsense.depth_postprocess import (
             FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_ON_THE_FLY_SUFFIX,
             apply_ffs_native_like_depth_postprocess_float_m,
@@ -287,6 +307,9 @@ def load_depth_frame(
         "source_depth_dir_used": raw_depth_dir_name,
         "used_float_depth": bool(use_float),
         "depth_path": str(depth_path),
+        "native_depth_postprocess_enabled": bool(native_depth_postprocess if depth_source == "realsense" else False),
+        "native_depth_postprocess_applied": bool(native_postprocess_applied),
+        "native_depth_postprocess_origin": native_postprocess_origin,
         "ffs_native_like_postprocess_enabled": bool(ffs_native_like_postprocess if depth_source == "ffs" else False),
         "ffs_native_like_postprocess_applied": bool(postprocess_applied),
         "ffs_native_like_postprocess_origin": postprocess_origin,
@@ -304,6 +327,7 @@ def load_case_frame_camera_clouds(
     max_points_per_camera: int | None,
     depth_min_m: float,
     depth_max_m: float,
+    native_depth_postprocess: bool = False,
     ffs_native_like_postprocess: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     serials = metadata["serial_numbers"]
@@ -328,6 +352,7 @@ def load_case_frame_camera_clouds(
             frame_idx=frame_idx,
             depth_source=depth_source,
             use_float_ffs_depth_when_available=use_float_ffs_depth_when_available,
+            native_depth_postprocess=native_depth_postprocess,
             ffs_native_like_postprocess=ffs_native_like_postprocess,
         )
         camera_points, camera_colors, stats = depth_to_camera_points(
@@ -377,6 +402,7 @@ def load_case_frame_cloud(
     max_points_per_camera: int | None,
     depth_min_m: float,
     depth_max_m: float,
+    native_depth_postprocess: bool = False,
     ffs_native_like_postprocess: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     per_camera_clouds, camera_stats = load_case_frame_camera_clouds(
@@ -389,6 +415,7 @@ def load_case_frame_cloud(
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
+        native_depth_postprocess=native_depth_postprocess,
         ffs_native_like_postprocess=ffs_native_like_postprocess,
     )
     fused_points = [item["points"] for item in per_camera_clouds]
@@ -419,6 +446,7 @@ def load_case_frame_cloud_with_sources(
     max_points_per_camera: int | None,
     depth_min_m: float,
     depth_max_m: float,
+    native_depth_postprocess: bool = False,
     ffs_native_like_postprocess: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any], list[dict[str, Any]]]:
     per_camera_clouds, camera_stats = load_case_frame_camera_clouds(
@@ -431,6 +459,7 @@ def load_case_frame_cloud_with_sources(
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
+        native_depth_postprocess=native_depth_postprocess,
         ffs_native_like_postprocess=ffs_native_like_postprocess,
     )
     fused_points = [item["points"] for item in per_camera_clouds]

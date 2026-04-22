@@ -41,11 +41,13 @@ class MaskedCameraViewCompareSmokeTest(unittest.TestCase):
                 render_frame_fn=lambda points, colors, **kwargs: np.full((96, 128, 3), 120, dtype=np.uint8),
             )
 
+            self.assertTrue((output_dir / "00_masked_rgb_board.png").is_file())
             self.assertTrue((output_dir / "01_masked_camera_view_board.png").is_file())
             self.assertTrue((output_dir / "summary.json").is_file())
             self.assertTrue((output_dir / "debug" / "native_masked_fused.ply").is_file())
             self.assertTrue((output_dir / "debug" / "ffs_masked_fused.ply").is_file())
             self.assertEqual(summary["render_contract"]["view_mode"], "original_camera_extrinsics")
+            self.assertEqual(summary["render_contract"]["projection_mode"], "original_camera_pinhole")
             self.assertEqual(len(summary["column_views"]), 3)
             self.assertEqual(
                 [item["camera_idx"] for item in summary["column_views"]],
@@ -63,7 +65,13 @@ class MaskedCameraViewCompareSmokeTest(unittest.TestCase):
             np.testing.assert_allclose(summary["column_views"][0]["center"], [0.0, 0.0, 1.25], atol=1e-6)
             np.testing.assert_allclose(summary["column_views"][1]["camera_position"], [0.25, 0.0, 0.0], atol=1e-6)
             np.testing.assert_allclose(summary["column_views"][2]["camera_position"], [0.0, 0.25, 0.0], atol=1e-6)
+            self.assertEqual(summary["column_views"][0]["image_size"], [10, 8])
+            self.assertEqual(len(summary["column_views"][0]["intrinsic_matrix"]), 9)
+            self.assertEqual(len(summary["column_views"][0]["extrinsic_matrix"]), 16)
             self.assertFalse(summary["empty_mask_fallback_used"])
+            self.assertIn("rgb_board_path", summary)
+            self.assertEqual(summary["variants"]["masked_rgb_reference"]["panel_count"], 3)
+            self.assertEqual(len(summary["debug_artifacts"]["masked_rgb_paths"]), 3)
             for source_name in ("native", "ffs"):
                 self.assertEqual(len(summary["debug_artifacts"][f"{source_name}_render_paths"]), 3)
                 for camera_entry in summary["mask_sources"][source_name]["per_camera"]:
@@ -71,6 +79,53 @@ class MaskedCameraViewCompareSmokeTest(unittest.TestCase):
                         int(camera_entry["post_mask_point_count"]),
                         int(camera_entry["pre_mask_point_count"]),
                     )
+
+    def test_workflow_can_apply_native_and_ffs_postprocess(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            aligned_root = tmp_root / "data"
+            native_case = aligned_root / "native_case"
+            ffs_case = aligned_root / "ffs_case"
+            make_visualization_case(native_case, frame_num=1)
+            make_visualization_case(
+                ffs_case,
+                include_depth_ffs=True,
+                include_depth_ffs_float_m=True,
+                include_depth_ffs_native_like_postprocess=True,
+                include_depth_ffs_native_like_postprocess_float_m=True,
+                frame_num=1,
+            )
+            native_mask_root = make_sam31_masks(native_case)
+            ffs_mask_root = make_sam31_masks(ffs_case)
+            output_dir = tmp_root / "masked_camera_view_postprocess_output"
+
+            summary = run_masked_camera_view_compare_workflow(
+                aligned_root=aligned_root,
+                output_dir=output_dir,
+                realsense_case="native_case",
+                ffs_case="ffs_case",
+                frame_idx=0,
+                text_prompt="sloth",
+                native_mask_root=native_mask_root,
+                ffs_mask_root=ffs_mask_root,
+                native_mask_source="reused_existing",
+                ffs_mask_source="reused_existing",
+                mask_source_mode="reuse_or_generate",
+                native_depth_postprocess=True,
+                ffs_native_like_postprocess=True,
+                render_frame_fn=lambda points, colors, **kwargs: np.full((96, 128, 3), 90, dtype=np.uint8),
+            )
+
+            self.assertTrue(summary["native_depth_postprocess"])
+            self.assertTrue(summary["ffs_native_like_postprocess"])
+            for camera_stats in summary["source_stats"]["native"]["per_camera"]:
+                self.assertTrue(camera_stats["native_depth_postprocess_enabled"])
+                self.assertTrue(camera_stats["native_depth_postprocess_applied"])
+                self.assertEqual(camera_stats["native_depth_postprocess_origin"], "on_the_fly")
+            for camera_stats in summary["source_stats"]["ffs"]["per_camera"]:
+                self.assertTrue(camera_stats["ffs_native_like_postprocess_enabled"])
+                self.assertTrue(camera_stats["ffs_native_like_postprocess_applied"])
+                self.assertEqual(camera_stats["ffs_native_like_postprocess_origin"], "aligned_auxiliary")
 
 
 if __name__ == "__main__":

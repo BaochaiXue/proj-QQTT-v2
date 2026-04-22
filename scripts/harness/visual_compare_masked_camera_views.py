@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render a single-frame Native-vs-FFS masked pointcloud board from the 3 original calibrated camera views."
+        description="Render a single-frame masked RGB reference board plus a Native-vs-FFS masked pointcloud board from the 3 original calibrated camera views."
     )
     parser.add_argument("--case_name", type=str, default=None)
     parser.add_argument("--aligned_root", type=Path, default=ROOT / "data")
@@ -35,6 +35,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth_min_m", type=float, default=0.0)
     parser.add_argument("--depth_max_m", type=float, default=1.5)
     parser.add_argument("--look_distance", type=float, default=1.0)
+    parser.add_argument("--native_depth_postprocess", action="store_true")
+    parser.add_argument("--ffs_native_like_postprocess", action="store_true")
     parser.add_argument(
         "--use_float_ffs_depth_when_available",
         dest="use_float_ffs_depth_when_available",
@@ -127,6 +129,8 @@ def main() -> int:
         depth_min_m=float(args.depth_min_m),
         depth_max_m=float(args.depth_max_m),
         use_float_ffs_depth_when_available=bool(args.use_float_ffs_depth_when_available),
+        native_depth_postprocess=bool(args.native_depth_postprocess),
+        ffs_native_like_postprocess=bool(args.ffs_native_like_postprocess),
         look_distance=float(args.look_distance),
     )
     print(f"Masked camera-view compare outputs written to {result['output_dir']}")

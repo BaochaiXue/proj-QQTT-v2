@@ -72,6 +72,54 @@ def compose_grid_2x3(
     return np.vstack([title_bar, header_bar, body])
 
 
+def compose_single_row_board(
+    *,
+    title_lines: list[str],
+    column_headers: list[str],
+    images: list[np.ndarray],
+) -> np.ndarray:
+    if not images:
+        raise ValueError("compose_single_row_board requires at least one image.")
+    if len(column_headers) != len(images):
+        raise ValueError("column_headers must match image count.")
+
+    panel_h, panel_w = images[0].shape[:2]
+    if any(image.shape[:2] != (panel_h, panel_w) for image in images):
+        raise ValueError("All images must have the same size for compose_single_row_board.")
+
+    num_cols = len(images)
+    header_h = 40
+    title_h = 78 if len(title_lines) > 1 else 52
+    body = np.zeros((panel_h, panel_w * num_cols, 3), dtype=np.uint8)
+
+    for col_idx, image in enumerate(images):
+        x0 = col_idx * panel_w
+        body[:, x0:x0 + panel_w] = image
+
+    header_bar = np.full((header_h, body.shape[1], 3), (24, 24, 24), dtype=np.uint8)
+    for col_idx, header in enumerate(column_headers):
+        x0 = col_idx * panel_w
+        text_size = cv2.getTextSize(header, cv2.FONT_HERSHEY_SIMPLEX, 0.78, 2)[0]
+        text_x = x0 + max(8, (panel_w - text_size[0]) // 2)
+        cv2.putText(header_bar, header, (text_x, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (255, 255, 255), 2, cv2.LINE_AA)
+
+    title_bar = np.full((title_h, body.shape[1], 3), (12, 14, 18), dtype=np.uint8)
+    for line_idx, line in enumerate(title_lines[:2]):
+        y = 30 + line_idx * 26
+        cv2.putText(
+            title_bar,
+            line,
+            (16, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.84 if line_idx == 0 else 0.58,
+            (255, 255, 255) if line_idx == 0 else (224, 228, 234),
+            2 if line_idx == 0 else 1,
+            cv2.LINE_AA,
+        )
+
+    return np.vstack([title_bar, header_bar, body])
+
+
 def draw_text_box(
     image: np.ndarray,
     *,

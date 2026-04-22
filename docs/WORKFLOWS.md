@@ -413,21 +413,33 @@ For single-frame masked point-cloud diagnosis under the 3 original calibrated ca
 python scripts/harness/visual_compare_masked_camera_views.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --text_prompt sloth
 ```
 
+To compare after applying the same PhysTwin-like depth postprocess to both `Native` and `FFS` before fusion/rendering:
+
+```bash
+python scripts/harness/visual_compare_masked_camera_views.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --text_prompt sloth --native_depth_postprocess --ffs_native_like_postprocess
+```
+
 This workflow:
 
 - reuses the same QQTT-local `sam31_masks` resolution / generation policy as `visual_compare_masked_pointcloud.py`
 - uses the 3 real calibrated camera extrinsics from `calibrate.pkl`
+- uses the original per-camera `K_color` pinhole projection when rendering point clouds so each Open3D panel matches the corresponding RGB view scale more closely
+- can optionally apply the same software postprocess chain to `Native` depth on the fly
+- can optionally prefer aligned `depth_ffs_native_like_postprocess*` for `FFS` and otherwise run the same postprocess on the fly
 - fixes one exact original camera view per column:
   - `Cam0`
   - `Cam1`
   - `Cam2`
-- keeps one shared masked-object crop across all 6 panels
+- writes one `1x3` masked RGB reference board with the background zeroed outside the resolved mask
+- keeps one shared masked-object crop across the `2x3` point-cloud board
 - renders one `2x3` Open3D board:
   - top row = masked `Native`
   - bottom row = masked `FFS`
 - writes:
+  - `00_masked_rgb_board.png`
   - `01_masked_camera_view_board.png`
   - `summary.json`
+  - `debug/masked_rgb_cam*.png`
   - `debug/native_cam*.png`
   - `debug/ffs_cam*.png`
   - `debug/native_mask_overlay_cam*.png`

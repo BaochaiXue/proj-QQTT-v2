@@ -28,6 +28,7 @@ conda run -n ffs-standalone python scripts/harness/verify_ffs_tensorrt_wsl.py
 - The current WSL path uses the TensorRT Python builder rather than `trtexec`.
 - The local machine did not need a separately unpacked Linux TensorRT SDK root for this validation; the NVIDIA PyPI runtime packages were sufficient.
 - The repo-local harness keeps the host-side GWC volume path aligned with the QQTT TensorRT runner by replacing Triton-only calls with the existing PyTorch implementation.
+- The current harness runs TensorRT forward calls on an explicit non-default CUDA stream so `enqueueV3()` no longer falls back to TensorRT's default-stream synchronization path.
 - The upstream two-stage export still requires dimensions divisible by `32`, so the engine width for the default `848x480` viewer capture was set to `864`.
 
 ## Outputs
@@ -66,9 +67,10 @@ Headless TRT demo:
 
 Latency comparison at `864x480`, `valid_iters=4`, `max_disp=192`:
 
-- TensorRT average after warmup: `49.5 ms`
-- PyTorch average after warmup: `86.1 ms`
-- Observed speedup: about `1.74x`
+- TensorRT average after warmup: `48.1 ms`
+- PyTorch average after warmup: `81.1 ms`
+- Observed speedup: about `1.69x`
+- The previous TensorRT `enqueueV3()` default-stream warning did not appear in the current validation run.
 
 ## Follow-Up Boundary
 

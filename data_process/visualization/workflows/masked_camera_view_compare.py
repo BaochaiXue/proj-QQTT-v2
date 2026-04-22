@@ -13,7 +13,7 @@ from ..io_case import (
     load_case_metadata,
     resolve_case_dirs,
 )
-from ..layouts import compose_grid_2x3
+from ..layouts import compose_grid_2x3, compose_single_row_board
 from ..pointcloud_defaults import DEFAULT_POINTCLOUD_DEPTH_MAX_M, DEFAULT_POINTCLOUD_DEPTH_MIN_M
 from ..roi import crop_points_to_bounds
 from ..triplet_ply_compare import _case_has_ffs_raw_depth
@@ -35,8 +35,12 @@ MASKED_CAMERA_VIEW_RENDER_CONTRACT = {
     "renderer": "open3d_hidden_visualizer",
     "render_mode": "color_by_rgb",
     "view_mode": "original_camera_extrinsics",
+    "projection_mode": "original_camera_pinhole",
     "shared_crop_across_panels": True,
     "shared_per_column_view_between_rows": True,
+    "masked_rgb_reference_panel": True,
+    "supports_native_depth_postprocess": True,
+    "supports_ffs_native_like_postprocess": True,
 }
 
 
@@ -73,6 +77,40 @@ def _serialize_view_config(view_config: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _image_size_from_color_path(color_path: str | Path) -> tuple[int, int]:
+    image = cv2.imread(str(color_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(f"Missing RGB image for masked camera-view compare: {color_path}")
+    return int(image.shape[1]), int(image.shape[0])
+
+
+def _scale_intrinsic_matrix(
+    intrinsic_matrix: np.ndarray,
+    *,
+    source_size: tuple[int, int],
+    target_size: tuple[int, int],
+) -> np.ndarray:
+    source_w, source_h = [max(1, int(value)) for value in source_size]
+    target_w, target_h = [max(1, int(value)) for value in target_size]
+    scale_x = float(target_w) / float(source_w)
+    scale_y = float(target_h) / float(source_h)
+    scaled = np.asarray(intrinsic_matrix, dtype=np.float32).reshape(3, 3).copy()
+    scaled[0, 0] *= scale_x
+    scaled[1, 1] *= scale_y
+    scaled[0, 2] *= scale_x
+    scaled[1, 2] *= scale_y
+    return scaled
+
+
+def _mask_rgb_image(color_path: str | Path, *, mask: np.ndarray) -> np.ndarray:
+    image = cv2.imread(str(color_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(f"Missing RGB image for masked RGB board: {color_path}")
+    masked = np.zeros_like(image)
+    masked[np.asarray(mask, dtype=bool)] = image[np.asarray(mask, dtype=bool)]
+    return masked
+
+
 def run_masked_camera_view_compare_workflow(
     *,
     aligned_root: Path,
@@ -93,8 +131,10 @@ def run_masked_camera_view_compare_workflow(
     depth_min_m: float = DEFAULT_POINTCLOUD_DEPTH_MIN_M,
     depth_max_m: float = DEFAULT_POINTCLOUD_DEPTH_MAX_M,
     use_float_ffs_depth_when_available: bool = True,
-    render_width: int = 960,
-    render_height: int = 720,
+    native_depth_postprocess: bool = False,
+    ffs_native_like_postprocess: bool = False,
+    render_width: int | None = None,
+    render_height: int | None = None,
     point_size: float = 2.0,
     zoom: float = 0.55,
     look_distance: float = 1.0,
@@ -144,6 +184,7 @@ def run_masked_camera_view_compare_workflow(
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
+        native_depth_postprocess=bool(native_depth_postprocess),
     )
     ffs_points, ffs_colors, ffs_stats, ffs_clouds = load_case_frame_cloud_with_sources(
         case_dir=ffs_case_dir,
@@ -155,6 +196,8 @@ def run_masked_camera_view_compare_workflow(
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
+        native_depth_postprocess=False,
+        ffs_native_like_postprocess=bool(ffs_native_like_postprocess),
     )
 
     native_clouds = [cloud for cloud in native_clouds if int(cloud["camera_idx"]) in selected_camera_ids]
@@ -206,47 +249,87 @@ def run_masked_camera_view_compare_workflow(
     # Restore actual camera ids in labels/payload after building on the selected-order list.
     for idx, view_config in enumerate(view_configs):
         actual_camera_idx = int(selected_camera_ids[idx])
+        camera_cloud = native_camera_cloud_map[actual_camera_idx]
+        source_image_size = _image_size_from_color_path(camera_cloud["color_path"])
+        target_image_size = (
+            int(render_width) if render_width is not None else int(source_image_size[0]),
+            int(render_height) if render_height is not None else int(source_image_size[1]),
+        )
         view_config["camera_idx"] = actual_camera_idx
         view_config["view_name"] = f"cam{actual_camera_idx}"
         view_config["label"] = f"Cam{actual_camera_idx} | {serial_numbers[idx]}"
+        view_config["intrinsic_matrix"] = _scale_intrinsic_matrix(
+            np.asarray(camera_cloud["K_color"], dtype=np.float32),
+            source_size=source_image_size,
+            target_size=target_image_size,
+        )
+        view_config["extrinsic_matrix"] = np.linalg.inv(np.asarray(camera_cloud["c2w"], dtype=np.float32).reshape(4, 4)).astype(np.float32)
+        view_config["image_size"] = [int(target_image_size[0]), int(target_image_size[1])]
 
+    rgb_images: list[np.ndarray] = []
     native_images: list[np.ndarray] = []
     ffs_images: list[np.ndarray] = []
+    rgb_render_paths: list[str] = []
     native_render_paths: list[str] = []
     ffs_render_paths: list[str] = []
     for view_config in view_configs:
+        camera_idx = int(view_config["camera_idx"])
+        target_w, target_h = [int(item) for item in view_config["image_size"]]
+        rgb_image = _mask_rgb_image(
+            native_camera_cloud_map[camera_idx]["color_path"],
+            mask=native_masks[camera_idx],
+        )
         native_image = render_frame_fn(
             *crop_points_to_bounds(native_masked_points, native_masked_colors, crop_bounds),
-            width=int(render_width),
-            height=int(render_height),
+            width=int(target_w),
+            height=int(target_h),
             center=np.asarray(view_config["center"], dtype=np.float32),
             eye=np.asarray(view_config["camera_position"], dtype=np.float32),
             up=np.asarray(view_config["up"], dtype=np.float32),
             zoom=float(zoom),
             point_size=float(point_size),
+            intrinsic_matrix=np.asarray(view_config["intrinsic_matrix"], dtype=np.float32),
+            extrinsic_matrix=np.asarray(view_config["extrinsic_matrix"], dtype=np.float32),
         )
         ffs_image = render_frame_fn(
             *crop_points_to_bounds(ffs_masked_points, ffs_masked_colors, crop_bounds),
-            width=int(render_width),
-            height=int(render_height),
+            width=int(target_w),
+            height=int(target_h),
             center=np.asarray(view_config["center"], dtype=np.float32),
             eye=np.asarray(view_config["camera_position"], dtype=np.float32),
             up=np.asarray(view_config["up"], dtype=np.float32),
             zoom=float(zoom),
             point_size=float(point_size),
+            intrinsic_matrix=np.asarray(view_config["intrinsic_matrix"], dtype=np.float32),
+            extrinsic_matrix=np.asarray(view_config["extrinsic_matrix"], dtype=np.float32),
         )
+        rgb_images.append(rgb_image)
         native_images.append(native_image)
         ffs_images.append(ffs_image)
 
+        rgb_render_path = debug_dir / f"masked_rgb_cam{int(view_config['camera_idx'])}.png"
         native_render_path = debug_dir / f"native_cam{int(view_config['camera_idx'])}.png"
         ffs_render_path = debug_dir / f"ffs_cam{int(view_config['camera_idx'])}.png"
+        write_image(rgb_render_path, rgb_image)
         write_image(native_render_path, native_image)
         write_image(ffs_render_path, ffs_image)
+        rgb_render_paths.append(str(rgb_render_path.resolve()))
         native_render_paths.append(str(native_render_path.resolve()))
         ffs_render_paths.append(str(ffs_render_path.resolve()))
 
+    rgb_board = compose_single_row_board(
+        title_lines=[
+            "Masked RGB Reference",
+            f"frame={int(frame_idx):04d}  prompt={text_prompt}",
+        ],
+        column_headers=[str(view["label"]) for view in view_configs],
+        images=rgb_images,
+    )
+    rgb_board_path = output_dir / "00_masked_rgb_board.png"
+    write_image(rgb_board_path, rgb_board)
+
     board = compose_grid_2x3(
-        title=f"Masked Camera-View Compare | frame={int(frame_idx):04d} | prompt={text_prompt}",
+        title=f"Masked Camera-View PCD Compare | frame={int(frame_idx):04d} | prompt={text_prompt}",
         column_headers=[str(view["label"]) for view in view_configs],
         row_headers=["Native", "FFS"],
         native_images=native_images,
@@ -296,6 +379,8 @@ def run_masked_camera_view_compare_workflow(
         "text_prompt": str(text_prompt),
         "parsed_prompts": parse_text_prompts(text_prompt),
         "mask_source_mode": str(mask_source_mode),
+        "native_depth_postprocess": bool(native_depth_postprocess),
+        "ffs_native_like_postprocess": bool(ffs_native_like_postprocess),
         "mask_sources": {
             "native": {
                 "mask_source": str(native_mask_source),
@@ -333,8 +418,12 @@ def run_masked_camera_view_compare_workflow(
         },
         "column_views": [_serialize_view_config(view_config) for view_config in view_configs],
         "render_contract": dict(MASKED_CAMERA_VIEW_RENDER_CONTRACT),
+        "rgb_board_path": str(rgb_board_path.resolve()),
         "board_path": str(board_path.resolve()),
         "variants": {
+            "masked_rgb_reference": {
+                "panel_count": int(len(rgb_images)),
+            },
             "native_masked": {
                 "fused_point_count": int(len(crop_points_to_bounds(native_masked_points, native_masked_colors, crop_bounds)[0])),
                 "ply_path": str(ply_paths["native_masked"].resolve()),
@@ -345,6 +434,7 @@ def run_masked_camera_view_compare_workflow(
             },
         },
         "debug_artifacts": {
+            "masked_rgb_paths": rgb_render_paths,
             "native_mask_overlay_paths": overlay_paths["native"],
             "ffs_mask_overlay_paths": overlay_paths["ffs"],
             "native_render_paths": native_render_paths,

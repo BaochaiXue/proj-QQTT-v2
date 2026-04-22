@@ -53,6 +53,8 @@ def _render_open3d_hidden_window(
     up: np.ndarray,
     zoom: float,
     point_size: float,
+    intrinsic_matrix: np.ndarray | None = None,
+    extrinsic_matrix: np.ndarray | None = None,
 ) -> np.ndarray:
     if len(points) == 0:
         return np.zeros((height, width, 3), dtype=np.uint8)
@@ -75,10 +77,28 @@ def _render_open3d_hidden_window(
         render_option.background_color = np.asarray([0.0, 0.0, 0.0], dtype=np.float64)
         render_option.point_size = float(point_size)
         view_control = vis.get_view_control()
-        view_control.set_lookat(np.asarray(center, dtype=np.float64))
-        view_control.set_front(normalize_vector(np.asarray(center, dtype=np.float32) - np.asarray(eye, dtype=np.float32), np.array([0.0, 0.0, -1.0], dtype=np.float32)).astype(np.float64))
-        view_control.set_up(np.asarray(up, dtype=np.float64))
-        view_control.set_zoom(float(zoom))
+        if intrinsic_matrix is not None or extrinsic_matrix is not None:
+            if intrinsic_matrix is None or extrinsic_matrix is None:
+                raise ValueError("intrinsic_matrix and extrinsic_matrix must be passed together.")
+            intrinsic = np.asarray(intrinsic_matrix, dtype=np.float64).reshape(3, 3)
+            extrinsic = np.asarray(extrinsic_matrix, dtype=np.float64).reshape(4, 4)
+            camera_parameters = o3d.camera.PinholeCameraParameters()
+            camera_parameters.intrinsic = o3d.camera.PinholeCameraIntrinsic(
+                int(width),
+                int(height),
+                float(intrinsic[0, 0]),
+                float(intrinsic[1, 1]),
+                float(intrinsic[0, 2]),
+                float(intrinsic[1, 2]),
+            )
+            camera_parameters.extrinsic = extrinsic
+            if not view_control.convert_from_pinhole_camera_parameters(camera_parameters, allow_arbitrary=True):
+                raise RuntimeError("Failed to apply Open3D pinhole camera parameters.")
+        else:
+            view_control.set_lookat(np.asarray(center, dtype=np.float64))
+            view_control.set_front(normalize_vector(np.asarray(center, dtype=np.float32) - np.asarray(eye, dtype=np.float32), np.array([0.0, 0.0, -1.0], dtype=np.float32)).astype(np.float64))
+            view_control.set_up(np.asarray(up, dtype=np.float64))
+            view_control.set_zoom(float(zoom))
         vis.poll_events()
         vis.update_renderer()
         image = np.asarray(vis.capture_screen_float_buffer(do_render=True))
