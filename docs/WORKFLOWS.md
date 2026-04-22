@@ -98,6 +98,7 @@ Strict 3-camera batch live preview:
   - batches the 3 latest camera IR pairs into one shared FFS forward pass
 - PyTorch batch mode reuses the current checkpoint path
 - TensorRT batch mode requires batch-3 artifact directories instead of the current batch-1 directories
+  - current machine-side batch-3 TRT proof-of-life status is recorded in `docs/generated/ffs_batch3_viewer_validation.md`
 
 PyTorch batch example:
 
@@ -138,6 +139,38 @@ Use this first when the main question is:
 - can current PyTorch FFS reach online-setting FPS on our machine?
 - how much reference-depth drift appears when we lower `scale` or `valid_iters`?
 - which config is the best compromise for a target FPS threshold?
+
+Static-round TRT matrix replay + PPTX:
+
+```bash
+conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --reuse_artifacts
+```
+
+This harness is the current offline realtime-proxy workflow for the three static aligned FFS rounds. It:
+
+- uses:
+  - `static/ffs_30_static_round1_20260410_235202`
+  - `static/ffs_30_static_round2_20260414`
+  - `static/ffs_30_static_round3_20260414`
+- expands the fixed matrix:
+  - `model ∈ {23-36-37, 20-26-39, 20-30-48}`
+  - `scale ∈ {1.0, 0.5}`
+  - `valid_iters ∈ {4, 2}`
+  - `engine ∈ {single_engine_fp32, two_stage_fp16}`
+- benchmarks batch-1 replay with warmup frames `0..9`, measured frames `0..29`, and `FPS = 30 / elapsed_seconds`
+- exports:
+  - `manifest.json`
+  - `results.csv`
+  - `mask_cache/`
+  - `experiments/<experiment_id>/summary.json`
+  - `ppt/ffs_static_replay_matrix.pptx`
+
+Operator notes:
+
+- use `qqtt-ffs-compat`
+- ensure `python-pptx` and `onnx` are installed in that environment
+- the harness uses `stuffed animal` as the mask prompt
+- on the current machine, if SAM 3.1 checkpoint resolution is unavailable, the harness falls back to the existing static frame-0 stuffed-animal masks and copies them to frame 10 for this static-only workflow
 
 Realistic live 3-camera FFS benchmark:
 

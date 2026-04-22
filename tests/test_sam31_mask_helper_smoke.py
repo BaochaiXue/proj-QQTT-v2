@@ -7,10 +7,15 @@ import sys
 import tempfile
 import unittest
 
+import cv2
+import numpy as np
+
 from scripts.harness.sam31_mask_helper import (
     _build_sam31_builder_kwargs,
     _call_download_ckpt_from_hf,
+    _prepare_session_frames,
     _resolve_sam3_video_predictor_builder,
+    ColorSource,
     build_mask_output_path,
     default_output_dir,
     discover_color_sources,
@@ -51,6 +56,27 @@ class Sam31MaskHelperSmokeTest(unittest.TestCase):
         self.assertEqual(output_dir, case_root.resolve() / "sam31_masks")
         mask_path = build_mask_output_path(output_dir, camera_idx=2, obj_id=5, frame_token="1012")
         self.assertEqual(mask_path, output_dir.resolve() / "mask" / "2" / "5" / "1012.png")
+
+    def test_prepare_session_frames_supports_frame_directory_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            frame_dir = Path(tmp_dir) / "frames"
+            session_dir = Path(tmp_dir) / "session"
+            frame_dir.mkdir(parents=True, exist_ok=True)
+            for frame_name, intensity in (("10.png", 20), ("2.png", 60)):
+                image = np.full((12, 16, 3), intensity, dtype=np.uint8)
+                self.assertTrue(cv2.imwrite(str(frame_dir / frame_name), image))
+
+            source = ColorSource(
+                camera_idx=0,
+                mode="frames",
+                path=frame_dir,
+                frame_paths=[frame_dir / "2.png", frame_dir / "10.png"],
+            )
+            frame_token_by_index = _prepare_session_frames(source, session_dir=session_dir)
+
+            self.assertEqual(frame_token_by_index, {0: "2", 1: "10"})
+            self.assertTrue((session_dir / "00000.jpg").is_file())
+            self.assertTrue((session_dir / "00001.jpg").is_file())
 
     def test_cli_help_does_not_require_sam3_runtime(self) -> None:
         command = [sys.executable, "scripts/harness/generate_sam31_masks.py", "--help"]

@@ -81,6 +81,7 @@ The repo is intentionally small.
 - `scripts/harness/check_scope.py`
 - `scripts/harness/check_all.py`
 - `scripts/harness/benchmark_ffs_configs.py`
+- `scripts/harness/run_ffs_static_replay_matrix.py`
 - `scripts/harness/cleanup_different_types_cases.py`
 - `tests/test_record_data_align_smoke.py`
 - `docs/*`
@@ -164,6 +165,12 @@ The FFS benchmark helper stack is intentionally split like this:
   - aligned-case stereo pair loading
   - repeated CUDA benchmark execution
   - JSON / markdown benchmark report writing
+- `scripts/harness/run_ffs_static_replay_matrix.py`
+  - fixed 24-config TRT matrix expansion
+  - static-round replay across all 3 rounds and all 3 cameras
+  - mask caching / static fallback handling
+  - masked RGB and FFS-only masked PCD board generation
+  - ranked PPTX export
 
 This keeps the deterministic summary logic testable without requiring CUDA while leaving the actual model execution in the thin harness CLI.
 

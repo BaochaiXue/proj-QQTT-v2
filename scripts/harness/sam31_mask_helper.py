@@ -267,7 +267,7 @@ def build_sam31_video_predictor(
 
 
 def _prepare_session_frames(source: ColorSource, *, session_dir: Path) -> dict[int, str]:
-    cv2, _, _, _, _ = _load_runtime_deps()
+    cv2, _, _, _, _, _ = _load_runtime_deps()
     if session_dir.exists():
         shutil.rmtree(session_dir)
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -311,7 +311,7 @@ def _prepare_session_frames(source: ColorSource, *, session_dir: Path) -> dict[i
 
 
 def _select_output_indices(outputs: dict[str, Any], *, keep_all_instances: bool) -> list[int]:
-    _, np, _, _, _ = _load_runtime_deps()
+    _, np, _, _, _, _ = _load_runtime_deps()
     out_obj_ids = np.asarray(outputs.get("out_obj_ids", []), dtype=np.int64).reshape(-1)
     if out_obj_ids.size == 0:
         return []
@@ -334,7 +334,7 @@ def _select_output_indices(outputs: dict[str, Any], *, keep_all_instances: bool)
 
 
 def _collect_frame_segments(outputs: dict[str, Any], *, allowed_obj_ids: set[int] | None = None) -> dict[int, np.ndarray]:
-    _, np, _, _, _ = _load_runtime_deps()
+    _, np, _, _, _, _ = _load_runtime_deps()
     out_obj_ids = np.asarray(outputs.get("out_obj_ids", []), dtype=np.int64).reshape(-1)
     if out_obj_ids.size == 0:
         return {}
@@ -424,7 +424,7 @@ def run_camera_segmentation(
                     "text": prompt,
                 }
             )
-            _, np, _, _, _ = _load_runtime_deps()
+            _, np, _, _, _, _ = _load_runtime_deps()
             outputs = response["outputs"]
             candidate_ids = np.asarray(outputs.get("out_obj_ids", []), dtype=np.int64).reshape(-1)
 
@@ -489,7 +489,7 @@ def run_camera_segmentation(
         if hasattr(predictor, "shutdown"):
             predictor.shutdown()
 
-    cv2, np, _, _, _ = _load_runtime_deps()
+    cv2, np, _, _, _, _ = _load_runtime_deps()
     mask_root = output_root / "mask"
     mask_root.mkdir(parents=True, exist_ok=True)
     with (mask_root / f"mask_info_{int(source.camera_idx)}.json").open("w", encoding="utf-8") as handle:

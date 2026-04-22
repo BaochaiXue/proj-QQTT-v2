@@ -97,8 +97,9 @@ Strict 3-camera batch mode is now also available:
   - requires exactly 3 active cameras
   - runs one shared FFS inference over the 3 latest camera IR pairs at once
 - TensorRT batch mode requires batch-3 TRT artifact directories
-  - recommended two-stage directory: `data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl`
-  - recommended single-engine directory: `data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32`
+  - intended two-stage directory: `data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl`
+  - intended single-engine directory: `data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32`
+  - current machine-side batch-3 TRT build status is tracked in `docs/generated/ffs_batch3_viewer_validation.md`
 
 Strict 3-camera batch preview examples:
 
@@ -113,6 +114,26 @@ Explicit single-engine TensorRT preview:
 ```bash
 python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir /path/to/single_engine_trt_dir
 ```
+
+Static-round TRT matrix replay + PPTX export:
+
+```bash
+conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --reuse_artifacts
+```
+
+This workflow is the current offline realtime-proxy harness for the three static FFS rounds. It:
+
+- replays `static/ffs_30_static_round1_20260410_235202`, `round2`, and `round3`
+- searches the fixed `3 models × 2 scales × 2 valid_iters × 2 TRT engines = 24` matrix
+- measures `30 / elapsed_seconds` FPS after a `10`-frame warmup for every `round × camera`
+- writes one shared masked RGB `3x3` board, one masked FFS-only PCD `3x3` board per experiment, `results.csv`, `manifest.json`, and a ranked PPTX
+
+Important:
+
+- run it from `qqtt-ffs-compat`
+- `python-pptx` and `onnx` must be available in that environment
+- the harness uses `stuffed animal` masks at `frame_idx=10`
+- if the local SAM 3.1 checkpoint is unavailable, the harness falls back to the existing static frame-0 stuffed-animal masks and copies them to frame 10 for this static-only workflow
 
 ## Calibration
 
