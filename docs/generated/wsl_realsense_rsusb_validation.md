@@ -88,6 +88,22 @@ sudo chmod 666 /dev/bus/usb/002/002 /dev/bus/usb/002/004 /dev/bus/usb/002/005
 
 This is only a temporary workaround. It is not a persistent device-permission policy.
 
+The repo now includes a persistent install path that replaces the manual `chmod` step:
+
+```bash
+sudo bash env_install/install_wsl_realsense_udev.sh
+```
+
+The installed rule is:
+
+```text
+ACTION=="add|change", SUBSYSTEM=="usb", DEVTYPE=="usb_device", ATTR{idVendor}=="8086", ATTR{idProduct}=="0b5c", GROUP:="plugdev", MODE:="0660"
+```
+
+This keeps the D455 raw USB nodes usable by the current `plugdev` user after future
+WSL-side attach events. It does not replace the Windows-side `usbipd` bind / attach
+requirement.
+
 ## Validation Commands
 
 Stable enumeration through the RSUSB-backed Python binding:

@@ -1,0 +1,3 @@
+# QQTT WSL RealSense raw USB access for RSUSB-backed librealsense.
+# Applies to Intel RealSense D455 USB device nodes attached into WSL via usbipd.
+ACTION=="add|change", SUBSYSTEM=="usb", DEVTYPE=="usb_device", ATTR{idVendor}=="8086", ATTR{idProduct}=="0b5c", GROUP:="plugdev", MODE:="0660"

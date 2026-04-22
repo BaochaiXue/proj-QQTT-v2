@@ -75,6 +75,8 @@ The repo is intentionally small.
 ### Tooling / Harness
 
 - `env_install/env_install.sh`
+- `env_install/99-qqtt-realsense-wsl.rules`
+- `env_install/install_wsl_realsense_udev.sh`
 - `scripts/harness/check_scope.py`
 - `scripts/harness/check_all.py`
 - `scripts/harness/benchmark_ffs_configs.py`

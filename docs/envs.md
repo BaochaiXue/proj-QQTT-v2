@@ -59,3 +59,21 @@
   - integrated `stereo_ir -> ffs` camera-only workflow
   - optional live TensorRT-backed FFS viewer using prebuilt two-stage engines
   - optional multi-frame Rerun point-cloud diagnostics
+
+## WSL RealSense Raw USB Access
+
+- Purpose: keep RSUSB-backed RealSense access ready in WSL without repeating manual `chmod`
+- Current validated Linux-side install command:
+  - `sudo bash env_install/install_wsl_realsense_udev.sh`
+- Installed rule behavior:
+  - matches `SUBSYSTEM=="usb"` and `DEVTYPE=="usb_device"`
+  - matches Intel D455 `idVendor=8086`, `idProduct=0b5c`
+  - sets `GROUP=plugdev` and `MODE=0660`
+- Current validated WSL prerequisite:
+  - the capture user is in the `plugdev` group
+- Current Windows-side prerequisite:
+  - devices still need to be bound and attached with `usbipd`
+  - for persistent host-side reattach, prefer `usbipd attach --wsl --auto-attach --busid <BUSID>`
+- Repo-owned helper assets:
+  - `env_install/99-qqtt-realsense-wsl.rules`
+  - `env_install/install_wsl_realsense_udev.sh`
