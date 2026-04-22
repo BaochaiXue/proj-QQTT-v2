@@ -62,14 +62,16 @@ The pass should leave behind:
 ## Completion Checklist
 
 - [x] inspect current `udev` match surface
-- [ ] add rule template
-- [ ] add installer script
-- [ ] update docs
-- [ ] run deterministic checks
-- [ ] install the persistent rule into `/etc/udev/rules.d/`
+- [x] add rule template
+- [x] add installer script
+- [x] update docs
+- [x] run deterministic checks
+- [x] install the persistent rule into `/etc/udev/rules.d/`
 
 ## Progress Log
 
 - 2026-04-21: confirmed WSL runs `systemd-udevd` and exposes D455 USB nodes as `SUBSYSTEM=usb`, `DEVTYPE=usb_device`
 - 2026-04-21: confirmed current user is a member of `plugdev`
 - 2026-04-21: confirmed the temporary `chmod` workaround is replacing missing persistent USB-node permissions rather than a repo logic error
+- 2026-04-21: added the repo-owned `udev` rule template and installer script, updated WSL docs, and passed `conda run -n qqtt-ffs-compat python scripts/harness/check_all.py`
+- 2026-04-21: installed `/etc/udev/rules.d/99-qqtt-realsense-wsl.rules`, verified the rule matches with `udevadm test`, and confirmed reattached D455 USB nodes come back as `root:plugdev 0660`

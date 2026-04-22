@@ -66,7 +66,7 @@
 - Current validated Linux-side install command:
   - `sudo bash env_install/install_wsl_realsense_udev.sh`
 - Installed rule behavior:
-  - matches `SUBSYSTEM=="usb"` and `DEVTYPE=="usb_device"`
+  - matches `SUBSYSTEM=="usb"` and `ENV{DEVTYPE}=="usb_device"`
   - matches Intel D455 `idVendor=8086`, `idProduct=0b5c`
   - sets `GROUP=plugdev` and `MODE=0660`
 - Current validated WSL prerequisite:

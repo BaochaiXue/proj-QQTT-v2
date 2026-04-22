@@ -97,12 +97,25 @@ sudo bash env_install/install_wsl_realsense_udev.sh
 The installed rule is:
 
 ```text
-ACTION=="add|change", SUBSYSTEM=="usb", DEVTYPE=="usb_device", ATTR{idVendor}=="8086", ATTR{idProduct}=="0b5c", GROUP:="plugdev", MODE:="0660"
+ACTION=="add|change", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="8086", ATTR{idProduct}=="0b5c", GROUP:="plugdev", MODE:="0660"
 ```
 
 This keeps the D455 raw USB nodes usable by the current `plugdev` user after future
 WSL-side attach events. It does not replace the Windows-side `usbipd` bind / attach
 requirement.
+
+Rule verification details:
+
+- `udevadm test /sys/bus/usb/devices/2-1` reported:
+  - `/etc/udev/rules.d/99-qqtt-realsense-wsl.rules:3 GROUP 46`
+  - `/etc/udev/rules.d/99-qqtt-realsense-wsl.rules:3 MODE 0660`
+- a detach/attach validation regenerated RealSense USB nodes with:
+  - `crw-rw---- root plugdev`
+
+Observed caveat during the detach/attach validation:
+
+- one D455 (`BUSID 1-4`) failed to reattach once because Windows still had the device busy
+- the Linux-side `udev` rule still validated successfully on the newly reattached D455 nodes
 
 ## Validation Commands
 
@@ -147,8 +160,7 @@ Observed successful result:
 
 ## Notes
 
-- raw USB node permissions are currently a manual step; this should be replaced by a
-  persistent rule before relying on repeated re-attach cycles
 - concurrent RealSense processes can still trigger `RS2_USB_STATUS_BUSY`
 - the viewer proof-of-life succeeded; `record_data.py` was not re-run after the final
   successful viewer session because the preview process was actively using the cameras
+- Windows-side `usbipd --auto-attach` remains a separate prerequisite for full "WSL opens and cameras are already attached" behavior
