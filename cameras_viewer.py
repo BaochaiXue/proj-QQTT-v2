@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import threading
 import time
 from collections import deque
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -39,6 +40,9 @@ DEFAULT_EXPOSURE_OVERRIDES = {
 }
 MEASURED_FPS_WINDOW_S = 1.0
 MIN_MEASURED_FPS_SAMPLES = 2
+_SCREEN_SIZE_CACHE: Optional[Tuple[int, int]] = None
+CAPTURE_THREAD_TIMEOUT_MS = 100
+DEPTH_RENDER_MODE_CHOICES = ("colormap", "fps_placeholder")
 
 
 def _apply_color_controls(
@@ -189,14 +193,27 @@ def _make_panel(
     depth_vis_max_m: float,
     label_lines: Tuple[str, str],
 ) -> Any:
-    cv2, np, _ = _runtime_imports()
     depth_colormap = colorize_depth_units(
         depth,
         depth_scale_m_per_unit=float(depth_scale_m_per_unit),
         depth_min_m=float(depth_vis_min_m),
         depth_max_m=float(depth_vis_max_m),
     )
-    panel = np.vstack([color, depth_colormap])
+    return _compose_panel(color=color, bottom_image=depth_colormap, label_lines=label_lines)
+
+
+def _compose_panel(
+    *,
+    color: Any,
+    bottom_image: Any,
+    label_lines: Tuple[str, str],
+) -> Any:
+    cv2, np, _ = _runtime_imports()
+    color_image = np.asarray(color, dtype=np.uint8)
+    lower = np.asarray(bottom_image, dtype=np.uint8)
+    if lower.ndim == 2:
+        lower = cv2.cvtColor(lower, cv2.COLOR_GRAY2BGR)
+    panel = np.vstack([color_image, lower])
     _draw_panel_label(panel, label_lines=label_lines, color_bgr=(255, 255, 255))
     return panel
 
@@ -224,6 +241,16 @@ def _compute_measured_fps(frame_times: deque[float]) -> float:
     return float((len(frame_times) - 1) / elapsed_s)
 
 
+def _format_measured_rate_label(
+    *,
+    fps_value: float,
+    sample_count: int,
+) -> str:
+    if int(sample_count) < MIN_MEASURED_FPS_SAMPLES:
+        return "warming"
+    return f"{float(fps_value):.1f}"
+
+
 def _format_panel_label_lines(
     *,
     serial: str,
@@ -236,13 +263,23 @@ def _format_panel_label_lines(
 ) -> Tuple[str, str]:
     usb_label = usb_desc or "unknown"
     line1 = f"{serial} usb={usb_label} {stream_w}x{stream_h}@{float(configured_fps):.1f}fps"
-    measured_label = (
-        f"{float(measured_fps):.1f}"
-        if int(measured_sample_count) >= MIN_MEASURED_FPS_SAMPLES
-        else "warming"
+    measured_label = _format_measured_rate_label(
+        fps_value=measured_fps,
+        sample_count=measured_sample_count,
     )
     line2 = f"configured: {float(configured_fps):.1f} | measured: {measured_label}"
     return line1, line2
+
+
+def _format_depth_debug_lines(
+    *,
+    measured_fps: float,
+    measured_sample_count: int,
+) -> Tuple[str, str]:
+    return (
+        "Depth render disabled",
+        f"depth fps: {_format_measured_rate_label(fps_value=measured_fps, sample_count=measured_sample_count)}",
+    )
 
 
 def _draw_panel_label(
@@ -267,6 +304,60 @@ def _draw_panel_label(
             2,
             cv2.LINE_AA,
         )
+
+
+def _make_message_bottom(
+    *,
+    width: int,
+    height: int,
+    message_lines: Tuple[str, ...],
+    color_bgr: Tuple[int, int, int] = (180, 180, 180),
+) -> Any:
+    cv2, np, _ = _runtime_imports()
+    canvas = np.zeros((height, width, 3), dtype=np.uint8)
+    if not message_lines:
+        return canvas
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.8
+    thickness = 2
+    line_gap = 18
+    line_sizes = [
+        cv2.getTextSize(line, font, font_scale, thickness)[0]
+        for line in message_lines
+    ]
+    total_height = sum(size[1] for size in line_sizes) + line_gap * max(0, len(line_sizes) - 1)
+    y = max(24, (height - total_height) // 2 + line_sizes[0][1])
+    for line, size in zip(message_lines, line_sizes):
+        x = max(8, (width - size[0]) // 2)
+        cv2.putText(
+            canvas,
+            line,
+            (x, y),
+            font,
+            font_scale,
+            color_bgr,
+            thickness,
+            cv2.LINE_AA,
+        )
+        y += size[1] + line_gap
+    return canvas
+
+
+def _make_depth_debug_bottom(
+    *,
+    width: int,
+    height: int,
+    measured_fps: float,
+    measured_sample_count: int,
+) -> Any:
+    return _make_message_bottom(
+        width=width,
+        height=height,
+        message_lines=_format_depth_debug_lines(
+            measured_fps=measured_fps,
+            measured_sample_count=measured_sample_count,
+        ),
+    )
 
 
 def _fit_to_canvas(
@@ -299,7 +390,7 @@ def _fit_to_canvas(
     return canvas
 
 
-def _get_screen_size() -> tuple[int, int]:
+def _query_screen_size() -> tuple[int, int]:
     try:
         import tkinter as tk
 
@@ -313,18 +404,52 @@ def _get_screen_size() -> tuple[int, int]:
         return 1920, 1080
 
 
-def _fit_grid_for_display(grid: Any) -> Any:
-    cv2, _, _ = _runtime_imports()
-    screen_width, screen_height = _get_screen_size()
+def _get_screen_size() -> tuple[int, int]:
+    global _SCREEN_SIZE_CACHE
+    if _SCREEN_SIZE_CACHE is None:
+        _SCREEN_SIZE_CACHE = _query_screen_size()
+    return _SCREEN_SIZE_CACHE
+
+
+def _compute_display_target_size(
+    *,
+    grid_height: int,
+    grid_width: int,
+    screen_size: Optional[Tuple[int, int]] = None,
+) -> Tuple[int, int]:
+    if grid_width <= 0 or grid_height <= 0:
+        raise ValueError(f"Invalid grid size: {(grid_height, grid_width)}")
+    if screen_size is None:
+        screen_width, screen_height = _get_screen_size()
+    else:
+        screen_width, screen_height = screen_size
+    screen_width = int(screen_width)
+    screen_height = int(screen_height)
     max_width = max(640, screen_width - 120)
     max_height = max(480, screen_height - 180)
-    grid_height, grid_width = grid.shape[:2]
     scale = min(max_width / grid_width, max_height / grid_height, 1.0)
-    if scale >= 1.0:
+    target_width = max(1, int(round(grid_width * scale)))
+    target_height = max(1, int(round(grid_height * scale)))
+    return target_width, target_height
+
+
+def _fit_grid_for_display(
+    grid: Any,
+    *,
+    target_size: Optional[Tuple[int, int]] = None,
+) -> Any:
+    cv2, _, _ = _runtime_imports()
+    grid_height, grid_width = grid.shape[:2]
+    if target_size is None:
+        target_width, target_height = _compute_display_target_size(
+            grid_height=grid_height,
+            grid_width=grid_width,
+        )
+    else:
+        target_width, target_height = map(int, target_size)
+    if target_width == grid_width and target_height == grid_height:
         return grid
-    resized_width = max(1, int(round(grid_width * scale)))
-    resized_height = max(1, int(round(grid_height * scale)))
-    return cv2.resize(grid, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+    return cv2.resize(grid, (target_width, target_height), interpolation=cv2.INTER_AREA)
 
 
 def _empty_panel(width: int, height: int, label_lines: Tuple[str, str]) -> np.ndarray:
@@ -371,6 +496,153 @@ def _enumerate_d400_devices(ctx: Any) -> List[Any]:
     return devices
 
 
+def _build_camera_state(
+    *,
+    serial: str,
+    usb_desc: str,
+    pipeline: Any,
+    align: Any,
+    stream_w: int,
+    stream_h: int,
+    fps_used: int,
+) -> dict[str, Any]:
+    return {
+        "serial": serial,
+        "usb": usb_desc,
+        "pipeline": pipeline,
+        "align": align,
+        "fps": float(fps_used),
+        "stream_w": int(stream_w),
+        "stream_h": int(stream_h),
+        "lock": threading.Lock(),
+        "capture_thread": None,
+        "capture_seq": 0,
+        "last_rendered_capture_seq": 0,
+        "frame_times": deque(),
+        "measured_fps": 0.0,
+        "last_color": None,
+        "last_depth": None,
+        "last_depth_scale_m_per_unit": 0.001,
+    }
+
+
+def _capture_loop(
+    cam_state: dict[str, Any],
+    *,
+    target_width: int,
+    target_height: int,
+    stop_event: threading.Event,
+) -> None:
+    cv2, np, _ = _runtime_imports()
+    while not stop_event.is_set():
+        frames = _safe_wait_frames(
+            cam_state["pipeline"],
+            timeout_ms=CAPTURE_THREAD_TIMEOUT_MS,
+        )
+        if not frames:
+            continue
+        try:
+            frames = cam_state["align"].process(frames)
+            depth = frames.get_depth_frame()
+            color = frames.get_color_frame()
+        except RuntimeError:
+            continue
+        if not depth or not color:
+            continue
+
+        color_np = np.asanyarray(color.get_data())
+        depth_np = np.asanyarray(depth.get_data())
+        try:
+            depth_scale_m_per_unit = float(depth.get_units())
+        except Exception:
+            depth_scale_m_per_unit = 0.001
+        if color_np.shape[1] != target_width or color_np.shape[0] != target_height:
+            color_np = _fit_to_canvas(
+                color_np,
+                target_width,
+                target_height,
+                interpolation=cv2.INTER_LINEAR,
+            )
+        if depth_np.shape[1] != target_width or depth_np.shape[0] != target_height:
+            depth_np = _fit_to_canvas(
+                depth_np,
+                target_width,
+                target_height,
+                interpolation=cv2.INTER_NEAREST,
+            )
+
+        with cam_state["lock"]:
+            cam_state["capture_seq"] = int(cam_state["capture_seq"]) + 1
+            cam_state["last_color"] = color_np
+            cam_state["last_depth"] = depth_np
+            cam_state["last_depth_scale_m_per_unit"] = depth_scale_m_per_unit
+
+
+def _render_panel(
+    cam_state: dict[str, Any],
+    *,
+    width: int,
+    height: int,
+    depth_vis_min_m: float,
+    depth_vis_max_m: float,
+    depth_render_mode: str,
+) -> Any:
+    _, np, _ = _runtime_imports()
+    now_s = time.perf_counter()
+    with cam_state["lock"]:
+        capture_seq = int(cam_state["capture_seq"])
+        frame_received = capture_seq > int(cam_state["last_rendered_capture_seq"])
+        if frame_received:
+            cam_state["last_rendered_capture_seq"] = capture_seq
+        _update_recent_frame_times(
+            cam_state["frame_times"],
+            now_s=now_s,
+            frame_received=frame_received,
+        )
+        cam_state["measured_fps"] = _compute_measured_fps(cam_state["frame_times"])
+        serial = str(cam_state["serial"])
+        usb_desc = str(cam_state["usb"])
+        stream_w = int(cam_state["stream_w"])
+        stream_h = int(cam_state["stream_h"])
+        configured_fps = float(cam_state["fps"])
+        measured_fps = float(cam_state["measured_fps"])
+        measured_sample_count = len(cam_state["frame_times"])
+        latest_color = None if cam_state["last_color"] is None else np.asarray(cam_state["last_color"]).copy()
+        latest_depth = None if cam_state["last_depth"] is None else np.asarray(cam_state["last_depth"]).copy()
+        depth_scale_m_per_unit = float(cam_state["last_depth_scale_m_per_unit"])
+
+    label_lines = _format_panel_label_lines(
+        serial=serial,
+        usb_desc=usb_desc,
+        stream_w=stream_w,
+        stream_h=stream_h,
+        configured_fps=configured_fps,
+        measured_fps=measured_fps,
+        measured_sample_count=measured_sample_count,
+    )
+    if latest_color is None or latest_depth is None:
+        return _empty_panel(width, height, label_lines)
+    if depth_render_mode == "fps_placeholder":
+        return _compose_panel(
+            color=latest_color,
+            bottom_image=_make_depth_debug_bottom(
+                width=width,
+                height=height,
+                measured_fps=measured_fps,
+                measured_sample_count=measured_sample_count,
+            ),
+            label_lines=label_lines,
+        )
+    return _make_panel(
+        color=latest_color,
+        depth=latest_depth,
+        depth_scale_m_per_unit=depth_scale_m_per_unit,
+        depth_vis_min_m=float(depth_vis_min_m),
+        depth_vis_max_m=float(depth_vis_max_m),
+        label_lines=label_lines,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
@@ -382,6 +654,12 @@ def main() -> int:
     parser.add_argument("--gain", type=float, default=60.0)
     parser.add_argument("--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M)
     parser.add_argument("--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M)
+    parser.add_argument(
+        "--depth-render-mode",
+        choices=DEPTH_RENDER_MODE_CHOICES,
+        default="colormap",
+        help="Bottom-panel depth display mode. Use fps_placeholder to skip depth rendering and show received depth FPS only.",
+    )
     args = parser.parse_args()
     cv2, np, rs = _runtime_imports()
     if float(args.depth_vis_max_m) <= float(args.depth_vis_min_m):
@@ -400,7 +678,8 @@ def main() -> int:
     serials = [dev.get_info(rs.camera_info.serial_number) for dev in devices]
     print(f"Detected {len(devices)} camera(s): {', '.join(serials)}", flush=True)
 
-    cams: List[Dict[str, object]] = []
+    stop_event = threading.Event()
+    cams: List[Dict[str, Any]] = []
     for dev in devices:
         serial = dev.get_info(rs.camera_info.serial_number)
         try:
@@ -432,21 +711,28 @@ def main() -> int:
             exposure=target_exposure,
             gain=args.gain,
         )
-        cams.append(
-            {
-                "serial": serial,
-                "usb": usb_desc,
-                "pipeline": pipeline,
-                "align": rs.align(rs.stream.color),
-                "fps": fps_used,
-                "stream_w": stream_w,
-                "stream_h": stream_h,
-                "frame_times": deque(),
-                "last_color": None,
-                "last_depth": None,
-                "last_depth_scale_m_per_unit": 0.001,
-            }
+        cam_state = _build_camera_state(
+            serial=serial,
+            usb_desc=usb_desc,
+            pipeline=pipeline,
+            align=rs.align(rs.stream.color),
+            stream_w=stream_w,
+            stream_h=stream_h,
+            fps_used=fps_used,
         )
+        cam_state["capture_thread"] = threading.Thread(
+            target=_capture_loop,
+            args=(cam_state,),
+            kwargs={
+                "target_width": int(args.width),
+                "target_height": int(args.height),
+                "stop_event": stop_event,
+            },
+            daemon=True,
+            name=f"native-capture-{serial}",
+        )
+        cam_state["capture_thread"].start()
+        cams.append(cam_state)
         print(
             f"Started {serial} usb={usb_desc or 'unknown'} "
             f"at {stream_w}x{stream_h}@{fps_used} "
@@ -462,6 +748,12 @@ def main() -> int:
 
     panel_h = args.height * 2
     panel_w = args.width
+    grid_cols = 2
+    grid_rows = int(math.ceil(len(cams) / grid_cols))
+    display_target_size = _compute_display_target_size(
+        grid_height=grid_rows * panel_h,
+        grid_width=grid_cols * panel_w,
+    )
     window_flags = cv2.WINDOW_NORMAL
     if hasattr(cv2, "WINDOW_KEEPRATIO"):
         window_flags |= cv2.WINDOW_KEEPRATIO
@@ -471,83 +763,33 @@ def main() -> int:
         while True:
             panels: List[np.ndarray] = []
             for cam in cams:
-                now_s = time.perf_counter()
-                pipeline = cam["pipeline"]
-                frames = _safe_wait_frames(pipeline, timeout_ms=100)
-                received_valid_pair = False
-                if frames:
-                    frames = cam["align"].process(frames)
-                    depth = frames.get_depth_frame()
-                    color = frames.get_color_frame()
-                    if depth and color:
-                        color_np = np.asanyarray(color.get_data())
-                        depth_np = np.asanyarray(depth.get_data())
-                        try:
-                            depth_scale_m_per_unit = float(depth.get_units())
-                        except Exception:
-                            depth_scale_m_per_unit = 0.001
-                        if (
-                            color_np.shape[1] != args.width
-                            or color_np.shape[0] != args.height
-                        ):
-                            color_np = _fit_to_canvas(
-                                color_np,
-                                args.width,
-                                args.height,
-                                interpolation=cv2.INTER_LINEAR,
-                            )
-                        if (
-                            depth_np.shape[1] != args.width
-                            or depth_np.shape[0] != args.height
-                        ):
-                            depth_np = _fit_to_canvas(
-                                depth_np,
-                                args.width,
-                                args.height,
-                                interpolation=cv2.INTER_NEAREST,
-                            )
-                        cam["last_color"] = color_np
-                        cam["last_depth"] = depth_np
-                        cam["last_depth_scale_m_per_unit"] = depth_scale_m_per_unit
-                        received_valid_pair = True
-                _update_recent_frame_times(
-                    cam["frame_times"],
-                    now_s=now_s,
-                    frame_received=received_valid_pair,
-                )
-                measured_fps = _compute_measured_fps(cam["frame_times"])
-                label_lines = _format_panel_label_lines(
-                    serial=str(cam["serial"]),
-                    usb_desc=str(cam["usb"]),
-                    stream_w=int(cam["stream_w"]),
-                    stream_h=int(cam["stream_h"]),
-                    configured_fps=float(cam["fps"]),
-                    measured_fps=measured_fps,
-                    measured_sample_count=len(cam["frame_times"]),
-                )
-                if cam["last_color"] is None or cam["last_depth"] is None:
-                    panel = _empty_panel(args.width, args.height, label_lines)
-                else:
-                    panel = _make_panel(
-                        color=cam["last_color"],
-                        depth=cam["last_depth"],
-                        depth_scale_m_per_unit=float(cam["last_depth_scale_m_per_unit"]),
+                panels.append(
+                    _render_panel(
+                        cam,
+                        width=int(args.width),
+                        height=int(args.height),
                         depth_vis_min_m=float(args.depth_vis_min_m),
                         depth_vis_max_m=float(args.depth_vis_max_m),
-                        label_lines=label_lines,
+                        depth_render_mode=str(args.depth_render_mode),
                     )
-                panels.append(panel)
+                )
 
             grid = _tile_panels(panels, panel_h, panel_w)
-            display_grid = _fit_grid_for_display(grid)
+            display_grid = _fit_grid_for_display(grid, target_size=display_target_size)
             cv2.imshow("RealSense Viewer", display_grid)
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 break
     finally:
+        stop_event.set()
         for cam in cams:
             try:
                 cam["pipeline"].stop()
+            except Exception:
+                pass
+        for cam in cams:
+            try:
+                cam["capture_thread"].join(timeout=2.0)
             except Exception:
                 pass
         cv2.destroyAllWindows()

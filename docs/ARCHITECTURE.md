@@ -126,6 +126,15 @@ Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` 
 - `--ffs_worker_mode shared`
   - one shared worker process sequentially serves all active cameras while reusing a single FFS runner instance
 
+The live viewer FFS mode surface is now:
+
+- `--ffs_backend pytorch`
+  - current original PyTorch runner
+- `--ffs_backend tensorrt --ffs_trt_mode two_stage`
+  - current two-stage TensorRT runner with `feature_runner.engine` + `post_runner.engine`
+- `--ffs_backend tensorrt --ffs_trt_mode single_engine`
+  - single-engine TensorRT runner with one `.engine` file and shared TensorRT config discovery
+
 The FFS benchmark helper stack is intentionally split like this:
 
 - `data_process/depth_backends/benchmarking.py`

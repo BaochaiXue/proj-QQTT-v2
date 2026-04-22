@@ -75,10 +75,25 @@ Live RGB + Fast-FoundationStereo preview:
 python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo
 ```
 
+The default live FFS mode is still the current two-stage TensorRT path:
+
+- `--ffs_backend tensorrt --ffs_trt_mode two_stage`
+  - default
+- `--ffs_backend pytorch`
+  - current original PyTorch path
+- `--ffs_backend tensorrt --ffs_trt_mode single_engine`
+  - new single-engine TensorRT path
+
 The default FFS viewer topology is still `--ffs_worker_mode per_camera`, which means one FFS worker process per active camera. You can also force a single shared FFS worker process for all active cameras:
 
 ```bash
 python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_worker_mode shared
+```
+
+Explicit single-engine TensorRT preview:
+
+```bash
+python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir /path/to/single_engine_trt_dir
 ```
 
 ## Calibration

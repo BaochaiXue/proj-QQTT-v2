@@ -34,9 +34,11 @@ from cameras_viewer import (
 )
 from data_process.depth_backends import (
     FastFoundationStereoRunner,
+    FastFoundationStereoSingleEngineTensorRTRunner,
     FastFoundationStereoTensorRTRunner,
     align_depth_to_color,
     load_tensorrt_model_config,
+    resolve_single_engine_tensorrt_model_path,
     resolve_tensorrt_image_transform,
 )
 from data_process.visualization.depth_colormap import (
@@ -355,7 +357,9 @@ def _build_ffs_runner(
     ffs_scale: float,
     ffs_valid_iters: int,
     ffs_max_disp: int,
+    trt_mode: str,
     trt_model_dir: str | None,
+    trt_model_path: str | None,
     trt_root: str | None,
 ) -> Any:
     if runner_backend == "pytorch":
@@ -371,11 +375,21 @@ def _build_ffs_runner(
     if runner_backend == "tensorrt":
         if trt_model_dir is None:
             raise ValueError("Missing trt_model_dir for TensorRT FFS backend.")
-        return FastFoundationStereoTensorRTRunner(
-            ffs_repo=ffs_repo,
-            model_dir=trt_model_dir,
-            trt_root=trt_root,
-        )
+        if trt_mode == "two_stage":
+            return FastFoundationStereoTensorRTRunner(
+                ffs_repo=ffs_repo,
+                model_dir=trt_model_dir,
+                trt_root=trt_root,
+            )
+        if trt_mode == "single_engine":
+            if trt_model_path is None:
+                raise ValueError("Missing trt_model_path for single-engine TensorRT FFS backend.")
+            return FastFoundationStereoSingleEngineTensorRTRunner(
+                ffs_repo=ffs_repo,
+                model_dir=trt_model_dir,
+                trt_root=trt_root,
+            )
+        raise ValueError(f"Unsupported TensorRT mode: {trt_mode}")
     raise ValueError(f"Unsupported FFS backend: {runner_backend}")
 
 
@@ -423,7 +437,9 @@ def _resolve_ffs_worker_kwargs(args: argparse.Namespace) -> dict[str, Any]:
         "ffs_scale": float(args.ffs_scale),
         "ffs_valid_iters": int(args.ffs_valid_iters),
         "ffs_max_disp": int(args.ffs_max_disp),
+        "trt_mode": "two_stage",
         "trt_model_dir": None,
+        "trt_model_path": None,
         "trt_root": None,
         "trt_engine_height": None,
         "trt_engine_width": None,
@@ -442,11 +458,23 @@ def _resolve_ffs_worker_kwargs(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--ffs_trt_model_dir is required for --ffs_backend tensorrt")
     if not args.ffs_trt_model_dir.exists():
         raise FileNotFoundError(f"Missing --ffs_trt_model_dir: {args.ffs_trt_model_dir}")
-    for engine_name in ("feature_runner.engine", "post_runner.engine"):
-        engine_path = args.ffs_trt_model_dir / engine_name
-        if not engine_path.exists():
-            raise FileNotFoundError(f"Missing TensorRT engine: {engine_path}")
-    cfg = load_tensorrt_model_config(args.ffs_trt_model_dir)
+    trt_mode = str(args.ffs_trt_mode)
+    worker_kwargs["trt_mode"] = trt_mode
+    if trt_mode == "two_stage":
+        for engine_name in ("feature_runner.engine", "post_runner.engine"):
+            engine_path = args.ffs_trt_model_dir / engine_name
+            if not engine_path.exists():
+                raise FileNotFoundError(f"Missing TensorRT engine: {engine_path}")
+        cfg = load_tensorrt_model_config(
+            args.ffs_trt_model_dir,
+            model_path=args.ffs_trt_model_dir / "feature_runner.engine",
+        )
+    elif trt_mode == "single_engine":
+        trt_model_path = resolve_single_engine_tensorrt_model_path(args.ffs_trt_model_dir)
+        cfg = load_tensorrt_model_config(args.ffs_trt_model_dir, model_path=trt_model_path)
+        worker_kwargs["trt_model_path"] = str(trt_model_path.resolve())
+    else:
+        raise ValueError(f"Unsupported --ffs_trt_mode: {trt_mode}")
     worker_kwargs["trt_model_dir"] = str(args.ffs_trt_model_dir.resolve())
     worker_kwargs["trt_engine_height"] = int(cfg["image_size"][0])
     worker_kwargs["trt_engine_width"] = int(cfg["image_size"][1])
@@ -576,7 +604,9 @@ def _ffs_worker_loop(
     ffs_scale: float,
     ffs_valid_iters: int,
     ffs_max_disp: int,
+    trt_mode: str,
     trt_model_dir: str | None,
+    trt_model_path: str | None,
     trt_root: str | None,
     trt_engine_height: int | None,
     trt_engine_width: int | None,
@@ -592,7 +622,9 @@ def _ffs_worker_loop(
             ffs_scale=ffs_scale,
             ffs_valid_iters=ffs_valid_iters,
             ffs_max_disp=ffs_max_disp,
+            trt_mode=trt_mode,
             trt_model_dir=trt_model_dir,
+            trt_model_path=trt_model_path,
             trt_root=trt_root,
         )
     except Exception as exc:
@@ -668,7 +700,9 @@ def _shared_ffs_worker_loop(
     ffs_scale: float,
     ffs_valid_iters: int,
     ffs_max_disp: int,
+    trt_mode: str,
     trt_model_dir: str | None,
+    trt_model_path: str | None,
     trt_root: str | None,
     trt_engine_height: int | None,
     trt_engine_width: int | None,
@@ -688,7 +722,9 @@ def _shared_ffs_worker_loop(
             ffs_scale=ffs_scale,
             ffs_valid_iters=ffs_valid_iters,
             ffs_max_disp=ffs_max_disp,
+            trt_mode=trt_mode,
             trt_model_dir=trt_model_dir,
+            trt_model_path=trt_model_path,
             trt_root=trt_root,
         )
     except Exception as exc:
@@ -915,6 +951,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ffs_valid_iters", type=int, default=8)
     parser.add_argument("--ffs_max_disp", type=int, default=192)
     parser.add_argument("--ffs_worker_mode", choices=("per_camera", "shared"), default="per_camera")
+    parser.add_argument("--ffs_trt_mode", choices=("two_stage", "single_engine"), default="two_stage")
     parser.add_argument("--ffs_trt_model_dir", type=Path, default=DEFAULT_FFS_TRT_MODEL_DIR)
     parser.add_argument("--ffs_trt_root", type=Path, default=None)
     parser.add_argument("--duration-s", type=float, default=0.0)
@@ -1099,7 +1136,13 @@ def main() -> int:
         print(
             f"Started {spec['serial']} usb={spec['usb_desc'] or 'unknown'} "
             f"at {int(spec['stream_w'])}x{int(spec['stream_h'])}@{int(spec['fps_used'])} "
-            f"backend={args.ffs_backend} worker_mode={worker_mode} "
+            f"backend={args.ffs_backend}"
+            + (
+                f" trt_mode={str(worker_runner_kwargs['trt_mode'])}"
+                if str(args.ffs_backend) == "tensorrt"
+                else ""
+            )
+            + f" worker_mode={worker_mode} "
             f"(AE={spec['ae']}, EXP={spec['exp']}, GAIN={spec['gain']}, target_exp={float(spec['target_exposure'])})",
             flush=True,
         )

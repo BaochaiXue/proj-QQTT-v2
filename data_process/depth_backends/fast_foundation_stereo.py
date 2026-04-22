@@ -10,6 +10,9 @@ import numpy as np
 
 from .geometry import disparity_to_metric_depth
 
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
 
 def _disable_torch_compile(torch_module) -> None:
     def identity_compile(fn=None, *args, **kwargs):
@@ -144,20 +147,79 @@ def _configure_tensorrt_runtime_search_paths(trt_root: Path | None) -> list[Any]
     return dll_handles
 
 
-def load_tensorrt_model_config(model_dir: str | Path) -> dict[str, Any]:
+def load_tensorrt_model_config(
+    model_dir: str | Path,
+    *,
+    model_path: str | Path | None = None,
+) -> dict[str, Any]:
     import yaml
 
     model_dir = Path(model_dir).resolve()
-    cfg_path = model_dir / "onnx.yaml"
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"TensorRT metadata not found: {cfg_path}")
+    cfg_path = resolve_tensorrt_model_config_path(model_dir, model_path=model_path)
     with open(cfg_path, "r", encoding="utf-8") as handle:
         cfg = yaml.safe_load(handle) or {}
     image_size = cfg.get("image_size")
     if not isinstance(image_size, (list, tuple)) or len(image_size) != 2:
-        raise ValueError(f"Expected onnx.yaml image_size=[H, W], got {image_size!r} in {cfg_path}")
+        raise ValueError(f"Expected TensorRT config image_size=[H, W], got {image_size!r} in {cfg_path}")
     cfg["image_size"] = [int(image_size[0]), int(image_size[1])]
     return cfg
+
+
+def resolve_tensorrt_model_config_path(
+    model_dir: str | Path,
+    *,
+    model_path: str | Path | None = None,
+) -> Path:
+    model_dir = Path(model_dir).resolve()
+    candidates: list[Path] = []
+    if model_path is not None:
+        model_path = Path(model_path)
+        candidates.append(model_dir / f"{model_path.stem}.yaml")
+    candidates.extend(
+        [
+            model_dir / "config.yaml",
+            model_dir / "onnx.yaml",
+        ]
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        "TensorRT metadata not found. Looked in: "
+        + ", ".join(str(path) for path in candidates)
+    )
+
+
+def resolve_single_engine_tensorrt_model_path(model_dir: str | Path) -> Path:
+    model_dir = Path(model_dir).resolve()
+    engine_paths = sorted(path for path in model_dir.glob("*.engine") if path.is_file())
+    if not engine_paths:
+        raise FileNotFoundError(f"No TensorRT single-engine model found under {model_dir}.")
+    if len(engine_paths) > 1:
+        raise ValueError(
+            "Expected exactly one TensorRT single-engine model under "
+            f"{model_dir}, found {len(engine_paths)}: "
+            + ", ".join(path.name for path in engine_paths)
+        )
+    return engine_paths[0]
+
+
+def normalize_single_engine_tensorrt_image(image: np.ndarray) -> np.ndarray:
+    image = np.asarray(image, dtype=np.float32)
+    return (image / 255.0 - IMAGENET_MEAN) / IMAGENET_STD
+
+
+def select_tensorrt_disparity_output(outputs: dict[str, Any]) -> Any:
+    if "disparity" in outputs:
+        return outputs["disparity"]
+    if "disp" in outputs:
+        return outputs["disp"]
+    if len(outputs) == 1:
+        return next(iter(outputs.values()))
+    raise ValueError(
+        "Could not resolve TensorRT disparity output from outputs: "
+        + ", ".join(sorted(outputs))
+    )
 
 
 def run_forward_on_non_default_cuda_stream(
@@ -280,6 +342,45 @@ def undo_tensorrt_disparity_transform(
         width_end = disparity_raw.shape[1] - pad_right
         return disparity_raw[pad_top:height_end, pad_left:width_end]
     raise ValueError(f"Unsupported TensorRT disparity transform mode: {mode}")
+
+
+def finalize_single_engine_tensorrt_output(
+    disparity_raw: np.ndarray,
+    *,
+    transform: dict[str, int | float | str],
+    K_ir_left: np.ndarray,
+    baseline_m: float,
+    valid_iters: int,
+    max_disp: int,
+    audit_mode: bool,
+) -> dict[str, np.ndarray | float | list[list[float]]]:
+    disparity_raw = np.asarray(disparity_raw, dtype=np.float32)
+    if disparity_raw.ndim == 4:
+        if disparity_raw.shape[0] != 1:
+            raise ValueError(f"Expected batch size 1 disparity output, got shape={disparity_raw.shape}.")
+        disparity_raw = disparity_raw.reshape(disparity_raw.shape[-2], disparity_raw.shape[-1])
+    elif disparity_raw.ndim == 3:
+        if disparity_raw.shape[0] != 1:
+            raise ValueError(f"Expected single-channel disparity output, got shape={disparity_raw.shape}.")
+        disparity_raw = disparity_raw.reshape(disparity_raw.shape[-2], disparity_raw.shape[-1])
+    elif disparity_raw.ndim != 2:
+        raise ValueError(f"Expected 2D/3D/4D disparity output, got shape={disparity_raw.shape}.")
+
+    disparity_raw = undo_tensorrt_disparity_transform(disparity_raw, transform=transform)
+    scale_x = float(transform["scale_x"])
+    scale_y = float(transform["scale_y"])
+    uniform_scale = scale_x if abs(scale_x - scale_y) <= 1e-6 else 1.0
+    return build_disparity_products(
+        disparity_raw,
+        K_ir_left=K_ir_left,
+        baseline_m=baseline_m,
+        scale=uniform_scale,
+        scale_x=scale_x,
+        scale_y=scale_y,
+        valid_iters=valid_iters,
+        max_disp=max_disp,
+        audit_mode=audit_mode,
+    )
 
 
 def _patch_tensorrt_triton_cost_volume(*, ffs_repo: Path) -> Any:
@@ -503,6 +604,186 @@ class FastFoundationStereoTensorRTRunner:
             scale=uniform_scale,
             scale_x=scale_x,
             scale_y=scale_y,
+            valid_iters=self.valid_iters,
+            max_disp=self.max_disp,
+            audit_mode=audit_mode,
+        )
+
+
+class _SingleEngineTensorRTRuntime:
+    def __init__(self, *, engine_path: Path) -> None:
+        import tensorrt as trt
+        import torch
+
+        self.trt = trt
+        self.torch = torch
+        self.logger = trt.Logger(trt.Logger.WARNING)
+        with open(engine_path, "rb") as handle:
+            self.engine = trt.Runtime(self.logger).deserialize_cuda_engine(handle.read())
+        if self.engine is None:
+            raise RuntimeError(f"Failed to deserialize TensorRT engine from {engine_path}.")
+        self.context = self.engine.create_execution_context()
+
+    def _trt_to_torch_dtype(self, tensor_dtype: Any) -> Any:
+        trt = self.trt
+        mapping = {
+            trt.DataType.FLOAT: self.torch.float32,
+            trt.DataType.HALF: self.torch.float16,
+            trt.DataType.BF16: self.torch.bfloat16,
+            trt.DataType.INT32: self.torch.int32,
+            trt.DataType.INT8: self.torch.int8,
+            trt.DataType.BOOL: self.torch.bool,
+        }
+        if tensor_dtype not in mapping:
+            raise RuntimeError(f"Unsupported TensorRT dtype: {tensor_dtype}")
+        return mapping[tensor_dtype]
+
+    def __call__(self, *, left_image: Any, right_image: Any) -> dict[str, Any]:
+        trt = self.trt
+        input_names = [
+            self.engine.get_tensor_name(idx)
+            for idx in range(self.engine.num_io_tensors)
+            if self.engine.get_tensor_mode(self.engine.get_tensor_name(idx)) == trt.TensorIOMode.INPUT
+        ]
+        if len(input_names) != 2:
+            raise RuntimeError(f"Expected exactly two TensorRT inputs, got {input_names!r}.")
+        lower_input_names = {name.lower(): name for name in input_names}
+        left_input_name = next(
+            (name for key, name in lower_input_names.items() if "left" in key),
+            input_names[0],
+        )
+        right_input_name = next(
+            (
+                name
+                for key, name in lower_input_names.items()
+                if "right" in key and name != left_input_name
+            ),
+            input_names[1] if input_names[1] != left_input_name else input_names[0],
+        )
+        if left_input_name == right_input_name:
+            raise RuntimeError(f"Could not disambiguate TensorRT input names: {input_names!r}.")
+        inputs = {
+            left_input_name: left_image,
+            right_input_name: right_image,
+        }
+        for name, tensor in list(inputs.items()):
+            expected_dtype = self._trt_to_torch_dtype(self.engine.get_tensor_dtype(name))
+            if tensor.dtype != expected_dtype:
+                tensor = tensor.to(expected_dtype)
+            if not tensor.is_contiguous():
+                tensor = tensor.contiguous()
+            inputs[name] = tensor
+            self.context.set_input_shape(name, tuple(tensor.shape))
+
+        outputs: dict[str, Any] = {}
+        for idx in range(self.engine.num_io_tensors):
+            name = self.engine.get_tensor_name(idx)
+            if self.engine.get_tensor_mode(name) != trt.TensorIOMode.OUTPUT:
+                continue
+            shape = tuple(self.context.get_tensor_shape(name))
+            dtype = self._trt_to_torch_dtype(self.engine.get_tensor_dtype(name))
+            outputs[name] = self.torch.empty(shape, device="cuda", dtype=dtype)
+
+        for name, tensor in inputs.items():
+            self.context.set_tensor_address(name, int(tensor.data_ptr()))
+        for name, tensor in outputs.items():
+            self.context.set_tensor_address(name, int(tensor.data_ptr()))
+
+        stream = self.torch.cuda.current_stream().cuda_stream
+        ok = self.context.execute_async_v3(stream)
+        if not ok:
+            raise RuntimeError("TensorRT execute_async_v3 returned failure.")
+        return outputs
+
+
+class FastFoundationStereoSingleEngineTensorRTRunner:
+    def __init__(
+        self,
+        *,
+        ffs_repo: str | Path,
+        model_dir: str | Path,
+        trt_root: str | Path | None = None,
+    ) -> None:
+        self.ffs_repo = Path(ffs_repo).resolve()
+        self.model_dir = Path(model_dir).resolve()
+        self.trt_root = None if trt_root is None else Path(trt_root).resolve()
+        self.model_path = resolve_single_engine_tensorrt_model_path(self.model_dir)
+
+        if not self.ffs_repo.exists():
+            raise FileNotFoundError(f"Fast-FoundationStereo repo not found: {self.ffs_repo}")
+
+        import torch
+        from omegaconf import OmegaConf
+
+        _disable_torch_compile(torch)
+        if not torch.cuda.is_available():
+            raise RuntimeError("FastFoundationStereoSingleEngineTensorRTRunner requires CUDA.")
+
+        self._dll_handles = _configure_tensorrt_runtime_search_paths(self.trt_root)
+        from Utils import set_logging_format, set_seed
+
+        cfg_dict = load_tensorrt_model_config(self.model_dir, model_path=self.model_path)
+        self.cfg = OmegaConf.create(cfg_dict)
+        self.engine_height = int(self.cfg.image_size[0])
+        self.engine_width = int(self.cfg.image_size[1])
+        self.valid_iters = int(self.cfg.valid_iters)
+        self.max_disp = int(self.cfg.max_disp)
+        self.torch = torch
+        self.inference_stream = torch.cuda.Stream()
+        set_logging_format()
+        set_seed(0)
+        torch.autograd.set_grad_enabled(False)
+        self.model = _SingleEngineTensorRTRuntime(engine_path=self.model_path)
+
+    def _prepare_image(self, image: np.ndarray) -> tuple[np.ndarray, dict[str, int | float | str]]:
+        image = np.asarray(image)
+        if image.ndim == 2:
+            image = np.tile(image[..., None], (1, 1, 3))
+        image = image[..., :3]
+        transform = resolve_tensorrt_image_transform(
+            input_height=int(image.shape[0]),
+            input_width=int(image.shape[1]),
+            engine_height=self.engine_height,
+            engine_width=self.engine_width,
+        )
+        image = apply_tensorrt_image_transform(image, transform=transform)
+        image = normalize_single_engine_tensorrt_image(image)
+        return image, transform
+
+    def run_pair(
+        self,
+        left_image: np.ndarray,
+        right_image: np.ndarray,
+        *,
+        K_ir_left: np.ndarray,
+        baseline_m: float,
+        audit_mode: bool = False,
+    ) -> dict[str, np.ndarray | float | list[list[float]]]:
+        left, left_transform = self._prepare_image(left_image)
+        right, right_transform = self._prepare_image(right_image)
+        if left_transform != right_transform:
+            raise ValueError(
+                "Left/right TensorRT preprocessing transforms must match. "
+                f"Got {left_transform!r} vs {right_transform!r}."
+            )
+
+        torch = self.torch
+        left_tensor = torch.as_tensor(left).cuda().float()[None].permute(0, 3, 1, 2)
+        right_tensor = torch.as_tensor(right).cuda().float()[None].permute(0, 3, 1, 2)
+        outputs = run_forward_on_non_default_cuda_stream(
+            torch_module=torch,
+            stream=self.inference_stream,
+            forward_fn=self.model,
+            left_image=left_tensor,
+            right_image=right_tensor,
+        )
+        disparity_output = select_tensorrt_disparity_output(outputs)
+        disparity_raw = disparity_output.data.cpu().numpy()
+        return finalize_single_engine_tensorrt_output(
+            disparity_raw,
+            transform=left_transform,
+            K_ir_left=K_ir_left,
+            baseline_m=baseline_m,
             valid_iters=self.valid_iters,
             max_disp=self.max_disp,
             audit_mode=audit_mode,

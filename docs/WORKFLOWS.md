@@ -10,6 +10,21 @@ Use this to verify that all 3 cameras enumerate and stream correctly before cali
 
 Each panel now shows both the negotiated stream `configured fps` and a per-camera `measured fps` computed from the recent valid color+depth delivery rate, so fallback startup profiles and live stalls are easier to see during preview.
 
+Display-fit bounds are resolved once at viewer startup instead of probing the
+screen on every frame. If you change monitor/layout mid-session, restart the
+viewer so it can re-evaluate the available screen size.
+
+Native preview now uses one background capture thread per active camera and a
+latest-frame render loop in the main thread, so preview freshness no longer
+depends on the render loop reaching every `wait_for_frames()` call in order.
+
+When you want a cheaper native-viewer throughput probe, replace the depth
+colormap with a black placeholder that only reports received depth FPS:
+
+```bash
+python cameras_viewer.py --depth-render-mode fps_placeholder
+```
+
 The viewer uses the same `TURBO` metric-depth colormap as the aligned-case depth diagnostics. Keep the display range explicit when you want preview colors to match later panels:
 
 ```bash
@@ -29,10 +44,27 @@ Use this as a debug viewer only:
 - overlay = negotiated stream profile plus live `capture` and `ffs` fps
 - preview favors freshness over completeness and may drop stale stereo work while FFS catches up
 
-If you explicitly want the older PyTorch viewer path instead of the default TensorRT engines:
+Live FFS mode selection is now:
+
+- `--ffs_backend tensorrt --ffs_trt_mode two_stage`
+  - default live path
+  - current repo-local two-stage TensorRT engines
+- `--ffs_backend pytorch`
+  - current original PyTorch path
+- `--ffs_backend tensorrt --ffs_trt_mode single_engine`
+  - single-engine TensorRT path
+  - requires an explicit single-engine model directory
+
+If you explicitly want the current original PyTorch viewer path instead of the default two-stage TensorRT engines:
 
 ```bash
 python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth
+```
+
+If you want the single-engine TensorRT viewer path:
+
+```bash
+python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /path/to/single_engine_trt_dir
 ```
 
 Worker topology defaults to one FFS worker process per active camera:

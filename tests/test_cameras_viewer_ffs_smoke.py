@@ -257,6 +257,7 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
 
         self.assertEqual(args.ffs_backend, "tensorrt")
         self.assertEqual(args.ffs_trt_model_dir, DEFAULT_FFS_TRT_MODEL_DIR)
+        self.assertEqual(args.ffs_trt_mode, "two_stage")
         self.assertEqual(args.ffs_worker_mode, "per_camera")
 
     def test_parse_args_accepts_shared_worker_mode(self) -> None:
@@ -271,6 +272,19 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
                 args = parse_args()
 
         self.assertEqual(args.ffs_worker_mode, "shared")
+
+    def test_parse_args_accepts_single_engine_trt_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            with mock.patch(
+                "sys.argv",
+                ["cameras_viewer_FFS.py", "--ffs_repo", str(repo), "--ffs_trt_mode", "single_engine"],
+            ):
+                args = parse_args()
+
+        self.assertEqual(args.ffs_trt_mode, "single_engine")
 
     def test_resolve_tensorrt_worker_kwargs_loads_engine_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -292,16 +306,81 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
                 ffs_scale=1.0,
                 ffs_valid_iters=8,
                 ffs_max_disp=256,
+                ffs_trt_mode="two_stage",
                 ffs_trt_model_dir=trt_model_dir,
                 ffs_trt_root=None,
             )
             worker_kwargs = _resolve_ffs_worker_kwargs(args)
 
         self.assertEqual(worker_kwargs["runner_backend"], "tensorrt")
+        self.assertEqual(worker_kwargs["trt_mode"], "two_stage")
         self.assertEqual(worker_kwargs["trt_model_dir"], str(trt_model_dir.resolve()))
         self.assertEqual(worker_kwargs["trt_engine_height"], 480)
         self.assertEqual(worker_kwargs["trt_engine_width"], 640)
         self.assertIsNone(worker_kwargs["model_path"])
+        self.assertIsNone(worker_kwargs["trt_model_path"])
+
+    def test_resolve_single_engine_tensorrt_worker_kwargs_auto_detects_engine_and_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            trt_model_dir = root / "single_engine_model"
+            trt_model_dir.mkdir()
+            (trt_model_dir / "fast_foundationstereo.engine").write_bytes(b"stub")
+            (trt_model_dir / "fast_foundationstereo.yaml").write_text(
+                "image_size: [480, 848]\nvalid_iters: 4\nmax_disp: 192\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                ffs_backend="tensorrt",
+                ffs_repo=repo,
+                ffs_model_path=None,
+                ffs_scale=1.0,
+                ffs_valid_iters=8,
+                ffs_max_disp=256,
+                ffs_trt_mode="single_engine",
+                ffs_trt_model_dir=trt_model_dir,
+                ffs_trt_root=None,
+            )
+            worker_kwargs = _resolve_ffs_worker_kwargs(args)
+
+        self.assertEqual(worker_kwargs["runner_backend"], "tensorrt")
+        self.assertEqual(worker_kwargs["trt_mode"], "single_engine")
+        self.assertEqual(worker_kwargs["trt_model_dir"], str(trt_model_dir.resolve()))
+        self.assertEqual(
+            worker_kwargs["trt_model_path"],
+            str((trt_model_dir / "fast_foundationstereo.engine").resolve()),
+        )
+        self.assertEqual(worker_kwargs["trt_engine_height"], 480)
+        self.assertEqual(worker_kwargs["trt_engine_width"], 848)
+
+    def test_resolve_single_engine_tensorrt_worker_kwargs_requires_unique_engine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            trt_model_dir = root / "single_engine_model"
+            trt_model_dir.mkdir()
+            (trt_model_dir / "a.engine").write_bytes(b"stub")
+            (trt_model_dir / "b.engine").write_bytes(b"stub")
+            (trt_model_dir / "onnx.yaml").write_text(
+                "image_size: [480, 848]\nvalid_iters: 4\nmax_disp: 192\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                ffs_backend="tensorrt",
+                ffs_repo=repo,
+                ffs_model_path=None,
+                ffs_scale=1.0,
+                ffs_valid_iters=8,
+                ffs_max_disp=256,
+                ffs_trt_mode="single_engine",
+                ffs_trt_model_dir=trt_model_dir,
+                ffs_trt_root=None,
+            )
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                _resolve_ffs_worker_kwargs(args)
 
     def test_tensorrt_startup_note_reports_resize_when_engine_differs(self) -> None:
         note = _format_ffs_backend_startup_note(
@@ -332,6 +411,18 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
             note,
             "TensorRT engine 864x480; capture 848x480 will be symmetrically padded to 864x480 before inference.",
         )
+
+    def test_tensorrt_startup_note_reports_match_when_engine_matches_capture(self) -> None:
+        note = _format_ffs_backend_startup_note(
+            runner_backend="tensorrt",
+            stream_w=848,
+            stream_h=480,
+            worker_kwargs={
+                "trt_engine_height": 480,
+                "trt_engine_width": 848,
+            },
+        )
+        self.assertEqual(note, "TensorRT engine 848x480 matches capture size.")
 
     def test_tensorrt_transform_resolves_pad_for_848_capture_and_864_engine(self) -> None:
         transform = resolve_tensorrt_image_transform(

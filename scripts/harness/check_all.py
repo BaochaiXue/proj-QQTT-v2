@@ -74,6 +74,7 @@ def main() -> int:
     run([python, "-m", "unittest", "-v", "tests.test_ffs_remove_invisible_mask_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_ffs_native_like_depth_postprocess_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_ffs_radius_outlier_filter_smoke"])
+    run([python, "-m", "unittest", "-v", "tests.test_ffs_tensorrt_single_engine_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_record_data_align_ffs_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_record_data_align_both_smoke"])
     run([python, "-m", "unittest", "-v", "tests.test_calibrate_loader_smoke"])
