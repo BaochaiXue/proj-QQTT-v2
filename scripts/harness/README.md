@@ -19,6 +19,8 @@ Rule of thumb:
 ### Hardware / External Proof-of-Life
 
 - `verify_ffs_demo.py`
+- `verify_ffs_tensorrt_windows.py`
+- `verify_ffs_tensorrt_wsl.py`
 - `probe_d455_ir_pair.py`
 - `probe_d455_stream_capability.py`
 - `render_d455_stream_probe_report.py`

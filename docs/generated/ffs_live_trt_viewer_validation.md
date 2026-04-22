@@ -36,6 +36,30 @@ C:\Users\zhang\miniconda3\envs\qqtt-ffs-compat\python.exe cameras_viewer_FFS.py 
 - This validation used `640x480` capture to match the validated engine shape exactly.
 - The worker process still uses the PyTorch GWC volume implementation on the host side because the upstream TensorRT runtime path assumes Triton is available.
 
+## Post-Change Follow-Up Target
+
+The validated results in this note still reflect the original `640x480` engine-matched live smoke. After the pad-aware viewer change, the intended follow-up target is:
+
+- keep live capture at `848x480`
+- build the two-stage TensorRT engines at `864x480`
+- use symmetric replicate padding (`8 px` left and `8 px` right) before inference
+- crop the disparity back to `848x480` before depth reprojection
+
+Reason:
+
+- upstream `scripts/make_onnx.py` requires both dimensions to be divisible by `32`
+- `848` is therefore not a valid two-stage engine width in the current upstream export path
+
+Follow-up commands to validate this newer target were not rerun in this note, but the intended viewer smoke commands are:
+
+```text
+C:\Users\zhang\miniconda3\envs\qqtt-ffs-compat\python.exe cameras_viewer_FFS.py --max-cams 1 --width 848 --height 480 --duration-s 30 --stats-log-interval-s 5 --ffs_backend tensorrt --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_trt_model_dir C:\Users\zhang\proj-QQTT\data\ffs_proof_of_life\trt_two_stage_864x480 --ffs_trt_root C:\Users\zhang\external\TensorRT-10.16.1.11
+```
+
+```text
+C:\Users\zhang\miniconda3\envs\qqtt-ffs-compat\python.exe cameras_viewer_FFS.py --max-cams 3 --width 848 --height 480 --duration-s 20 --stats-log-interval-s 5 --ffs_backend tensorrt --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_trt_model_dir C:\Users\zhang\proj-QQTT\data\ffs_proof_of_life\trt_two_stage_864x480 --ffs_trt_root C:\Users\zhang\external\TensorRT-10.16.1.11
+```
+
 ## Single-Camera Result
 
 Observed startup:
@@ -90,4 +114,4 @@ Interpretation:
 ## Follow-Up Boundary
 
 - This validation does not cover `record_data_align.py` or other QQTT production depth-backend entrypoints.
-- This validation also does not cover non-matching engine/capture combinations such as the default `848x480` viewer profile.
+- This validation also does not yet include a manual rerun of the newer `848x480` capture with `864x480` engine pad/unpad path.

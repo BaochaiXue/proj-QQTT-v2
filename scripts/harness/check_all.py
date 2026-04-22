@@ -21,6 +21,7 @@ def main() -> int:
     run([python, "record_data.py", "--help"])
     run([python, "data_process/record_data_align.py", "--help"])
     run([python, "scripts/harness/verify_ffs_demo.py", "--help"])
+    run([python, "scripts/harness/verify_ffs_tensorrt_wsl.py", "--help"])
     run([python, "scripts/harness/probe_d455_ir_pair.py", "--help"])
     run([python, "scripts/harness/probe_d455_stream_capability.py", "--help"])
     run([python, "scripts/harness/render_d455_stream_probe_report.py", "--help"])

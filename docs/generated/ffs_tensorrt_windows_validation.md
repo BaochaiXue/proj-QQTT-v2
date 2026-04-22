@@ -45,6 +45,17 @@ C:\Users\zhang\miniconda3\envs\ffs-standalone\python.exe scripts\harness\verify_
   - replacing Triton-only GWC volume calls with the existing PyTorch implementation for ONNX export and TensorRT runtime host preprocessing
 - The TensorRT engines themselves are still the standard upstream two-stage engines built by `trtexec`.
 
+## Repo Follow-Up Note For The QQTT Viewer
+
+The proof-of-life in this note remains the validated `640x480` export and engine build. For the current QQTT viewer default capture profile, the intended follow-up engine build target is now:
+
+- capture: `848x480`
+- engine: `864x480`
+- rationale: upstream `scripts/make_onnx.py` requires dimensions divisible by `32`, so `848x480` cannot be used as the two-stage engine shape directly
+- runtime behavior in QQTT: symmetrically replicate-pad the `848x480` IR pair to `864x480`, run TRT, then crop the disparity back to `848x480` before reprojection
+
+That newer `848 -> 864 -> 848` repo path was not part of this original Windows validation run.
+
 ## Outputs
 
 - `data\ffs_proof_of_life\trt_two_stage_640x480\feature_runner.onnx`
@@ -88,3 +99,4 @@ Latency comparison at `640x480`, `valid_iters=4`, `max_disp=192`:
 
 - This validation does not cover QQTT `record_data_align.py`, `cameras_viewer_FFS.py`, or any live 3-camera TRT integration.
 - This validation also does not cover the newer single-ONNX / single-engine upstream workflow.
+- This validation also does not cover the later QQTT-specific `848x480` capture with `864x480` engine pad/unpad path.

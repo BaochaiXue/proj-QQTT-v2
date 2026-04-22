@@ -37,6 +37,7 @@ from data_process.depth_backends import (
     FastFoundationStereoTensorRTRunner,
     align_depth_to_color,
     load_tensorrt_model_config,
+    resolve_tensorrt_image_transform,
 )
 from data_process.visualization.depth_colormap import (
     DEFAULT_DEPTH_VIS_MAX_M,
@@ -401,8 +402,21 @@ def _format_ffs_backend_startup_note(
         return None
     engine_h = int(worker_kwargs["trt_engine_height"])
     engine_w = int(worker_kwargs["trt_engine_width"])
-    if engine_w == int(stream_w) and engine_h == int(stream_h):
+    transform = resolve_tensorrt_image_transform(
+        input_height=int(stream_h),
+        input_width=int(stream_w),
+        engine_height=engine_h,
+        engine_width=engine_w,
+    )
+    mode = str(transform["mode"])
+    if mode == "match":
         return f"TensorRT engine {engine_w}x{engine_h} matches capture size."
+    if mode == "pad":
+        return (
+            f"TensorRT engine {engine_w}x{engine_h}; "
+            f"capture {int(stream_w)}x{int(stream_h)} will be symmetrically padded to "
+            f"{engine_w}x{engine_h} before inference."
+        )
     return (
         f"TensorRT engine {engine_w}x{engine_h}; "
         f"capture {int(stream_w)}x{int(stream_h)} will be resized before inference."

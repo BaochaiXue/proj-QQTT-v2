@@ -160,6 +160,113 @@ def load_tensorrt_model_config(model_dir: str | Path) -> dict[str, Any]:
     return cfg
 
 
+def resolve_tensorrt_image_transform(
+    *,
+    input_height: int,
+    input_width: int,
+    engine_height: int,
+    engine_width: int,
+) -> dict[str, int | float | str]:
+    input_height = int(input_height)
+    input_width = int(input_width)
+    engine_height = int(engine_height)
+    engine_width = int(engine_width)
+    if input_height == engine_height and input_width == engine_width:
+        return {
+            "mode": "match",
+            "engine_height": engine_height,
+            "engine_width": engine_width,
+            "output_height": input_height,
+            "output_width": input_width,
+            "scale_x": 1.0,
+            "scale_y": 1.0,
+            "pad_top": 0,
+            "pad_bottom": 0,
+            "pad_left": 0,
+            "pad_right": 0,
+        }
+    if input_height == 480 and input_width == 848 and engine_height == 480 and engine_width == 864:
+        pad_total = engine_width - input_width
+        pad_left = pad_total // 2
+        pad_right = pad_total - pad_left
+        return {
+            "mode": "pad",
+            "engine_height": engine_height,
+            "engine_width": engine_width,
+            "output_height": input_height,
+            "output_width": input_width,
+            "scale_x": 1.0,
+            "scale_y": 1.0,
+            "pad_top": 0,
+            "pad_bottom": 0,
+            "pad_left": pad_left,
+            "pad_right": pad_right,
+        }
+    return {
+        "mode": "resize",
+        "engine_height": engine_height,
+        "engine_width": engine_width,
+        "output_height": engine_height,
+        "output_width": engine_width,
+        "scale_x": float(engine_width / input_width),
+        "scale_y": float(engine_height / input_height),
+        "pad_top": 0,
+        "pad_bottom": 0,
+        "pad_left": 0,
+        "pad_right": 0,
+    }
+
+
+def apply_tensorrt_image_transform(
+    image: np.ndarray,
+    *,
+    transform: dict[str, int | float | str],
+) -> np.ndarray:
+    image = np.asarray(image)
+    mode = str(transform["mode"])
+    if mode == "match":
+        return image
+    if mode == "pad":
+        pad_top = int(transform["pad_top"])
+        pad_bottom = int(transform["pad_bottom"])
+        pad_left = int(transform["pad_left"])
+        pad_right = int(transform["pad_right"])
+        pad_spec: list[tuple[int, int]] = [
+            (pad_top, pad_bottom),
+            (pad_left, pad_right),
+        ]
+        if image.ndim == 3:
+            pad_spec.append((0, 0))
+        return np.pad(image, tuple(pad_spec), mode="edge")
+    if mode == "resize":
+        return cv2.resize(
+            image,
+            dsize=(int(transform["engine_width"]), int(transform["engine_height"])),
+            interpolation=cv2.INTER_LINEAR,
+        )
+    raise ValueError(f"Unsupported TensorRT image transform mode: {mode}")
+
+
+def undo_tensorrt_disparity_transform(
+    disparity_raw: np.ndarray,
+    *,
+    transform: dict[str, int | float | str],
+) -> np.ndarray:
+    disparity_raw = np.asarray(disparity_raw, dtype=np.float32)
+    mode = str(transform["mode"])
+    if mode in {"match", "resize"}:
+        return disparity_raw
+    if mode == "pad":
+        pad_top = int(transform["pad_top"])
+        pad_bottom = int(transform["pad_bottom"])
+        pad_left = int(transform["pad_left"])
+        pad_right = int(transform["pad_right"])
+        height_end = disparity_raw.shape[0] - pad_bottom
+        width_end = disparity_raw.shape[1] - pad_right
+        return disparity_raw[pad_top:height_end, pad_left:width_end]
+    raise ValueError(f"Unsupported TensorRT disparity transform mode: {mode}")
+
+
 def _patch_tensorrt_triton_cost_volume(*, ffs_repo: Path) -> Any:
     _ensure_ffs_repo_on_sys_path(ffs_repo)
     import core.foundation_stereo as foundation_stereo
@@ -327,20 +434,19 @@ class FastFoundationStereoTensorRTRunner:
             str(self.post_engine_path),
         )
 
-    def _prepare_image(self, image: np.ndarray) -> tuple[np.ndarray, float, float]:
+    def _prepare_image(self, image: np.ndarray) -> tuple[np.ndarray, dict[str, int | float | str]]:
         image = np.asarray(image)
         if image.ndim == 2:
             image = np.tile(image[..., None], (1, 1, 3))
         image = image[..., :3]
-        scale_x = float(self.engine_width / image.shape[1])
-        scale_y = float(self.engine_height / image.shape[0])
-        if image.shape[1] != self.engine_width or image.shape[0] != self.engine_height:
-            image = cv2.resize(
-                image,
-                dsize=(self.engine_width, self.engine_height),
-                interpolation=cv2.INTER_LINEAR,
-            )
-        return image, scale_x, scale_y
+        transform = resolve_tensorrt_image_transform(
+            input_height=int(image.shape[0]),
+            input_width=int(image.shape[1]),
+            engine_height=self.engine_height,
+            engine_width=self.engine_width,
+        )
+        image = apply_tensorrt_image_transform(image, transform=transform)
+        return image, transform
 
     def run_pair(
         self,
@@ -351,14 +457,22 @@ class FastFoundationStereoTensorRTRunner:
         baseline_m: float,
         audit_mode: bool = False,
     ) -> dict[str, np.ndarray | float | list[list[float]]]:
-        left, scale_x, scale_y = self._prepare_image(left_image)
-        right, _, _ = self._prepare_image(right_image)
+        left, left_transform = self._prepare_image(left_image)
+        right, right_transform = self._prepare_image(right_image)
+        if left_transform != right_transform:
+            raise ValueError(
+                "Left/right TensorRT preprocessing transforms must match. "
+                f"Got {left_transform!r} vs {right_transform!r}."
+            )
 
         torch = self.torch
         left_tensor = torch.as_tensor(left).cuda().float()[None].permute(0, 3, 1, 2)
         right_tensor = torch.as_tensor(right).cuda().float()[None].permute(0, 3, 1, 2)
         disparity = self.model.forward(left_tensor, right_tensor)
         disparity_raw = disparity.data.cpu().numpy().reshape(self.engine_height, self.engine_width).astype(np.float32)
+        disparity_raw = undo_tensorrt_disparity_transform(disparity_raw, transform=left_transform)
+        scale_x = float(left_transform["scale_x"])
+        scale_y = float(left_transform["scale_y"])
         uniform_scale = scale_x if abs(scale_x - scale_y) <= 1e-6 else 1.0
         return build_disparity_products(
             disparity_raw,

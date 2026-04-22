@@ -22,6 +22,11 @@ from cameras_viewer_FFS import (
     _summarize_runtime_stats,
     _update_recent_frame_times,
 )
+from data_process.depth_backends.fast_foundation_stereo import (
+    apply_tensorrt_image_transform,
+    resolve_tensorrt_image_transform,
+    undo_tensorrt_disparity_transform,
+)
 
 
 class CamerasViewerFfsSmokeTest(unittest.TestCase):
@@ -228,14 +233,62 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
             stream_w=848,
             stream_h=480,
             worker_kwargs={
-                "trt_engine_height": 480,
+                "trt_engine_height": 448,
                 "trt_engine_width": 640,
             },
         )
         self.assertEqual(
             note,
-            "TensorRT engine 640x480; capture 848x480 will be resized before inference.",
+            "TensorRT engine 640x448; capture 848x480 will be resized before inference.",
         )
+
+    def test_tensorrt_startup_note_reports_symmetric_padding_for_848_capture(self) -> None:
+        note = _format_ffs_backend_startup_note(
+            runner_backend="tensorrt",
+            stream_w=848,
+            stream_h=480,
+            worker_kwargs={
+                "trt_engine_height": 480,
+                "trt_engine_width": 864,
+            },
+        )
+        self.assertEqual(
+            note,
+            "TensorRT engine 864x480; capture 848x480 will be symmetrically padded to 864x480 before inference.",
+        )
+
+    def test_tensorrt_transform_resolves_pad_for_848_capture_and_864_engine(self) -> None:
+        transform = resolve_tensorrt_image_transform(
+            input_height=480,
+            input_width=848,
+            engine_height=480,
+            engine_width=864,
+        )
+        self.assertEqual(transform["mode"], "pad")
+        self.assertEqual(transform["pad_left"], 8)
+        self.assertEqual(transform["pad_right"], 8)
+        self.assertEqual(transform["scale_x"], 1.0)
+        self.assertEqual(transform["scale_y"], 1.0)
+
+    def test_tensorrt_pad_transform_replication_and_unpad_are_deterministic(self) -> None:
+        transform = resolve_tensorrt_image_transform(
+            input_height=480,
+            input_width=848,
+            engine_height=480,
+            engine_width=864,
+        )
+        image = np.zeros((480, 848, 3), dtype=np.uint8)
+        image[:, 0, :] = 17
+        image[:, -1, :] = 29
+        padded = apply_tensorrt_image_transform(image, transform=transform)
+        self.assertEqual(padded.shape, (480, 864, 3))
+        self.assertTrue(np.all(padded[:, :8, :] == 17))
+        self.assertTrue(np.all(padded[:, -8:, :] == 29))
+
+        disparity = np.arange(480 * 864, dtype=np.float32).reshape(480, 864)
+        cropped = undo_tensorrt_disparity_transform(disparity, transform=transform)
+        self.assertEqual(cropped.shape, (480, 848))
+        np.testing.assert_array_equal(cropped, disparity[:, 8:-8])
 
 
 if __name__ == "__main__":
