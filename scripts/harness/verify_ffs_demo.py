@@ -145,7 +145,16 @@ def resolve_env_python(env_name: str) -> Path:
         capture_output=True,
         text=True,
     ).stdout.strip()
-    return Path(base) / "envs" / env_name / "python.exe"
+    env_root = Path(base) / "envs" / env_name
+    candidates = [
+        env_root / "bin" / "python",
+        env_root / "python.exe",
+        env_root / "Scripts" / "python.exe",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"Could not resolve python interpreter for conda env {env_name!r} under {env_root}")
 
 
 def run_command(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:

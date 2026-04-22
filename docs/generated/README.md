@@ -10,12 +10,14 @@ Current grouping:
 - `d455_stream_probe_results.json`
 - `d455_stream_probe_results.md`
 - `both_eval_30_frame_validation.md`
+- `wsl_realsense_rsusb_validation.md`
 
 These record what the current machine and D455 topology actually supported during probe or capture checks.
 
 ## FFS / Integration Validation
 
 - `ffs_demo_validation.md`
+- `wsl_env_bootstrap_validation.md`
 - `ffs_tensorrt_windows_validation.md`
 - `ffs_benchmark_tradeoff_validation.md`
 - `ffs_live_3cam_benchmark_validation.md`
