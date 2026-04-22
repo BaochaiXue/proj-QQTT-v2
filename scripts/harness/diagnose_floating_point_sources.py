@@ -23,6 +23,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera_ids", nargs="*", type=int, default=None)
     parser.add_argument("--use_float_ffs_depth_when_available", action="store_true")
     parser.add_argument("--ffs_native_like_postprocess", action="store_true")
+    parser.add_argument("--text_prompt", type=str, default=None)
+    parser.add_argument("--native_mask_root", type=Path, default=None)
+    parser.add_argument("--ffs_mask_root", type=Path, default=None)
     parser.add_argument("--radius_m", type=float, default=0.01)
     parser.add_argument("--nb_points", type=int, default=40)
     parser.add_argument("--edge_band_px", type=int, default=8)
@@ -36,6 +39,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     from data_process.visualization.floating_point_diagnostics import run_floating_point_source_diagnostics_workflow
+    from data_process.visualization.io_case import resolve_case_dirs
 
     output_dir = args.output_dir
     if output_dir is None:
@@ -43,6 +47,23 @@ def main() -> int:
             output_dir = args.aligned_root / args.case_name / "floating_point_diagnostics"
         else:
             output_dir = args.aligned_root / f"floating_point_diagnostics_{args.realsense_case}_vs_{args.ffs_case}"
+    native_mask_root = args.native_mask_root
+    ffs_mask_root = args.ffs_mask_root
+    if str(args.text_prompt or "").strip():
+        native_case_dir, ffs_case_dir, same_case_mode = resolve_case_dirs(
+            aligned_root=Path(args.aligned_root).resolve(),
+            case_name=args.case_name,
+            realsense_case=args.realsense_case,
+            ffs_case=args.ffs_case,
+        )
+        if native_mask_root is None:
+            candidate = native_case_dir / "sam31_masks"
+            if candidate.is_dir():
+                native_mask_root = candidate
+        if ffs_mask_root is None:
+            candidate = (native_case_dir if same_case_mode else ffs_case_dir) / "sam31_masks"
+            if candidate.is_dir():
+                ffs_mask_root = candidate
 
     result = run_floating_point_source_diagnostics_workflow(
         aligned_root=args.aligned_root,
@@ -63,6 +84,9 @@ def main() -> int:
         occlusion_depth_tol_m=args.occlusion_depth_tol_m,
         occlusion_depth_tol_ratio=args.occlusion_depth_tol_ratio,
         write_mp4=args.write_mp4,
+        text_prompt=args.text_prompt,
+        native_mask_root=native_mask_root,
+        ffs_mask_root=ffs_mask_root,
     )
     print(f"Floating-point diagnostics written to {result['output_dir']}")
     return 0

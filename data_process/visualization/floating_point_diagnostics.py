@@ -7,6 +7,11 @@ import cv2
 import numpy as np
 import open3d as o3d
 
+from .depth_colormap import (
+    DEFAULT_DEPTH_VIS_MAX_M,
+    DEFAULT_DEPTH_VIS_MIN_M,
+    colorize_depth_meters,
+)
 from .depth_diagnostics import compose_grid, get_case_camera_transform, label_tile, load_color_frame, resolve_camera_ids
 from .io_artifacts import write_json
 from .io_case import (
@@ -17,6 +22,7 @@ from .io_case import (
     resolve_case_dirs,
     select_frame_indices,
 )
+from .layouts import compose_registration_matrix_board
 
 
 PRIMARY_CAUSE_PRIORITY = ("occlusion", "edge", "dark", "other")
@@ -31,6 +37,19 @@ PRIMARY_CAUSE_LABELS = {
     "edge": "EDGE",
     "dark": "DARK",
     "other": "OTHER",
+}
+FLOATING_POINT_PROJECTION_RENDER_CONTRACT = {
+    "masked_mode_supported": True,
+    "comparison_board_layout": "4x3",
+    "comparison_board_rows": [
+        "Native RGB",
+        "Native Depth",
+        "FFS RGB",
+        "FFS Depth",
+    ],
+    "depth_colormap": "viewer_turbo",
+    "depth_vis_min_m": float(DEFAULT_DEPTH_VIS_MIN_M),
+    "depth_vis_max_m": float(DEFAULT_DEPTH_VIS_MAX_M),
 }
 
 
@@ -131,6 +150,7 @@ def load_frame_camera_clouds_with_metadata(
     selected_camera_ids = resolve_camera_ids(metadata, camera_ids)
     camera_clouds: list[dict[str, Any]] = []
     for camera_idx in selected_camera_ids:
+        color_path = case_dir / "color" / str(camera_idx) / f"{frame_idx}.png"
         color_image = load_color_frame(case_dir, camera_idx, frame_idx)
         _, depth_m, depth_info = load_depth_frame(
             case_dir=case_dir,
@@ -154,6 +174,7 @@ def load_frame_camera_clouds_with_metadata(
                 "serial": str(serial_numbers[camera_idx]),
                 "K_color": np.asarray(intrinsics[camera_idx], dtype=np.float32),
                 "c2w": np.asarray(c2w_list[camera_idx], dtype=np.float32),
+                "color_path": str(color_path),
                 "color_image": np.asarray(color_image, dtype=np.uint8),
                 "depth_m": np.asarray(depth_m, dtype=np.float32),
                 "points": point_payload["points"],
@@ -409,6 +430,39 @@ def _render_color_overlay(
     return cv2.addWeighted(overlay, 0.70, base, 0.30, 0.0)
 
 
+def _apply_mask_to_color_image(
+    color_image: np.ndarray,
+    *,
+    pixel_mask: np.ndarray | None,
+) -> np.ndarray:
+    image = np.asarray(color_image, dtype=np.uint8).copy()
+    if pixel_mask is None:
+        return image
+    masked = np.zeros_like(image)
+    mask = np.asarray(pixel_mask, dtype=bool)
+    masked[mask] = image[mask]
+    return masked
+
+
+def _render_depth_overlay(
+    depth_m: np.ndarray,
+    records: list[dict[str, Any]],
+    *,
+    pixel_mask: np.ndarray | None,
+    depth_vis_min_m: float,
+    depth_vis_max_m: float,
+) -> np.ndarray:
+    depth_vis = colorize_depth_meters(
+        np.asarray(depth_m, dtype=np.float32),
+        depth_min_m=float(depth_vis_min_m),
+        depth_max_m=float(depth_vis_max_m),
+    )
+    if pixel_mask is not None:
+        depth_vis = depth_vis.copy()
+        depth_vis[~np.asarray(pixel_mask, dtype=bool)] = 0
+    return _render_color_overlay(depth_vis, records)
+
+
 def _render_cause_heatmap(
     color_image: np.ndarray,
     records: list[dict[str, Any]],
@@ -485,33 +539,170 @@ def _compose_source_board(
     records: list[dict[str, Any]],
     tile_size: tuple[int, int],
     source_metrics: dict[str, Any],
+    pixel_mask_by_camera: dict[int, np.ndarray] | None,
+    depth_vis_min_m: float,
+    depth_vis_max_m: float,
 ) -> np.ndarray:
     overlay_tiles: list[np.ndarray] = []
-    heatmap_tiles: list[np.ndarray] = []
+    depth_tiles: list[np.ndarray] = []
     for camera_cloud in camera_clouds:
         camera_idx = int(camera_cloud["camera_idx"])
         camera_records = _camera_records(records, camera_idx)
+        pixel_mask = None if pixel_mask_by_camera is None else pixel_mask_by_camera.get(camera_idx)
         overlay_tiles.append(
             label_tile(
-                _render_color_overlay(camera_cloud["color_image"], camera_records),
-                f"Cam{camera_idx} Overlay | n={len(camera_records)}",
+                _render_color_overlay(
+                    _apply_mask_to_color_image(camera_cloud["color_image"], pixel_mask=pixel_mask),
+                    camera_records,
+                ),
+                f"Cam{camera_idx} RGB | n={len(camera_records)}",
                 tile_size,
             )
         )
-        heatmap_tiles.append(
+        depth_tiles.append(
             label_tile(
-                _render_cause_heatmap(camera_cloud["color_image"], camera_records),
-                f"Cam{camera_idx} Causes | {_short_cause_counts(camera_records)}",
+                _render_depth_overlay(
+                    camera_cloud["depth_m"],
+                    camera_records,
+                    pixel_mask=pixel_mask,
+                    depth_vis_min_m=depth_vis_min_m,
+                    depth_vis_max_m=depth_vis_max_m,
+                ),
+                f"Cam{camera_idx} Depth | {_short_cause_counts(camera_records)}",
                 tile_size,
             )
         )
-    board = compose_grid(overlay_tiles + heatmap_tiles, columns=max(1, len(camera_clouds)))
+    board = compose_grid(overlay_tiles + depth_tiles, columns=max(1, len(camera_clouds)))
     return _annotate_source_board(
         board,
         source_name=source_name,
         frame_idx=frame_idx,
         outlier_point_count=int(source_metrics["outlier_point_count"]),
         primary_cause_histogram=source_metrics["primary_cause_histogram"],
+    )
+
+
+def _resolve_masked_camera_clouds(
+    *,
+    case_dir: Path,
+    frame_idx: int,
+    camera_clouds: list[dict[str, Any]],
+    mask_root: str | Path | None,
+    text_prompt: str | None,
+) -> tuple[list[dict[str, Any]], dict[int, np.ndarray] | None, dict[int, dict[str, Any]], list[dict[str, Any]]]:
+    if mask_root is None or not str(text_prompt or "").strip():
+        return camera_clouds, None, {}, []
+    from .workflows.masked_pointcloud_compare import (
+        filter_camera_clouds_with_pixel_masks,
+        load_union_masks_for_camera_clouds,
+    )
+
+    pixel_mask_by_camera, debug_by_camera = load_union_masks_for_camera_clouds(
+        mask_root=mask_root,
+        camera_clouds=camera_clouds,
+        frame_token=str(frame_idx),
+        text_prompt=str(text_prompt),
+    )
+    masked_camera_clouds, mask_metrics = filter_camera_clouds_with_pixel_masks(
+        camera_clouds,
+        pixel_mask_by_camera=pixel_mask_by_camera,
+    )
+    return masked_camera_clouds, pixel_mask_by_camera, debug_by_camera, mask_metrics
+
+
+def _camera_cloud_map(camera_clouds: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    return {int(item["camera_idx"]): item for item in camera_clouds}
+
+
+def _resize_for_board(image: np.ndarray, *, tile_size: tuple[int, int]) -> np.ndarray:
+    tile_w, tile_h = [int(item) for item in tile_size]
+    return cv2.resize(np.asarray(image, dtype=np.uint8), (tile_w, tile_h), interpolation=cv2.INTER_AREA)
+
+
+def _compose_comparison_projection_board(
+    *,
+    frame_idx: int,
+    column_headers: list[str],
+    native_camera_clouds: list[dict[str, Any]],
+    native_records: list[dict[str, Any]],
+    native_pixel_mask_by_camera: dict[int, np.ndarray] | None,
+    native_metrics: dict[str, Any],
+    ffs_camera_clouds: list[dict[str, Any]],
+    ffs_records: list[dict[str, Any]],
+    ffs_pixel_mask_by_camera: dict[int, np.ndarray] | None,
+    ffs_metrics: dict[str, Any],
+    tile_size: tuple[int, int],
+    depth_vis_min_m: float,
+    depth_vis_max_m: float,
+) -> np.ndarray:
+    native_by_camera = _camera_cloud_map(native_camera_clouds)
+    ffs_by_camera = _camera_cloud_map(ffs_camera_clouds)
+    native_rgb_row: list[np.ndarray] = []
+    native_depth_row: list[np.ndarray] = []
+    ffs_rgb_row: list[np.ndarray] = []
+    ffs_depth_row: list[np.ndarray] = []
+    for camera_idx in [int(header.split("|", 1)[0].replace("Cam", "").strip()) for header in column_headers]:
+        native_camera = native_by_camera[camera_idx]
+        ffs_camera = ffs_by_camera[camera_idx]
+        native_records_cam = _camera_records(native_records, camera_idx)
+        ffs_records_cam = _camera_records(ffs_records, camera_idx)
+        native_mask = None if native_pixel_mask_by_camera is None else native_pixel_mask_by_camera.get(camera_idx)
+        ffs_mask = None if ffs_pixel_mask_by_camera is None else ffs_pixel_mask_by_camera.get(camera_idx)
+        native_rgb_row.append(
+            _resize_for_board(
+                _render_color_overlay(
+                    _apply_mask_to_color_image(native_camera["color_image"], pixel_mask=native_mask),
+                    native_records_cam,
+                ),
+                tile_size=tile_size,
+            )
+        )
+        native_depth_row.append(
+            _resize_for_board(
+                _render_depth_overlay(
+                    native_camera["depth_m"],
+                    native_records_cam,
+                    pixel_mask=native_mask,
+                    depth_vis_min_m=depth_vis_min_m,
+                    depth_vis_max_m=depth_vis_max_m,
+                ),
+                tile_size=tile_size,
+            )
+        )
+        ffs_rgb_row.append(
+            _resize_for_board(
+                _render_color_overlay(
+                    _apply_mask_to_color_image(ffs_camera["color_image"], pixel_mask=ffs_mask),
+                    ffs_records_cam,
+                ),
+                tile_size=tile_size,
+            )
+        )
+        ffs_depth_row.append(
+            _resize_for_board(
+                _render_depth_overlay(
+                    ffs_camera["depth_m"],
+                    ffs_records_cam,
+                    pixel_mask=ffs_mask,
+                    depth_vis_min_m=depth_vis_min_m,
+                    depth_vis_max_m=depth_vis_max_m,
+                ),
+                tile_size=tile_size,
+            )
+        )
+    return compose_registration_matrix_board(
+        title_lines=[
+            f"Floating Point Projection Compare | frame={int(frame_idx):04d}",
+            (
+                f"Native outliers={int(native_metrics['outlier_point_count'])} "
+                f"FFS outliers={int(ffs_metrics['outlier_point_count'])} | "
+                f"OCC=red EDGE=yellow DARK=orange OTHER=gray | "
+                f"viewer depth turbo [{float(depth_vis_min_m):.2f}, {float(depth_vis_max_m):.2f}] m"
+            ),
+        ],
+        row_headers=["Native RGB", "Native Depth", "FFS RGB", "FFS Depth"],
+        column_headers=column_headers,
+        image_rows=[native_rgb_row, native_depth_row, ffs_rgb_row, ffs_depth_row],
     )
 
 
@@ -532,8 +723,12 @@ def analyze_floating_point_source_frame(
     occlusion_depth_tol_m: float,
     occlusion_depth_tol_ratio: float,
     panel_frame_idx: int,
+    mask_root: str | Path | None = None,
+    text_prompt: str | None = None,
+    depth_vis_min_m: float = DEFAULT_DEPTH_VIS_MIN_M,
+    depth_vis_max_m: float = DEFAULT_DEPTH_VIS_MAX_M,
 ) -> dict[str, Any]:
-    camera_clouds = load_frame_camera_clouds_with_metadata(
+    full_camera_clouds = load_frame_camera_clouds_with_metadata(
         case_dir=case_dir,
         metadata=metadata,
         frame_idx=frame_idx,
@@ -542,6 +737,14 @@ def analyze_floating_point_source_frame(
         ffs_native_like_postprocess=ffs_native_like_postprocess,
         camera_ids=camera_ids,
     )
+    masked_camera_clouds, pixel_mask_by_camera, mask_debug_by_camera, mask_metrics = _resolve_masked_camera_clouds(
+        case_dir=case_dir,
+        frame_idx=frame_idx,
+        camera_clouds=full_camera_clouds,
+        mask_root=mask_root,
+        text_prompt=text_prompt,
+    )
+    camera_clouds = masked_camera_clouds
     fused_cloud = _fuse_camera_clouds(camera_clouds)
     outlier_indices = detect_radius_outlier_indices(
         fused_cloud["points"],
@@ -613,14 +816,21 @@ def analyze_floating_point_source_frame(
     board = _compose_source_board(
         source_name=source_name,
         frame_idx=frame_idx,
-        camera_clouds=camera_clouds,
+        camera_clouds=full_camera_clouds,
         records=records,
         tile_size=(320, 220),
         source_metrics=metrics,
+        pixel_mask_by_camera=pixel_mask_by_camera,
+        depth_vis_min_m=depth_vis_min_m,
+        depth_vis_max_m=depth_vis_max_m,
     )
     return {
         "frame_idx": int(frame_idx),
-        "camera_clouds": camera_clouds,
+        "camera_clouds": full_camera_clouds,
+        "masked_camera_clouds": masked_camera_clouds,
+        "pixel_mask_by_camera": pixel_mask_by_camera,
+        "mask_debug_by_camera": mask_debug_by_camera,
+        "mask_metrics": mask_metrics,
         "metrics": metrics,
         "records": records,
         "board": board,
@@ -691,6 +901,11 @@ def run_floating_point_source_diagnostics_workflow(
     occlusion_depth_tol_m: float = 0.02,
     occlusion_depth_tol_ratio: float = 0.03,
     write_mp4: bool = False,
+    text_prompt: str | None = None,
+    native_mask_root: str | Path | None = None,
+    ffs_mask_root: str | Path | None = None,
+    depth_vis_min_m: float = DEFAULT_DEPTH_VIS_MIN_M,
+    depth_vis_max_m: float = DEFAULT_DEPTH_VIS_MAX_M,
 ) -> dict[str, Any]:
     aligned_root = Path(aligned_root).resolve()
     output_dir = Path(output_dir).resolve()
@@ -703,6 +918,13 @@ def run_floating_point_source_diagnostics_workflow(
     native_metadata = load_case_metadata(native_case_dir)
     ffs_metadata = load_case_metadata(ffs_case_dir)
     selected_camera_ids = resolve_camera_ids(native_metadata, camera_ids)
+    masked_mode_enabled = bool(
+        str(text_prompt or "").strip()
+        and (
+            native_mask_root is not None
+            or ffs_mask_root is not None
+        )
+    )
     frame_pairs = select_frame_indices(
         native_count=get_frame_count(native_metadata),
         ffs_count=get_frame_count(ffs_metadata),
@@ -716,14 +938,18 @@ def run_floating_point_source_diagnostics_workflow(
     output_dir.mkdir(parents=True, exist_ok=True)
     native_frames_dir = output_dir / "native" / "frames"
     ffs_frames_dir = output_dir / "ffs" / "frames"
+    comparison_frames_dir = output_dir / "comparison_frames"
     native_frames_dir.mkdir(parents=True, exist_ok=True)
     ffs_frames_dir.mkdir(parents=True, exist_ok=True)
+    comparison_frames_dir.mkdir(parents=True, exist_ok=True)
 
     video_writer = None
     comparison_mp4_path = output_dir / "comparison.mp4"
+    single_board_path = output_dir / "00_outlier_projection_board.png"
     fps = int(native_metadata.get("fps", 10))
     native_per_frame_metrics: list[dict[str, Any]] = []
     ffs_per_frame_metrics: list[dict[str, Any]] = []
+    comparison_frame_paths: list[str] = []
     for panel_frame_idx, (native_frame_idx, ffs_frame_idx) in enumerate(frame_pairs):
         native_result = analyze_floating_point_source_frame(
             source_name="Native",
@@ -741,6 +967,10 @@ def run_floating_point_source_diagnostics_workflow(
             occlusion_depth_tol_m=occlusion_depth_tol_m,
             occlusion_depth_tol_ratio=occlusion_depth_tol_ratio,
             panel_frame_idx=panel_frame_idx,
+            mask_root=native_mask_root,
+            text_prompt=text_prompt,
+            depth_vis_min_m=depth_vis_min_m,
+            depth_vis_max_m=depth_vis_max_m,
         )
         ffs_result = analyze_floating_point_source_frame(
             source_name="FFS",
@@ -758,24 +988,51 @@ def run_floating_point_source_diagnostics_workflow(
             occlusion_depth_tol_m=occlusion_depth_tol_m,
             occlusion_depth_tol_ratio=occlusion_depth_tol_ratio,
             panel_frame_idx=panel_frame_idx,
+            mask_root=ffs_mask_root,
+            text_prompt=text_prompt,
+            depth_vis_min_m=depth_vis_min_m,
+            depth_vis_max_m=depth_vis_max_m,
+        )
+        column_headers = [
+            f"Cam{int(cloud['camera_idx'])} | {str(cloud['serial'])}"
+            for cloud in native_result["camera_clouds"]
+        ]
+        comparison_board = _compose_comparison_projection_board(
+            frame_idx=native_frame_idx,
+            column_headers=column_headers,
+            native_camera_clouds=native_result["camera_clouds"],
+            native_records=native_result["records"],
+            native_pixel_mask_by_camera=native_result["pixel_mask_by_camera"],
+            native_metrics=native_result["metrics"],
+            ffs_camera_clouds=ffs_result["camera_clouds"],
+            ffs_records=ffs_result["records"],
+            ffs_pixel_mask_by_camera=ffs_result["pixel_mask_by_camera"],
+            ffs_metrics=ffs_result["metrics"],
+            tile_size=(320, 220),
+            depth_vis_min_m=depth_vis_min_m,
+            depth_vis_max_m=depth_vis_max_m,
         )
         native_frame_path = native_frames_dir / f"{panel_frame_idx:06d}.png"
         ffs_frame_path = ffs_frames_dir / f"{panel_frame_idx:06d}.png"
+        comparison_frame_path = comparison_frames_dir / f"{panel_frame_idx:06d}.png"
         cv2.imwrite(str(native_frame_path), native_result["board"])
         cv2.imwrite(str(ffs_frame_path), ffs_result["board"])
+        cv2.imwrite(str(comparison_frame_path), comparison_board)
+        if len(frame_pairs) == 1:
+            cv2.imwrite(str(single_board_path), comparison_board)
         native_per_frame_metrics.append(native_result["metrics"])
         ffs_per_frame_metrics.append(ffs_result["metrics"])
+        comparison_frame_paths.append(str(comparison_frame_path.resolve()))
 
         if write_mp4:
-            combined = np.hstack([native_result["board"], ffs_result["board"]])
             if video_writer is None:
                 video_writer = cv2.VideoWriter(
                     str(comparison_mp4_path),
                     cv2.VideoWriter_fourcc(*"mp4v"),
                     float(max(1, fps)),
-                    (combined.shape[1], combined.shape[0]),
+                    (comparison_board.shape[1], comparison_board.shape[0]),
                 )
-            video_writer.write(combined)
+            video_writer.write(comparison_board)
     if video_writer is not None:
         video_writer.release()
 
@@ -797,17 +1054,27 @@ def run_floating_point_source_diagnostics_workflow(
             "occlusion_depth_tol_m": float(occlusion_depth_tol_m),
             "occlusion_depth_tol_ratio": float(occlusion_depth_tol_ratio),
             "write_mp4": bool(write_mp4),
+            "text_prompt": None if not str(text_prompt or "").strip() else str(text_prompt),
+            "depth_vis_min_m": float(depth_vis_min_m),
+            "depth_vis_max_m": float(depth_vis_max_m),
         },
+        "render_contract": dict(FLOATING_POINT_PROJECTION_RENDER_CONTRACT),
+        "masked_mode": bool(masked_mode_enabled),
         "native": {
             "per_frame_metrics_path": str((output_dir / "native" / "per_frame_metrics.json").resolve()),
             "frames_dir": str(native_frames_dir.resolve()),
             "aggregate": _aggregate_source_metrics(native_per_frame_metrics),
+            "mask_root": None if native_mask_root is None else str(Path(native_mask_root).resolve()),
         },
         "ffs": {
             "per_frame_metrics_path": str((output_dir / "ffs" / "per_frame_metrics.json").resolve()),
             "frames_dir": str(ffs_frames_dir.resolve()),
             "aggregate": _aggregate_source_metrics(ffs_per_frame_metrics),
+            "mask_root": None if ffs_mask_root is None else str(Path(ffs_mask_root).resolve()),
         },
+        "comparison_frames_dir": str(comparison_frames_dir.resolve()),
+        "comparison_frame_paths": comparison_frame_paths,
+        "comparison_board_path": str(single_board_path.resolve()) if len(frame_pairs) == 1 else None,
         "comparison_mp4": None if not write_mp4 else str(comparison_mp4_path.resolve()),
     }
     write_json(output_dir / "summary.json", summary)

@@ -352,20 +352,24 @@ Use this to judge:
 - which source depth produces lower reprojection residuals in the target camera
 - whether failures are localized to one camera pair or happen everywhere
 
-To diagnose where floating-point outliers come from without changing any aligned outputs:
+To diagnose where floating-point outliers come from and project them back onto masked RGB/depth views without changing any aligned outputs:
 
 ```bash
-python scripts/harness/diagnose_floating_point_sources.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --use_float_ffs_depth_when_available
+python scripts/harness/diagnose_floating_point_sources.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --text_prompt sloth --use_float_ffs_depth_when_available
 ```
 
 This diagnostic-only workflow:
 
 - loads aligned `color + depth` data only; it does not rewrite `depth/`, metadata, or calibration artifacts
-- applies a PhysTwin-style full-scene radius outlier rule independently to `Native` and `FFS`
-- projects each outlier back to its source color image and classifies it as `occlusion`, `edge`, `dark`, or `other`
+- can optionally reuse existing `sam31_masks` when `--text_prompt` is provided so all overlays are masked to the target object
+- applies a PhysTwin-style radius outlier rule independently to `Native` and `FFS`
+- projects each outlier back to its source RGB and depth image and classifies it as `occlusion`, `edge`, `dark`, or `other`
+- uses the same viewer depth colormap defaults for valid depth colors: Turbo over `[0.10, 3.00] m`
 - writes:
   - `native/frames/*.png`
   - `ffs/frames/*.png`
+  - `comparison_frames/*.png`
+  - `00_outlier_projection_board.png` for single-frame runs
   - `native/per_frame_metrics.json`
   - `ffs/per_frame_metrics.json`
   - `summary.json`
@@ -373,7 +377,7 @@ This diagnostic-only workflow:
 
 Use this to judge:
 
-- whether most outliers cluster around image/depth edges
+- whether most outliers cluster around the masked object boundary in RGB/depth
 - whether they are concentrated in dark image regions
 - whether they disappear under cross-view support and instead look like occlusion failures
 - which camera contributes most of the outliers on each source path
