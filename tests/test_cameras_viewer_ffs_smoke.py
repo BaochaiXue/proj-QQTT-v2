@@ -5,6 +5,7 @@ from collections import deque
 import queue
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -14,9 +15,11 @@ from cameras_viewer_FFS import (
     DEFAULT_FFS_TRT_MODEL_DIR,
     _compute_measured_fps,
     _drain_shared_worker_next_request,
+    _format_depth_debug_lines,
     _format_ffs_backend_startup_note,
     _format_runtime_stats_lines,
     _format_panel_label_lines,
+    _render_panel,
     _fit_grid_for_window,
     _put_latest,
     _reproject_ffs_depth_to_color,
@@ -71,6 +74,24 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
             ffs_sample_count=1,
         )
         self.assertEqual(line2, "capture: warming | ffs: warming")
+
+    def test_depth_debug_lines_are_deterministic(self) -> None:
+        line1, line2 = _format_depth_debug_lines(
+            ffs_fps=3.14,
+            ffs_sample_count=5,
+            worker_error=None,
+        )
+        self.assertEqual(line1, "FFS depth render disabled")
+        self.assertEqual(line2, "ffs fps: 3.1")
+
+    def test_depth_debug_lines_surface_error_state(self) -> None:
+        line1, line2 = _format_depth_debug_lines(
+            ffs_fps=0.0,
+            ffs_sample_count=1,
+            worker_error="RuntimeError: sample",
+        )
+        self.assertEqual(line1, "FFS error")
+        self.assertEqual(line2, "ffs fps: warming")
 
     def test_put_latest_replaces_pending_item(self) -> None:
         q: queue.Queue[object] = queue.Queue(maxsize=1)
@@ -180,6 +201,45 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(runtime_stats["aggregate_capture_fps"], 66.2, places=6)
         self.assertAlmostEqual(runtime_stats["aggregate_ffs_fps"], 5.3, places=6)
 
+    def test_render_panel_placeholder_mode_skips_depth_colormap(self) -> None:
+        cam_state = {
+            "serial": "239222300433",
+            "usb": "3.2",
+            "stream_w": 848,
+            "stream_h": 480,
+            "fps": 30.0,
+            "capture_fps": 15.2,
+            "capture_frame_times": deque([0.0, 0.1]),
+            "ffs_fps": 3.1,
+            "ffs_frame_times": deque([0.0, 0.3]),
+            "latest_color": np.zeros((480, 848, 3), dtype=np.uint8),
+            "latest_ffs_depth_m": np.zeros((480, 848), dtype=np.float32),
+            "worker_error": None,
+            "lock": threading.Lock(),
+        }
+        with mock.patch("cameras_viewer_FFS.colorize_depth_meters") as colorize_mock:
+            with mock.patch("cameras_viewer_FFS._make_depth_debug_bottom", return_value="bottom") as bottom_mock:
+                sentinel_panel = np.zeros((960, 848, 3), dtype=np.uint8)
+                with mock.patch("cameras_viewer_FFS._compose_panel", return_value=sentinel_panel) as compose_mock:
+                    result = _render_panel(
+                        cam_state,
+                        width=848,
+                        height=480,
+                        depth_vis_min_m=0.1,
+                        depth_vis_max_m=3.0,
+                        depth_render_mode="fps_placeholder",
+                    )
+        self.assertIs(result, sentinel_panel)
+        colorize_mock.assert_not_called()
+        bottom_mock.assert_called_once_with(
+            width=848,
+            height=480,
+            ffs_fps=3.1,
+            ffs_sample_count=2,
+            worker_error=None,
+        )
+        compose_mock.assert_called_once()
+
     def test_runtime_stats_lines_are_deterministic(self) -> None:
         runtime_stats = {
             "camera_count": 2,
@@ -259,6 +319,7 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         self.assertEqual(args.ffs_trt_model_dir, DEFAULT_FFS_TRT_MODEL_DIR)
         self.assertEqual(args.ffs_trt_mode, "two_stage")
         self.assertEqual(args.ffs_worker_mode, "per_camera")
+        self.assertEqual(args.depth_render_mode, "colormap")
 
     def test_parse_args_accepts_shared_worker_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -285,6 +346,19 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
                 args = parse_args()
 
         self.assertEqual(args.ffs_trt_mode, "single_engine")
+
+    def test_parse_args_accepts_depth_placeholder_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            with mock.patch(
+                "sys.argv",
+                ["cameras_viewer_FFS.py", "--ffs_repo", str(repo), "--depth-render-mode", "fps_placeholder"],
+            ):
+                args = parse_args()
+
+        self.assertEqual(args.depth_render_mode, "fps_placeholder")
 
     def test_resolve_tensorrt_worker_kwargs_loads_engine_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

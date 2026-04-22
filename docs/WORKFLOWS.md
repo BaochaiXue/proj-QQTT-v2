@@ -44,6 +44,13 @@ Use this as a debug viewer only:
 - overlay = negotiated stream profile plus live `capture` and `ffs` fps
 - preview favors freshness over completeness and may drop stale stereo work while FFS catches up
 
+When you want a cheaper FFS-viewer throughput probe, replace the lower FFS
+depth colormap with a black placeholder that only reports received FFS FPS:
+
+```bash
+python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --depth-render-mode fps_placeholder
+```
+
 Live FFS mode selection is now:
 
 - `--ffs_backend tensorrt --ffs_trt_mode two_stage`

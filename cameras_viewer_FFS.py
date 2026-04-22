@@ -28,6 +28,7 @@ from cameras_viewer import (
     _enumerate_d400_devices,
     _fit_grid_for_display,
     _fit_to_canvas,
+    _make_message_bottom,
     _runtime_imports,
     _tile_panels,
     _update_recent_frame_times,
@@ -58,6 +59,7 @@ CAPTURE_QUEUE_TIMEOUT_MS = 100
 RESULT_QUEUE_TIMEOUT_S = 0.1
 SHARED_WORKER_IDLE_SLEEP_S = 0.005
 DEFAULT_FFS_TRT_MODEL_DIR = Path(__file__).resolve().parent / "data" / "ffs_proof_of_life" / "trt_two_stage_864x480_wsl"
+DEPTH_RENDER_MODE_CHOICES = ("colormap", "fps_placeholder")
 
 
 def _intrinsics_to_matrix(intrinsics: Any) -> list[list[float]]:
@@ -172,6 +174,39 @@ def _format_panel_label_lines(
         f" | ffs: {_rate_label(fps_value=ffs_fps, sample_count=ffs_sample_count)}"
     )
     return line1, line2
+
+
+def _format_depth_debug_lines(
+    *,
+    ffs_fps: float,
+    ffs_sample_count: int,
+    worker_error: str | None,
+) -> Tuple[str, str]:
+    return (
+        "FFS error" if worker_error else "FFS depth render disabled",
+        f"ffs fps: {_rate_label(fps_value=ffs_fps, sample_count=ffs_sample_count)}",
+    )
+
+
+def _make_depth_debug_bottom(
+    *,
+    width: int,
+    height: int,
+    ffs_fps: float,
+    ffs_sample_count: int,
+    worker_error: str | None,
+) -> Any:
+    color_bgr = (0, 0, 255) if worker_error else (180, 180, 180)
+    return _make_message_bottom(
+        width=width,
+        height=height,
+        message_lines=_format_depth_debug_lines(
+            ffs_fps=ffs_fps,
+            ffs_sample_count=ffs_sample_count,
+            worker_error=worker_error,
+        ),
+        color_bgr=color_bgr,
+    )
 
 
 def _summarize_runtime_stats(per_camera_stats: List[dict[str, Any]]) -> dict[str, Any]:
@@ -877,7 +912,15 @@ def _build_camera_state(
     }
 
 
-def _render_panel(cam_state: dict[str, Any], *, width: int, height: int, depth_vis_min_m: float, depth_vis_max_m: float) -> Any:
+def _render_panel(
+    cam_state: dict[str, Any],
+    *,
+    width: int,
+    height: int,
+    depth_vis_min_m: float,
+    depth_vis_max_m: float,
+    depth_render_mode: str,
+) -> Any:
     with cam_state["lock"]:
         serial = str(cam_state["serial"])
         usb_desc = str(cam_state["usb"])
@@ -907,7 +950,15 @@ def _render_panel(cam_state: dict[str, Any], *, width: int, height: int, depth_v
         return _empty_panel(width, height, label_lines)
     render_width = stream_w
     render_height = stream_h
-    if latest_ffs_depth_m is None:
+    if str(depth_render_mode) == "fps_placeholder":
+        lower = _make_depth_debug_bottom(
+            width=render_width,
+            height=render_height,
+            ffs_fps=ffs_fps,
+            ffs_sample_count=ffs_sample_count,
+            worker_error=worker_error,
+        )
+    elif latest_ffs_depth_m is None:
         lower = _make_waiting_bottom(
             render_width,
             render_height,
@@ -944,6 +995,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gain", type=float, default=60.0)
     parser.add_argument("--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M)
     parser.add_argument("--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M)
+    parser.add_argument("--depth-render-mode", choices=DEPTH_RENDER_MODE_CHOICES, default="colormap")
     parser.add_argument("--ffs_backend", choices=("pytorch", "tensorrt"), default="tensorrt")
     parser.add_argument("--ffs_repo", type=Path, required=True)
     parser.add_argument("--ffs_model_path", type=Path, default=None)
@@ -1181,6 +1233,7 @@ def main() -> int:
                         height=int(args.height),
                         depth_vis_min_m=float(args.depth_vis_min_m),
                         depth_vis_max_m=float(args.depth_vis_max_m),
+                        depth_render_mode=str(args.depth_render_mode),
                     )
                 )
             grid = _tile_panels(panels, panel_h, panel_w)
