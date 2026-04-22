@@ -632,6 +632,15 @@ Deterministic checks:
 python scripts/harness/check_all.py
 ```
 
+This default path is the fast deterministic profile and is intended to finish in
+under one minute on a healthy repo environment.
+
+When you need the broader legacy validation surface, run:
+
+```bash
+python scripts/harness/check_all.py --full
+```
+
 Manual hardware validation checklist:
 
 - [docs/HARDWARE_VALIDATION.md](/c:/Users/zhang/proj-QQTT/docs/HARDWARE_VALIDATION.md)

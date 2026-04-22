@@ -195,3 +195,99 @@ Interpretation:
 - the generated single-engine directory is directly consumable by `cameras_viewer_FFS.py`
 - the current single-camera viewer path no longer hits the earlier `ModuleNotFoundError: No module named 'Utils'`
 - the first `5s` sample window was still in warmup, but the second window produced stable FFS results
+
+## FP32 Follow-Up Build
+
+Goal:
+
+- build a standalone FP32 variant without adding a second `.engine` to the existing FP16 directory
+
+Artifact directory:
+
+- `data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp32`
+
+Build command:
+
+```text
+/home/zhangxinjie/miniconda3/envs/ffs-standalone/bin/python - <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, '/home/zhangxinjie/proj-QQTT-v2')
+from scripts.harness.verify_ffs_tensorrt_wsl import build_engine_from_onnx
+out_dir = Path('/home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp32')
+build_engine_from_onnx(
+    onnx_path=out_dir / 'fast_foundationstereo.onnx',
+    engine_path=out_dir / 'fast_foundationstereo.engine',
+    log_path=out_dir / 'single_engine_build.log',
+    workspace_gib=8,
+    fp16=False,
+)
+print('fp32 single-engine TensorRT build complete')
+PY
+```
+
+Smoke validation command:
+
+```text
+/home/zhangxinjie/miniconda3/envs/qqtt-ffs-compat/bin/python - <<'PY'
+from pathlib import Path
+import sys
+import cv2
+import imageio.v2 as imageio
+import numpy as np
+
+ROOT = Path('/home/zhangxinjie/proj-QQTT-v2')
+FFS_REPO = Path('/home/zhangxinjie/Fast-FoundationStereo')
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(FFS_REPO) not in sys.path:
+    sys.path.insert(0, str(FFS_REPO))
+
+from data_process.depth_backends.fast_foundation_stereo import FastFoundationStereoSingleEngineTensorRTRunner
+from Utils import depth2xyzmap, o3d, toOpen3dCloud, vis_disparity
+
+out_dir = ROOT / 'data' / 'ffs_proof_of_life' / 'trt_single_engine_864x480_wsl_fp32' / 'demo_out'
+out_dir.mkdir(parents=True, exist_ok=True)
+left_file = FFS_REPO / 'demo_data' / 'left.png'
+right_file = FFS_REPO / 'demo_data' / 'right.png'
+intrinsic_file = FFS_REPO / 'demo_data' / 'K.txt'
+runner = FastFoundationStereoSingleEngineTensorRTRunner(
+    ffs_repo=FFS_REPO,
+    model_dir=ROOT / 'data' / 'ffs_proof_of_life' / 'trt_single_engine_864x480_wsl_fp32',
+)
+left = imageio.imread(left_file)[..., :3]
+right = imageio.imread(right_file)[..., :3]
+with open(intrinsic_file, 'r', encoding='utf-8') as handle:
+    lines = handle.readlines()
+K = np.array(list(map(float, lines[0].rstrip().split())), dtype=np.float32).reshape(3, 3)
+baseline = float(lines[1])
+result = runner.run_pair(left, right, K_ir_left=K, baseline_m=baseline, audit_mode=True)
+print('audit_stats', result['audit_stats'])
+PY
+```
+
+FP32 outputs:
+
+- `data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp32/fast_foundationstereo.onnx`
+- `data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp32/fast_foundationstereo.yaml`
+- `data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp32/fast_foundationstereo.engine`
+- `data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp32/single_engine_build.log`
+- `data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp32/demo_out/disp_vis.png`
+- `data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp32/demo_out/depth_meter.npy`
+- `data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp32/demo_out/cloud.ply`
+
+FP32 results:
+
+- build completed successfully with `fp16=False`
+- engine size: about `77.7 MB`
+- TensorRT reported engine generation time: about `35.8 s`
+- upstream demo-pair smoke produced:
+  - `finite_ratio=1.0`
+  - `positive_ratio=1.0`
+  - `min_disparity≈36.76`
+  - `max_disparity≈123.58`
+
+Interpretation:
+
+- the FP32 single-engine artifact does not reproduce the earlier “right-edge stripe only” failure seen with the FP16 engine
+- keeping FP32 in its own directory preserves the viewer's “exactly one `.engine`” single-engine discovery contract

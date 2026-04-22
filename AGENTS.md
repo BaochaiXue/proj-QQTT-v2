@@ -47,6 +47,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 3. Update docs and tests in the same change when behavior changes.
 4. Run deterministic checks before finishing:
    - `python scripts/harness/check_all.py`
+   - use `python scripts/harness/check_all.py --full` when the change is broad enough that the default quick profile is not sufficient
 5. For external dependency proof-of-life work, record exact commands and outcomes under `docs/generated/`.
 6. For FFS changes, keep weights external and validate both deterministic tests and manual hardware outcomes.
 7. For comparison visualization changes, validate the calibration loader and non-interactive render path.

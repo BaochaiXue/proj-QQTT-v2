@@ -16,6 +16,15 @@ Rule of thumb:
 - `check_scope.py`
 - `check_visual_architecture.py`
 
+`check_all.py` now has two deterministic profiles:
+
+- default `python scripts/harness/check_all.py`
+  - fast quick profile
+  - intended to finish in under one minute on a healthy repo environment
+- explicit `python scripts/harness/check_all.py --full`
+  - broader legacy validation surface
+  - use for larger refactors or when you need the old wide regression net
+
 ### Hardware / External Proof-of-Life
 
 - `verify_ffs_demo.py`

@@ -66,6 +66,7 @@
   - `conda run -n qqtt-ffs-compat python scripts/harness/visual_compare_rerun.py --help`
   - `conda run -n qqtt-ffs-compat python -m unittest -v tests.test_sam31_mask_helper_smoke`
   - `conda run -n qqtt-ffs-compat python scripts/harness/check_all.py`
+  - `conda run -n qqtt-ffs-compat python scripts/harness/check_all.py --full`
 - Expected use:
   - D455 raw IR probe
   - saved-pair FFS inference
@@ -73,6 +74,7 @@
   - integrated `stereo_ir -> ffs` camera-only workflow
   - optional live TensorRT-backed FFS viewer using prebuilt `864x480` two-stage engines with `848x480 -> 864x480` symmetric pad/unpad handling
   - optional multi-frame Rerun point-cloud diagnostics
+  - fast default deterministic validation with optional full validation escalation
 
 ## WSL RealSense Raw USB Access
 
