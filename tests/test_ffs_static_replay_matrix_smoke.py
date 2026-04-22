@@ -51,9 +51,10 @@ class StaticReplayMatrixSmokeTests(unittest.TestCase):
 
     def test_trt_scale_policy(self) -> None:
         self.assertEqual(resolve_trt_size_for_scale(1.0), (480, 864))
+        self.assertEqual(resolve_trt_size_for_scale(0.75), (384, 640))
         self.assertEqual(resolve_trt_size_for_scale(0.5), (256, 448))
         with self.assertRaises(ValueError):
-            resolve_trt_size_for_scale(0.75)
+            resolve_trt_size_for_scale(0.33)
 
     def test_overall_mean_uses_all_nine_values(self) -> None:
         fps_by_round = {
@@ -83,8 +84,8 @@ class StaticReplayMatrixSmokeTests(unittest.TestCase):
 
     def test_current_ppt_contract_is_two_slides_per_experiment(self) -> None:
         experiment_count = len(MODEL_NAMES) * len(SCALE_VALUES) * len(VALID_ITERS_VALUES) * len(ENGINE_NAMES)
-        self.assertEqual(experiment_count, 24)
-        self.assertEqual(experiment_count * 2, 48)
+        self.assertEqual(experiment_count, 54)
+        self.assertEqual(experiment_count * 1, 54)
 
 
 if __name__ == "__main__":

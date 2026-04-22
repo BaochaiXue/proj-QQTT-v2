@@ -121,3 +121,72 @@ Use this setup for:
 - loading upstream-compatible `sam3` checkpoints
 
 Do not treat this validation as proof that arbitrary external `sam3.1`-named checkpoints are plug-compatible. The local `multiplex` checkpoint appears to come from a different model layout or forked training/runtime surface.
+
+## Update: Official Repo Upgrade
+
+### Additional Repair Commands
+
+The original `sam3==0.1.3` PyPI install was replaced with the latest official `facebookresearch/sam3` code from GitHub, and the local shell/runtime wiring was updated to point QQTT at the downloaded Hugging Face checkpoint:
+
+```text
+conda run -n qqtt-ffs-compat python -m pip uninstall -y sam3
+conda run -n qqtt-ffs-compat python -m pip install --no-deps --force-reinstall git+https://github.com/facebookresearch/sam3.git@main
+hf download facebook/sam3.1 sam3.1_multiplex.pt --local-dir /home/zhangxinjie/.cache/huggingface/qqtt_sam31
+curl -L https://openaipublic.azureedge.net/clip/bpe_simple_vocab_16e6.txt.gz -o /home/zhangxinjie/.cache/huggingface/qqtt_sam31/bpe_simple_vocab_16e6.txt.gz
+```
+
+Persistent shell wiring:
+
+- `hf` is now reachable from the default shell via `/home/zhangxinjie/miniconda3/bin/hf`
+- `QQTT_SAM31_CHECKPOINT=/home/zhangxinjie/.cache/huggingface/qqtt_sam31/sam3.1_multiplex.pt`
+- the BPE vocab resolves from the official package asset path:
+  - `/home/zhangxinjie/miniconda3/envs/qqtt-ffs-compat/lib/python3.10/site-packages/sam3/assets/bpe_simple_vocab_16e6.txt.gz`
+
+### Post-Upgrade Verification
+
+Installed package origin:
+
+```text
+conda run -n qqtt-ffs-compat python -m pip show sam3
+```
+
+Observed result:
+
+- package name: `sam3`
+- installed version string: `0.1.0`
+- source: `git+https://github.com/facebookresearch/sam3.git@main`
+- resolved commit during install:
+  - `2e0009e23f0ad0fbcbd0488df893d30d5c8c2565`
+
+Helper smoke:
+
+```text
+bash -lc '/home/zhangxinjie/miniconda3/envs/qqtt-ffs-compat/bin/python - <<\"PY\"
+from scripts.harness.sam31_mask_helper import build_sam31_video_predictor, resolve_sam31_bpe_path
+print("bpe", resolve_sam31_bpe_path())
+predictor, checkpoint = build_sam31_video_predictor(
+    checkpoint_path=None,
+    async_loading_frames=False,
+    compile_model=False,
+    max_num_objects=1,
+)
+print(checkpoint)
+if hasattr(predictor, "shutdown"):
+    predictor.shutdown()
+print("sam31_predictor_init_ok")
+PY'
+```
+
+Observed result:
+
+- `resolve_sam31_checkpoint_path()` resolved:
+  - `/home/zhangxinjie/.cache/huggingface/qqtt_sam31/sam3.1_multiplex.pt`
+- `resolve_sam31_bpe_path()` resolved:
+  - `/home/zhangxinjie/miniconda3/envs/qqtt-ffs-compat/lib/python3.10/site-packages/sam3/assets/bpe_simple_vocab_16e6.txt.gz`
+- predictor initialization completed successfully
+- the official repo emitted informational missing-key logs during model construction, but the predictor object was created and the smoke ended with:
+  - `sam31_predictor_init_ok`
+
+### Updated Conclusion
+
+After replacing the PyPI wheel with the latest official `facebookresearch/sam3` code, the local `qqtt-ffs-compat` environment can now initialize QQTT's `SAM 3.1` helper against the downloaded Hugging Face `sam3.1_multiplex.pt` checkpoint.

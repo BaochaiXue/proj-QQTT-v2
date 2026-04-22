@@ -63,8 +63,8 @@ ROUND_CASE_REFS = (
     "static/ffs_30_static_round3_20260414",
 )
 MODEL_NAMES = ("23-36-37", "20-26-39", "20-30-48")
-SCALE_VALUES = (1.0, 0.5)
-VALID_ITERS_VALUES = (4, 2)
+SCALE_VALUES = (1.0, 0.75, 0.5)
+VALID_ITERS_VALUES = (8, 4, 2)
 ENGINE_NAMES = ("single_engine_fp32", "two_stage_fp16")
 CAMERA_IDS = (0, 1, 2)
 FRAME_IDX_VISUAL_DEFAULT = 10
@@ -158,6 +158,8 @@ def format_scale_token(scale: float) -> str:
 def resolve_trt_size_for_scale(scale: float) -> tuple[int, int]:
     if math.isclose(float(scale), 1.0):
         return 480, 864
+    if math.isclose(float(scale), 0.75):
+        return 384, 640
     if math.isclose(float(scale), 0.5):
         return 256, 448
     raise ValueError(f"Unsupported TRT scale policy: {scale}")
@@ -931,6 +933,33 @@ def build_results_row(
     return row
 
 
+def build_results_row_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    config = dict(summary["config"])
+    fps_by_round = {
+        str(round_label): {int(camera_idx): float(value) for camera_idx, value in round_values.items()}
+        for round_label, round_values in dict(summary["fps_by_round"]).items()
+    }
+    experiment_dir = Path(str(summary["pcd_board_path"])).resolve().parent
+    return build_results_row(
+        config=ExperimentConfig(
+            experiment_id=str(config["experiment_id"]),
+            engine=str(config["engine"]),
+            model_name=str(config["model_name"]),
+            model_path=str(config["model_path"]),
+            scale=float(config["scale"]),
+            valid_iters=int(config["valid_iters"]),
+            max_disp=int(config["max_disp"]),
+            engine_height=int(config["engine_height"]),
+            engine_width=int(config["engine_width"]),
+            artifact_dir=str(config["artifact_dir"]),
+        ),
+        fps_by_round=fps_by_round,
+        rgb_board_path=Path(str(summary["rgb_board_path"])),
+        pcd_board_path=Path(str(summary["pcd_board_path"])),
+        experiment_dir=experiment_dir,
+    )
+
+
 def write_results_csv(*, csv_path: Path, rows: list[dict[str, Any]]) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
@@ -1055,24 +1084,11 @@ def export_pptx(
         _add_textbox(
             slide=slide,
             left=Inches(0.45),
-            top=Inches(0.35),
+            top=Inches(0.12),
             width=Inches(12.0),
-            height=Inches(6.7),
+            height=Inches(1.0),
             lines=summary_lines,
-            font_size_pt=20,
-            bold_first=True,
-        )
-
-        slide = prs.slides.add_slide(blank_layout)
-        _add_white_background(slide)
-        _add_textbox(
-            slide=slide,
-            left=Inches(0.45),
-            top=Inches(0.15),
-            width=Inches(12.0),
-            height=Inches(0.35),
-            lines=["Frame 10 Masked PCD 3x3"],
-            font_size_pt=18,
+            font_size_pt=11,
             bold_first=True,
         )
         _add_fitted_picture(
@@ -1080,6 +1096,7 @@ def export_pptx(
             image_path=Path(row["pcd_board_path"]),
             slide_width=prs.slide_width,
             slide_height=prs.slide_height,
+            top_margin_in=1.1,
         )
 
     prs.save(str(pptx_path))
@@ -1141,6 +1158,11 @@ def run_experiment_matrix(args: argparse.Namespace) -> dict[str, Any]:
     for config in configs:
         experiment_dir = experiments_root / config.experiment_id
         experiment_dir.mkdir(parents=True, exist_ok=True)
+        existing_summary_path = experiment_dir / "summary.json"
+        if existing_summary_path.is_file():
+            existing_summary = json.loads(existing_summary_path.read_text(encoding="utf-8"))
+            success_rows.append(build_results_row_from_summary(existing_summary))
+            continue
         success, build_log, build_error = ensure_trt_artifact(
             config=config,
             ffs_repo=ffs_repo,
