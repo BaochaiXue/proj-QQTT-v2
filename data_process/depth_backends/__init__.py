@@ -19,12 +19,18 @@ from .geometry import (
     unproject_ir_depth,
     write_ffs_intrinsic_file,
 )
-from .fast_foundation_stereo import FastFoundationStereoRunner, apply_remove_invisible_mask
+from .fast_foundation_stereo import (
+    FastFoundationStereoRunner,
+    FastFoundationStereoTensorRTRunner,
+    apply_remove_invisible_mask,
+    load_tensorrt_model_config,
+)
 from .ffs_audit import compute_disparity_audit_stats, derive_ir_right_to_color, summarize_left_right_audit
 
 __all__ = [
     "FfsBenchmarkConfig",
     "FastFoundationStereoRunner",
+    "FastFoundationStereoTensorRTRunner",
     "apply_remove_invisible_mask",
     "align_depth_to_color",
     "build_tradeoff_summary",
@@ -35,6 +41,7 @@ __all__ = [
     "expand_benchmark_configs",
     "format_ffs_intrinsic_text",
     "infer_model_label",
+    "load_tensorrt_model_config",
     "project_to_color",
     "quantize_depth_with_invalid_zero",
     "rasterize_nearest_depth",

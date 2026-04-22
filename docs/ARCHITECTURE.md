@@ -61,6 +61,7 @@ The repo is intentionally small.
 - `data_process/visualization/views.py`
 - `data_process/visualization/workflows/**`
 - `scripts/harness/visual_compare_masked_pointcloud.py`
+- `scripts/harness/visual_compare_masked_camera_views.py`
 - `scripts/harness/visual_compare_depth_triplet_ply.py`
 - `scripts/harness/visual_compare_depth_triplet_video.py`
 - `scripts/harness/visual_compare_depth_panels.py`
@@ -227,6 +228,10 @@ The fused point-cloud visualization is now split into four user-facing workflows
   - single-frame `Native` / `FFS` before-vs-after SAM 3.1 mask compare
   - keeps one shared crop and one shared oblique Open3D view across all 4 panels
   - reads or generates QQTT-local `sam31_masks` sidecars without introducing a PhysTwin runtime dependency
+- `visual_compare_masked_camera_views.py`
+  - single-frame masked `Native` vs masked `FFS` compare under the 3 original calibrated camera views
+  - uses exact camera `c2w` position/forward/up per column rather than a shared oblique view
+  - writes one fixed-view `2x3` Open3D board plus per-view debug renders
 - `visual_compare_turntable.py`
   - primary single-frame object-centric coverage-aware compare
   - explicit camera-frusta visualization from real `c2w`

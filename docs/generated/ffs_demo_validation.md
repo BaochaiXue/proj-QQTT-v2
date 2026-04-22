@@ -8,7 +8,7 @@
 ## Command
 
 ```text
-conda run -n ffs-standalone python C:\Users\zhang\AppData\Local\Temp\tmp4wpc1x7f\run_demo_wrapper.py C:\Users\zhang\external\Fast-FoundationStereo\scripts\run_demo.py --model_dir C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --left_file C:\Users\zhang\external\Fast-FoundationStereo\demo_data\left.png --right_file C:\Users\zhang\external\Fast-FoundationStereo\demo_data\right.png --intrinsic_file C:\Users\zhang\external\Fast-FoundationStereo\demo_data\K.txt --out_dir C:\Users\zhang\proj-QQTT\data\ffs_proof_of_life\official_demo --scale 1.0 --valid_iters 8 --max_disp 192 --get_pc 1 --remove_invisible 0 --denoise_cloud 0
+conda run -n ffs-standalone python C:\Users\zhang\AppData\Local\Temp\tmpc28ou60n\run_demo_wrapper.py C:\Users\zhang\external\Fast-FoundationStereo\scripts\run_demo.py --model_dir C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --left_file C:\Users\zhang\external\Fast-FoundationStereo\demo_data\left.png --right_file C:\Users\zhang\external\Fast-FoundationStereo\demo_data\right.png --intrinsic_file C:\Users\zhang\external\Fast-FoundationStereo\demo_data\K.txt --out_dir C:\Users\zhang\proj-QQTT\data\ffs_proof_of_life\official_demo --scale 1.0 --valid_iters 8 --max_disp 192 --get_pc 1 --remove_invisible 0 --denoise_cloud 0
 ```
 
 ## Verified Outputs

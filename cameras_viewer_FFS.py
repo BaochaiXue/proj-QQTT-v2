@@ -31,7 +31,12 @@ from cameras_viewer import (
     _tile_panels,
     _update_recent_frame_times,
 )
-from data_process.depth_backends import FastFoundationStereoRunner, align_depth_to_color
+from data_process.depth_backends import (
+    FastFoundationStereoRunner,
+    FastFoundationStereoTensorRTRunner,
+    align_depth_to_color,
+    load_tensorrt_model_config,
+)
 from data_process.visualization.depth_colormap import (
     DEFAULT_DEPTH_VIS_MAX_M,
     DEFAULT_DEPTH_VIS_MIN_M,
@@ -357,6 +362,71 @@ def _reproject_ffs_depth_to_color(
     )
 
 
+def _resolve_ffs_worker_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    backend = str(args.ffs_backend)
+    if not args.ffs_repo.exists():
+        raise FileNotFoundError(f"Missing --ffs_repo: {args.ffs_repo}")
+
+    worker_kwargs: dict[str, Any] = {
+        "runner_backend": backend,
+        "ffs_repo": str(args.ffs_repo.resolve()),
+        "model_path": None,
+        "ffs_scale": float(args.ffs_scale),
+        "ffs_valid_iters": int(args.ffs_valid_iters),
+        "ffs_max_disp": int(args.ffs_max_disp),
+        "trt_model_dir": None,
+        "trt_root": None,
+        "trt_engine_height": None,
+        "trt_engine_width": None,
+    }
+    if backend == "pytorch":
+        if args.ffs_model_path is None:
+            raise ValueError("--ffs_model_path is required for --ffs_backend pytorch")
+        if not args.ffs_model_path.exists():
+            raise FileNotFoundError(f"Missing --ffs_model_path: {args.ffs_model_path}")
+        worker_kwargs["model_path"] = str(args.ffs_model_path.resolve())
+        return worker_kwargs
+    if backend != "tensorrt":
+        raise ValueError(f"Unsupported --ffs_backend: {backend}")
+
+    if args.ffs_trt_model_dir is None:
+        raise ValueError("--ffs_trt_model_dir is required for --ffs_backend tensorrt")
+    if not args.ffs_trt_model_dir.exists():
+        raise FileNotFoundError(f"Missing --ffs_trt_model_dir: {args.ffs_trt_model_dir}")
+    for engine_name in ("feature_runner.engine", "post_runner.engine"):
+        engine_path = args.ffs_trt_model_dir / engine_name
+        if not engine_path.exists():
+            raise FileNotFoundError(f"Missing TensorRT engine: {engine_path}")
+    cfg = load_tensorrt_model_config(args.ffs_trt_model_dir)
+    worker_kwargs["trt_model_dir"] = str(args.ffs_trt_model_dir.resolve())
+    worker_kwargs["trt_engine_height"] = int(cfg["image_size"][0])
+    worker_kwargs["trt_engine_width"] = int(cfg["image_size"][1])
+    if args.ffs_trt_root is not None:
+        if not args.ffs_trt_root.exists():
+            raise FileNotFoundError(f"Missing --ffs_trt_root: {args.ffs_trt_root}")
+        worker_kwargs["trt_root"] = str(args.ffs_trt_root.resolve())
+    return worker_kwargs
+
+
+def _format_ffs_backend_startup_note(
+    *,
+    runner_backend: str,
+    stream_w: int,
+    stream_h: int,
+    worker_kwargs: dict[str, Any],
+) -> str | None:
+    if runner_backend != "tensorrt":
+        return None
+    engine_h = int(worker_kwargs["trt_engine_height"])
+    engine_w = int(worker_kwargs["trt_engine_width"])
+    if engine_w == int(stream_w) and engine_h == int(stream_h):
+        return f"TensorRT engine {engine_w}x{engine_h} matches capture size."
+    return (
+        f"TensorRT engine {engine_w}x{engine_h}; "
+        f"capture {int(stream_w)}x{int(stream_h)} will be resized before inference."
+    )
+
+
 def _capture_loop(
     cam_state: dict[str, Any],
     *,
@@ -438,23 +508,41 @@ def _ffs_worker_loop(
     serial: str,
     request_queue: Any,
     result_queue: Any,
+    runner_backend: str,
     ffs_repo: str,
-    model_path: str,
+    model_path: str | None,
     ffs_scale: float,
     ffs_valid_iters: int,
     ffs_max_disp: int,
+    trt_model_dir: str | None,
+    trt_root: str | None,
+    trt_engine_height: int | None,
+    trt_engine_width: int | None,
     geometry: dict[str, Any],
     output_shape: tuple[int, int],
 ) -> None:
     result_frame_times: deque[float] = deque()
     try:
-        runner = FastFoundationStereoRunner(
-            ffs_repo=ffs_repo,
-            model_path=model_path,
-            scale=ffs_scale,
-            valid_iters=ffs_valid_iters,
-            max_disp=ffs_max_disp,
-        )
+        if runner_backend == "pytorch":
+            if model_path is None:
+                raise ValueError("Missing model_path for PyTorch FFS backend.")
+            runner = FastFoundationStereoRunner(
+                ffs_repo=ffs_repo,
+                model_path=model_path,
+                scale=ffs_scale,
+                valid_iters=ffs_valid_iters,
+                max_disp=ffs_max_disp,
+            )
+        elif runner_backend == "tensorrt":
+            if trt_model_dir is None:
+                raise ValueError("Missing trt_model_dir for TensorRT FFS backend.")
+            runner = FastFoundationStereoTensorRTRunner(
+                ffs_repo=ffs_repo,
+                model_dir=trt_model_dir,
+                trt_root=trt_root,
+            )
+        else:
+            raise ValueError(f"Unsupported FFS backend: {runner_backend}")
     except Exception as exc:
         _put_latest(
             result_queue,
@@ -659,11 +747,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gain", type=float, default=60.0)
     parser.add_argument("--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M)
     parser.add_argument("--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M)
+    parser.add_argument("--ffs_backend", choices=("pytorch", "tensorrt"), default="pytorch")
     parser.add_argument("--ffs_repo", type=Path, required=True)
-    parser.add_argument("--ffs_model_path", type=Path, required=True)
+    parser.add_argument("--ffs_model_path", type=Path, default=None)
     parser.add_argument("--ffs_scale", type=float, default=1.0)
     parser.add_argument("--ffs_valid_iters", type=int, default=8)
     parser.add_argument("--ffs_max_disp", type=int, default=192)
+    parser.add_argument("--ffs_trt_model_dir", type=Path, default=None)
+    parser.add_argument("--ffs_trt_root", type=Path, default=None)
     parser.add_argument("--duration-s", type=float, default=0.0)
     parser.add_argument("--stats-log-interval-s", type=float, default=0.0)
     return parser.parse_args()
@@ -678,10 +769,7 @@ def main() -> int:
             f"--depth-vis-max-m must be greater than --depth-vis-min-m. "
             f"Got {args.depth_vis_min_m=} {args.depth_vis_max_m=}"
         )
-    if not args.ffs_repo.exists():
-        raise FileNotFoundError(f"Missing --ffs_repo: {args.ffs_repo}")
-    if not args.ffs_model_path.exists():
-        raise FileNotFoundError(f"Missing --ffs_model_path: {args.ffs_model_path}")
+    worker_runner_kwargs = _resolve_ffs_worker_kwargs(args)
 
     ctx = rs.context()
     devices = _enumerate_d400_devices(ctx)
@@ -738,11 +826,7 @@ def main() -> int:
                 "serial": serial,
                 "request_queue": request_queue,
                 "result_queue": result_queue,
-                "ffs_repo": str(args.ffs_repo.resolve()),
-                "model_path": str(args.ffs_model_path.resolve()),
-                "ffs_scale": float(args.ffs_scale),
-                "ffs_valid_iters": int(args.ffs_valid_iters),
-                "ffs_max_disp": int(args.ffs_max_disp),
+                **worker_runner_kwargs,
                 "geometry": geometry,
                 "output_shape": (int(stream_h), int(stream_w)),
             },
@@ -788,9 +872,18 @@ def main() -> int:
         print(
             f"Started {serial} usb={usb_desc or 'unknown'} "
             f"at {stream_w}x{stream_h}@{fps_used} "
+            f"backend={args.ffs_backend} "
             f"(AE={ae}, EXP={exp}, GAIN={g}, target_exp={target_exposure})",
             flush=True,
         )
+        startup_note = _format_ffs_backend_startup_note(
+            runner_backend=str(worker_runner_kwargs["runner_backend"]),
+            stream_w=int(stream_w),
+            stream_h=int(stream_h),
+            worker_kwargs=worker_runner_kwargs,
+        )
+        if startup_note:
+            print(f"[info {serial}] {startup_note}", flush=True)
 
     if not cams:
         print("Failed to start any camera.", flush=True)

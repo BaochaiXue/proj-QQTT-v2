@@ -23,6 +23,8 @@
 - Current validated torch stack:
   - `torch==2.7.0+cu128`
   - `torchvision==0.22.0+cu128`
+- Current optional TensorRT add-on:
+  - `tensorrt-cu12==10.16.1.11`
 - Current optional visualization add-on:
   - `rerun-sdk==0.31.2`
 - Validation commands:
@@ -37,4 +39,5 @@
   - saved-pair FFS inference
   - geometry / scale conversion
   - integrated `stereo_ir -> ffs` camera-only workflow
+  - optional live TensorRT-backed FFS viewer using prebuilt two-stage engines
   - optional multi-frame Rerun point-cloud diagnostics

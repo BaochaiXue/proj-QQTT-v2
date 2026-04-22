@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import argparse
 from collections import deque
 import queue
+from pathlib import Path
+import tempfile
 import unittest
 
 import numpy as np
 
 from cameras_viewer_FFS import (
     _compute_measured_fps,
+    _format_ffs_backend_startup_note,
     _format_runtime_stats_lines,
     _format_panel_label_lines,
     _put_latest,
     _reproject_ffs_depth_to_color,
+    _resolve_ffs_worker_kwargs,
     _summarize_runtime_stats,
     _update_recent_frame_times,
 )
@@ -148,6 +153,78 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         self.assertEqual(
             lines[2],
             "[stats cam1 239222303506] capture=33.1 ffs=2.7 infer_ms=376.8 seq_gap=13 error=RuntimeError: sample",
+        )
+
+    def test_resolve_pytorch_worker_kwargs_keeps_existing_runtime_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            model_path = root / "model.pth"
+            model_path.write_bytes(b"stub")
+            args = argparse.Namespace(
+                ffs_backend="pytorch",
+                ffs_repo=repo,
+                ffs_model_path=model_path,
+                ffs_scale=0.75,
+                ffs_valid_iters=4,
+                ffs_max_disp=192,
+                ffs_trt_model_dir=None,
+                ffs_trt_root=None,
+            )
+            worker_kwargs = _resolve_ffs_worker_kwargs(args)
+
+        self.assertEqual(worker_kwargs["runner_backend"], "pytorch")
+        self.assertEqual(worker_kwargs["model_path"], str(model_path.resolve()))
+        self.assertAlmostEqual(worker_kwargs["ffs_scale"], 0.75)
+        self.assertEqual(worker_kwargs["ffs_valid_iters"], 4)
+        self.assertEqual(worker_kwargs["ffs_max_disp"], 192)
+        self.assertIsNone(worker_kwargs["trt_model_dir"])
+
+    def test_resolve_tensorrt_worker_kwargs_loads_engine_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            trt_model_dir = root / "trt_model"
+            trt_model_dir.mkdir()
+            (trt_model_dir / "onnx.yaml").write_text(
+                "image_size: [480, 640]\nvalid_iters: 4\nmax_disp: 192\n",
+                encoding="utf-8",
+            )
+            (trt_model_dir / "feature_runner.engine").write_bytes(b"stub")
+            (trt_model_dir / "post_runner.engine").write_bytes(b"stub")
+            args = argparse.Namespace(
+                ffs_backend="tensorrt",
+                ffs_repo=repo,
+                ffs_model_path=None,
+                ffs_scale=1.0,
+                ffs_valid_iters=8,
+                ffs_max_disp=256,
+                ffs_trt_model_dir=trt_model_dir,
+                ffs_trt_root=None,
+            )
+            worker_kwargs = _resolve_ffs_worker_kwargs(args)
+
+        self.assertEqual(worker_kwargs["runner_backend"], "tensorrt")
+        self.assertEqual(worker_kwargs["trt_model_dir"], str(trt_model_dir.resolve()))
+        self.assertEqual(worker_kwargs["trt_engine_height"], 480)
+        self.assertEqual(worker_kwargs["trt_engine_width"], 640)
+        self.assertIsNone(worker_kwargs["model_path"])
+
+    def test_tensorrt_startup_note_reports_resize_when_engine_differs(self) -> None:
+        note = _format_ffs_backend_startup_note(
+            runner_backend="tensorrt",
+            stream_w=848,
+            stream_h=480,
+            worker_kwargs={
+                "trt_engine_height": 480,
+                "trt_engine_width": 640,
+            },
+        )
+        self.assertEqual(
+            note,
+            "TensorRT engine 640x480; capture 848x480 will be resized before inference.",
         )
 
 

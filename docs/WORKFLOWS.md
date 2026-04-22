@@ -386,6 +386,40 @@ Use this when the question is specifically:
 - do we get a cleaner object-focused compare after masking?
 - how much point count is removed by masking per camera and per source?
 
+For single-frame masked point-cloud diagnosis under the 3 original calibrated camera views:
+
+```bash
+python scripts/harness/visual_compare_masked_camera_views.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --text_prompt sloth
+```
+
+This workflow:
+
+- reuses the same QQTT-local `sam31_masks` resolution / generation policy as `visual_compare_masked_pointcloud.py`
+- uses the 3 real calibrated camera extrinsics from `calibrate.pkl`
+- fixes one exact original camera view per column:
+  - `Cam0`
+  - `Cam1`
+  - `Cam2`
+- keeps one shared masked-object crop across all 6 panels
+- renders one `2x3` Open3D board:
+  - top row = masked `Native`
+  - bottom row = masked `FFS`
+- writes:
+  - `01_masked_camera_view_board.png`
+  - `summary.json`
+  - `debug/native_cam*.png`
+  - `debug/ffs_cam*.png`
+  - `debug/native_mask_overlay_cam*.png`
+  - `debug/ffs_mask_overlay_cam*.png`
+  - `debug/native_masked_fused.ply`
+  - `debug/ffs_masked_fused.ply`
+
+Use this when the question is specifically:
+
+- how do `Native` and `FFS` look from the exact 3 original camera viewpoints?
+- if we fix the camera extrinsics, where does FFS geometry break relative to native depth?
+- does masking still leave visible floating fragments when judged from the original camera views?
+
 For professor-facing 3-view point-cloud match diagnosis, start with the single match board:
 
 ```bash

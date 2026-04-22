@@ -96,6 +96,47 @@ def build_camera_pose_view_configs(
     return configs
 
 
+def build_original_camera_view_configs(
+    *,
+    c2w_list: list[np.ndarray],
+    serial_numbers: list[str],
+    look_distance: float = 1.0,
+    camera_ids: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    if len(serial_numbers) != len(c2w_list):
+        raise ValueError("serial_numbers must match c2w_list length.")
+    selected_ids = list(range(len(c2w_list))) if camera_ids is None else [int(idx) for idx in camera_ids]
+    if float(look_distance) <= 1e-6:
+        raise ValueError("look_distance must be positive.")
+
+    configs: list[dict[str, Any]] = []
+    for camera_idx in selected_ids:
+        if camera_idx < 0 or camera_idx >= len(c2w_list):
+            raise ValueError(f"camera_idx out of range: {camera_idx}")
+        transform = np.asarray(c2w_list[camera_idx], dtype=np.float32).reshape(4, 4)
+        camera_position = transform[:3, 3].astype(np.float32)
+        right = normalize_vector(transform[:3, 0], np.array([1.0, 0.0, 0.0], dtype=np.float32))
+        up = normalize_vector(-transform[:3, 1], np.array([0.0, 0.0, 1.0], dtype=np.float32))
+        forward = normalize_vector(transform[:3, 2], np.array([0.0, 0.0, 1.0], dtype=np.float32))
+        center = camera_position + forward * float(look_distance)
+        configs.append(
+            {
+                "view_name": f"cam{camera_idx}",
+                "label": f"Cam{camera_idx} | {serial_numbers[camera_idx]}",
+                "camera_idx": int(camera_idx),
+                "serial": str(serial_numbers[camera_idx]),
+                "center": center.astype(np.float32),
+                "camera_position": camera_position.astype(np.float32),
+                "right": right.astype(np.float32),
+                "up": up.astype(np.float32),
+                "forward": forward.astype(np.float32),
+                "look_distance": float(look_distance),
+                "radius": float(look_distance),
+            }
+        )
+    return configs
+
+
 def build_orbit_basis(
     *,
     camera_poses: list[dict[str, Any]],
