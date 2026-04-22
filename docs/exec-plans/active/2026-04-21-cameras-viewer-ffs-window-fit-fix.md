@@ -39,7 +39,7 @@ collapse the multi-camera grid into a tiny thumbnail in the corner of a large wi
 ## Completion Checklist
 
 - [x] isolate the unstable window-fit path
-- [ ] patch the viewer
-- [ ] add regression coverage
-- [ ] run targeted tests
-- [ ] run deterministic checks
+- [x] patch the viewer
+- [x] add regression coverage
+- [x] run targeted tests
+- [x] run deterministic checks
