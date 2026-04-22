@@ -124,12 +124,11 @@ conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix
 This workflow is the current offline realtime-proxy harness for the three static FFS rounds. It:
 
 - replays `static/ffs_30_static_round1_20260410_235202`, `round2`, and `round3`
-- searches the fixed `3 models × 2 scales × 2 valid_iters × 2 TRT engines = 24` matrix
+- searches the fixed `3 models × 3 scales × 3 valid_iters × 2 TRT engines = 54` matrix
 - measures `30 / elapsed_seconds` FPS after a `10`-frame warmup for every `round × camera`
 - writes one shared masked RGB `3x3` board artifact, one masked FFS-only PCD `3x3` board per experiment, `results.csv`, `manifest.json`, and a ranked PPTX
-- the PPT itself now contains only `2` slides per experiment:
-  - summary
-  - frame-10 masked PCD panel
+- the PPT itself now contains only `1` slide per experiment:
+  - top-of-slide summary text + frame-10 masked PCD panel
 
 Important:
 

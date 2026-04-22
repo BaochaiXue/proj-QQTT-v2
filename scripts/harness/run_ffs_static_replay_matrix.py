@@ -1011,11 +1011,12 @@ def _add_textbox(
     text_box = slide.shapes.add_textbox(left, top, width, height)
     frame = text_box.text_frame
     frame.clear()
+    frame.word_wrap = True
     for line_idx, line in enumerate(lines):
         paragraph = frame.paragraphs[0] if line_idx == 0 else frame.add_paragraph()
         paragraph.text = str(line)
         paragraph.alignment = PP_ALIGN.LEFT
-        paragraph.space_after = Pt(4)
+        paragraph.space_after = Pt(1)
         for run in paragraph.runs:
             run.font.size = Pt(font_size_pt)
             run.font.name = "Arial"
@@ -1030,6 +1031,8 @@ def _add_fitted_picture(
     slide_width: int,
     slide_height: int,
     top_margin_in: float = 0.65,
+    bottom_margin_in: float = 0.25,
+    side_margin_in: float = 0.35,
 ) -> None:
     from pptx.util import Inches
 
@@ -1038,14 +1041,17 @@ def _add_fitted_picture(
         raise FileNotFoundError(f"Missing PPT image: {image_path}")
     slide_w = int(slide_width)
     slide_h = int(slide_height)
-    max_w = slide_w - Inches(0.6)
-    max_h = slide_h - Inches(top_margin_in) - Inches(0.3)
+    top_margin = int(Inches(top_margin_in))
+    bottom_margin = int(Inches(bottom_margin_in))
+    side_margin = int(Inches(side_margin_in))
+    max_w = slide_w - side_margin * 2
+    max_h = slide_h - top_margin - bottom_margin
     img_h, img_w = image.shape[:2]
     scale = min(float(max_w) / float(img_w), float(max_h) / float(img_h))
     width = int(round(img_w * scale))
     height = int(round(img_h * scale))
     left = int((slide_w - width) / 2)
-    top = int((slide_h - height) / 2 + Inches(0.15))
+    top = int(top_margin + (max_h - height) / 2)
     slide.shapes.add_picture(str(image_path), left, top, width=width, height=height)
 
 
@@ -1071,32 +1077,29 @@ def export_pptx(
         slide = prs.slides.add_slide(blank_layout)
         _add_white_background(slide)
         summary_lines = [
-            row["experiment_id"],
-            f"engine={row['engine']}",
-            f"model={row['model_name']}",
-            f"scale={row['scale']}",
-            f"valid_iters={row['valid_iters']}",
-            f"overall_mean_fps={row['overall_mean_fps']:.2f}",
-            f"Round 1 FPS: cam1={row['round1_cam1_fps']:.2f}, cam2={row['round1_cam2_fps']:.2f}, cam3={row['round1_cam3_fps']:.2f}",
-            f"Round 2 FPS: cam1={row['round2_cam1_fps']:.2f}, cam2={row['round2_cam2_fps']:.2f}, cam3={row['round2_cam3_fps']:.2f}",
-            f"Round 3 FPS: cam1={row['round3_cam1_fps']:.2f}, cam2={row['round3_cam2_fps']:.2f}, cam3={row['round3_cam3_fps']:.2f}",
+            f"engine={row['engine']} | model={row['model_name']} | scale={row['scale']} | valid_iters={row['valid_iters']} | overall_mean_fps={row['overall_mean_fps']:.2f}",
+            f"Round 1 FPS | cam1={row['round1_cam1_fps']:.2f} | cam2={row['round1_cam2_fps']:.2f} | cam3={row['round1_cam3_fps']:.2f}",
+            f"Round 2 FPS | cam1={row['round2_cam1_fps']:.2f} | cam2={row['round2_cam2_fps']:.2f} | cam3={row['round2_cam3_fps']:.2f}",
+            f"Round 3 FPS | cam1={row['round3_cam1_fps']:.2f} | cam2={row['round3_cam2_fps']:.2f} | cam3={row['round3_cam3_fps']:.2f}",
         ]
         _add_textbox(
             slide=slide,
             left=Inches(0.45),
             top=Inches(0.12),
-            width=Inches(12.0),
-            height=Inches(1.0),
+            width=Inches(12.4),
+            height=Inches(0.72),
             lines=summary_lines,
-            font_size_pt=11,
-            bold_first=True,
+            font_size_pt=9.5,
+            bold_first=False,
         )
         _add_fitted_picture(
             slide=slide,
             image_path=Path(row["pcd_board_path"]),
             slide_width=prs.slide_width,
             slide_height=prs.slide_height,
-            top_margin_in=1.1,
+            top_margin_in=0.92,
+            bottom_margin_in=0.22,
+            side_margin_in=0.32,
         )
 
     prs.save(str(pptx_path))

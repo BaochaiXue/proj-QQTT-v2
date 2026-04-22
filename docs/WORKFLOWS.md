@@ -154,8 +154,8 @@ This harness is the current offline realtime-proxy workflow for the three static
   - `static/ffs_30_static_round3_20260414`
 - expands the fixed matrix:
   - `model ∈ {23-36-37, 20-26-39, 20-30-48}`
-  - `scale ∈ {1.0, 0.5}`
-  - `valid_iters ∈ {4, 2}`
+  - `scale ∈ {1.0, 0.75, 0.5}`
+  - `valid_iters ∈ {8, 4, 2}`
   - `engine ∈ {single_engine_fp32, two_stage_fp16}`
 - benchmarks batch-1 replay with warmup frames `0..9`, measured frames `0..29`, and `FPS = 30 / elapsed_seconds`
 - exports:
@@ -165,9 +165,9 @@ This harness is the current offline realtime-proxy workflow for the three static
   - `experiments/<experiment_id>/summary.json`
   - `ppt/ffs_static_replay_matrix.pptx`
 - PPT layout:
-  - `2` slides per experiment
-  - page 1 = summary + 9 FPS values
-  - page 2 = frame-10 masked FFS-only `3x3` PCD board
+  - `1` slide per experiment
+  - top-of-slide summary text = setting + 9 FPS values
+  - main image = frame-10 masked FFS-only `3x3` PCD board
 
 Operator notes:
 
@@ -213,6 +213,42 @@ Use this when the question is specifically:
 - where is FFS uncertain on the static object, per camera?
 - do `margin` and `max_softmax` show the same uncertain regions?
 - how does masked confidence compare across static rounds under the exact same layout?
+
+Static-round masked FFS confidence + PCD panels:
+
+```bash
+conda run -n qqtt-ffs-compat python scripts/harness/visualize_ffs_static_confidence_pcd_panels.py
+```
+
+This offline static-only workflow:
+
+- reruns PyTorch FFS on frame `0` for:
+  - `static/ffs_30_static_round1_20260410_235202`
+  - `static/ffs_30_static_round2_20260414`
+  - `static/ffs_30_static_round3_20260414`
+- reuses the same existing static stuffed-animal FFS mask cache as the depth-row confidence workflow
+- derives two confidence proxies from the captured classifier logits:
+  - `margin`
+  - `max_softmax`
+- aligns confidence to color coordinates
+- rebuilds a fused masked FFS point cloud from the same rerun depth and renders it under the 3 original color camera pinhole views
+- writes one `3x3` board per metric and per round:
+  - row 1 = masked RGB for cameras `0/1/2`
+  - row 2 = fused masked FFS PCD rendered from cameras `0/1/2`
+  - row 3 = masked color-aligned confidence for cameras `0/1/2`
+- uses a fixed `[0.0, 1.0]` confidence legend with `COLORMAP_VIRIDIS`
+- writes:
+  - `round1/margin_board.png`
+  - `round1/max_softmax_board.png`
+  - `round1/summary.json`
+  - same for `round2/` and `round3/`
+  - top-level `summary.json`
+
+Use this when the question is specifically:
+
+- does low-confidence FFS geometry also look weak in the fused masked point cloud?
+- how does the fused masked FFS object look from the exact 3 RGB camera views?
+- do `margin` and `max_softmax` confidence highlight the same failure regions as the PCD row?
 
 Realistic live 3-camera FFS benchmark:
 

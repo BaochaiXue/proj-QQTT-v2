@@ -82,7 +82,7 @@ class StaticReplayMatrixSmokeTests(unittest.TestCase):
         self.assertGreater(board.shape[0], 3 * tile.shape[0])
         self.assertGreater(board.shape[1], 3 * tile.shape[1])
 
-    def test_current_ppt_contract_is_two_slides_per_experiment(self) -> None:
+    def test_current_ppt_contract_is_one_slide_per_experiment(self) -> None:
         experiment_count = len(MODEL_NAMES) * len(SCALE_VALUES) * len(VALID_ITERS_VALUES) * len(ENGINE_NAMES)
         self.assertEqual(experiment_count, 54)
         self.assertEqual(experiment_count * 1, 54)

@@ -64,6 +64,7 @@ The repo is intentionally small.
 - `scripts/harness/visual_compare_masked_pointcloud.py`
 - `scripts/harness/visual_compare_masked_camera_views.py`
 - `scripts/harness/visualize_ffs_static_confidence_panels.py`
+- `scripts/harness/visualize_ffs_static_confidence_pcd_panels.py`
 - `scripts/harness/visual_compare_depth_triplet_ply.py`
 - `scripts/harness/visual_compare_depth_triplet_video.py`
 - `scripts/harness/visual_compare_depth_panels.py`
@@ -84,6 +85,7 @@ The repo is intentionally small.
 - `scripts/harness/benchmark_ffs_configs.py`
 - `scripts/harness/run_ffs_static_replay_matrix.py`
 - `scripts/harness/visualize_ffs_static_confidence_panels.py`
+- `scripts/harness/visualize_ffs_static_confidence_pcd_panels.py`
 - `scripts/harness/cleanup_different_types_cases.py`
 - `tests/test_record_data_align_smoke.py`
 - `docs/*`
@@ -168,7 +170,7 @@ The FFS benchmark helper stack is intentionally split like this:
   - repeated CUDA benchmark execution
   - JSON / markdown benchmark report writing
 - `scripts/harness/run_ffs_static_replay_matrix.py`
-  - fixed 24-config TRT matrix expansion
+  - fixed 54-config TRT matrix expansion
   - static-round replay across all 3 rounds and all 3 cameras
   - mask caching / static fallback handling
   - masked RGB and FFS-only masked PCD board generation
@@ -177,6 +179,10 @@ The FFS benchmark helper stack is intentionally split like this:
   - static-round frame-0 PyTorch FFS rerun for all 3 static rounds
   - classifier-logit-derived `margin` and `max_softmax` confidence maps
   - masked `3x3` RGB / depth / confidence board export per round
+- `scripts/harness/visualize_ffs_static_confidence_pcd_panels.py`
+  - static-round frame-0 PyTorch FFS rerun for all 3 static rounds
+  - fused masked FFS point cloud rendering from the 3 original camera pinhole views
+  - masked `3x3` RGB / PCD / confidence board export per round
 
 This keeps the deterministic summary logic testable without requiring CUDA while leaving the actual model execution in the thin harness CLI.
 
