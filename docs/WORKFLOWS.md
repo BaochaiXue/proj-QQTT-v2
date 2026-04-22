@@ -90,6 +90,33 @@ Shared-worker live preview:
 python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_worker_mode shared
 ```
 
+Strict 3-camera batch live preview:
+
+- `--ffs_batch_mode strict3`
+  - requires `--ffs_worker_mode shared`
+  - requires exactly 3 active cameras
+  - batches the 3 latest camera IR pairs into one shared FFS forward pass
+- PyTorch batch mode reuses the current checkpoint path
+- TensorRT batch mode requires batch-3 artifact directories instead of the current batch-1 directories
+
+PyTorch batch example:
+
+```bash
+python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth --ffs_worker_mode shared --ffs_batch_mode strict3
+```
+
+Two-stage TensorRT batch example:
+
+```bash
+python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl --ffs_worker_mode shared --ffs_batch_mode strict3
+```
+
+Single-engine TensorRT batch example:
+
+```bash
+python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32 --ffs_worker_mode shared --ffs_batch_mode strict3
+```
+
 Saved-pair FFS speed / tradeoff benchmark:
 
 ```bash

@@ -122,6 +122,83 @@ def build_disparity_products(
     return result
 
 
+def split_disparity_batch_output_maps(
+    disparity_raw: np.ndarray,
+    *,
+    expected_batch_size: int,
+) -> list[np.ndarray]:
+    disparity_raw = np.asarray(disparity_raw, dtype=np.float32)
+    batch_size = int(expected_batch_size)
+    if batch_size <= 0:
+        raise ValueError(f"expected_batch_size must be positive, got {expected_batch_size}.")
+
+    if disparity_raw.ndim == 4:
+        if disparity_raw.shape[0] != batch_size:
+            raise ValueError(
+                "Expected TensorRT disparity batch dimension to match requested batch size. "
+                f"Got shape={disparity_raw.shape} expected_batch_size={batch_size}."
+            )
+        if disparity_raw.shape[1] != 1:
+            raise ValueError(f"Expected single-channel disparity output, got shape={disparity_raw.shape}.")
+        return [np.asarray(disparity_raw[idx, 0], dtype=np.float32) for idx in range(batch_size)]
+
+    if disparity_raw.ndim == 3:
+        if disparity_raw.shape[0] != batch_size:
+            raise ValueError(
+                "Expected disparity batch dimension to match requested batch size. "
+                f"Got shape={disparity_raw.shape} expected_batch_size={batch_size}."
+            )
+        return [np.asarray(disparity_raw[idx], dtype=np.float32) for idx in range(batch_size)]
+
+    if disparity_raw.ndim == 2:
+        if batch_size != 1:
+            raise ValueError(
+                "Expected a batched disparity output but received a single map. "
+                f"Got shape={disparity_raw.shape} expected_batch_size={batch_size}."
+            )
+        return [np.asarray(disparity_raw, dtype=np.float32)]
+
+    raise ValueError(f"Expected 2D/3D/4D disparity output, got shape={disparity_raw.shape}.")
+
+
+def finalize_tensorrt_disparity_batch_outputs(
+    disparity_raw: np.ndarray,
+    *,
+    transform: dict[str, int | float | str],
+    batch_samples: list[dict[str, Any]],
+    valid_iters: int,
+    max_disp: int,
+) -> list[dict[str, np.ndarray | float | list[list[float]]]]:
+    if not batch_samples:
+        raise ValueError("Expected at least one batch sample.")
+
+    disparity_maps = split_disparity_batch_output_maps(
+        disparity_raw,
+        expected_batch_size=len(batch_samples),
+    )
+    scale_x = float(transform["scale_x"])
+    scale_y = float(transform["scale_y"])
+    uniform_scale = scale_x if abs(scale_x - scale_y) <= 1e-6 else 1.0
+
+    outputs: list[dict[str, np.ndarray | float | list[list[float]]]] = []
+    for sample, disparity_map in zip(batch_samples, disparity_maps):
+        disparity_map = undo_tensorrt_disparity_transform(disparity_map, transform=transform)
+        outputs.append(
+            build_disparity_products(
+                disparity_map,
+                K_ir_left=np.asarray(sample["K_ir_left"], dtype=np.float32),
+                baseline_m=float(sample["baseline_m"]),
+                scale=uniform_scale,
+                scale_x=scale_x,
+                scale_y=scale_y,
+                valid_iters=int(valid_iters),
+                max_disp=int(max_disp),
+                audit_mode=bool(sample.get("audit_mode", False)),
+            )
+        )
+    return outputs
+
+
 def _ensure_ffs_repo_on_sys_path(ffs_repo: Path) -> None:
     repo_path = str(ffs_repo)
     if repo_path not in sys.path:
@@ -202,6 +279,55 @@ def resolve_single_engine_tensorrt_model_path(model_dir: str | Path) -> Path:
             + ", ".join(path.name for path in engine_paths)
         )
     return engine_paths[0]
+
+
+def resolve_tensorrt_engine_static_batch_size(
+    *,
+    trt_mode: str,
+    model_dir: str | Path,
+    trt_root: str | Path | None = None,
+) -> int:
+    model_dir = Path(model_dir).resolve()
+    trt_root_path = None if trt_root is None else Path(trt_root).resolve()
+    dll_handles = _configure_tensorrt_runtime_search_paths(trt_root_path)
+    del dll_handles
+
+    import tensorrt as trt
+
+    logger = trt.Logger(trt.Logger.WARNING)
+
+    def _load_engine(engine_path: Path):
+        with open(engine_path, "rb") as handle:
+            engine = trt.Runtime(logger).deserialize_cuda_engine(handle.read())
+        if engine is None:
+            raise RuntimeError(f"Failed to deserialize TensorRT engine from {engine_path}.")
+        return engine
+
+    if trt_mode == "two_stage":
+        feature_engine = _load_engine(model_dir / "feature_runner.engine")
+        post_engine = _load_engine(model_dir / "post_runner.engine")
+        left_batch = int(feature_engine.get_tensor_shape("left")[0])
+        right_batch = int(feature_engine.get_tensor_shape("right")[0])
+        disp_batch = int(post_engine.get_tensor_shape("disp")[0])
+        if left_batch != right_batch or left_batch != disp_batch:
+            raise ValueError(
+                "Two-stage TensorRT engine batch dimensions are inconsistent. "
+                f"feature_left={left_batch} feature_right={right_batch} post_disp={disp_batch}"
+            )
+        return left_batch
+    if trt_mode == "single_engine":
+        model_path = resolve_single_engine_tensorrt_model_path(model_dir)
+        engine = _load_engine(model_path)
+        left_batch = int(engine.get_tensor_shape("left_image")[0])
+        right_batch = int(engine.get_tensor_shape("right_image")[0])
+        disp_batch = int(engine.get_tensor_shape("disparity")[0])
+        if left_batch != right_batch or left_batch != disp_batch:
+            raise ValueError(
+                "Single-engine TensorRT engine batch dimensions are inconsistent. "
+                f"left={left_batch} right={right_batch} disparity={disp_batch}"
+            )
+        return left_batch
+    raise ValueError(f"Unsupported TensorRT mode for batch-size resolution: {trt_mode}")
 
 
 def normalize_single_engine_tensorrt_image(image: np.ndarray) -> np.ndarray:
@@ -354,33 +480,20 @@ def finalize_single_engine_tensorrt_output(
     max_disp: int,
     audit_mode: bool,
 ) -> dict[str, np.ndarray | float | list[list[float]]]:
-    disparity_raw = np.asarray(disparity_raw, dtype=np.float32)
-    if disparity_raw.ndim == 4:
-        if disparity_raw.shape[0] != 1:
-            raise ValueError(f"Expected batch size 1 disparity output, got shape={disparity_raw.shape}.")
-        disparity_raw = disparity_raw.reshape(disparity_raw.shape[-2], disparity_raw.shape[-1])
-    elif disparity_raw.ndim == 3:
-        if disparity_raw.shape[0] != 1:
-            raise ValueError(f"Expected single-channel disparity output, got shape={disparity_raw.shape}.")
-        disparity_raw = disparity_raw.reshape(disparity_raw.shape[-2], disparity_raw.shape[-1])
-    elif disparity_raw.ndim != 2:
-        raise ValueError(f"Expected 2D/3D/4D disparity output, got shape={disparity_raw.shape}.")
-
-    disparity_raw = undo_tensorrt_disparity_transform(disparity_raw, transform=transform)
-    scale_x = float(transform["scale_x"])
-    scale_y = float(transform["scale_y"])
-    uniform_scale = scale_x if abs(scale_x - scale_y) <= 1e-6 else 1.0
-    return build_disparity_products(
+    outputs = finalize_tensorrt_disparity_batch_outputs(
         disparity_raw,
-        K_ir_left=K_ir_left,
-        baseline_m=baseline_m,
-        scale=uniform_scale,
-        scale_x=scale_x,
-        scale_y=scale_y,
+        transform=transform,
+        batch_samples=[
+            {
+                "K_ir_left": np.asarray(K_ir_left, dtype=np.float32),
+                "baseline_m": float(baseline_m),
+                "audit_mode": bool(audit_mode),
+            }
+        ],
         valid_iters=valid_iters,
         max_disp=max_disp,
-        audit_mode=audit_mode,
     )
+    return outputs[0]
 
 
 def _patch_tensorrt_triton_cost_volume(*, ffs_repo: Path) -> Any:
@@ -459,29 +572,44 @@ class FastFoundationStereoRunner:
             image = cv2.resize(image, dsize=None, fx=self.scale, fy=self.scale, interpolation=cv2.INTER_LINEAR)
         return image
 
-    def run_pair(
+    def run_batch(
         self,
-        left_image: np.ndarray,
-        right_image: np.ndarray,
-        *,
-        K_ir_left: np.ndarray,
-        baseline_m: float,
-        audit_mode: bool = False,
-    ) -> dict[str, np.ndarray | float | list[list[float]]]:
-        left = self._prepare_image(left_image)
-        right = self._prepare_image(right_image)
-        if right.shape[:2] != left.shape[:2]:
-            right = cv2.resize(right, dsize=(left.shape[1], left.shape[0]), interpolation=cv2.INTER_LINEAR)
+        batch_samples: list[dict[str, Any]],
+    ) -> list[dict[str, np.ndarray | float | list[list[float]]]]:
+        if not batch_samples:
+            raise ValueError("Expected at least one batch sample.")
+
+        prepared_left: list[np.ndarray] = []
+        prepared_right: list[np.ndarray] = []
+        target_shape: tuple[int, int] | None = None
+        for sample in batch_samples:
+            left = self._prepare_image(sample["left_image"])
+            right = self._prepare_image(sample["right_image"])
+            if right.shape[:2] != left.shape[:2]:
+                right = cv2.resize(right, dsize=(left.shape[1], left.shape[0]), interpolation=cv2.INTER_LINEAR)
+            if target_shape is None:
+                target_shape = (int(left.shape[0]), int(left.shape[1]))
+            elif (int(left.shape[0]), int(left.shape[1])) != target_shape:
+                raise ValueError(
+                    "All PyTorch FFS batch samples must have the same preprocessed image shape. "
+                    f"Got {(int(left.shape[0]), int(left.shape[1]))} vs {target_shape}."
+                )
+            prepared_left.append(left)
+            prepared_right.append(right)
 
         torch = self.torch
-        left_tensor = torch.as_tensor(left).cuda().float()[None].permute(0, 3, 1, 2)
-        right_tensor = torch.as_tensor(right).cuda().float()[None].permute(0, 3, 1, 2)
+        left_tensor = torch.stack(
+            [torch.as_tensor(left).cuda().float().permute(2, 0, 1) for left in prepared_left],
+            dim=0,
+        )
+        right_tensor = torch.stack(
+            [torch.as_tensor(right).cuda().float().permute(2, 0, 1) for right in prepared_right],
+            dim=0,
+        )
         padder = self.InputPadder(left_tensor.shape, divis_by=32, force_square=False)
         left_tensor, right_tensor = padder.pad(left_tensor, right_tensor)
 
         with torch.amp.autocast("cuda", enabled=True, dtype=self.AMP_DTYPE):
-            # This is the external Fast-FoundationStereo network forward pass.
-            # Input: this camera's left/right stereo images. Output: disparity.
             disparity = self.model.forward(
                 left_tensor,
                 right_tensor,
@@ -491,16 +619,43 @@ class FastFoundationStereoRunner:
             )
 
         disparity = padder.unpad(disparity.float())
-        disparity_raw = disparity.data.cpu().numpy().reshape(left.shape[0], left.shape[1]).astype(np.float32)
-        return build_disparity_products(
-            disparity_raw,
-            K_ir_left=K_ir_left,
-            baseline_m=baseline_m,
-            scale=self.scale,
-            valid_iters=self.valid_iters,
-            max_disp=self.max_disp,
-            audit_mode=audit_mode,
+        disparity_maps = split_disparity_batch_output_maps(
+            disparity.data.cpu().numpy(),
+            expected_batch_size=len(batch_samples),
         )
+        return [
+            build_disparity_products(
+                disparity_map,
+                K_ir_left=np.asarray(sample["K_ir_left"], dtype=np.float32),
+                baseline_m=float(sample["baseline_m"]),
+                scale=self.scale,
+                valid_iters=self.valid_iters,
+                max_disp=self.max_disp,
+                audit_mode=bool(sample.get("audit_mode", False)),
+            )
+            for sample, disparity_map in zip(batch_samples, disparity_maps)
+        ]
+
+    def run_pair(
+        self,
+        left_image: np.ndarray,
+        right_image: np.ndarray,
+        *,
+        K_ir_left: np.ndarray,
+        baseline_m: float,
+        audit_mode: bool = False,
+    ) -> dict[str, np.ndarray | float | list[list[float]]]:
+        return self.run_batch(
+            [
+                {
+                    "left_image": left_image,
+                    "right_image": right_image,
+                    "K_ir_left": K_ir_left,
+                    "baseline_m": baseline_m,
+                    "audit_mode": audit_mode,
+                }
+            ]
+        )[0]
 
 
 class FastFoundationStereoTensorRTRunner:
@@ -565,6 +720,63 @@ class FastFoundationStereoTensorRTRunner:
         image = apply_tensorrt_image_transform(image, transform=transform)
         return image, transform
 
+    def run_batch(
+        self,
+        batch_samples: list[dict[str, Any]],
+    ) -> list[dict[str, np.ndarray | float | list[list[float]]]]:
+        if not batch_samples:
+            raise ValueError("Expected at least one batch sample.")
+
+        prepared_left: list[np.ndarray] = []
+        prepared_right: list[np.ndarray] = []
+        batch_transform: dict[str, int | float | str] | None = None
+        for sample in batch_samples:
+            left, left_transform = self._prepare_image(sample["left_image"])
+            right, right_transform = self._prepare_image(sample["right_image"])
+            if left_transform != right_transform:
+                raise ValueError(
+                    "Left/right TensorRT preprocessing transforms must match. "
+                    f"Got {left_transform!r} vs {right_transform!r}."
+                )
+            if batch_transform is None:
+                batch_transform = left_transform
+            elif left_transform != batch_transform:
+                raise ValueError(
+                    "All two-stage TensorRT batch samples must share the same preprocessing transform. "
+                    f"Got {left_transform!r} vs {batch_transform!r}."
+                )
+            prepared_left.append(left)
+            prepared_right.append(right)
+
+        torch = self.torch
+        left_tensor = torch.stack(
+            [torch.as_tensor(left).cuda().float().permute(2, 0, 1) for left in prepared_left],
+            dim=0,
+        )
+        right_tensor = torch.stack(
+            [torch.as_tensor(right).cuda().float().permute(2, 0, 1) for right in prepared_right],
+            dim=0,
+        )
+        disparity = run_forward_on_non_default_cuda_stream(
+            torch_module=torch,
+            stream=self.inference_stream,
+            forward_fn=self.model.forward,
+            image1=left_tensor,
+            image2=right_tensor,
+        )
+        return finalize_tensorrt_disparity_batch_outputs(
+            disparity.data.cpu().numpy(),
+            transform=batch_transform or resolve_tensorrt_image_transform(
+                input_height=self.engine_height,
+                input_width=self.engine_width,
+                engine_height=self.engine_height,
+                engine_width=self.engine_width,
+            ),
+            batch_samples=batch_samples,
+            valid_iters=self.valid_iters,
+            max_disp=self.max_disp,
+        )
+
     def run_pair(
         self,
         left_image: np.ndarray,
@@ -574,40 +786,17 @@ class FastFoundationStereoTensorRTRunner:
         baseline_m: float,
         audit_mode: bool = False,
     ) -> dict[str, np.ndarray | float | list[list[float]]]:
-        left, left_transform = self._prepare_image(left_image)
-        right, right_transform = self._prepare_image(right_image)
-        if left_transform != right_transform:
-            raise ValueError(
-                "Left/right TensorRT preprocessing transforms must match. "
-                f"Got {left_transform!r} vs {right_transform!r}."
-            )
-
-        torch = self.torch
-        left_tensor = torch.as_tensor(left).cuda().float()[None].permute(0, 3, 1, 2)
-        right_tensor = torch.as_tensor(right).cuda().float()[None].permute(0, 3, 1, 2)
-        disparity = run_forward_on_non_default_cuda_stream(
-            torch_module=torch,
-            stream=self.inference_stream,
-            forward_fn=self.model.forward,
-            image1=left_tensor,
-            image2=right_tensor,
-        )
-        disparity_raw = disparity.data.cpu().numpy().reshape(self.engine_height, self.engine_width).astype(np.float32)
-        disparity_raw = undo_tensorrt_disparity_transform(disparity_raw, transform=left_transform)
-        scale_x = float(left_transform["scale_x"])
-        scale_y = float(left_transform["scale_y"])
-        uniform_scale = scale_x if abs(scale_x - scale_y) <= 1e-6 else 1.0
-        return build_disparity_products(
-            disparity_raw,
-            K_ir_left=K_ir_left,
-            baseline_m=baseline_m,
-            scale=uniform_scale,
-            scale_x=scale_x,
-            scale_y=scale_y,
-            valid_iters=self.valid_iters,
-            max_disp=self.max_disp,
-            audit_mode=audit_mode,
-        )
+        return self.run_batch(
+            [
+                {
+                    "left_image": left_image,
+                    "right_image": right_image,
+                    "K_ir_left": K_ir_left,
+                    "baseline_m": baseline_m,
+                    "audit_mode": audit_mode,
+                }
+            ]
+        )[0]
 
 
 class _SingleEngineTensorRTRuntime:
@@ -751,6 +940,64 @@ class FastFoundationStereoSingleEngineTensorRTRunner:
         image = normalize_single_engine_tensorrt_image(image)
         return image, transform
 
+    def run_batch(
+        self,
+        batch_samples: list[dict[str, Any]],
+    ) -> list[dict[str, np.ndarray | float | list[list[float]]]]:
+        if not batch_samples:
+            raise ValueError("Expected at least one batch sample.")
+
+        prepared_left: list[np.ndarray] = []
+        prepared_right: list[np.ndarray] = []
+        batch_transform: dict[str, int | float | str] | None = None
+        for sample in batch_samples:
+            left, left_transform = self._prepare_image(sample["left_image"])
+            right, right_transform = self._prepare_image(sample["right_image"])
+            if left_transform != right_transform:
+                raise ValueError(
+                    "Left/right TensorRT preprocessing transforms must match. "
+                    f"Got {left_transform!r} vs {right_transform!r}."
+                )
+            if batch_transform is None:
+                batch_transform = left_transform
+            elif left_transform != batch_transform:
+                raise ValueError(
+                    "All single-engine TensorRT batch samples must share the same preprocessing transform. "
+                    f"Got {left_transform!r} vs {batch_transform!r}."
+                )
+            prepared_left.append(left)
+            prepared_right.append(right)
+
+        torch = self.torch
+        left_tensor = torch.stack(
+            [torch.as_tensor(left).cuda().float().permute(2, 0, 1) for left in prepared_left],
+            dim=0,
+        )
+        right_tensor = torch.stack(
+            [torch.as_tensor(right).cuda().float().permute(2, 0, 1) for right in prepared_right],
+            dim=0,
+        )
+        outputs = run_forward_on_non_default_cuda_stream(
+            torch_module=torch,
+            stream=self.inference_stream,
+            forward_fn=self.model,
+            left_image=left_tensor,
+            right_image=right_tensor,
+        )
+        disparity_output = select_tensorrt_disparity_output(outputs)
+        return finalize_tensorrt_disparity_batch_outputs(
+            disparity_output.data.cpu().numpy(),
+            transform=batch_transform or resolve_tensorrt_image_transform(
+                input_height=self.engine_height,
+                input_width=self.engine_width,
+                engine_height=self.engine_height,
+                engine_width=self.engine_width,
+            ),
+            batch_samples=batch_samples,
+            valid_iters=self.valid_iters,
+            max_disp=self.max_disp,
+        )
+
     def run_pair(
         self,
         left_image: np.ndarray,
@@ -760,32 +1007,14 @@ class FastFoundationStereoSingleEngineTensorRTRunner:
         baseline_m: float,
         audit_mode: bool = False,
     ) -> dict[str, np.ndarray | float | list[list[float]]]:
-        left, left_transform = self._prepare_image(left_image)
-        right, right_transform = self._prepare_image(right_image)
-        if left_transform != right_transform:
-            raise ValueError(
-                "Left/right TensorRT preprocessing transforms must match. "
-                f"Got {left_transform!r} vs {right_transform!r}."
-            )
-
-        torch = self.torch
-        left_tensor = torch.as_tensor(left).cuda().float()[None].permute(0, 3, 1, 2)
-        right_tensor = torch.as_tensor(right).cuda().float()[None].permute(0, 3, 1, 2)
-        outputs = run_forward_on_non_default_cuda_stream(
-            torch_module=torch,
-            stream=self.inference_stream,
-            forward_fn=self.model,
-            left_image=left_tensor,
-            right_image=right_tensor,
-        )
-        disparity_output = select_tensorrt_disparity_output(outputs)
-        disparity_raw = disparity_output.data.cpu().numpy()
-        return finalize_single_engine_tensorrt_output(
-            disparity_raw,
-            transform=left_transform,
-            K_ir_left=K_ir_left,
-            baseline_m=baseline_m,
-            valid_iters=self.valid_iters,
-            max_disp=self.max_disp,
-            audit_mode=audit_mode,
-        )
+        return self.run_batch(
+            [
+                {
+                    "left_image": left_image,
+                    "right_image": right_image,
+                    "K_ir_left": K_ir_left,
+                    "baseline_m": baseline_m,
+                    "audit_mode": audit_mode,
+                }
+            ]
+        )[0]

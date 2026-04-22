@@ -291,3 +291,105 @@ Interpretation:
 
 - the FP32 single-engine artifact does not reproduce the earlier “right-edge stripe only” failure seen with the FP16 engine
 - keeping FP32 in its own directory preserves the viewer's “exactly one `.engine`” single-engine discovery contract
+
+## FP16 Iter-8 Follow-Up Build
+
+Goal:
+
+- build a standalone FP16 single-engine variant with `valid_iters=8` without touching the existing iter-4 FP16 and FP32 directories
+
+Artifact directory:
+
+- `data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp16_iter8`
+
+Export command:
+
+```text
+conda run -n ffs-standalone python /home/zhangxinjie/Fast-FoundationStereo/scripts/make_single_onnx.py --model_dir /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth --save_path /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp16_iter8 --height 480 --width 864 --valid_iters 8 --max_disp 192
+```
+
+Observed export outcome:
+
+- wrote `fast_foundationstereo.onnx`
+- wrote `fast_foundationstereo.yaml`
+- recorded `valid_iters: 8`
+- the upstream helper printed a `trtexec` suggestion but did not emit the `.engine`, so the repo-local builder helper was still required
+
+Build command:
+
+```text
+/home/zhangxinjie/miniconda3/envs/ffs-standalone/bin/python - <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, '/home/zhangxinjie/proj-QQTT-v2')
+from scripts.harness.verify_ffs_tensorrt_wsl import build_engine_from_onnx
+out_dir = Path('/home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_single_engine_864x480_wsl_fp16_iter8')
+build_engine_from_onnx(
+    onnx_path=out_dir / 'fast_foundationstereo.onnx',
+    engine_path=out_dir / 'fast_foundationstereo.engine',
+    log_path=out_dir / 'single_engine_build.log',
+    workspace_gib=8,
+    fp16=True,
+)
+print('fp16 iter8 single-engine TensorRT build complete')
+PY
+```
+
+Observed build outcome:
+
+- build completed successfully with `fp16=True`
+- TensorRT reported engine generation time: about `65.3 s`
+- TensorRT emitted repeated half-cast clipping warnings:
+  - `contains out-of-range weights when cast to Half, clipping to +/- 65504`
+
+Smoke validation command:
+
+```text
+/home/zhangxinjie/miniconda3/envs/qqtt-ffs-compat/bin/python - <<'PY'
+from pathlib import Path
+import sys
+import imageio.v2 as imageio
+import numpy as np
+
+ROOT = Path('/home/zhangxinjie/proj-QQTT-v2')
+FFS_REPO = Path('/home/zhangxinjie/Fast-FoundationStereo')
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(FFS_REPO) not in sys.path:
+    sys.path.insert(0, str(FFS_REPO))
+
+from data_process.depth_backends.fast_foundation_stereo import FastFoundationStereoSingleEngineTensorRTRunner
+
+left = imageio.imread(FFS_REPO / 'demo_data' / 'left.png')[..., :3]
+right = imageio.imread(FFS_REPO / 'demo_data' / 'right.png')[..., :3]
+with open(FFS_REPO / 'demo_data' / 'K.txt', 'r', encoding='utf-8') as handle:
+    lines = handle.readlines()
+K = np.array(list(map(float, lines[0].rstrip().split())), dtype=np.float32).reshape(3, 3)
+baseline = float(lines[1])
+runner = FastFoundationStereoSingleEngineTensorRTRunner(
+    ffs_repo=FFS_REPO,
+    model_dir=ROOT / 'data' / 'ffs_proof_of_life' / 'trt_single_engine_864x480_wsl_fp16_iter8',
+)
+result = runner.run_pair(left, right, K_ir_left=K, baseline_m=baseline, audit_mode=True)
+print(result['audit_stats'])
+PY
+```
+
+Smoke results:
+
+- `finite_ratio=0.0`
+- `positive_ratio=0.0`
+- `min_disparity=0.0`
+- `max_disparity=0.0`
+
+Cross-check against existing single-engine artifacts:
+
+- `trt_single_engine_864x480_wsl` (FP16, iter-4): `finite_ratio≈0.1898`
+- `trt_single_engine_864x480_wsl_fp32` (FP32, iter-4): `finite_ratio=1.0`
+- `trt_single_engine_864x480_wsl_fp16_iter8` (FP16, iter-8): `finite_ratio=0.0`
+
+Interpretation:
+
+- this specific `FP16 + iter-8` single-engine artifact compiles, but the repo-integrated runner returns an all-zero disparity field on the upstream demo pair
+- the failure is worse than the existing iter-4 FP16 single-engine artifact and is consistent with FP16 numerical degradation rather than a viewer integration bug
+- keep the artifact for controlled debugging, but do not treat it as a valid production render baseline

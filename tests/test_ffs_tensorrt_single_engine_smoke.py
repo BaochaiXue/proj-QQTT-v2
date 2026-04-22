@@ -7,12 +7,14 @@ from pathlib import Path
 import numpy as np
 
 from data_process.depth_backends.fast_foundation_stereo import (
+    finalize_tensorrt_disparity_batch_outputs,
     finalize_single_engine_tensorrt_output,
     load_tensorrt_model_config,
     normalize_single_engine_tensorrt_image,
     resolve_single_engine_tensorrt_model_path,
     resolve_tensorrt_model_config_path,
     select_tensorrt_disparity_output,
+    split_disparity_batch_output_maps,
 )
 
 
@@ -138,6 +140,72 @@ class FfsTensorrtSingleEngineSmokeTest(unittest.TestCase):
         np.testing.assert_allclose(result["K_ir_left_used"], k_ir_left)
         self.assertEqual(result["valid_iters"], 4)
         self.assertEqual(result["max_disp"], 192)
+
+    def test_split_disparity_batch_output_maps_preserves_batch_order(self) -> None:
+        disparity_raw = np.arange(3 * 1 * 2 * 4, dtype=np.float32).reshape(3, 1, 2, 4)
+        disparity_maps = split_disparity_batch_output_maps(disparity_raw, expected_batch_size=3)
+        self.assertEqual(len(disparity_maps), 3)
+        np.testing.assert_array_equal(disparity_maps[0], disparity_raw[0, 0])
+        np.testing.assert_array_equal(disparity_maps[1], disparity_raw[1, 0])
+        np.testing.assert_array_equal(disparity_maps[2], disparity_raw[2, 0])
+
+    def test_finalize_tensorrt_disparity_batch_outputs_preserves_per_sample_contract(self) -> None:
+        disparity_raw = np.stack(
+            [
+                np.full((2, 3), 1.0, dtype=np.float32),
+                np.full((2, 3), 2.0, dtype=np.float32),
+                np.full((2, 3), 3.0, dtype=np.float32),
+            ],
+            axis=0,
+        )[:, None, :, :]
+        transform = {
+            "mode": "match",
+            "engine_height": 2,
+            "engine_width": 3,
+            "output_height": 2,
+            "output_width": 3,
+            "scale_x": 1.0,
+            "scale_y": 1.0,
+            "pad_top": 0,
+            "pad_bottom": 0,
+            "pad_left": 0,
+            "pad_right": 0,
+        }
+        batch_samples = [
+            {
+                "K_ir_left": np.array([[100.0, 0.0, 1.0], [0.0, 100.0, 1.0], [0.0, 0.0, 1.0]], dtype=np.float32),
+                "baseline_m": 0.10,
+                "audit_mode": False,
+            },
+            {
+                "K_ir_left": np.array([[110.0, 0.0, 1.0], [0.0, 110.0, 1.0], [0.0, 0.0, 1.0]], dtype=np.float32),
+                "baseline_m": 0.20,
+                "audit_mode": False,
+            },
+            {
+                "K_ir_left": np.array([[120.0, 0.0, 1.0], [0.0, 120.0, 1.0], [0.0, 0.0, 1.0]], dtype=np.float32),
+                "baseline_m": 0.30,
+                "audit_mode": False,
+            },
+        ]
+
+        outputs = finalize_tensorrt_disparity_batch_outputs(
+            disparity_raw,
+            transform=transform,
+            batch_samples=batch_samples,
+            valid_iters=4,
+            max_disp=192,
+        )
+
+        self.assertEqual(len(outputs), 3)
+        self.assertEqual(outputs[0]["disparity"].shape, (2, 3))
+        self.assertEqual(outputs[1]["disparity"].shape, (2, 3))
+        self.assertEqual(outputs[2]["disparity"].shape, (2, 3))
+        self.assertAlmostEqual(float(outputs[0]["disparity"][0, 0]), 1.0)
+        self.assertAlmostEqual(float(outputs[1]["disparity"][0, 0]), 2.0)
+        self.assertAlmostEqual(float(outputs[2]["disparity"][0, 0]), 3.0)
+        np.testing.assert_allclose(outputs[1]["K_ir_left_used"], batch_samples[1]["K_ir_left"])
+        self.assertAlmostEqual(float(outputs[2]["baseline_m"]), 0.30)
 
 
 if __name__ == "__main__":

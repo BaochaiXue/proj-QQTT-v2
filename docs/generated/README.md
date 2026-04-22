@@ -21,6 +21,7 @@ These record what the current machine and D455 topology actually supported durin
 - `ffs_tensorrt_windows_validation.md`
 - `ffs_tensorrt_wsl_validation.md`
 - `ffs_single_engine_tensorrt_wsl_validation.md`
+- `ffs_batch3_viewer_validation.md`
 - `ffs_benchmark_tradeoff_validation.md`
 - `ffs_live_3cam_benchmark_validation.md`
 - `ffs_live_trt_viewer_validation.md`

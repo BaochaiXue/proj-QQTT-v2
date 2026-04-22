@@ -15,6 +15,7 @@ from cameras_viewer_FFS import (
     DEFAULT_FFS_TRT_MODEL_DIR,
     _compute_measured_fps,
     _drain_shared_worker_next_request,
+    _drain_shared_worker_strict_batch_requests,
     _format_depth_debug_lines,
     _format_ffs_backend_startup_note,
     _format_runtime_stats_lines,
@@ -26,6 +27,8 @@ from cameras_viewer_FFS import (
     _resolve_ffs_worker_kwargs,
     _summarize_runtime_stats,
     _update_recent_frame_times,
+    _validate_ffs_batch_mode_active_camera_count,
+    _validate_ffs_batch_mode_args,
     parse_args,
 )
 from data_process.depth_backends.fast_foundation_stereo import (
@@ -292,6 +295,7 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
                 ffs_backend="pytorch",
                 ffs_repo=repo,
                 ffs_model_path=model_path,
+                ffs_batch_mode="off",
                 ffs_scale=0.75,
                 ffs_valid_iters=4,
                 ffs_max_disp=192,
@@ -319,6 +323,7 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         self.assertEqual(args.ffs_trt_model_dir, DEFAULT_FFS_TRT_MODEL_DIR)
         self.assertEqual(args.ffs_trt_mode, "two_stage")
         self.assertEqual(args.ffs_worker_mode, "per_camera")
+        self.assertEqual(args.ffs_batch_mode, "off")
         self.assertEqual(args.depth_render_mode, "colormap")
 
     def test_parse_args_accepts_shared_worker_mode(self) -> None:
@@ -334,6 +339,19 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
 
         self.assertEqual(args.ffs_worker_mode, "shared")
 
+    def test_parse_args_accepts_strict_batch_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            with mock.patch(
+                "sys.argv",
+                ["cameras_viewer_FFS.py", "--ffs_repo", str(repo), "--ffs_batch_mode", "strict3"],
+            ):
+                args = parse_args()
+
+        self.assertEqual(args.ffs_batch_mode, "strict3")
+
     def test_parse_args_accepts_single_engine_trt_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -346,6 +364,14 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
                 args = parse_args()
 
         self.assertEqual(args.ffs_trt_mode, "single_engine")
+
+    def test_validate_ffs_batch_mode_args_rejects_per_camera_worker_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires --ffs_worker_mode shared"):
+            _validate_ffs_batch_mode_args(worker_mode="per_camera", batch_mode="strict3")
+
+    def test_validate_ffs_batch_mode_active_camera_count_requires_exactly_three(self) -> None:
+        with self.assertRaisesRegex(ValueError, "exactly 3 active cameras"):
+            _validate_ffs_batch_mode_active_camera_count(batch_mode="strict3", active_camera_count=2)
 
     def test_parse_args_accepts_depth_placeholder_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -377,6 +403,7 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
                 ffs_backend="tensorrt",
                 ffs_repo=repo,
                 ffs_model_path=None,
+                ffs_batch_mode="off",
                 ffs_scale=1.0,
                 ffs_valid_iters=8,
                 ffs_max_disp=256,
@@ -410,6 +437,7 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
                 ffs_backend="tensorrt",
                 ffs_repo=repo,
                 ffs_model_path=None,
+                ffs_batch_mode="off",
                 ffs_scale=1.0,
                 ffs_valid_iters=8,
                 ffs_max_disp=256,
@@ -446,6 +474,7 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
                 ffs_backend="tensorrt",
                 ffs_repo=repo,
                 ffs_model_path=None,
+                ffs_batch_mode="off",
                 ffs_scale=1.0,
                 ffs_valid_iters=8,
                 ffs_max_disp=256,
@@ -455,6 +484,118 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "exactly one"):
                 _resolve_ffs_worker_kwargs(args)
+
+    def test_resolve_tensorrt_worker_kwargs_strict_batch_requires_batch3_engines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            trt_model_dir = root / "trt_model"
+            trt_model_dir.mkdir()
+            (trt_model_dir / "onnx.yaml").write_text(
+                "image_size: [480, 640]\nvalid_iters: 4\nmax_disp: 192\n",
+                encoding="utf-8",
+            )
+            (trt_model_dir / "feature_runner.engine").write_bytes(b"stub")
+            (trt_model_dir / "post_runner.engine").write_bytes(b"stub")
+            args = argparse.Namespace(
+                ffs_backend="tensorrt",
+                ffs_repo=repo,
+                ffs_model_path=None,
+                ffs_batch_mode="strict3",
+                ffs_scale=1.0,
+                ffs_valid_iters=8,
+                ffs_max_disp=256,
+                ffs_trt_mode="two_stage",
+                ffs_trt_model_dir=trt_model_dir,
+                ffs_trt_root=None,
+            )
+            with mock.patch("cameras_viewer_FFS.resolve_tensorrt_engine_static_batch_size", return_value=1):
+                with self.assertRaisesRegex(ValueError, "static batch dimension 3"):
+                    _resolve_ffs_worker_kwargs(args)
+
+    def test_resolve_tensorrt_worker_kwargs_strict_batch_records_batch3_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            trt_model_dir = root / "trt_model"
+            trt_model_dir.mkdir()
+            (trt_model_dir / "fast_foundationstereo.engine").write_bytes(b"stub")
+            (trt_model_dir / "fast_foundationstereo.yaml").write_text(
+                "image_size: [480, 864]\nvalid_iters: 4\nmax_disp: 192\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                ffs_backend="tensorrt",
+                ffs_repo=repo,
+                ffs_model_path=None,
+                ffs_batch_mode="strict3",
+                ffs_scale=1.0,
+                ffs_valid_iters=8,
+                ffs_max_disp=256,
+                ffs_trt_mode="single_engine",
+                ffs_trt_model_dir=trt_model_dir,
+                ffs_trt_root=None,
+            )
+            with mock.patch("cameras_viewer_FFS.resolve_tensorrt_engine_static_batch_size", return_value=3):
+                worker_kwargs = _resolve_ffs_worker_kwargs(args)
+
+        self.assertEqual(worker_kwargs["trt_static_batch_size"], 3)
+
+    def test_shared_worker_strict_batch_waits_until_all_cameras_have_latest_payloads(self) -> None:
+        q0: queue.Queue[object] = queue.Queue(maxsize=2)
+        q1: queue.Queue[object] = queue.Queue(maxsize=2)
+        q2: queue.Queue[object] = queue.Queue(maxsize=2)
+        q0.put_nowait({"capture_seq": 1})
+        q0.put_nowait({"capture_seq": 4})
+        q1.put_nowait({"capture_seq": 2})
+
+        batch_payloads, pending, closed = _drain_shared_worker_strict_batch_requests(
+            camera_order=[0, 1, 2],
+            request_queues={0: q0, 1: q1, 2: q2},
+            pending_payloads={},
+            closed_camera_indices=set(),
+        )
+        self.assertIsNone(batch_payloads)
+        self.assertEqual(closed, set())
+        self.assertEqual(pending, {0: {"capture_seq": 4}, 1: {"capture_seq": 2}})
+
+        q2.put_nowait({"capture_seq": 3})
+        batch_payloads, pending, closed = _drain_shared_worker_strict_batch_requests(
+            camera_order=[0, 1, 2],
+            request_queues={0: q0, 1: q1, 2: q2},
+            pending_payloads=pending,
+            closed_camera_indices=closed,
+        )
+        self.assertEqual(
+            batch_payloads,
+            [
+                (0, {"capture_seq": 4}),
+                (1, {"capture_seq": 2}),
+                (2, {"capture_seq": 3}),
+            ],
+        )
+        self.assertEqual(pending, {})
+        self.assertEqual(closed, set())
+
+    def test_shared_worker_strict_batch_marks_closed_queue_without_emitting_batch(self) -> None:
+        q0: queue.Queue[object] = queue.Queue(maxsize=1)
+        q1: queue.Queue[object] = queue.Queue(maxsize=1)
+        q2: queue.Queue[object] = queue.Queue(maxsize=1)
+        q0.put_nowait(None)
+        q1.put_nowait({"capture_seq": 8})
+        q2.put_nowait({"capture_seq": 9})
+
+        batch_payloads, pending, closed = _drain_shared_worker_strict_batch_requests(
+            camera_order=[0, 1, 2],
+            request_queues={0: q0, 1: q1, 2: q2},
+            pending_payloads={},
+            closed_camera_indices=set(),
+        )
+        self.assertIsNone(batch_payloads)
+        self.assertEqual(closed, {0})
+        self.assertEqual(pending, {1: {"capture_seq": 8}, 2: {"capture_seq": 9}})
 
     def test_tensorrt_startup_note_reports_resize_when_engine_differs(self) -> None:
         note = _format_ffs_backend_startup_note(

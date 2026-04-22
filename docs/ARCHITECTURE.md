@@ -125,6 +125,8 @@ Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` 
   - one worker process per active camera
 - `--ffs_worker_mode shared`
   - one shared worker process sequentially serves all active cameras while reusing a single FFS runner instance
+  - optional `--ffs_batch_mode strict3` upgrades this shared worker into a strict 3-camera batch scheduler
+  - the shared worker keeps a latest-pending payload cache per camera and only launches a batch when all 3 cameras have fresh IR pairs
 
 The live viewer FFS mode surface is now:
 
@@ -134,6 +136,22 @@ The live viewer FFS mode surface is now:
   - current two-stage TensorRT runner with `feature_runner.engine` + `post_runner.engine`
 - `--ffs_backend tensorrt --ffs_trt_mode single_engine`
   - single-engine TensorRT runner with one `.engine` file and shared TensorRT config discovery
+
+The runner surface now supports both single-sample and batched inference:
+
+- `run_pair(...)`
+  - thin wrapper over batch size 1
+- `run_batch(...)`
+  - shared implementation path for PyTorch, two-stage TensorRT, and single-engine TensorRT
+  - returns one per-camera output contract per input sample in the same order
+
+Batch-mode TensorRT intentionally uses separate artifact directories:
+
+- current batch-1 directories remain valid for non-batch viewer mode
+- strict 3-camera batch mode requires static batch-3 TensorRT engines
+- recommended proof-of-life directories:
+  - `data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl/`
+  - `data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32/`
 
 The FFS benchmark helper stack is intentionally split like this:
 

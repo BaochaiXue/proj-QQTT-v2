@@ -41,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR))
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--width", type=int, default=864)
+    parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--valid_iters", type=int, default=4)
     parser.add_argument("--max_disp", type=int, default=192)
     parser.add_argument("--workspace_gib", type=int, default=8)
@@ -97,6 +98,7 @@ def export_onnx(
     out_dir: Path,
     height: int,
     width: int,
+    batch_size: int,
     valid_iters: int,
     max_disp: int,
 ) -> None:
@@ -110,8 +112,8 @@ def export_onnx(
 
     feature_runner = foundation_stereo.TrtFeatureRunner(model).cuda().eval()
     post_runner = foundation_stereo.TrtPostRunner(model).cuda().eval()
-    left_img = torch_module.randn(1, 3, height, width, device="cuda", dtype=torch_module.float32) * 255
-    right_img = torch_module.randn(1, 3, height, width, device="cuda", dtype=torch_module.float32) * 255
+    left_img = torch_module.randn(batch_size, 3, height, width, device="cuda", dtype=torch_module.float32) * 255
+    right_img = torch_module.randn(batch_size, 3, height, width, device="cuda", dtype=torch_module.float32) * 255
 
     torch_module.onnx.export(
         feature_runner,
@@ -232,6 +234,7 @@ def run_demo(
     intrinsic_file: Path,
     out_dir: Path,
     zfar: float,
+    batch_size: int,
 ) -> None:
     from omegaconf import OmegaConf
     from Utils import depth2xyzmap, o3d, set_logging_format, set_seed, toOpen3dCloud, vis_disparity
@@ -276,8 +279,8 @@ def run_demo(
     imageio.imwrite(out_dir / "left.png", img0)
     imageio.imwrite(out_dir / "right.png", img1)
 
-    img0_tensor = torch_module.as_tensor(img0).cuda().float()[None].permute(0, 3, 1, 2)
-    img1_tensor = torch_module.as_tensor(img1).cuda().float()[None].permute(0, 3, 1, 2)
+    img0_tensor = torch_module.as_tensor(img0).cuda().float()[None].permute(0, 3, 1, 2).repeat(batch_size, 1, 1, 1)
+    img1_tensor = torch_module.as_tensor(img1).cuda().float()[None].permute(0, 3, 1, 2).repeat(batch_size, 1, 1, 1)
     disp = run_forward_on_non_default_cuda_stream(
         torch_module=torch_module,
         stream=inference_stream,
@@ -286,7 +289,7 @@ def run_demo(
         image2=img1_tensor,
     )
     height, width = img0.shape[:2]
-    disp = disp.data.cpu().numpy().reshape(height, width).clip(0, None) * 1 / fx
+    disp = disp.data.cpu().numpy()[0].reshape(height, width).clip(0, None) * 1 / fx
 
     vis = vis_disparity(disp, min_val=None, max_val=None, cmap=None, color_map=cv2.COLORMAP_TURBO)
     vis = np.concatenate([img0, img1, vis], axis=1)
@@ -312,6 +315,7 @@ def profile_tensorrt(
     torch_module,
     foundation_stereo,
     onnx_dir: Path,
+    batch_size: int,
     warmup: int,
     total: int,
 ) -> float:
@@ -327,8 +331,8 @@ def profile_tensorrt(
     )
     inference_stream = torch_module.cuda.Stream()
     height, width = int(args.image_size[0]), int(args.image_size[1])
-    img0 = torch_module.randint(0, 256, (1, 3, height, width), dtype=torch_module.float32).cuda()
-    img1 = torch_module.randint(0, 256, (1, 3, height, width), dtype=torch_module.float32).cuda()
+    img0 = torch_module.randint(0, 256, (batch_size, 3, height, width), dtype=torch_module.float32).cuda()
+    img1 = torch_module.randint(0, 256, (batch_size, 3, height, width), dtype=torch_module.float32).cuda()
     times = []
     for idx in range(total):
         torch_module.cuda.synchronize()
@@ -408,6 +412,8 @@ def main() -> int:
     ensure_required_paths([ffs_repo, model_path, left_file, right_file, intrinsic_file])
     if int(args.height) % 32 != 0 or int(args.width) % 32 != 0:
         raise ValueError(f"Expected engine size divisible by 32, got {args.width}x{args.height}")
+    if int(args.batch_size) <= 0:
+        raise ValueError(f"Expected positive --batch_size, got {args.batch_size}")
 
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -423,6 +429,7 @@ def main() -> int:
         out_dir=out_dir,
         height=args.height,
         width=args.width,
+        batch_size=args.batch_size,
         valid_iters=args.valid_iters,
         max_disp=args.max_disp,
     )
@@ -449,6 +456,7 @@ def main() -> int:
         intrinsic_file=intrinsic_file,
         out_dir=out_dir / "demo_out",
         zfar=args.zfar,
+        batch_size=args.batch_size,
     )
 
     if args.skip_profiles:
@@ -459,6 +467,7 @@ def main() -> int:
         torch_module=torch_module,
         foundation_stereo=foundation_stereo,
         onnx_dir=out_dir,
+        batch_size=args.batch_size,
         warmup=args.warmup,
         total=args.total,
     )

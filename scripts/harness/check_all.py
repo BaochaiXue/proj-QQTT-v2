@@ -29,6 +29,7 @@ FULL_HELP_SCRIPTS: tuple[str, ...] = (
     "data_process/record_data_align.py",
     "scripts/harness/verify_ffs_demo.py",
     "scripts/harness/verify_ffs_tensorrt_wsl.py",
+    "scripts/harness/verify_ffs_single_engine_tensorrt_wsl.py",
     "scripts/harness/probe_d455_ir_pair.py",
     "scripts/harness/probe_d455_stream_capability.py",
     "scripts/harness/render_d455_stream_probe_report.py",
@@ -64,10 +65,12 @@ QUICK_UNITTEST_BATCHES: tuple[tuple[str, ...], ...] = (
     ),
     (
         "tests.test_record_data_align_smoke",
+        "tests.test_cameras_viewer_ffs_smoke",
         "tests.test_depth_backend_contract_smoke",
         "tests.test_ffs_intrinsic_file_format",
         "tests.test_ffs_reprojection_smoke",
         "tests.test_ffs_remove_invisible_mask_smoke",
+        "tests.test_ffs_tensorrt_single_engine_smoke",
     ),
     (
         "tests.test_visual_compare_depth_panels_smoke",

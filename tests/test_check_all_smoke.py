@@ -25,9 +25,13 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "-m",
                 "unittest",
                 "-v",
-                "tests.test_visual_compare_depth_panels_smoke",
-                "tests.test_visual_compare_reprojection_smoke",
-                "tests.test_visual_compare_turntable_smoke",
+                "tests.test_record_data_align_smoke",
+                "tests.test_cameras_viewer_ffs_smoke",
+                "tests.test_depth_backend_contract_smoke",
+                "tests.test_ffs_intrinsic_file_format",
+                "tests.test_ffs_reprojection_smoke",
+                "tests.test_ffs_remove_invisible_mask_smoke",
+                "tests.test_ffs_tensorrt_single_engine_smoke",
             ],
             commands,
         )
@@ -37,6 +41,7 @@ class CheckAllSmokeTest(unittest.TestCase):
         commands = check_all.build_commands(python="python", profile="full")
         self.assertGreater(len(commands), len(check_all.build_commands(python="python", profile="quick")))
         self.assertIn(["python", "scripts/harness/verify_ffs_demo.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/verify_ffs_single_engine_tensorrt_wsl.py", "--help"], commands)
         self.assertIn(
             ["python", "-m", "pytest", "tests/test_d455_probe_matrix_builder.py", "tests/test_d455_probe_result_schema.py"],
             commands,

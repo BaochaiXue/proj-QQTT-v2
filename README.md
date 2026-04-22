@@ -90,6 +90,24 @@ The default FFS viewer topology is still `--ffs_worker_mode per_camera`, which m
 python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_worker_mode shared
 ```
 
+Strict 3-camera batch mode is now also available:
+
+- `--ffs_batch_mode strict3`
+  - requires `--ffs_worker_mode shared`
+  - requires exactly 3 active cameras
+  - runs one shared FFS inference over the 3 latest camera IR pairs at once
+- TensorRT batch mode requires batch-3 TRT artifact directories
+  - recommended two-stage directory: `data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl`
+  - recommended single-engine directory: `data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32`
+
+Strict 3-camera batch preview examples:
+
+```bash
+python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth --ffs_worker_mode shared --ffs_batch_mode strict3
+python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl --ffs_worker_mode shared --ffs_batch_mode strict3
+python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32 --ffs_worker_mode shared --ffs_batch_mode strict3
+```
+
 Explicit single-engine TensorRT preview:
 
 ```bash
