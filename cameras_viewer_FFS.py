@@ -54,6 +54,7 @@ if TYPE_CHECKING:
 LATEST_QUEUE_SIZE = 1
 CAPTURE_QUEUE_TIMEOUT_MS = 100
 RESULT_QUEUE_TIMEOUT_S = 0.1
+SHARED_WORKER_IDLE_SLEEP_S = 0.005
 DEFAULT_FFS_TRT_MODEL_DIR = Path(__file__).resolve().parent / "data" / "ffs_proof_of_life" / "trt_two_stage_864x480_wsl"
 
 
@@ -346,6 +347,70 @@ def _reproject_ffs_depth_to_color(
     )
 
 
+def _build_ffs_runner(
+    *,
+    runner_backend: str,
+    ffs_repo: str,
+    model_path: str | None,
+    ffs_scale: float,
+    ffs_valid_iters: int,
+    ffs_max_disp: int,
+    trt_model_dir: str | None,
+    trt_root: str | None,
+) -> Any:
+    if runner_backend == "pytorch":
+        if model_path is None:
+            raise ValueError("Missing model_path for PyTorch FFS backend.")
+        return FastFoundationStereoRunner(
+            ffs_repo=ffs_repo,
+            model_path=model_path,
+            scale=ffs_scale,
+            valid_iters=ffs_valid_iters,
+            max_disp=ffs_max_disp,
+        )
+    if runner_backend == "tensorrt":
+        if trt_model_dir is None:
+            raise ValueError("Missing trt_model_dir for TensorRT FFS backend.")
+        return FastFoundationStereoTensorRTRunner(
+            ffs_repo=ffs_repo,
+            model_dir=trt_model_dir,
+            trt_root=trt_root,
+        )
+    raise ValueError(f"Unsupported FFS backend: {runner_backend}")
+
+
+def _drain_shared_worker_next_request(
+    *,
+    camera_order: List[int],
+    request_queues: dict[int, Any],
+    closed_camera_indices: set[int],
+    start_cursor: int,
+) -> tuple[int | None, Any | None, int, set[int]]:
+    queue_count = len(camera_order)
+    if queue_count <= 0:
+        return None, None, 0, set(closed_camera_indices)
+
+    cursor = int(start_cursor) % queue_count
+    base_cursor = cursor
+    closed = set(int(idx) for idx in closed_camera_indices)
+    for offset in range(queue_count):
+        pos = (base_cursor + offset) % queue_count
+        camera_idx = int(camera_order[pos])
+        if camera_idx in closed:
+            continue
+        try:
+            payload = request_queues[camera_idx].get_nowait()
+        except queue.Empty:
+            continue
+        next_cursor = (pos + 1) % queue_count
+        if payload is None:
+            closed.add(camera_idx)
+            cursor = next_cursor
+            continue
+        return camera_idx, payload, next_cursor, closed
+    return None, None, cursor, closed
+
+
 def _resolve_ffs_worker_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     backend = str(args.ffs_backend)
     if not args.ffs_repo.exists():
@@ -520,26 +585,16 @@ def _ffs_worker_loop(
 ) -> None:
     result_frame_times: deque[float] = deque()
     try:
-        if runner_backend == "pytorch":
-            if model_path is None:
-                raise ValueError("Missing model_path for PyTorch FFS backend.")
-            runner = FastFoundationStereoRunner(
-                ffs_repo=ffs_repo,
-                model_path=model_path,
-                scale=ffs_scale,
-                valid_iters=ffs_valid_iters,
-                max_disp=ffs_max_disp,
-            )
-        elif runner_backend == "tensorrt":
-            if trt_model_dir is None:
-                raise ValueError("Missing trt_model_dir for TensorRT FFS backend.")
-            runner = FastFoundationStereoTensorRTRunner(
-                ffs_repo=ffs_repo,
-                model_dir=trt_model_dir,
-                trt_root=trt_root,
-            )
-        else:
-            raise ValueError(f"Unsupported FFS backend: {runner_backend}")
+        runner = _build_ffs_runner(
+            runner_backend=runner_backend,
+            ffs_repo=ffs_repo,
+            model_path=model_path,
+            ffs_scale=ffs_scale,
+            ffs_valid_iters=ffs_valid_iters,
+            ffs_max_disp=ffs_max_disp,
+            trt_model_dir=trt_model_dir,
+            trt_root=trt_root,
+        )
     except Exception as exc:
         _put_latest(
             result_queue,
@@ -596,6 +651,115 @@ def _ffs_worker_loop(
                 result_queue,
                 {
                     "camera_idx": int(camera_idx),
+                    "serial": serial,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+
+
+def _shared_ffs_worker_loop(
+    *,
+    request_queues: dict[int, Any],
+    result_queues: dict[int, Any],
+    camera_serials: dict[int, str],
+    runner_backend: str,
+    ffs_repo: str,
+    model_path: str | None,
+    ffs_scale: float,
+    ffs_valid_iters: int,
+    ffs_max_disp: int,
+    trt_model_dir: str | None,
+    trt_root: str | None,
+    trt_engine_height: int | None,
+    trt_engine_width: int | None,
+    geometries: dict[int, dict[str, Any]],
+    output_shapes: dict[int, tuple[int, int]],
+) -> None:
+    del trt_engine_height, trt_engine_width
+    camera_order = sorted(int(idx) for idx in request_queues.keys())
+    result_frame_times: dict[int, deque[float]] = {
+        int(camera_idx): deque() for camera_idx in camera_order
+    }
+    try:
+        runner = _build_ffs_runner(
+            runner_backend=runner_backend,
+            ffs_repo=ffs_repo,
+            model_path=model_path,
+            ffs_scale=ffs_scale,
+            ffs_valid_iters=ffs_valid_iters,
+            ffs_max_disp=ffs_max_disp,
+            trt_model_dir=trt_model_dir,
+            trt_root=trt_root,
+        )
+    except Exception as exc:
+        for camera_idx in camera_order:
+            _put_latest(
+                result_queues[int(camera_idx)],
+                {
+                    "camera_idx": int(camera_idx),
+                    "serial": str(camera_serials[int(camera_idx)]),
+                    "fatal_error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+        return
+
+    cursor = 0
+    closed_camera_indices: set[int] = set()
+    while True:
+        camera_idx, payload, cursor, closed_camera_indices = _drain_shared_worker_next_request(
+            camera_order=camera_order,
+            request_queues=request_queues,
+            closed_camera_indices=closed_camera_indices,
+            start_cursor=cursor,
+        )
+        if payload is None:
+            if len(closed_camera_indices) >= len(camera_order):
+                return
+            time.sleep(SHARED_WORKER_IDLE_SLEEP_S)
+            continue
+
+        camera_idx = int(camera_idx)
+        geometry = geometries[camera_idx]
+        output_shape = output_shapes[camera_idx]
+        serial = str(camera_serials[camera_idx])
+        try:
+            infer_start_s = time.perf_counter()
+            run_output = runner.run_pair(
+                payload["ir_left"],
+                payload["ir_right"],
+                K_ir_left=np.asarray(geometry["K_ir_left"], dtype=np.float32),
+                baseline_m=float(geometry["ir_baseline_m"]),
+            )
+            depth_color_m = _reproject_ffs_depth_to_color(
+                np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
+                K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
+                T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
+                K_color=np.asarray(geometry["K_color"], dtype=np.float32),
+                output_shape=output_shape,
+            )
+            result_time_s = time.perf_counter()
+            _update_recent_frame_times(
+                result_frame_times[camera_idx],
+                now_s=result_time_s,
+                frame_received=True,
+            )
+            _put_latest(
+                result_queues[camera_idx],
+                {
+                    "camera_idx": camera_idx,
+                    "serial": serial,
+                    "capture_seq": int(payload["capture_seq"]),
+                    "depth_color_m": depth_color_m,
+                    "worker_ffs_fps": _compute_measured_fps(result_frame_times[camera_idx]),
+                    "inference_s": float(result_time_s - infer_start_s),
+                    "result_time_s": result_time_s,
+                },
+            )
+        except Exception as exc:
+            _put_latest(
+                result_queues[camera_idx],
+                {
+                    "camera_idx": camera_idx,
                     "serial": serial,
                     "error": f"{type(exc).__name__}: {exc}",
                 },
@@ -750,6 +914,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ffs_scale", type=float, default=1.0)
     parser.add_argument("--ffs_valid_iters", type=int, default=8)
     parser.add_argument("--ffs_max_disp", type=int, default=192)
+    parser.add_argument("--ffs_worker_mode", choices=("per_camera", "shared"), default="per_camera")
     parser.add_argument("--ffs_trt_model_dir", type=Path, default=DEFAULT_FFS_TRT_MODEL_DIR)
     parser.add_argument("--ffs_trt_root", type=Path, default=None)
     parser.add_argument("--duration-s", type=float, default=0.0)
@@ -781,6 +946,8 @@ def main() -> int:
     mp_ctx = mp.get_context("spawn")
     stop_event = threading.Event()
     cams: List[Dict[str, Any]] = []
+    camera_specs: List[Dict[str, Any]] = []
+    worker_processes: List[mp.Process] = []
 
     for camera_idx, dev in enumerate(devices):
         serial = dev.get_info(rs.camera_info.serial_number)
@@ -816,75 +983,134 @@ def main() -> int:
 
         request_queue = mp_ctx.Queue(maxsize=LATEST_QUEUE_SIZE)
         result_queue = mp_ctx.Queue(maxsize=LATEST_QUEUE_SIZE)
-        worker_process = mp_ctx.Process(
-            target=_ffs_worker_loop,
-            kwargs={
-                "camera_idx": camera_idx,
+        camera_specs.append(
+            {
+                "camera_idx": int(camera_idx),
                 "serial": serial,
+                "usb_desc": usb_desc,
+                "pipeline": pipeline,
+                "stream_w": int(stream_w),
+                "stream_h": int(stream_h),
+                "fps_used": int(fps_used),
+                "geometry": geometry,
                 "request_queue": request_queue,
                 "result_queue": result_queue,
+                "ae": ae,
+                "exp": exp,
+                "gain": g,
+                "target_exposure": target_exposure,
+            }
+        )
+
+    if not camera_specs:
+        print("Failed to start any camera.", flush=True)
+        return 3
+
+    worker_mode = str(args.ffs_worker_mode)
+    if worker_mode == "per_camera":
+        for spec in camera_specs:
+            worker_process = mp_ctx.Process(
+                target=_ffs_worker_loop,
+                kwargs={
+                    "camera_idx": int(spec["camera_idx"]),
+                    "serial": str(spec["serial"]),
+                    "request_queue": spec["request_queue"],
+                    "result_queue": spec["result_queue"],
+                    **worker_runner_kwargs,
+                    "geometry": spec["geometry"],
+                    "output_shape": (int(spec["stream_h"]), int(spec["stream_w"])),
+                },
+                daemon=True,
+            )
+            worker_process.start()
+            spec["worker_process"] = worker_process
+            worker_processes.append(worker_process)
+    else:
+        shared_worker_process = mp_ctx.Process(
+            target=_shared_ffs_worker_loop,
+            kwargs={
+                "request_queues": {
+                    int(spec["camera_idx"]): spec["request_queue"] for spec in camera_specs
+                },
+                "result_queues": {
+                    int(spec["camera_idx"]): spec["result_queue"] for spec in camera_specs
+                },
+                "camera_serials": {
+                    int(spec["camera_idx"]): str(spec["serial"]) for spec in camera_specs
+                },
                 **worker_runner_kwargs,
-                "geometry": geometry,
-                "output_shape": (int(stream_h), int(stream_w)),
+                "geometries": {
+                    int(spec["camera_idx"]): spec["geometry"] for spec in camera_specs
+                },
+                "output_shapes": {
+                    int(spec["camera_idx"]): (int(spec["stream_h"]), int(spec["stream_w"]))
+                    for spec in camera_specs
+                },
             },
             daemon=True,
         )
-        worker_process.start()
+        shared_worker_process.start()
+        worker_processes.append(shared_worker_process)
+        for spec in camera_specs:
+            spec["worker_process"] = shared_worker_process
 
+    print(
+        f"FFS worker topology: {worker_mode} "
+        f"({len(worker_processes)} process(es) for {len(camera_specs)} active camera(s))",
+        flush=True,
+    )
+
+    for spec in camera_specs:
         cam_state = _build_camera_state(
-            camera_idx=camera_idx,
-            serial=serial,
-            usb_desc=usb_desc,
-            pipeline=pipeline,
-            stream_w=stream_w,
-            stream_h=stream_h,
-            fps_used=fps_used,
-            geometry=geometry,
-            request_queue=request_queue,
-            result_queue=result_queue,
-            worker_process=worker_process,
+            camera_idx=int(spec["camera_idx"]),
+            serial=str(spec["serial"]),
+            usb_desc=str(spec["usb_desc"]),
+            pipeline=spec["pipeline"],
+            stream_w=int(spec["stream_w"]),
+            stream_h=int(spec["stream_h"]),
+            fps_used=int(spec["fps_used"]),
+            geometry=spec["geometry"],
+            request_queue=spec["request_queue"],
+            result_queue=spec["result_queue"],
+            worker_process=spec["worker_process"],
         )
         cam_state["capture_thread"] = threading.Thread(
             target=_capture_loop,
             args=(cam_state,),
             kwargs={
-                "target_width": int(stream_w),
-                "target_height": int(stream_h),
+                "target_width": int(spec["stream_w"]),
+                "target_height": int(spec["stream_h"]),
                 "stop_event": stop_event,
             },
             daemon=True,
-            name=f"capture-{serial}",
+            name=f"capture-{spec['serial']}",
         )
         cam_state["result_thread"] = threading.Thread(
             target=_result_loop,
             args=(cam_state,),
             kwargs={"stop_event": stop_event},
             daemon=True,
-            name=f"ffs-result-{serial}",
+            name=f"ffs-result-{spec['serial']}",
         )
         cam_state["capture_thread"].start()
         cam_state["result_thread"].start()
         cams.append(cam_state)
 
         print(
-            f"Started {serial} usb={usb_desc or 'unknown'} "
-            f"at {stream_w}x{stream_h}@{fps_used} "
-            f"backend={args.ffs_backend} "
-            f"(AE={ae}, EXP={exp}, GAIN={g}, target_exp={target_exposure})",
+            f"Started {spec['serial']} usb={spec['usb_desc'] or 'unknown'} "
+            f"at {int(spec['stream_w'])}x{int(spec['stream_h'])}@{int(spec['fps_used'])} "
+            f"backend={args.ffs_backend} worker_mode={worker_mode} "
+            f"(AE={spec['ae']}, EXP={spec['exp']}, GAIN={spec['gain']}, target_exp={float(spec['target_exposure'])})",
             flush=True,
         )
         startup_note = _format_ffs_backend_startup_note(
             runner_backend=str(worker_runner_kwargs["runner_backend"]),
-            stream_w=int(stream_w),
-            stream_h=int(stream_h),
+            stream_w=int(spec["stream_w"]),
+            stream_h=int(spec["stream_h"]),
             worker_kwargs=worker_runner_kwargs,
         )
         if startup_note:
-            print(f"[info {serial}] {startup_note}", flush=True)
-
-    if not cams:
-        print("Failed to start any camera.", flush=True)
-        return 3
+            print(f"[info {spec['serial']}] {startup_note}", flush=True)
 
     print(f"Running with {len(cams)} camera(s). Press q/Esc to quit.", flush=True)
 
@@ -949,8 +1175,7 @@ def main() -> int:
                 pass
         for cam_state in cams:
             _put_latest(cam_state["request_queue"], None)
-        for cam_state in cams:
-            proc = cam_state["worker_process"]
+        for proc in worker_processes:
             proc.join(timeout=5.0)
             if proc.is_alive():
                 proc.terminate()

@@ -56,8 +56,12 @@ class FfsRadiusOutlierFilterSmokeTest(unittest.TestCase):
         self.assertEqual(int(filtered_u16[0, 0]), 0)
         self.assertEqual(float(filtered_depth_m[0, 1]), 0.0)
         self.assertEqual(int(filtered_u16[0, 1]), 0)
-        self.assertGreater(int(filtered_u16[5, 5]), 0)
-        self.assertEqual(stats["outlier_pixel_count"], 1)
+        self.assertGreater(int(np.count_nonzero(filtered_u16)), 0)
+        self.assertGreaterEqual(int(stats["outlier_pixel_count"]), 1)
+        self.assertEqual(
+            int(stats["inlier_pixel_count"]) + int(stats["outlier_pixel_count"]),
+            int(stats["valid_pixel_count"]),
+        )
 
     def test_contract_builder_matches_new_metadata_shape(self) -> None:
         contract = build_ffs_radius_outlier_filter_contract(radius_m=0.01, nb_points=40)

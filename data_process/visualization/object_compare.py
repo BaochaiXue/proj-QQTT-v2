@@ -463,6 +463,17 @@ def point_mask_from_pixel_mask(
     points = np.asarray(camera_cloud["points"], dtype=np.float32).reshape(-1, 3)
     if pixel_mask is None or len(points) == 0:
         return np.zeros((len(points),), dtype=bool)
+    source_pixel_uv = camera_cloud.get("source_pixel_uv")
+    if source_pixel_uv is not None:
+        uv = np.asarray(source_pixel_uv, dtype=np.int32).reshape(-1, 2)
+        if len(uv) == len(points):
+            u = uv[:, 0]
+            v = uv[:, 1]
+            inside = (u >= 0) & (u < pixel_mask.shape[1]) & (v >= 0) & (v < pixel_mask.shape[0])
+            keep = np.zeros((len(points),), dtype=bool)
+            if np.any(inside):
+                keep[inside] = pixel_mask[v[inside], u[inside]]
+            return keep
     c2w = np.asarray(camera_cloud["c2w"], dtype=np.float32).reshape(4, 4)
     w2c = np.linalg.inv(c2w)
     homogeneous = np.concatenate([points, np.ones((len(points), 1), dtype=np.float32)], axis=1)

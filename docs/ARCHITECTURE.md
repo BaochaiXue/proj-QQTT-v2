@@ -119,6 +119,13 @@ Those formal exports also rewrite `calibrate.pkl` into case camera order so old 
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
 
+`cameras_viewer_FFS.py` keeps per-camera capture threads and per-camera latest-only request/result queues, but now supports two explicit FFS worker topologies:
+
+- `--ffs_worker_mode per_camera`
+  - one worker process per active camera
+- `--ffs_worker_mode shared`
+  - one shared worker process sequentially serves all active cameras while reusing a single FFS runner instance
+
 The FFS benchmark helper stack is intentionally split like this:
 
 - `data_process/depth_backends/benchmarking.py`
@@ -235,8 +242,13 @@ The fused point-cloud visualization is now split into four user-facing workflows
 - `visual_compare_masked_camera_views.py`
   - single-frame masked `Native` vs masked `FFS` compare under the 3 original calibrated camera views
   - uses exact camera `c2w` plus original `K_color` pinhole projection per column rather than a shared oblique view
-  - can optionally apply the same software depth postprocess chain to `Native` and `FFS` before point-cloud fusion/rendering
-  - writes one masked `1x3` RGB reference board and one fixed-view `2x3` Open3D board plus per-view debug renders
+  - can optionally apply PhysTwin `data_process_mask.py`-style mask refinement:
+    - fused masked object cloud
+    - Open3D `remove_radius_outlier(nb_points=40, radius=0.01)`
+    - write rejected source points back into per-camera masks
+  - writes one masked `1x3` RGB reference board and one fixed-view Open3D board:
+    - default `2x3` for masked `Native` vs masked `FFS`
+    - `4x3` raw-vs-PS compare when both postprocess flags are enabled
 - `visual_compare_turntable.py`
   - primary single-frame object-centric coverage-aware compare
   - explicit camera-frusta visualization from real `c2w`

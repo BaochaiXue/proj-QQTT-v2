@@ -23,6 +23,12 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - `python cameras_viewer_FFS.py --ffs_repo <repo>` launches successfully with the default TensorRT engine path
 - each FFS panel shows live RGB on top and color-aligned FFS depth on bottom
 - each FFS panel reports negotiated profile plus live `capture` and `ffs` fps
+- default worker topology launches successfully:
+  - `python cameras_viewer_FFS.py --ffs_repo <repo>`
+  - startup logs report `FFS worker topology: per_camera`
+- optional shared-worker viewer mode launches successfully when requested explicitly:
+  - `python cameras_viewer_FFS.py --ffs_repo <repo> --ffs_worker_mode shared`
+  - startup logs report `FFS worker topology: shared`
 - optional PyTorch viewer mode launches successfully when requested explicitly:
   - `python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo <repo> --ffs_model_path <weights>`
 - optional TensorRT viewer mode launches successfully with prebuilt engines:

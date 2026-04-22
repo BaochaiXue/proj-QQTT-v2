@@ -44,7 +44,7 @@ def depth_to_camera_points(
     color_image: np.ndarray,
     pixel_roi: tuple[int, int, int, int] | None = None,
     max_points_per_camera: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
     depth = np.asarray(depth_m, dtype=np.float32)
     K = np.asarray(K_color, dtype=np.float32).reshape(3, 3)
     color = np.asarray(color_image)
@@ -74,6 +74,7 @@ def depth_to_camera_points(
         return (
             np.empty((0, 3), dtype=np.float32),
             np.empty((0, 3), dtype=np.uint8),
+            np.empty((0, 2), dtype=np.int32),
             {"valid_depth_pixels": 0, "points_after_sampling": 0},
         )
 
@@ -82,13 +83,15 @@ def depth_to_camera_points(
     y = (yy[valid] - cy) * z / fy
     points = np.stack([x, y, z], axis=1)
     colors = color[valid].astype(np.uint8)
+    source_pixel_uv = np.stack([xx[valid], yy[valid]], axis=1).astype(np.int32)
 
     if max_points_per_camera is not None and len(points) > int(max_points_per_camera):
         idx = np.linspace(0, len(points) - 1, int(max_points_per_camera), dtype=np.int32)
         points = points[idx]
         colors = colors[idx]
+        source_pixel_uv = source_pixel_uv[idx]
 
-    return points, colors, {
+    return points, colors, source_pixel_uv, {
         "valid_depth_pixels": valid_count,
         "points_after_sampling": int(len(points)),
     }
@@ -355,7 +358,7 @@ def load_case_frame_camera_clouds(
             native_depth_postprocess=native_depth_postprocess,
             ffs_native_like_postprocess=ffs_native_like_postprocess,
         )
-        camera_points, camera_colors, stats = depth_to_camera_points(
+        camera_points, camera_colors, source_pixel_uv, stats = depth_to_camera_points(
             depth_m,
             intrinsics[camera_idx],
             depth_min_m=depth_min_m,
@@ -374,6 +377,7 @@ def load_case_frame_camera_clouds(
                 "color_path": str(color_path),
                 "points": world_points,
                 "colors": camera_colors,
+                "source_pixel_uv": source_pixel_uv,
                 "source_camera_idx": np.full((len(world_points),), int(camera_idx), dtype=np.int16),
                 "source_serial": np.full((len(world_points),), serial, dtype=object),
                 **depth_info,

@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render a single-frame masked RGB reference board plus a Native-vs-FFS masked pointcloud board from the 3 original calibrated camera views."
+        description="Render a single-frame masked RGB reference board plus a fixed-view masked pointcloud compare board from the 3 original calibrated camera views. When both postprocess flags are enabled, the PCD board expands to a 4x3 raw-vs-PS compare."
     )
     parser.add_argument("--case_name", type=str, default=None)
     parser.add_argument("--aligned_root", type=Path, default=ROOT / "data")
@@ -35,8 +35,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth_min_m", type=float, default=0.0)
     parser.add_argument("--depth_max_m", type=float, default=1.5)
     parser.add_argument("--look_distance", type=float, default=1.0)
-    parser.add_argument("--native_depth_postprocess", action="store_true")
-    parser.add_argument("--ffs_native_like_postprocess", action="store_true")
+    parser.add_argument(
+        "--native_depth_postprocess",
+        action="store_true",
+        help="Apply PhysTwin data_process_mask-style radius-outlier mask refinement to Native after mask loading. When both sides are enabled, the PCD board switches to 4x3 compare mode.",
+    )
+    parser.add_argument(
+        "--ffs_native_like_postprocess",
+        action="store_true",
+        help="Apply PhysTwin data_process_mask-style radius-outlier mask refinement to FFS after mask loading. When both sides are enabled, the PCD board switches to 4x3 compare mode.",
+    )
     parser.add_argument(
         "--use_float_ffs_depth_when_available",
         dest="use_float_ffs_depth_when_available",

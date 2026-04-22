@@ -8,6 +8,7 @@ from typing import Any, Callable
 import cv2
 import numpy as np
 
+from ..floating_point_diagnostics import detect_radius_outlier_indices
 from ..io_artifacts import write_image, write_json, write_ply_ascii
 from ..io_case import (
     get_frame_count,
@@ -39,6 +40,12 @@ MASKED_POINTCLOUD_VARIANTS = (
     ("ffs_masked", "FFS Masked"),
 )
 MIN_MASKED_POINT_COUNT_FOR_FOCUS = 32
+PHYSTWIN_DATA_PROCESS_MASK_CONTRACT = {
+    "mode": "phystwin_data_process_mask",
+    "nb_points": 40,
+    "radius_m": 0.01,
+    "implementation": "masked_fused_pointcloud_remove_radius_outlier_then_clear_source_pixels",
+}
 
 
 def parse_text_prompts(text_prompt: str) -> list[str]:
@@ -158,6 +165,10 @@ def filter_camera_clouds_with_pixel_masks(
         filtered_cloud = dict(camera_cloud)
         filtered_cloud["points"] = np.asarray(camera_cloud["points"], dtype=np.float32)[point_keep_mask]
         filtered_cloud["colors"] = np.asarray(camera_cloud["colors"], dtype=np.uint8)[point_keep_mask]
+        if "source_pixel_uv" in camera_cloud:
+            filtered_cloud["source_pixel_uv"] = _filter_aligned_array(camera_cloud["source_pixel_uv"], point_keep_mask)
+        if "source_depth_m" in camera_cloud:
+            filtered_cloud["source_depth_m"] = _filter_aligned_array(camera_cloud["source_depth_m"], point_keep_mask)
         if "source_camera_idx" in camera_cloud:
             filtered_cloud["source_camera_idx"] = _filter_aligned_array(camera_cloud["source_camera_idx"], point_keep_mask)
         if "source_serial" in camera_cloud:
@@ -173,6 +184,121 @@ def filter_camera_clouds_with_pixel_masks(
             }
         )
     return filtered_clouds, metrics
+
+
+def _copy_pixel_masks_for_camera_clouds(
+    camera_clouds: list[dict[str, Any]],
+    *,
+    pixel_mask_by_camera: dict[int, np.ndarray],
+) -> dict[int, np.ndarray]:
+    copied: dict[int, np.ndarray] = {}
+    for camera_cloud in camera_clouds:
+        camera_idx = int(camera_cloud["camera_idx"])
+        pixel_mask = pixel_mask_by_camera.get(camera_idx)
+        if pixel_mask is None:
+            pixel_mask = np.zeros(_image_shape_for_camera_cloud(camera_cloud), dtype=bool)
+        copied[camera_idx] = np.asarray(pixel_mask, dtype=bool).copy()
+    return copied
+
+
+def _point_tuple_membership_mask(points: np.ndarray, *, point_set: set[tuple[float, float, float]]) -> np.ndarray:
+    cloud = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    if len(cloud) == 0 or not point_set:
+        return np.zeros((len(cloud),), dtype=bool)
+    return np.fromiter(
+        (tuple(float(value) for value in point) in point_set for point in cloud),
+        count=len(cloud),
+        dtype=bool,
+    )
+
+
+def refine_pixel_masks_with_phystwin_data_process_mask(
+    camera_clouds: list[dict[str, Any]],
+    *,
+    pixel_mask_by_camera: dict[int, np.ndarray],
+    nb_points: int = int(PHYSTWIN_DATA_PROCESS_MASK_CONTRACT["nb_points"]),
+    radius_m: float = float(PHYSTWIN_DATA_PROCESS_MASK_CONTRACT["radius_m"]),
+) -> tuple[dict[int, np.ndarray], dict[str, Any]]:
+    refined_masks = _copy_pixel_masks_for_camera_clouds(
+        camera_clouds,
+        pixel_mask_by_camera=pixel_mask_by_camera,
+    )
+    masked_clouds_before, pre_metrics = filter_camera_clouds_with_pixel_masks(
+        camera_clouds,
+        pixel_mask_by_camera=refined_masks,
+    )
+    fused_points_before, _ = _fuse_camera_clouds(masked_clouds_before)
+    outlier_result = detect_radius_outlier_indices(
+        fused_points_before,
+        radius_m=float(radius_m),
+        nb_points=int(nb_points),
+    )
+    outlier_indices = np.asarray(outlier_result["outlier_indices"], dtype=np.int32).reshape(-1)
+    outlier_point_set = {
+        tuple(float(value) for value in point)
+        for point in np.asarray(fused_points_before, dtype=np.float32)[outlier_indices]
+    }
+
+    per_camera_refine_metrics: list[dict[str, Any]] = []
+    total_removed_pixels = 0
+    for masked_camera_cloud, pre_metric in zip(masked_clouds_before, pre_metrics):
+        camera_idx = int(masked_camera_cloud["camera_idx"])
+        source_pixel_uv = masked_camera_cloud.get("source_pixel_uv")
+        if source_pixel_uv is None:
+            raise ValueError("PhysTwin-aligned mask refinement requires source_pixel_uv on camera clouds.")
+        rejected_mask = _point_tuple_membership_mask(
+            masked_camera_cloud["points"],
+            point_set=outlier_point_set,
+        )
+        candidate_uv = np.asarray(source_pixel_uv, dtype=np.int32).reshape(-1, 2)[rejected_mask]
+        inside = (
+            (candidate_uv[:, 0] >= 0)
+            & (candidate_uv[:, 0] < refined_masks[camera_idx].shape[1])
+            & (candidate_uv[:, 1] >= 0)
+            & (candidate_uv[:, 1] < refined_masks[camera_idx].shape[0])
+        ) if len(candidate_uv) > 0 else np.zeros((0,), dtype=bool)
+        candidate_uv = candidate_uv[inside]
+        removed_pixels = 0
+        removed_point_matches = int(np.count_nonzero(rejected_mask))
+        if len(candidate_uv) > 0:
+            unique_uv = np.unique(candidate_uv, axis=0)
+            mask_before = int(np.count_nonzero(refined_masks[camera_idx]))
+            refined_masks[camera_idx][unique_uv[:, 1], unique_uv[:, 0]] = False
+            mask_after = int(np.count_nonzero(refined_masks[camera_idx]))
+            removed_pixels = mask_before - mask_after
+        total_removed_pixels += int(removed_pixels)
+        per_camera_refine_metrics.append(
+            {
+                "camera_idx": camera_idx,
+                "serial": str(masked_camera_cloud["serial"]),
+                "pre_mask_pixel_count": int(pre_metric["mask_pixel_count"]),
+                "pre_masked_point_count": int(pre_metric["post_mask_point_count"]),
+                "outlier_point_matches": int(removed_point_matches),
+                "removed_mask_pixel_count": int(removed_pixels),
+            }
+        )
+
+    masked_clouds_after, post_metrics = filter_camera_clouds_with_pixel_masks(
+        camera_clouds,
+        pixel_mask_by_camera=refined_masks,
+    )
+    fused_points_after, _ = _fuse_camera_clouds(masked_clouds_after)
+    post_metrics_by_camera = {int(item["camera_idx"]): item for item in post_metrics}
+    for metric in per_camera_refine_metrics:
+        camera_idx = int(metric["camera_idx"])
+        post_metric = post_metrics_by_camera[camera_idx]
+        metric["post_mask_pixel_count"] = int(post_metric["mask_pixel_count"])
+        metric["post_masked_point_count"] = int(post_metric["post_mask_point_count"])
+
+    summary = {
+        **PHYSTWIN_DATA_PROCESS_MASK_CONTRACT,
+        "fused_point_count_before": int(len(fused_points_before)),
+        "fused_point_count_after": int(len(fused_points_after)),
+        "fused_outlier_point_count": int(len(outlier_indices)),
+        "removed_mask_pixel_count_total": int(total_removed_pixels),
+        "per_camera": per_camera_refine_metrics,
+    }
+    return refined_masks, summary
 
 
 def _fuse_camera_clouds(camera_clouds: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:

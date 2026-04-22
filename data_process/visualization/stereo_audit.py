@@ -510,7 +510,7 @@ def _build_swapped_ffs_camera_clouds(
         color_image = cv2.imread(str(color_path), cv2.IMREAD_COLOR)
         if color_image is None:
             raise FileNotFoundError(f"Missing aligned RGB frame for swapped FFS point cloud: {color_path}")
-        camera_points, camera_colors, _ = depth_to_camera_points(
+        camera_points, camera_colors, _, _ = depth_to_camera_points(
             swapped_depth_color,
             K_color,
             depth_min_m=depth_min_m,

@@ -13,7 +13,7 @@ from ..io_case import (
     load_case_metadata,
     resolve_case_dirs,
 )
-from ..layouts import compose_grid_2x3, compose_single_row_board
+from ..layouts import compose_grid_2x3, compose_registration_matrix_board, compose_single_row_board
 from ..pointcloud_defaults import DEFAULT_POINTCLOUD_DEPTH_MAX_M, DEFAULT_POINTCLOUD_DEPTH_MIN_M
 from ..roi import crop_points_to_bounds
 from ..triplet_ply_compare import _case_has_ffs_raw_depth
@@ -21,13 +21,14 @@ from ..triplet_video_compare import _render_open3d_hidden_window
 from ..views import build_original_camera_view_configs
 from .masked_pointcloud_compare import (
     MIN_MASKED_POINT_COUNT_FOR_FOCUS,
-    _compute_focus_bounds,
+    PHYSTWIN_DATA_PROCESS_MASK_CONTRACT,
     _expand_bounds,
     _overlay_mask_on_rgb,
     _resolve_mask_root,
     filter_camera_clouds_with_pixel_masks,
     load_union_masks_for_camera_clouds,
     parse_text_prompts,
+    refine_pixel_masks_with_phystwin_data_process_mask,
 )
 
 
@@ -39,8 +40,11 @@ MASKED_CAMERA_VIEW_RENDER_CONTRACT = {
     "shared_crop_across_panels": True,
     "shared_per_column_view_between_rows": True,
     "masked_rgb_reference_panel": True,
-    "supports_native_depth_postprocess": True,
-    "supports_ffs_native_like_postprocess": True,
+    "supports_native_depth_postprocess_flag": True,
+    "supports_ffs_native_like_postprocess_flag": True,
+    "postprocess_mode": str(PHYSTWIN_DATA_PROCESS_MASK_CONTRACT["mode"]),
+    "default_board_mode": "2x3",
+    "dual_postprocess_board_mode": "4x3",
 }
 
 
@@ -109,6 +113,46 @@ def _mask_rgb_image(color_path: str | Path, *, mask: np.ndarray) -> np.ndarray:
     masked = np.zeros_like(image)
     masked[np.asarray(mask, dtype=bool)] = image[np.asarray(mask, dtype=bool)]
     return masked
+
+
+def _copy_pixel_masks(pixel_masks: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
+    return {
+        int(camera_idx): np.asarray(pixel_mask, dtype=bool).copy()
+        for camera_idx, pixel_mask in pixel_masks.items()
+    }
+
+
+def _compute_focus_bounds_for_variant_sets(
+    *,
+    masked_point_sets: list[np.ndarray],
+    unmasked_native_points: np.ndarray,
+    unmasked_ffs_points: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, str, bool]:
+    masked_sets = [np.asarray(points, dtype=np.float32) for points in masked_point_sets if len(points) > 0]
+    masked_count = int(sum(len(points) for points in masked_sets))
+    if masked_sets and masked_count >= MIN_MASKED_POINT_COUNT_FOR_FOCUS:
+        stacked = np.concatenate(masked_sets, axis=0)
+        return (
+            stacked.min(axis=0).astype(np.float32),
+            stacked.max(axis=0).astype(np.float32),
+            "masked_variant_union",
+            False,
+        )
+
+    unmasked_sets = [
+        np.asarray(points, dtype=np.float32)
+        for points in (unmasked_native_points, unmasked_ffs_points)
+        if len(points) > 0
+    ]
+    if not unmasked_sets:
+        raise RuntimeError("Masked camera-view compare could not load any fused points.")
+    stacked = np.concatenate(unmasked_sets, axis=0)
+    return (
+        stacked.min(axis=0).astype(np.float32),
+        stacked.max(axis=0).astype(np.float32),
+        "unmasked_fallback",
+        True,
+    )
 
 
 def run_masked_camera_view_compare_workflow(
@@ -184,7 +228,6 @@ def run_masked_camera_view_compare_workflow(
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
-        native_depth_postprocess=bool(native_depth_postprocess),
     )
     ffs_points, ffs_colors, ffs_stats, ffs_clouds = load_case_frame_cloud_with_sources(
         case_dir=ffs_case_dir,
@@ -196,8 +239,6 @@ def run_masked_camera_view_compare_workflow(
         max_points_per_camera=max_points_per_camera,
         depth_min_m=depth_min_m,
         depth_max_m=depth_max_m,
-        native_depth_postprocess=False,
-        ffs_native_like_postprocess=bool(ffs_native_like_postprocess),
     )
 
     native_clouds = [cloud for cloud in native_clouds if int(cloud["camera_idx"]) in selected_camera_ids]
@@ -217,20 +258,100 @@ def run_masked_camera_view_compare_workflow(
         frame_token=str(ffs_frame_idx),
         text_prompt=text_prompt,
     )
-    native_masked_clouds, native_mask_metrics = filter_camera_clouds_with_pixel_masks(
-        native_clouds,
-        pixel_mask_by_camera=native_masks,
-    )
-    ffs_masked_clouds, ffs_mask_metrics = filter_camera_clouds_with_pixel_masks(
-        ffs_clouds,
-        pixel_mask_by_camera=ffs_masks,
-    )
-    native_masked_points, native_masked_colors = _fuse_camera_clouds(native_masked_clouds)
-    ffs_masked_points, ffs_masked_colors = _fuse_camera_clouds(ffs_masked_clouds)
+    native_raw_masks = _copy_pixel_masks(native_masks)
+    ffs_raw_masks = _copy_pixel_masks(ffs_masks)
+    native_postprocess_summary = {
+        "enabled": bool(native_depth_postprocess),
+        "applied": False,
+        "origin": "none",
+        "contract": None,
+        "fused_point_count_before": 0,
+        "fused_point_count_after": 0,
+        "fused_outlier_point_count": 0,
+        "removed_mask_pixel_count_total": 0,
+        "per_camera": [],
+    }
+    ffs_postprocess_summary = {
+        "enabled": bool(ffs_native_like_postprocess),
+        "applied": False,
+        "origin": "none",
+        "contract": None,
+        "fused_point_count_before": 0,
+        "fused_point_count_after": 0,
+        "fused_outlier_point_count": 0,
+        "removed_mask_pixel_count_total": 0,
+        "per_camera": [],
+    }
+    if native_depth_postprocess:
+        native_masks, native_refine_summary = refine_pixel_masks_with_phystwin_data_process_mask(
+            native_clouds,
+            pixel_mask_by_camera=native_masks,
+        )
+        native_postprocess_summary = {
+            "enabled": True,
+            "applied": True,
+            "origin": "on_the_fly",
+            "contract": dict(PHYSTWIN_DATA_PROCESS_MASK_CONTRACT),
+            **native_refine_summary,
+        }
+    if ffs_native_like_postprocess:
+        ffs_masks, ffs_refine_summary = refine_pixel_masks_with_phystwin_data_process_mask(
+            ffs_clouds,
+            pixel_mask_by_camera=ffs_masks,
+        )
+        ffs_postprocess_summary = {
+            "enabled": True,
+            "applied": True,
+            "origin": "on_the_fly",
+            "contract": dict(PHYSTWIN_DATA_PROCESS_MASK_CONTRACT),
+            **ffs_refine_summary,
+        }
+    native_postprocess_masks = _copy_pixel_masks(native_masks)
+    ffs_postprocess_masks = _copy_pixel_masks(ffs_masks)
 
-    focus_bounds_min, focus_bounds_max, focus_source, fallback_used = _compute_focus_bounds(
-        masked_native_points=native_masked_points,
-        masked_ffs_points=ffs_masked_points,
+    native_raw_masked_clouds, native_raw_mask_metrics = filter_camera_clouds_with_pixel_masks(
+        native_clouds,
+        pixel_mask_by_camera=native_raw_masks,
+    )
+    ffs_raw_masked_clouds, ffs_raw_mask_metrics = filter_camera_clouds_with_pixel_masks(
+        ffs_clouds,
+        pixel_mask_by_camera=ffs_raw_masks,
+    )
+    native_postprocess_masked_clouds, native_postprocess_mask_metrics = filter_camera_clouds_with_pixel_masks(
+        native_clouds,
+        pixel_mask_by_camera=native_postprocess_masks,
+    )
+    ffs_postprocess_masked_clouds, ffs_postprocess_mask_metrics = filter_camera_clouds_with_pixel_masks(
+        ffs_clouds,
+        pixel_mask_by_camera=ffs_postprocess_masks,
+    )
+
+    native_raw_masked_points, native_raw_masked_colors = _fuse_camera_clouds(native_raw_masked_clouds)
+    ffs_raw_masked_points, ffs_raw_masked_colors = _fuse_camera_clouds(ffs_raw_masked_clouds)
+    native_postprocess_masked_points, native_postprocess_masked_colors = _fuse_camera_clouds(native_postprocess_masked_clouds)
+    ffs_postprocess_masked_points, ffs_postprocess_masked_colors = _fuse_camera_clouds(ffs_postprocess_masked_clouds)
+
+    compare_mode_4x3 = bool(native_depth_postprocess and ffs_native_like_postprocess)
+    displayed_native_masks = native_postprocess_masks if native_depth_postprocess else native_raw_masks
+    displayed_ffs_masks = ffs_postprocess_masks if ffs_native_like_postprocess else ffs_raw_masks
+    displayed_native_mask_metrics = native_postprocess_mask_metrics if native_depth_postprocess else native_raw_mask_metrics
+    displayed_ffs_mask_metrics = ffs_postprocess_mask_metrics if ffs_native_like_postprocess else ffs_raw_mask_metrics
+    displayed_native_points = native_postprocess_masked_points if native_depth_postprocess else native_raw_masked_points
+    displayed_native_colors = native_postprocess_masked_colors if native_depth_postprocess else native_raw_masked_colors
+    displayed_ffs_points = ffs_postprocess_masked_points if ffs_native_like_postprocess else ffs_raw_masked_points
+    displayed_ffs_colors = ffs_postprocess_masked_colors if ffs_native_like_postprocess else ffs_raw_masked_colors
+
+    focus_bounds_min, focus_bounds_max, focus_source, fallback_used = _compute_focus_bounds_for_variant_sets(
+        masked_point_sets=(
+            [
+                native_raw_masked_points,
+                native_postprocess_masked_points,
+                ffs_raw_masked_points,
+                ffs_postprocess_masked_points,
+            ]
+            if compare_mode_4x3
+            else [displayed_native_points, displayed_ffs_points]
+        ),
         unmasked_native_points=native_points,
         unmasked_ffs_points=ffs_points,
     )
@@ -267,55 +388,93 @@ def run_masked_camera_view_compare_workflow(
         view_config["image_size"] = [int(target_image_size[0]), int(target_image_size[1])]
 
     rgb_images: list[np.ndarray] = []
-    native_images: list[np.ndarray] = []
-    ffs_images: list[np.ndarray] = []
     rgb_render_paths: list[str] = []
     native_render_paths: list[str] = []
+    native_postprocess_render_paths: list[str] = []
     ffs_render_paths: list[str] = []
+    ffs_postprocess_render_paths: list[str] = []
+    variant_image_rows: dict[str, list[np.ndarray]] = {
+        "native_raw": [],
+        "native_postprocess": [],
+        "ffs_raw": [],
+        "ffs_postprocess": [],
+    }
     for view_config in view_configs:
         camera_idx = int(view_config["camera_idx"])
         target_w, target_h = [int(item) for item in view_config["image_size"]]
         rgb_image = _mask_rgb_image(
             native_camera_cloud_map[camera_idx]["color_path"],
-            mask=native_masks[camera_idx],
+            mask=native_raw_masks[camera_idx] if compare_mode_4x3 else displayed_native_masks[camera_idx],
         )
-        native_image = render_frame_fn(
-            *crop_points_to_bounds(native_masked_points, native_masked_colors, crop_bounds),
-            width=int(target_w),
-            height=int(target_h),
-            center=np.asarray(view_config["center"], dtype=np.float32),
-            eye=np.asarray(view_config["camera_position"], dtype=np.float32),
-            up=np.asarray(view_config["up"], dtype=np.float32),
-            zoom=float(zoom),
-            point_size=float(point_size),
-            intrinsic_matrix=np.asarray(view_config["intrinsic_matrix"], dtype=np.float32),
-            extrinsic_matrix=np.asarray(view_config["extrinsic_matrix"], dtype=np.float32),
-        )
-        ffs_image = render_frame_fn(
-            *crop_points_to_bounds(ffs_masked_points, ffs_masked_colors, crop_bounds),
-            width=int(target_w),
-            height=int(target_h),
-            center=np.asarray(view_config["center"], dtype=np.float32),
-            eye=np.asarray(view_config["camera_position"], dtype=np.float32),
-            up=np.asarray(view_config["up"], dtype=np.float32),
-            zoom=float(zoom),
-            point_size=float(point_size),
-            intrinsic_matrix=np.asarray(view_config["intrinsic_matrix"], dtype=np.float32),
-            extrinsic_matrix=np.asarray(view_config["extrinsic_matrix"], dtype=np.float32),
-        )
+        rendered_variants = {
+            "native_raw": render_frame_fn(
+                *crop_points_to_bounds(native_raw_masked_points, native_raw_masked_colors, crop_bounds),
+                width=int(target_w),
+                height=int(target_h),
+                center=np.asarray(view_config["center"], dtype=np.float32),
+                eye=np.asarray(view_config["camera_position"], dtype=np.float32),
+                up=np.asarray(view_config["up"], dtype=np.float32),
+                zoom=float(zoom),
+                point_size=float(point_size),
+                intrinsic_matrix=np.asarray(view_config["intrinsic_matrix"], dtype=np.float32),
+                extrinsic_matrix=np.asarray(view_config["extrinsic_matrix"], dtype=np.float32),
+            ),
+            "native_postprocess": render_frame_fn(
+                *crop_points_to_bounds(native_postprocess_masked_points, native_postprocess_masked_colors, crop_bounds),
+                width=int(target_w),
+                height=int(target_h),
+                center=np.asarray(view_config["center"], dtype=np.float32),
+                eye=np.asarray(view_config["camera_position"], dtype=np.float32),
+                up=np.asarray(view_config["up"], dtype=np.float32),
+                zoom=float(zoom),
+                point_size=float(point_size),
+                intrinsic_matrix=np.asarray(view_config["intrinsic_matrix"], dtype=np.float32),
+                extrinsic_matrix=np.asarray(view_config["extrinsic_matrix"], dtype=np.float32),
+            ),
+            "ffs_raw": render_frame_fn(
+                *crop_points_to_bounds(ffs_raw_masked_points, ffs_raw_masked_colors, crop_bounds),
+                width=int(target_w),
+                height=int(target_h),
+                center=np.asarray(view_config["center"], dtype=np.float32),
+                eye=np.asarray(view_config["camera_position"], dtype=np.float32),
+                up=np.asarray(view_config["up"], dtype=np.float32),
+                zoom=float(zoom),
+                point_size=float(point_size),
+                intrinsic_matrix=np.asarray(view_config["intrinsic_matrix"], dtype=np.float32),
+                extrinsic_matrix=np.asarray(view_config["extrinsic_matrix"], dtype=np.float32),
+            ),
+            "ffs_postprocess": render_frame_fn(
+                *crop_points_to_bounds(ffs_postprocess_masked_points, ffs_postprocess_masked_colors, crop_bounds),
+                width=int(target_w),
+                height=int(target_h),
+                center=np.asarray(view_config["center"], dtype=np.float32),
+                eye=np.asarray(view_config["camera_position"], dtype=np.float32),
+                up=np.asarray(view_config["up"], dtype=np.float32),
+                zoom=float(zoom),
+                point_size=float(point_size),
+                intrinsic_matrix=np.asarray(view_config["intrinsic_matrix"], dtype=np.float32),
+                extrinsic_matrix=np.asarray(view_config["extrinsic_matrix"], dtype=np.float32),
+            ),
+        }
         rgb_images.append(rgb_image)
-        native_images.append(native_image)
-        ffs_images.append(ffs_image)
+        for variant_name, image in rendered_variants.items():
+            variant_image_rows[variant_name].append(image)
 
         rgb_render_path = debug_dir / f"masked_rgb_cam{int(view_config['camera_idx'])}.png"
         native_render_path = debug_dir / f"native_cam{int(view_config['camera_idx'])}.png"
+        native_postprocess_render_path = debug_dir / f"native_postprocess_cam{int(view_config['camera_idx'])}.png"
         ffs_render_path = debug_dir / f"ffs_cam{int(view_config['camera_idx'])}.png"
+        ffs_postprocess_render_path = debug_dir / f"ffs_postprocess_cam{int(view_config['camera_idx'])}.png"
         write_image(rgb_render_path, rgb_image)
-        write_image(native_render_path, native_image)
-        write_image(ffs_render_path, ffs_image)
+        write_image(native_render_path, rendered_variants["native_raw"])
+        write_image(native_postprocess_render_path, rendered_variants["native_postprocess"])
+        write_image(ffs_render_path, rendered_variants["ffs_raw"])
+        write_image(ffs_postprocess_render_path, rendered_variants["ffs_postprocess"])
         rgb_render_paths.append(str(rgb_render_path.resolve()))
         native_render_paths.append(str(native_render_path.resolve()))
+        native_postprocess_render_paths.append(str(native_postprocess_render_path.resolve()))
         ffs_render_paths.append(str(ffs_render_path.resolve()))
+        ffs_postprocess_render_paths.append(str(ffs_postprocess_render_path.resolve()))
 
     rgb_board = compose_single_row_board(
         title_lines=[
@@ -328,41 +487,80 @@ def run_masked_camera_view_compare_workflow(
     rgb_board_path = output_dir / "00_masked_rgb_board.png"
     write_image(rgb_board_path, rgb_board)
 
-    board = compose_grid_2x3(
-        title=f"Masked Camera-View PCD Compare | frame={int(frame_idx):04d} | prompt={text_prompt}",
-        column_headers=[str(view["label"]) for view in view_configs],
-        row_headers=["Native", "FFS"],
-        native_images=native_images,
-        ffs_images=ffs_images,
-    )
+    board_row_headers = ["Native", "FFS"]
+    if compare_mode_4x3:
+        board = compose_registration_matrix_board(
+            title_lines=[
+                "Masked Camera-View PCD Compare",
+                f"frame={int(frame_idx):04d}  prompt={text_prompt}  fixed original camera viewpoints",
+            ],
+            row_headers=["Native", "Native + PS", "FFS", "FFS + PS"],
+            column_headers=[str(view["label"]) for view in view_configs],
+            image_rows=[
+                variant_image_rows["native_raw"],
+                variant_image_rows["native_postprocess"],
+                variant_image_rows["ffs_raw"],
+                variant_image_rows["ffs_postprocess"],
+            ],
+        )
+        board_row_headers = ["Native", "Native + PS", "FFS", "FFS + PS"]
+    else:
+        board = compose_grid_2x3(
+            title=f"Masked Camera-View PCD Compare | frame={int(frame_idx):04d} | prompt={text_prompt}",
+            column_headers=[str(view["label"]) for view in view_configs],
+            row_headers=board_row_headers,
+            native_images=variant_image_rows["native_postprocess"] if native_depth_postprocess else variant_image_rows["native_raw"],
+            ffs_images=variant_image_rows["ffs_postprocess"] if ffs_native_like_postprocess else variant_image_rows["ffs_raw"],
+        )
     board_path = output_dir / "01_masked_camera_view_board.png"
     write_image(board_path, board)
 
-    overlay_paths: dict[str, list[str]] = {"native": [], "ffs": []}
+    overlay_paths: dict[str, list[str]] = {
+        "native": [],
+        "native_postprocess": [],
+        "ffs": [],
+        "ffs_postprocess": [],
+    }
     for source_name, camera_clouds, pixel_masks in (
-        ("native", native_clouds, native_masks),
-        ("ffs", ffs_clouds, ffs_masks),
+        ("native", native_clouds, native_raw_masks),
+        ("native_postprocess", native_clouds, native_postprocess_masks),
+        ("ffs", ffs_clouds, ffs_raw_masks),
+        ("ffs_postprocess", ffs_clouds, ffs_postprocess_masks),
     ):
         for camera_cloud in camera_clouds:
             camera_idx = int(camera_cloud["camera_idx"])
             overlay = _overlay_mask_on_rgb(
                 camera_cloud["color_path"],
                 mask=pixel_masks[camera_idx],
-                label=f"{source_name.title()} Cam{camera_idx} mask",
+                label=f"{source_name.replace('_', ' ').title()} Cam{camera_idx} mask",
             )
             overlay_path = debug_dir / f"{source_name}_mask_overlay_cam{camera_idx}.png"
             write_image(overlay_path, overlay)
             overlay_paths[source_name].append(str(overlay_path.resolve()))
 
     ply_paths = {
-        "native_masked": debug_dir / "native_masked_fused.ply",
-        "ffs_masked": debug_dir / "ffs_masked_fused.ply",
+        "native_raw": debug_dir / "native_masked_fused.ply",
+        "native_postprocess": debug_dir / "native_postprocess_masked_fused.ply",
+        "ffs_raw": debug_dir / "ffs_masked_fused.ply",
+        "ffs_postprocess": debug_dir / "ffs_postprocess_masked_fused.ply",
     }
-    write_ply_ascii(*((ply_paths["native_masked"],) + crop_points_to_bounds(native_masked_points, native_masked_colors, crop_bounds)))
-    write_ply_ascii(*((ply_paths["ffs_masked"],) + crop_points_to_bounds(ffs_masked_points, ffs_masked_colors, crop_bounds)))
+    write_ply_ascii(*((ply_paths["native_raw"],) + crop_points_to_bounds(native_raw_masked_points, native_raw_masked_colors, crop_bounds)))
+    write_ply_ascii(*((ply_paths["native_postprocess"],) + crop_points_to_bounds(native_postprocess_masked_points, native_postprocess_masked_colors, crop_bounds)))
+    write_ply_ascii(*((ply_paths["ffs_raw"],) + crop_points_to_bounds(ffs_raw_masked_points, ffs_raw_masked_colors, crop_bounds)))
+    write_ply_ascii(*((ply_paths["ffs_postprocess"],) + crop_points_to_bounds(ffs_postprocess_masked_points, ffs_postprocess_masked_colors, crop_bounds)))
 
-    native_metrics_by_camera = {int(item["camera_idx"]): item for item in native_mask_metrics}
-    ffs_metrics_by_camera = {int(item["camera_idx"]): item for item in ffs_mask_metrics}
+    native_raw_metrics_by_camera = {int(item["camera_idx"]): item for item in native_raw_mask_metrics}
+    ffs_raw_metrics_by_camera = {int(item["camera_idx"]): item for item in ffs_raw_mask_metrics}
+    native_display_metrics_by_camera = {int(item["camera_idx"]): item for item in displayed_native_mask_metrics}
+    ffs_display_metrics_by_camera = {int(item["camera_idx"]): item for item in displayed_ffs_mask_metrics}
+    native_postprocess_metrics_by_camera = {int(item["camera_idx"]): item for item in native_postprocess_mask_metrics}
+    ffs_postprocess_metrics_by_camera = {int(item["camera_idx"]): item for item in ffs_postprocess_mask_metrics}
+    native_postprocess_by_camera = {
+        int(item["camera_idx"]): item for item in native_postprocess_summary["per_camera"]
+    }
+    ffs_postprocess_by_camera = {
+        int(item["camera_idx"]): item for item in ffs_postprocess_summary["per_camera"]
+    }
     summary = {
         "aligned_root": str(aligned_root),
         "output_dir": str(output_dir),
@@ -381,6 +579,13 @@ def run_masked_camera_view_compare_workflow(
         "mask_source_mode": str(mask_source_mode),
         "native_depth_postprocess": bool(native_depth_postprocess),
         "ffs_native_like_postprocess": bool(ffs_native_like_postprocess),
+        "board_mode": "4x3" if compare_mode_4x3 else "2x3",
+        "board_row_headers": list(board_row_headers),
+        "postprocess_contract": dict(PHYSTWIN_DATA_PROCESS_MASK_CONTRACT),
+        "postprocess": {
+            "native": native_postprocess_summary,
+            "ffs": ffs_postprocess_summary,
+        },
         "mask_sources": {
             "native": {
                 "mask_source": str(native_mask_source),
@@ -389,8 +594,27 @@ def run_masked_camera_view_compare_workflow(
                 "per_camera": [
                     {
                         **native_mask_debug[int(cloud["camera_idx"])],
-                        "pre_mask_point_count": int(native_metrics_by_camera[int(cloud["camera_idx"])]["pre_mask_point_count"]),
-                        "post_mask_point_count": int(native_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                        "loaded_mask_pixel_count": int(native_mask_debug[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                        "raw_mask_pixel_count": int(native_raw_metrics_by_camera[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                        "raw_mask_point_count": int(native_raw_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                        "postprocess_mask_pixel_count": int(native_postprocess_metrics_by_camera[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                        "postprocess_mask_point_count": int(native_postprocess_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                        "post_mask_pixel_count": int(native_display_metrics_by_camera[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                        "pre_mask_point_count": int(native_display_metrics_by_camera[int(cloud["camera_idx"])]["pre_mask_point_count"]),
+                        "post_mask_point_count": int(native_display_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                        "mask_postprocess": native_postprocess_by_camera.get(
+                            int(cloud["camera_idx"]),
+                            {
+                                "camera_idx": int(cloud["camera_idx"]),
+                                "serial": str(cloud["serial"]),
+                                "pre_mask_pixel_count": int(native_mask_debug[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                                "post_mask_pixel_count": int(native_postprocess_metrics_by_camera[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                                "pre_masked_point_count": int(native_raw_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                                "post_masked_point_count": int(native_postprocess_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                                "outlier_point_matches": 0,
+                                "removed_mask_pixel_count": 0,
+                            },
+                        ),
                     }
                     for cloud in native_clouds
                 ],
@@ -402,8 +626,27 @@ def run_masked_camera_view_compare_workflow(
                 "per_camera": [
                     {
                         **ffs_mask_debug[int(cloud["camera_idx"])],
-                        "pre_mask_point_count": int(ffs_metrics_by_camera[int(cloud["camera_idx"])]["pre_mask_point_count"]),
-                        "post_mask_point_count": int(ffs_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                        "loaded_mask_pixel_count": int(ffs_mask_debug[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                        "raw_mask_pixel_count": int(ffs_raw_metrics_by_camera[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                        "raw_mask_point_count": int(ffs_raw_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                        "postprocess_mask_pixel_count": int(ffs_postprocess_metrics_by_camera[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                        "postprocess_mask_point_count": int(ffs_postprocess_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                        "post_mask_pixel_count": int(ffs_display_metrics_by_camera[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                        "pre_mask_point_count": int(ffs_display_metrics_by_camera[int(cloud["camera_idx"])]["pre_mask_point_count"]),
+                        "post_mask_point_count": int(ffs_display_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                        "mask_postprocess": ffs_postprocess_by_camera.get(
+                            int(cloud["camera_idx"]),
+                            {
+                                "camera_idx": int(cloud["camera_idx"]),
+                                "serial": str(cloud["serial"]),
+                                "pre_mask_pixel_count": int(ffs_mask_debug[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                                "post_mask_pixel_count": int(ffs_postprocess_metrics_by_camera[int(cloud["camera_idx"])]["mask_pixel_count"]),
+                                "pre_masked_point_count": int(ffs_raw_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                                "post_masked_point_count": int(ffs_postprocess_metrics_by_camera[int(cloud["camera_idx"])]["post_mask_point_count"]),
+                                "outlier_point_matches": 0,
+                                "removed_mask_pixel_count": 0,
+                            },
+                        ),
                     }
                     for cloud in ffs_clouds
                 ],
@@ -424,21 +667,45 @@ def run_masked_camera_view_compare_workflow(
             "masked_rgb_reference": {
                 "panel_count": int(len(rgb_images)),
             },
-            "native_masked": {
-                "fused_point_count": int(len(crop_points_to_bounds(native_masked_points, native_masked_colors, crop_bounds)[0])),
-                "ply_path": str(ply_paths["native_masked"].resolve()),
+            "native_raw": {
+                "row_label": "Native",
+                "fused_point_count": int(len(crop_points_to_bounds(native_raw_masked_points, native_raw_masked_colors, crop_bounds)[0])),
+                "ply_path": str(ply_paths["native_raw"].resolve()),
+                "render_paths": list(native_render_paths),
+                "postprocess_origin": "none",
             },
-            "ffs_masked": {
-                "fused_point_count": int(len(crop_points_to_bounds(ffs_masked_points, ffs_masked_colors, crop_bounds)[0])),
-                "ply_path": str(ply_paths["ffs_masked"].resolve()),
+            "native_postprocess": {
+                "row_label": "Native + PS",
+                "fused_point_count": int(len(crop_points_to_bounds(native_postprocess_masked_points, native_postprocess_masked_colors, crop_bounds)[0])),
+                "ply_path": str(ply_paths["native_postprocess"].resolve()),
+                "render_paths": list(native_postprocess_render_paths),
+                "postprocess_origin": str(native_postprocess_summary["origin"]),
+            },
+            "ffs_raw": {
+                "row_label": "FFS",
+                "fused_point_count": int(len(crop_points_to_bounds(ffs_raw_masked_points, ffs_raw_masked_colors, crop_bounds)[0])),
+                "ply_path": str(ply_paths["ffs_raw"].resolve()),
+                "render_paths": list(ffs_render_paths),
+                "postprocess_origin": "none",
+            },
+            "ffs_postprocess": {
+                "row_label": "FFS + PS",
+                "fused_point_count": int(len(crop_points_to_bounds(ffs_postprocess_masked_points, ffs_postprocess_masked_colors, crop_bounds)[0])),
+                "ply_path": str(ply_paths["ffs_postprocess"].resolve()),
+                "render_paths": list(ffs_postprocess_render_paths),
+                "postprocess_origin": str(ffs_postprocess_summary["origin"]),
             },
         },
         "debug_artifacts": {
             "masked_rgb_paths": rgb_render_paths,
             "native_mask_overlay_paths": overlay_paths["native"],
+            "native_postprocess_mask_overlay_paths": overlay_paths["native_postprocess"],
             "ffs_mask_overlay_paths": overlay_paths["ffs"],
+            "ffs_postprocess_mask_overlay_paths": overlay_paths["ffs_postprocess"],
             "native_render_paths": native_render_paths,
+            "native_postprocess_render_paths": native_postprocess_render_paths,
             "ffs_render_paths": ffs_render_paths,
+            "ffs_postprocess_render_paths": ffs_postprocess_render_paths,
         },
         "source_stats": {
             "native": native_stats,

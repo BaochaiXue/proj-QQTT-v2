@@ -13,6 +13,7 @@ import numpy as np
 from cameras_viewer_FFS import (
     DEFAULT_FFS_TRT_MODEL_DIR,
     _compute_measured_fps,
+    _drain_shared_worker_next_request,
     _format_ffs_backend_startup_note,
     _format_runtime_stats_lines,
     _format_panel_label_lines,
@@ -77,6 +78,53 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         _put_latest(q, {"frame": 2})
         self.assertEqual(q.qsize(), 1)
         self.assertEqual(q.get_nowait(), {"frame": 2})
+
+    def test_shared_worker_request_drain_round_robins_across_camera_queues(self) -> None:
+        q0: queue.Queue[object] = queue.Queue(maxsize=1)
+        q1: queue.Queue[object] = queue.Queue(maxsize=1)
+        q2: queue.Queue[object] = queue.Queue(maxsize=1)
+        q0.put_nowait({"capture_seq": 1})
+        q1.put_nowait({"capture_seq": 2})
+        q2.put_nowait({"capture_seq": 3})
+        request_queues = {0: q0, 1: q1, 2: q2}
+
+        camera_idx, payload, cursor, closed = _drain_shared_worker_next_request(
+            camera_order=[0, 1, 2],
+            request_queues=request_queues,
+            closed_camera_indices=set(),
+            start_cursor=0,
+        )
+        self.assertEqual(camera_idx, 0)
+        self.assertEqual(payload, {"capture_seq": 1})
+        self.assertEqual(cursor, 1)
+        self.assertEqual(closed, set())
+
+        camera_idx, payload, cursor, closed = _drain_shared_worker_next_request(
+            camera_order=[0, 1, 2],
+            request_queues=request_queues,
+            closed_camera_indices=closed,
+            start_cursor=cursor,
+        )
+        self.assertEqual(camera_idx, 1)
+        self.assertEqual(payload, {"capture_seq": 2})
+        self.assertEqual(cursor, 2)
+        self.assertEqual(closed, set())
+
+    def test_shared_worker_request_drain_marks_closed_queues_and_continues(self) -> None:
+        q0: queue.Queue[object] = queue.Queue(maxsize=1)
+        q1: queue.Queue[object] = queue.Queue(maxsize=1)
+        q0.put_nowait(None)
+        q1.put_nowait({"capture_seq": 9})
+        camera_idx, payload, cursor, closed = _drain_shared_worker_next_request(
+            camera_order=[0, 1],
+            request_queues={0: q0, 1: q1},
+            closed_camera_indices=set(),
+            start_cursor=0,
+        )
+        self.assertEqual(camera_idx, 1)
+        self.assertEqual(payload, {"capture_seq": 9})
+        self.assertEqual(cursor, 0)
+        self.assertEqual(closed, {0})
 
     def test_fit_grid_for_window_uses_stable_screen_bounded_helper(self) -> None:
         grid = np.zeros((960, 1696, 3), dtype=np.uint8)
@@ -209,6 +257,20 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
 
         self.assertEqual(args.ffs_backend, "tensorrt")
         self.assertEqual(args.ffs_trt_model_dir, DEFAULT_FFS_TRT_MODEL_DIR)
+        self.assertEqual(args.ffs_worker_mode, "per_camera")
+
+    def test_parse_args_accepts_shared_worker_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            with mock.patch(
+                "sys.argv",
+                ["cameras_viewer_FFS.py", "--ffs_repo", str(repo), "--ffs_worker_mode", "shared"],
+            ):
+                args = parse_args()
+
+        self.assertEqual(args.ffs_worker_mode, "shared")
 
     def test_resolve_tensorrt_worker_kwargs_loads_engine_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

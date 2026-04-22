@@ -46,6 +46,8 @@ class MaskedCameraViewCompareSmokeTest(unittest.TestCase):
             self.assertTrue((output_dir / "summary.json").is_file())
             self.assertTrue((output_dir / "debug" / "native_masked_fused.ply").is_file())
             self.assertTrue((output_dir / "debug" / "ffs_masked_fused.ply").is_file())
+            self.assertEqual(summary["board_mode"], "2x3")
+            self.assertEqual(summary["board_row_headers"], ["Native", "FFS"])
             self.assertEqual(summary["render_contract"]["view_mode"], "original_camera_extrinsics")
             self.assertEqual(summary["render_contract"]["projection_mode"], "original_camera_pinhole")
             self.assertEqual(len(summary["column_views"]), 3)
@@ -118,14 +120,44 @@ class MaskedCameraViewCompareSmokeTest(unittest.TestCase):
 
             self.assertTrue(summary["native_depth_postprocess"])
             self.assertTrue(summary["ffs_native_like_postprocess"])
+            self.assertEqual(summary["board_mode"], "4x3")
+            self.assertEqual(summary["board_row_headers"], ["Native", "Native + PS", "FFS", "FFS + PS"])
+            self.assertEqual(summary["postprocess_contract"]["mode"], "phystwin_data_process_mask")
+            self.assertEqual(summary["postprocess"]["native"]["origin"], "on_the_fly")
+            self.assertEqual(summary["postprocess"]["ffs"]["origin"], "on_the_fly")
+            self.assertEqual(summary["postprocess"]["native"]["radius_m"], 0.01)
+            self.assertEqual(summary["postprocess"]["native"]["nb_points"], 40)
+            self.assertEqual(
+                sorted(summary["variants"].keys()),
+                ["ffs_postprocess", "ffs_raw", "masked_rgb_reference", "native_postprocess", "native_raw"],
+            )
+            self.assertEqual(len(summary["variants"]["native_raw"]["render_paths"]), 3)
+            self.assertEqual(len(summary["variants"]["native_postprocess"]["render_paths"]), 3)
+            self.assertEqual(len(summary["variants"]["ffs_raw"]["render_paths"]), 3)
+            self.assertEqual(len(summary["variants"]["ffs_postprocess"]["render_paths"]), 3)
             for camera_stats in summary["source_stats"]["native"]["per_camera"]:
-                self.assertTrue(camera_stats["native_depth_postprocess_enabled"])
-                self.assertTrue(camera_stats["native_depth_postprocess_applied"])
-                self.assertEqual(camera_stats["native_depth_postprocess_origin"], "on_the_fly")
+                self.assertFalse(camera_stats["native_depth_postprocess_enabled"])
+                self.assertFalse(camera_stats["native_depth_postprocess_applied"])
+                self.assertEqual(camera_stats["native_depth_postprocess_origin"], "none")
             for camera_stats in summary["source_stats"]["ffs"]["per_camera"]:
-                self.assertTrue(camera_stats["ffs_native_like_postprocess_enabled"])
-                self.assertTrue(camera_stats["ffs_native_like_postprocess_applied"])
-                self.assertEqual(camera_stats["ffs_native_like_postprocess_origin"], "aligned_auxiliary")
+                self.assertFalse(camera_stats["ffs_native_like_postprocess_enabled"])
+                self.assertFalse(camera_stats["ffs_native_like_postprocess_applied"])
+                self.assertEqual(camera_stats["ffs_native_like_postprocess_origin"], "none")
+            for source_name in ("native", "ffs"):
+                self.assertTrue(summary["postprocess"][source_name]["applied"])
+                self.assertEqual(len(summary["debug_artifacts"][f"{source_name}_postprocess_render_paths"]), 3)
+                for camera_entry in summary["mask_sources"][source_name]["per_camera"]:
+                    self.assertIn("mask_postprocess", camera_entry)
+                    self.assertIn("raw_mask_point_count", camera_entry)
+                    self.assertIn("postprocess_mask_point_count", camera_entry)
+                    self.assertGreaterEqual(
+                        int(camera_entry["mask_postprocess"]["pre_mask_pixel_count"]),
+                        int(camera_entry["mask_postprocess"]["post_mask_pixel_count"]),
+                    )
+                    self.assertGreaterEqual(
+                        int(camera_entry["pre_mask_point_count"]),
+                        int(camera_entry["post_mask_point_count"]),
+                    )
 
 
 if __name__ == "__main__":

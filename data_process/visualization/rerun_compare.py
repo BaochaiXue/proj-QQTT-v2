@@ -234,7 +234,7 @@ def _load_ffs_variants(
                 k_color_list[camera_idx],
                 output_shape=(int(color_image.shape[0]), int(color_image.shape[1])),
             )
-            camera_points, camera_colors, camera_stats = depth_to_camera_points(
+            camera_points, camera_colors, _, camera_stats = depth_to_camera_points(
                 depth_color_m,
                 k_color_list[camera_idx],
                 depth_min_m=depth_min_m,

@@ -69,6 +69,18 @@ The preview depth panel now uses the same `TURBO` metric-depth colorization path
 python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
 ```
 
+Live RGB + Fast-FoundationStereo preview:
+
+```bash
+python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo
+```
+
+The default FFS viewer topology is still `--ffs_worker_mode per_camera`, which means one FFS worker process per active camera. You can also force a single shared FFS worker process for all active cameras:
+
+```bash
+python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_worker_mode shared
+```
+
 ## Calibration
 
 Calibrate the 3-camera setup:

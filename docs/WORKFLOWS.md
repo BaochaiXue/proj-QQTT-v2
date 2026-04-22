@@ -35,6 +35,22 @@ If you explicitly want the older PyTorch viewer path instead of the default Tens
 python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth
 ```
 
+Worker topology defaults to one FFS worker process per active camera:
+
+- `--ffs_worker_mode per_camera`
+  - current default
+  - one worker process per active camera
+- `--ffs_worker_mode shared`
+  - one shared worker process handles all active cameras sequentially
+  - keeps per-camera latest-only request/result queues
+  - useful when you want to reduce model duplication and compare shared-worker behavior explicitly
+
+Shared-worker live preview:
+
+```bash
+python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_worker_mode shared
+```
+
 Saved-pair FFS speed / tradeoff benchmark:
 
 ```bash
@@ -66,7 +82,7 @@ python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-i
 Use this when the main question is the real online path:
 
 - 3 cameras streaming at once
-- 3 FFS workers sharing one GPU
+- either 3 per-camera FFS workers or 1 shared FFS worker, depending on `--ffs_worker_mode`
 - latest-only queue pressure
 - actual viewer-side `capture` vs `ffs` throughput
 
@@ -413,7 +429,7 @@ For single-frame masked point-cloud diagnosis under the 3 original calibrated ca
 python scripts/harness/visual_compare_masked_camera_views.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --text_prompt sloth
 ```
 
-To compare after applying the same PhysTwin-like depth postprocess to both `Native` and `FFS` before fusion/rendering:
+To compare after applying the same PhysTwin `data_process_mask.py`-style mask refinement to both `Native` and `FFS` before rendering:
 
 ```bash
 python scripts/harness/visual_compare_masked_camera_views.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --text_prompt sloth --native_depth_postprocess --ffs_native_like_postprocess
@@ -424,17 +440,27 @@ This workflow:
 - reuses the same QQTT-local `sam31_masks` resolution / generation policy as `visual_compare_masked_pointcloud.py`
 - uses the 3 real calibrated camera extrinsics from `calibrate.pkl`
 - uses the original per-camera `K_color` pinhole projection when rendering point clouds so each Open3D panel matches the corresponding RGB view scale more closely
-- can optionally apply the same software postprocess chain to `Native` depth on the fly
-- can optionally prefer aligned `depth_ffs_native_like_postprocess*` for `FFS` and otherwise run the same postprocess on the fly
+- can optionally apply the same PhysTwin `data_process_mask.py` semantics to either source after mask loading:
+  - build the fused masked object-only cloud
+  - run Open3D `remove_radius_outlier(nb_points=40, radius=0.01)`
+  - clear the rejected source pixels from each camera mask
+- does not depend on aligned `depth_ffs_native_like_postprocess*` auxiliary depth streams for this workflow
 - fixes one exact original camera view per column:
   - `Cam0`
   - `Cam1`
   - `Cam2`
 - writes one `1x3` masked RGB reference board with the background zeroed outside the resolved mask
-- keeps one shared masked-object crop across the `2x3` point-cloud board
-- renders one `2x3` Open3D board:
-  - top row = masked `Native`
-  - bottom row = masked `FFS`
+- keeps one shared masked-object crop across the fixed-view point-cloud board
+- renders:
+  - default `2x3` board when zero or one postprocess flag is enabled:
+    - top row = masked `Native`
+    - bottom row = masked `FFS`
+  - `4x3` board when both `--native_depth_postprocess` and `--ffs_native_like_postprocess` are enabled:
+    - row 1 = `Native`
+    - row 2 = `Native + PS`
+    - row 3 = `FFS`
+    - row 4 = `FFS + PS`
+- in `4x3` mode the raw and `PS` rows reuse the same per-column original camera viewpoint and shared object crop
 - writes:
   - `00_masked_rgb_board.png`
   - `01_masked_camera_view_board.png`
