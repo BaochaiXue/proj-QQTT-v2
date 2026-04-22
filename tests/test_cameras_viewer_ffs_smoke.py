@@ -6,6 +6,7 @@ import queue
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -14,6 +15,7 @@ from cameras_viewer_FFS import (
     _format_ffs_backend_startup_note,
     _format_runtime_stats_lines,
     _format_panel_label_lines,
+    _fit_grid_for_window,
     _put_latest,
     _reproject_ffs_depth_to_color,
     _resolve_ffs_worker_kwargs,
@@ -67,6 +69,14 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         _put_latest(q, {"frame": 2})
         self.assertEqual(q.qsize(), 1)
         self.assertEqual(q.get_nowait(), {"frame": 2})
+
+    def test_fit_grid_for_window_uses_stable_screen_bounded_helper(self) -> None:
+        grid = np.zeros((960, 1696, 3), dtype=np.uint8)
+        sentinel = np.zeros((720, 1272, 3), dtype=np.uint8)
+        with mock.patch("cameras_viewer_FFS._fit_grid_for_display", return_value=sentinel) as fit_mock:
+            result = _fit_grid_for_window(grid, window_name="RealSense FFS Viewer")
+        fit_mock.assert_called_once()
+        self.assertIs(result, sentinel)
 
     def test_reproject_ffs_depth_to_color_keeps_identity_mapping(self) -> None:
         depth_ir_left_m = np.array([[0.0, 0.0, 0.0], [0.0, 1.25, 0.0], [0.0, 0.0, 0.0]], dtype=np.float32)

@@ -26,6 +26,7 @@ from cameras_viewer import (
     _build_profiles,
     _compute_measured_fps,
     _enumerate_d400_devices,
+    _fit_grid_for_display,
     _fit_to_canvas,
     _runtime_imports,
     _tile_panels,
@@ -301,30 +302,11 @@ def _empty_panel(width: int, height: int, label_lines: Tuple[str, str]) -> np.nd
 
 
 def _fit_grid_for_window(grid: Any, *, window_name: str) -> Any:
-    cv2, _, _ = _runtime_imports()
-    target_width = int(grid.shape[1])
-    target_height = int(grid.shape[0])
-    if hasattr(cv2, "getWindowImageRect"):
-        try:
-            _, _, current_width, current_height = cv2.getWindowImageRect(window_name)
-            if int(current_width) > 0 and int(current_height) > 0:
-                target_width = int(current_width)
-                target_height = int(current_height)
-        except Exception:
-            pass
-    if target_width == int(grid.shape[1]) and target_height == int(grid.shape[0]):
-        return grid
-    interpolation = (
-        cv2.INTER_AREA
-        if target_width < int(grid.shape[1]) or target_height < int(grid.shape[0])
-        else cv2.INTER_LINEAR
-    )
-    return _fit_to_canvas(
-        grid,
-        target_width,
-        target_height,
-        interpolation=interpolation,
-    )
+    del window_name
+    # The base viewer's screen-bounded fit path is stable under WSL Qt/OpenCV.
+    # Using getWindowImageRect() here can bootstrap the FFS grid into a tiny
+    # thumbnail if the initial image rect is reported before the first real frame.
+    return _fit_grid_for_display(grid)
 
 
 def _put_latest(queue_obj: Any, item: Any) -> None:
