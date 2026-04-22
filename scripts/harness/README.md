@@ -53,6 +53,7 @@ It preserves the canonical `color/` and `depth/` frame trees plus optional `colo
 - `visual_compare_depth_triplet_video.py`
 - `visual_compare_masked_pointcloud.py`
 - `visual_compare_masked_camera_views.py`
+- `visualize_ffs_static_confidence_panels.py`
 - `visual_compare_turntable.py`
 - `visual_compare_rerun.py`
 - `visual_make_match_board.py`

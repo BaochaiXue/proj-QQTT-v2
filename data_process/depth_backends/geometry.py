@@ -101,6 +101,44 @@ def rasterize_nearest_depth(
     return depth
 
 
+def rasterize_scalar_by_nearest_depth(
+    uv: np.ndarray,
+    z_values: np.ndarray,
+    scalar_values: np.ndarray,
+    output_shape: tuple[int, int],
+    invalid_value: float = 0.0,
+) -> np.ndarray:
+    height, width = output_shape
+    scalar_map = np.full((height, width), invalid_value, dtype=np.float32)
+    nearest_depth = np.full((height, width), np.inf, dtype=np.float32)
+    uv = np.asarray(uv, dtype=np.float32)
+    z_values = np.asarray(z_values, dtype=np.float32)
+    scalar_values = np.asarray(scalar_values, dtype=np.float32)
+    valid = (
+        np.isfinite(uv[:, 0])
+        & np.isfinite(uv[:, 1])
+        & np.isfinite(z_values)
+        & (z_values > 0)
+        & np.isfinite(scalar_values)
+    )
+    if not np.any(valid):
+        return scalar_map
+
+    coords = np.rint(uv[valid]).astype(np.int32)
+    z = z_values[valid]
+    scalars = scalar_values[valid]
+    inside = (coords[:, 0] >= 0) & (coords[:, 0] < width) & (coords[:, 1] >= 0) & (coords[:, 1] < height)
+    coords = coords[inside]
+    z = z[inside]
+    scalars = scalars[inside]
+    for (x_coord, y_coord), depth_value, scalar_value in zip(coords, z, scalars, strict=False):
+        current_depth = nearest_depth[y_coord, x_coord]
+        if depth_value < current_depth:
+            nearest_depth[y_coord, x_coord] = depth_value
+            scalar_map[y_coord, x_coord] = scalar_value
+    return scalar_map
+
+
 def align_depth_to_color(
     depth_ir_m: np.ndarray,
     K_ir_left: np.ndarray,
@@ -113,6 +151,35 @@ def align_depth_to_color(
     points_color = transform_points(points_ir, T_ir_left_to_color)
     uv_color, z_color = project_to_color(points_color, K_color)
     return rasterize_nearest_depth(uv_color, z_color, output_shape=output_shape, invalid_value=invalid_value)
+
+
+def align_ir_scalar_to_color(
+    depth_ir_m: np.ndarray,
+    scalar_ir: np.ndarray,
+    K_ir_left: np.ndarray,
+    T_ir_left_to_color: np.ndarray,
+    K_color: np.ndarray,
+    output_shape: tuple[int, int],
+    invalid_value: float = 0.0,
+) -> np.ndarray:
+    depth = np.asarray(depth_ir_m, dtype=np.float32)
+    scalar = np.asarray(scalar_ir, dtype=np.float32)
+    if depth.shape != scalar.shape:
+        raise ValueError(
+            f"depth_ir_m and scalar_ir must share the same shape. Got {depth.shape} vs {scalar.shape}."
+        )
+
+    points_ir, valid_mask = unproject_ir_depth(depth, K_ir_left)
+    scalar_values = scalar[valid_mask]
+    points_color = transform_points(points_ir, T_ir_left_to_color)
+    uv_color, z_color = project_to_color(points_color, K_color)
+    return rasterize_scalar_by_nearest_depth(
+        uv_color,
+        z_color,
+        scalar_values,
+        output_shape=output_shape,
+        invalid_value=invalid_value,
+    )
 
 
 def quantize_depth_with_invalid_zero(depth_m: np.ndarray, depth_scale_m_per_unit: float) -> np.ndarray:

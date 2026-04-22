@@ -176,6 +176,44 @@ Operator notes:
 - the harness uses `stuffed animal` as the mask prompt
 - on the current machine, if SAM 3.1 checkpoint resolution is unavailable, the harness falls back to the existing static frame-0 stuffed-animal masks and copies them to frame 10 for this static-only workflow
 
+Static-round masked FFS confidence panels:
+
+```bash
+conda run -n qqtt-ffs-compat python scripts/harness/visualize_ffs_static_confidence_panels.py
+```
+
+This offline static-only workflow:
+
+- reruns PyTorch FFS on frame `0` for:
+  - `static/ffs_30_static_round1_20260410_235202`
+  - `static/ffs_30_static_round2_20260414`
+  - `static/ffs_30_static_round3_20260414`
+- reuses the existing static stuffed-animal FFS mask cache from:
+  - `masked_pointcloud_compare_round1_frame_0000_stuffed_animal`
+  - `masked_pointcloud_compare_round2_frame_0000_stuffed_animal`
+  - `masked_pointcloud_compare_round3_frame_0000_stuffed_animal`
+- derives two confidence proxies from the captured classifier logits:
+  - `margin`
+  - `max_softmax`
+- aligns both FFS depth and confidence to color coordinates
+- writes one `3x3` masked board per metric and per round:
+  - row 1 = masked RGB for cameras `0/1/2`
+  - row 2 = masked color-aligned FFS depth for cameras `0/1/2`
+  - row 3 = masked color-aligned confidence for cameras `0/1/2`
+- uses a fixed `[0.0, 1.0]` confidence legend with `COLORMAP_VIRIDIS`
+- writes:
+  - `round1/margin_board.png`
+  - `round1/max_softmax_board.png`
+  - `round1/summary.json`
+  - same for `round2/` and `round3/`
+  - top-level `summary.json`
+
+Use this when the question is specifically:
+
+- where is FFS uncertain on the static object, per camera?
+- do `margin` and `max_softmax` show the same uncertain regions?
+- how does masked confidence compare across static rounds under the exact same layout?
+
 Realistic live 3-camera FFS benchmark:
 
 ```bash

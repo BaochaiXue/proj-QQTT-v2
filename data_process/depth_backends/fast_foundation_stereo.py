@@ -122,6 +122,49 @@ def build_disparity_products(
     return result
 
 
+def compute_confidence_proxies_from_logits(logits: np.ndarray) -> dict[str, np.ndarray]:
+    logits = np.asarray(logits, dtype=np.float32)
+    if logits.ndim == 5 and logits.shape[1] == 1:
+        logits = logits[:, 0]
+    if logits.ndim != 4:
+        raise ValueError(f"Expected logits shaped [B, D, H, W], got {logits.shape}.")
+    if logits.shape[1] <= 0:
+        raise ValueError(f"Expected positive disparity-bin axis, got {logits.shape}.")
+
+    logits_shifted = logits - np.max(logits, axis=1, keepdims=True)
+    exp_logits = np.exp(logits_shifted)
+    prob = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
+    prob = prob.astype(np.float32, copy=False)
+    sorted_prob = np.sort(prob, axis=1)
+    top1 = sorted_prob[:, -1]
+    top2 = sorted_prob[:, -2] if logits.shape[1] > 1 else np.zeros_like(top1, dtype=np.float32)
+    margin = np.clip(top1 - top2, 0.0, 1.0).astype(np.float32, copy=False)
+    max_softmax = np.clip(top1, 0.0, 1.0).astype(np.float32, copy=False)
+    return {
+        "margin": margin,
+        "max_softmax": max_softmax,
+    }
+
+
+def resize_confidence_maps_to_shape(
+    confidence_maps: np.ndarray,
+    *,
+    output_shape: tuple[int, int],
+) -> np.ndarray:
+    maps = np.asarray(confidence_maps, dtype=np.float32)
+    if maps.ndim != 3:
+        raise ValueError(f"Expected confidence maps shaped [B, H, W], got {maps.shape}.")
+
+    target_h, target_w = [int(item) for item in output_shape]
+    resized = [
+        cv2.resize(np.asarray(confidence_map, dtype=np.float32), (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        for confidence_map in maps
+    ]
+    if not resized:
+        return np.empty((0, target_h, target_w), dtype=np.float32)
+    return np.stack(resized, axis=0).astype(np.float32, copy=False)
+
+
 def split_disparity_batch_output_maps(
     disparity_raw: np.ndarray,
     *,
@@ -572,6 +615,43 @@ class FastFoundationStereoRunner:
             image = cv2.resize(image, dsize=None, fx=self.scale, fy=self.scale, interpolation=cv2.INTER_LINEAR)
         return image
 
+    def _forward_with_optional_classifier_logits(
+        self,
+        *,
+        left_tensor: Any,
+        right_tensor: Any,
+        capture_classifier_logits: bool,
+    ) -> tuple[Any, np.ndarray | None]:
+        captured_logits: list[Any] = []
+        hook_handle = None
+        if capture_classifier_logits:
+            def _capture_logits(_module: Any, _inputs: tuple[Any, ...], output: Any) -> None:
+                captured_logits.append(output.detach().float())
+
+            hook_handle = self.model.classifier.register_forward_hook(_capture_logits)
+
+        try:
+            with self.torch.amp.autocast("cuda", enabled=True, dtype=self.AMP_DTYPE):
+                disparity = self.model.forward(
+                    left_tensor,
+                    right_tensor,
+                    iters=self.valid_iters,
+                    test_mode=True,
+                    optimize_build_volume="pytorch1",
+                )
+        finally:
+            if hook_handle is not None:
+                hook_handle.remove()
+
+        if not capture_classifier_logits:
+            return disparity, None
+        if len(captured_logits) != 1:
+            raise RuntimeError(
+                "Expected exactly one classifier logits capture during PyTorch FFS forward. "
+                f"Got {len(captured_logits)} captures."
+            )
+        return disparity, np.asarray(captured_logits[0].cpu().numpy(), dtype=np.float32)
+
     def run_batch(
         self,
         batch_samples: list[dict[str, Any]],
@@ -609,15 +689,11 @@ class FastFoundationStereoRunner:
         padder = self.InputPadder(left_tensor.shape, divis_by=32, force_square=False)
         left_tensor, right_tensor = padder.pad(left_tensor, right_tensor)
 
-        with torch.amp.autocast("cuda", enabled=True, dtype=self.AMP_DTYPE):
-            disparity = self.model.forward(
-                left_tensor,
-                right_tensor,
-                iters=self.valid_iters,
-                test_mode=True,
-                optimize_build_volume="pytorch1",
-            )
-
+        disparity, _ = self._forward_with_optional_classifier_logits(
+            left_tensor=left_tensor,
+            right_tensor=right_tensor,
+            capture_classifier_logits=False,
+        )
         disparity = padder.unpad(disparity.float())
         disparity_maps = split_disparity_batch_output_maps(
             disparity.data.cpu().numpy(),
@@ -656,6 +732,70 @@ class FastFoundationStereoRunner:
                 }
             ]
         )[0]
+
+    def run_pair_with_confidence(
+        self,
+        left_image: np.ndarray,
+        right_image: np.ndarray,
+        *,
+        K_ir_left: np.ndarray,
+        baseline_m: float,
+        audit_mode: bool = False,
+    ) -> dict[str, np.ndarray | float | list[list[float]]]:
+        left = self._prepare_image(left_image)
+        right = self._prepare_image(right_image)
+        if right.shape[:2] != left.shape[:2]:
+            right = cv2.resize(right, dsize=(left.shape[1], left.shape[0]), interpolation=cv2.INTER_LINEAR)
+
+        torch = self.torch
+        left_tensor = torch.as_tensor(left).cuda().float()[None].permute(0, 3, 1, 2)
+        right_tensor = torch.as_tensor(right).cuda().float()[None].permute(0, 3, 1, 2)
+        padder = self.InputPadder(left_tensor.shape, divis_by=32, force_square=False)
+        left_tensor, right_tensor = padder.pad(left_tensor, right_tensor)
+        padded_output_shape = (int(left_tensor.shape[-2]), int(left_tensor.shape[-1]))
+
+        disparity, logits = self._forward_with_optional_classifier_logits(
+            left_tensor=left_tensor,
+            right_tensor=right_tensor,
+            capture_classifier_logits=True,
+        )
+        if logits is None:
+            raise RuntimeError("PyTorch FFS confidence path expected classifier logits but none were captured.")
+        confidence_coarse = compute_confidence_proxies_from_logits(logits)
+        confidence_margin = resize_confidence_maps_to_shape(
+            confidence_coarse["margin"],
+            output_shape=padded_output_shape,
+        )
+        confidence_max_softmax = resize_confidence_maps_to_shape(
+            confidence_coarse["max_softmax"],
+            output_shape=padded_output_shape,
+        )
+
+        disparity = padder.unpad(disparity.float())
+        confidence_margin_tensor = padder.unpad(torch.as_tensor(confidence_margin[:, None, :, :]))
+        confidence_max_softmax_tensor = padder.unpad(torch.as_tensor(confidence_max_softmax[:, None, :, :]))
+        disparity_map = split_disparity_batch_output_maps(disparity.data.cpu().numpy(), expected_batch_size=1)[0]
+        confidence_margin_map = split_disparity_batch_output_maps(
+            confidence_margin_tensor.data.cpu().numpy(),
+            expected_batch_size=1,
+        )[0]
+        confidence_max_softmax_map = split_disparity_batch_output_maps(
+            confidence_max_softmax_tensor.data.cpu().numpy(),
+            expected_batch_size=1,
+        )[0]
+
+        result = build_disparity_products(
+            disparity_map,
+            K_ir_left=np.asarray(K_ir_left, dtype=np.float32),
+            baseline_m=float(baseline_m),
+            scale=self.scale,
+            valid_iters=self.valid_iters,
+            max_disp=self.max_disp,
+            audit_mode=bool(audit_mode),
+        )
+        result["confidence_margin_ir_left"] = np.clip(confidence_margin_map, 0.0, 1.0).astype(np.float32)
+        result["confidence_max_softmax_ir_left"] = np.clip(confidence_max_softmax_map, 0.0, 1.0).astype(np.float32)
+        return result
 
 
 class FastFoundationStereoTensorRTRunner:

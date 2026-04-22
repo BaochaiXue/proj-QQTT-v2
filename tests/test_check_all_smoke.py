@@ -16,8 +16,9 @@ class CheckAllSmokeTest(unittest.TestCase):
 
     def test_quick_profile_uses_curated_batched_commands(self) -> None:
         commands = check_all.build_commands(python="python", profile="quick")
-        self.assertEqual(len(commands), 15)
+        self.assertEqual(len(commands), 17)
         self.assertIn(["python", "cameras_viewer.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/visualize_ffs_static_confidence_panels.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/check_visual_architecture.py"], commands)
         self.assertIn(
             [
@@ -32,6 +33,8 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_ffs_reprojection_smoke",
                 "tests.test_ffs_remove_invisible_mask_smoke",
                 "tests.test_ffs_tensorrt_single_engine_smoke",
+                "tests.test_ffs_confidence_panels_smoke",
+                "tests.test_ffs_static_replay_matrix_smoke",
             ],
             commands,
         )
