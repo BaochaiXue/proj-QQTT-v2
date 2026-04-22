@@ -5,6 +5,8 @@ import csv
 import gc
 import json
 import math
+import multiprocessing as mp
+import queue
 import shutil
 import subprocess
 import sys
@@ -79,6 +81,7 @@ STATIC_MASK_FALLBACK_ROOTS = {
     "Round 2": ROOT / "data" / "static" / "masked_pointcloud_compare_round2_frame_0000_stuffed_animal" / "_generated_masks" / "ffs" / "sam31_masks",
     "Round 3": ROOT / "data" / "static" / "masked_pointcloud_compare_round3_frame_0000_stuffed_animal" / "_generated_masks" / "ffs" / "sam31_masks",
 }
+ROUND_BENCHMARK_RESULT_TIMEOUT_S = 1800.0
 
 
 @dataclass(frozen=True)
@@ -114,6 +117,29 @@ class ReplayFrame:
     right_image: np.ndarray
 
 
+@dataclass(frozen=True)
+class RoundCameraBenchmarkJob:
+    config: ExperimentConfig
+    ffs_repo: str
+    round_label: str
+    case_dir: str
+    camera_idx: int
+    frame_idx: int
+    k_ir_left: np.ndarray
+    k_color: np.ndarray
+    t_ir_left_to_color: np.ndarray
+    baseline_m: float
+    color_output_shape: tuple[int, int]
+
+
+@dataclass
+class RoundCameraBenchmarkResult:
+    round_label: str
+    camera_idx: int
+    fps: float
+    depth_color_m: np.ndarray
+
+
 @dataclass
 class RoundCaseBundle:
     round_label: str
@@ -141,6 +167,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aligned_root", type=Path, default=ROOT / "data")
     parser.add_argument("--ffs_repo", type=Path, default=DEFAULT_FFS_REPO)
     parser.add_argument("--output_root", type=Path, default=None)
+    parser.add_argument("--artifact_root", type=Path, default=None)
     parser.add_argument("--frame_idx", type=int, default=FRAME_IDX_VISUAL_DEFAULT)
     parser.add_argument("--mask_prompt", type=str, default=MASK_PROMPT_DEFAULT)
     parser.add_argument("--workspace_gib", type=int, default=8)
@@ -835,6 +862,102 @@ def build_runner_for_experiment(config: ExperimentConfig, *, ffs_repo: Path) -> 
     raise ValueError(f"Unsupported engine: {config.engine}")
 
 
+def load_replay_frames_for_camera(*, case_dir: Path, camera_idx: int) -> list[ReplayFrame]:
+    left_dir = case_dir / "ir_left" / str(int(camera_idx))
+    right_dir = case_dir / "ir_right" / str(int(camera_idx))
+    if not left_dir.is_dir() or not right_dir.is_dir():
+        raise FileNotFoundError(f"Missing aligned stereo directories for case={case_dir.name}, cam={camera_idx}.")
+    frame_ids = sorted(int(path.stem) for path in left_dir.glob("*.png"))
+    replay_frames: list[ReplayFrame] = []
+    for frame_number in frame_ids:
+        left_path = left_dir / f"{frame_number}.png"
+        right_path = right_dir / f"{frame_number}.png"
+        left_image = cv2.imread(str(left_path), cv2.IMREAD_UNCHANGED)
+        right_image = cv2.imread(str(right_path), cv2.IMREAD_UNCHANGED)
+        if left_image is None or right_image is None:
+            raise FileNotFoundError(
+                f"Missing aligned stereo pair for case={case_dir.name}, cam={camera_idx}, frame={frame_number}."
+            )
+        replay_frames.append(
+            ReplayFrame(
+                frame_idx=int(frame_number),
+                left_image=np.asarray(left_image),
+                right_image=np.asarray(right_image),
+            )
+        )
+    if not replay_frames:
+        raise ValueError(f"No replay frames found for case={case_dir.name}, cam={camera_idx}.")
+    return replay_frames
+
+
+def _benchmark_round_camera_job(job: RoundCameraBenchmarkJob) -> RoundCameraBenchmarkResult:
+    runner = build_runner_for_experiment(job.config, ffs_repo=Path(job.ffs_repo))
+    try:
+        replay_frames = load_replay_frames_for_camera(case_dir=Path(job.case_dir), camera_idx=int(job.camera_idx))
+        depth_color_frame: np.ndarray | None = None
+        for warmup_frame in replay_frames[:10]:
+            runner.run_pair(
+                warmup_frame.left_image,
+                warmup_frame.right_image,
+                K_ir_left=np.asarray(job.k_ir_left, dtype=np.float32),
+                baseline_m=float(job.baseline_m),
+                audit_mode=False,
+            )
+        _torch_synchronize(runner)
+        start_s = time.perf_counter()
+        for replay_frame in replay_frames:
+            output = runner.run_pair(
+                replay_frame.left_image,
+                replay_frame.right_image,
+                K_ir_left=np.asarray(job.k_ir_left, dtype=np.float32),
+                baseline_m=float(job.baseline_m),
+                audit_mode=False,
+            )
+            if int(replay_frame.frame_idx) == int(job.frame_idx):
+                depth_color_frame = align_depth_to_color(
+                    np.asarray(output["depth_ir_left_m"], dtype=np.float32),
+                    np.asarray(output["K_ir_left_used"], dtype=np.float32),
+                    np.asarray(job.t_ir_left_to_color, dtype=np.float32),
+                    np.asarray(job.k_color, dtype=np.float32),
+                    output_shape=tuple(int(item) for item in job.color_output_shape),
+                )
+        _torch_synchronize(runner)
+        elapsed_s = max(1e-9, float(time.perf_counter() - start_s))
+        if depth_color_frame is None:
+            raise RuntimeError(
+                f"Did not capture frame_idx={int(job.frame_idx)} while benchmarking {job.round_label} cam={int(job.camera_idx)}."
+            )
+        return RoundCameraBenchmarkResult(
+            round_label=str(job.round_label),
+            camera_idx=int(job.camera_idx),
+            fps=float(len(replay_frames) / elapsed_s),
+            depth_color_m=np.asarray(depth_color_frame, dtype=np.float32),
+        )
+    finally:
+        _cleanup_runner(runner)
+
+
+def _benchmark_round_camera_job_entry(*, job: RoundCameraBenchmarkJob, result_queue: Any) -> None:
+    try:
+        result = _benchmark_round_camera_job(job)
+        result_queue.put(
+            {
+                "round_label": str(result.round_label),
+                "camera_idx": int(result.camera_idx),
+                "fps": float(result.fps),
+                "depth_color_m": np.asarray(result.depth_color_m, dtype=np.float32),
+            }
+        )
+    except Exception as exc:
+        result_queue.put(
+            {
+                "round_label": str(job.round_label),
+                "camera_idx": int(job.camera_idx),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+
+
 def benchmark_experiment(
     *,
     config: ExperimentConfig,
@@ -842,52 +965,72 @@ def benchmark_experiment(
     ffs_repo: Path,
     frame_idx: int,
 ) -> tuple[dict[str, dict[int, float]], dict[str, dict[int, np.ndarray]]]:
-    runner = build_runner_for_experiment(config, ffs_repo=ffs_repo)
     fps_by_round: dict[str, dict[int, float]] = {}
     frame_depths: dict[str, dict[int, np.ndarray]] = {}
-    try:
-        for bundle in round_cases:
-            round_fps: dict[int, float] = {}
-            round_depths: dict[int, np.ndarray] = {}
-            for camera_idx in CAMERA_IDS:
-                replay_frames = bundle.stereo_pairs_by_camera[int(camera_idx)]
-                for warmup_frame in replay_frames[:10]:
-                    runner.run_pair(
-                        warmup_frame.left_image,
-                        warmup_frame.right_image,
-                        K_ir_left=bundle.k_ir_left_list[int(camera_idx)],
-                        baseline_m=bundle.baselines_m[int(camera_idx)],
-                        audit_mode=False,
-                    )
-                _torch_synchronize(runner)
-                start_s = time.perf_counter()
-                for replay_frame in replay_frames:
-                    output = runner.run_pair(
-                        replay_frame.left_image,
-                        replay_frame.right_image,
-                        K_ir_left=bundle.k_ir_left_list[int(camera_idx)],
-                        baseline_m=bundle.baselines_m[int(camera_idx)],
-                        audit_mode=False,
-                    )
-                    if int(replay_frame.frame_idx) == int(frame_idx):
-                        depth_color_m = align_depth_to_color(
-                            np.asarray(output["depth_ir_left_m"], dtype=np.float32),
-                            np.asarray(output["K_ir_left_used"], dtype=np.float32),
-                            bundle.t_ir_left_to_color_list[int(camera_idx)],
-                            bundle.k_color_list[int(camera_idx)],
-                            output_shape=(
-                                int(bundle.color_frame_images[int(camera_idx)].shape[0]),
-                                int(bundle.color_frame_images[int(camera_idx)].shape[1]),
-                            ),
-                        )
-                        round_depths[int(camera_idx)] = np.asarray(depth_color_m, dtype=np.float32)
-                _torch_synchronize(runner)
-                elapsed_s = max(1e-9, float(time.perf_counter() - start_s))
-                round_fps[int(camera_idx)] = float(len(replay_frames) / elapsed_s)
-            fps_by_round[bundle.round_label] = round_fps
-            frame_depths[bundle.round_label] = round_depths
-    finally:
-        _cleanup_runner(runner)
+    mp_ctx = mp.get_context("spawn")
+    for bundle in round_cases:
+        round_jobs = [
+            RoundCameraBenchmarkJob(
+                config=config,
+                ffs_repo=str(ffs_repo),
+                round_label=str(bundle.round_label),
+                case_dir=str(bundle.case_dir),
+                camera_idx=int(camera_idx),
+                frame_idx=int(frame_idx),
+                k_ir_left=np.asarray(bundle.k_ir_left_list[int(camera_idx)], dtype=np.float32),
+                k_color=np.asarray(bundle.k_color_list[int(camera_idx)], dtype=np.float32),
+                t_ir_left_to_color=np.asarray(bundle.t_ir_left_to_color_list[int(camera_idx)], dtype=np.float32),
+                baseline_m=float(bundle.baselines_m[int(camera_idx)]),
+                color_output_shape=(
+                    int(bundle.color_frame_images[int(camera_idx)].shape[0]),
+                    int(bundle.color_frame_images[int(camera_idx)].shape[1]),
+                ),
+            )
+            for camera_idx in CAMERA_IDS
+        ]
+        result_queue = mp_ctx.Queue()
+        workers = [
+            mp_ctx.Process(
+                target=_benchmark_round_camera_job_entry,
+                kwargs={"job": job, "result_queue": result_queue},
+            )
+            for job in round_jobs
+        ]
+        for worker in workers:
+            worker.start()
+
+        round_fps: dict[int, float] = {}
+        round_depths: dict[int, np.ndarray] = {}
+        errors: list[str] = []
+        try:
+            for _ in round_jobs:
+                payload = result_queue.get(timeout=float(ROUND_BENCHMARK_RESULT_TIMEOUT_S))
+                camera_idx = int(payload["camera_idx"])
+                if "error" in payload:
+                    errors.append(f"{bundle.round_label} cam{int(camera_idx) + 1}: {payload['error']}")
+                    continue
+                round_fps[camera_idx] = float(payload["fps"])
+                round_depths[camera_idx] = np.asarray(payload["depth_color_m"], dtype=np.float32)
+        except queue.Empty as exc:
+            errors.append(
+                f"{bundle.round_label}: timed out waiting for concurrent round benchmark worker results after "
+                f"{float(ROUND_BENCHMARK_RESULT_TIMEOUT_S):.1f}s."
+            )
+        finally:
+            for worker in workers:
+                worker.join(timeout=2.0)
+            for worker in workers:
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join(timeout=2.0)
+            try:
+                result_queue.close()
+            except Exception:
+                pass
+        if errors:
+            raise RuntimeError("; ".join(errors))
+        fps_by_round[bundle.round_label] = round_fps
+        frame_depths[bundle.round_label] = round_depths
     return fps_by_round, frame_depths
 
 
@@ -1116,7 +1259,11 @@ def run_experiment_matrix(args: argparse.Namespace) -> dict[str, Any]:
         if args.output_root is not None
         else (ROOT / "data" / "experiments" / f"ffs_static_replay_matrix_{timestamp_token()}").resolve()
     )
-    artifacts_root = output_root / "artifacts"
+    artifacts_root = (
+        Path(args.artifact_root).resolve()
+        if args.artifact_root is not None
+        else (output_root / "artifacts").resolve()
+    )
     experiments_root = output_root / "experiments"
     mask_cache_root = output_root / "mask_cache"
     ppt_root = output_root / "ppt"
@@ -1161,11 +1308,6 @@ def run_experiment_matrix(args: argparse.Namespace) -> dict[str, Any]:
     for config in configs:
         experiment_dir = experiments_root / config.experiment_id
         experiment_dir.mkdir(parents=True, exist_ok=True)
-        existing_summary_path = experiment_dir / "summary.json"
-        if existing_summary_path.is_file():
-            existing_summary = json.loads(existing_summary_path.read_text(encoding="utf-8"))
-            success_rows.append(build_results_row_from_summary(existing_summary))
-            continue
         success, build_log, build_error = ensure_trt_artifact(
             config=config,
             ffs_repo=ffs_repo,
@@ -1249,6 +1391,7 @@ def run_experiment_matrix(args: argparse.Namespace) -> dict[str, Any]:
     manifest = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "output_root": str(output_root),
+        "artifact_root": str(artifacts_root),
         "aligned_root": str(aligned_root),
         "ffs_repo": str(ffs_repo),
         "frame_idx": int(args.frame_idx),

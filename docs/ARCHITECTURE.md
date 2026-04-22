@@ -171,7 +171,7 @@ The FFS benchmark helper stack is intentionally split like this:
   - JSON / markdown benchmark report writing
 - `scripts/harness/run_ffs_static_replay_matrix.py`
   - fixed 54-config TRT matrix expansion
-  - static-round replay across all 3 rounds and all 3 cameras
+  - static-round replay with 3-camera simultaneous benchmarking inside each round
   - mask caching / static fallback handling
   - masked RGB and FFS-only masked PCD board generation
   - ranked PPTX export
@@ -182,7 +182,7 @@ The FFS benchmark helper stack is intentionally split like this:
 - `scripts/harness/visualize_ffs_static_confidence_pcd_panels.py`
   - static-round frame-0 PyTorch FFS rerun for all 3 static rounds
   - fused masked FFS point cloud rendering from the 3 original camera pinhole views
-  - masked `3x3` RGB / PCD / confidence board export per round
+  - masked `3x3` RGB / RGB-colored fused PCD / confidence-colored fused PCD board export per round
 
 This keeps the deterministic summary logic testable without requiring CUDA while leaving the actual model execution in the thin harness CLI.
 

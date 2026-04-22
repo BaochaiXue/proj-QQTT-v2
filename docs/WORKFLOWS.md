@@ -51,6 +51,19 @@ depth colormap with a black placeholder that only reports received FFS FPS:
 python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --depth-render-mode fps_placeholder
 ```
 
+When you want a true no-render throughput probe, disable panel rendering and
+skip the worker-side color reprojection entirely:
+
+```bash
+python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --render-mode none
+```
+
+Notes:
+
+- `--render-mode none` disables panel assembly and `cv2.imshow()`
+- worker processes stop producing color-aligned depth maps in this mode
+- if `--stats-log-interval-s` is omitted, the viewer falls back to `1 Hz` console stats so FFS FPS remains visible
+
 Live FFS mode selection is now:
 
 - `--ffs_backend tensorrt --ffs_trt_mode two_stage`
@@ -143,7 +156,7 @@ Use this first when the main question is:
 Static-round TRT matrix replay + PPTX:
 
 ```bash
-conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --reuse_artifacts
+conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/ffs_static_replay_matrix_20260422_fullrun/artifacts --reuse_artifacts
 ```
 
 This harness is the current offline realtime-proxy workflow for the three static aligned FFS rounds. It:
@@ -157,7 +170,8 @@ This harness is the current offline realtime-proxy workflow for the three static
   - `scale ∈ {1.0, 0.75, 0.5}`
   - `valid_iters ∈ {8, 4, 2}`
   - `engine ∈ {single_engine_fp32, two_stage_fp16}`
-- benchmarks batch-1 replay with warmup frames `0..9`, measured frames `0..29`, and `FPS = 30 / elapsed_seconds`
+- benchmarks `3` views simultaneously within each round using `3` subprocess workers and `batch=1`
+- each worker warms up on frames `0..9`, measures frames `0..29`, and records `FPS = 30 / elapsed_seconds`
 - exports:
   - `manifest.json`
   - `results.csv`
@@ -173,6 +187,7 @@ Operator notes:
 
 - use `qqtt-ffs-compat`
 - ensure `python-pptx` and `onnx` are installed in that environment
+- point `--artifact_root` at an existing artifact tree when you want fresh benchmark results without rebuilding TRT engines
 - the harness uses `stuffed animal` as the mask prompt
 - on the current machine, if SAM 3.1 checkpoint resolution is unavailable, the harness falls back to the existing static frame-0 stuffed-animal masks and copies them to frame 10 for this static-only workflow
 
@@ -230,12 +245,12 @@ This offline static-only workflow:
 - derives two confidence proxies from the captured classifier logits:
   - `margin`
   - `max_softmax`
-- aligns confidence to color coordinates
+- aligns confidence to color coordinates, samples it at each reconstructed point's `source_pixel_uv`, and carries that confidence into the fused masked cloud
 - rebuilds a fused masked FFS point cloud from the same rerun depth and renders it under the 3 original color camera pinhole views
 - writes one `3x3` board per metric and per round:
   - row 1 = masked RGB for cameras `0/1/2`
   - row 2 = fused masked FFS PCD rendered from cameras `0/1/2`
-  - row 3 = masked color-aligned confidence for cameras `0/1/2`
+  - row 3 = the exact same fused masked FFS PCD rendered from cameras `0/1/2`, but colored by the selected point confidence metric
 - uses a fixed `[0.0, 1.0]` confidence legend with `COLORMAP_VIRIDIS`
 - writes:
   - `round1/margin_board.png`

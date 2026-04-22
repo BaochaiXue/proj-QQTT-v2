@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Live preview for RGB + Fast-FoundationStereo depth.
 
-Shows live RGB (top) and color-aligned FFS depth colormap (bottom) per camera.
-Press `q` or `Esc` to exit.
+Default mode shows live RGB (top) and color-aligned FFS depth colormap
+(bottom) per camera. Press `q` or `Esc` to exit when panel rendering is
+enabled.
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ RESULT_QUEUE_TIMEOUT_S = 0.1
 SHARED_WORKER_IDLE_SLEEP_S = 0.005
 DEFAULT_FFS_TRT_MODEL_DIR = Path(__file__).resolve().parent / "data" / "ffs_proof_of_life" / "trt_two_stage_864x480_wsl"
 DEPTH_RENDER_MODE_CHOICES = ("colormap", "fps_placeholder")
+RENDER_MODE_CHOICES = ("panel", "none")
 FFS_BATCH_MODE_CHOICES = ("off", "strict3")
 
 
@@ -386,6 +388,26 @@ def _reproject_ffs_depth_to_color(
     )
 
 
+def _should_publish_depth_color(*, render_mode: str) -> bool:
+    return str(render_mode) == "panel"
+
+
+def _payload_has_successful_result(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if "fatal_error" in payload or "error" in payload:
+        return False
+    return "capture_seq" in payload
+
+
+def _effective_stats_log_interval_s(*, render_mode: str, requested_interval_s: float) -> float:
+    if float(requested_interval_s) > 0.0:
+        return float(requested_interval_s)
+    if str(render_mode) == "none":
+        return 1.0
+    return 0.0
+
+
 def _validate_ffs_batch_mode_args(*, worker_mode: str, batch_mode: str) -> None:
     if str(batch_mode) == "strict3" and str(worker_mode) != "shared":
         raise ValueError("--ffs_batch_mode strict3 requires --ffs_worker_mode shared.")
@@ -698,6 +720,7 @@ def _ffs_worker_loop(
     runner_backend: str,
     ffs_repo: str,
     batch_mode: str,
+    render_mode: str,
     model_path: str | None,
     ffs_scale: float,
     ffs_valid_iters: int,
@@ -753,31 +776,29 @@ def _ffs_worker_loop(
                 K_ir_left=np.asarray(geometry["K_ir_left"], dtype=np.float32),
                 baseline_m=float(geometry["ir_baseline_m"]),
             )
-            depth_color_m = _reproject_ffs_depth_to_color(
-                np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
-                K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
-                T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
-                K_color=np.asarray(geometry["K_color"], dtype=np.float32),
-                output_shape=output_shape,
-            )
+            result_payload = {
+                "camera_idx": int(camera_idx),
+                "serial": serial,
+                "capture_seq": int(payload["capture_seq"]),
+            }
+            if _should_publish_depth_color(render_mode=render_mode):
+                result_payload["depth_color_m"] = _reproject_ffs_depth_to_color(
+                    np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
+                    K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
+                    T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
+                    K_color=np.asarray(geometry["K_color"], dtype=np.float32),
+                    output_shape=output_shape,
+                )
             result_time_s = time.perf_counter()
             _update_recent_frame_times(
                 result_frame_times,
                 now_s=result_time_s,
                 frame_received=True,
             )
-            _put_latest(
-                result_queue,
-                {
-                    "camera_idx": int(camera_idx),
-                    "serial": serial,
-                    "capture_seq": int(payload["capture_seq"]),
-                    "depth_color_m": depth_color_m,
-                    "worker_ffs_fps": _compute_measured_fps(result_frame_times),
-                    "inference_s": float(result_time_s - infer_start_s),
-                    "result_time_s": result_time_s,
-                },
-            )
+            result_payload["worker_ffs_fps"] = _compute_measured_fps(result_frame_times)
+            result_payload["inference_s"] = float(result_time_s - infer_start_s)
+            result_payload["result_time_s"] = result_time_s
+            _put_latest(result_queue, result_payload)
         except Exception as exc:
             _put_latest(
                 result_queue,
@@ -797,6 +818,7 @@ def _shared_ffs_worker_loop(
     runner_backend: str,
     ffs_repo: str,
     batch_mode: str,
+    render_mode: str,
     model_path: str | None,
     ffs_scale: float,
     ffs_valid_iters: int,
@@ -883,30 +905,28 @@ def _shared_ffs_worker_loop(
                     geometry = geometries[camera_idx]
                     output_shape = output_shapes[camera_idx]
                     serial = str(camera_serials[camera_idx])
-                    depth_color_m = _reproject_ffs_depth_to_color(
-                        np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
-                        K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
-                        T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
-                        K_color=np.asarray(geometry["K_color"], dtype=np.float32),
-                        output_shape=output_shape,
-                    )
+                    result_payload = {
+                        "camera_idx": camera_idx,
+                        "serial": serial,
+                        "capture_seq": int(payload["capture_seq"]),
+                    }
+                    if _should_publish_depth_color(render_mode=render_mode):
+                        result_payload["depth_color_m"] = _reproject_ffs_depth_to_color(
+                            np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
+                            K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
+                            T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
+                            K_color=np.asarray(geometry["K_color"], dtype=np.float32),
+                            output_shape=output_shape,
+                        )
                     _update_recent_frame_times(
                         result_frame_times[camera_idx],
                         now_s=result_time_s,
                         frame_received=True,
                     )
-                    _put_latest(
-                        result_queues[camera_idx],
-                        {
-                            "camera_idx": camera_idx,
-                            "serial": serial,
-                            "capture_seq": int(payload["capture_seq"]),
-                            "depth_color_m": depth_color_m,
-                            "worker_ffs_fps": _compute_measured_fps(result_frame_times[camera_idx]),
-                            "inference_s": float(result_time_s - infer_start_s),
-                            "result_time_s": result_time_s,
-                        },
-                    )
+                    result_payload["worker_ffs_fps"] = _compute_measured_fps(result_frame_times[camera_idx])
+                    result_payload["inference_s"] = float(result_time_s - infer_start_s)
+                    result_payload["result_time_s"] = result_time_s
+                    _put_latest(result_queues[camera_idx], result_payload)
             except Exception as exc:
                 for camera_idx, _ in batch_payloads:
                     camera_idx = int(camera_idx)
@@ -944,31 +964,29 @@ def _shared_ffs_worker_loop(
                 K_ir_left=np.asarray(geometry["K_ir_left"], dtype=np.float32),
                 baseline_m=float(geometry["ir_baseline_m"]),
             )
-            depth_color_m = _reproject_ffs_depth_to_color(
-                np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
-                K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
-                T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
-                K_color=np.asarray(geometry["K_color"], dtype=np.float32),
-                output_shape=output_shape,
-            )
+            result_payload = {
+                "camera_idx": camera_idx,
+                "serial": serial,
+                "capture_seq": int(payload["capture_seq"]),
+            }
+            if _should_publish_depth_color(render_mode=render_mode):
+                result_payload["depth_color_m"] = _reproject_ffs_depth_to_color(
+                    np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
+                    K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
+                    T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
+                    K_color=np.asarray(geometry["K_color"], dtype=np.float32),
+                    output_shape=output_shape,
+                )
             result_time_s = time.perf_counter()
             _update_recent_frame_times(
                 result_frame_times[camera_idx],
                 now_s=result_time_s,
                 frame_received=True,
             )
-            _put_latest(
-                result_queues[camera_idx],
-                {
-                    "camera_idx": camera_idx,
-                    "serial": serial,
-                    "capture_seq": int(payload["capture_seq"]),
-                    "depth_color_m": depth_color_m,
-                    "worker_ffs_fps": _compute_measured_fps(result_frame_times[camera_idx]),
-                    "inference_s": float(result_time_s - infer_start_s),
-                    "result_time_s": result_time_s,
-                },
-            )
+            result_payload["worker_ffs_fps"] = _compute_measured_fps(result_frame_times[camera_idx])
+            result_payload["inference_s"] = float(result_time_s - infer_start_s)
+            result_payload["result_time_s"] = result_time_s
+            _put_latest(result_queues[camera_idx], result_payload)
         except Exception as exc:
             _put_latest(
                 result_queues[camera_idx],
@@ -998,14 +1016,14 @@ def _result_loop(cam_state: dict[str, Any], *, stop_event: threading.Event) -> N
                     cam_state["worker_error"] = str(payload["error"])
                 else:
                     cam_state["worker_error"] = None
-                    cam_state["latest_ffs_depth_m"] = payload["depth_color_m"]
+                    cam_state["latest_ffs_depth_m"] = None if "depth_color_m" not in payload else payload["depth_color_m"]
                     cam_state["latest_ffs_capture_seq"] = int(payload["capture_seq"])
                     cam_state["last_worker_ffs_fps"] = float(payload["worker_ffs_fps"])
                     cam_state["last_inference_s"] = float(payload["inference_s"])
             _update_recent_frame_times(
                 cam_state["ffs_frame_times"],
                 now_s=now_s,
-                frame_received=got_result and payload is not None and "depth_color_m" in payload,
+                frame_received=got_result and _payload_has_successful_result(payload),
             )
             cam_state["ffs_fps"] = _compute_measured_fps(cam_state["ffs_frame_times"])
         if stop_event.is_set() and not cam_state["worker_process"].is_alive() and not got_result:
@@ -1138,6 +1156,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gain", type=float, default=60.0)
     parser.add_argument("--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M)
     parser.add_argument("--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M)
+    parser.add_argument("--render-mode", choices=RENDER_MODE_CHOICES, default="panel")
     parser.add_argument("--depth-render-mode", choices=DEPTH_RENDER_MODE_CHOICES, default="colormap")
     parser.add_argument("--ffs_backend", choices=("pytorch", "tensorrt"), default="tensorrt")
     parser.add_argument("--ffs_repo", type=Path, required=True)
@@ -1159,6 +1178,7 @@ def main() -> int:
     mp.freeze_support()
     args = parse_args()
     cv2, np, rs = _runtime_imports()
+    render_mode = str(args.render_mode)
     if float(args.depth_vis_max_m) <= float(args.depth_vis_min_m):
         raise ValueError(
             f"--depth-vis-max-m must be greater than --depth-vis-min-m. "
@@ -1272,6 +1292,7 @@ def main() -> int:
                     "request_queue": spec["request_queue"],
                     "result_queue": spec["result_queue"],
                     **worker_runner_kwargs,
+                    "render_mode": render_mode,
                     "geometry": spec["geometry"],
                     "output_shape": (int(spec["stream_h"]), int(spec["stream_w"])),
                 },
@@ -1294,6 +1315,7 @@ def main() -> int:
                     int(spec["camera_idx"]): str(spec["serial"]) for spec in camera_specs
                 },
                 **worker_runner_kwargs,
+                "render_mode": render_mode,
                 "geometries": {
                     int(spec["camera_idx"]): spec["geometry"] for spec in camera_specs
                 },
@@ -1311,7 +1333,7 @@ def main() -> int:
 
     print(
         f"FFS worker topology: {worker_mode} "
-        f"batch_mode={batch_mode} "
+        f"batch_mode={batch_mode} render_mode={render_mode} "
         f"({len(worker_processes)} process(es) for {len(camera_specs)} active camera(s))",
         flush=True,
     )
@@ -1361,7 +1383,7 @@ def main() -> int:
                 if str(args.ffs_backend) == "tensorrt"
                 else ""
             )
-            + f" worker_mode={worker_mode} batch_mode={batch_mode} "
+            + f" worker_mode={worker_mode} batch_mode={batch_mode} render_mode={render_mode} "
             f"(AE={spec['ae']}, EXP={spec['exp']}, GAIN={spec['gain']}, target_exp={float(spec['target_exposure'])})",
             flush=True,
         )
@@ -1374,40 +1396,55 @@ def main() -> int:
         if startup_note:
             print(f"[info {spec['serial']}] {startup_note}", flush=True)
 
-    print(f"Running with {len(cams)} camera(s). Press q/Esc to quit.", flush=True)
+    if render_mode == "panel":
+        print(f"Running with {len(cams)} camera(s). Press q/Esc to quit.", flush=True)
+    else:
+        print(
+            f"Running with {len(cams)} camera(s). render_mode=none disables panel rendering and color reprojection. "
+            "Press Ctrl-C to quit or use --duration-s.",
+            flush=True,
+        )
 
     panel_h = args.height * 2
     panel_w = args.width
-    window_flags = cv2.WINDOW_NORMAL
-    if hasattr(cv2, "WINDOW_KEEPRATIO"):
-        window_flags |= cv2.WINDOW_KEEPRATIO
-    cv2.namedWindow("RealSense FFS Viewer", window_flags)
     loop_start_s = time.perf_counter()
-    next_stats_log_s: Optional[float]
-    if float(args.stats_log_interval_s) > 0:
-        next_stats_log_s = loop_start_s + float(args.stats_log_interval_s)
-    else:
-        next_stats_log_s = None
+    effective_stats_log_interval_s = _effective_stats_log_interval_s(
+        render_mode=render_mode,
+        requested_interval_s=float(args.stats_log_interval_s),
+    )
+    next_stats_log_s: Optional[float] = (
+        loop_start_s + effective_stats_log_interval_s if effective_stats_log_interval_s > 0.0 else None
+    )
+    if render_mode == "panel":
+        window_flags = cv2.WINDOW_NORMAL
+        if hasattr(cv2, "WINDOW_KEEPRATIO"):
+            window_flags |= cv2.WINDOW_KEEPRATIO
+        cv2.namedWindow("RealSense FFS Viewer", window_flags)
 
     try:
         while True:
-            panels: List[np.ndarray] = []
-            for cam_state in cams:
-                panels.append(
-                    _render_panel(
-                        cam_state,
-                        width=int(args.width),
-                        height=int(args.height),
-                        depth_vis_min_m=float(args.depth_vis_min_m),
-                        depth_vis_max_m=float(args.depth_vis_max_m),
-                        depth_render_mode=str(args.depth_render_mode),
-                    )
-                )
-            grid = _tile_panels(panels, panel_h, panel_w)
-            display_grid = _fit_grid_for_window(grid, window_name="RealSense FFS Viewer")
-            cv2.imshow("RealSense FFS Viewer", display_grid)
-            key = cv2.waitKey(1) & 0xFF
             now_s = time.perf_counter()
+            key = -1
+            if render_mode == "panel":
+                panels: List[np.ndarray] = []
+                for cam_state in cams:
+                    panels.append(
+                        _render_panel(
+                            cam_state,
+                            width=int(args.width),
+                            height=int(args.height),
+                            depth_vis_min_m=float(args.depth_vis_min_m),
+                            depth_vis_max_m=float(args.depth_vis_max_m),
+                            depth_render_mode=str(args.depth_render_mode),
+                        )
+                    )
+                grid = _tile_panels(panels, panel_h, panel_w)
+                display_grid = _fit_grid_for_window(grid, window_name="RealSense FFS Viewer")
+                cv2.imshow("RealSense FFS Viewer", display_grid)
+                key = cv2.waitKey(1) & 0xFF
+            else:
+                time.sleep(0.05)
+                now_s = time.perf_counter()
             if next_stats_log_s is not None and now_s >= next_stats_log_s:
                 runtime_stats = _collect_runtime_stats(cams)
                 for line in _format_runtime_stats_lines(
@@ -1415,14 +1452,14 @@ def main() -> int:
                     runtime_stats=runtime_stats,
                 ):
                     print(line, flush=True)
-                next_stats_log_s = now_s + float(args.stats_log_interval_s)
+                next_stats_log_s = now_s + effective_stats_log_interval_s
             if float(args.duration_s) > 0 and (now_s - loop_start_s) >= float(args.duration_s):
                 print(
                     f"Reached --duration-s={float(args.duration_s):.1f}. Stopping viewer.",
                     flush=True,
                 )
                 break
-            if key in (ord("q"), 27):
+            if render_mode == "panel" and key in (ord("q"), 27):
                 break
     finally:
         stop_event.set()
@@ -1453,7 +1490,8 @@ def main() -> int:
                 cam_state["result_queue"].close()
             except Exception:
                 pass
-        cv2.destroyAllWindows()
+        if render_mode == "panel":
+            cv2.destroyAllWindows()
 
     return 0
 

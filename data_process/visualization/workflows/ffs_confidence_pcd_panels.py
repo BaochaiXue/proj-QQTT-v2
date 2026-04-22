@@ -16,7 +16,6 @@ from ..depth_diagnostics import label_tile
 from ..io_artifacts import write_image, write_json
 from ..io_case import depth_to_camera_points, load_case_metadata, resolve_case_dir, transform_points
 from ..layouts import compose_registration_matrix_board, overlay_scalar_colorbar
-from ..roi import crop_points_to_bounds
 from ..views import build_original_camera_view_configs
 from .ffs_confidence_panels import (
     DEFAULT_STATIC_CONFIDENCE_MASK_PROMPT,
@@ -66,21 +65,28 @@ def _mask_image(image: np.ndarray, *, mask: np.ndarray) -> np.ndarray:
     return masked
 
 
-def _colorize_confidence_map(confidence: np.ndarray, *, valid_mask: np.ndarray | None = None) -> np.ndarray:
-    confidence = np.asarray(confidence, dtype=np.float32)
+def _sample_scalar_at_source_pixels(scalar_image: np.ndarray, source_pixel_uv: np.ndarray) -> np.ndarray:
+    scalar = np.asarray(scalar_image, dtype=np.float32)
+    source_uv = np.asarray(source_pixel_uv, dtype=np.int32)
+    if len(source_uv) == 0:
+        return np.empty((0,), dtype=np.float32)
+    return scalar[source_uv[:, 1], source_uv[:, 0]].astype(np.float32, copy=True)
+
+
+def _colorize_confidence_values(confidence_values: np.ndarray) -> np.ndarray:
+    confidence = np.asarray(confidence_values, dtype=np.float32).reshape(-1)
+    if len(confidence) == 0:
+        return np.empty((0, 3), dtype=np.uint8)
     normalized = np.clip(confidence, 0.0, 1.0)
-    colorized = cv2.applyColorMap((normalized * 255.0).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
-    if valid_mask is not None:
-        colorized = np.asarray(colorized, dtype=np.uint8).copy()
-        colorized[~np.asarray(valid_mask, dtype=bool)] = 0
-    return colorized
+    colorized = cv2.applyColorMap((normalized[:, None] * 255.0).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
+    return colorized.reshape(-1, 3).astype(np.uint8)
 
 
 def _metric_label(metric_name: str) -> str:
     if metric_name == "margin":
-        return "Confidence (margin)"
+        return "Confidence PCD (margin)"
     if metric_name == "max_softmax":
-        return "Confidence (max_softmax)"
+        return "Confidence PCD (max_softmax)"
     raise ValueError(f"Unsupported metric_name={metric_name!r}.")
 
 
@@ -92,6 +98,28 @@ def _fuse_camera_clouds(camera_clouds: list[dict[str, Any]]) -> tuple[np.ndarray
     if len(point_sets) == 1:
         return point_sets[0], color_sets[0]
     return np.concatenate(point_sets, axis=0), np.concatenate(color_sets, axis=0)
+
+
+def _fuse_camera_cloud_confidence(camera_clouds: list[dict[str, Any]], metric_name: str) -> np.ndarray:
+    confidence_sets = [
+        np.asarray(item["point_confidence_by_metric"][metric_name], dtype=np.float32)
+        for item in camera_clouds
+        if len(item["points"]) > 0
+    ]
+    if not confidence_sets:
+        return np.empty((0,), dtype=np.float32)
+    if len(confidence_sets) == 1:
+        return confidence_sets[0]
+    return np.concatenate(confidence_sets, axis=0)
+
+
+def _compute_crop_valid_mask(points: np.ndarray, crop_bounds: dict[str, np.ndarray] | None) -> np.ndarray:
+    points = np.asarray(points, dtype=np.float32)
+    if crop_bounds is None or len(points) == 0:
+        return np.ones((len(points),), dtype=bool)
+    crop_min = np.asarray(crop_bounds["min"], dtype=np.float32)
+    crop_max = np.asarray(crop_bounds["max"], dtype=np.float32)
+    return np.all(points >= crop_min[None, :], axis=1) & np.all(points <= crop_max[None, :], axis=1)
 
 
 def _render_open3d_offscreen_pinhole(
@@ -107,7 +135,11 @@ def _render_open3d_offscreen_pinhole(
     point_size: float,
     intrinsic_matrix: np.ndarray,
     extrinsic_matrix: np.ndarray,
+    render_kind: str | None = None,
+    metric_name: str | None = None,
+    camera_idx: int | None = None,
 ) -> np.ndarray:
+    _ = (center, eye, up, zoom, render_kind, metric_name, camera_idx)
     if len(points) == 0:
         return np.zeros((int(height), int(width), 3), dtype=np.uint8)
 
@@ -169,9 +201,9 @@ def build_confidence_pcd_board(
     column_headers: list[str],
     rgb_images: list[np.ndarray],
     pcd_images: list[np.ndarray],
-    confidence_images: list[np.ndarray],
+    confidence_pcd_images: list[np.ndarray],
 ) -> np.ndarray:
-    if len(rgb_images) != 3 or len(pcd_images) != 3 or len(confidence_images) != 3:
+    if len(rgb_images) != 3 or len(pcd_images) != 3 or len(confidence_pcd_images) != 3:
         raise ValueError("Confidence PCD board requires exactly 3 images per row.")
 
     image_rows = [
@@ -189,7 +221,7 @@ def build_confidence_pcd_board(
                 _metric_label(metric_name),
                 (image.shape[1], image.shape[0]),
             )
-            for image in confidence_images
+            for image in confidence_pcd_images
         ],
     ]
     return compose_registration_matrix_board(
@@ -200,7 +232,7 @@ def build_confidence_pcd_board(
                 f"iters={int(model_config['valid_iters'])} | disp={int(model_config['max_disp'])}"
             ),
         ],
-        row_headers=["RGB", "Masked FFS PCD", "Confidence"],
+        row_headers=["RGB", "Masked FFS PCD", "Confidence PCD"],
         column_headers=column_headers,
         image_rows=image_rows,
     )
@@ -300,7 +332,6 @@ def run_ffs_static_confidence_pcd_panels_workflow(
         camera_clouds_masked: list[dict[str, Any]] = []
         camera_clouds_unmasked: list[dict[str, Any]] = []
         rgb_images: list[np.ndarray] = []
-        confidence_images_by_metric: dict[str, list[np.ndarray]] = {metric_name: [] for metric_name in metric_names}
         per_camera_summary: list[dict[str, Any]] = []
 
         for camera_idx in camera_ids:
@@ -346,6 +377,8 @@ def run_ffs_static_confidence_pcd_panels_workflow(
             )
             world_points = transform_points(camera_points, c2w)
             point_keep_mask = mask[source_pixel_uv[:, 1], source_pixel_uv[:, 0]] if len(source_pixel_uv) > 0 else np.zeros((0,), dtype=bool)
+            point_confidence_by_metric_unmasked: dict[str, np.ndarray] = {}
+            point_confidence_by_metric_masked: dict[str, np.ndarray] = {}
             camera_clouds_unmasked.append(
                 {
                     "camera_idx": int(camera_idx),
@@ -356,6 +389,7 @@ def run_ffs_static_confidence_pcd_panels_workflow(
                     "points": world_points,
                     "colors": camera_colors,
                     "source_pixel_uv": source_pixel_uv,
+                    "point_confidence_by_metric": point_confidence_by_metric_unmasked,
                 }
             )
             camera_clouds_masked.append(
@@ -368,6 +402,7 @@ def run_ffs_static_confidence_pcd_panels_workflow(
                     "points": world_points[point_keep_mask],
                     "colors": camera_colors[point_keep_mask],
                     "source_pixel_uv": source_pixel_uv[point_keep_mask],
+                    "point_confidence_by_metric": point_confidence_by_metric_masked,
                 }
             )
             rgb_images.append(_mask_rgb_image(color_path, mask=mask))
@@ -384,13 +419,21 @@ def run_ffs_static_confidence_pcd_panels_workflow(
                     output_shape=output_shape,
                     invalid_value=0.0,
                 )
-                confidence_color_vis = _colorize_confidence_map(confidence_color, valid_mask=depth_valid_mask)
-                confidence_images_by_metric[metric_name].append(_mask_image(confidence_color_vis, mask=mask))
+                point_confidence = _sample_scalar_at_source_pixels(confidence_color, source_pixel_uv)
+                point_confidence_by_metric_unmasked[metric_name] = point_confidence
+                point_confidence_by_metric_masked[metric_name] = point_confidence[point_keep_mask]
+                masked_point_confidence = point_confidence[point_keep_mask]
                 confidence_summary[metric_name] = {
                     "aligned_valid_pixel_count": int(np.count_nonzero(depth_valid_mask)),
                     "masked_valid_pixel_count": int(np.count_nonzero(mask & depth_valid_mask)),
                     "min": float(np.min(confidence_color[depth_valid_mask])) if np.any(depth_valid_mask) else 0.0,
                     "max": float(np.max(confidence_color[depth_valid_mask])) if np.any(depth_valid_mask) else 0.0,
+                    "point_min": float(np.min(point_confidence)) if len(point_confidence) > 0 else 0.0,
+                    "point_max": float(np.max(point_confidence)) if len(point_confidence) > 0 else 0.0,
+                    "point_mean": float(np.mean(point_confidence)) if len(point_confidence) > 0 else 0.0,
+                    "masked_point_min": float(np.min(masked_point_confidence)) if len(masked_point_confidence) > 0 else 0.0,
+                    "masked_point_max": float(np.max(masked_point_confidence)) if len(masked_point_confidence) > 0 else 0.0,
+                    "masked_point_mean": float(np.mean(masked_point_confidence)) if len(masked_point_confidence) > 0 else 0.0,
                 }
 
             per_camera_summary.append(
@@ -411,12 +454,23 @@ def run_ffs_static_confidence_pcd_panels_workflow(
             )
 
         fused_masked_points, fused_masked_colors = _fuse_camera_clouds(camera_clouds_masked)
-        fused_unmasked_points, fused_unmasked_colors = _fuse_camera_clouds(camera_clouds_unmasked)
+        fused_unmasked_points, _ = _fuse_camera_clouds(camera_clouds_unmasked)
+        fused_masked_confidence_by_metric = {
+            metric_name: _fuse_camera_cloud_confidence(camera_clouds_masked, metric_name)
+            for metric_name in metric_names
+        }
         focus_bounds_min, focus_bounds_max, focus_source, fallback_used = _compute_focus_bounds(
             masked_points=fused_masked_points,
             unmasked_points=fused_unmasked_points,
         )
         crop_bounds = _expand_bounds(focus_bounds_min, focus_bounds_max)
+        crop_valid_mask = _compute_crop_valid_mask(fused_masked_points, crop_bounds)
+        cropped_masked_points = fused_masked_points[crop_valid_mask]
+        cropped_masked_rgb_colors = fused_masked_colors[crop_valid_mask]
+        cropped_masked_confidence_colors_by_metric = {
+            metric_name: _colorize_confidence_values(fused_masked_confidence_by_metric[metric_name][crop_valid_mask])
+            for metric_name in metric_names
+        }
         source_cloud_map = {int(item["camera_idx"]): item for item in camera_clouds_unmasked}
         c2w_selected = [np.asarray(source_cloud_map[camera_idx]["c2w"], dtype=np.float32) for camera_idx in camera_ids]
         serial_numbers = [str(source_cloud_map[camera_idx]["serial"]) for camera_idx in camera_ids]
@@ -444,12 +498,15 @@ def run_ffs_static_confidence_pcd_panels_workflow(
 
         pcd_images: list[np.ndarray] = []
         pcd_render_paths: list[str] = []
+        confidence_pcd_images_by_metric: dict[str, list[np.ndarray]] = {metric_name: [] for metric_name in metric_names}
+        confidence_pcd_render_paths_by_metric: dict[str, list[str]] = {metric_name: [] for metric_name in metric_names}
         debug_dir = round_output_dir / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
         for view_config in view_configs:
             target_w, target_h = [int(item) for item in view_config["image_size"]]
             pcd_image = render_frame_fn(
-                *crop_points_to_bounds(fused_masked_points, fused_masked_colors, crop_bounds),
+                cropped_masked_points,
+                cropped_masked_rgb_colors,
                 width=int(target_w),
                 height=int(target_h),
                 center=np.asarray(view_config["center"], dtype=np.float32),
@@ -459,11 +516,34 @@ def run_ffs_static_confidence_pcd_panels_workflow(
                 point_size=float(point_size),
                 intrinsic_matrix=np.asarray(view_config["intrinsic_matrix"], dtype=np.float32),
                 extrinsic_matrix=np.asarray(view_config["extrinsic_matrix"], dtype=np.float32),
+                render_kind="rgb_pcd",
+                camera_idx=int(view_config["camera_idx"]),
             )
             pcd_images.append(pcd_image)
             pcd_render_path = debug_dir / f"masked_ffs_pcd_cam{int(view_config['camera_idx'])}.png"
             write_image(pcd_render_path, pcd_image)
             pcd_render_paths.append(str(pcd_render_path.resolve()))
+            for metric_name in metric_names:
+                confidence_pcd_image = render_frame_fn(
+                    cropped_masked_points,
+                    cropped_masked_confidence_colors_by_metric[metric_name],
+                    width=int(target_w),
+                    height=int(target_h),
+                    center=np.asarray(view_config["center"], dtype=np.float32),
+                    eye=np.asarray(view_config["camera_position"], dtype=np.float32),
+                    up=np.asarray(view_config["up"], dtype=np.float32),
+                    zoom=0.55,
+                    point_size=float(point_size),
+                    intrinsic_matrix=np.asarray(view_config["intrinsic_matrix"], dtype=np.float32),
+                    extrinsic_matrix=np.asarray(view_config["extrinsic_matrix"], dtype=np.float32),
+                    render_kind="confidence_pcd",
+                    metric_name=str(metric_name),
+                    camera_idx=int(view_config["camera_idx"]),
+                )
+                confidence_pcd_images_by_metric[metric_name].append(confidence_pcd_image)
+                confidence_render_path = debug_dir / f"confidence_pcd_{metric_name}_cam{int(view_config['camera_idx'])}.png"
+                write_image(confidence_render_path, confidence_pcd_image)
+                confidence_pcd_render_paths_by_metric[metric_name].append(str(confidence_render_path.resolve()))
 
         column_headers = [str(view_config["label"]) for view_config in view_configs]
         board_paths: dict[str, str] = {}
@@ -476,7 +556,7 @@ def run_ffs_static_confidence_pcd_panels_workflow(
                 column_headers=column_headers,
                 rgb_images=rgb_images,
                 pcd_images=pcd_images,
-                confidence_images=confidence_images_by_metric[metric_name],
+                confidence_pcd_images=confidence_pcd_images_by_metric[metric_name],
             )
             board_path = round_output_dir / f"{metric_name}_board.png"
             write_image(board_path, board)
@@ -492,16 +572,19 @@ def run_ffs_static_confidence_pcd_panels_workflow(
             "text_prompt": str(text_prompt),
             "metrics": list(metric_names),
             "model_config": dict(model_config),
-            "row_headers": ["RGB", "Masked FFS PCD", "Confidence"],
+            "row_headers": ["RGB", "Masked FFS PCD", "Confidence PCD"],
             "column_headers": column_headers,
             "board_paths": board_paths,
             "pcd_render_paths": pcd_render_paths,
+            "confidence_pcd_render_paths": confidence_pcd_render_paths_by_metric,
             "pcd_render_contract": {
-                "renderer": "open3d_hidden_visualizer",
+                "renderer": "open3d_offscreen_renderer",
                 "projection_mode": "original_camera_pinhole",
                 "view_mode": "original_camera_extrinsics",
                 "shared_crop_across_panels": True,
                 "row2_source": "fused_masked_ffs",
+                "row3_source": "fused_masked_ffs_confidence",
+                "row3_binding": "sample_color_aligned_confidence_at_source_pixel",
             },
             "column_views": [
                 {
@@ -525,6 +608,7 @@ def run_ffs_static_confidence_pcd_panels_workflow(
             "empty_mask_fallback_used": bool(fallback_used),
             "fused_unmasked_point_count": int(len(fused_unmasked_points)),
             "fused_masked_point_count": int(len(fused_masked_points)),
+            "cropped_fused_masked_point_count": int(len(cropped_masked_points)),
             "per_camera": per_camera_summary,
             "mask_debug": {str(key): value for key, value in mask_debug.items()},
             "output_dir": str(round_output_dir.resolve()),

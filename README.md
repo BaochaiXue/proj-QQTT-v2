@@ -75,6 +75,16 @@ Live RGB + Fast-FoundationStereo preview:
 python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo
 ```
 
+True no-render FFS throughput probe:
+
+```bash
+python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --render-mode none
+```
+
+In `--render-mode none`, the viewer skips panel assembly / `imshow()`, does not
+reproject FFS depth into the color frame, and prints periodic console FPS stats
+instead.
+
 The default live FFS mode is still the current two-stage TensorRT path:
 
 - `--ffs_backend tensorrt --ffs_trt_mode two_stage`
@@ -118,14 +128,15 @@ python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo 
 Static-round TRT matrix replay + PPTX export:
 
 ```bash
-conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --reuse_artifacts
+conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/ffs_static_replay_matrix_20260422_fullrun/artifacts --reuse_artifacts
 ```
 
 This workflow is the current offline realtime-proxy harness for the three static FFS rounds. It:
 
 - replays `static/ffs_30_static_round1_20260410_235202`, `round2`, and `round3`
 - searches the fixed `3 models × 3 scales × 3 valid_iters × 2 TRT engines = 54` matrix
-- measures `30 / elapsed_seconds` FPS after a `10`-frame warmup for every `round × camera`
+- benchmarks `3` cameras simultaneously within each round using `3` worker processes and `batch=1`
+- measures `30 / elapsed_seconds` FPS after a `10`-frame warmup for every `Round X cam Y`
 - writes one shared masked RGB `3x3` board artifact, one masked FFS-only PCD `3x3` board per experiment, `results.csv`, `manifest.json`, and a ranked PPTX
 - the PPT itself now contains only `1` slide per experiment:
   - top-of-slide summary text + frame-10 masked PCD panel
@@ -134,6 +145,7 @@ Important:
 
 - run it from `qqtt-ffs-compat`
 - `python-pptx` and `onnx` must be available in that environment
+- `--artifact_root` can point at an older artifact tree so TRT engines are reused without reusing old benchmark results
 - the harness uses `stuffed animal` masks at `frame_idx=10`
 - if the local SAM 3.1 checkpoint is unavailable, the harness falls back to the existing static frame-0 stuffed-animal masks and copies them to frame 10 for this static-only workflow
 

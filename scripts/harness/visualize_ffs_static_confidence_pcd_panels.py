@@ -17,7 +17,7 @@ DEFAULT_OUTPUT_ROOT = ROOT / "data" / "static" / "ffs_confidence_pcd_panels_fram
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render masked 3x3 static-round FFS confidence boards with a fused masked FFS PCD row for frame 0."
+        description="Render masked 3x3 static-round FFS confidence boards with RGB-colored and confidence-colored fused masked FFS PCD rows for frame 0."
     )
     parser.add_argument("--aligned_root", type=Path, default=ROOT / "data")
     parser.add_argument("--output_root", type=Path, default=DEFAULT_OUTPUT_ROOT)

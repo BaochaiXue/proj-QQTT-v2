@@ -52,14 +52,20 @@ class _RenderCollector:
         self.calls: list[dict[str, object]] = []
 
     def __call__(self, points: np.ndarray, colors: np.ndarray, **kwargs) -> np.ndarray:
+        points_array = np.asarray(points, dtype=np.float32)
+        colors_array = np.asarray(colors, dtype=np.uint8)
         self.calls.append(
             {
-                "point_count": int(len(np.asarray(points))),
-                "color_count": int(len(np.asarray(colors))),
+                "point_count": int(len(points_array)),
+                "color_count": int(len(colors_array)),
                 "width": int(kwargs["width"]),
                 "height": int(kwargs["height"]),
+                "render_kind": str(kwargs.get("render_kind", "")),
+                "metric_name": None if kwargs.get("metric_name") is None else str(kwargs.get("metric_name")),
+                "camera_idx": None if kwargs.get("camera_idx") is None else int(kwargs.get("camera_idx")),
                 "intrinsic_matrix": np.asarray(kwargs.get("intrinsic_matrix"), dtype=np.float32).copy(),
                 "extrinsic_matrix": np.asarray(kwargs.get("extrinsic_matrix"), dtype=np.float32).copy(),
+                "colors": colors_array.copy(),
             }
         )
         return np.full((int(kwargs["height"]), int(kwargs["width"]), 3), 90, dtype=np.uint8)
@@ -76,7 +82,7 @@ class FfsConfidencePcdPanelsSmokeTest(unittest.TestCase):
     def test_build_confidence_pcd_board_returns_nonempty_matrix_board(self) -> None:
         rgb_images = [np.full((40, 60, 3), 40, dtype=np.uint8) for _ in range(3)]
         pcd_images = [np.full((40, 60, 3), 80, dtype=np.uint8) for _ in range(3)]
-        confidence_images = [np.full((40, 60, 3), 120, dtype=np.uint8) for _ in range(3)]
+        confidence_pcd_images = [np.full((40, 60, 3), 120, dtype=np.uint8) for _ in range(3)]
 
         board = build_confidence_pcd_board(
             round_label="Round 1",
@@ -86,7 +92,7 @@ class FfsConfidencePcdPanelsSmokeTest(unittest.TestCase):
             column_headers=["Cam0", "Cam1", "Cam2"],
             rgb_images=rgb_images,
             pcd_images=pcd_images,
-            confidence_images=confidence_images,
+            confidence_pcd_images=confidence_pcd_images,
         )
 
         self.assertEqual(board.ndim, 3)
@@ -136,17 +142,30 @@ class FfsConfidencePcdPanelsSmokeTest(unittest.TestCase):
             self.assertEqual(summary["metrics"], ["margin", "max_softmax"])
             self.assertEqual(len(summary["rounds"]), 1)
             round_summary = summary["rounds"][0]
-            self.assertEqual(round_summary["row_headers"], ["RGB", "Masked FFS PCD", "Confidence"])
+            self.assertEqual(round_summary["row_headers"], ["RGB", "Masked FFS PCD", "Confidence PCD"])
             self.assertEqual(round_summary["pcd_render_contract"]["row2_source"], "fused_masked_ffs")
+            self.assertEqual(round_summary["pcd_render_contract"]["row3_source"], "fused_masked_ffs_confidence")
             self.assertEqual(len(round_summary["column_views"]), 3)
             self.assertGreater(int(round_summary["fused_masked_point_count"]), 0)
+            self.assertGreater(int(round_summary["cropped_fused_masked_point_count"]), 0)
             self.assertEqual(sorted(round_summary["board_paths"].keys()), ["margin", "max_softmax"])
-            self.assertEqual(len(render_collector.calls), 3)
+            self.assertEqual(len(render_collector.calls), 9)
+            rgb_calls = [call for call in render_collector.calls if call["render_kind"] == "rgb_pcd"]
+            confidence_calls = [call for call in render_collector.calls if call["render_kind"] == "confidence_pcd"]
+            self.assertEqual(len(rgb_calls), 3)
+            self.assertEqual(len(confidence_calls), 6)
             for call in render_collector.calls:
                 self.assertGreater(int(call["point_count"]), 0)
                 self.assertEqual(int(call["point_count"]), int(call["color_count"]))
                 self.assertEqual(np.asarray(call["intrinsic_matrix"]).shape, (3, 3))
                 self.assertEqual(np.asarray(call["extrinsic_matrix"]).shape, (4, 4))
+            rgb_calls_by_camera = {int(call["camera_idx"]): call for call in rgb_calls}
+            for call in confidence_calls:
+                camera_idx = int(call["camera_idx"])
+                self.assertIn(camera_idx, rgb_calls_by_camera)
+                self.assertEqual(int(call["point_count"]), int(rgb_calls_by_camera[camera_idx]["point_count"]))
+                self.assertFalse(np.array_equal(np.asarray(call["colors"]), np.asarray(rgb_calls_by_camera[camera_idx]["colors"])))
+                self.assertIn(str(call["metric_name"]), ("margin", "max_softmax"))
 
 
 if __name__ == "__main__":
