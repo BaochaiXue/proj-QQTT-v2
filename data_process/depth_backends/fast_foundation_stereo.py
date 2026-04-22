@@ -719,6 +719,7 @@ class FastFoundationStereoSingleEngineTensorRTRunner:
         if not torch.cuda.is_available():
             raise RuntimeError("FastFoundationStereoSingleEngineTensorRTRunner requires CUDA.")
 
+        _ensure_ffs_repo_on_sys_path(self.ffs_repo)
         self._dll_handles = _configure_tensorrt_runtime_search_paths(self.trt_root)
         from Utils import set_logging_format, set_seed
 
