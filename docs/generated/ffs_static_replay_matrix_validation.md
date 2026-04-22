@@ -65,9 +65,8 @@ This fallback is limited to the static replay harness and is recorded in each ca
 
 - successful experiments: `24 / 24`
 - failed experiments: `0 / 24`
-- PPTX slide count: `73`
-  - `1` run-summary slide
-  - `72` experiment slides = `24 × 3`
+- PPTX slide count: `48`
+  - `48` experiment slides = `24 × 2`
 
 Engine summary from `results.csv`:
 
@@ -102,5 +101,5 @@ Bottom 3 configs by overall mean FPS:
 
 - Open3D rendering completed under EGL headless mode and emitted repeated DRI3 / EGL warnings on this machine, but the boards and PPTX were written successfully.
 - The experiment-local PPTX embeds:
-  - one shared masked RGB `3x3` board reused across all experiments
+  - one summary slide per experiment
   - one masked FFS-only PCD `3x3` board per experiment

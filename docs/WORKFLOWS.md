@@ -164,6 +164,10 @@ This harness is the current offline realtime-proxy workflow for the three static
   - `mask_cache/`
   - `experiments/<experiment_id>/summary.json`
   - `ppt/ffs_static_replay_matrix.pptx`
+- PPT layout:
+  - `2` slides per experiment
+  - page 1 = summary + 9 FPS values
+  - page 2 = frame-10 masked FFS-only `3x3` PCD board
 
 Operator notes:
 

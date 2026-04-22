@@ -1026,7 +1026,7 @@ def export_pptx(
     manifest: dict[str, Any],
     successful_rows: list[dict[str, Any]],
     failures: list[ExperimentFailure],
-    shared_rgb_board_path: Path,
+    shared_rgb_board_path: Path | None = None,
 ) -> None:
     ensure_python_pptx_available()
     from pptx import Presentation
@@ -1037,46 +1037,6 @@ def export_pptx(
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
     blank_layout = prs.slide_layouts[6]
-
-    slide = prs.slides.add_slide(blank_layout)
-    _add_white_background(slide)
-    _add_textbox(
-        slide=slide,
-        left=Inches(0.5),
-        top=Inches(0.45),
-        width=Inches(12.2),
-        height=Inches(6.5),
-        lines=[
-            "Static Replay FFS Matrix",
-            f"generated_at_utc: {manifest['generated_at_utc']}",
-            f"output_root: {manifest['output_root']}",
-            f"successful_experiments: {len(successful_rows)}",
-            f"failed_experiments: {len(failures)}",
-            f"frame_idx: {manifest['frame_idx']}",
-            f"mask_prompt: {manifest['mask_prompt']}",
-        ],
-        font_size_pt=22,
-        bold_first=True,
-    )
-
-    if failures:
-        slide = prs.slides.add_slide(blank_layout)
-        _add_white_background(slide)
-        lines = ["Failed Configs"]
-        for failure in failures:
-            lines.append(
-                f"{failure.experiment_id} | stage={failure.stage} | {failure.message}"
-            )
-        _add_textbox(
-            slide=slide,
-            left=Inches(0.45),
-            top=Inches(0.35),
-            width=Inches(12.3),
-            height=Inches(6.7),
-            lines=lines,
-            font_size_pt=14,
-            bold_first=True,
-        )
 
     for row in successful_rows:
         slide = prs.slides.add_slide(blank_layout)
@@ -1101,25 +1061,6 @@ def export_pptx(
             lines=summary_lines,
             font_size_pt=20,
             bold_first=True,
-        )
-
-        slide = prs.slides.add_slide(blank_layout)
-        _add_white_background(slide)
-        _add_textbox(
-            slide=slide,
-            left=Inches(0.45),
-            top=Inches(0.15),
-            width=Inches(12.0),
-            height=Inches(0.35),
-            lines=["Frame 10 Masked RGB 3x3"],
-            font_size_pt=18,
-            bold_first=True,
-        )
-        _add_fitted_picture(
-            slide=slide,
-            image_path=shared_rgb_board_path,
-            slide_width=prs.slide_width,
-            slide_height=prs.slide_height,
         )
 
         slide = prs.slides.add_slide(blank_layout)
