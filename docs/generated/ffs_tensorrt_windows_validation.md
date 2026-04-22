@@ -54,7 +54,7 @@ The proof-of-life in this note remains the validated `640x480` export and engine
 - rationale: upstream `scripts/make_onnx.py` requires dimensions divisible by `32`, so `848x480` cannot be used as the two-stage engine shape directly
 - runtime behavior in QQTT: symmetrically replicate-pad the `848x480` IR pair to `864x480`, run TRT, then crop the disparity back to `848x480` before reprojection
 
-That newer `848 -> 864 -> 848` repo path was not part of this original Windows validation run.
+That newer `848 -> 864 -> 848` repo path was not part of this original Windows validation run. The later WSL validation and engine build outputs are recorded separately in `docs/generated/ffs_tensorrt_wsl_validation.md`.
 
 ## Outputs
 

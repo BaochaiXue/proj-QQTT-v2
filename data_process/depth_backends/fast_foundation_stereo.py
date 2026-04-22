@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import cv2
 import numpy as np
@@ -158,6 +158,21 @@ def load_tensorrt_model_config(model_dir: str | Path) -> dict[str, Any]:
         raise ValueError(f"Expected onnx.yaml image_size=[H, W], got {image_size!r} in {cfg_path}")
     cfg["image_size"] = [int(image_size[0]), int(image_size[1])]
     return cfg
+
+
+def run_forward_on_non_default_cuda_stream(
+    *,
+    torch_module: Any,
+    stream: Any,
+    forward_fn: Callable[..., Any],
+    **forward_kwargs: Any,
+) -> Any:
+    current_stream = torch_module.cuda.current_stream()
+    stream.wait_stream(current_stream)
+    with torch_module.cuda.stream(stream):
+        output = forward_fn(**forward_kwargs)
+    current_stream.wait_stream(stream)
+    return output
 
 
 def resolve_tensorrt_image_transform(
@@ -425,6 +440,7 @@ class FastFoundationStereoTensorRTRunner:
         self.valid_iters = int(self.cfg.valid_iters)
         self.max_disp = int(self.cfg.max_disp)
         self.torch = torch
+        self.inference_stream = torch.cuda.Stream()
         set_logging_format()
         set_seed(0)
         torch.autograd.set_grad_enabled(False)
@@ -468,7 +484,13 @@ class FastFoundationStereoTensorRTRunner:
         torch = self.torch
         left_tensor = torch.as_tensor(left).cuda().float()[None].permute(0, 3, 1, 2)
         right_tensor = torch.as_tensor(right).cuda().float()[None].permute(0, 3, 1, 2)
-        disparity = self.model.forward(left_tensor, right_tensor)
+        disparity = run_forward_on_non_default_cuda_stream(
+            torch_module=torch,
+            stream=self.inference_stream,
+            forward_fn=self.model.forward,
+            image1=left_tensor,
+            image2=right_tensor,
+        )
         disparity_raw = disparity.data.cpu().numpy().reshape(self.engine_height, self.engine_width).astype(np.float32)
         disparity_raw = undo_tensorrt_disparity_transform(disparity_raw, transform=left_transform)
         scale_x = float(left_transform["scale_x"])

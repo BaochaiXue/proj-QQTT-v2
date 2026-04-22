@@ -7,6 +7,11 @@ import cv2
 import numpy as np
 
 from data_process.aligned_case_metadata import load_aligned_metadata
+from data_process.depth_backends import (
+    FFS_DEPTH_ARCHIVE_DIR_BOTH_BACKEND,
+    FFS_DEPTH_ARCHIVE_DIR_FFS_BACKEND,
+    FFS_FLOAT_ARCHIVE_DIR,
+)
 from .calibration_io import load_calibration_transforms
 from .io_artifacts import write_ply_ascii
 
@@ -194,6 +199,26 @@ def choose_depth_stream(
 ) -> tuple[str, bool]:
     if source == "realsense":
         return "depth", False
+    if source == "ffs_raw":
+        if use_float_ffs_depth_when_available and (case_dir / FFS_FLOAT_ARCHIVE_DIR).is_dir():
+            return FFS_FLOAT_ARCHIVE_DIR, True
+        if use_float_ffs_depth_when_available and (case_dir / "depth_ffs_float_m").is_dir():
+            return "depth_ffs_float_m", True
+
+        primary_ffs_depth_dir = (
+            "depth"
+            if str(metadata.get("depth_source_for_depth_dir", "")) == "ffs" or str(metadata.get("depth_backend_used", "")) == "ffs"
+            else "depth_ffs"
+        )
+        archive_ffs_depth_dir = (
+            FFS_DEPTH_ARCHIVE_DIR_FFS_BACKEND
+            if primary_ffs_depth_dir == "depth"
+            else FFS_DEPTH_ARCHIVE_DIR_BOTH_BACKEND
+        )
+        if (case_dir / archive_ffs_depth_dir).is_dir():
+            return archive_ffs_depth_dir, False
+        if (case_dir / primary_ffs_depth_dir).is_dir():
+            return primary_ffs_depth_dir, False
 
     if ffs_native_like_postprocess:
         if use_float_ffs_depth_when_available and (case_dir / "depth_ffs_native_like_postprocess_float_m").is_dir():

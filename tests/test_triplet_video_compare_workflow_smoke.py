@@ -75,6 +75,35 @@ class TripletVideoCompareWorkflowSmokeTest(unittest.TestCase):
                 ["depth_ffs_native_like_postprocess_float_m"],
             )
 
+    def test_two_case_workflow_prefers_archived_raw_depth_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            aligned_root = tmp_root / "data"
+            native_case = aligned_root / "native_case"
+            ffs_case = aligned_root / "ffs_case"
+            make_visualization_case(native_case, frame_num=2)
+            make_visualization_case(
+                ffs_case,
+                include_depth_ffs=True,
+                include_depth_ffs_float_m=True,
+                include_depth_ffs_original=True,
+                include_depth_ffs_float_m_original=True,
+                frame_num=2,
+                depth_backend_used="both",
+                depth_source_for_depth_dir="realsense",
+            )
+
+            output_dir = tmp_root / "triplet_video_output"
+            summary = run_triplet_video_compare_workflow(
+                aligned_root=aligned_root,
+                realsense_case="native_case",
+                ffs_case="ffs_case",
+                output_dir=output_dir,
+                render_frame_fn=lambda points, colors, **kwargs: np.full((72, 96, 3), 90, dtype=np.uint8),
+            )
+
+            self.assertEqual(summary["variants"]["ffs_raw"]["depth_dirs_used"], ["depth_ffs_float_m_original"])
+
     def test_workflow_uses_rgb_colors_and_vertical_flip(self) -> None:
         seen_colorful = {"value": False}
 

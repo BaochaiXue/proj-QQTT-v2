@@ -11,6 +11,7 @@ from unittest import mock
 import numpy as np
 
 from cameras_viewer_FFS import (
+    DEFAULT_FFS_TRT_MODEL_DIR,
     _compute_measured_fps,
     _format_ffs_backend_startup_note,
     _format_runtime_stats_lines,
@@ -21,10 +22,12 @@ from cameras_viewer_FFS import (
     _resolve_ffs_worker_kwargs,
     _summarize_runtime_stats,
     _update_recent_frame_times,
+    parse_args,
 )
 from data_process.depth_backends.fast_foundation_stereo import (
     apply_tensorrt_image_transform,
     resolve_tensorrt_image_transform,
+    run_forward_on_non_default_cuda_stream,
     undo_tensorrt_disparity_transform,
 )
 
@@ -196,6 +199,17 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         self.assertEqual(worker_kwargs["ffs_max_disp"], 192)
         self.assertIsNone(worker_kwargs["trt_model_dir"])
 
+    def test_parse_args_defaults_to_tensorrt_and_repo_local_engine_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo = root / "ffs_repo"
+            repo.mkdir()
+            with mock.patch("sys.argv", ["cameras_viewer_FFS.py", "--ffs_repo", str(repo)]):
+                args = parse_args()
+
+        self.assertEqual(args.ffs_backend, "tensorrt")
+        self.assertEqual(args.ffs_trt_model_dir, DEFAULT_FFS_TRT_MODEL_DIR)
+
     def test_resolve_tensorrt_worker_kwargs_loads_engine_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -289,6 +303,68 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         cropped = undo_tensorrt_disparity_transform(disparity, transform=transform)
         self.assertEqual(cropped.shape, (480, 848))
         np.testing.assert_array_equal(cropped, disparity[:, 8:-8])
+
+    def test_non_default_cuda_stream_helper_waits_and_restores_order(self) -> None:
+        events: list[object] = []
+
+        class FakeCurrentStream:
+            def wait_stream(self, stream: object) -> None:
+                events.append(("current_wait_stream", stream))
+
+        class FakeInferenceStream:
+            def wait_stream(self, stream: object) -> None:
+                events.append(("inference_wait_stream", stream))
+
+        class FakeStreamContext:
+            def __init__(self, stream: object) -> None:
+                self._stream = stream
+
+            def __enter__(self) -> None:
+                events.append(("enter_stream", self._stream))
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                events.append(("exit_stream", self._stream))
+
+        fake_current_stream = FakeCurrentStream()
+        fake_inference_stream = FakeInferenceStream()
+
+        class FakeCuda:
+            def current_stream(self) -> object:
+                events.append("current_stream")
+                return fake_current_stream
+
+            def stream(self, stream: object) -> FakeStreamContext:
+                events.append(("stream_context", stream))
+                return FakeStreamContext(stream)
+
+        class FakeTorch:
+            cuda = FakeCuda()
+
+        def fake_forward(**kwargs: object) -> dict[str, object]:
+            events.append(("forward", kwargs))
+            return {"ok": True}
+
+        result = run_forward_on_non_default_cuda_stream(
+            torch_module=FakeTorch(),
+            stream=fake_inference_stream,
+            forward_fn=fake_forward,
+            image1="left",
+            image2="right",
+        )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(
+            events,
+            [
+                "current_stream",
+                ("inference_wait_stream", fake_current_stream),
+                ("stream_context", fake_inference_stream),
+                ("enter_stream", fake_inference_stream),
+                ("forward", {"image1": "left", "image2": "right"}),
+                ("exit_stream", fake_inference_stream),
+                ("current_wait_stream", fake_inference_stream),
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -20,14 +20,16 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - `python cameras_viewer.py` launches successfully
 - each camera shows live color and depth
 - each panel reports negotiated `configured fps` plus live `measured fps`
-- `python cameras_viewer_FFS.py --ffs_repo <repo> --ffs_model_path <weights>` launches successfully
+- `python cameras_viewer_FFS.py --ffs_repo <repo>` launches successfully with the default TensorRT engine path
 - each FFS panel shows live RGB on top and color-aligned FFS depth on bottom
 - each FFS panel reports negotiated profile plus live `capture` and `ffs` fps
+- optional PyTorch viewer mode launches successfully when requested explicitly:
+  - `python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo <repo> --ffs_model_path <weights>`
 - optional TensorRT viewer mode launches successfully with prebuilt engines:
   - `python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_repo <repo> --ffs_trt_model_dir <engine_dir> --ffs_trt_root <tensorrt_root>`
   - if engine size differs from capture size, startup output reports whether frames will be symmetrically padded or resized before inference
 - timed benchmark mode works:
-  - `python cameras_viewer_FFS.py --duration-s 20 --stats-log-interval-s 5 --ffs_repo <repo> --ffs_model_path <weights>`
+  - `python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-interval-s 5 --ffs_repo <repo> --ffs_model_path <weights>`
   - stdout prints aggregate and per-camera runtime stats during the run
   - TensorRT mode should also print aggregate and per-camera runtime stats when `--ffs_backend tensorrt` is selected
 

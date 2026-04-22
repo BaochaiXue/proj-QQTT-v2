@@ -38,6 +38,8 @@ ALIGNED_METADATA_EXT_KEYS = (
     "ir_baseline_m",
     "source_streams_present",
     "ffs_config",
+    "ffs_radius_outlier_filter_enabled",
+    "ffs_radius_outlier_filter",
 )
 
 _KNOWN_ALIGNED_METADATA_KEYS = set(LEGACY_ALIGNED_METADATA_KEYS) | set(ALIGNED_METADATA_EXT_KEYS)

@@ -11,8 +11,12 @@ import cv2
 import imageio
 import numpy as np
 
-
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from data_process.depth_backends.fast_foundation_stereo import run_forward_on_non_default_cuda_stream
+
 DEFAULT_FFS_REPO = Path("/home/zhangxinjie/Fast-FoundationStereo")
 DEFAULT_MODEL_PATH = DEFAULT_FFS_REPO / "weights" / "23-36-37" / "model_best_bp2_serialize.pth"
 DEFAULT_OUT_DIR = ROOT / "data" / "ffs_proof_of_life" / "trt_two_stage_864x480_wsl"
@@ -254,6 +258,7 @@ def run_demo(
         str(onnx_dir / "feature_runner.engine"),
         str(onnx_dir / "post_runner.engine"),
     )
+    inference_stream = torch_module.cuda.Stream()
 
     img0 = imageio.imread(left_file)
     img1 = imageio.imread(right_file)
@@ -273,7 +278,13 @@ def run_demo(
 
     img0_tensor = torch_module.as_tensor(img0).cuda().float()[None].permute(0, 3, 1, 2)
     img1_tensor = torch_module.as_tensor(img1).cuda().float()[None].permute(0, 3, 1, 2)
-    disp = model.forward(img0_tensor, img1_tensor)
+    disp = run_forward_on_non_default_cuda_stream(
+        torch_module=torch_module,
+        stream=inference_stream,
+        forward_fn=model.forward,
+        image1=img0_tensor,
+        image2=img1_tensor,
+    )
     height, width = img0.shape[:2]
     disp = disp.data.cpu().numpy().reshape(height, width).clip(0, None) * 1 / fx
 
@@ -314,6 +325,7 @@ def profile_tensorrt(
         str(onnx_dir / "feature_runner.engine"),
         str(onnx_dir / "post_runner.engine"),
     )
+    inference_stream = torch_module.cuda.Stream()
     height, width = int(args.image_size[0]), int(args.image_size[1])
     img0 = torch_module.randint(0, 256, (1, 3, height, width), dtype=torch_module.float32).cuda()
     img1 = torch_module.randint(0, 256, (1, 3, height, width), dtype=torch_module.float32).cuda()
@@ -321,7 +333,13 @@ def profile_tensorrt(
     for idx in range(total):
         torch_module.cuda.synchronize()
         start = time.perf_counter()
-        model.forward(img0, img1)
+        run_forward_on_non_default_cuda_stream(
+            torch_module=torch_module,
+            stream=inference_stream,
+            forward_fn=model.forward,
+            image1=img0,
+            image2=img1,
+        )
         torch_module.cuda.synchronize()
         elapsed = time.perf_counter() - start
         times.append(elapsed)

@@ -19,6 +19,7 @@ These record what the current machine and D455 topology actually supported durin
 - `ffs_demo_validation.md`
 - `wsl_env_bootstrap_validation.md`
 - `ffs_tensorrt_windows_validation.md`
+- `ffs_tensorrt_wsl_validation.md`
 - `ffs_benchmark_tradeoff_validation.md`
 - `ffs_live_3cam_benchmark_validation.md`
 - `ffs_live_trt_viewer_validation.md`
@@ -31,6 +32,7 @@ These document external FFS proof-of-life, repo integration behavior, and target
 ## Visualization Validation
 
 - `depth_visualization_validation.md`
+- `sam31_env_validation.md`
 - `visual_stack_cleanup_inventory.md`
 - `visual_stack_cleanup_validation.md`
 

@@ -3,6 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from data_process.depth_backends import (
+    FFS_DEPTH_ARCHIVE_DIR_BOTH_BACKEND,
+    FFS_DEPTH_ARCHIVE_DIR_FFS_BACKEND,
+    FFS_FLOAT_ARCHIVE_DIR,
+)
+
 from .io_artifacts import write_json, write_ply_ascii
 from .io_case import (
     get_frame_count,
@@ -13,7 +19,13 @@ from .io_case import (
 from .pointcloud_defaults import DEFAULT_POINTCLOUD_DEPTH_MAX_M, DEFAULT_POINTCLOUD_DEPTH_MIN_M
 
 
-RAW_FFS_DEPTH_DIRS = ("depth_ffs_float_m", "depth_ffs")
+RAW_FFS_DEPTH_DIRS = (
+    FFS_FLOAT_ARCHIVE_DIR,
+    FFS_DEPTH_ARCHIVE_DIR_BOTH_BACKEND,
+    FFS_DEPTH_ARCHIVE_DIR_FFS_BACKEND,
+    "depth_ffs_float_m",
+    "depth_ffs",
+)
 TRIPLET_POINTCLOUD_CONTRACT = {
     "native": "aligned native depth -> K_color deprojection -> c2w calibration-world transform -> fused across 3 cameras",
     "ffs_raw": "aligned FFS raw depth -> K_color deprojection -> c2w calibration-world transform -> fused across 3 cameras",
@@ -32,8 +44,15 @@ def _select_single_frame_index(*, native_count: int, ffs_count: int, frame_idx: 
     return selected, selected
 
 
-def _case_has_ffs_raw_depth(case_dir: Path) -> bool:
-    return any((case_dir / directory_name).is_dir() for directory_name in RAW_FFS_DEPTH_DIRS)
+def _case_has_ffs_raw_depth(case_dir: Path, metadata: dict[str, Any] | None = None) -> bool:
+    if any((case_dir / directory_name).is_dir() for directory_name in RAW_FFS_DEPTH_DIRS):
+        return True
+    if metadata is None:
+        metadata = load_case_metadata(case_dir)
+    return (
+        str(metadata.get("depth_source_for_depth_dir", "")) == "ffs"
+        and (case_dir / "depth").is_dir()
+    )
 
 
 def _aggregate_postprocess_origin(per_camera: list[dict[str, Any]]) -> str:
@@ -138,9 +157,9 @@ def run_triplet_ply_compare_workflow(
     native_metadata = load_case_metadata(native_case_dir)
     ffs_metadata = load_case_metadata(ffs_case_dir)
 
-    if not _case_has_ffs_raw_depth(ffs_case_dir):
+    if not _case_has_ffs_raw_depth(ffs_case_dir, ffs_metadata):
         raise ValueError(
-            "Triplet PLY compare requires an aligned FFS case containing depth_ffs/ or depth_ffs_float_m/."
+            "Triplet PLY compare requires an aligned FFS case containing raw FFS depth or a raw-depth archive."
         )
     if len(native_metadata["serial_numbers"]) != len(ffs_metadata["serial_numbers"]):
         raise ValueError("Native and FFS cases must have the same number of cameras for triplet comparison.")
@@ -158,7 +177,7 @@ def run_triplet_ply_compare_workflow(
     variants: dict[str, dict[str, Any]] = {}
     for variant_name, case_dir, metadata, variant_frame_idx, depth_source, enable_postprocess in (
         ("native", native_case_dir, native_metadata, native_frame_idx, "realsense", False),
-        ("ffs_raw", ffs_case_dir, ffs_metadata, ffs_frame_idx, "ffs", False),
+        ("ffs_raw", ffs_case_dir, ffs_metadata, ffs_frame_idx, "ffs_raw", False),
         ("ffs_postprocess", ffs_case_dir, ffs_metadata, ffs_frame_idx, "ffs", True),
     ):
         points, colors, stats, per_camera_clouds = _load_triplet_variant(

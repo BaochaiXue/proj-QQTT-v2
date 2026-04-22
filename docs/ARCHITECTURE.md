@@ -28,6 +28,7 @@ The repo is intentionally small.
 - `data_process/depth_backends/benchmarking.py`
 - `data_process/depth_backends/geometry.py`
 - `data_process/depth_backends/fast_foundation_stereo.py`
+- `data_process/depth_backends/radius_outlier_filter.py`
 
 ### Comparison Visualization
 
@@ -100,6 +101,7 @@ The repo is intentionally small.
 - lazily imports `data_process/depth_backends/*` only when `--depth_backend ffs|both` is requested
 - keeps `realsense` as the default backend
 - can optionally write auxiliary `depth_ffs_native_like_postprocess*` streams without changing canonical aligned depth outputs
+- can optionally replace the main aligned FFS depth with a per-camera Open3D radius-outlier-filtered result while archiving the raw unfiltered FFS depth under `*_original*`
 - now writes aligned metadata in two files:
   - `metadata.json` for legacy `proj-QQTT` compatibility
   - `metadata_ext.json` for QQTT-only aligned metadata extensions
@@ -108,7 +110,7 @@ Downstream-facing formal exports under `data/different_types/` may be narrowed f
 
 - `cleanup_different_types_cases.py`
   - default dry-run
-  - in-place removal of IR streams, FFS auxiliary depth streams, and `metadata_ext.json`
+  - in-place removal of IR streams, FFS raw archive directories `*_original*`, FFS auxiliary depth streams, and `metadata_ext.json`
   - preserves the minimal downstream structure expected by external consumers, plus optional `color/<camera>.mp4` RGB sidecars
   - execute mode backfills missing color mp4 sidecars from `color/<camera>/*.png` before cleanup
 

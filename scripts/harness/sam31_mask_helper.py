@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import platform
@@ -12,8 +13,10 @@ from typing import Any, Sequence
 
 
 QQTT_SAM31_CHECKPOINT_ENV = "QQTT_SAM31_CHECKPOINT"
+QQTT_SAM31_BPE_PATH_ENV = "QQTT_SAM31_BPE_PATH"
 DEFAULT_OUTPUT_DIR_NAME = "sam31_masks"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp")
+BPE_VOCAB_NAME = "bpe_simple_vocab_16e6.txt.gz"
 PROMPT_SPLIT_PATTERN = re.compile(r"[,\n;]+|(?<!\d)\.(?!\d)")
 _CUDA_AUTOCAST_CONTEXT = None
 
@@ -91,13 +94,92 @@ def build_mask_output_path(output_dir: str | Path, *, camera_idx: int, obj_id: i
     return Path(output_dir).resolve() / "mask" / str(int(camera_idx)) / str(int(obj_id)) / f"{frame_token}.png"
 
 
+def _resolve_sam3_video_predictor_builder(model_builder_module: Any) -> tuple[Any, str]:
+    if hasattr(model_builder_module, "build_sam3_predictor"):
+        return model_builder_module.build_sam3_predictor, "build_sam3_predictor"
+    if hasattr(model_builder_module, "build_sam3_video_predictor"):
+        return model_builder_module.build_sam3_video_predictor, "build_sam3_video_predictor"
+    raise ImportError(
+        "sam3.model_builder does not expose `build_sam3_predictor` or `build_sam3_video_predictor`."
+    )
+
+
+def _build_sam31_builder_kwargs(
+    builder_name: str,
+    *,
+    checkpoint_path: str,
+    bpe_path: str | None,
+    async_loading_frames: bool,
+    compile_model: bool,
+    max_num_objects: int,
+) -> dict[str, Any]:
+    if builder_name == "build_sam3_predictor":
+        return {
+            "checkpoint_path": checkpoint_path,
+            "version": "sam3.1",
+            "compile": compile_model,
+            "warm_up": False,
+            "max_num_objects": max_num_objects,
+            "use_fa3": False,
+            "async_loading_frames": async_loading_frames,
+        }
+
+    if builder_name == "build_sam3_video_predictor":
+        builder_kwargs = {
+            "checkpoint_path": checkpoint_path,
+            "async_loading_frames": async_loading_frames,
+        }
+        if bpe_path is not None:
+            builder_kwargs["bpe_path"] = bpe_path
+        return builder_kwargs
+
+    raise ValueError(f"Unsupported SAM 3 builder: {builder_name}")
+
+
+def _call_download_ckpt_from_hf(download_ckpt_from_hf: Any) -> str:
+    signature = inspect.signature(download_ckpt_from_hf)
+    if "version" in signature.parameters:
+        return str(download_ckpt_from_hf(version="sam3.1"))
+    return str(download_ckpt_from_hf())
+
+
+def resolve_sam31_bpe_path(checkpoint_path: str | Path | None = None) -> str | None:
+    candidates: list[Path] = []
+
+    bpe_override = os.getenv(QQTT_SAM31_BPE_PATH_ENV)
+    if bpe_override:
+        candidates.append(Path(bpe_override).expanduser())
+
+    if checkpoint_path is not None:
+        checkpoint_dir = Path(checkpoint_path).expanduser().resolve().parent
+        candidates.append(checkpoint_dir / BPE_VOCAB_NAME)
+
+    try:
+        import sam3  # noqa: PLC0415
+
+        sam3_root = Path(sam3.__file__).resolve().parent
+        candidates.append(sam3_root / "assets" / BPE_VOCAB_NAME)
+        candidates.append(sam3_root.parent / "assets" / BPE_VOCAB_NAME)
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.is_file():
+            return str(resolved)
+    return None
+
+
 def _load_runtime_deps():
     import cv2  # noqa: PLC0415
     import numpy as np  # noqa: PLC0415
     import torch  # noqa: PLC0415
-    from sam3.model_builder import build_sam3_predictor, download_ckpt_from_hf  # noqa: PLC0415
+    import sam3.model_builder as sam3_model_builder  # noqa: PLC0415
 
-    return cv2, np, torch, build_sam3_predictor, download_ckpt_from_hf
+    build_video_predictor, builder_name = _resolve_sam3_video_predictor_builder(sam3_model_builder)
+    download_ckpt_from_hf = sam3_model_builder.download_ckpt_from_hf
+
+    return cv2, np, torch, build_video_predictor, builder_name, download_ckpt_from_hf
 
 
 def _configure_torch_inference(torch_module) -> None:
@@ -146,9 +228,9 @@ def resolve_sam31_checkpoint_path(checkpoint_path: str | Path | None = None) -> 
             )
         return str(resolved)
 
-    _, _, _, _, download_ckpt_from_hf = _load_runtime_deps()
+    _, _, _, _, _, download_ckpt_from_hf = _load_runtime_deps()
     try:
-        return str(Path(download_ckpt_from_hf(version="sam3.1")).resolve())
+        return str(Path(_call_download_ckpt_from_hf(download_ckpt_from_hf)).resolve())
     except Exception as exc:
         raise RuntimeError(
             "Unable to resolve the SAM 3.1 checkpoint. Run `hf auth login`, accept "
@@ -164,20 +246,22 @@ def build_sam31_video_predictor(
     compile_model: bool = False,
     max_num_objects: int = 16,
 ):
-    _, _, torch_module, build_sam3_predictor, _ = _load_runtime_deps()
+    _, _, torch_module, build_video_predictor, builder_name, _ = _load_runtime_deps()
     if not torch_module.cuda.is_available():
         raise RuntimeError("The upstream SAM 3.1 video predictor currently requires CUDA.")
 
     _configure_torch_inference(torch_module)
     resolved_checkpoint = resolve_sam31_checkpoint_path(checkpoint_path)
-    predictor = build_sam3_predictor(
-        checkpoint_path=resolved_checkpoint,
-        version="sam3.1",
-        compile=compile_model,
-        warm_up=False,
-        max_num_objects=max_num_objects,
-        use_fa3=False,
-        async_loading_frames=async_loading_frames,
+    resolved_bpe_path = resolve_sam31_bpe_path(resolved_checkpoint)
+    predictor = build_video_predictor(
+        **_build_sam31_builder_kwargs(
+            builder_name,
+            checkpoint_path=resolved_checkpoint,
+            bpe_path=resolved_bpe_path,
+            async_loading_frames=async_loading_frames,
+            compile_model=compile_model,
+            max_num_objects=max_num_objects,
+        )
     )
     return predictor, resolved_checkpoint
 

@@ -61,6 +61,9 @@ def build_parser() -> ArgumentParser:
     parser.add_argument("--ffs_scale", type=float, default=1.0)
     parser.add_argument("--ffs_valid_iters", type=int, default=8)
     parser.add_argument("--ffs_max_disp", type=int, default=192)
+    parser.add_argument("--ffs_radius_outlier_filter", action="store_true")
+    parser.add_argument("--ffs_radius_outlier_radius_m", type=float, default=0.01)
+    parser.add_argument("--ffs_radius_outlier_nb_points", type=int, default=40)
     parser.add_argument(
         "--ffs_native_like_postprocess",
         action="store_true",
@@ -89,6 +92,19 @@ def validate_args(args: Any) -> None:
             raise ValueError("--ffs_repo is required for --depth_backend ffs|both")
         if not args.ffs_model_path:
             raise ValueError("--ffs_model_path is required for --depth_backend ffs|both")
+    if bool(_optional_arg(args, "ffs_radius_outlier_filter", False)) and args.depth_backend not in {"ffs", "both"}:
+        raise ValueError("--ffs_radius_outlier_filter requires --depth_backend ffs|both")
+    if float(_optional_arg(args, "ffs_radius_outlier_radius_m", 0.01)) <= 0.0:
+        raise ValueError("--ffs_radius_outlier_radius_m must be > 0")
+    if int(_optional_arg(args, "ffs_radius_outlier_nb_points", 40)) <= 0:
+        raise ValueError("--ffs_radius_outlier_nb_points must be > 0")
+
+
+def _optional_arg(args: Any, name: str, default: Any):
+    values = getattr(args, "__dict__", None)
+    if isinstance(values, dict) and name in values:
+        return values[name]
+    return default
 
 
 def find_ffmpeg() -> str | None:
@@ -270,6 +286,35 @@ def require_ffs_geometry(metadata: dict[str, Any], num_cameras: int) -> None:
         raise ValueError("FFS backend requires depth_scale_m_per_unit for compatibility encoding")
 
 
+def _resolve_ffs_stream_dirs(
+    *,
+    depth_backend: str,
+    write_ffs_float_m: bool,
+    ffs_native_like_postprocess_enabled: bool,
+    ffs_radius_outlier_filter_enabled: bool,
+    archive_u16_dir: str,
+    archive_float_dir: str,
+) -> list[str]:
+    streams_to_write = ["color"]
+    if depth_backend == "ffs":
+        streams_to_write.append("depth")
+        if write_ffs_float_m:
+            streams_to_write.append("depth_ffs_float_m")
+    elif depth_backend == "both":
+        streams_to_write.extend(["depth", "depth_ffs"])
+        if write_ffs_float_m:
+            streams_to_write.append("depth_ffs_float_m")
+    else:
+        streams_to_write.append("depth")
+    if ffs_radius_outlier_filter_enabled:
+        streams_to_write.append(archive_u16_dir)
+        if write_ffs_float_m:
+            streams_to_write.append(archive_float_dir)
+    if depth_backend in {"ffs", "both"} and ffs_native_like_postprocess_enabled:
+        streams_to_write.extend(["depth_ffs_native_like_postprocess", "depth_ffs_native_like_postprocess_float_m"])
+    return streams_to_write
+
+
 def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     validate_args(args)
 
@@ -284,6 +329,10 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     available_streams = discover_available_streams(case_dir)
     fps = args.fps if args.fps is not None else int(metadata.get("fps", 30))
     final_frames = match_frames(metadata["recording"], num_cameras, args.start, args.end)
+    ffs_native_like_postprocess_enabled = bool(_optional_arg(args, "ffs_native_like_postprocess", False))
+    ffs_radius_outlier_filter_enabled = bool(_optional_arg(args, "ffs_radius_outlier_filter", False))
+    ffs_radius_outlier_radius_m = float(_optional_arg(args, "ffs_radius_outlier_radius_m", 0.01))
+    ffs_radius_outlier_nb_points = int(_optional_arg(args, "ffs_radius_outlier_nb_points", 40))
     if not final_frames:
         raise RuntimeError(f"No aligned frames found for case={args.case_name} in range {args.start} -> {args.end}")
 
@@ -301,18 +350,31 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     for optional_stream in ("ir_left", "ir_right"):
         if optional_stream in available_streams:
             streams_to_write.append(optional_stream)
-    if args.depth_backend == "realsense":
+    if args.depth_backend in {"ffs", "both"}:
+        from data_process.depth_backends import (
+            FFS_DEPTH_ARCHIVE_DIR_BOTH_BACKEND,
+            FFS_DEPTH_ARCHIVE_DIR_FFS_BACKEND,
+            FFS_FLOAT_ARCHIVE_DIR,
+        )
+
+        archive_u16_dir = (
+            FFS_DEPTH_ARCHIVE_DIR_FFS_BACKEND
+            if args.depth_backend == "ffs"
+            else FFS_DEPTH_ARCHIVE_DIR_BOTH_BACKEND
+        )
+        archive_float_dir = FFS_FLOAT_ARCHIVE_DIR
+        streams_to_write.extend(
+            _resolve_ffs_stream_dirs(
+                depth_backend=args.depth_backend,
+                write_ffs_float_m=bool(args.write_ffs_float_m),
+                ffs_native_like_postprocess_enabled=ffs_native_like_postprocess_enabled,
+                ffs_radius_outlier_filter_enabled=ffs_radius_outlier_filter_enabled,
+                archive_u16_dir=archive_u16_dir,
+                archive_float_dir=archive_float_dir,
+            )[1:]
+        )
+    else:
         streams_to_write.append("depth")
-    elif args.depth_backend == "ffs":
-        streams_to_write.append("depth")
-        if args.write_ffs_float_m:
-            streams_to_write.append("depth_ffs_float_m")
-    elif args.depth_backend == "both":
-        streams_to_write.extend(["depth", "depth_ffs"])
-        if args.write_ffs_float_m:
-            streams_to_write.append("depth_ffs_float_m")
-    if args.depth_backend in {"ffs", "both"} and bool(getattr(args, "ffs_native_like_postprocess", False)):
-        streams_to_write.extend(["depth_ffs_native_like_postprocess", "depth_ffs_native_like_postprocess_float_m"])
 
     print(f"[align] base_path={base_path}")
     print(f"[align] case_name={args.case_name}")
@@ -321,7 +383,13 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     print(f"[align] num_cameras={num_cameras}")
     print(f"[align] matched frames={len(final_frames)}")
     print(f"[align] depth_backend={args.depth_backend}")
-    print(f"[align] ffs_native_like_postprocess={bool(getattr(args, 'ffs_native_like_postprocess', False))}")
+    print(f"[align] ffs_native_like_postprocess={ffs_native_like_postprocess_enabled}")
+    print(
+        "[align] "
+        f"ffs_radius_outlier_filter={ffs_radius_outlier_filter_enabled} "
+        f"radius_m={ffs_radius_outlier_radius_m:.4f} "
+        f"nb_points={ffs_radius_outlier_nb_points}"
+    )
 
     prepare_output_case(output_case_dir, num_cameras, streams_to_write)
     write_aligned_calibration_file(
@@ -346,7 +414,14 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
         "streams_present": streams_to_write,
         "depth_backend_used": args.depth_backend,
         "depth_source_for_depth_dir": "realsense" if args.depth_backend != "ffs" else "ffs",
-        "ffs_native_like_postprocess_enabled": bool(getattr(args, "ffs_native_like_postprocess", False)),
+        "ffs_native_like_postprocess_enabled": ffs_native_like_postprocess_enabled,
+        "ffs_radius_outlier_filter_enabled": ffs_radius_outlier_filter_enabled,
+        "ffs_radius_outlier_filter": {
+            "mode": "per_camera_color_frame_radius_outlier",
+            "radius_m": ffs_radius_outlier_radius_m,
+            "nb_points": ffs_radius_outlier_nb_points,
+            "archive_policy": "replace_main_and_archive_raw",
+        },
         "depth_scale_m_per_unit": get_metadata_list(metadata, "depth_scale_m_per_unit", num_cameras),
         "depth_encoding": metadata.get("depth_encoding") or "uint16_meters_scaled_invalid_zero",
         "intrinsics": color_intrinsics,
@@ -361,12 +436,28 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
 
     runner = None
     if args.depth_backend in {"ffs", "both"}:
-        from data_process.depth_backends import FastFoundationStereoRunner, align_depth_to_color, quantize_depth_with_invalid_zero
+        from data_process.depth_backends import (
+            FFS_DEPTH_ARCHIVE_DIR_BOTH_BACKEND,
+            FFS_DEPTH_ARCHIVE_DIR_FFS_BACKEND,
+            FFS_FLOAT_ARCHIVE_DIR,
+            FastFoundationStereoRunner,
+            align_depth_to_color,
+            apply_ffs_radius_outlier_filter_u16,
+            quantize_depth_with_invalid_zero,
+        )
         from qqtt.env.camera.realsense.depth_postprocess import (
             FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_DIR,
             FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_FLOAT_DIR,
             apply_ffs_native_like_depth_postprocess_float_m,
         )
+        archive_u16_dir = (
+            FFS_DEPTH_ARCHIVE_DIR_FFS_BACKEND
+            if args.depth_backend == "ffs"
+            else FFS_DEPTH_ARCHIVE_DIR_BOTH_BACKEND
+        )
+        archive_float_dir = FFS_FLOAT_ARCHIVE_DIR
+        ffs_main_u16_dir = "depth" if args.depth_backend == "ffs" else "depth_ffs"
+        ffs_main_float_dir = "depth_ffs_float_m"
 
         # This is the production entrypoint for FFS inside the repo.
         # We load the external Fast-FoundationStereo model once here,
@@ -388,7 +479,6 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
         }
     else:
         align_depth_to_color = None
-        quantize_depth_with_invalid_zero = None
 
     import cv2
     import numpy as np
@@ -432,19 +522,33 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
                     output_shape=(int(metadata["WH"][1]), int(metadata["WH"][0])),
                 )
                 scale_m = float(aligned_metadata["depth_scale_m_per_unit"][camera_idx])
-                depth_compat = quantize_depth_with_invalid_zero(depth_color, scale_m)
+                filtered_depth_u16, filtered_depth_m, _filter_stats = apply_ffs_radius_outlier_filter_u16(
+                    depth_color,
+                    K_color=np.asarray(aligned_metadata["K_color"][camera_idx], dtype=np.float32),
+                    depth_scale_m_per_unit=scale_m,
+                    radius_m=ffs_radius_outlier_radius_m,
+                    nb_points=ffs_radius_outlier_nb_points,
+                ) if ffs_radius_outlier_filter_enabled else (
+                    quantize_depth_with_invalid_zero(depth_color, scale_m),
+                    np.asarray(depth_color, dtype=np.float32),
+                    {},
+                )
+                filtered_depth_u16[~(np.isfinite(filtered_depth_m) & (filtered_depth_m > 0))] = 0
 
-                if args.depth_backend == "ffs":
-                    np.save(output_case_dir / "depth" / str(camera_idx) / f"{output_idx}.npy", depth_compat)
-                else:
-                    np.save(output_case_dir / "depth_ffs" / str(camera_idx) / f"{output_idx}.npy", depth_compat)
+                np.save(output_case_dir / ffs_main_u16_dir / str(camera_idx) / f"{output_idx}.npy", filtered_depth_u16)
+
+                if ffs_radius_outlier_filter_enabled:
+                    raw_depth_u16 = quantize_depth_with_invalid_zero(depth_color, scale_m)
+                    np.save(output_case_dir / archive_u16_dir / str(camera_idx) / f"{output_idx}.npy", raw_depth_u16)
 
                 if args.write_ffs_float_m:
-                    np.save(output_case_dir / "depth_ffs_float_m" / str(camera_idx) / f"{output_idx}.npy", depth_color)
+                    np.save(output_case_dir / ffs_main_float_dir / str(camera_idx) / f"{output_idx}.npy", filtered_depth_m)
+                    if ffs_radius_outlier_filter_enabled:
+                        np.save(output_case_dir / archive_float_dir / str(camera_idx) / f"{output_idx}.npy", depth_color.astype(np.float32))
 
-                if bool(getattr(args, "ffs_native_like_postprocess", False)):
+                if ffs_native_like_postprocess_enabled:
                     filtered_depth_u16, filtered_depth_m = apply_ffs_native_like_depth_postprocess_float_m(
-                        depth_color,
+                        filtered_depth_m,
                         depth_scale_m_per_unit=scale_m,
                         fps=int(fps),
                         frame_number=int(output_idx) + 1,

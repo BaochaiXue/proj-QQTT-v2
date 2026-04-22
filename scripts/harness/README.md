@@ -71,6 +71,7 @@ Use it only as an operator-side sidecar:
 - it writes mask artifacts under a caller-selected output directory, defaulting to `<case_root>/sam31_masks/`
 - it expects `sam3` to be installed in the active environment and Hugging Face auth/checkpoint access to be handled outside the repo
 - checkpoints remain external and should be passed by path or resolved from Hugging Face cache via login / `QQTT_SAM31_CHECKPOINT`
+- for current PyPI `sam3`, keep `bpe_simple_vocab_16e6.txt.gz` external as well, preferably next to the checkpoint, or set `QQTT_SAM31_BPE_PATH`
 
 ## Do Not Grow Here
 

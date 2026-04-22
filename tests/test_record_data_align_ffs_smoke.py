@@ -39,6 +39,15 @@ class FakeRunner:
         }
 
 
+class FakeOutlierRunner(FakeRunner):
+    def run_pair(self, left_image, right_image, *, K_ir_left, baseline_m):
+        output = super().run_pair(left_image, right_image, K_ir_left=K_ir_left, baseline_m=baseline_m)
+        depth_ir = np.asarray(output["depth_ir_left_m"], dtype=np.float32).copy()
+        depth_ir[0, 0] = 0.1
+        output["depth_ir_left_m"] = depth_ir
+        return output
+
+
 def make_v2_case(case_dir: Path) -> None:
     shutil.copytree(FIXTURE, case_dir)
     shutil.copytree(case_dir / "color", case_dir / "ir_left")
@@ -98,6 +107,9 @@ class RecordDataAlignFfsSmokeTest(unittest.TestCase):
                 ffs_scale=1.0,
                 ffs_valid_iters=4,
                 ffs_max_disp=64,
+                ffs_radius_outlier_filter=False,
+                ffs_radius_outlier_radius_m=0.01,
+                ffs_radius_outlier_nb_points=40,
                 ffs_native_like_postprocess=False,
                 write_ffs_float_m=True,
                 fail_if_no_ir_stereo=True,
@@ -123,6 +135,7 @@ class RecordDataAlignFfsSmokeTest(unittest.TestCase):
             self.assertEqual(metadata_ext["depth_source_for_depth_dir"], "ffs")
             self.assertIn("ffs_config", metadata_ext)
             self.assertFalse(metadata_ext["ffs_native_like_postprocess_enabled"])
+            self.assertFalse(metadata_ext["ffs_radius_outlier_filter_enabled"])
             self.assertEqual(metadata_ext["streams_present"], ["color", "ir_left", "ir_right", "depth", "depth_ffs_float_m"])
 
     def test_aligns_case_with_ffs_native_like_aux_streams(self) -> None:
@@ -147,6 +160,9 @@ class RecordDataAlignFfsSmokeTest(unittest.TestCase):
                 ffs_scale=1.0,
                 ffs_valid_iters=4,
                 ffs_max_disp=64,
+                ffs_radius_outlier_filter=False,
+                ffs_radius_outlier_radius_m=0.01,
+                ffs_radius_outlier_nb_points=40,
                 ffs_native_like_postprocess=True,
                 write_ffs_float_m=False,
                 fail_if_no_ir_stereo=True,
@@ -163,6 +179,67 @@ class RecordDataAlignFfsSmokeTest(unittest.TestCase):
             metadata_ext = json.loads((aligned_case / ALIGNED_METADATA_EXT_FILENAME).read_text(encoding="utf-8"))
             self.assertEqual(set(metadata.keys()), set(LEGACY_ALIGNED_METADATA_KEYS))
             self.assertTrue(metadata_ext["ffs_native_like_postprocess_enabled"])
+
+    def test_aligns_case_with_ffs_radius_outlier_filter_and_archives_raw_depth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            base_path = tmp_root / "data_collect"
+            case_dir = base_path / "sample_case"
+            make_v2_case(case_dir)
+
+            output_path = tmp_root / "data"
+            args = Namespace(
+                base_path=base_path,
+                case_name="sample_case",
+                output_path=output_path,
+                start=10,
+                end=11,
+                fps=None,
+                write_mp4=False,
+                depth_backend="ffs",
+                ffs_repo="C:/external/fake",
+                ffs_model_path="C:/external/fake/model.pth",
+                ffs_scale=1.0,
+                ffs_valid_iters=4,
+                ffs_max_disp=64,
+                ffs_radius_outlier_filter=True,
+                ffs_radius_outlier_radius_m=0.01,
+                ffs_radius_outlier_nb_points=3,
+                ffs_native_like_postprocess=False,
+                write_ffs_float_m=True,
+                fail_if_no_ir_stereo=True,
+            )
+            align_case(args, runner_factory=FakeOutlierRunner)
+
+            aligned_case = output_path / "sample_case"
+            self.assertTrue((aligned_case / "depth_original" / "0" / "0.npy").is_file())
+            self.assertTrue((aligned_case / "depth_ffs_float_m_original" / "0" / "0.npy").is_file())
+
+            filtered_depth = np.load(aligned_case / "depth" / "0" / "0.npy")
+            raw_depth = np.load(aligned_case / "depth_original" / "0" / "0.npy")
+            filtered_depth_float = np.load(aligned_case / "depth_ffs_float_m" / "0" / "0.npy")
+            raw_depth_float = np.load(aligned_case / "depth_ffs_float_m_original" / "0" / "0.npy")
+            self.assertEqual(int(filtered_depth[0, 0]), 0)
+            self.assertGreater(int(raw_depth[0, 0]), 0)
+            self.assertEqual(float(filtered_depth_float[0, 0]), 0.0)
+            self.assertGreater(float(raw_depth_float[0, 0]), 0.0)
+
+            metadata_ext = json.loads((aligned_case / ALIGNED_METADATA_EXT_FILENAME).read_text(encoding="utf-8"))
+            self.assertTrue(metadata_ext["ffs_radius_outlier_filter_enabled"])
+            self.assertEqual(metadata_ext["ffs_radius_outlier_filter"]["radius_m"], 0.01)
+            self.assertEqual(metadata_ext["ffs_radius_outlier_filter"]["nb_points"], 3)
+            self.assertEqual(
+                metadata_ext["streams_present"],
+                [
+                    "color",
+                    "ir_left",
+                    "ir_right",
+                    "depth",
+                    "depth_ffs_float_m",
+                    "depth_original",
+                    "depth_ffs_float_m_original",
+                ],
+            )
 
 
 if __name__ == "__main__":

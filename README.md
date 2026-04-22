@@ -161,6 +161,26 @@ This keeps canonical `depth/` unchanged and additionally writes:
 - `depth_ffs_native_like_postprocess/`
 - `depth_ffs_native_like_postprocess_float_m/`
 
+Optional Open3D radius-outlier filtering during alignment:
+
+```bash
+python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --ffs_radius_outlier_filter --ffs_radius_outlier_radius_m 0.01 --ffs_radius_outlier_nb_points 40 --write_ffs_float_m
+```
+
+This rewrites the main aligned FFS depth to the filtered result and archives the unfiltered raw FFS depth:
+
+- for `--depth_backend ffs`:
+  - main filtered depth: `depth/`
+  - raw archive: `depth_original/`
+  - optional filtered float: `depth_ffs_float_m/`
+  - optional raw float archive: `depth_ffs_float_m_original/`
+- for `--depth_backend both`:
+  - native `depth/` stays unchanged
+  - main filtered FFS depth: `depth_ffs/`
+  - raw archive: `depth_ffs_original/`
+  - optional filtered float: `depth_ffs_float_m/`
+  - optional raw float archive: `depth_ffs_float_m_original/`
+
 Optional comparison backend:
 
 ```bash
@@ -190,6 +210,7 @@ python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --re
 ```
 
 When enabled, the panel workflow prefers aligned `depth_ffs_native_like_postprocess*` streams when they exist and otherwise computes the same FFS native-like postprocess on the fly.
+If an aligned case was built with `--ffs_radius_outlier_filter`, the default `FFS` path already uses the filtered main FFS depth.
 
 This is the primary first-pass diagnostic. It shows:
 
@@ -520,6 +541,18 @@ data/<case_name>/
     1/<frame>.npy
     2/<frame>.npy
   depth_ffs_float_m/    # optional
+    0/<frame>.npy
+    1/<frame>.npy
+    2/<frame>.npy
+  depth_original/       # only for --depth_backend ffs with --ffs_radius_outlier_filter
+    0/<frame>.npy
+    1/<frame>.npy
+    2/<frame>.npy
+  depth_ffs_original/   # only for --depth_backend both with --ffs_radius_outlier_filter
+    0/<frame>.npy
+    1/<frame>.npy
+    2/<frame>.npy
+  depth_ffs_float_m_original/ # optional raw float archive when --ffs_radius_outlier_filter is enabled
     0/<frame>.npy
     1/<frame>.npy
     2/<frame>.npy

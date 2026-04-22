@@ -54,6 +54,7 @@ if TYPE_CHECKING:
 LATEST_QUEUE_SIZE = 1
 CAPTURE_QUEUE_TIMEOUT_MS = 100
 RESULT_QUEUE_TIMEOUT_S = 0.1
+DEFAULT_FFS_TRT_MODEL_DIR = Path(__file__).resolve().parent / "data" / "ffs_proof_of_life" / "trt_two_stage_864x480_wsl"
 
 
 def _intrinsics_to_matrix(intrinsics: Any) -> list[list[float]]:
@@ -743,13 +744,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gain", type=float, default=60.0)
     parser.add_argument("--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M)
     parser.add_argument("--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M)
-    parser.add_argument("--ffs_backend", choices=("pytorch", "tensorrt"), default="pytorch")
+    parser.add_argument("--ffs_backend", choices=("pytorch", "tensorrt"), default="tensorrt")
     parser.add_argument("--ffs_repo", type=Path, required=True)
     parser.add_argument("--ffs_model_path", type=Path, default=None)
     parser.add_argument("--ffs_scale", type=float, default=1.0)
     parser.add_argument("--ffs_valid_iters", type=int, default=8)
     parser.add_argument("--ffs_max_disp", type=int, default=192)
-    parser.add_argument("--ffs_trt_model_dir", type=Path, default=None)
+    parser.add_argument("--ffs_trt_model_dir", type=Path, default=DEFAULT_FFS_TRT_MODEL_DIR)
     parser.add_argument("--ffs_trt_root", type=Path, default=None)
     parser.add_argument("--duration-s", type=float, default=0.0)
     parser.add_argument("--stats-log-interval-s", type=float, default=0.0)

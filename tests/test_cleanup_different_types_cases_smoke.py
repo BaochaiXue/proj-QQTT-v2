@@ -12,7 +12,16 @@ from scripts.harness.cleanup_different_types_cases import cleanup_cases
 
 def _write_case(root: Path, case_name: str, *, include_mp4: bool = True) -> Path:
     case_dir = root / case_name
-    for stream in ("color", "depth", "ir_left", "ir_right", "depth_ffs_float_m", "depth_ffs_native_like_postprocess"):
+    for stream in (
+        "color",
+        "depth",
+        "ir_left",
+        "ir_right",
+        "depth_ffs_float_m",
+        "depth_ffs_float_m_original",
+        "depth_ffs_original",
+        "depth_ffs_native_like_postprocess",
+    ):
         for camera_idx in range(4):
             stream_dir = case_dir / stream / str(camera_idx)
             stream_dir.mkdir(parents=True, exist_ok=True)
@@ -88,6 +97,8 @@ class CleanupDifferentTypesCasesSmokeTest(unittest.TestCase):
             self.assertFalse((case_dir / "metadata_ext.json").exists())
             self.assertFalse((case_dir / "ir_left").exists())
             self.assertFalse((case_dir / "depth_ffs_float_m").exists())
+            self.assertFalse((case_dir / "depth_ffs_float_m_original").exists())
+            self.assertFalse((case_dir / "depth_ffs_original").exists())
             self.assertEqual((case_dir / "metadata.json").read_text(encoding="utf-8"), metadata_before)
             self.assertEqual(sorted(item.name for item in (case_dir / "color").iterdir()), ["0", "0.mp4", "1", "1.mp4", "2", "2.mp4"])
             self.assertEqual(sorted(item.name for item in (case_dir / "depth").iterdir()), ["0", "1", "2"])

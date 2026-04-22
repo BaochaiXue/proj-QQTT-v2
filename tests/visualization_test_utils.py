@@ -16,10 +16,15 @@ def make_visualization_case(
     *,
     include_depth_ffs: bool = False,
     include_depth_ffs_float_m: bool = False,
+    include_depth_original: bool = False,
+    include_depth_ffs_original: bool = False,
+    include_depth_ffs_float_m_original: bool = False,
     include_depth_ffs_native_like_postprocess: bool = False,
     include_depth_ffs_native_like_postprocess_float_m: bool = False,
     frame_num: int = 2,
     include_sparse_outlier: bool = False,
+    depth_backend_used: str | None = None,
+    depth_source_for_depth_dir: str | None = None,
 ) -> None:
     case_dir.mkdir(parents=True, exist_ok=True)
     streams = ["color", "depth"]
@@ -27,6 +32,12 @@ def make_visualization_case(
         streams.append("depth_ffs")
     if include_depth_ffs_float_m:
         streams.append("depth_ffs_float_m")
+    if include_depth_original:
+        streams.append("depth_original")
+    if include_depth_ffs_original:
+        streams.append("depth_ffs_original")
+    if include_depth_ffs_float_m_original:
+        streams.append("depth_ffs_float_m_original")
     if include_depth_ffs_native_like_postprocess:
         streams.append("depth_ffs_native_like_postprocess")
     if include_depth_ffs_native_like_postprocess_float_m:
@@ -67,6 +78,19 @@ def make_visualization_case(
                 depth_ffs_float = depth_mm.astype(np.float32) * 0.001 - 0.03
                 depth_ffs_float[depth_mm == 0] = 0.0
                 np.save(case_dir / "depth_ffs_float_m" / str(cam) / f"{frame_idx}.npy", depth_ffs_float.astype(np.float32))
+            if include_depth_original:
+                depth_original_mm = np.clip(depth_mm.astype(np.int32) - 70 + cam * 2, 0, 65535).astype(np.uint16)
+                np.save(case_dir / "depth_original" / str(cam) / f"{frame_idx}.npy", depth_original_mm)
+            if include_depth_ffs_original:
+                depth_ffs_original_mm = np.clip(depth_mm.astype(np.int32) - 55 + cam * 4, 0, 65535).astype(np.uint16)
+                np.save(case_dir / "depth_ffs_original" / str(cam) / f"{frame_idx}.npy", depth_ffs_original_mm)
+            if include_depth_ffs_float_m_original:
+                depth_ffs_float_original = depth_mm.astype(np.float32) * 0.001 - 0.045
+                depth_ffs_float_original[depth_mm == 0] = 0.0
+                np.save(
+                    case_dir / "depth_ffs_float_m_original" / str(cam) / f"{frame_idx}.npy",
+                    depth_ffs_float_original.astype(np.float32),
+                )
             if include_depth_ffs_native_like_postprocess:
                 depth_ffs_native_like_postprocess_mm = np.clip(depth_mm.astype(np.int32) - 20 + cam * 3, 0, 65535).astype(np.uint16)
                 np.save(
@@ -93,8 +117,8 @@ def make_visualization_case(
         "depth_scale_m_per_unit": [0.001, 0.001, 0.001],
         "intrinsics": K,
         "K_color": K,
-        "depth_backend_used": "both" if include_depth_ffs else "realsense",
-        "depth_source_for_depth_dir": "realsense",
+        "depth_backend_used": depth_backend_used or ("both" if include_depth_ffs else "realsense"),
+        "depth_source_for_depth_dir": depth_source_for_depth_dir or ("realsense"),
     }
     write_split_aligned_metadata(case_dir, metadata)
 

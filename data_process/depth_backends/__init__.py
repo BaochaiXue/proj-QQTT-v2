@@ -1,61 +1,57 @@
-from .benchmarking import (
-    FfsBenchmarkConfig,
-    build_tradeoff_summary,
-    compute_reference_depth_metrics,
-    expand_benchmark_configs,
-    infer_model_label,
-    resize_depth_nearest,
-    select_tradeoff_result,
-    summarize_latency_samples_ms,
-)
-from .geometry import (
-    align_depth_to_color,
-    disparity_to_metric_depth,
-    format_ffs_intrinsic_text,
-    project_to_color,
-    quantize_depth_with_invalid_zero,
-    rasterize_nearest_depth,
-    transform_points,
-    unproject_ir_depth,
-    write_ffs_intrinsic_file,
-)
-from .fast_foundation_stereo import (
-    FastFoundationStereoRunner,
-    FastFoundationStereoTensorRTRunner,
-    apply_tensorrt_image_transform,
-    apply_remove_invisible_mask,
-    load_tensorrt_model_config,
-    resolve_tensorrt_image_transform,
-    undo_tensorrt_disparity_transform,
-)
-from .ffs_audit import compute_disparity_audit_stats, derive_ir_right_to_color, summarize_left_right_audit
+from __future__ import annotations
 
-__all__ = [
-    "FfsBenchmarkConfig",
-    "FastFoundationStereoRunner",
-    "FastFoundationStereoTensorRTRunner",
-    "apply_tensorrt_image_transform",
-    "apply_remove_invisible_mask",
-    "align_depth_to_color",
-    "build_tradeoff_summary",
-    "compute_reference_depth_metrics",
-    "compute_disparity_audit_stats",
-    "disparity_to_metric_depth",
-    "derive_ir_right_to_color",
-    "expand_benchmark_configs",
-    "format_ffs_intrinsic_text",
-    "infer_model_label",
-    "load_tensorrt_model_config",
-    "project_to_color",
-    "quantize_depth_with_invalid_zero",
-    "rasterize_nearest_depth",
-    "resolve_tensorrt_image_transform",
-    "resize_depth_nearest",
-    "select_tradeoff_result",
-    "summarize_left_right_audit",
-    "summarize_latency_samples_ms",
-    "transform_points",
-    "undo_tensorrt_disparity_transform",
-    "unproject_ir_depth",
-    "write_ffs_intrinsic_file",
-]
+from importlib import import_module
+
+
+_EXPORT_TO_MODULE = {
+    "FfsBenchmarkConfig": ".benchmarking",
+    "build_tradeoff_summary": ".benchmarking",
+    "compute_reference_depth_metrics": ".benchmarking",
+    "expand_benchmark_configs": ".benchmarking",
+    "infer_model_label": ".benchmarking",
+    "resize_depth_nearest": ".benchmarking",
+    "select_tradeoff_result": ".benchmarking",
+    "summarize_latency_samples_ms": ".benchmarking",
+    "align_depth_to_color": ".geometry",
+    "disparity_to_metric_depth": ".geometry",
+    "format_ffs_intrinsic_text": ".geometry",
+    "project_to_color": ".geometry",
+    "quantize_depth_with_invalid_zero": ".geometry",
+    "rasterize_nearest_depth": ".geometry",
+    "transform_points": ".geometry",
+    "unproject_ir_depth": ".geometry",
+    "write_ffs_intrinsic_file": ".geometry",
+    "FastFoundationStereoRunner": ".fast_foundation_stereo",
+    "FastFoundationStereoTensorRTRunner": ".fast_foundation_stereo",
+    "apply_tensorrt_image_transform": ".fast_foundation_stereo",
+    "apply_remove_invisible_mask": ".fast_foundation_stereo",
+    "load_tensorrt_model_config": ".fast_foundation_stereo",
+    "resolve_tensorrt_image_transform": ".fast_foundation_stereo",
+    "undo_tensorrt_disparity_transform": ".fast_foundation_stereo",
+    "compute_disparity_audit_stats": ".ffs_audit",
+    "derive_ir_right_to_color": ".ffs_audit",
+    "summarize_left_right_audit": ".ffs_audit",
+    "FFS_DEPTH_ARCHIVE_DIR_FFS_BACKEND": ".radius_outlier_filter",
+    "FFS_DEPTH_ARCHIVE_DIR_BOTH_BACKEND": ".radius_outlier_filter",
+    "FFS_FLOAT_ARCHIVE_DIR": ".radius_outlier_filter",
+    "FFS_RADIUS_OUTLIER_FILTER_ARCHIVE_POLICY": ".radius_outlier_filter",
+    "FFS_RADIUS_OUTLIER_FILTER_MODE": ".radius_outlier_filter",
+    "apply_ffs_radius_outlier_filter_float_m": ".radius_outlier_filter",
+    "apply_ffs_radius_outlier_filter_u16": ".radius_outlier_filter",
+    "build_ffs_radius_outlier_filter_contract": ".radius_outlier_filter",
+}
+
+__all__ = sorted(_EXPORT_TO_MODULE)
+
+
+def __getattr__(name: str):
+    if name not in _EXPORT_TO_MODULE:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = import_module(_EXPORT_TO_MODULE[name], __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

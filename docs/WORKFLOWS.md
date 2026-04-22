@@ -16,10 +16,10 @@ The viewer uses the same `TURBO` metric-depth colormap as the aligned-case depth
 python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
 ```
 
-FFS preview for live RGB plus color-aligned FFS depth:
+FFS preview for live RGB plus color-aligned FFS depth now defaults to the repo-local TensorRT path:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth
+python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo
 ```
 
 Use this as a debug viewer only:
@@ -28,6 +28,12 @@ Use this as a debug viewer only:
 - bottom = latest available color-aligned FFS depth
 - overlay = negotiated stream profile plus live `capture` and `ffs` fps
 - preview favors freshness over completeness and may drop stale stereo work while FFS catches up
+
+If you explicitly want the older PyTorch viewer path instead of the default TensorRT engines:
+
+```bash
+python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth
+```
 
 Saved-pair FFS speed / tradeoff benchmark:
 
@@ -54,7 +60,7 @@ Use this first when the main question is:
 Realistic live 3-camera FFS benchmark:
 
 ```bash
-python cameras_viewer_FFS.py --duration-s 20 --stats-log-interval-s 5 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\20-30-48\model_best_bp2_serialize.pth --ffs_scale 0.75 --ffs_valid_iters 4 --ffs_max_disp 192
+python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-interval-s 5 --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_scale 0.75 --ffs_valid_iters 4 --ffs_max_disp 192
 ```
 
 Use this when the main question is the real online path:
@@ -222,6 +228,20 @@ This keeps canonical FFS compatibility depth unchanged and additionally writes:
 - `depth_ffs_native_like_postprocess/`
 - `depth_ffs_native_like_postprocess_float_m/`
 
+Optional Open3D radius-outlier filtering during alignment:
+
+```bash
+python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --ffs_radius_outlier_filter --ffs_radius_outlier_radius_m 0.01 --ffs_radius_outlier_nb_points 40 --write_ffs_float_m
+```
+
+This PhysTwin-style filtering:
+
+- runs on each per-camera color-aligned FFS depth frame
+- applies Open3D `remove_radius_outlier(nb_points=40, radius=0.01)` by default
+- writes the filtered result as the main aligned FFS depth
+- archives the unfiltered raw FFS depth beside it
+- does not change native `depth/` when `--depth_backend both`
+
 Experimental comparison backend:
 
 ```bash
@@ -234,6 +254,7 @@ Important:
 - `ffs` requires raw `ir_left` / `ir_right` plus runtime geometry metadata.
 - `both` is experimental and should only be used when the hardware probe says the same-take stream set is supported.
 - current repo visualization loaders merge `metadata.json` and `metadata_ext.json` automatically when both are present
+- `ffs_raw` triplet workflows now prefer archived raw FFS depth when present and otherwise fall back to legacy pre-archive `depth_ffs*`
 
 For downstream-facing formal exports under `data/different_types/`, use the cleanup script after alignment:
 
@@ -256,7 +277,7 @@ After cleanup, each case keeps only:
 - `calibrate.pkl`
 - `metadata.json`
 
-This formal downstream export is intentionally narrower than the repo's internal aligned-case comparison contract and deletes `metadata_ext.json`, IR streams, and FFS auxiliary depth directories.
+This formal downstream export is intentionally narrower than the repo's internal aligned-case comparison contract and deletes `metadata_ext.json`, IR streams, FFS raw archives such as `*_original*`, and FFS auxiliary depth directories.
 
 ## 5. Compare
 
@@ -622,11 +643,15 @@ This workflow:
 - selects one aligned frame only
 - keeps raw `calibration_world` coordinates
 - fuses all 3 cameras for exactly 3 variants:
-  - `native`
-  - `ffs_raw`
-  - `ffs_postprocess`
+- `native`
+- `ffs_raw`
+- `ffs_postprocess`
 - reuses aligned `depth/` for Native
-- reuses aligned `depth_ffs*` for `ffs_raw`
+- prefers archived raw FFS depth for `ffs_raw`:
+  - `depth_ffs_float_m_original/`
+  - `depth_ffs_original/`
+  - `depth_original/` when the aligned case itself is FFS-backed
+- otherwise falls back to legacy pre-archive `depth_ffs*`
 - prefers aligned `depth_ffs_native_like_postprocess*` for `ffs_postprocess`
 - otherwise applies the same native-like depth postprocess on the fly before fusion
 - writes:

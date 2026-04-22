@@ -107,7 +107,7 @@ def _variant_specs(
         "ffs_raw": {
             "case_dir": ffs_case_dir,
             "metadata": ffs_metadata,
-            "depth_source": "ffs",
+            "depth_source": "ffs_raw",
             "ffs_native_like_postprocess": False,
             "frame_pair_index": 1,
         },
@@ -225,8 +225,8 @@ def run_triplet_video_compare_workflow(
     native_metadata = load_case_metadata(native_case_dir)
     ffs_metadata = load_case_metadata(ffs_case_dir)
 
-    if not _case_has_ffs_raw_depth(ffs_case_dir):
-        raise ValueError("Triplet video compare requires an aligned FFS case containing depth_ffs/ or depth_ffs_float_m/.")
+    if not _case_has_ffs_raw_depth(ffs_case_dir, ffs_metadata):
+        raise ValueError("Triplet video compare requires an aligned FFS case containing raw FFS depth or a raw-depth archive.")
     if len(native_metadata["serial_numbers"]) != len(ffs_metadata["serial_numbers"]):
         raise ValueError("Native and FFS cases must have the same number of cameras for triplet video comparison.")
 
