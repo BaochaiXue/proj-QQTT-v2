@@ -9,6 +9,7 @@ The repo is intentionally small.
 - `cameras_viewer.py`
 - `cameras_calibrate.py`
 - `record_data.py`
+- `record_data_realtime_align.py`
 - `data_process/record_data_align.py`
 
 ### Shared Camera Package
@@ -92,7 +93,13 @@ The repo is intentionally small.
 
 ## Dependency Flow
 
-`cameras_calibrate.py` and `record_data.py` import `CameraSystem`.
+`cameras_calibrate.py`, `record_data.py`, and `record_data_realtime_align.py`
+import `CameraSystem`.
+
+`record_data_realtime_align.py` writes native RGB-D directly as one growing
+formal aligned case under `data/different_types_real_time/`. It keeps FPS logs
+outside the case so the case itself remains limited to `color/`, `depth/`,
+`calibrate.pkl`, and legacy `metadata.json`.
 
 `CameraSystem` depends on:
 

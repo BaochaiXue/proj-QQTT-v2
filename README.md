@@ -273,6 +273,18 @@ Important:
 - this repo explicitly reprojects FFS depth from IR-left coordinates into color coordinates during alignment
 - canonical aligned `depth/` remains compatibility-oriented
 
+Realtime native RGB-D formal export:
+
+```bash
+python record_data_realtime_align.py --case_name native_rt_baseline
+```
+
+This writes one growing case under `data/different_types_real_time/<case_name>/`
+with only `color/`, `depth/`, `calibrate.pkl`, and legacy `metadata.json`.
+It does not generate mp4 sidecars. FPS stats are written under
+`data/different_types_real_time/_logs/` and report complete 3-camera aligned
+frame sets per second.
+
 ## Compare Native vs FFS
 
 The repo now provides three complementary comparison views. Use them together:

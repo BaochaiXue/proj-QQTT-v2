@@ -378,7 +378,32 @@ Optional single-camera selection for validation:
 python record_data.py --case_name smoke_case --capture_mode stereo_ir --serials 239222300781 --max_frames 5 --disable-keyboard-listener
 ```
 
-## 4. Align
+## 4. Realtime Native Aligned Export
+
+Use this native RGB-D baseline when the goal is to produce a growing
+PhysTwin-compatible formal case directly from live 3-camera RealSense capture:
+
+```bash
+python record_data_realtime_align.py --case_name native_rt_baseline
+```
+
+The output case is written under `data/different_types_real_time/<case_name>/`
+and intentionally keeps only the formal downstream interface:
+
+- `calibrate.pkl`
+- `metadata.json`
+- `color/0|1|2/<frame>.png`
+- `depth/0|1|2/<frame>.npy`
+
+It does not write mp4 sidecars, `metadata_ext.json`, FFS outputs, PCD outputs,
+or debug files inside the case. Runtime stats are written outside the formal
+case under `data/different_types_real_time/_logs/`.
+
+The realtime baseline FPS is defined as complete synchronized 3-camera RGB-D
+frame sets written per second, not per-camera capture FPS and not visualization
+render FPS.
+
+## 5. Align
 
 ```bash
 python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend realsense
@@ -487,7 +512,7 @@ After cleanup, each case keeps only:
 
 This formal downstream export is intentionally narrower than the repo's internal aligned-case comparison contract and deletes `metadata_ext.json`, IR streams, FFS raw archives such as `*_original*`, and FFS auxiliary depth directories.
 
-## 5. Compare
+## 6. Compare
 
 Start with single-camera panels:
 

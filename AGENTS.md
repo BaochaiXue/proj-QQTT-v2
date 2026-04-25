@@ -9,6 +9,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `cameras_viewer.py`: live preview / debug entrypoint
 - `cameras_calibrate.py`: calibration entrypoint
 - `record_data.py`: raw RGB-D recording entrypoint
+- `record_data_realtime_align.py`: native realtime RGB-D aligned formal export baseline
 - `data_process/record_data_align.py`: trim + align raw cases into `data/`
 - `data_process/depth_backends/`: shared FFS geometry + runner used by production alignment and harness scripts
 - `data_process/visualization/`: aligned-case comparison visualization package
