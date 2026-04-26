@@ -241,6 +241,16 @@ This keeps canonical `depth/` unchanged and additionally writes:
 - `depth_ffs_native_like_postprocess/`
 - `depth_ffs_native_like_postprocess_float_m/`
 
+Optional PyTorch logits confidence filtering during FFS alignment:
+
+```bash
+python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --ffs_confidence_mode max_softmax --ffs_confidence_threshold 0.6 --ffs_confidence_depth_min_m 0.2 --ffs_confidence_depth_max_m 1.5
+```
+
+Confidence-filtered depth remains uint16 depth with invalid / rejected pixels
+encoded as zero. See `docs/ffs_confidence_filtering.md` for sweep usage and
+threshold interpretation.
+
 Optional Open3D radius-outlier filtering during alignment:
 
 ```bash

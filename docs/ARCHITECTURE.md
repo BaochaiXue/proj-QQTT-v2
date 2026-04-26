@@ -114,6 +114,7 @@ outside the case so the case itself remains limited to `color/`, `depth/`,
 - keeps `realsense` as the default backend
 - can optionally write auxiliary `depth_ffs_native_like_postprocess*` streams without changing canonical aligned depth outputs
 - can optionally replace the main aligned FFS depth with a per-camera Open3D radius-outlier-filtered result while archiving the raw unfiltered FFS depth under `*_original*`
+- can optionally filter FFS depth with PyTorch logits confidence before uint16 depth encoding while keeping invalid / rejected pixels encoded as zero
 - now writes aligned metadata in two files:
   - `metadata.json` for legacy `proj-QQTT` compatibility
   - `metadata_ext.json` for QQTT-only aligned metadata extensions

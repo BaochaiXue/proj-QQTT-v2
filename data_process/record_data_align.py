@@ -68,6 +68,17 @@ def build_parser() -> ArgumentParser:
         "--ffs_native_like_postprocess",
         action="store_true",
     )
+    parser.add_argument(
+        "--ffs_confidence_mode",
+        choices=("none", "margin", "max_softmax", "entropy", "variance"),
+        default="none",
+        help="Optional PyTorch logits confidence mode for filtering FFS depth before uint16 encoding.",
+    )
+    parser.add_argument("--ffs_confidence_threshold", type=float, default=0.0)
+    parser.add_argument("--ffs_confidence_depth_min_m", type=float, default=0.2)
+    parser.add_argument("--ffs_confidence_depth_max_m", type=float, default=1.5)
+    parser.add_argument("--write_ffs_confidence_debug", action="store_true")
+    parser.add_argument("--write_ffs_valid_mask_debug", action="store_true")
     parser.add_argument("--write_ffs_float_m", action="store_true")
     parser.add_argument("--fail_if_no_ir_stereo", action="store_true")
     return parser
@@ -98,6 +109,23 @@ def validate_args(args: Any) -> None:
         raise ValueError("--ffs_radius_outlier_radius_m must be > 0")
     if int(_optional_arg(args, "ffs_radius_outlier_nb_points", 40)) <= 0:
         raise ValueError("--ffs_radius_outlier_nb_points must be > 0")
+    confidence_mode = str(_optional_arg(args, "ffs_confidence_mode", "none"))
+    if confidence_mode not in {"none", "margin", "max_softmax", "entropy", "variance"}:
+        raise ValueError(f"Unsupported --ffs_confidence_mode: {confidence_mode}")
+    if confidence_mode != "none" and args.depth_backend not in {"ffs", "both"}:
+        raise ValueError("--ffs_confidence_mode requires --depth_backend ffs|both")
+    if float(_optional_arg(args, "ffs_confidence_threshold", 0.0)) < 0.0:
+        raise ValueError("--ffs_confidence_threshold must be >= 0")
+    if float(_optional_arg(args, "ffs_confidence_threshold", 0.0)) > 1.0:
+        raise ValueError("--ffs_confidence_threshold must be <= 1")
+    confidence_depth_min_m = float(_optional_arg(args, "ffs_confidence_depth_min_m", 0.2))
+    confidence_depth_max_m = float(_optional_arg(args, "ffs_confidence_depth_max_m", 1.5))
+    if confidence_depth_min_m > confidence_depth_max_m:
+        raise ValueError("--ffs_confidence_depth_min_m must be <= --ffs_confidence_depth_max_m")
+    if confidence_mode == "none" and bool(_optional_arg(args, "write_ffs_confidence_debug", False)):
+        raise ValueError("--write_ffs_confidence_debug requires --ffs_confidence_mode != none")
+    if confidence_mode == "none" and bool(_optional_arg(args, "write_ffs_valid_mask_debug", False)):
+        raise ValueError("--write_ffs_valid_mask_debug requires --ffs_confidence_mode != none")
 
 
 def _optional_arg(args: Any, name: str, default: Any):
@@ -292,6 +320,9 @@ def _resolve_ffs_stream_dirs(
     write_ffs_float_m: bool,
     ffs_native_like_postprocess_enabled: bool,
     ffs_radius_outlier_filter_enabled: bool,
+    ffs_confidence_mode: str,
+    write_ffs_confidence_debug: bool,
+    write_ffs_valid_mask_debug: bool,
     archive_u16_dir: str,
     archive_float_dir: str,
 ) -> list[str]:
@@ -310,9 +341,29 @@ def _resolve_ffs_stream_dirs(
         streams_to_write.append(archive_u16_dir)
         if write_ffs_float_m:
             streams_to_write.append(archive_float_dir)
+    if depth_backend in {"ffs", "both"} and ffs_confidence_mode != "none":
+        if write_ffs_confidence_debug:
+            streams_to_write.append("confidence_ffs")
+        if write_ffs_valid_mask_debug:
+            streams_to_write.append("valid_mask_ffs")
     if depth_backend in {"ffs", "both"} and ffs_native_like_postprocess_enabled:
         streams_to_write.extend(["depth_ffs_native_like_postprocess", "depth_ffs_native_like_postprocess_float_m"])
     return streams_to_write
+
+
+def summarize_numeric_stats(samples: list[dict[str, float]]) -> dict[str, float]:
+    if not samples:
+        return {"sample_count": 0.0}
+    keys = sorted({key for sample in samples for key in sample})
+    summary: dict[str, float] = {"sample_count": float(len(samples))}
+    for key in keys:
+        values = [float(sample[key]) for sample in samples if key in sample]
+        if not values:
+            continue
+        summary[f"{key}_mean"] = float(sum(values) / len(values))
+        summary[f"{key}_min"] = float(min(values))
+        summary[f"{key}_max"] = float(max(values))
+    return summary
 
 
 def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
@@ -333,6 +384,12 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     ffs_radius_outlier_filter_enabled = bool(_optional_arg(args, "ffs_radius_outlier_filter", False))
     ffs_radius_outlier_radius_m = float(_optional_arg(args, "ffs_radius_outlier_radius_m", 0.01))
     ffs_radius_outlier_nb_points = int(_optional_arg(args, "ffs_radius_outlier_nb_points", 40))
+    ffs_confidence_mode = str(_optional_arg(args, "ffs_confidence_mode", "none"))
+    ffs_confidence_threshold = float(_optional_arg(args, "ffs_confidence_threshold", 0.0))
+    ffs_confidence_depth_min_m = float(_optional_arg(args, "ffs_confidence_depth_min_m", 0.2))
+    ffs_confidence_depth_max_m = float(_optional_arg(args, "ffs_confidence_depth_max_m", 1.5))
+    write_ffs_confidence_debug = bool(_optional_arg(args, "write_ffs_confidence_debug", False))
+    write_ffs_valid_mask_debug = bool(_optional_arg(args, "write_ffs_valid_mask_debug", False))
     if not final_frames:
         raise RuntimeError(f"No aligned frames found for case={args.case_name} in range {args.start} -> {args.end}")
 
@@ -369,6 +426,9 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
                 write_ffs_float_m=bool(args.write_ffs_float_m),
                 ffs_native_like_postprocess_enabled=ffs_native_like_postprocess_enabled,
                 ffs_radius_outlier_filter_enabled=ffs_radius_outlier_filter_enabled,
+                ffs_confidence_mode=ffs_confidence_mode,
+                write_ffs_confidence_debug=write_ffs_confidence_debug,
+                write_ffs_valid_mask_debug=write_ffs_valid_mask_debug,
                 archive_u16_dir=archive_u16_dir,
                 archive_float_dir=archive_float_dir,
             )[1:]
@@ -384,6 +444,12 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     print(f"[align] matched frames={len(final_frames)}")
     print(f"[align] depth_backend={args.depth_backend}")
     print(f"[align] ffs_native_like_postprocess={ffs_native_like_postprocess_enabled}")
+    print(
+        "[align] "
+        f"ffs_confidence_mode={ffs_confidence_mode} "
+        f"threshold={ffs_confidence_threshold:.3f} "
+        f"depth_range_m={ffs_confidence_depth_min_m:.3f}->{ffs_confidence_depth_max_m:.3f}"
+    )
     print(
         "[align] "
         f"ffs_radius_outlier_filter={ffs_radius_outlier_filter_enabled} "
@@ -422,6 +488,16 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
             "nb_points": ffs_radius_outlier_nb_points,
             "archive_policy": "replace_main_and_archive_raw",
         },
+        "ffs_confidence_filter": {
+            "enabled": ffs_confidence_mode != "none",
+            "mode": ffs_confidence_mode,
+            "threshold": ffs_confidence_threshold,
+            "depth_min_m": ffs_confidence_depth_min_m,
+            "depth_max_m": ffs_confidence_depth_max_m,
+            "debug_confidence_uint8": write_ffs_confidence_debug,
+            "debug_valid_mask_uint8": write_ffs_valid_mask_debug,
+            "depth_output_encoding": "uint16_depth_scale_invalid_zero",
+        },
         "depth_scale_m_per_unit": get_metadata_list(metadata, "depth_scale_m_per_unit", num_cameras),
         "depth_encoding": metadata.get("depth_encoding") or "uint16_meters_scaled_invalid_zero",
         "intrinsics": color_intrinsics,
@@ -442,7 +518,9 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
             FFS_FLOAT_ARCHIVE_DIR,
             FastFoundationStereoRunner,
             align_depth_to_color,
+            align_ir_scalar_to_color,
             apply_ffs_radius_outlier_filter_u16,
+            build_confidence_filtered_depth_uint16,
             quantize_depth_with_invalid_zero,
         )
         from qqtt.env.camera.realsense.depth_postprocess import (
@@ -483,6 +561,7 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     import cv2
     import numpy as np
 
+    confidence_filter_stats_samples: list[dict[str, float]] = []
     for output_idx, frame in enumerate(final_frames):
         if output_idx % 100 == 0:
             print(f"[align] processing frame {output_idx}/{len(final_frames)}")
@@ -507,24 +586,30 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
                 # This is the actual FFS call: feed this camera's own
                 # IR-left / IR-right pair into the external model and get
                 # disparity + IR-left metric depth back.
-                ffs_output = runner.run_pair(
-                    left_image,
-                    right_image,
-                    K_ir_left=np.asarray(aligned_metadata["K_ir_left"][camera_idx], dtype=np.float32),
-                    baseline_m=float(aligned_metadata["ir_baseline_m"][camera_idx]),
-                )
+                runner_kwargs = {
+                    "K_ir_left": np.asarray(aligned_metadata["K_ir_left"][camera_idx], dtype=np.float32),
+                    "baseline_m": float(aligned_metadata["ir_baseline_m"][camera_idx]),
+                }
+                if ffs_confidence_mode != "none":
+                    ffs_output = runner.run_pair_with_confidence(left_image, right_image, **runner_kwargs)
+                else:
+                    ffs_output = runner.run_pair(left_image, right_image, **runner_kwargs)
                 depth_ir = np.asarray(ffs_output["depth_ir_left_m"], dtype=np.float32)
+                K_ir_left_used = np.asarray(ffs_output["K_ir_left_used"], dtype=np.float32)
+                T_ir_left_to_color = np.asarray(aligned_metadata["T_ir_left_to_color"][camera_idx], dtype=np.float32)
+                K_color = np.asarray(aligned_metadata["K_color"][camera_idx], dtype=np.float32)
+                output_shape = (int(metadata["WH"][1]), int(metadata["WH"][0]))
                 depth_color = align_depth_to_color(
                     depth_ir,
-                    np.asarray(ffs_output["K_ir_left_used"], dtype=np.float32),
-                    np.asarray(aligned_metadata["T_ir_left_to_color"][camera_idx], dtype=np.float32),
-                    np.asarray(aligned_metadata["K_color"][camera_idx], dtype=np.float32),
-                    output_shape=(int(metadata["WH"][1]), int(metadata["WH"][0])),
+                    K_ir_left_used,
+                    T_ir_left_to_color,
+                    K_color,
+                    output_shape=output_shape,
                 )
                 scale_m = float(aligned_metadata["depth_scale_m_per_unit"][camera_idx])
                 filtered_depth_u16, filtered_depth_m, _filter_stats = apply_ffs_radius_outlier_filter_u16(
                     depth_color,
-                    K_color=np.asarray(aligned_metadata["K_color"][camera_idx], dtype=np.float32),
+                    K_color=K_color,
                     depth_scale_m_per_unit=scale_m,
                     radius_m=ffs_radius_outlier_radius_m,
                     nb_points=ffs_radius_outlier_nb_points,
@@ -534,6 +619,49 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
                     {},
                 )
                 filtered_depth_u16[~(np.isfinite(filtered_depth_m) & (filtered_depth_m > 0))] = 0
+
+                if ffs_confidence_mode != "none":
+                    confidence_ir = np.asarray(
+                        ffs_output[f"confidence_{ffs_confidence_mode}_ir_left"],
+                        dtype=np.float32,
+                    )
+                    confidence_color = align_ir_scalar_to_color(
+                        depth_ir,
+                        confidence_ir,
+                        K_ir_left_used,
+                        T_ir_left_to_color,
+                        K_color,
+                        output_shape=output_shape,
+                        invalid_value=0.0,
+                    )
+                    confidence_result = build_confidence_filtered_depth_uint16(
+                        depth_m=filtered_depth_m,
+                        confidence=confidence_color,
+                        confidence_threshold=ffs_confidence_threshold,
+                        depth_scale_m_per_unit=scale_m,
+                        depth_min_m=ffs_confidence_depth_min_m,
+                        depth_max_m=ffs_confidence_depth_max_m,
+                    )
+                    filtered_depth_u16 = np.asarray(confidence_result["depth_uint16"], dtype=np.uint16)
+                    valid_mask_uint8 = np.asarray(confidence_result["valid_mask_uint8"], dtype=np.uint8)
+                    confidence_uint8 = np.asarray(confidence_result["confidence_uint8"], dtype=np.uint8)
+                    confidence_filter_stats_samples.append(
+                        {
+                            str(key): float(value)
+                            for key, value in dict(confidence_result["stats"]).items()
+                        }
+                    )
+                    filtered_depth_m = np.where(valid_mask_uint8.astype(bool), filtered_depth_m, 0.0).astype(np.float32)
+                    if write_ffs_confidence_debug:
+                        cv2.imwrite(
+                            str(output_case_dir / "confidence_ffs" / str(camera_idx) / f"{output_idx}.png"),
+                            confidence_uint8,
+                        )
+                    if write_ffs_valid_mask_debug:
+                        cv2.imwrite(
+                            str(output_case_dir / "valid_mask_ffs" / str(camera_idx) / f"{output_idx}.png"),
+                            (valid_mask_uint8 * 255).astype(np.uint8),
+                        )
 
                 np.save(output_case_dir / ffs_main_u16_dir / str(camera_idx) / f"{output_idx}.npy", filtered_depth_u16)
 
@@ -555,6 +683,9 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
                     )
                     np.save(output_case_dir / FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_DIR / str(camera_idx) / f"{output_idx}.npy", filtered_depth_u16)
                     np.save(output_case_dir / FFS_NATIVE_LIKE_DEPTH_POSTPROCESS_FLOAT_DIR / str(camera_idx) / f"{output_idx}.npy", filtered_depth_m)
+
+    if ffs_confidence_mode != "none":
+        aligned_metadata["ffs_confidence_filter"]["stats_summary"] = summarize_numeric_stats(confidence_filter_stats_samples)
 
     write_split_aligned_metadata(output_case_dir, aligned_metadata)
 

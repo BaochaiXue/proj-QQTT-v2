@@ -50,7 +50,7 @@ class _FakeConfidenceRunner:
 
 
 class FfsConfidencePanelsSmokeTest(unittest.TestCase):
-    def test_compute_confidence_proxies_from_logits_returns_margin_and_max_softmax(self) -> None:
+    def test_compute_confidence_proxies_from_logits_returns_expected_maps(self) -> None:
         logits = np.array(
             [
                 [
@@ -63,13 +63,12 @@ class FfsConfidencePanelsSmokeTest(unittest.TestCase):
         )
         confidence = compute_confidence_proxies_from_logits(logits)
 
-        self.assertEqual(set(confidence.keys()), {"margin", "max_softmax"})
-        self.assertEqual(confidence["margin"].shape, (1, 2, 2))
-        self.assertEqual(confidence["max_softmax"].shape, (1, 2, 2))
-        self.assertTrue(np.all(confidence["margin"] >= 0.0))
-        self.assertTrue(np.all(confidence["margin"] <= 1.0))
-        self.assertTrue(np.all(confidence["max_softmax"] >= 0.0))
-        self.assertTrue(np.all(confidence["max_softmax"] <= 1.0))
+        self.assertEqual(set(confidence.keys()), {"margin", "max_softmax", "entropy", "variance"})
+        for confidence_map in confidence.values():
+            self.assertEqual(confidence_map.shape, (1, 2, 2))
+            self.assertEqual(confidence_map.dtype, np.float32)
+            self.assertTrue(np.all(confidence_map >= 0.0))
+            self.assertTrue(np.all(confidence_map <= 1.0))
         self.assertGreater(float(confidence["margin"][0, 0, 0]), 0.0)
         self.assertGreaterEqual(
             float(confidence["max_softmax"][0, 0, 0]),

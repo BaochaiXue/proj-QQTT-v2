@@ -38,6 +38,7 @@ ALIGNED_METADATA_EXT_KEYS = (
     "ir_baseline_m",
     "source_streams_present",
     "ffs_config",
+    "ffs_confidence_filter",
     "ffs_radius_outlier_filter_enabled",
     "ffs_radius_outlier_filter",
 )

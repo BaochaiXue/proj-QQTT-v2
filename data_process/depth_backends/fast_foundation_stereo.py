@@ -133,16 +133,48 @@ def compute_confidence_proxies_from_logits(logits: np.ndarray) -> dict[str, np.n
 
     logits_shifted = logits - np.max(logits, axis=1, keepdims=True)
     exp_logits = np.exp(logits_shifted)
-    prob = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
+    prob_denom = np.sum(exp_logits, axis=1, keepdims=True)
+    prob = np.divide(
+        exp_logits,
+        prob_denom,
+        out=np.zeros_like(exp_logits, dtype=np.float32),
+        where=prob_denom > 0,
+    )
+    prob = np.nan_to_num(prob, nan=0.0, posinf=0.0, neginf=0.0)
     prob = prob.astype(np.float32, copy=False)
     sorted_prob = np.sort(prob, axis=1)
     top1 = sorted_prob[:, -1]
     top2 = sorted_prob[:, -2] if logits.shape[1] > 1 else np.zeros_like(top1, dtype=np.float32)
-    margin = np.clip(top1 - top2, 0.0, 1.0).astype(np.float32, copy=False)
-    max_softmax = np.clip(top1, 0.0, 1.0).astype(np.float32, copy=False)
+    margin = np.nan_to_num(np.clip(top1 - top2, 0.0, 1.0), nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+    max_softmax = np.nan_to_num(np.clip(top1, 0.0, 1.0), nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+
+    disparity_bins = int(logits.shape[1])
+    entropy = -(prob * np.log(prob + 1e-8)).sum(axis=1)
+    max_entropy = max(float(np.log(disparity_bins)), 1e-8)
+    entropy_confidence = 1.0 - (entropy / max_entropy)
+    entropy_confidence = np.nan_to_num(entropy_confidence, nan=0.0, posinf=0.0, neginf=0.0)
+    entropy_confidence = np.clip(entropy_confidence, 0.0, 1.0).astype(np.float32, copy=False)
+
+    d_values = np.arange(disparity_bins, dtype=np.float32).reshape(1, disparity_bins, 1, 1)
+    pred = (prob * d_values).sum(axis=1)
+    pred2 = (prob * (d_values ** 2)).sum(axis=1)
+    variance = np.maximum(pred2 - (pred ** 2), 0.0)
+    inverse_variance = 1.0 / (variance + 1e-4)
+    finite = np.isfinite(inverse_variance)
+    variance_confidence = np.zeros(inverse_variance.shape, dtype=np.float32)
+    if np.any(finite):
+        finite_values = inverse_variance[finite]
+        p05 = float(np.quantile(finite_values, 0.05))
+        p95 = float(np.quantile(finite_values, 0.95))
+        denom = max(p95 - p05, 1e-8)
+        variance_confidence = ((inverse_variance - p05) / denom).astype(np.float32, copy=False)
+    variance_confidence = np.nan_to_num(variance_confidence, nan=0.0, posinf=0.0, neginf=0.0)
+    variance_confidence = np.clip(variance_confidence, 0.0, 1.0).astype(np.float32, copy=False)
     return {
         "margin": margin,
         "max_softmax": max_softmax,
+        "entropy": entropy_confidence,
+        "variance": variance_confidence,
     }
 
 
@@ -762,27 +794,20 @@ class FastFoundationStereoRunner:
         if logits is None:
             raise RuntimeError("PyTorch FFS confidence path expected classifier logits but none were captured.")
         confidence_coarse = compute_confidence_proxies_from_logits(logits)
-        confidence_margin = resize_confidence_maps_to_shape(
-            confidence_coarse["margin"],
-            output_shape=padded_output_shape,
-        )
-        confidence_max_softmax = resize_confidence_maps_to_shape(
-            confidence_coarse["max_softmax"],
-            output_shape=padded_output_shape,
-        )
+        confidence_resized = {
+            metric_name: resize_confidence_maps_to_shape(
+                confidence_map,
+                output_shape=padded_output_shape,
+            )
+            for metric_name, confidence_map in confidence_coarse.items()
+        }
 
         disparity = padder.unpad(disparity.float())
-        confidence_margin_tensor = padder.unpad(torch.as_tensor(confidence_margin[:, None, :, :]))
-        confidence_max_softmax_tensor = padder.unpad(torch.as_tensor(confidence_max_softmax[:, None, :, :]))
+        confidence_tensors = {
+            metric_name: padder.unpad(torch.as_tensor(confidence_map[:, None, :, :]))
+            for metric_name, confidence_map in confidence_resized.items()
+        }
         disparity_map = split_disparity_batch_output_maps(disparity.data.cpu().numpy(), expected_batch_size=1)[0]
-        confidence_margin_map = split_disparity_batch_output_maps(
-            confidence_margin_tensor.data.cpu().numpy(),
-            expected_batch_size=1,
-        )[0]
-        confidence_max_softmax_map = split_disparity_batch_output_maps(
-            confidence_max_softmax_tensor.data.cpu().numpy(),
-            expected_batch_size=1,
-        )[0]
 
         result = build_disparity_products(
             disparity_map,
@@ -793,8 +818,12 @@ class FastFoundationStereoRunner:
             max_disp=self.max_disp,
             audit_mode=bool(audit_mode),
         )
-        result["confidence_margin_ir_left"] = np.clip(confidence_margin_map, 0.0, 1.0).astype(np.float32)
-        result["confidence_max_softmax_ir_left"] = np.clip(confidence_max_softmax_map, 0.0, 1.0).astype(np.float32)
+        for metric_name, confidence_tensor in confidence_tensors.items():
+            confidence_map = split_disparity_batch_output_maps(
+                confidence_tensor.data.cpu().numpy(),
+                expected_batch_size=1,
+            )[0]
+            result[f"confidence_{metric_name}_ir_left"] = np.clip(confidence_map, 0.0, 1.0).astype(np.float32)
         return result
 
 

@@ -35,6 +35,7 @@ Rule of thumb:
 - `render_d455_stream_probe_report.py`
 - `run_ffs_on_saved_pair.py`
 - `reproject_ffs_to_color.py`
+- `run_ffs_confidence_filter_sweep.py`
 - `generate_sam31_masks.py`
 
 ### Data Cleanup

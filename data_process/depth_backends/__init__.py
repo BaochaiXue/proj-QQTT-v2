@@ -6,6 +6,7 @@ from importlib import import_module
 _EXPORT_TO_MODULE = {
     "FfsBenchmarkConfig": ".benchmarking",
     "build_tradeoff_summary": ".benchmarking",
+    "build_confidence_filtered_depth_uint16": ".confidence_filtering",
     "compute_reference_depth_metrics": ".benchmarking",
     "expand_benchmark_configs": ".benchmarking",
     "infer_model_label": ".benchmarking",
