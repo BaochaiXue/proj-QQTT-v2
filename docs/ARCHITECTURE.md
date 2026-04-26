@@ -66,6 +66,7 @@ The repo is intentionally small.
 - `scripts/harness/visual_compare_masked_camera_views.py`
 - `scripts/harness/visualize_ffs_static_confidence_panels.py`
 - `scripts/harness/visualize_ffs_static_confidence_pcd_panels.py`
+- `scripts/harness/visual_compare_native_ffs_fused_pcd.py`
 - `scripts/harness/visual_compare_depth_triplet_ply.py`
 - `scripts/harness/visual_compare_depth_triplet_video.py`
 - `scripts/harness/visual_compare_depth_panels.py`
@@ -87,6 +88,7 @@ The repo is intentionally small.
 - `scripts/harness/run_ffs_static_replay_matrix.py`
 - `scripts/harness/visualize_ffs_static_confidence_panels.py`
 - `scripts/harness/visualize_ffs_static_confidence_pcd_panels.py`
+- `scripts/harness/visual_compare_native_ffs_fused_pcd.py`
 - `scripts/harness/cleanup_different_types_cases.py`
 - `tests/test_record_data_align_smoke.py`
 - `docs/*`
@@ -191,6 +193,10 @@ The FFS benchmark helper stack is intentionally split like this:
   - static-round frame-0 PyTorch FFS rerun for all 3 static rounds
   - fused masked FFS point cloud rendering from the 3 original camera pinhole views
   - masked `3x3` RGB / RGB-colored fused PCD / confidence-colored fused PCD board export per round
+- `scripts/harness/visual_compare_native_ffs_fused_pcd.py`
+  - static-round frame-0 native / FFS / fused object-PCD board export per round
+  - fused depth keeps native unless native is missing or below the configured threshold
+  - reuses static SAM masks and applies display-only PhysTwin-like radius-neighbor cleanup without rewriting aligned depth
 
 This keeps the deterministic summary logic testable without requiring CUDA while leaving the actual model execution in the thin harness CLI.
 

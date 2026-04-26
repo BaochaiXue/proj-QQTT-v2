@@ -16,12 +16,15 @@ class CheckAllSmokeTest(unittest.TestCase):
 
     def test_quick_profile_uses_curated_batched_commands(self) -> None:
         commands = check_all.build_commands(python="python", profile="quick")
-        self.assertEqual(len(commands), 20)
+        self.assertEqual(len(commands), 23)
         self.assertIn(["python", "cameras_viewer.py", "--help"], commands)
         self.assertIn(["python", "record_data_realtime_align.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visualize_ffs_static_confidence_panels.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visualize_ffs_static_confidence_pcd_panels.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/run_ffs_confidence_filter_sweep.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/visual_compare_ffs_confidence_filter_pcd.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/visual_compare_ffs_confidence_threshold_sweep_pcd.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/visual_compare_native_ffs_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/check_visual_architecture.py"], commands)
         self.assertIn(
             [
@@ -33,6 +36,9 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_cameras_viewer_ffs_smoke",
                 "tests.test_depth_backend_contract_smoke",
                 "tests.test_ffs_confidence_filtering_smoke",
+                "tests.test_ffs_confidence_filter_pcd_compare_smoke",
+                "tests.test_ffs_confidence_threshold_sweep_pcd_compare_smoke",
+                "tests.test_native_ffs_fused_pcd_compare_smoke",
                 "tests.test_ffs_intrinsic_file_format",
                 "tests.test_ffs_reprojection_smoke",
                 "tests.test_ffs_remove_invisible_mask_smoke",

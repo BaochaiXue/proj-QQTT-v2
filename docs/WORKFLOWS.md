@@ -550,6 +550,21 @@ When `--ffs_native_like_postprocess` is enabled:
 - otherwise it computes the same FFS native-like postprocess on the fly before rendering the panels
 - `summary.json` records whether FFS native-like postprocessing was enabled and which FFS depth source was used per frame
 
+For the static native/FFS fused object-PCD experiment across round 1-3 frame 0:
+
+```bash
+python scripts/harness/visual_compare_native_ffs_fused_pcd.py --aligned_root ./data --frame_idx 0
+```
+
+This diagnostic-only workflow writes one masked object `3x3` PCD board per static round:
+
+- rows: `Native depth`, `Original FFS`, `Fused depth`
+- columns: `Cam0`, `Cam1`, `Cam2`
+- fused rule: keep native depth unless native is missing or below `--native_min_m` (`0.6m` by default), otherwise use same-pixel FFS depth
+- reuses the existing static SAM object masks, erodes them inward by `--mask_erode_pixels` (`1px` by default), and renders only the masked object PCD
+- applies display-only PhysTwin-like radius-neighbor cleanup to each fused row before rendering
+- does not write fused depth back into any aligned case
+
 For professor-/review-quality static boards, use the publication-style preset:
 
 ```bash
