@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from scripts.harness.ffs_geometry import quantize_depth_with_invalid_zero
+from data_process.depth_backends.geometry import quantize_depth_with_invalid_zero
 
 
 class DepthQuantizationSmokeTest(unittest.TestCase):

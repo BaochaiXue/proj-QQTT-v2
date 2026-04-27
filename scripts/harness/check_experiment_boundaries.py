@@ -21,16 +21,6 @@ EXPERIMENT_WORKFLOW_SHIMS = {
     ROOT / "data_process" / "visualization" / "workflows" / "native_ffs_fused_pcd_compare.py",
 }
 
-EXPERIMENT_CLI_SHIMS = {
-    ROOT / "scripts" / "harness" / "run_ffs_confidence_filter_sweep.py",
-    ROOT / "scripts" / "harness" / "visual_compare_ffs_confidence_filter_pcd.py",
-    ROOT / "scripts" / "harness" / "visual_compare_ffs_confidence_threshold_sweep_pcd.py",
-    ROOT / "scripts" / "harness" / "visual_compare_ffs_mask_erode_sweep_pcd.py",
-    ROOT / "scripts" / "harness" / "visual_compare_native_ffs_fused_pcd.py",
-    ROOT / "scripts" / "harness" / "visualize_ffs_static_confidence_panels.py",
-    ROOT / "scripts" / "harness" / "visualize_ffs_static_confidence_pcd_panels.py",
-}
-
 FORMAL_CODE_ROOTS = (
     ROOT / "qqtt",
     ROOT / "data_process" / "depth_backends",
@@ -124,13 +114,13 @@ def collect_violations() -> list[str]:
             violations.append(f"{path.relative_to(ROOT)} imports visualization experiments.")
 
     for path in sorted(HARNESS_ROOT.rglob("*.py")):
-        if _is_under(path, HARNESS_ROOT / "experiments") or path in EXPERIMENT_CLI_SHIMS:
+        if _is_under(path, HARNESS_ROOT / "experiments"):
             continue
         imports = _imported_modules(path)
         if any(module == "scripts.harness.experiments" or module.startswith("scripts.harness.experiments.") for module in imports):
             violations.append(f"{path.relative_to(ROOT)} imports harness experiments.")
 
-    for path in sorted(EXPERIMENT_WORKFLOW_SHIMS | EXPERIMENT_CLI_SHIMS):
+    for path in sorted(EXPERIMENT_WORKFLOW_SHIMS):
         if not path.exists():
             violations.append(f"Missing experiment compatibility shim: {path.relative_to(ROOT)}")
             continue
@@ -139,8 +129,7 @@ def collect_violations() -> list[str]:
             for line in path.read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         ]
-        max_nonblank_lines = 12 if path in EXPERIMENT_CLI_SHIMS else 7
-        if len(nonblank_lines) > max_nonblank_lines:
+        if len(nonblank_lines) > 7:
             violations.append(f"Experiment compatibility shim is too large: {path.relative_to(ROOT)}")
 
     return violations

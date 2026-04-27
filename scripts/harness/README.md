@@ -75,9 +75,9 @@ These should stay thin wrappers around workflow modules under `data_process/visu
 - `experiments/visualize_ffs_static_confidence_panels.py`
 - `experiments/visualize_ffs_static_confidence_pcd_panels.py`
 
-These are canonical paths for one-off FFS experiments. The old root-level
-paths remain as thin compatibility wrappers, but new experiments should not add
-more root-level harness scripts.
+These are the only supported command paths for one-off FFS experiments. Do not
+add root-level compatibility wrappers for experiment CLIs; old wrappers were
+removed so the harness directory stays focused on current user-facing tools.
 
 `experiments/visual_compare_ffs_confidence_filter_pcd.py` renders the static round 1-3 frame-0 object-mask `6x3` Open3D boards for native, raw FFS, and four confidence-filtered FFS variants. Use `--phystwin_like_postprocess --phystwin_radius_m 0.01 --phystwin_nb_points 40` when the displayed clouds should match the PhysTwin-like radius-neighbor cleanup.
 
@@ -128,4 +128,8 @@ Those belong under `data_process/visualization/` and should be imported by these
 
 - thin wrappers remain in `scripts/harness/`
 - old cache/junk directories have been removed
+- root-level experiment compatibility wrappers have been removed; use
+  `scripts/harness/experiments/`
+- tests import shared FFS geometry from `data_process/depth_backends/geometry.py`
+  directly instead of through a harness shim
 - legacy duplicate generated-doc references have been collapsed onto the newer cleanup docs under `docs/generated/`

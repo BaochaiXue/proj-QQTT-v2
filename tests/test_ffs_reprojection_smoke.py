@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from scripts.harness.ffs_geometry import (
+from data_process.depth_backends.geometry import (
     project_to_color,
     rasterize_nearest_depth,
     transform_points,

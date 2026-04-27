@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from scripts.harness.ffs_geometry import format_ffs_intrinsic_text
+from data_process.depth_backends.geometry import format_ffs_intrinsic_text
 
 
 class FfsIntrinsicFileFormatTest(unittest.TestCase):

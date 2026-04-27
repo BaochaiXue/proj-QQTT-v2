@@ -229,6 +229,9 @@ Experiment-only workflow implementations live under
 are compatibility shims only; formal recording and alignment code must not
 import the experiment package. `scripts/harness/check_experiment_boundaries.py`
 guards that dependency direction.
+Experiment CLIs live only under `scripts/harness/experiments/`; root-level
+harness wrappers for those experiments were removed to keep the command surface
+small.
 
 The native RealSense depth filter contract is now centralized in:
 
