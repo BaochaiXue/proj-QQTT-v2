@@ -14,6 +14,7 @@ EXPERIMENT_WORKFLOW_SHIMS = {
     ROOT / "data_process" / "visualization" / "workflows" / "ffs_confidence_panels.py",
     ROOT / "data_process" / "visualization" / "workflows" / "ffs_confidence_pcd_panels.py",
     ROOT / "data_process" / "visualization" / "workflows" / "ffs_confidence_threshold_sweep_pcd_compare.py",
+    ROOT / "data_process" / "visualization" / "workflows" / "ffs_mask_erode_multipage_sweep_pcd_compare.py",
     ROOT / "data_process" / "visualization" / "workflows" / "ffs_mask_erode_sweep_pcd_compare.py",
     ROOT / "data_process" / "visualization" / "workflows" / "native_ffs_fused_pcd_compare.py",
 }

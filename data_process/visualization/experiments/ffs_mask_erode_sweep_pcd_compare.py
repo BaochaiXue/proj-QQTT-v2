@@ -35,6 +35,36 @@ DEFAULT_MASK_ERODE_PIXELS: tuple[int, ...] = tuple(range(1, 9))
 DEFAULT_ROW_LABEL_WIDTH = 340
 
 
+def build_default_mask_erode_multipage_specs() -> list[dict[str, Any]]:
+    """Default 10x3 pages for the extended 1..28px mask-erode experiment."""
+    return [
+        {
+            "page_id": "page1_erode_01_08",
+            "page_label": "Page 1/3 | native/original + erode 1..8px",
+            "include_baselines": True,
+            "erode_pixels": list(range(1, 9)),
+            "expected_rows": 10,
+            "row_contract": "native 0px/original FFS 0px/FFS erode 1..8px",
+        },
+        {
+            "page_id": "page2_erode_09_18",
+            "page_label": "Page 2/3 | FFS erode 9..18px",
+            "include_baselines": False,
+            "erode_pixels": list(range(9, 19)),
+            "expected_rows": 10,
+            "row_contract": "FFS erode 9..18px only; baselines are on page 1",
+        },
+        {
+            "page_id": "page3_erode_19_28",
+            "page_label": "Page 3/3 | FFS erode 19..28px",
+            "include_baselines": False,
+            "erode_pixels": list(range(19, 29)),
+            "expected_rows": 10,
+            "row_contract": "FFS erode 19..28px only; baselines are on page 1",
+        },
+    ]
+
+
 def parse_mask_erode_pixels(erode_pixels: str | list[int] | tuple[int, ...]) -> list[int]:
     if isinstance(erode_pixels, str):
         values = [int(item.strip()) for item in erode_pixels.split(",") if item.strip()]
@@ -53,11 +83,15 @@ def _erode_key(erode_pixels: int) -> str:
     return f"ffs_erode_{int(erode_pixels)}px"
 
 
-def _variant_rows(erode_pixels: list[int]) -> list[dict[str, str]]:
-    rows = [
+def _baseline_variant_rows() -> list[dict[str, str]]:
+    return [
         {"key": "native", "row_header": "Native depth | mask 0px", "summary_label": "native_depth_mask_0px"},
         {"key": "ffs_original", "row_header": "Original FFS | mask 0px", "summary_label": "ffs_original_mask_0px"},
     ]
+
+
+def _variant_rows(erode_pixels: list[int]) -> list[dict[str, str]]:
+    rows = _baseline_variant_rows()
     rows.extend(
         {
             "key": _erode_key(value),
@@ -69,6 +103,84 @@ def _variant_rows(erode_pixels: list[int]) -> list[dict[str, str]]:
     return rows
 
 
+def _erode_variant_rows(erode_pixels: list[int]) -> list[dict[str, str]]:
+    return [
+        {
+            "key": _erode_key(value),
+            "row_header": f"FFS | mask erode {int(value)}px",
+            "summary_label": f"ffs_mask_erode_{int(value)}px",
+        }
+        for value in erode_pixels
+    ]
+
+
+def _normalize_board_page_specs(board_page_specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not board_page_specs:
+        raise ValueError("board_page_specs must be non-empty when provided.")
+    normalized: list[dict[str, Any]] = []
+    seen_page_ids: set[str] = set()
+    seen_erode_pixels: set[int] = set()
+    for page_index, raw_spec in enumerate(board_page_specs, start=1):
+        spec = dict(raw_spec)
+        page_id = str(spec.get("page_id", f"page{page_index}")).strip()
+        if not page_id:
+            raise ValueError(f"board_page_specs[{page_index - 1}] has an empty page_id.")
+        if page_id in seen_page_ids:
+            raise ValueError(f"Duplicate board page_id: {page_id}")
+        seen_page_ids.add(page_id)
+
+        erode_values = parse_mask_erode_pixels(spec.get("erode_pixels", []))
+        duplicate_erodes = sorted(set(erode_values) & seen_erode_pixels)
+        if duplicate_erodes:
+            raise ValueError(f"Duplicate erode pixels across board pages: {duplicate_erodes}")
+        seen_erode_pixels.update(erode_values)
+
+        include_baselines = bool(spec.get("include_baselines", False))
+        row_count = len(erode_values) + (2 if include_baselines else 0)
+        expected_rows = spec.get("expected_rows")
+        if expected_rows is not None and int(expected_rows) != row_count:
+            raise ValueError(
+                f"Board page {page_id} expected {int(expected_rows)} rows, "
+                f"but include_baselines={include_baselines} and erode_pixels={erode_values} produce {row_count}."
+            )
+
+        row_contract = str(spec.get("row_contract", "")).strip()
+        if not row_contract:
+            erode_label = f"{min(erode_values)}..{max(erode_values)}px"
+            row_contract = (
+                f"native 0px/original FFS 0px/FFS erode {erode_label}"
+                if include_baselines
+                else f"FFS erode {erode_label} only"
+            )
+
+        normalized.append(
+            {
+                "page_id": page_id,
+                "page_index": int(spec.get("page_index", page_index)),
+                "page_label": str(spec.get("page_label", page_id)),
+                "include_baselines": include_baselines,
+                "erode_pixels": erode_values,
+                "expected_rows": None if expected_rows is None else int(expected_rows),
+                "row_count": int(row_count),
+                "row_contract": row_contract,
+            }
+        )
+    return normalized
+
+
+def _collect_page_erode_pixels(board_page_specs: list[dict[str, Any]]) -> list[int]:
+    erode_values: list[int] = []
+    for spec in board_page_specs:
+        erode_values.extend(int(item) for item in spec["erode_pixels"])
+    return erode_values
+
+
+def _variant_rows_for_page(page_spec: dict[str, Any]) -> list[dict[str, str]]:
+    rows = _baseline_variant_rows() if bool(page_spec["include_baselines"]) else []
+    rows.extend(_erode_variant_rows([int(item) for item in page_spec["erode_pixels"]]))
+    return rows
+
+
 def build_ffs_mask_erode_sweep_pcd_board(
     *,
     round_label: str,
@@ -77,6 +189,7 @@ def build_ffs_mask_erode_sweep_pcd_board(
     column_headers: list[str],
     variant_rows: list[dict[str, str]],
     rendered_rows: list[list[np.ndarray]],
+    page_label: str | None = None,
 ) -> np.ndarray:
     if len(variant_rows) != len(rendered_rows):
         raise ValueError(f"variant_rows and rendered_rows must match. Got {len(variant_rows)} vs {len(rendered_rows)}.")
@@ -92,11 +205,13 @@ def build_ffs_mask_erode_sweep_pcd_board(
         )
     erode_values = [int(item) for item in model_config["mask_erode_pixels"]]
     erode_label = f"{min(erode_values)}..{max(erode_values)}px" if erode_values else "none"
+    row_contract_label = str(model_config.get("row_contract_label", "native 0px/original FFS 0px/FFS erode sweep"))
+    page_suffix = "" if page_label is None else f" | {page_label}"
     return compose_registration_matrix_board(
         title_lines=[
-            f"Static Object PCD FFS Mask-Erode Sweep | {round_label} | frame {int(frame_idx)}",
+            f"Static Object PCD FFS Mask-Erode Sweep | {round_label} | frame {int(frame_idx)}{page_suffix}",
             (
-                "rows=native 0px/original FFS 0px/FFS erode sweep | "
+                f"rows={row_contract_label} | "
                 f"object_mask={str(model_config['object_mask_enabled']).lower()} | "
                 f"erode_sweep={erode_label} | post={postprocess_label}"
             ),
@@ -134,11 +249,17 @@ def run_ffs_mask_erode_sweep_pcd_workflow(
     use_float_ffs_depth_when_available: bool = True,
     round_specs: list[dict[str, Any]] | None = None,
     render_frame_fn: Callable[..., np.ndarray] | None = None,
+    board_page_specs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     aligned_root = Path(aligned_root).resolve()
     output_root = Path(output_root).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
-    erode_values = parse_mask_erode_pixels(erode_pixels)
+    normalized_page_specs = None if board_page_specs is None else _normalize_board_page_specs(board_page_specs)
+    erode_values = (
+        parse_mask_erode_pixels(erode_pixels)
+        if normalized_page_specs is None
+        else _collect_page_erode_pixels(normalized_page_specs)
+    )
     if float(depth_max_m) <= float(depth_min_m):
         raise ValueError(f"depth_max_m must be greater than depth_min_m. Got {depth_min_m}, {depth_max_m}.")
     if float(phystwin_radius_m) <= 0.0:
@@ -376,6 +497,7 @@ def run_ffs_mask_erode_sweep_pcd_workflow(
             }
 
         rendered_rows: list[list[np.ndarray]] = []
+        rendered_rows_by_key: dict[str, list[np.ndarray]] = {}
         render_summary: dict[str, list[dict[str, Any]]] = {}
         for variant in variant_rows:
             variant_key = str(variant["key"])
@@ -415,17 +537,60 @@ def run_ffs_mask_erode_sweep_pcd_workflow(
                     }
                 )
             rendered_rows.append(row_images)
+            rendered_rows_by_key[variant_key] = row_images
 
-        board = build_ffs_mask_erode_sweep_pcd_board(
-            round_label=str(round_spec["round_label"]),
-            frame_idx=selected_frame_idx,
-            model_config=model_config,
-            column_headers=column_headers,
-            variant_rows=variant_rows,
-            rendered_rows=rendered_rows,
-        )
-        board_path = round_output_dir / f"ffs_mask_erode_sweep_object_pcd_10x3_frame_{selected_frame_idx:04d}.png"
-        write_image(board_path, board)
+        page_summaries: list[dict[str, Any]] = []
+        board_paths: list[str] = []
+        if normalized_page_specs is None:
+            board = build_ffs_mask_erode_sweep_pcd_board(
+                round_label=str(round_spec["round_label"]),
+                frame_idx=selected_frame_idx,
+                model_config=model_config,
+                column_headers=column_headers,
+                variant_rows=variant_rows,
+                rendered_rows=rendered_rows,
+            )
+            board_path = round_output_dir / f"ffs_mask_erode_sweep_object_pcd_10x3_frame_{selected_frame_idx:04d}.png"
+            write_image(board_path, board)
+            board_paths.append(str(board_path.resolve()))
+        else:
+            for page_spec in normalized_page_specs:
+                page_variant_rows = _variant_rows_for_page(page_spec)
+                page_rendered_rows = [rendered_rows_by_key[str(variant["key"])] for variant in page_variant_rows]
+                page_model_config = dict(model_config)
+                page_model_config["mask_erode_pixels"] = [int(item) for item in page_spec["erode_pixels"]]
+                page_model_config["row_contract_label"] = str(page_spec["row_contract"])
+                board = build_ffs_mask_erode_sweep_pcd_board(
+                    round_label=str(round_spec["round_label"]),
+                    frame_idx=selected_frame_idx,
+                    model_config=page_model_config,
+                    column_headers=column_headers,
+                    variant_rows=page_variant_rows,
+                    rendered_rows=page_rendered_rows,
+                    page_label=str(page_spec["page_label"]),
+                )
+                board_path = (
+                    round_output_dir
+                    / f"ffs_mask_erode_multipage_object_pcd_10x3_frame_{selected_frame_idx:04d}_{page_spec['page_id']}.png"
+                )
+                write_image(board_path, board)
+                board_paths.append(str(board_path.resolve()))
+                page_summaries.append(
+                    {
+                        "page_id": str(page_spec["page_id"]),
+                        "page_index": int(page_spec["page_index"]),
+                        "page_label": str(page_spec["page_label"]),
+                        "include_baselines": bool(page_spec["include_baselines"]),
+                        "erode_pixels": [int(item) for item in page_spec["erode_pixels"]],
+                        "row_count": int(page_spec["row_count"]),
+                        "expected_rows": page_spec["expected_rows"],
+                        "row_contract": str(page_spec["row_contract"]),
+                        "row_headers": [str(item["row_header"]) for item in page_variant_rows],
+                        "variant_keys": [str(item["key"]) for item in page_variant_rows],
+                        "board_path": str(board_path.resolve()),
+                    }
+                )
+            board_path = Path(board_paths[0])
 
         mask_debug = {}
         for camera_idx in camera_ids:
@@ -451,6 +616,8 @@ def run_ffs_mask_erode_sweep_pcd_workflow(
             "variant_rows": variant_rows,
             "column_headers": column_headers,
             "board_path": str(board_path.resolve()),
+            "board_paths": board_paths,
+            "pages": page_summaries,
             "model_config": dict(model_config),
             "mask_root": str(Path(round_spec["mask_root"]).resolve()) if use_object_mask else None,
             "mask_debug": mask_debug,
@@ -466,7 +633,12 @@ def run_ffs_mask_erode_sweep_pcd_workflow(
                 "renderer": "open3d_offscreen_renderer",
                 "projection_mode": "original_camera_pinhole",
                 "columns": "original_ffs_camera_views",
-                "rows": "native_depth_ffs_original_ffs_mask_erode_sweep",
+                "rows": (
+                    "native_depth_ffs_original_ffs_mask_erode_multipage_sweep"
+                    if normalized_page_specs is not None
+                    else "native_depth_ffs_original_ffs_mask_erode_sweep"
+                ),
+                "page_layout": "multipage_10x3" if normalized_page_specs is not None else "single_board",
                 "display_postprocess": "phystwin_like_radius_neighbor_filter" if phystwin_like_postprocess else "none",
                 "display_postprocess_applied_to": "fused_object_pcd_rows_before_rendering",
                 "object_masked": bool(use_object_mask),
@@ -504,6 +676,7 @@ def run_ffs_mask_erode_sweep_pcd_workflow(
         "output_dir": str(output_root.resolve()),
         "frame_idx": int(frame_idx),
         "erode_pixels": [int(item) for item in erode_values],
+        "board_page_specs": normalized_page_specs,
         "model_config": dict(model_config),
         "rounds": rounds_summary,
     }
