@@ -100,6 +100,31 @@ formal aligned case under `data/different_types_real_time/`. It keeps FPS logs
 outside the case so the case itself remains limited to `color/`, `depth/`,
 `calibrate.pkl`, and legacy `metadata.json`.
 
+## Camera Identity Contract
+
+Aligned cases use logical camera indices only as positions in
+`metadata["serial_numbers"]`. `color/<camera_idx>/`, `depth/<camera_idx>/`,
+intrinsics, depth scales, and other per-camera lists must all have the same
+length and order as that serial list.
+
+`metadata["calibration_reference_serials"]` records the serial order used by
+the source `calibrate.pkl`. Any consumer that loads camera poses must map
+`calibrate.pkl` through this serial list before indexing by `camera_idx`.
+Aligned metadata loading now rejects duplicate serials, mismatched per-camera
+list lengths, and calibration reference lists that do not cover the case
+serials.
+
+New calibrations write `calibrate_metadata.json` next to `calibrate.pkl`. The
+sidecar records the calibration transform serial order, and recording entry
+points prefer that sidecar over inferred connected-device order when writing
+`metadata["calibration_reference_serials"]`.
+
+Swapping USB ports is safe because capture uses device serial numbers rather
+than port order. Physically swapping camera positions in the rig is not a
+metadata-only change: the rig must be recalibrated, or the recording must use a
+calibration file whose reference serial order and transforms describe the new
+physical layout.
+
 `CameraSystem` depends on:
 
 - `qqtt/env/camera/realsense/multi_realsense.py`

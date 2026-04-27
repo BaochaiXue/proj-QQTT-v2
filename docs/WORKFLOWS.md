@@ -280,6 +280,8 @@ Use this when the main question is the real online path:
 
 The live viewer now supports:
 
+- `--serials`
+  - optional explicit preview order; omit it to use stable sorted serial order
 - `--duration-s`
   - auto-stops after the requested benchmark window
 - `--stats-log-interval-s`
@@ -302,12 +304,19 @@ Treat this live 3-camera viewer benchmark as the authoritative online-setting me
 python cameras_calibrate.py
 ```
 
-This writes `calibrate.pkl` in the repo root by default.
+This writes `calibrate.pkl` and `calibrate_metadata.json` in the repo root by
+default. The metadata sidecar records the serial order that the transforms in
+`calibrate.pkl` use.
+
+If cameras have been physically swapped on the rig, rerun calibration before
+recording. Serial checks can catch a wrong or replaced device, but they cannot
+infer that the same physical devices moved to new rig positions.
 
 Useful options:
 
 ```bash
 python cameras_calibrate.py --width 1280 --height 720 --fps 5 --num-cam 3
+python cameras_calibrate.py --serials 239222303506 239222300412 239222300781
 ```
 
 ## 3. Record
@@ -361,6 +370,11 @@ After `CameraSystem` resolves the actual camera serials, `record_data.py` prints
 
 - stage = `after camera discovery`
 - final support / blocked / experimental / unknown status for the discovered serial set
+
+When `calibrate_metadata.json` exists next to `calibrate.pkl`, recording uses
+that sidecar as the calibration reference serial order and copies it into the
+raw case. If the sidecar is missing, the old fallback remains available but
+prints a warning to rerun calibration after any physical rig change.
 
 When `--max_frames` is used, recording now fails fast if one or more cameras stop making progress while others continue, instead of waiting indefinitely for the slowest camera to catch up.
 

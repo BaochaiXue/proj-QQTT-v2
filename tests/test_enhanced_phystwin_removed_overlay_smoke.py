@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from data_process.visualization.experiments.enhanced_phystwin_removed_overlay import (
+    DEFAULT_SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR,
     build_enhanced_phystwin_removed_overlay_board,
     run_enhanced_phystwin_removed_overlay_workflow,
 )
@@ -22,10 +23,12 @@ class _RenderCollector:
         self.calls: list[dict[str, object]] = []
 
     def __call__(self, points: np.ndarray, colors: np.ndarray, **kwargs) -> np.ndarray:
+        unique_colors = {tuple(int(channel) for channel in color) for color in np.asarray(colors, dtype=np.uint8)}
         self.calls.append(
             {
                 "point_count": int(len(np.asarray(points))),
                 "color_count": int(len(np.asarray(colors))),
+                "unique_colors": unique_colors,
                 "width": int(kwargs["width"]),
                 "height": int(kwargs["height"]),
                 "render_kind": str(kwargs.get("render_kind", "")),
@@ -53,31 +56,45 @@ class EnhancedPhystwinRemovedOverlaySmokeTest(unittest.TestCase):
             points=points,
             colors=colors,
             enabled=True,
-            radius_m=0.02,
+            radius_m=0.05,
             nb_points=2,
             component_voxel_size_m=0.01,
             keep_near_main_gap_m=0.0,
         )
-        legacy_points, legacy_colors, legacy_stats = _apply_enhanced_phystwin_like_postprocess(
-            points=points,
-            colors=colors,
-            enabled=True,
-            radius_m=0.02,
-            nb_points=2,
-            component_voxel_size_m=0.01,
-            keep_near_main_gap_m=0.0,
-        )
-
-        np.testing.assert_allclose(traced_points, legacy_points)
-        np.testing.assert_array_equal(traced_colors, legacy_colors)
-        self.assertEqual(traced_stats["output_point_count"], legacy_stats["output_point_count"])
         self.assertEqual(int(np.count_nonzero(trace["kept_mask"])), len(main))
         self.assertEqual(int(np.count_nonzero(trace["radius_removed_mask"])), len(radius_outlier))
         self.assertEqual(int(np.count_nonzero(trace["component_removed_mask"])), len(floating))
         self.assertEqual(int(np.count_nonzero(trace["removed_mask"])), len(floating) + len(radius_outlier))
+        self.assertEqual(len(traced_points), len(main))
+        self.assertEqual(len(traced_colors), len(main))
+        self.assertEqual(traced_stats["output_point_count"], len(main))
 
-    def test_build_board_returns_4x3_matrix(self) -> None:
-        image_rows = [[np.full((40, 60, 3), 90, dtype=np.uint8) for _ in range(3)] for _ in range(4)]
+        disabled_traced_points, disabled_traced_colors, disabled_traced_stats, _disabled_trace = (
+            _apply_enhanced_phystwin_like_postprocess_with_trace(
+                points=points,
+                colors=colors,
+                enabled=False,
+                radius_m=0.05,
+                nb_points=2,
+                component_voxel_size_m=0.01,
+                keep_near_main_gap_m=0.0,
+            )
+        )
+        disabled_legacy_points, disabled_legacy_colors, disabled_legacy_stats = _apply_enhanced_phystwin_like_postprocess(
+            points=points,
+            colors=colors,
+            enabled=False,
+            radius_m=0.05,
+            nb_points=2,
+            component_voxel_size_m=0.01,
+            keep_near_main_gap_m=0.0,
+        )
+        np.testing.assert_allclose(disabled_traced_points, disabled_legacy_points)
+        np.testing.assert_array_equal(disabled_traced_colors, disabled_legacy_colors)
+        self.assertEqual(disabled_traced_stats["output_point_count"], disabled_legacy_stats["output_point_count"])
+
+    def test_build_board_returns_5x3_matrix(self) -> None:
+        image_rows = [[np.full((40, 60, 3), 90, dtype=np.uint8) for _ in range(3)] for _ in range(5)]
         board = build_enhanced_phystwin_removed_overlay_board(
             round_label="Round 1",
             frame_idx=0,
@@ -93,10 +110,10 @@ class EnhancedPhystwinRemovedOverlaySmokeTest(unittest.TestCase):
             image_rows=image_rows,
         )
         self.assertEqual(board.ndim, 3)
-        self.assertGreater(board.shape[0], 120)
+        self.assertGreater(board.shape[0], 5 * 40)
         self.assertGreater(board.shape[1], 220 + 3 * 60)
 
-    def test_workflow_writes_4x3_overlay_and_summary(self) -> None:
+    def test_workflow_writes_5x3_overlay_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             aligned_root = tmp_root / "data"
@@ -139,11 +156,30 @@ class EnhancedPhystwinRemovedOverlaySmokeTest(unittest.TestCase):
 
             round_summary = summary["rounds"][0]
             self.assertTrue(Path(round_summary["board_path"]).is_file())
+            self.assertIn("5x3", Path(round_summary["board_path"]).name)
             self.assertEqual(len(render_collector.calls), 3)
-            self.assertEqual(round_summary["render_contract"]["rows"], "rgb_mask_pcd_removed_depth_removed_rgb_removed")
+            self.assertEqual(
+                round_summary["render_contract"]["rows"],
+                "rgb_mask_native_depth_mask_pcd_removed_ffs_depth_removed_rgb_removed",
+            )
             self.assertGreater(round_summary["total_removed_point_count"], 0)
             self.assertTrue(any(item["removed_overlay_pixel_count"] > 0 for item in round_summary["per_camera"]))
+            self.assertTrue(all(item["native_masked_valid_pixel_count"] > 0 for item in round_summary["per_camera"]))
+            self.assertTrue(all("native_depth_info" in item for item in round_summary["per_camera"]))
             self.assertEqual(round_summary["model_config"]["highlight_scope"], "all")
+            self.assertEqual(round_summary["render_contract"]["highlight_color_mode"], "source_camera")
+            removed_by_source = round_summary["total_removed_point_count_by_source_camera"]
+            self.assertEqual(sum(int(value) for value in removed_by_source.values()), round_summary["total_removed_point_count"])
+            for camera_summary in round_summary["per_camera"]:
+                camera_idx = int(camera_summary["camera_idx"])
+                self.assertEqual(
+                    camera_summary["highlight_color_bgr"],
+                    list(DEFAULT_SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR[camera_idx]),
+                )
+            rendered_colors = render_collector.calls[0]["unique_colors"]
+            for camera_idx, removed_count in removed_by_source.items():
+                if int(removed_count) > 0:
+                    self.assertIn(DEFAULT_SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR[int(camera_idx)], rendered_colors)
 
 
 if __name__ == "__main__":

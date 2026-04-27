@@ -52,6 +52,8 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - `python cameras_calibrate.py` detects the ChArUco board from all 3 cameras
 - calibration completes without reprojection failure
 - `calibrate.pkl` is written in the repo root
+- `calibrate_metadata.json` is written next to it and records the calibration serial order
+- rerun calibration after any physical camera-position swap on the rig
 
 ### Recording
 
@@ -61,6 +63,7 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - per-camera `ir_left/<camera>/<step>.png` and `ir_right/<camera>/<step>.png` are written for `stereo_ir`
 - `metadata.json` exists
 - `calibrate.pkl` is copied into the case if available
+- `calibrate_metadata.json` is copied into the case when available
 - short `--max_frames` runs fail quickly instead of hanging forever when one camera stalls and the others keep advancing
 
 ### Alignment

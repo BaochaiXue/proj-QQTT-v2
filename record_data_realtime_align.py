@@ -13,6 +13,7 @@ from typing import Any, Callable
 import numpy as np
 
 from data_process.aligned_case_metadata import LEGACY_ALIGNED_METADATA_KEYS
+from qqtt.env.camera.calibration_metadata import load_calibration_reference_serials
 from qqtt.env.camera.defaults import (
     DEFAULT_FPS,
     DEFAULT_HEIGHT,
@@ -267,6 +268,13 @@ def run_realtime_export(
     calibrate_path = Path(args.calibrate_path).resolve()
     if not calibrate_path.is_file():
         raise FileNotFoundError(f"Missing calibrate.pkl required for realtime aligned export: {calibrate_path}")
+    calibration_reference_serials = load_calibration_reference_serials(calibrate_path)
+    if calibration_reference_serials is None:
+        print(
+            "[realtime-align] warning: calibration metadata sidecar was not found next to "
+            f"{calibrate_path}. If the camera rig was physically moved or cameras were swapped, "
+            "rerun cameras_calibrate.py before realtime export."
+        )
 
     case_name = _make_case_name(args.case_name)
     output_root = Path(args.output_root).resolve()
@@ -292,6 +300,7 @@ def run_realtime_export(
         fps=int(args.fps),
         num_cam=int(args.num_cam),
         serial_numbers=args.serials if args.serials else None,
+        calibration_reference_serials=calibration_reference_serials,
         capture_mode="rgbd",
         enable_keyboard_listener=False,
     )

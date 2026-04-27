@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import qqtt.env
 import record_data
+from qqtt.env.camera.calibration_metadata import build_calibration_metadata, write_calibration_metadata
 from qqtt.env.camera.preflight import CapturePreflightDecision
 
 
@@ -55,6 +56,7 @@ class _FakeCameraSystem:
 
     def __init__(self, *args, serial_numbers=None, **kwargs) -> None:
         type(self).last_instance = self
+        self.kwargs = dict(kwargs)
         self.serial_numbers = list(serial_numbers) if serial_numbers is not None else ["a", "b", "c"]
         self.realsense = _FakeRealsense()
         self.record_calls: list[tuple[str, int | None]] = []
@@ -242,6 +244,64 @@ class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn("operator_status: unknown", output)
             self.assertIn("preflight support is unknown", output)
+
+    def test_calibration_metadata_sidecar_sets_reference_serial_order(self) -> None:
+        _FakeCameraSystem.last_instance = None
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            calibrate_path = root / "calibrate.pkl"
+            calibrate_path.write_bytes(b"fake calibration")
+            write_calibration_metadata(
+                calibrate_path,
+                build_calibration_metadata(
+                    serial_numbers=["b", "a", "c"],
+                    WH=(848, 480),
+                    fps=30,
+                    transform_count=3,
+                ),
+            )
+            argv = [
+                "record_data.py",
+                "--case_name",
+                "sidecar_case",
+                "--output_dir",
+                str(root),
+                "--calibrate_path",
+                str(calibrate_path),
+                "--serials",
+                "a",
+                "b",
+                "c",
+                "--disable-keyboard-listener",
+            ]
+            with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch.object(
+                record_data,
+                "evaluate_capture_preflight",
+                side_effect=[
+                    _decision(
+                        capture_mode="rgbd",
+                        operator_status="supported",
+                        allowed_to_record=True,
+                        serials=["a", "b", "c"],
+                        reason="ok",
+                    ),
+                    _decision(
+                        capture_mode="rgbd",
+                        operator_status="supported",
+                        allowed_to_record=True,
+                        serials=["a", "b", "c"],
+                        reason="ok",
+                    ),
+                ],
+            ), patch("sys.argv", argv):
+                self.assertEqual(record_data.main(), 0)
+
+            self.assertEqual(
+                _FakeCameraSystem.last_instance.kwargs["calibration_reference_serials"],
+                ["b", "a", "c"],
+            )
+            self.assertTrue((root / "sidecar_case" / "calibrate.pkl").is_file())
+            self.assertTrue((root / "sidecar_case" / "calibrate_metadata.json").is_file())
 
 
 if __name__ == "__main__":

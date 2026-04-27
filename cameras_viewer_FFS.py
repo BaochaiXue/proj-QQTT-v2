@@ -30,6 +30,7 @@ from cameras_viewer import (
     _fit_grid_for_display,
     _fit_to_canvas,
     _make_message_bottom,
+    _order_devices_by_serial,
     _runtime_imports,
     _tile_panels,
     _update_recent_frame_times,
@@ -1151,6 +1152,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--max-cams", type=int, default=DEFAULT_NUM_CAM)
+    parser.add_argument("--serials", nargs="*", default=None)
     parser.add_argument("--auto-exposure", action="store_true")
     parser.add_argument("--exposure", type=float, default=70.0)
     parser.add_argument("--gain", type=float, default=60.0)
@@ -1200,7 +1202,11 @@ def main() -> int:
         print("No D400 RealSense device detected by librealsense.", flush=True)
         return 2
 
-    devices = devices[: args.max_cams]
+    devices = _order_devices_by_serial(
+        devices,
+        serials=args.serials if args.serials else None,
+        max_cams=int(args.max_cams),
+    )
     serials = [dev.get_info(rs.camera_info.serial_number) for dev in devices]
     print(f"Detected {len(devices)} camera(s): {', '.join(serials)}", flush=True)
 

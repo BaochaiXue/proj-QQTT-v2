@@ -238,7 +238,7 @@ def _apply_enhanced_phystwin_like_postprocess_with_trace(
     component_voxel_size_m: float,
     keep_near_main_gap_m: float = 0.0,
     max_component_report_count: int = 32,
-) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any], dict[str, np.ndarray]]:
     point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     color_array = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
     input_point_count = int(len(point_array))

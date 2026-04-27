@@ -1,20 +1,40 @@
 from __future__ import annotations
 
 from collections import deque
+import os
 import unittest
 from unittest import mock
 
 import cameras_viewer
 from cameras_viewer import (
     _build_camera_state,
+    _configure_qt_platform_default,
     _compute_display_target_size,
     _compute_measured_fps,
     _format_depth_debug_lines,
     _format_panel_label_lines,
     _get_screen_size,
+    _order_devices_by_serial,
     _render_panel,
     _update_recent_frame_times,
 )
+
+
+class _FakeDevice:
+    def __init__(self, serial: str):
+        self.serial = serial
+
+    def get_info(self, key):
+        _ = key
+        return self.serial
+
+
+class _FakeCameraInfo:
+    serial_number = object()
+
+
+class _FakeRs:
+    camera_info = _FakeCameraInfo()
 
 
 class CamerasViewerFpsSmokeTest(unittest.TestCase):
@@ -23,6 +43,18 @@ class CamerasViewerFpsSmokeTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         cameras_viewer._SCREEN_SIZE_CACHE = None
+
+    def test_qt_platform_defaults_to_xcb_under_wsl(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch("cameras_viewer._is_wsl_environment", return_value=True):
+                _configure_qt_platform_default()
+            self.assertEqual(os.environ["QT_QPA_PLATFORM"], "xcb")
+
+    def test_qt_platform_preserves_explicit_operator_value(self) -> None:
+        with mock.patch.dict(os.environ, {"QT_QPA_PLATFORM": "wayland"}, clear=True):
+            with mock.patch("cameras_viewer._is_wsl_environment", return_value=True):
+                _configure_qt_platform_default()
+            self.assertEqual(os.environ["QT_QPA_PLATFORM"], "wayland")
 
     def test_measured_fps_is_zero_for_empty_history(self) -> None:
         self.assertEqual(_compute_measured_fps(deque()), 0.0)
@@ -120,6 +152,18 @@ class CamerasViewerFpsSmokeTest(unittest.TestCase):
         self.assertEqual(state["measured_fps"], 0.0)
         self.assertIsNone(state["last_color"])
         self.assertIsNotNone(state["lock"])
+
+    def test_order_devices_defaults_to_sorted_serials(self) -> None:
+        devices = [_FakeDevice("cam_b"), _FakeDevice("cam_a"), _FakeDevice("cam_c")]
+        with mock.patch("cameras_viewer._runtime_imports", return_value=(None, None, _FakeRs)):
+            ordered = _order_devices_by_serial(devices, serials=None, max_cams=2)
+        self.assertEqual([item.serial for item in ordered], ["cam_a", "cam_b"])
+
+    def test_order_devices_accepts_explicit_serial_order(self) -> None:
+        devices = [_FakeDevice("cam_b"), _FakeDevice("cam_a"), _FakeDevice("cam_c")]
+        with mock.patch("cameras_viewer._runtime_imports", return_value=(None, None, _FakeRs)):
+            ordered = _order_devices_by_serial(devices, serials=["cam_c", "cam_a"], max_cams=3)
+        self.assertEqual([item.serial for item in ordered], ["cam_c", "cam_a"])
 
     def test_render_panel_uses_latest_buffer_and_marks_rendered_seq(self) -> None:
         state = _build_camera_state(

@@ -20,6 +20,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=int, default=CALIBRATE_DEFAULT_FPS)
     parser.add_argument("--num-cam", type=int, default=DEFAULT_NUM_CAM)
     parser.add_argument(
+        "--serials",
+        nargs="*",
+        default=None,
+        help="Optional explicit logical camera order for calibration.",
+    )
+    parser.add_argument(
         "--disable-keyboard-listener",
         action="store_true",
         help="Disable the optional keyboard listener.",
@@ -44,6 +50,7 @@ def main() -> int:
         WH=[args.width, args.height],
         fps=args.fps,
         num_cam=args.num_cam,
+        serial_numbers=args.serials if args.serials else None,
         enable_keyboard_listener=enable_keyboard_listener,
     )
     camera_system.calibrate()

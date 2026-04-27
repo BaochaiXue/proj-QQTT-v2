@@ -9,10 +9,31 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+
+def _is_wsl_environment() -> bool:
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
+
+
+def _configure_qt_platform_default() -> None:
+    if os.environ.get("QT_QPA_PLATFORM"):
+        return
+    if _is_wsl_environment():
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+
+
+_configure_qt_platform_default()
 
 from data_process.visualization.depth_colormap import (
     DEFAULT_DEPTH_VIS_MAX_M,
@@ -496,6 +517,31 @@ def _enumerate_d400_devices(ctx: Any) -> List[Any]:
     return devices
 
 
+def _device_serial(dev: Any) -> str:
+    _, _, rs = _runtime_imports()
+    return str(dev.get_info(rs.camera_info.serial_number))
+
+
+def _order_devices_by_serial(
+    devices: List[Any],
+    *,
+    serials: Optional[List[str]],
+    max_cams: int,
+) -> List[Any]:
+    by_serial: Dict[str, Any] = {}
+    for dev in devices:
+        serial = _device_serial(dev)
+        if serial in by_serial:
+            raise ValueError(f"Duplicate RealSense serial detected: {serial}")
+        by_serial[serial] = dev
+    if serials:
+        missing = [serial for serial in serials if serial not in by_serial]
+        if missing:
+            raise ValueError(f"Requested serials not detected by librealsense: {missing}")
+        return [by_serial[serial] for serial in serials]
+    return sorted(devices, key=_device_serial)[: int(max_cams)]
+
+
 def _build_camera_state(
     *,
     serial: str,
@@ -649,6 +695,7 @@ def main() -> int:
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--max-cams", type=int, default=DEFAULT_NUM_CAM)
+    parser.add_argument("--serials", nargs="*", default=None)
     parser.add_argument("--auto-exposure", action="store_true")
     parser.add_argument("--exposure", type=float, default=70.0)
     parser.add_argument("--gain", type=float, default=60.0)
@@ -674,7 +721,11 @@ def main() -> int:
         print("No D400 RealSense device detected by librealsense.", flush=True)
         return 2
 
-    devices = devices[: args.max_cams]
+    devices = _order_devices_by_serial(
+        devices,
+        serials=args.serials if args.serials else None,
+        max_cams=int(args.max_cams),
+    )
     serials = [dev.get_info(rs.camera_info.serial_number) for dev in devices]
     print(f"Detected {len(devices)} camera(s): {', '.join(serials)}", flush=True)
 

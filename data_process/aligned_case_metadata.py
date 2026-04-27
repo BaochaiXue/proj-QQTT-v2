@@ -45,6 +45,85 @@ ALIGNED_METADATA_EXT_KEYS = (
 
 _KNOWN_ALIGNED_METADATA_KEYS = set(LEGACY_ALIGNED_METADATA_KEYS) | set(ALIGNED_METADATA_EXT_KEYS)
 
+_PER_CAMERA_LIST_KEYS = (
+    "intrinsics",
+    "logical_camera_names",
+    "K_color",
+    "K_ir_left",
+    "K_ir_right",
+    "T_ir_left_to_right",
+    "T_ir_left_to_color",
+    "ir_baseline_m",
+)
+
+
+def _validate_unique_string_list(metadata: dict[str, Any], key: str, *, required: bool) -> list[str] | None:
+    values = metadata.get(key)
+    if values is None:
+        if required:
+            raise ValueError(f"Aligned metadata missing {key!r}.")
+        return None
+    if not isinstance(values, list) or not values:
+        raise ValueError(f"Aligned metadata {key!r} must be a non-empty list.")
+    if not all(isinstance(item, str) and item for item in values):
+        raise ValueError(f"Aligned metadata {key!r} must contain non-empty string serials.")
+
+    duplicates = sorted({item for item in values if values.count(item) > 1})
+    if duplicates:
+        raise ValueError(f"Aligned metadata {key!r} contains duplicate serials: {duplicates}")
+    return values
+
+
+def _validate_per_camera_list_length(
+    metadata: dict[str, Any],
+    key: str,
+    camera_count: int,
+    *,
+    allow_scalar: bool = False,
+) -> None:
+    if key not in metadata:
+        return
+    value = metadata[key]
+    if allow_scalar and not isinstance(value, list):
+        return
+    if not isinstance(value, list):
+        raise ValueError(f"Aligned metadata {key!r} must be a per-camera list.")
+    if len(value) != camera_count:
+        raise ValueError(
+            f"Aligned metadata {key!r} length {len(value)} does not match "
+            f"serial_numbers length {camera_count}."
+        )
+
+
+def validate_aligned_metadata_camera_contract(metadata: dict[str, Any]) -> None:
+    """Validate the serial-index contract used by aligned-case consumers."""
+
+    serial_numbers = _validate_unique_string_list(metadata, "serial_numbers", required=True)
+    assert serial_numbers is not None
+    camera_count = len(serial_numbers)
+
+    calibration_reference_serials = _validate_unique_string_list(
+        metadata,
+        "calibration_reference_serials",
+        required=False,
+    )
+    if calibration_reference_serials is not None:
+        missing = [serial for serial in serial_numbers if serial not in calibration_reference_serials]
+        if missing:
+            raise ValueError(
+                "Aligned metadata calibration_reference_serials does not cover case serial_numbers: "
+                f"{missing}"
+            )
+
+    for key in _PER_CAMERA_LIST_KEYS:
+        _validate_per_camera_list_length(metadata, key, camera_count)
+    _validate_per_camera_list_length(
+        metadata,
+        "depth_scale_m_per_unit",
+        camera_count,
+        allow_scalar=True,
+    )
+
 
 def split_aligned_metadata(metadata: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     missing_legacy = [key for key in LEGACY_ALIGNED_METADATA_KEYS if key not in metadata]
@@ -54,6 +133,8 @@ def split_aligned_metadata(metadata: dict[str, Any]) -> tuple[dict[str, Any], di
     unexpected = sorted(set(metadata) - _KNOWN_ALIGNED_METADATA_KEYS)
     if unexpected:
         raise ValueError(f"Aligned metadata contains unexpected keys: {unexpected}")
+
+    validate_aligned_metadata_camera_contract(metadata)
 
     legacy_metadata = {
         key: metadata[key]
@@ -81,6 +162,7 @@ def load_aligned_metadata(case_dir: Path) -> tuple[dict[str, Any], dict[str, Any
         if key in LEGACY_ALIGNED_METADATA_KEYS:
             continue
         merged_metadata[key] = value
+    validate_aligned_metadata_camera_contract(merged_metadata)
     return legacy_or_merged, ext_metadata, merged_metadata
 
 

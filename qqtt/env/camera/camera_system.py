@@ -1,5 +1,6 @@
 from .realsense import MultiRealsense, SingleRealsense
 from .recording_metadata import build_recording_metadata as build_recording_metadata_payload
+from .calibration_metadata import build_calibration_metadata, write_calibration_metadata
 from .defaults import (
     DEFAULT_EXPOSURE,
     DEFAULT_FPS,
@@ -16,6 +17,7 @@ import cv2
 import json
 import os
 import pickle
+from pathlib import Path
 from typing import Optional, Any
 
 np.set_printoptions(threshold=np.inf)
@@ -72,6 +74,7 @@ class CameraSystem:
         gain=DEFAULT_GAIN,
         white_balance=DEFAULT_WHITE_BALANCE,
         exposure_overrides=None,
+        calibration_reference_serials=None,
         enable_keyboard_listener=True,
     ):
         self.WH = WH
@@ -87,14 +90,32 @@ class CameraSystem:
         connected_serials = SingleRealsense.get_connected_devices_serial()
         self.connected_serial_numbers = list(connected_serials)
         if serial_numbers is not None:
+            serial_numbers = list(serial_numbers)
+            if len(serial_numbers) != len(set(serial_numbers)):
+                raise ValueError(f"Requested serials contain duplicates: {serial_numbers}")
             missing = [serial for serial in serial_numbers if serial not in connected_serials]
             if missing:
                 raise AssertionError(f"Requested serials not connected: {missing}")
-            self.serial_numbers = list(serial_numbers)
+            self.serial_numbers = serial_numbers
         else:
             if len(connected_serials) < num_cam:
                 raise AssertionError(f"Only {len(connected_serials)} cameras are connected.")
             self.serial_numbers = connected_serials[:num_cam]
+        if calibration_reference_serials is not None:
+            calibration_reference_serials = list(calibration_reference_serials)
+            if len(calibration_reference_serials) != len(set(calibration_reference_serials)):
+                raise ValueError(f"Calibration reference serials contain duplicates: {calibration_reference_serials}")
+            missing_from_calibration = [
+                serial for serial in self.serial_numbers if serial not in calibration_reference_serials
+            ]
+            if missing_from_calibration:
+                raise ValueError(
+                    "Calibration reference serials do not cover selected cameras. "
+                    f"missing={missing_from_calibration}, calibration_reference_serials={calibration_reference_serials}"
+                )
+            self.calibration_reference_serials = calibration_reference_serials
+        else:
+            self.calibration_reference_serials = list(self.connected_serial_numbers)
         self.num_cam = len(self.serial_numbers)
         self.capture_mode = capture_mode
         self.capture_config = CAPTURE_MODE_CONFIGS[capture_mode]
@@ -162,11 +183,15 @@ class CameraSystem:
 
         # Get the latest k frames from all cameras, and picked the latest synchronized frames
         last_realsense_data = self.realsense.get(k=k)
-        timestamp_list = [x["timestamp"][-1] for x in last_realsense_data.values()]
+        timestamp_list = [
+            last_realsense_data[camera_idx]["timestamp"][-1]
+            for camera_idx in range(self.num_cam)
+        ]
         last_timestamp = np.min(timestamp_list)
 
         data = {}
-        for camera_idx, value in last_realsense_data.items():
+        for camera_idx in range(self.num_cam):
+            value = last_realsense_data[camera_idx]
             this_timestamps = value["timestamp"]
             min_diff = 10
             best_idx = None
@@ -318,7 +343,7 @@ class CameraSystem:
     def build_recording_metadata(self):
         return build_recording_metadata_payload(
             serial_numbers=self.serial_numbers,
-            calibration_reference_serials=self.connected_serial_numbers,
+            calibration_reference_serials=self.calibration_reference_serials,
             capture_mode=self.capture_mode,
             streams_present=self.streams_present,
             fps=self.fps,
@@ -471,8 +496,20 @@ class CameraSystem:
                     f"max={errors_np.max():.6f}"
                 )
 
-        with open("calibrate.pkl", "wb") as f:
+        calibrate_path = Path("calibrate.pkl")
+        with calibrate_path.open("wb") as f:
             pickle.dump(c2ws, f)
+        sidecar_path = write_calibration_metadata(
+            calibrate_path,
+            build_calibration_metadata(
+                serial_numbers=self.serial_numbers,
+                WH=self.WH,
+                fps=self.fps,
+                transform_count=len(c2ws),
+                per_camera_reprojection_error=per_camera_errors,
+            ),
+        )
+        print(f"[Calibrate] Wrote {calibrate_path} and {sidecar_path}")
 
         if self.listener is not None:
             self.listener.stop()

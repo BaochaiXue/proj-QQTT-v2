@@ -11,6 +11,10 @@ from qqtt.env.camera.defaults import (
     DEFAULT_NUM_CAM,
     DEFAULT_WIDTH,
 )
+from qqtt.env.camera.calibration_metadata import (
+    calibration_metadata_path_for,
+    load_calibration_reference_serials,
+)
 from qqtt.env.camera.preflight import evaluate_capture_preflight, format_capture_preflight_summary
 
 _PROJECT_ROOT = next(
@@ -110,6 +114,17 @@ def main() -> int:
     if effective_serials:
         _raise_if_preflight_blocked(decision=initial_preflight, stage_label="before camera startup")
 
+    calibrate_path = Path(args.calibrate_path).resolve()
+    calibration_reference_serials = None
+    if calibrate_path.exists():
+        calibration_reference_serials = load_calibration_reference_serials(calibrate_path)
+        if calibration_reference_serials is None:
+            print(
+                "[record] warning: calibration metadata sidecar was not found next to "
+                f"{calibrate_path}. If the camera rig was physically moved or cameras were swapped, "
+                "rerun cameras_calibrate.py before recording."
+            )
+
     camera_system = CameraSystem(
         WH=[args.width, args.height],
         fps=args.fps,
@@ -117,6 +132,7 @@ def main() -> int:
         serial_numbers=args.serials,
         capture_mode=args.capture_mode,
         emitter=args.emitter,
+        calibration_reference_serials=calibration_reference_serials,
         enable_keyboard_listener=not args.disable_keyboard_listener,
     )
     if not effective_serials:
@@ -147,9 +163,11 @@ def main() -> int:
         )
     camera_system.record(output_path=str(output_path), max_frames=args.max_frames)
 
-    calibrate_path = Path(args.calibrate_path).resolve()
     if calibrate_path.exists():
         copy2(calibrate_path, output_path / "calibrate.pkl")
+        sidecar_path = calibration_metadata_path_for(calibrate_path)
+        if sidecar_path.exists():
+            copy2(sidecar_path, output_path / sidecar_path.name)
     else:
         print(f"[record] warning: calibrate file not found, skipping copy: {calibrate_path}")
     return 0

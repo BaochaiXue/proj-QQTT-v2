@@ -39,6 +39,12 @@ DEFAULT_TILE_WIDTH = 480
 DEFAULT_TILE_HEIGHT = 360
 DEFAULT_ROW_LABEL_WIDTH = 300
 DEFAULT_HIGHLIGHT_COLOR_BGR = (255, 0, 255)
+DEFAULT_SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR: tuple[tuple[int, int, int], ...] = (
+    (255, 0, 255),  # Cam0: magenta
+    (255, 255, 0),  # Cam1: cyan
+    (0, 191, 255),  # Cam2: amber
+)
+DEFAULT_SOURCE_CAMERA_HIGHLIGHT_LABELS: tuple[str, ...] = ("Cam0 magenta", "Cam1 cyan", "Cam2 amber")
 HIGHLIGHT_SCOPES = ("all", "radius", "component")
 
 
@@ -95,6 +101,11 @@ def _overlay_mask(
     return canvas
 
 
+def _source_camera_highlight_color_bgr(camera_idx: int) -> tuple[int, int, int]:
+    palette = DEFAULT_SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR
+    return tuple(int(item) for item in palette[int(camera_idx) % len(palette)])
+
+
 def _build_rgb_object_mask_tile(
     *,
     color_image: np.ndarray,
@@ -140,6 +151,26 @@ def _build_masked_depth_removed_tile(
     return label_tile(overlay, label, tile_size)
 
 
+def _build_masked_depth_tile(
+    *,
+    depth_m: np.ndarray,
+    object_mask: np.ndarray,
+    label: str,
+    tile_size: tuple[int, int],
+    depth_min_m: float,
+    depth_max_m: float,
+) -> np.ndarray:
+    valid_mask = np.asarray(object_mask, dtype=bool) & np.isfinite(depth_m) & (np.asarray(depth_m, dtype=np.float32) > 0.0)
+    masked_depth = np.where(valid_mask, np.asarray(depth_m, dtype=np.float32), 0.0)
+    depth_vis = colorize_depth_meters(
+        masked_depth,
+        depth_min_m=float(depth_min_m),
+        depth_max_m=float(depth_max_m),
+        invalid_color=(0, 0, 0),
+    )
+    return label_tile(depth_vis, label, tile_size)
+
+
 def _build_rgb_removed_tile(
     *,
     color_image: np.ndarray,
@@ -177,14 +208,14 @@ def build_enhanced_phystwin_removed_overlay_board(
     column_headers: list[str],
     image_rows: list[list[np.ndarray]],
 ) -> np.ndarray:
-    if len(image_rows) != 4 or any(len(row) != 3 for row in image_rows):
-        raise ValueError("Enhanced removed overlay board requires a 4x3 image matrix.")
+    if len(image_rows) != 5 or any(len(row) != 3 for row in image_rows):
+        raise ValueError("Enhanced removed overlay board requires a 5x3 image matrix.")
     return compose_registration_matrix_board(
         title_lines=[
             f"Enhanced PT-like Removed Points Overlay | {round_label} | frame {int(frame_idx)}",
             (
-                "rows=RGB mask / PCD + removed / depth + removed / RGB + removed | "
-                f"highlight={model_config['highlight_scope']} | source-camera pixels"
+                "rows=RGB mask / native depth / PCD + removed / FFS depth + removed / RGB + removed | "
+                f"highlight={model_config['highlight_scope']} | source-camera colors/pixels"
             ),
             (
                 f"radius={float(model_config['phystwin_radius_m']):.3f}m/"
@@ -193,7 +224,13 @@ def build_enhanced_phystwin_removed_overlay_board(
                 f"alpha={float(model_config['highlight_alpha']):.2f}"
             ),
         ],
-        row_headers=["RGB + object mask", "PCD + removed", "Depth + removed", "RGB + removed"],
+        row_headers=[
+            "RGB + object mask",
+            "Native depth mask",
+            "PCD + removed",
+            "FFS depth + removed",
+            "RGB + removed",
+        ],
         column_headers=column_headers,
         image_rows=image_rows,
         row_label_width=int(model_config.get("row_label_width", DEFAULT_ROW_LABEL_WIDTH)),
@@ -259,23 +296,37 @@ def run_enhanced_phystwin_removed_overlay_workflow(
         "highlight_alpha": float(highlight_alpha),
         "highlight_radius_px": int(highlight_radius_px),
         "highlight_color_bgr": list(DEFAULT_HIGHLIGHT_COLOR_BGR),
+        "source_camera_highlight_colors_bgr": {
+            str(camera_idx): list(_source_camera_highlight_color_bgr(camera_idx)) for camera_idx in range(3)
+        },
+        "source_camera_highlight_labels": list(DEFAULT_SOURCE_CAMERA_HIGHLIGHT_LABELS),
         "use_float_ffs_depth_when_available": bool(use_float_ffs_depth_when_available),
     }
 
     rounds_summary: list[dict[str, Any]] = []
     for round_spec in selected_round_specs:
+        native_case_dir = resolve_case_dir(aligned_root=aligned_root, case_ref=str(round_spec["native_case_ref"]))
         ffs_case_dir = resolve_case_dir(aligned_root=aligned_root, case_ref=str(round_spec["ffs_case_ref"]))
+        native_metadata = load_case_metadata(native_case_dir)
         ffs_metadata = load_case_metadata(ffs_case_dir)
         selected_frame_idx = int(frame_idx)
-        max_frame = int(ffs_metadata["frame_num"]) - 1
+        native_max_frame = int(native_metadata["frame_num"]) - 1
+        ffs_max_frame = int(ffs_metadata["frame_num"]) - 1
+        max_frame = min(native_max_frame, ffs_max_frame)
         if selected_frame_idx < 0 or selected_frame_idx > max_frame:
             raise ValueError(
                 f"frame_idx={selected_frame_idx} is out of range for {round_spec['round_id']}; "
-                f"expected 0 <= frame_idx <= {max_frame}."
+                f"expected 0 <= frame_idx <= {max_frame} "
+                f"(native max={native_max_frame}, ffs max={ffs_max_frame})."
             )
         camera_ids = list(range(len(ffs_metadata["serial_numbers"])))
         if len(camera_ids) != 3:
             raise ValueError(f"Expected exactly 3 FFS cameras for {round_spec['round_id']}, got {camera_ids}.")
+        if len(native_metadata["serial_numbers"]) != len(camera_ids):
+            raise ValueError(
+                f"Expected native camera count to match FFS for {round_spec['round_id']}; "
+                f"got native={len(native_metadata['serial_numbers'])}, ffs={len(camera_ids)}."
+            )
 
         ffs_c2w_list = load_calibration_transforms(
             ffs_case_dir / "calibrate.pkl",
@@ -323,6 +374,14 @@ def run_enhanced_phystwin_removed_overlay_workflow(
                 depth_source="ffs_raw",
                 use_float_ffs_depth_when_available=bool(use_float_ffs_depth_when_available),
             )
+            native_depth_m, native_depth_info = _load_depth_m(
+                case_dir=native_case_dir,
+                metadata=native_metadata,
+                camera_idx=int(camera_idx),
+                frame_idx=selected_frame_idx,
+                depth_source="realsense",
+                use_float_ffs_depth_when_available=False,
+            )
             object_mask = np.asarray(masks_by_camera.get(int(camera_idx), np.zeros(depth_m.shape, dtype=bool)), dtype=bool)
             cloud = _build_world_cloud(
                 depth_m=depth_m,
@@ -349,6 +408,8 @@ def run_enhanced_phystwin_removed_overlay_workflow(
                     "color_image": color_image,
                     "depth_m": depth_m,
                     "depth_info": dict(depth_info),
+                    "native_depth_m": native_depth_m,
+                    "native_depth_info": dict(native_depth_info),
                     "object_mask": object_mask,
                     "raw_point_count": int(len(points)),
                     "mask_pixel_count": int(np.count_nonzero(object_mask)),
@@ -372,9 +433,18 @@ def run_enhanced_phystwin_removed_overlay_workflow(
         selected_removed_mask = _select_removed_mask(trace, highlight_scope=str(highlight_scope))
         pcd_colors = np.asarray(fused_colors, dtype=np.uint8).copy()
         if len(pcd_colors) > 0:
-            pcd_colors[selected_removed_mask] = np.asarray(DEFAULT_HIGHLIGHT_COLOR_BGR, dtype=np.uint8)
+            for camera_idx in camera_ids:
+                source_removed_mask = selected_removed_mask & (source_camera_idx == int(camera_idx))
+                pcd_colors[source_removed_mask] = np.asarray(
+                    _source_camera_highlight_color_bgr(int(camera_idx)),
+                    dtype=np.uint8,
+                )
+        selected_removed_by_source_camera = {
+            str(camera_idx): int(np.count_nonzero(selected_removed_mask & (source_camera_idx == int(camera_idx))))
+            for camera_idx in camera_ids
+        }
 
-        image_rows = [[], [], [], []]
+        image_rows = [[], [], [], [], []]
         per_camera_summary: list[dict[str, Any]] = []
         render_summary: list[dict[str, Any]] = []
         pcd_row_images: list[np.ndarray] = []
@@ -398,7 +468,13 @@ def run_enhanced_phystwin_removed_overlay_workflow(
             )
             rendered = label_tile(
                 rendered,
-                f"{_format_point_count(len(fused_points))} | removed={int(np.count_nonzero(selected_removed_mask))}",
+                (
+                    f"{_format_point_count(len(fused_points))} | removed={int(np.count_nonzero(selected_removed_mask))} | "
+                    "C0/C1/C2="
+                    f"{selected_removed_by_source_camera.get('0', 0)}/"
+                    f"{selected_removed_by_source_camera.get('1', 0)}/"
+                    f"{selected_removed_by_source_camera.get('2', 0)}"
+                ),
                 (int(tile_width), int(tile_height)),
             )
             pcd_row_images.append(rendered)
@@ -407,11 +483,12 @@ def run_enhanced_phystwin_removed_overlay_workflow(
                     "camera_idx": int(view_config["camera_idx"]),
                     "point_count": int(len(fused_points)),
                     "removed_point_count": int(np.count_nonzero(selected_removed_mask)),
+                    "removed_point_count_by_source_camera": dict(selected_removed_by_source_camera),
                     "tile_width": int(tile_width),
                     "tile_height": int(tile_height),
                 }
             )
-        image_rows[1] = pcd_row_images
+        image_rows[2] = pcd_row_images
 
         for camera_payload in camera_payloads:
             camera_idx = int(camera_payload["camera_idx"])
@@ -427,6 +504,10 @@ def run_enhanced_phystwin_removed_overlay_workflow(
             radius_removed_count = int(np.count_nonzero(radius_removed_point_mask))
             component_removed_count = int(np.count_nonzero(component_removed_point_mask))
             total_removed_count = int(np.count_nonzero(removed_point_mask))
+            highlight_color_bgr = _source_camera_highlight_color_bgr(camera_idx)
+            highlight_color_label = DEFAULT_SOURCE_CAMERA_HIGHLIGHT_LABELS[
+                camera_idx % len(DEFAULT_SOURCE_CAMERA_HIGHLIGHT_LABELS)
+            ]
             image_rows[0].append(
                 _build_rgb_object_mask_tile(
                     color_image=np.asarray(camera_payload["color_image"], dtype=np.uint8),
@@ -435,26 +516,47 @@ def run_enhanced_phystwin_removed_overlay_workflow(
                     tile_size=(int(tile_width), int(tile_height)),
                 )
             )
-            image_rows[2].append(
+            native_valid_mask = (
+                np.asarray(camera_payload["object_mask"], dtype=bool)
+                & np.isfinite(np.asarray(camera_payload["native_depth_m"], dtype=np.float32))
+                & (np.asarray(camera_payload["native_depth_m"], dtype=np.float32) > 0.0)
+            )
+            image_rows[1].append(
+                _build_masked_depth_tile(
+                    depth_m=np.asarray(camera_payload["native_depth_m"], dtype=np.float32),
+                    object_mask=np.asarray(camera_payload["object_mask"], dtype=bool),
+                    label=f"native valid={int(np.count_nonzero(native_valid_mask))} px",
+                    tile_size=(int(tile_width), int(tile_height)),
+                    depth_min_m=float(depth_min_m),
+                    depth_max_m=float(depth_max_m),
+                )
+            )
+            image_rows[3].append(
                 _build_masked_depth_removed_tile(
                     depth_m=np.asarray(camera_payload["depth_m"], dtype=np.float32),
                     object_mask=np.asarray(camera_payload["object_mask"], dtype=bool),
                     removed_pixel_mask=removed_pixel_mask,
-                    label=f"removed={total_removed_count} | r={radius_removed_count} c={component_removed_count}",
+                    label=(
+                        f"removed={total_removed_count} | r={radius_removed_count} c={component_removed_count} | "
+                        f"{highlight_color_label}"
+                    ),
                     tile_size=(int(tile_width), int(tile_height)),
                     depth_min_m=float(depth_min_m),
                     depth_max_m=float(depth_max_m),
-                    highlight_color_bgr=DEFAULT_HIGHLIGHT_COLOR_BGR,
+                    highlight_color_bgr=highlight_color_bgr,
                     highlight_alpha=float(highlight_alpha),
                 )
             )
-            image_rows[3].append(
+            image_rows[4].append(
                 _build_rgb_removed_tile(
                     color_image=np.asarray(camera_payload["color_image"], dtype=np.uint8),
                     removed_pixel_mask=removed_pixel_mask,
-                    label=f"RGB removed={total_removed_count} | pixels={int(np.count_nonzero(removed_pixel_mask))}",
+                    label=(
+                        f"RGB removed={total_removed_count} | pixels={int(np.count_nonzero(removed_pixel_mask))} | "
+                        f"{highlight_color_label}"
+                    ),
                     tile_size=(int(tile_width), int(tile_height)),
-                    highlight_color_bgr=DEFAULT_HIGHLIGHT_COLOR_BGR,
+                    highlight_color_bgr=highlight_color_bgr,
                     highlight_alpha=float(highlight_alpha),
                 )
             )
@@ -468,7 +570,11 @@ def run_enhanced_phystwin_removed_overlay_workflow(
                     "component_removed_point_count": component_removed_count,
                     "total_removed_point_count": total_removed_count,
                     "removed_overlay_pixel_count": int(np.count_nonzero(removed_pixel_mask)),
+                    "highlight_color_bgr": list(highlight_color_bgr),
+                    "highlight_color_label": str(highlight_color_label),
                     "depth_info": dict(camera_payload["depth_info"]),
+                    "native_depth_info": dict(camera_payload["native_depth_info"]),
+                    "native_masked_valid_pixel_count": int(np.count_nonzero(native_valid_mask)),
                 }
             )
 
@@ -482,11 +588,13 @@ def run_enhanced_phystwin_removed_overlay_workflow(
             column_headers=column_headers,
             image_rows=image_rows,
         )
-        board_path = round_output_dir / f"enhanced_phystwin_removed_overlay_4x3_frame_{selected_frame_idx:04d}.png"
+        board_path = round_output_dir / f"enhanced_phystwin_removed_overlay_5x3_frame_{selected_frame_idx:04d}.png"
         write_image(board_path, board)
         round_summary = {
             "round_id": str(round_spec["round_id"]),
             "round_label": str(round_spec["round_label"]),
+            "native_case_ref": str(round_spec["native_case_ref"]),
+            "native_case_dir": str(native_case_dir.resolve()),
             "ffs_case_ref": str(round_spec["ffs_case_ref"]),
             "ffs_case_dir": str(ffs_case_dir.resolve()),
             "frame_idx": int(selected_frame_idx),
@@ -499,14 +607,19 @@ def run_enhanced_phystwin_removed_overlay_workflow(
             "radius_removed_point_count": int(np.count_nonzero(trace["radius_removed_mask"])),
             "component_removed_point_count": int(np.count_nonzero(trace["component_removed_mask"])),
             "total_removed_point_count": int(np.count_nonzero(selected_removed_mask)),
+            "total_removed_point_count_by_source_camera": dict(selected_removed_by_source_camera),
             "postprocess_stats": dict(postprocess_stats),
             "per_camera": per_camera_summary,
             "render_summary": render_summary,
             "render_contract": {
                 "projection_mode": "source_camera_pixels_no_cross_reprojection",
                 "pcd_projection_mode": "original_camera_pinhole",
-                "rows": "rgb_mask_pcd_removed_depth_removed_rgb_removed",
+                "rows": "rgb_mask_native_depth_mask_pcd_removed_ffs_depth_removed_rgb_removed",
                 "highlight_scope": str(highlight_scope),
+                "highlight_color_mode": "source_camera",
+                "source_camera_highlight_colors_bgr": {
+                    str(camera_idx): list(_source_camera_highlight_color_bgr(camera_idx)) for camera_idx in camera_ids
+                },
                 "object_masked": True,
                 "formal_depth_written": False,
             },
