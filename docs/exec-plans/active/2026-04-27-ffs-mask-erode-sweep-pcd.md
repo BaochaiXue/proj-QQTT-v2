@@ -24,11 +24,12 @@ result folder.
 
 ## Files To Touch
 
-- `data_process/visualization/workflows/ffs_mask_erode_sweep_pcd_compare.py`
 - `data_process/visualization/experiments/ffs_mask_erode_sweep_pcd_compare.py`
 - `data_process/visualization/layouts.py`
-- `scripts/harness/visual_compare_ffs_mask_erode_sweep_pcd.py`
 - `scripts/harness/experiments/visual_compare_ffs_mask_erode_sweep_pcd.py`
+- compatibility wrappers:
+  - `data_process/visualization/workflows/ffs_mask_erode_sweep_pcd_compare.py`
+  - `scripts/harness/visual_compare_ffs_mask_erode_sweep_pcd.py`
 - `tests/test_ffs_mask_erode_sweep_pcd_compare_smoke.py`
 - `scripts/harness/check_all.py`
 - `tests/test_check_all_smoke.py`
@@ -56,6 +57,6 @@ result folder.
 ## Validation
 
 - `conda run -n qqtt-ffs-compat python -m unittest -v tests.test_ffs_mask_erode_sweep_pcd_compare_smoke tests.test_check_all_smoke`
-- `conda run -n qqtt-ffs-compat python scripts/harness/visual_compare_ffs_mask_erode_sweep_pcd.py --help`
+- `conda run -n qqtt-ffs-compat python scripts/harness/experiments/visual_compare_ffs_mask_erode_sweep_pcd.py --help`
 - `conda run -n qqtt-ffs-compat python scripts/harness/check_all.py`
-- `conda run -n qqtt-ffs-compat python scripts/harness/visual_compare_ffs_mask_erode_sweep_pcd.py --frame_idx 0`
+- `conda run -n qqtt-ffs-compat python scripts/harness/experiments/visual_compare_ffs_mask_erode_sweep_pcd.py --frame_idx 0`
