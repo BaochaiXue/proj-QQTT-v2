@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 
 from scripts.harness import check_all
@@ -16,7 +17,7 @@ class CheckAllSmokeTest(unittest.TestCase):
 
     def test_quick_profile_uses_curated_batched_commands(self) -> None:
         commands = check_all.build_commands(python="python", profile="quick")
-        self.assertEqual(len(commands), 25)
+        self.assertEqual(len(commands), 26)
         self.assertIn(["python", "cameras_viewer.py", "--help"], commands)
         self.assertIn(["python", "record_data_realtime_align.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/visualize_ffs_static_confidence_panels.py", "--help"], commands)
@@ -24,6 +25,7 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertIn(["python", "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/visual_compare_ffs_confidence_filter_pcd.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/visual_compare_ffs_mask_erode_sweep_pcd.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/visual_compare_native_ffs_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/check_experiment_boundaries.py"], commands)
@@ -40,6 +42,7 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_ffs_confidence_filtering_smoke",
                 "tests.test_ffs_confidence_filter_pcd_compare_smoke",
                 "tests.test_ffs_confidence_threshold_sweep_pcd_compare_smoke",
+                "tests.test_ffs_mask_erode_multipage_sweep_pcd_compare_smoke",
                 "tests.test_ffs_mask_erode_sweep_pcd_compare_smoke",
                 "tests.test_native_ffs_fused_pcd_compare_smoke",
                 "tests.test_ffs_intrinsic_file_format",
@@ -63,6 +66,27 @@ class CheckAllSmokeTest(unittest.TestCase):
             ["python", "-m", "pytest", "tests/test_d455_probe_matrix_builder.py", "tests/test_d455_probe_result_schema.py"],
             commands,
         )
+
+    def test_generated_script_paths_exist(self) -> None:
+        for profile in ("quick", "full"):
+            with self.subTest(profile=profile):
+                commands = check_all.build_commands(python="python", profile=profile)
+                for cmd in commands:
+                    for item in cmd[1:]:
+                        if item.endswith(".py") and not item.startswith("-"):
+                            script_path = check_all.ROOT / item
+                            self.assertTrue(script_path.is_file(), f"missing script path in {profile}: {item}")
+
+    def test_generated_unittest_modules_exist(self) -> None:
+        for profile in ("quick", "full"):
+            with self.subTest(profile=profile):
+                commands = check_all.build_commands(python="python", profile=profile)
+                for cmd in commands:
+                    if cmd[1:4] != ["-m", "unittest", "-v"]:
+                        continue
+                    for module_name in cmd[4:]:
+                        module_path = check_all.ROOT / Path(*module_name.split(".")).with_suffix(".py")
+                        self.assertTrue(module_path.is_file(), f"missing unittest module in {profile}: {module_name}")
 
 
 if __name__ == "__main__":

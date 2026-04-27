@@ -67,6 +67,7 @@ These should stay thin wrappers around workflow modules under `data_process/visu
 - `experiments/run_ffs_confidence_filter_sweep.py`
 - `experiments/visual_compare_ffs_confidence_filter_pcd.py`
 - `experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py`
+- `experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py`
 - `experiments/visual_compare_ffs_mask_erode_sweep_pcd.py`
 - `experiments/visual_compare_native_ffs_fused_pcd.py`
 - `experiments/visualize_ffs_static_confidence_panels.py`
@@ -81,6 +82,8 @@ more root-level harness scripts.
 `experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py` renders the same `6x3` board shape as one experiment over thresholds `0.01,0.05,0.10,0.15,0.20,0.25,0.50`. The default experiment uses the object mask, erodes the mask inward by `1px`, and applies the PhysTwin-like radius-neighbor cleanup before rendering each row.
 
 `experiments/visual_compare_ffs_mask_erode_sweep_pcd.py` renders static round 1-3 frame-0 object-only `10x3` Open3D boards for native depth, original FFS depth, and original FFS depth with mask erosion from `1px` through `8px`. The default experiment keeps all outputs under one result folder, applies display-only PhysTwin-like radius-neighbor cleanup before rendering each row, and uses a wider left label band; adjust `--row_label_width` if labels still need more room.
+
+`experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py` renders the extended static round 1-3 frame-0 object-only mask-erode experiment as three `10x3` pages per round. Page 1 contains native depth, original FFS, and erode `1..8px`; pages 2 and 3 continue with erode `9..18px` and `19..28px` only so each page remains `10x3`. The experiment uses one result folder and applies display-only PhysTwin-like radius-neighbor cleanup before rendering.
 
 `experiments/visual_compare_native_ffs_fused_pcd.py` renders the static round 1-3 frame-0 object-only `3x3` PCD boards for native, original FFS, and fused native/FFS depth. The fused row keeps every valid native depth pixel and uses FFS only where native depth is missing; it reuses the existing static SAM mask and applies display-only PhysTwin-like radius-neighbor cleanup before rendering.
 
