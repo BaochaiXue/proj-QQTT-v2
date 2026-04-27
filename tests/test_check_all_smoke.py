@@ -17,12 +17,13 @@ class CheckAllSmokeTest(unittest.TestCase):
 
     def test_quick_profile_uses_curated_batched_commands(self) -> None:
         commands = check_all.build_commands(python="python", profile="quick")
-        self.assertEqual(len(commands), 26)
+        self.assertEqual(len(commands), 27)
         self.assertIn(["python", "cameras_viewer.py", "--help"], commands)
         self.assertIn(["python", "record_data_realtime_align.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/visualize_ffs_static_confidence_panels.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/visual_compare_ffs_confidence_filter_pcd.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py", "--help"], commands)
@@ -39,6 +40,7 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_record_data_align_smoke",
                 "tests.test_cameras_viewer_ffs_smoke",
                 "tests.test_depth_backend_contract_smoke",
+                "tests.test_enhanced_phystwin_postprocess_pcd_compare_smoke",
                 "tests.test_ffs_confidence_filtering_smoke",
                 "tests.test_ffs_confidence_filter_pcd_compare_smoke",
                 "tests.test_ffs_confidence_threshold_sweep_pcd_compare_smoke",

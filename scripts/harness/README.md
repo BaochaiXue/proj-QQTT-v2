@@ -65,6 +65,7 @@ These should stay thin wrappers around workflow modules under `data_process/visu
 ### Experiment-Only CLIs
 
 - `experiments/run_ffs_confidence_filter_sweep.py`
+- `experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py`
 - `experiments/visual_compare_ffs_confidence_filter_pcd.py`
 - `experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py`
 - `experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py`
@@ -80,6 +81,8 @@ more root-level harness scripts.
 `experiments/visual_compare_ffs_confidence_filter_pcd.py` renders the static round 1-3 frame-0 object-mask `6x3` Open3D boards for native, raw FFS, and four confidence-filtered FFS variants. Use `--phystwin_like_postprocess --phystwin_radius_m 0.01 --phystwin_nb_points 40` when the displayed clouds should match the PhysTwin-like radius-neighbor cleanup.
 
 `experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py` renders the same `6x3` board shape as one experiment over thresholds `0.01,0.05,0.10,0.15,0.20,0.25,0.50`. The default experiment uses the object mask, erodes the mask inward by `1px`, and applies the PhysTwin-like radius-neighbor cleanup before rendering each row.
+
+`experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py` renders static round 1-3 frame-0 object-only `6x3` boards comparing native and original FFS point clouds under no postprocess, the existing PhysTwin-like radius-neighbor postprocess, and the enhanced radius-plus-3D-component postprocess. The enhanced mode keeps the main component and records removed component bbox/gap stats for tuning.
 
 `experiments/visual_compare_ffs_mask_erode_sweep_pcd.py` renders static round 1-3 frame-0 object-only `10x3` Open3D boards for native depth, original FFS depth, and original FFS depth with mask erosion from `1px` through `8px`. The default experiment keeps all outputs under one result folder, applies display-only PhysTwin-like radius-neighbor cleanup before rendering each row, and uses a wider left label band; adjust `--row_label_width` if labels still need more room.
 
