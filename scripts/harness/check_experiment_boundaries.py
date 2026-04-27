@@ -11,6 +11,7 @@ HARNESS_ROOT = ROOT / "scripts" / "harness"
 
 EXPERIMENT_WORKFLOW_SHIMS = {
     ROOT / "data_process" / "visualization" / "workflows" / "enhanced_phystwin_postprocess_pcd_compare.py",
+    ROOT / "data_process" / "visualization" / "workflows" / "enhanced_phystwin_removed_overlay.py",
     ROOT / "data_process" / "visualization" / "workflows" / "ffs_confidence_filter_pcd_compare.py",
     ROOT / "data_process" / "visualization" / "workflows" / "ffs_confidence_panels.py",
     ROOT / "data_process" / "visualization" / "workflows" / "ffs_confidence_pcd_panels.py",

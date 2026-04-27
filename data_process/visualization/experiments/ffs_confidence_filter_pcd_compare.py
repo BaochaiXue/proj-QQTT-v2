@@ -228,7 +228,7 @@ def _component_summary(
     }
 
 
-def _apply_enhanced_phystwin_like_postprocess(
+def _apply_enhanced_phystwin_like_postprocess_with_trace(
     *,
     points: np.ndarray,
     colors: np.ndarray,
@@ -242,13 +242,44 @@ def _apply_enhanced_phystwin_like_postprocess(
     point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     color_array = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
     input_point_count = int(len(point_array))
-    radius_points, radius_colors, radius_stats = _apply_phystwin_like_radius_postprocess(
-        points=point_array,
-        colors=color_array,
-        enabled=bool(enabled),
-        radius_m=float(radius_m),
-        nb_points=int(nb_points),
-    )
+    radius_kept_mask = np.ones((input_point_count,), dtype=bool)
+    radius_stats = {
+        "enabled": bool(enabled),
+        "mode": "phystwin_like_radius_neighbor_filter",
+        "radius_m": float(radius_m),
+        "nb_points": int(nb_points),
+        "input_point_count": input_point_count,
+        "inlier_point_count": input_point_count,
+        "outlier_point_count": 0,
+        "outlier_ratio": 0.0,
+    }
+    if bool(enabled) and input_point_count > 0:
+        result = detect_radius_outlier_indices(
+            point_array,
+            radius_m=float(radius_m),
+            nb_points=int(nb_points),
+        )
+        inlier_indices = np.sort(np.asarray(result["inlier_indices"], dtype=np.int32).reshape(-1))
+        radius_kept_mask[:] = False
+        radius_kept_mask[inlier_indices] = True
+        outlier_count = int(input_point_count - len(inlier_indices))
+        radius_stats.update(
+            {
+                "inlier_point_count": int(len(inlier_indices)),
+                "outlier_point_count": outlier_count,
+                "outlier_ratio": float(outlier_count / max(1, input_point_count)),
+            }
+        )
+    radius_indices = np.where(radius_kept_mask)[0].astype(np.int32)
+    radius_points = point_array[radius_indices]
+    radius_colors = color_array[radius_indices]
+    component_removed_mask = np.zeros((input_point_count,), dtype=bool)
+    trace = {
+        "kept_mask": radius_kept_mask.copy(),
+        "radius_removed_mask": ~radius_kept_mask,
+        "component_removed_mask": component_removed_mask.copy(),
+        "removed_mask": ~radius_kept_mask,
+    }
     stats: dict[str, Any] = {
         "enabled": bool(enabled),
         "mode": "enhanced_phystwin_like_radius_then_component_filter",
@@ -268,7 +299,7 @@ def _apply_enhanced_phystwin_like_postprocess(
         "removed_components": [],
     }
     if not enabled or len(radius_points) == 0:
-        return radius_points, radius_colors, stats
+        return radius_points, radius_colors, stats, trace
     if float(component_voxel_size_m) <= 0.0:
         raise ValueError(f"component_voxel_size_m must be positive, got {component_voxel_size_m}.")
     if float(keep_near_main_gap_m) < 0.0:
@@ -292,12 +323,12 @@ def _apply_enhanced_phystwin_like_postprocess(
                     kept=True,
                 )
             ]
-        return radius_points, radius_colors, stats
+        return radius_points, radius_colors, stats, trace
 
     main_points = radius_points[np.asarray(components[0], dtype=np.int32)]
     main_bbox_min = main_points.min(axis=0).astype(np.float32)
     main_bbox_max = main_points.max(axis=0).astype(np.float32)
-    keep_mask = np.zeros((len(radius_points),), dtype=bool)
+    component_keep_mask = np.zeros((len(radius_points),), dtype=bool)
     kept_component_indices: list[int] = []
     component_summaries: list[dict[str, Any]] = []
     removed_summaries: list[dict[str, Any]] = []
@@ -311,7 +342,7 @@ def _apply_enhanced_phystwin_like_postprocess(
             bbox_max = component_points.max(axis=0).astype(np.float32)
             keep_component = _bbox_gap_m(bbox_min, bbox_max, main_bbox_min, main_bbox_max) <= float(keep_near_main_gap_m)
         if keep_component:
-            keep_mask[indices] = True
+            component_keep_mask[indices] = True
             kept_component_indices.append(int(component_idx))
         summary = _component_summary(
             component_idx=int(component_idx),
@@ -325,8 +356,17 @@ def _apply_enhanced_phystwin_like_postprocess(
         if not keep_component:
             removed_summaries.append(summary)
 
-    kept_count = int(np.count_nonzero(keep_mask))
+    kept_count = int(np.count_nonzero(component_keep_mask))
     removed_count = int(len(radius_points) - kept_count)
+    component_removed_radius_mask = ~component_keep_mask
+    component_removed_mask[radius_indices[component_removed_radius_mask]] = True
+    kept_mask = radius_kept_mask & ~component_removed_mask
+    trace = {
+        "kept_mask": kept_mask,
+        "radius_removed_mask": ~radius_kept_mask,
+        "component_removed_mask": component_removed_mask,
+        "removed_mask": (~radius_kept_mask) | component_removed_mask,
+    }
     stats.update(
         {
             "output_point_count": kept_count,
@@ -338,7 +378,31 @@ def _apply_enhanced_phystwin_like_postprocess(
             "removed_components": removed_summaries[: max(1, int(max_component_report_count))],
         }
     )
-    return radius_points[keep_mask], radius_colors[keep_mask], stats
+    return radius_points[component_keep_mask], radius_colors[component_keep_mask], stats, trace
+
+
+def _apply_enhanced_phystwin_like_postprocess(
+    *,
+    points: np.ndarray,
+    colors: np.ndarray,
+    enabled: bool,
+    radius_m: float,
+    nb_points: int,
+    component_voxel_size_m: float,
+    keep_near_main_gap_m: float = 0.0,
+    max_component_report_count: int = 32,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    filtered_points, filtered_colors, stats, _trace = _apply_enhanced_phystwin_like_postprocess_with_trace(
+        points=points,
+        colors=colors,
+        enabled=enabled,
+        radius_m=radius_m,
+        nb_points=nb_points,
+        component_voxel_size_m=component_voxel_size_m,
+        keep_near_main_gap_m=keep_near_main_gap_m,
+        max_component_report_count=max_component_report_count,
+    )
+    return filtered_points, filtered_colors, stats
 
 
 def _format_point_count(point_count: int) -> str:
