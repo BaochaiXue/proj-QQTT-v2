@@ -195,7 +195,7 @@ The FFS benchmark helper stack is intentionally split like this:
   - masked `3x3` RGB / RGB-colored fused PCD / confidence-colored fused PCD board export per round
 - `scripts/harness/visual_compare_native_ffs_fused_pcd.py`
   - static-round frame-0 native / FFS / fused object-PCD board export per round
-  - fused depth keeps native unless native is missing or below the configured threshold
+  - fused depth keeps every valid native pixel and uses FFS only where native depth is missing
   - reuses static SAM masks and applies display-only PhysTwin-like radius-neighbor cleanup without rewriting aligned depth
 
 This keeps the deterministic summary logic testable without requiring CUDA while leaving the actual model execution in the thin harness CLI.

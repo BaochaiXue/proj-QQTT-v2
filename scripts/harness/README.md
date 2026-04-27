@@ -73,7 +73,7 @@ These should stay thin wrappers around workflow modules under `data_process/visu
 
 `visual_compare_ffs_confidence_threshold_sweep_pcd.py` renders the same `6x3` board shape as one experiment over thresholds `0.01,0.05,0.10,0.15,0.20,0.25,0.50`. The default experiment uses the object mask, erodes the mask inward by `1px`, and applies the PhysTwin-like radius-neighbor cleanup before rendering each row.
 
-`visual_compare_native_ffs_fused_pcd.py` renders the static round 1-3 frame-0 object-only `3x3` PCD boards for native, original FFS, and fused native/FFS depth. The fused row keeps native depth unless native is missing or below `--native_min_m`, reuses the existing static SAM mask, and applies display-only PhysTwin-like radius-neighbor cleanup before rendering.
+`visual_compare_native_ffs_fused_pcd.py` renders the static round 1-3 frame-0 object-only `3x3` PCD boards for native, original FFS, and fused native/FFS depth. The fused row keeps every valid native depth pixel and uses FFS only where native depth is missing; it reuses the existing static SAM mask and applies display-only PhysTwin-like radius-neighbor cleanup before rendering.
 
 ### Focused Diagnostics
 

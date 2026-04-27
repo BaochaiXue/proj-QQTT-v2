@@ -46,20 +46,20 @@ class NativeFfsFusedPcdCompareSmokeTest(unittest.TestCase):
         self.assertTrue(str(specs[0]["ffs_case_ref"]).startswith("static/ffs_30_static_round1"))
         self.assertTrue(str(specs[0]["mask_root"]).endswith("masked_pointcloud_compare_round1_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks"))
 
-    def test_fuse_native_ffs_depth_uses_ffs_for_missing_and_below_threshold(self) -> None:
+    def test_fuse_native_ffs_depth_only_uses_ffs_for_missing_native(self) -> None:
         native = np.array([[0.9, 0.0, 0.5], [0.6, 0.59, np.nan]], dtype=np.float32)
         ffs = np.array([[0.8, 0.7, 0.75], [0.65, 0.72, 0.0]], dtype=np.float32)
 
-        fused, stats = fuse_native_ffs_depth(native, ffs, native_min_m=0.6)
+        fused, stats = fuse_native_ffs_depth(native, ffs)
 
         np.testing.assert_allclose(
             fused,
-            np.array([[0.9, 0.7, 0.75], [0.6, 0.72, 0.0]], dtype=np.float32),
+            np.array([[0.9, 0.7, 0.5], [0.6, 0.59, 0.0]], dtype=np.float32),
         )
-        self.assertEqual(stats["native_kept_pixel_count"], 2)
+        self.assertEqual(stats["mode"], "missing_only")
+        self.assertEqual(stats["native_kept_pixel_count"], 4)
         self.assertEqual(stats["native_missing_pixel_count"], 2)
-        self.assertEqual(stats["native_below_threshold_pixel_count"], 2)
-        self.assertEqual(stats["ffs_filled_pixel_count"], 3)
+        self.assertEqual(stats["ffs_filled_pixel_count"], 1)
         self.assertEqual(stats["unfilled_pixel_count"], 1)
 
     def test_build_board_returns_3x3_matrix(self) -> None:
@@ -73,7 +73,6 @@ class NativeFfsFusedPcdCompareSmokeTest(unittest.TestCase):
         board = build_native_ffs_fused_pcd_board(
             round_label="Round 1",
             frame_idx=0,
-            native_min_m=0.6,
             model_config={
                 "depth_min_m": 0.2,
                 "depth_max_m": 1.5,
@@ -153,10 +152,11 @@ class NativeFfsFusedPcdCompareSmokeTest(unittest.TestCase):
                 self.assertEqual(np.asarray(call["intrinsic_matrix"]).shape, (3, 3))
                 self.assertEqual(np.asarray(call["extrinsic_matrix"]).shape, (4, 4))
             fused_cam0 = round_summary["per_variant_camera"]["fused"][0]
-            self.assertEqual(fused_cam0["fusion"]["ffs_filled_pixel_count"], 2)
-            self.assertEqual(fused_cam0["fusion"]["native_kept_pixel_count"], 78)
+            self.assertEqual(fused_cam0["fusion"]["mode"], "missing_only")
+            self.assertEqual(fused_cam0["fusion"]["ffs_filled_pixel_count"], 1)
+            self.assertEqual(fused_cam0["fusion"]["native_kept_pixel_count"], 79)
             self.assertGreater(round_summary["fused_point_counts"]["fused"], round_summary["fused_point_counts"]["native"])
-            self.assertEqual(float(summary["model_config"]["native_min_m"]), 0.6)
+            self.assertEqual(summary["model_config"]["fusion_mode"], "missing_only")
 
 
 if __name__ == "__main__":

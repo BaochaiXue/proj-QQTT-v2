@@ -9,8 +9,8 @@ renders object-only masked point-cloud boards comparing:
 - original aligned FFS depth
 - fused native/FFS depth
 
-The fused depth should keep native pixels when native depth is valid and at
-least `0.6m`; otherwise it should take the same-pixel FFS depth. The board
+The fused depth should keep every valid native depth pixel and take same-pixel
+FFS depth only where native depth is missing. The board
 should match the existing professor-facing masked object PCD style: rows are
 depth variants, columns are the three original camera views, object masks are
 reused from existing SAM 3.1 sidecars, and displayed fused clouds pass the
@@ -41,8 +41,7 @@ PhysTwin-like radius-neighbor cleanup.
    the existing static FFS SAM mask roots.
 2. Load frame `0` native depth and original aligned FFS depth in meters for
    each camera.
-3. Build fused depth in memory using `native_valid && native >= 0.6m` as the
-   native-keep rule.
+3. Build fused depth in memory using `native_valid` as the native-keep rule.
 4. Apply the object mask, with optional default `1px` erosion, to native, FFS,
    and fused depth before point-cloud construction.
 5. Build per-camera world clouds, fuse all 3 cameras per row, then apply the

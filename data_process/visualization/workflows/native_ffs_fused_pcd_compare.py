@@ -48,7 +48,6 @@ DEFAULT_NATIVE_FFS_FUSED_PCD_ROUNDS: tuple[dict[str, str], ...] = (
         "mask_root": "static/masked_pointcloud_compare_round3_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks",
     },
 )
-DEFAULT_NATIVE_FFS_FUSED_MIN_NATIVE_M = 0.6
 DEFAULT_PHYSTWIN_RADIUS_M = float(PHYSTWIN_DATA_PROCESS_MASK_CONTRACT["radius_m"])
 DEFAULT_PHYSTWIN_NB_POINTS = int(PHYSTWIN_DATA_PROCESS_MASK_CONTRACT["nb_points"])
 
@@ -66,8 +65,6 @@ def build_static_native_ffs_fused_pcd_round_specs(*, aligned_root: Path) -> list
 def fuse_native_ffs_depth(
     native_depth_m: np.ndarray,
     ffs_depth_m: np.ndarray,
-    *,
-    native_min_m: float = DEFAULT_NATIVE_FFS_FUSED_MIN_NATIVE_M,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     native = np.asarray(native_depth_m, dtype=np.float32)
     ffs = np.asarray(ffs_depth_m, dtype=np.float32)
@@ -78,10 +75,9 @@ def fuse_native_ffs_depth(
 
     native_positive = np.isfinite(native) & (native > 0.0)
     native_missing = ~native_positive
-    native_below_threshold = native_positive & (native < float(native_min_m))
-    native_keep = native_positive & (native >= float(native_min_m))
+    native_keep = native_positive
     ffs_valid = np.isfinite(ffs) & (ffs > 0.0)
-    use_ffs_candidate = ~native_keep
+    use_ffs_candidate = native_missing
     use_ffs_valid = use_ffs_candidate & ffs_valid
 
     fused = np.zeros(native.shape, dtype=np.float32)
@@ -89,11 +85,10 @@ def fuse_native_ffs_depth(
     fused[use_ffs_valid] = ffs[use_ffs_valid]
     pixel_count = int(native.size)
     stats = {
-        "native_min_m": float(native_min_m),
+        "mode": "missing_only",
         "pixel_count": pixel_count,
         "native_valid_pixel_count": int(np.count_nonzero(native_positive)),
         "native_missing_pixel_count": int(np.count_nonzero(native_missing)),
-        "native_below_threshold_pixel_count": int(np.count_nonzero(native_below_threshold)),
         "native_kept_pixel_count": int(np.count_nonzero(native_keep)),
         "ffs_valid_pixel_count": int(np.count_nonzero(ffs_valid)),
         "ffs_candidate_pixel_count": int(np.count_nonzero(use_ffs_candidate)),
@@ -148,7 +143,6 @@ def build_native_ffs_fused_pcd_board(
     *,
     round_label: str,
     frame_idx: int,
-    native_min_m: float,
     model_config: dict[str, Any],
     column_headers: list[str],
     variant_rows: list[dict[str, str]],
@@ -174,7 +168,7 @@ def build_native_ffs_fused_pcd_board(
                 f"erode={int(model_config['mask_erode_pixels'])}px | post={postprocess_label}"
             ),
             (
-                f"fused rule: use FFS when native missing or native < {float(native_min_m):.2f}m | "
+                "fused rule: use FFS only where native depth is missing | "
                 f"depth=[{float(model_config['depth_min_m']):.2f},{float(model_config['depth_max_m']):.2f}]m"
             ),
         ],
@@ -209,7 +203,6 @@ def run_native_ffs_fused_pcd_workflow(
     aligned_root: Path,
     output_root: Path,
     frame_idx: int = 0,
-    native_min_m: float = DEFAULT_NATIVE_FFS_FUSED_MIN_NATIVE_M,
     depth_min_m: float = 0.2,
     depth_max_m: float = 1.5,
     point_size: float = 2.0,
@@ -230,8 +223,6 @@ def run_native_ffs_fused_pcd_workflow(
     aligned_root = Path(aligned_root).resolve()
     output_root = Path(output_root).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
-    if float(native_min_m) <= 0.0:
-        raise ValueError(f"native_min_m must be positive, got {native_min_m}.")
     if float(depth_max_m) <= float(depth_min_m):
         raise ValueError(f"depth_max_m must be greater than depth_min_m. Got {depth_min_m}, {depth_max_m}.")
     if int(mask_erode_pixels) < 0:
@@ -249,7 +240,7 @@ def run_native_ffs_fused_pcd_workflow(
     render_frame_fn = render_frame_fn or _render_open3d_offscreen_pinhole
     variant_rows = _variant_rows()
     model_config = {
-        "native_min_m": float(native_min_m),
+        "fusion_mode": "missing_only",
         "depth_min_m": float(depth_min_m),
         "depth_max_m": float(depth_max_m),
         "point_size": float(point_size),
@@ -365,7 +356,6 @@ def run_native_ffs_fused_pcd_workflow(
             fused_depth_m, fusion_stats = fuse_native_ffs_depth(
                 native_depth_m,
                 ffs_depth_m,
-                native_min_m=float(native_min_m),
             )
 
             variant_inputs = {
@@ -491,14 +481,12 @@ def run_native_ffs_fused_pcd_workflow(
         board = build_native_ffs_fused_pcd_board(
             round_label=str(round_spec["round_label"]),
             frame_idx=selected_frame_idx,
-            native_min_m=float(native_min_m),
             model_config=model_config,
             column_headers=column_headers,
             variant_rows=variant_rows,
             rendered_rows=rendered_rows,
         )
-        suffix = str(f"{float(native_min_m):.2f}").replace(".", "_")
-        board_path = round_output_dir / f"native_ffs_fused_object_pcd_3x3_frame_{selected_frame_idx:04d}_native_min_{suffix}.png"
+        board_path = round_output_dir / f"native_ffs_missing_fused_object_pcd_3x3_frame_{selected_frame_idx:04d}.png"
         write_image(board_path, board)
 
         round_summary = {
@@ -530,8 +518,7 @@ def run_native_ffs_fused_pcd_workflow(
                 "erode_kernel": "3x3_ones",
             },
             "fusion_rule": {
-                "mode": "native_unless_missing_or_below_threshold_else_ffs",
-                "native_min_m": float(native_min_m),
+                "mode": "native_unless_missing_else_ffs",
                 "operation_order": "fuse_raw_aligned_depth_then_object_mask_then_fuse_cameras_then_display_postprocess",
             },
             "render_contract": {

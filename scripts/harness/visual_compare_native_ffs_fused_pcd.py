@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-DEFAULT_OUTPUT_ROOT = ROOT / "data" / "static" / "native_ffs_fused_object_pcd_3x3_frame_0000_native_min_0_60"
+DEFAULT_OUTPUT_ROOT = ROOT / "data" / "static" / "native_ffs_missing_fused_object_pcd_3x3_frame_0000"
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,12 +23,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aligned_root", type=Path, default=ROOT / "data")
     parser.add_argument("--output_root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--frame_idx", type=int, default=0)
-    parser.add_argument(
-        "--native_min_m",
-        type=float,
-        default=0.6,
-        help="Use FFS depth when native depth is missing or below this threshold.",
-    )
     parser.add_argument("--depth_min_m", type=float, default=0.2)
     parser.add_argument("--depth_max_m", type=float, default=1.5)
     parser.add_argument("--point_size", type=float, default=2.0)
@@ -101,7 +95,6 @@ def main() -> int:
         aligned_root=Path(args.aligned_root).resolve(),
         output_root=Path(args.output_root).resolve(),
         frame_idx=int(args.frame_idx),
-        native_min_m=float(args.native_min_m),
         depth_min_m=float(args.depth_min_m),
         depth_max_m=float(args.depth_max_m),
         point_size=float(args.point_size),

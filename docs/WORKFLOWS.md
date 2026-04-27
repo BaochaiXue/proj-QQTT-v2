@@ -560,7 +560,7 @@ This diagnostic-only workflow writes one masked object `3x3` PCD board per stati
 
 - rows: `Native depth`, `Original FFS`, `Fused depth`
 - columns: `Cam0`, `Cam1`, `Cam2`
-- fused rule: keep native depth unless native is missing or below `--native_min_m` (`0.6m` by default), otherwise use same-pixel FFS depth
+- fused rule: keep every valid native depth pixel and use same-pixel FFS only where native depth is missing
 - reuses the existing static SAM object masks, erodes them inward by `--mask_erode_pixels` (`1px` by default), and renders only the masked object PCD
 - applies display-only PhysTwin-like radius-neighbor cleanup to each fused row before rendering
 - does not write fused depth back into any aligned case
