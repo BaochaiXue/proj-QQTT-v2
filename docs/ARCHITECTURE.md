@@ -62,11 +62,9 @@ The repo is intentionally small.
 - `data_process/visualization/types.py`
 - `data_process/visualization/views.py`
 - `data_process/visualization/workflows/**`
+- `data_process/visualization/experiments/**`
 - `scripts/harness/visual_compare_masked_pointcloud.py`
 - `scripts/harness/visual_compare_masked_camera_views.py`
-- `scripts/harness/visualize_ffs_static_confidence_panels.py`
-- `scripts/harness/visualize_ffs_static_confidence_pcd_panels.py`
-- `scripts/harness/visual_compare_native_ffs_fused_pcd.py`
 - `scripts/harness/visual_compare_depth_triplet_ply.py`
 - `scripts/harness/visual_compare_depth_triplet_video.py`
 - `scripts/harness/visual_compare_depth_panels.py`
@@ -84,11 +82,10 @@ The repo is intentionally small.
 - `env_install/install_wsl_realsense_udev.sh`
 - `scripts/harness/check_scope.py`
 - `scripts/harness/check_all.py`
+- `scripts/harness/check_experiment_boundaries.py`
 - `scripts/harness/benchmark_ffs_configs.py`
 - `scripts/harness/run_ffs_static_replay_matrix.py`
-- `scripts/harness/visualize_ffs_static_confidence_panels.py`
-- `scripts/harness/visualize_ffs_static_confidence_pcd_panels.py`
-- `scripts/harness/visual_compare_native_ffs_fused_pcd.py`
+- `scripts/harness/experiments/**`
 - `scripts/harness/cleanup_different_types_cases.py`
 - `tests/test_record_data_align_smoke.py`
 - `docs/*`
@@ -185,20 +182,28 @@ The FFS benchmark helper stack is intentionally split like this:
   - mask caching / static fallback handling
   - masked RGB and FFS-only masked PCD board generation
   - ranked PPTX export
-- `scripts/harness/visualize_ffs_static_confidence_panels.py`
+- `scripts/harness/experiments/visualize_ffs_static_confidence_panels.py`
   - static-round frame-0 PyTorch FFS rerun for all 3 static rounds
   - classifier-logit-derived `margin` and `max_softmax` confidence maps
   - masked `3x3` RGB / depth / confidence board export per round
-- `scripts/harness/visualize_ffs_static_confidence_pcd_panels.py`
+- `scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py`
   - static-round frame-0 PyTorch FFS rerun for all 3 static rounds
   - fused masked FFS point cloud rendering from the 3 original camera pinhole views
   - masked `3x3` RGB / RGB-colored fused PCD / confidence-colored fused PCD board export per round
-- `scripts/harness/visual_compare_native_ffs_fused_pcd.py`
+- `scripts/harness/experiments/visual_compare_native_ffs_fused_pcd.py`
   - static-round frame-0 native / FFS / fused object-PCD board export per round
   - fused depth keeps every valid native pixel and uses FFS only where native depth is missing
   - reuses static SAM masks and applies display-only PhysTwin-like radius-neighbor cleanup without rewriting aligned depth
 
 This keeps the deterministic summary logic testable without requiring CUDA while leaving the actual model execution in the thin harness CLI.
+
+Experiment-only workflow implementations live under
+`data_process/visualization/experiments/`. Existing
+`data_process/visualization/workflows/ffs_*` and
+`data_process/visualization/workflows/native_ffs_fused_pcd_compare.py` imports
+are compatibility shims only; formal recording and alignment code must not
+import the experiment package. `scripts/harness/check_experiment_boundaries.py`
+guards that dependency direction.
 
 The native RealSense depth filter contract is now centralized in:
 

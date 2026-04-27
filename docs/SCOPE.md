@@ -13,6 +13,8 @@ This repository handles 3-camera RealSense preview, calibration, synchronized RG
 - packaging aligned cases under `data/`
 - realtime native RGB-D aligned export to the formal `different_types`-style interface
 - aligned depth-backend comparison visualization utilities
+- explicitly isolated experiment-only aligned-case visualization under
+  `data_process/visualization/experiments/` and `scripts/harness/experiments/`
 - manual hardware validation documentation
 - deterministic tests and scope guard for the kept workflow
 
@@ -33,3 +35,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized RG
 ## Boundary Rule
 
 If a file, dependency, CLI, or README section exists only to support downstream physics, rendering, tracking, or evaluation, it does not belong in this repo.
+
+Experiment-only FFS depth diagnostics are allowed only when they consume
+aligned cases, write diagnostic artifacts outside formal case directories, and
+remain separated from recording / alignment runtime imports.

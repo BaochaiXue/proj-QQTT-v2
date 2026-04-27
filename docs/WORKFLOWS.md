@@ -194,7 +194,7 @@ Operator notes:
 Static-round masked FFS confidence panels:
 
 ```bash
-conda run -n qqtt-ffs-compat python scripts/harness/visualize_ffs_static_confidence_panels.py
+conda run -n qqtt-ffs-compat python scripts/harness/experiments/visualize_ffs_static_confidence_panels.py
 ```
 
 This offline static-only workflow:
@@ -232,7 +232,7 @@ Use this when the question is specifically:
 Static-round masked FFS confidence + PCD panels:
 
 ```bash
-conda run -n qqtt-ffs-compat python scripts/harness/visualize_ffs_static_confidence_pcd_panels.py
+conda run -n qqtt-ffs-compat python scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py
 ```
 
 This offline static-only workflow:
@@ -553,7 +553,7 @@ When `--ffs_native_like_postprocess` is enabled:
 For the static native/FFS fused object-PCD experiment across round 1-3 frame 0:
 
 ```bash
-python scripts/harness/visual_compare_native_ffs_fused_pcd.py --aligned_root ./data --frame_idx 0
+python scripts/harness/experiments/visual_compare_native_ffs_fused_pcd.py --aligned_root ./data --frame_idx 0
 ```
 
 This diagnostic-only workflow writes one masked object `3x3` PCD board per static round:

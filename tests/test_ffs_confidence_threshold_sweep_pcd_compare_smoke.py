@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from data_process.visualization.workflows.ffs_confidence_threshold_sweep_pcd_compare import (
+from data_process.visualization.experiments.ffs_confidence_threshold_sweep_pcd_compare import (
     DEFAULT_CONFIDENCE_SWEEP_THRESHOLDS,
     build_confidence_threshold_sweep_pcd_board,
     parse_confidence_thresholds,

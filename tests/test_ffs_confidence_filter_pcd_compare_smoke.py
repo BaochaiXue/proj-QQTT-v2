@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from data_process.visualization.workflows.ffs_confidence_filter_pcd_compare import (
+from data_process.visualization.experiments.ffs_confidence_filter_pcd_compare import (
     build_confidence_filter_pcd_board,
     build_static_confidence_filter_round_specs,
     run_ffs_confidence_filter_pcd_compare_workflow,

@@ -8,7 +8,7 @@ import numpy as np
 
 from data_process.depth_backends.fast_foundation_stereo import compute_confidence_proxies_from_logits
 from data_process.depth_backends.geometry import align_ir_scalar_to_color
-from data_process.visualization.workflows.ffs_confidence_panels import (
+from data_process.visualization.experiments.ffs_confidence_panels import (
     build_confidence_board,
     build_static_confidence_round_specs,
     run_ffs_static_confidence_panels_workflow,

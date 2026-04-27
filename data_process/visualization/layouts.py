@@ -410,6 +410,7 @@ def compose_registration_matrix_board(
     image_rows: list[list[np.ndarray]],
     legend_image: np.ndarray | None = None,
     background_bgr: tuple[int, int, int] = (14, 16, 20),
+    row_label_width: int = 176,
 ) -> np.ndarray:
     if not image_rows or not image_rows[0]:
         raise ValueError("compose_registration_matrix_board requires a non-empty image matrix.")
@@ -422,7 +423,9 @@ def compose_registration_matrix_board(
         raise ValueError("column_headers must match image column count.")
 
     panel_h, panel_w = image_rows[0][0].shape[:2]
-    row_label_w = 176
+    row_label_w = int(row_label_width)
+    if row_label_w < 1:
+        raise ValueError(f"row_label_width must be positive, got {row_label_width}.")
     header_h = 42
     gap = 10
     padding = 12

@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.harness.experiments.visual_compare_ffs_confidence_threshold_sweep_pcd import main
+from scripts.harness.experiments.visual_compare_ffs_mask_erode_sweep_pcd import main
 
 
 if __name__ == "__main__":

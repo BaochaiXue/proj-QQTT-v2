@@ -69,7 +69,7 @@ spatially paired.
 ## Sweep
 
 ```bash
-python scripts/harness/run_ffs_confidence_filter_sweep.py \
+python scripts/harness/experiments/run_ffs_confidence_filter_sweep.py \
   --case_name <case_name> \
   --start 0 \
   --end 120 \

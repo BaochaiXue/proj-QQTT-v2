@@ -13,6 +13,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `data_process/record_data_align.py`: trim + align raw cases into `data/`
 - `data_process/depth_backends/`: shared FFS geometry + runner used by production alignment and harness scripts
 - `data_process/visualization/`: aligned-case comparison visualization package
+- `data_process/visualization/experiments/`: experiment-only visualization workflows; formal recording/alignment code must not import this package
 - `qqtt/env/camera/`: shared RealSense camera runtime
 - `qqtt/env/camera/preflight.py`: record-time probe/preflight decision table
 - `env_install/env_install.sh`: camera-only environment setup
@@ -26,6 +27,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `docs/generated/README.md`: grouped index of generated validation docs and reusable helper assets
 - `scripts/harness/check_scope.py`: deterministic repo scope guard
 - `scripts/harness/check_visual_architecture.py`: visualization layering / file-size guard
+- `scripts/harness/check_experiment_boundaries.py`: guard that keeps experiment-only modules out of formal runtime code
 - `scripts/harness/README.md`: grouped harness CLI/probe/check map and retention policy
 - `tests/test_record_data_align_smoke.py`: smoke test for aligned-case generation
 - `scripts/harness/visual_compare_depth_panels.py`: per-camera aligned native-vs-FFS depth panels
@@ -35,8 +37,8 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `scripts/harness/visual_compare_depth_triplet_video.py`: multi-frame native / FFS raw / FFS postprocess point-cloud video compare
 - `scripts/harness/visual_compare_rerun.py`: multi-frame native-vs-FFS remove-invisible point-cloud export to Rerun + fused PLYs
 - `scripts/harness/visual_compare_turntable.py`: current single-frame professor-facing compare
-- `scripts/harness/visualize_ffs_static_confidence_panels.py`: static-round masked FFS RGB/depth/confidence 3x3 boards
-- `scripts/harness/visualize_ffs_static_confidence_pcd_panels.py`: static-round masked FFS RGB/PCD/confidence 3x3 boards
+- `scripts/harness/experiments/visualize_ffs_static_confidence_panels.py`: static-round masked FFS RGB/depth/confidence 3x3 experiment boards
+- `scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py`: static-round masked FFS RGB/PCD/confidence 3x3 experiment boards
 - `scripts/harness/visual_make_professor_triptych.py`: current three-figure professor-facing summary pack
 - `scripts/harness/visual_make_match_board.py`: current professor-facing 3-view point-cloud match board
 - `scripts/harness/audit_ffs_left_right.py`: focused FFS left/right ordering audit

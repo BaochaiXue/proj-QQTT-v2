@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from data_process.visualization.workflows.ffs_confidence_pcd_panels import (
+from data_process.visualization.experiments.ffs_confidence_pcd_panels import (
     build_confidence_pcd_board,
     build_static_confidence_pcd_round_specs,
     run_ffs_static_confidence_pcd_panels_workflow,

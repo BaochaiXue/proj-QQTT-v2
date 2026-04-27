@@ -6,11 +6,12 @@ from pathlib import Path
 
 import numpy as np
 
-from data_process.visualization.experiments.native_ffs_fused_pcd_compare import (
-    build_native_ffs_fused_pcd_board,
-    build_static_native_ffs_fused_pcd_round_specs,
-    fuse_native_ffs_depth,
-    run_native_ffs_fused_pcd_workflow,
+from data_process.visualization.experiments.ffs_mask_erode_sweep_pcd_compare import (
+    DEFAULT_MASK_ERODE_PIXELS,
+    DEFAULT_ROW_LABEL_WIDTH,
+    build_ffs_mask_erode_sweep_pcd_board,
+    parse_mask_erode_pixels,
+    run_ffs_mask_erode_sweep_pcd_workflow,
 )
 from tests.visualization_test_utils import make_sam31_masks, make_visualization_case
 
@@ -33,54 +34,46 @@ class _RenderCollector:
                 "extrinsic_matrix": np.asarray(kwargs.get("extrinsic_matrix"), dtype=np.float32).copy(),
             }
         )
-        return np.full((int(kwargs["height"]), int(kwargs["width"]), 3), 85, dtype=np.uint8)
+        return np.full((int(kwargs["height"]), int(kwargs["width"]), 3), 82, dtype=np.uint8)
 
 
-class NativeFfsFusedPcdCompareSmokeTest(unittest.TestCase):
-    def test_static_round_specs_match_expected_case_pairs_and_masks(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            specs = build_static_native_ffs_fused_pcd_round_specs(aligned_root=Path(tmp_dir) / "data")
+class FfsMaskErodeSweepPcdCompareSmokeTest(unittest.TestCase):
+    def test_parse_mask_erode_pixels_uses_default_1_to_8_sweep(self) -> None:
+        self.assertEqual(parse_mask_erode_pixels(DEFAULT_MASK_ERODE_PIXELS), [1, 2, 3, 4, 5, 6, 7, 8])
+        self.assertEqual(parse_mask_erode_pixels("1,8"), [1, 8])
+        with self.assertRaises(ValueError):
+            parse_mask_erode_pixels("0,1")
+        with self.assertRaises(ValueError):
+            parse_mask_erode_pixels("1,1")
 
-        self.assertEqual([item["round_id"] for item in specs], ["round1", "round2", "round3"])
-        self.assertTrue(str(specs[0]["native_case_ref"]).startswith("static/native_30_static_round1"))
-        self.assertTrue(str(specs[0]["ffs_case_ref"]).startswith("static/ffs_30_static_round1"))
-        self.assertTrue(str(specs[0]["mask_root"]).endswith("masked_pointcloud_compare_round1_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks"))
-
-    def test_fuse_native_ffs_depth_only_uses_ffs_for_missing_native(self) -> None:
-        native = np.array([[0.9, 0.0, 0.5], [0.6, 0.59, np.nan]], dtype=np.float32)
-        ffs = np.array([[0.8, 0.7, 0.75], [0.65, 0.72, 0.0]], dtype=np.float32)
-
-        fused, stats = fuse_native_ffs_depth(native, ffs)
-
-        np.testing.assert_allclose(
-            fused,
-            np.array([[0.9, 0.7, 0.5], [0.6, 0.59, 0.0]], dtype=np.float32),
-        )
-        self.assertEqual(stats["mode"], "missing_only")
-        self.assertEqual(stats["native_kept_pixel_count"], 4)
-        self.assertEqual(stats["native_missing_pixel_count"], 2)
-        self.assertEqual(stats["ffs_filled_pixel_count"], 1)
-        self.assertEqual(stats["unfilled_pixel_count"], 1)
-
-    def test_build_board_returns_3x3_matrix(self) -> None:
-        rendered_rows = [[np.full((40, 60, 3), 90, dtype=np.uint8) for _ in range(3)] for _ in range(3)]
+    def test_build_board_returns_10x3_matrix_for_default_rows(self) -> None:
+        rendered_rows = [[np.full((40, 60, 3), 90, dtype=np.uint8) for _ in range(3)] for _ in range(10)]
         variant_rows = [
-            {"key": "native", "row_header": "Native depth", "summary_label": "native_depth"},
-            {"key": "ffs_original", "row_header": "Original FFS", "summary_label": "original_ffs"},
-            {"key": "fused", "row_header": "Fused depth", "summary_label": "native_ffs_fused"},
+            {"key": "native", "row_header": "Native depth | mask 0px", "summary_label": "native_depth_mask_0px"},
+            {"key": "ffs_original", "row_header": "Original FFS | mask 0px", "summary_label": "ffs_original_mask_0px"},
+            *[
+                {
+                    "key": f"ffs_erode_{idx}px",
+                    "row_header": f"FFS | mask erode {idx}px",
+                    "summary_label": f"ffs_mask_erode_{idx}px",
+                }
+                for idx in range(1, 9)
+            ],
         ]
 
-        board = build_native_ffs_fused_pcd_board(
+        board = build_ffs_mask_erode_sweep_pcd_board(
             round_label="Round 1",
             frame_idx=0,
             model_config={
                 "depth_min_m": 0.2,
                 "depth_max_m": 1.5,
                 "object_mask_enabled": True,
-                "mask_erode_pixels": 1,
+                "mask_erode_pixels": [1, 2, 3, 4, 5, 6, 7, 8],
                 "phystwin_like_postprocess_enabled": True,
                 "phystwin_radius_m": 0.01,
                 "phystwin_nb_points": 40,
+                "use_float_ffs_depth_when_available": True,
+                "row_label_width": DEFAULT_ROW_LABEL_WIDTH,
             },
             column_headers=["Cam0", "Cam1", "Cam2"],
             variant_rows=variant_rows,
@@ -88,11 +81,11 @@ class NativeFfsFusedPcdCompareSmokeTest(unittest.TestCase):
         )
 
         self.assertEqual(board.ndim, 3)
-        self.assertGreater(board.shape[0], 120)
-        self.assertGreater(board.shape[1], 180)
+        self.assertGreater(board.shape[0], 400)
+        self.assertGreaterEqual(board.shape[1], DEFAULT_ROW_LABEL_WIDTH + 3 * 60)
         self.assertGreater(int(np.count_nonzero(board)), 0)
 
-    def test_workflow_writes_masked_object_pcd_board_and_summary(self) -> None:
+    def test_workflow_writes_one_result_folder_for_erode_sweep(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             aligned_root = tmp_root / "data"
@@ -109,22 +102,21 @@ class NativeFfsFusedPcdCompareSmokeTest(unittest.TestCase):
             )
             mask_root = make_sam31_masks(ffs_case_dir, prompt_labels_by_object={1: "stuffed animal"})
             native_depth = np.full((8, 10), 900, dtype=np.uint16)
-            native_depth[1, 1] = 0
-            native_depth[2, 2] = 500
             ffs_depth = np.full((8, 10), 0.8, dtype=np.float32)
             for camera_idx in range(3):
                 np.save(native_case_dir / "depth" / str(camera_idx) / "0.npy", native_depth)
                 np.save(ffs_case_dir / "depth_ffs_float_m" / str(camera_idx) / "0.npy", ffs_depth)
 
             render_collector = _RenderCollector()
-            summary = run_native_ffs_fused_pcd_workflow(
+            summary = run_ffs_mask_erode_sweep_pcd_workflow(
                 aligned_root=aligned_root,
                 output_root=tmp_root / "output",
                 frame_idx=0,
+                erode_pixels=[1, 2],
                 tile_width=80,
                 tile_height=60,
+                row_label_width=240,
                 max_points_per_camera=None,
-                mask_erode_pixels=0,
                 phystwin_like_postprocess=False,
                 round_specs=[
                     {
@@ -138,25 +130,29 @@ class NativeFfsFusedPcdCompareSmokeTest(unittest.TestCase):
                 render_frame_fn=render_collector,
             )
 
+            self.assertTrue((tmp_root / "output" / "summary.json").is_file())
             round_summary = summary["rounds"][0]
             self.assertTrue(Path(round_summary["board_path"]).is_file())
-            self.assertTrue((tmp_root / "output" / "summary.json").is_file())
-            self.assertEqual(round_summary["row_headers"], ["Native depth", "Original FFS", "Fused depth"])
-            self.assertTrue(round_summary["render_contract"]["object_masked"])
-            self.assertFalse(round_summary["render_contract"]["formal_depth_written"])
+            self.assertEqual(round_summary["erode_pixels"], [1, 2])
+            self.assertEqual(
+                round_summary["row_headers"],
+                ["Native depth | mask 0px", "Original FFS | mask 0px", "FFS | mask erode 1px", "FFS | mask erode 2px"],
+            )
+            self.assertEqual(len(render_collector.calls), 12)
+            self.assertEqual(round_summary["render_contract"]["rows"], "native_depth_ffs_original_ffs_mask_erode_sweep")
             self.assertEqual(round_summary["render_contract"]["display_postprocess"], "none")
-            self.assertEqual(len(render_collector.calls), 9)
+            self.assertEqual(round_summary["model_config"]["row_label_width"], 240)
+            self.assertLess(
+                round_summary["mask_debug"]["0"]["eroded"]["1"]["mask_pixel_count_after_erode"],
+                round_summary["mask_debug"]["0"]["raw"]["mask_pixel_count"],
+            )
+            self.assertIn("ffs_erode_1px", round_summary["fused_point_counts"])
+            self.assertIn("ffs_erode_2px", round_summary["fused_point_counts"])
             for call in render_collector.calls:
                 self.assertEqual(int(call["width"]), 80)
                 self.assertEqual(int(call["height"]), 60)
                 self.assertEqual(np.asarray(call["intrinsic_matrix"]).shape, (3, 3))
                 self.assertEqual(np.asarray(call["extrinsic_matrix"]).shape, (4, 4))
-            fused_cam0 = round_summary["per_variant_camera"]["fused"][0]
-            self.assertEqual(fused_cam0["fusion"]["mode"], "missing_only")
-            self.assertEqual(fused_cam0["fusion"]["ffs_filled_pixel_count"], 1)
-            self.assertEqual(fused_cam0["fusion"]["native_kept_pixel_count"], 79)
-            self.assertGreater(round_summary["fused_point_counts"]["fused"], round_summary["fused_point_counts"]["native"])
-            self.assertEqual(summary["model_config"]["fusion_mode"], "missing_only")
 
 
 if __name__ == "__main__":
