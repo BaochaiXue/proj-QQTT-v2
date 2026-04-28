@@ -20,6 +20,7 @@ These record what the current machine and D455 topology actually supported durin
 - `wsl_env_bootstrap_validation.md`
 - `ffs_tensorrt_windows_validation.md`
 - `ffs_tensorrt_wsl_validation.md`
+- `ffs_official_twostage_triton_env_validation.md`
 - `ffs_single_engine_tensorrt_wsl_validation.md`
 - `ffs_batch3_viewer_validation.md`
 - `ffs_benchmark_tradeoff_validation.md`

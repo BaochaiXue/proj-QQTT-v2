@@ -27,7 +27,7 @@ conda run -n ffs-standalone python scripts/harness/verify_ffs_tensorrt_wsl.py
 
 - The current WSL path uses the TensorRT Python builder rather than `trtexec`.
 - The local machine did not need a separately unpacked Linux TensorRT SDK root for this validation; the NVIDIA PyPI runtime packages were sufficient.
-- The repo-local harness keeps the host-side GWC volume path aligned with the QQTT TensorRT runner by replacing Triton-only calls with the existing PyTorch implementation.
+- Superseded implementation note on `2026-04-28`: the repo-local WSL TensorRT harness now follows the official Fast-FoundationStereo route and requires the Triton GWC volume kernel between the feature and post TensorRT engines. Earlier validation used a PyTorch GWC fallback.
 - The current harness runs TensorRT forward calls on an explicit non-default CUDA stream so `enqueueV3()` no longer falls back to TensorRT's default-stream synchronization path.
 - The upstream two-stage export still requires dimensions divisible by `32`, so the engine width for the default `848x480` viewer capture was set to `864`.
 

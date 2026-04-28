@@ -170,7 +170,8 @@ The live viewer FFS mode surface is now:
 - `--ffs_backend pytorch`
   - current original PyTorch runner
 - `--ffs_backend tensorrt --ffs_trt_mode two_stage`
-  - current two-stage TensorRT runner with `feature_runner.engine` + `post_runner.engine`
+  - official-style two-stage TensorRT runner with `feature_runner.engine` + Triton GWC + `post_runner.engine`
+  - requires a Triton runtime compatible with the current PyTorch/CUDA/Python environment
 - `--ffs_backend tensorrt --ffs_trt_mode single_engine`
   - single-engine TensorRT runner with one `.engine` file and shared TensorRT config discovery
 

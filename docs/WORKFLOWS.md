@@ -68,7 +68,8 @@ Live FFS mode selection is now:
 
 - `--ffs_backend tensorrt --ffs_trt_mode two_stage`
   - default live path
-  - current repo-local two-stage TensorRT engines
+  - official-style two-stage TensorRT path: `feature_runner.engine` + Triton GWC + `post_runner.engine`
+  - requires a working Triton kernel runtime in the active Python environment
 - `--ffs_backend pytorch`
   - current original PyTorch path
 - `--ffs_backend tensorrt --ffs_trt_mode single_engine`

@@ -30,6 +30,28 @@
   - saved-pair checkpoint / scale / iteration tradeoff benchmarks
   - two-stage ONNX / TensorRT engine export and headless demo validation on WSL
 
+## `ffs-official-trt`
+
+- Purpose: run the official Fast-FoundationStereo two-stage TensorRT route with Triton GWC enabled
+- Created from:
+  - `conda create -y -n ffs-official-trt --clone ffs-standalone`
+- Current validated Python:
+  - `3.10.18`
+- Current validated torch stack:
+  - `torch==2.7.0+cu128`
+  - `torchvision==0.22.0+cu128`
+- Current validated Triton:
+  - `triton==3.4.0`
+- Reason for separate environment:
+  - `triton==3.3.0` and `3.3.1` failed the official Fast-FoundationStereo GWC kernel with `SystemError: PY_SSIZE_T_CLEAN macro must be defined for '#' formats`
+  - `triton==3.4.0` fixed the local official GWC probe while keeping the RTX 5090-compatible `torch==2.7.0+cu128` stack
+- Validation commands:
+  - `/home/zhangxinjie/miniconda3/envs/ffs-official-trt/bin/python cameras_viewer_FFS.py --help`
+  - official GWC and static-sample two-stage TRT validation are recorded in `docs/generated/ffs_official_twostage_triton_env_validation.md`
+- Expected use:
+  - official-style two-stage TensorRT inference: `feature_runner.engine -> Triton GWC -> post_runner.engine`
+  - live/viewer or static replay tests that specifically need official two-stage TRT latency behavior
+
 ## `qqtt-ffs-compat`
 
 - Purpose: run QQTT-side proof-of-life scripts that need both RealSense access and FFS-compatible Python packages

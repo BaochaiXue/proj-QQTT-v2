@@ -40,7 +40,7 @@ conda run -n qqtt-ffs-compat python cameras_viewer_FFS.py --max-cams 3 --width 8
 - `cameras_viewer_FFS.py` now defaults to `--ffs_backend tensorrt` and the repo-local `trt_two_stage_864x480_wsl` engine directory.
 - The viewer reads `onnx.yaml` and identifies the `848x480 -> 864x480` path as symmetric replicate padding, not resize.
 - The live TensorRT worker now runs TRT forward calls on a dedicated non-default CUDA stream, and the current validation run no longer prints the earlier `enqueueV3()` default-stream warning.
-- The worker process still uses the PyTorch GWC volume implementation on the host side so the QQTT viewer path stays aligned with the current TensorRT backend implementation in the repo.
+- Superseded implementation note on `2026-04-28`: the two-stage TensorRT worker now follows the official Fast-FoundationStereo route and uses the Triton GWC volume kernel between the feature and post TensorRT engines. A compatible Triton runtime is required.
 - The Qt runtime printed `Could not find the Qt platform plugin "wayland"` once at startup, but the viewer still launched correctly on the current display path.
 
 ## Single-Camera Result

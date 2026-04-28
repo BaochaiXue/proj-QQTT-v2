@@ -75,10 +75,12 @@ def prepare_python_runtime(ffs_repo: Path):
     import core.foundation_stereo as foundation_stereo
     import core.submodule as submodule
 
-    # Keep the host-side GWC path consistent with the QQTT TensorRT runner.
-    replacement = submodule.build_gwc_volume_optimized_pytorch1
-    submodule.build_gwc_volume_triton = replacement
-    foundation_stereo.build_gwc_volume_triton = replacement
+    if getattr(submodule, "triton", None) is None:
+        raise RuntimeError(
+            "Official Fast-FoundationStereo two-stage TensorRT requires Triton for the "
+            "intermediate GWC volume kernel."
+        )
+    foundation_stereo.build_gwc_volume_triton = submodule.build_gwc_volume_triton
     return torch, foundation_stereo
 
 

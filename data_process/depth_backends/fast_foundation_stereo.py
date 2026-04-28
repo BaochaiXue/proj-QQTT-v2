@@ -571,14 +571,18 @@ def finalize_single_engine_tensorrt_output(
     return outputs[0]
 
 
-def _patch_tensorrt_triton_cost_volume(*, ffs_repo: Path) -> Any:
+def _load_official_tensorrt_foundation_stereo(*, ffs_repo: Path) -> Any:
     _ensure_ffs_repo_on_sys_path(ffs_repo)
     import core.foundation_stereo as foundation_stereo
     import core.submodule as submodule
 
-    replacement = submodule.build_gwc_volume_optimized_pytorch1
-    submodule.build_gwc_volume_triton = replacement
-    foundation_stereo.build_gwc_volume_triton = replacement
+    if getattr(submodule, "triton", None) is None:
+        raise RuntimeError(
+            "Official Fast-FoundationStereo two-stage TensorRT requires Triton for the "
+            "intermediate GWC volume kernel. Install a compatible official FFS environment "
+            "or use --ffs_trt_mode single_engine."
+        )
+    foundation_stereo.build_gwc_volume_triton = submodule.build_gwc_volume_triton
     return foundation_stereo
 
 
@@ -855,7 +859,7 @@ class FastFoundationStereoTensorRTRunner:
             raise RuntimeError("FastFoundationStereoTensorRTRunner requires CUDA.")
 
         self._dll_handles = _configure_tensorrt_runtime_search_paths(self.trt_root)
-        foundation_stereo = _patch_tensorrt_triton_cost_volume(ffs_repo=self.ffs_repo)
+        foundation_stereo = _load_official_tensorrt_foundation_stereo(ffs_repo=self.ffs_repo)
         from Utils import set_logging_format, set_seed
 
         cfg_dict = load_tensorrt_model_config(self.model_dir)

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import tempfile
+import sys
+import types
 import unittest
 from pathlib import Path
 
 import numpy as np
 
 from data_process.depth_backends.fast_foundation_stereo import (
+    _load_official_tensorrt_foundation_stereo,
     finalize_tensorrt_disparity_batch_outputs,
     finalize_single_engine_tensorrt_output,
     load_tensorrt_model_config,
@@ -19,6 +22,58 @@ from data_process.depth_backends.fast_foundation_stereo import (
 
 
 class FfsTensorrtSingleEngineSmokeTest(unittest.TestCase):
+    def test_two_stage_loader_restores_official_triton_gwc_symbol(self) -> None:
+        def official_gwc():
+            return "official"
+
+        def stale_gwc():
+            return "stale"
+
+        core_module = types.ModuleType("core")
+        foundation_stereo = types.ModuleType("core.foundation_stereo")
+        foundation_stereo.build_gwc_volume_triton = stale_gwc
+        submodule = types.ModuleType("core.submodule")
+        submodule.triton = object()
+        submodule.build_gwc_volume_triton = official_gwc
+
+        old_modules = {name: sys.modules.get(name) for name in ("core", "core.foundation_stereo", "core.submodule")}
+        try:
+            sys.modules["core"] = core_module
+            sys.modules["core.foundation_stereo"] = foundation_stereo
+            sys.modules["core.submodule"] = submodule
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                loaded = _load_official_tensorrt_foundation_stereo(ffs_repo=Path(tmp_dir))
+        finally:
+            for name, old_module in old_modules.items():
+                if old_module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = old_module
+
+        self.assertIs(loaded, foundation_stereo)
+        self.assertIs(foundation_stereo.build_gwc_volume_triton, official_gwc)
+
+    def test_two_stage_loader_requires_triton_for_official_gwc(self) -> None:
+        core_module = types.ModuleType("core")
+        foundation_stereo = types.ModuleType("core.foundation_stereo")
+        submodule = types.ModuleType("core.submodule")
+        submodule.triton = None
+
+        old_modules = {name: sys.modules.get(name) for name in ("core", "core.foundation_stereo", "core.submodule")}
+        try:
+            sys.modules["core"] = core_module
+            sys.modules["core.foundation_stereo"] = foundation_stereo
+            sys.modules["core.submodule"] = submodule
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                with self.assertRaisesRegex(RuntimeError, "requires Triton"):
+                    _load_official_tensorrt_foundation_stereo(ffs_repo=Path(tmp_dir))
+        finally:
+            for name, old_module in old_modules.items():
+                if old_module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = old_module
+
     def test_resolve_tensorrt_model_config_prefers_engine_stem_yaml(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             model_dir = Path(tmp_dir)
