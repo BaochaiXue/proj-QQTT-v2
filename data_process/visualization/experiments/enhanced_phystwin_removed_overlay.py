@@ -89,6 +89,7 @@ DEFAULT_SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR: tuple[tuple[int, int, int], ...] = (
 )
 DEFAULT_SOURCE_CAMERA_HIGHLIGHT_LABELS: tuple[str, ...] = ("Cam0 magenta", "Cam1 cyan", "Cam2 amber")
 HIGHLIGHT_SCOPES = ("all", "radius", "component")
+NATIVE_ROW_MODES = ("native_depth", "ir_pair")
 
 
 def build_static_enhanced_phystwin_removed_overlay_round_specs(*, aligned_root: Path) -> list[dict[str, Any]]:
@@ -242,6 +243,30 @@ def _build_rgb_removed_tile(
     return label_tile(overlay, label, tile_size)
 
 
+def _load_ir_image(path: Path) -> np.ndarray:
+    image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if image is None:
+        raise FileNotFoundError(f"Missing IR image: {path}")
+    if image.ndim == 2:
+        if image.dtype == np.uint8:
+            gray = image
+        else:
+            gray = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    if image.ndim == 3 and image.shape[2] == 3:
+        return image.astype(np.uint8)
+    raise ValueError(f"Unsupported IR image shape for {path}: {image.shape}")
+
+
+def _build_ir_tile(
+    *,
+    ir_image: np.ndarray,
+    label: str,
+    tile_size: tuple[int, int],
+) -> np.ndarray:
+    return label_tile(np.asarray(ir_image, dtype=np.uint8), label, tile_size)
+
+
 def _select_removed_mask(trace: dict[str, np.ndarray], *, highlight_scope: str) -> np.ndarray:
     scope = str(highlight_scope).strip().lower()
     if scope == "all":
@@ -260,16 +285,39 @@ def build_enhanced_phystwin_removed_overlay_board(
     model_config: dict[str, Any],
     column_headers: list[str],
     image_rows: list[list[np.ndarray]],
+    row_headers: list[str] | None = None,
 ) -> np.ndarray:
-    if len(image_rows) != 5 or any(len(row) != 3 for row in image_rows):
-        raise ValueError("Enhanced removed overlay board requires a 5x3 image matrix.")
+    if len(image_rows) not in {5, 6} or any(len(row) != 3 for row in image_rows):
+        raise ValueError("Enhanced removed overlay board requires a 5x3 or 6x3 image matrix.")
+    selected_row_headers = row_headers or (
+        [
+            "RGB + object mask",
+            "Native depth mask",
+            "PCD + removed",
+            "FFS depth + removed",
+            "RGB + removed",
+        ]
+        if len(image_rows) == 5
+        else [
+            "RGB + object mask",
+            "IR left",
+            "IR right",
+            "PCD + removed",
+            "FFS depth + removed",
+            "RGB + removed",
+        ]
+    )
+    if len(selected_row_headers) != len(image_rows):
+        raise ValueError("row_headers must match image_rows.")
+    row_summary = (
+        "rows=RGB mask / native depth / PCD + removed / FFS depth + removed / RGB + removed"
+        if len(image_rows) == 5
+        else "rows=RGB mask / IR left / IR right / PCD + removed / FFS depth + removed / RGB + removed"
+    )
     return compose_registration_matrix_board(
         title_lines=[
             f"Enhanced PT-like Removed Points Overlay | {round_label} | frame {int(frame_idx)}",
-            (
-                "rows=RGB mask / native depth / PCD + removed / FFS depth + removed / RGB + removed | "
-                f"highlight={model_config['highlight_scope']} | source-camera colors/pixels"
-            ),
+            f"{row_summary} | highlight={model_config['highlight_scope']} | source-camera colors/pixels",
             (
                 f"radius={float(model_config['phystwin_radius_m']):.3f}m/"
                 f"{int(model_config['phystwin_nb_points'])}nn | "
@@ -277,13 +325,7 @@ def build_enhanced_phystwin_removed_overlay_board(
                 f"alpha={float(model_config['highlight_alpha']):.2f}"
             ),
         ],
-        row_headers=[
-            "RGB + object mask",
-            "Native depth mask",
-            "PCD + removed",
-            "FFS depth + removed",
-            "RGB + removed",
-        ],
+        row_headers=selected_row_headers,
         column_headers=column_headers,
         image_rows=image_rows,
         row_label_width=int(model_config.get("row_label_width", DEFAULT_ROW_LABEL_WIDTH)),
@@ -312,6 +354,7 @@ def run_enhanced_phystwin_removed_overlay_workflow(
     highlight_alpha: float = 0.65,
     highlight_radius_px: int = 2,
     use_float_ffs_depth_when_available: bool = True,
+    native_row_mode: str = "native_depth",
     round_specs: list[dict[str, Any]] | None = None,
     render_frame_fn: Callable[..., np.ndarray] | None = None,
 ) -> dict[str, Any]:
@@ -324,6 +367,9 @@ def run_enhanced_phystwin_removed_overlay_workflow(
         raise ValueError(f"Unsupported highlight_scope={highlight_scope!r}; expected one of {HIGHLIGHT_SCOPES}.")
     if int(highlight_radius_px) < 0:
         raise ValueError(f"highlight_radius_px must be >= 0, got {highlight_radius_px}.")
+    native_row_mode = str(native_row_mode).strip().lower()
+    if native_row_mode not in NATIVE_ROW_MODES:
+        raise ValueError(f"Unsupported native_row_mode={native_row_mode!r}; expected one of {NATIVE_ROW_MODES}.")
 
     selected_round_specs = (
         build_static_enhanced_phystwin_removed_overlay_round_specs(aligned_root=aligned_root)
@@ -354,6 +400,7 @@ def run_enhanced_phystwin_removed_overlay_workflow(
         },
         "source_camera_highlight_labels": list(DEFAULT_SOURCE_CAMERA_HIGHLIGHT_LABELS),
         "use_float_ffs_depth_when_available": bool(use_float_ffs_depth_when_available),
+        "native_row_mode": native_row_mode,
     }
 
     rounds_summary: list[dict[str, Any]] = []
@@ -427,14 +474,25 @@ def run_enhanced_phystwin_removed_overlay_workflow(
                 depth_source="ffs_raw",
                 use_float_ffs_depth_when_available=bool(use_float_ffs_depth_when_available),
             )
-            native_depth_m, native_depth_info = _load_depth_m(
-                case_dir=native_case_dir,
-                metadata=native_metadata,
-                camera_idx=int(camera_idx),
-                frame_idx=selected_frame_idx,
-                depth_source="realsense",
-                use_float_ffs_depth_when_available=False,
-            )
+            if native_row_mode == "native_depth":
+                native_depth_m, native_depth_info = _load_depth_m(
+                    case_dir=native_case_dir,
+                    metadata=native_metadata,
+                    camera_idx=int(camera_idx),
+                    frame_idx=selected_frame_idx,
+                    depth_source="realsense",
+                    use_float_ffs_depth_when_available=False,
+                )
+            else:
+                native_depth_m = np.zeros(depth_m.shape, dtype=np.float32)
+                native_depth_info = {
+                    "depth_dir_used": None,
+                    "source_depth_dir_used": None,
+                    "used_float_depth": False,
+                    "depth_path": None,
+                    "native_depth_row_disabled": True,
+                    "native_row_mode": native_row_mode,
+                }
             object_mask = np.asarray(masks_by_camera.get(int(camera_idx), np.zeros(depth_m.shape, dtype=bool)), dtype=bool)
             cloud = _build_world_cloud(
                 depth_m=depth_m,
@@ -497,7 +555,10 @@ def run_enhanced_phystwin_removed_overlay_workflow(
             for camera_idx in camera_ids
         }
 
-        image_rows = [[], [], [], [], []]
+        image_rows = [[], [], [], [], []] if native_row_mode == "native_depth" else [[], [], [], [], [], []]
+        pcd_row_idx = 2 if native_row_mode == "native_depth" else 3
+        ffs_depth_row_idx = 3 if native_row_mode == "native_depth" else 4
+        rgb_removed_row_idx = 4 if native_row_mode == "native_depth" else 5
         per_camera_summary: list[dict[str, Any]] = []
         render_summary: list[dict[str, Any]] = []
         pcd_row_images: list[np.ndarray] = []
@@ -541,7 +602,7 @@ def run_enhanced_phystwin_removed_overlay_workflow(
                     "tile_height": int(tile_height),
                 }
             )
-        image_rows[2] = pcd_row_images
+        image_rows[pcd_row_idx] = pcd_row_images
 
         for camera_payload in camera_payloads:
             camera_idx = int(camera_payload["camera_idx"])
@@ -574,17 +635,32 @@ def run_enhanced_phystwin_removed_overlay_workflow(
                 & np.isfinite(np.asarray(camera_payload["native_depth_m"], dtype=np.float32))
                 & (np.asarray(camera_payload["native_depth_m"], dtype=np.float32) > 0.0)
             )
-            image_rows[1].append(
-                _build_masked_depth_tile(
-                    depth_m=np.asarray(camera_payload["native_depth_m"], dtype=np.float32),
-                    object_mask=np.asarray(camera_payload["object_mask"], dtype=bool),
-                    label=f"native valid={int(np.count_nonzero(native_valid_mask))} px",
-                    tile_size=(int(tile_width), int(tile_height)),
-                    depth_min_m=float(depth_min_m),
-                    depth_max_m=float(depth_max_m),
+            if native_row_mode == "native_depth":
+                image_rows[1].append(
+                    _build_masked_depth_tile(
+                        depth_m=np.asarray(camera_payload["native_depth_m"], dtype=np.float32),
+                        object_mask=np.asarray(camera_payload["object_mask"], dtype=bool),
+                        label=f"native valid={int(np.count_nonzero(native_valid_mask))} px",
+                        tile_size=(int(tile_width), int(tile_height)),
+                        depth_min_m=float(depth_min_m),
+                        depth_max_m=float(depth_max_m),
+                    )
                 )
-            )
-            image_rows[3].append(
+            else:
+                for row_idx, stream_name, stream_label in (
+                    (1, "ir_left", "IR left"),
+                    (2, "ir_right", "IR right"),
+                ):
+                    image_rows[row_idx].append(
+                        _build_ir_tile(
+                            ir_image=_load_ir_image(
+                                ffs_case_dir / stream_name / str(camera_idx) / f"{selected_frame_idx}.png"
+                            ),
+                            label=stream_label,
+                            tile_size=(int(tile_width), int(tile_height)),
+                        )
+                    )
+            image_rows[ffs_depth_row_idx].append(
                 _build_masked_depth_removed_tile(
                     depth_m=np.asarray(camera_payload["depth_m"], dtype=np.float32),
                     object_mask=np.asarray(camera_payload["object_mask"], dtype=bool),
@@ -600,7 +676,7 @@ def run_enhanced_phystwin_removed_overlay_workflow(
                     highlight_alpha=float(highlight_alpha),
                 )
             )
-            image_rows[4].append(
+            image_rows[rgb_removed_row_idx].append(
                 _build_rgb_removed_tile(
                     color_image=np.asarray(camera_payload["color_image"], dtype=np.uint8),
                     removed_pixel_mask=removed_pixel_mask,
@@ -634,14 +710,38 @@ def run_enhanced_phystwin_removed_overlay_workflow(
         round_output_dir = output_root / str(round_spec["round_id"])
         round_output_dir.mkdir(parents=True, exist_ok=True)
         column_headers = [str(view_config["label"]) for view_config in view_configs]
+        row_headers = (
+            [
+                "RGB + object mask",
+                "Native depth mask",
+                "PCD + removed",
+                "FFS depth + removed",
+                "RGB + removed",
+            ]
+            if native_row_mode == "native_depth"
+            else [
+                "RGB + object mask",
+                "IR left",
+                "IR right",
+                "PCD + removed",
+                "FFS depth + removed",
+                "RGB + removed",
+            ]
+        )
         board = build_enhanced_phystwin_removed_overlay_board(
             round_label=str(round_spec["round_label"]),
             frame_idx=selected_frame_idx,
             model_config=model_config,
             column_headers=column_headers,
             image_rows=image_rows,
+            row_headers=row_headers,
         )
-        board_path = round_output_dir / f"enhanced_phystwin_removed_overlay_5x3_frame_{selected_frame_idx:04d}.png"
+        matrix_label = f"{len(image_rows)}x{len(image_rows[0])}"
+        suffix = "" if native_row_mode == "native_depth" else f"_{native_row_mode}"
+        board_path = (
+            round_output_dir
+            / f"enhanced_phystwin_removed_overlay_{matrix_label}{suffix}_frame_{selected_frame_idx:04d}.png"
+        )
         write_image(board_path, board)
         round_summary = {
             "round_id": str(round_spec["round_id"]),
@@ -667,7 +767,12 @@ def run_enhanced_phystwin_removed_overlay_workflow(
             "render_contract": {
                 "projection_mode": "source_camera_pixels_no_cross_reprojection",
                 "pcd_projection_mode": "original_camera_pinhole",
-                "rows": "rgb_mask_native_depth_mask_pcd_removed_ffs_depth_removed_rgb_removed",
+                "rows": (
+                    "rgb_mask_native_depth_mask_pcd_removed_ffs_depth_removed_rgb_removed"
+                    if native_row_mode == "native_depth"
+                    else "rgb_mask_ir_left_ir_right_pcd_removed_ffs_depth_removed_rgb_removed"
+                ),
+                "native_row_mode": native_row_mode,
                 "highlight_scope": str(highlight_scope),
                 "highlight_color_mode": "source_camera",
                 "source_camera_highlight_colors_bgr": {

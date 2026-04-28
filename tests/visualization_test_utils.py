@@ -21,6 +21,7 @@ def make_visualization_case(
     include_depth_ffs_float_m_original: bool = False,
     include_depth_ffs_native_like_postprocess: bool = False,
     include_depth_ffs_native_like_postprocess_float_m: bool = False,
+    include_ir_pair: bool = False,
     frame_num: int = 2,
     include_sparse_outlier: bool = False,
     depth_backend_used: str | None = None,
@@ -42,6 +43,8 @@ def make_visualization_case(
         streams.append("depth_ffs_native_like_postprocess")
     if include_depth_ffs_native_like_postprocess_float_m:
         streams.append("depth_ffs_native_like_postprocess_float_m")
+    if include_ir_pair:
+        streams.extend(["ir_left", "ir_right"])
     for stream in streams:
         for cam in range(3):
             (case_dir / stream / str(cam)).mkdir(parents=True, exist_ok=True)
@@ -71,6 +74,11 @@ def make_visualization_case(
                 color[0:3, 0:3] = 0
             cv2.imwrite(str(case_dir / "color" / str(cam) / f"{frame_idx}.png"), color)
             np.save(case_dir / "depth" / str(cam) / f"{frame_idx}.npy", depth_mm)
+            if include_ir_pair:
+                ir_left = np.clip(70 + xx * 8 + yy * 3 + frame_idx * 4 + cam * 5, 0, 255).astype(np.uint8)
+                ir_right = np.clip(75 + xx * 6 + yy * 4 + frame_idx * 4 + cam * 4, 0, 255).astype(np.uint8)
+                cv2.imwrite(str(case_dir / "ir_left" / str(cam) / f"{frame_idx}.png"), ir_left)
+                cv2.imwrite(str(case_dir / "ir_right" / str(cam) / f"{frame_idx}.png"), ir_right)
             if include_depth_ffs:
                 depth_ffs_mm = np.clip(depth_mm.astype(np.int32) - 40 + cam * 5, 0, 65535).astype(np.uint16)
                 np.save(case_dir / "depth_ffs" / str(cam) / f"{frame_idx}.npy", depth_ffs_mm)

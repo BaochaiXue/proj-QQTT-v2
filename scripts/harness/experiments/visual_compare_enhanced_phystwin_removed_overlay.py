@@ -45,6 +45,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--highlight_alpha", type=float, default=0.65)
     parser.add_argument("--highlight_radius_px", type=int, default=2)
     parser.add_argument(
+        "--native_row_mode",
+        choices=("native_depth", "ir_pair"),
+        default="native_depth",
+        help="Use the default native-depth row, or replace it with IR left/right rows.",
+    )
+    parser.add_argument(
         "--no_float_ffs_depth",
         action="store_true",
         help="Do not prefer depth_ffs_float_m when it is available.",
@@ -102,6 +108,7 @@ def main() -> int:
         highlight_alpha=float(args.highlight_alpha),
         highlight_radius_px=int(args.highlight_radius_px),
         use_float_ffs_depth_when_available=not bool(args.no_float_ffs_depth),
+        native_row_mode=str(args.native_row_mode),
         round_specs=round_specs,
     )
     print(f"Enhanced PhysTwin removed overlay experiment written to {summary['output_dir']}")
