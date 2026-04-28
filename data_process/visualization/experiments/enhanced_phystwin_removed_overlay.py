@@ -30,11 +30,54 @@ from .native_ffs_fused_pcd_compare import (
     DEFAULT_PHYSTWIN_NB_POINTS,
     DEFAULT_PHYSTWIN_RADIUS_M,
     _load_depth_m,
-    build_static_native_ffs_fused_pcd_round_specs,
 )
 
 
 DEFAULT_OUTPUT_ROOT_NAME = "enhanced_phystwin_removed_overlay_frame_0000"
+DEFAULT_ENHANCED_PHYSTWIN_REMOVED_OVERLAY_ROUNDS: tuple[dict[str, str], ...] = (
+    {
+        "round_id": "round1",
+        "round_label": "Round 1",
+        "native_case_ref": "static/native_30_static_round1_20260410_235202",
+        "ffs_case_ref": "static/ffs_30_static_round1_20260410_235202",
+        "mask_root": "static/masked_pointcloud_compare_round1_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks",
+    },
+    {
+        "round_id": "round2",
+        "round_label": "Round 2",
+        "native_case_ref": "static/native_30_static_round2_20260414",
+        "ffs_case_ref": "static/ffs_30_static_round2_20260414",
+        "mask_root": "static/masked_pointcloud_compare_round2_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks",
+    },
+    {
+        "round_id": "round3",
+        "round_label": "Round 3",
+        "native_case_ref": "static/native_30_static_round3_20260414",
+        "ffs_case_ref": "static/ffs_30_static_round3_20260414",
+        "mask_root": "static/masked_pointcloud_compare_round3_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks",
+    },
+    {
+        "round_id": "round4",
+        "round_label": "Round 4",
+        "native_case_ref": "static/native_30_static_round4_20260427",
+        "ffs_case_ref": "static/ffs_30_static_round4_20260427",
+        "mask_root": "static/masked_pointcloud_compare_round4_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks",
+    },
+    {
+        "round_id": "round5",
+        "round_label": "Round 5",
+        "native_case_ref": "static/native_30_static_round5_20260427",
+        "ffs_case_ref": "static/ffs_30_static_round5_20260427",
+        "mask_root": "static/masked_pointcloud_compare_round5_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks",
+    },
+    {
+        "round_id": "round6",
+        "round_label": "Round 6",
+        "native_case_ref": "static/native_30_static_round6_20260427",
+        "ffs_case_ref": "static/ffs_30_static_round6_20260427",
+        "mask_root": "static/masked_pointcloud_compare_round6_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks",
+    },
+)
 DEFAULT_TILE_WIDTH = 480
 DEFAULT_TILE_HEIGHT = 360
 DEFAULT_ROW_LABEL_WIDTH = 300
@@ -46,6 +89,16 @@ DEFAULT_SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR: tuple[tuple[int, int, int], ...] = (
 )
 DEFAULT_SOURCE_CAMERA_HIGHLIGHT_LABELS: tuple[str, ...] = ("Cam0 magenta", "Cam1 cyan", "Cam2 amber")
 HIGHLIGHT_SCOPES = ("all", "radius", "component")
+
+
+def build_static_enhanced_phystwin_removed_overlay_round_specs(*, aligned_root: Path) -> list[dict[str, Any]]:
+    root = Path(aligned_root).resolve()
+    round_specs: list[dict[str, Any]] = []
+    for item in DEFAULT_ENHANCED_PHYSTWIN_REMOVED_OVERLAY_ROUNDS:
+        spec = dict(item)
+        spec["mask_root"] = root / str(item["mask_root"])
+        round_specs.append(spec)
+    return round_specs
 
 
 def _concat_or_empty(arrays: list[np.ndarray], *, shape: tuple[int, ...], dtype: np.dtype) -> np.ndarray:
@@ -273,7 +326,7 @@ def run_enhanced_phystwin_removed_overlay_workflow(
         raise ValueError(f"highlight_radius_px must be >= 0, got {highlight_radius_px}.")
 
     selected_round_specs = (
-        build_static_native_ffs_fused_pcd_round_specs(aligned_root=aligned_root)
+        build_static_enhanced_phystwin_removed_overlay_round_specs(aligned_root=aligned_root)
         if round_specs is None
         else [dict(item) for item in round_specs]
     )

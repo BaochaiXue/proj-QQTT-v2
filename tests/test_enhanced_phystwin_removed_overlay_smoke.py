@@ -9,6 +9,7 @@ import numpy as np
 from data_process.visualization.experiments.enhanced_phystwin_removed_overlay import (
     DEFAULT_SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR,
     build_enhanced_phystwin_removed_overlay_board,
+    build_static_enhanced_phystwin_removed_overlay_round_specs,
     run_enhanced_phystwin_removed_overlay_workflow,
 )
 from data_process.visualization.experiments.ffs_confidence_filter_pcd_compare import (
@@ -39,6 +40,17 @@ class _RenderCollector:
 
 
 class EnhancedPhystwinRemovedOverlaySmokeTest(unittest.TestCase):
+    def test_default_round_specs_cover_static_round1_to_round6(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            specs = build_static_enhanced_phystwin_removed_overlay_round_specs(aligned_root=Path(tmp_dir) / "data")
+
+        self.assertEqual([item["round_id"] for item in specs], [f"round{idx}" for idx in range(1, 7)])
+        self.assertTrue(
+            str(specs[-1]["mask_root"]).endswith(
+                "masked_pointcloud_compare_round6_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks"
+            )
+        )
+
     def test_trace_masks_match_existing_enhanced_filter(self) -> None:
         main = np.asarray(
             [[x, y, z] for x in (0.0, 0.004, 0.008) for y in (0.0, 0.004, 0.008) for z in (0.0, 0.004, 0.008)],

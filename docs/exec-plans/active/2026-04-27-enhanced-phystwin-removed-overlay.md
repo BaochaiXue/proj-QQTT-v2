@@ -17,7 +17,7 @@ PhysTwin-like postprocess back onto the source FFS RGB/depth views.
    - row 4: object-masked FFS depth with removed-point overlay by source camera
    - row 5: RGB with removed-point overlay by source camera
 3. Add an experiment CLI under `scripts/harness/experiments/` with defaults for
-   static round 1-3 frame 0 and `enhanced_component_voxel_size_m=0.01`.
+   static round 1-6 frame 0 and `enhanced_component_voxel_size_m=0.01`.
 4. Register the workflow shim, docs, quick/full check-all help command, and
    smoke tests.
 5. Validate with targeted unittests, CLI help, experiment boundary check, and

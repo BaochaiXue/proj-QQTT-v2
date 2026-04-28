@@ -13,6 +13,8 @@ import numpy as np
 from scripts.harness.sam31_mask_helper import (
     _build_sam31_builder_kwargs,
     _call_download_ckpt_from_hf,
+    _merge_initial_frame_segments,
+    _patch_sam31_init_state_kwarg_compat,
     _prepare_session_frames,
     _resolve_sam3_video_predictor_builder,
     ColorSource,
@@ -137,6 +139,43 @@ class Sam31MaskHelperSmokeTest(unittest.TestCase):
                 "async_loading_frames": True,
             },
         )
+
+    def test_init_state_kwarg_compat_filters_new_session_kwargs(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        class _Model:
+            def init_state(self, *, resource_path: str) -> dict[str, str]:
+                calls.append({"resource_path": resource_path})
+                return {"ok": resource_path}
+
+        class _Predictor:
+            model = _Model()
+
+        unsupported = _patch_sam31_init_state_kwarg_compat(_Predictor())
+
+        self.assertIn("offload_state_to_cpu", unsupported)
+        self.assertEqual(
+            _Predictor.model.init_state(
+                resource_path="/tmp/session",
+                offload_video_to_cpu=True,
+                offload_state_to_cpu=True,
+                async_loading_frames=True,
+            ),
+            {"ok": "/tmp/session"},
+        )
+        self.assertEqual(calls, [{"resource_path": "/tmp/session"}])
+
+    def test_initial_frame_segments_survive_empty_single_frame_propagation(self) -> None:
+        initial = {0: np.ones((2, 3), dtype=bool)}
+        video_segments = {0: {}}
+
+        _merge_initial_frame_segments(
+            video_segments,
+            ann_frame_index=0,
+            initial_frame_segments=initial,
+        )
+
+        self.assertIs(video_segments[0], initial)
 
     def test_download_ckpt_compat_supports_versioned_and_versionless_functions(self) -> None:
         calls: list[tuple[str, str | None]] = []

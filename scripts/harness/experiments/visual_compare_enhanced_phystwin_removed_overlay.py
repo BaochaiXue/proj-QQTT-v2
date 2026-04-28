@@ -16,7 +16,7 @@ DEFAULT_OUTPUT_ROOT = ROOT / "data" / "experiments" / "enhanced_phystwin_removed
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Render static round1-3 source-camera RGB/depth/PCD overlays highlighting points "
+            "Render static round1-6 source-camera RGB/depth/PCD overlays highlighting points "
             "removed by enhanced PhysTwin-like postprocessing."
         )
     )
@@ -52,8 +52,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rounds",
         type=str,
-        default="round1,round2,round3",
-        help="Comma-separated subset of round1,round2,round3, or 'all'.",
+        default="round1,round2,round3,round4,round5,round6",
+        help="Comma-separated subset of round1..round6, or 'all'.",
     )
     return parser.parse_args()
 
@@ -74,13 +74,11 @@ def main() -> int:
     args = parse_args()
 
     from data_process.visualization.experiments.enhanced_phystwin_removed_overlay import (
+        build_static_enhanced_phystwin_removed_overlay_round_specs,
         run_enhanced_phystwin_removed_overlay_workflow,
     )
-    from data_process.visualization.experiments.native_ffs_fused_pcd_compare import (
-        build_static_native_ffs_fused_pcd_round_specs,
-    )
 
-    all_specs = build_static_native_ffs_fused_pcd_round_specs(aligned_root=Path(args.aligned_root).resolve())
+    all_specs = build_static_enhanced_phystwin_removed_overlay_round_specs(aligned_root=Path(args.aligned_root).resolve())
     round_specs = _select_round_specs(str(args.rounds), all_specs)
     max_points_per_camera = None if int(args.max_points_per_camera) <= 0 else int(args.max_points_per_camera)
     summary = run_enhanced_phystwin_removed_overlay_workflow(

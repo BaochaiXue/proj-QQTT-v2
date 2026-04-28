@@ -212,6 +212,44 @@ def _configure_torch_inference(torch_module) -> None:
         torch_module.backends.cudnn.allow_tf32 = True
 
 
+def _patch_sam31_init_state_kwarg_compat(predictor: Any) -> list[str]:
+    model = getattr(predictor, "model", None)
+    init_state = getattr(model, "init_state", None)
+    if model is None or init_state is None:
+        return []
+    if bool(getattr(model, "_qqtt_init_state_kwarg_compat_patched", False)):
+        return list(getattr(model, "_qqtt_init_state_unsupported_kwargs", []))
+
+    try:
+        signature = inspect.signature(init_state)
+    except (TypeError, ValueError):
+        return []
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+        return []
+
+    start_session_kwargs = {
+        "resource_path",
+        "offload_video_to_cpu",
+        "offload_state_to_cpu",
+        "async_loading_frames",
+        "video_loader_type",
+    }
+    unsupported_kwargs = sorted(start_session_kwargs - set(signature.parameters))
+    if not unsupported_kwargs:
+        return []
+
+    allowed_kwargs = set(signature.parameters)
+
+    def _init_state_compat(*args: Any, **kwargs: Any) -> Any:
+        filtered_kwargs = {key: value for key, value in kwargs.items() if key in allowed_kwargs}
+        return init_state(*args, **filtered_kwargs)
+
+    setattr(model, "init_state", _init_state_compat)
+    setattr(model, "_qqtt_init_state_kwarg_compat_patched", True)
+    setattr(model, "_qqtt_init_state_unsupported_kwargs", unsupported_kwargs)
+    return unsupported_kwargs
+
+
 def resolve_sam31_checkpoint_path(checkpoint_path: str | Path | None = None) -> str:
     if checkpoint_path is not None:
         resolved = Path(checkpoint_path).expanduser().resolve()
@@ -263,6 +301,7 @@ def build_sam31_video_predictor(
             max_num_objects=max_num_objects,
         )
     )
+    _patch_sam31_init_state_kwarg_compat(predictor)
     return predictor, resolved_checkpoint
 
 
@@ -350,6 +389,16 @@ def _collect_frame_segments(outputs: dict[str, Any], *, allowed_obj_ids: set[int
             continue
         frame_segments[obj_id] = np.asarray(out_masks[idx]).astype(bool)
     return frame_segments
+
+
+def _merge_initial_frame_segments(
+    video_segments: dict[int, dict[int, np.ndarray]],
+    *,
+    ann_frame_index: int,
+    initial_frame_segments: dict[int, np.ndarray],
+) -> None:
+    if initial_frame_segments and not video_segments.get(int(ann_frame_index)):
+        video_segments[int(ann_frame_index)] = initial_frame_segments
 
 
 def _prepare_camera_output(output_dir: Path, *, camera_idx: int, overwrite: bool) -> None:
@@ -475,8 +524,11 @@ def run_camera_segmentation(
                 allowed_obj_ids=tracked_obj_ids,
             )
 
-        if int(ann_frame_index) not in video_segments and initial_frame_segments:
-            video_segments[int(ann_frame_index)] = initial_frame_segments
+        _merge_initial_frame_segments(
+            video_segments,
+            ann_frame_index=int(ann_frame_index),
+            initial_frame_segments=initial_frame_segments,
+        )
     finally:
         if session_id is not None:
             predictor.handle_request(
