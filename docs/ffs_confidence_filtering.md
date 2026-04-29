@@ -51,8 +51,8 @@ python data_process/record_data_align.py \
   --start 0 \
   --end 120 \
   --depth_backend ffs \
-  --ffs_repo /home/zhangxinjie/Fast-FoundationStereo \
-  --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth \
+  --ffs_repo ../Fast-FoundationStereo \
+  --ffs_model_path ../Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth \
   --ffs_scale 1.0 \
   --ffs_valid_iters 4 \
   --ffs_confidence_mode max_softmax \
@@ -73,8 +73,8 @@ python scripts/harness/experiments/run_ffs_confidence_filter_sweep.py \
   --case_name <case_name> \
   --start 0 \
   --end 120 \
-  --ffs_repo /home/zhangxinjie/Fast-FoundationStereo \
-  --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth \
+  --ffs_repo ../Fast-FoundationStereo \
+  --ffs_model_path ../Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth \
   --modes margin,max_softmax,entropy,variance \
   --thresholds 0.3,0.4,0.5,0.6,0.7,0.8 \
   --depth_min_m 0.2 \

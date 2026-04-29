@@ -79,7 +79,7 @@ python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
 FFS preview for live RGB plus color-aligned FFS depth now defaults to the repo-local `20-30-48 / iter4 / builderOpt5` TensorRT path. Run realtime and visualization experiments from `FFS-SAM-RS` unless a task explicitly names another environment:
 
 ```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py
 ```
 
 Use this as a debug viewer only:
@@ -93,14 +93,14 @@ When you want a cheaper FFS-viewer throughput probe, replace the lower FFS
 depth colormap with a black placeholder that only reports received FFS FPS:
 
 ```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --depth-render-mode fps_placeholder
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --depth-render-mode fps_placeholder
 ```
 
 When you want a true no-render throughput probe, disable panel rendering and
 skip the worker-side color reprojection entirely:
 
 ```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --render-mode none
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --render-mode none
 ```
 
 Notes:
@@ -113,6 +113,7 @@ Live FFS mode selection is now:
 
 - `--ffs_backend tensorrt --ffs_trt_mode two_stage`
   - default live path
+  - default external repo: sibling `../Fast-FoundationStereo`, resolved from the QQTT repo root
   - default model directory: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
   - official-style two-stage TensorRT path: `feature_runner.engine` + Triton GWC + `post_runner.engine`
   - requires a working Triton kernel runtime in the active Python environment
@@ -125,13 +126,13 @@ Live FFS mode selection is now:
 If you explicitly want the current original PyTorch viewer path instead of the default two-stage TensorRT engines:
 
 ```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_valid_iters 4
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo ../Fast-FoundationStereo --ffs_model_path ../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_valid_iters 4
 ```
 
 If you want the single-engine TensorRT viewer path:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /path/to/single_engine_trt_dir
+python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir /path/to/single_engine_trt_dir
 ```
 
 Worker topology defaults to one FFS worker process per active camera:
@@ -147,7 +148,7 @@ Worker topology defaults to one FFS worker process per active camera:
 Shared-worker live preview:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_worker_mode shared
+python cameras_viewer_FFS.py --ffs_worker_mode shared
 ```
 
 Strict 3-camera batch live preview:
@@ -163,19 +164,19 @@ Strict 3-camera batch live preview:
 PyTorch batch example:
 
 ```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_valid_iters 4 --ffs_worker_mode shared --ffs_batch_mode strict3
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo ../Fast-FoundationStereo --ffs_model_path ../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_valid_iters 4 --ffs_worker_mode shared --ffs_batch_mode strict3
 ```
 
 Two-stage TensorRT batch example:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl --ffs_worker_mode shared --ffs_batch_mode strict3
+python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_trt_model_dir data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl --ffs_worker_mode shared --ffs_batch_mode strict3
 ```
 
 Single-engine TensorRT batch example:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32 --ffs_worker_mode shared --ffs_batch_mode strict3
+python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32 --ffs_worker_mode shared --ffs_batch_mode strict3
 ```
 
 Saved-pair FFS speed / tradeoff benchmark:
@@ -322,7 +323,7 @@ Use this when the question is specifically:
 Realistic live 3-camera FFS benchmark:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-interval-s 5 --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_scale 0.75 --ffs_valid_iters 4 --ffs_max_disp 192
+python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-interval-s 5 --ffs_repo ../Fast-FoundationStereo --ffs_model_path ../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_scale 0.75 --ffs_valid_iters 4 --ffs_max_disp 192
 ```
 
 Use this when the main question is the real online path:

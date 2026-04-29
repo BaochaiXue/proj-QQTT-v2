@@ -21,7 +21,7 @@
   - local RTX 5090 Laptop GPU is `sm_120`
   - upstream `torch==2.6.0+cu124` failed with `no kernel image is available for execution on the device`
 - Validation command:
-  - `conda run -n ffs-standalone python scripts/harness/verify_ffs_demo.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --model_path /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth`
+  - `conda run -n ffs-standalone python scripts/harness/verify_ffs_demo.py --ffs_repo ../Fast-FoundationStereo --model_path ../Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth`
   - `conda run -n ffs-standalone python scripts/harness/benchmark_ffs_configs.py --help`
   - `conda run -n ffs-standalone python scripts/harness/verify_ffs_tensorrt_wsl.py`
 - Expected use:
@@ -68,7 +68,7 @@
   - `triton==3.6.0`
   - `open3d==0.19.0`
 - Default FFS runtime policy:
-  - checkpoint: `/home/zhangxinjie/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth`
+  - checkpoint: `../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth`
   - valid iterations: `4`
   - max disparity: `192`
   - two-stage ONNX/TensorRT artifact: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`

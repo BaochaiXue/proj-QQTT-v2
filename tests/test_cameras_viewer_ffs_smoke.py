@@ -13,6 +13,7 @@ import numpy as np
 
 from cameras_viewer_FFS import (
     _effective_stats_log_interval_s,
+    DEFAULT_FFS_REPO,
     DEFAULT_FFS_TRT_MODEL_DIR,
     _compute_measured_fps,
     _drain_shared_worker_next_request,
@@ -347,14 +348,11 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         self.assertIsNone(worker_kwargs["trt_model_dir"])
 
     def test_parse_args_defaults_to_tensorrt_and_repo_local_engine_dir(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            root = Path(tmp_dir)
-            repo = root / "ffs_repo"
-            repo.mkdir()
-            with mock.patch("sys.argv", ["cameras_viewer_FFS.py", "--ffs_repo", str(repo)]):
-                args = parse_args()
+        with mock.patch("sys.argv", ["cameras_viewer_FFS.py"]):
+            args = parse_args()
 
         self.assertEqual(args.ffs_backend, "tensorrt")
+        self.assertEqual(args.ffs_repo, DEFAULT_FFS_REPO)
         self.assertEqual(args.ffs_trt_model_dir, DEFAULT_FFS_TRT_MODEL_DIR)
         self.assertEqual(args.ffs_trt_mode, "two_stage")
         self.assertEqual(args.ffs_worker_mode, "per_camera")

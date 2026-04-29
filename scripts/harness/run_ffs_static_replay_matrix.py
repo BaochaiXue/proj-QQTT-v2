@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
 
 
 from data_process.depth_backends import (  # noqa: E402
+    DEFAULT_FFS_REPO,
     FastFoundationStereoSingleEngineTensorRTRunner,
     FastFoundationStereoTensorRTRunner,
     resolve_tensorrt_engine_static_batch_size,
@@ -71,7 +72,6 @@ ENGINE_NAMES = ("single_engine_fp32", "two_stage_fp16")
 CAMERA_IDS = (0, 1, 2)
 FRAME_IDX_VISUAL_DEFAULT = 10
 MASK_PROMPT_DEFAULT = "stuffed animal"
-DEFAULT_FFS_REPO = Path("/home/zhangxinjie/Fast-FoundationStereo")
 DEFAULT_MAX_DISP = 192
 DEFAULT_POINT_SIZE = 2.0
 DEFAULT_LOOK_DISTANCE = 1.0

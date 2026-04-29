@@ -72,13 +72,13 @@ python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
 Live RGB + Fast-FoundationStereo preview:
 
 ```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py
 ```
 
 True no-render FFS throughput probe:
 
 ```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --render-mode none
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --render-mode none
 ```
 
 In `--render-mode none`, the viewer skips panel assembly / `imshow()`, does not
@@ -88,6 +88,7 @@ instead.
 The default realtime / visualization FFS path is:
 
 - environment: `FFS-SAM-RS`
+- external repo default: sibling `../Fast-FoundationStereo`
 - checkpoint: `20-30-48`
 - `--ffs_valid_iters 4`
 - `--ffs_max_disp 192`
@@ -109,7 +110,7 @@ Available live FFS modes:
 The default FFS viewer topology is still `--ffs_worker_mode per_camera`, which means one FFS worker process per active camera. You can also force a single shared FFS worker process for all active cameras:
 
 ```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_worker_mode shared
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_worker_mode shared
 ```
 
 Strict 3-camera batch mode is now also available:
@@ -126,15 +127,15 @@ Strict 3-camera batch mode is now also available:
 Strict 3-camera batch preview examples:
 
 ```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_valid_iters 4 --ffs_worker_mode shared --ffs_batch_mode strict3
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl --ffs_worker_mode shared --ffs_batch_mode strict3
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32 --ffs_worker_mode shared --ffs_batch_mode strict3
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo ../Fast-FoundationStereo --ffs_model_path ../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_valid_iters 4 --ffs_worker_mode shared --ffs_batch_mode strict3
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_trt_model_dir data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl --ffs_worker_mode shared --ffs_batch_mode strict3
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32 --ffs_worker_mode shared --ffs_batch_mode strict3
 ```
 
 Explicit single-engine TensorRT preview:
 
 ```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir /path/to/single_engine_trt_dir
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir /path/to/single_engine_trt_dir
 ```
 
 Static-round TRT matrix replay + PPTX export:

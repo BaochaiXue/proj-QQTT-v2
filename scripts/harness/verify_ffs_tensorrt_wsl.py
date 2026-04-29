@@ -15,9 +15,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from data_process.depth_backends import DEFAULT_FFS_REPO
 from data_process.depth_backends.fast_foundation_stereo import run_forward_on_non_default_cuda_stream
 
-DEFAULT_FFS_REPO = Path("/home/zhangxinjie/Fast-FoundationStereo")
 DEFAULT_MODEL_PATH = DEFAULT_FFS_REPO / "weights" / "23-36-37" / "model_best_bp2_serialize.pth"
 DEFAULT_OUT_DIR = ROOT / "data" / "ffs_proof_of_life" / "trt_two_stage_864x480_wsl"
 

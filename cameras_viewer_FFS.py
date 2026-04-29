@@ -37,6 +37,7 @@ from cameras_viewer import (
 )
 from data_process.depth_backends import (
     DEFAULT_FFS_MAX_DISP,
+    DEFAULT_FFS_REPO,
     DEFAULT_FFS_SCALE,
     DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
     DEFAULT_FFS_VALID_ITERS,
@@ -1165,7 +1166,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-mode", choices=RENDER_MODE_CHOICES, default="panel")
     parser.add_argument("--depth-render-mode", choices=DEPTH_RENDER_MODE_CHOICES, default="colormap")
     parser.add_argument("--ffs_backend", choices=("pytorch", "tensorrt"), default="tensorrt")
-    parser.add_argument("--ffs_repo", type=Path, required=True)
+    parser.add_argument("--ffs_repo", type=Path, default=DEFAULT_FFS_REPO)
     parser.add_argument("--ffs_model_path", type=Path, default=None)
     parser.add_argument("--ffs_scale", type=float, default=DEFAULT_FFS_SCALE)
     parser.add_argument("--ffs_valid_iters", type=int, default=DEFAULT_FFS_VALID_ITERS)
