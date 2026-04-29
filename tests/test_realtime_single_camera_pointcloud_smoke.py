@@ -37,6 +37,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--render-backend {auto,image,pointcloud}", result.stdout)
         self.assertIn("--image-splat-px IMAGE_SPLAT_PX", result.stdout)
         self.assertIn("--debug", result.stdout)
+        self.assertIn("orbit=200000", result.stdout)
         self.assertIn(demo.COORDINATE_FRAME, result.stdout)
         self.assertIn("Use <=0 to disable", result.stdout)
         self.assertIn("far clipping", result.stdout)
@@ -77,6 +78,48 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         args = demo.build_parser().parse_args(["--view-mode", "orbit"])
         demo.validate_args(args)
         self.assertEqual(demo.resolve_render_backend(args), "pointcloud")
+
+    def test_orbit_view_defaults_to_200k_points_unless_explicit(self) -> None:
+        camera_args = demo.build_parser().parse_args([])
+        orbit_args = demo.build_parser().parse_args(["--view-mode", "orbit"])
+        uncapped_orbit_args = demo.build_parser().parse_args(["--view-mode", "orbit", "--max-points", "0"])
+
+        demo.validate_args(camera_args)
+        demo.validate_args(orbit_args)
+        demo.validate_args(uncapped_orbit_args)
+
+        self.assertEqual(demo.resolve_max_points(camera_args), 0)
+        self.assertEqual(demo.resolve_max_points(orbit_args), 200000)
+        self.assertEqual(demo.resolve_max_points(uncapped_orbit_args), 0)
+
+        demo.apply_view_defaults(orbit_args)
+        self.assertEqual(orbit_args.max_points, 200000)
+
+    def test_pointcloud_update_readds_only_when_capacity_is_too_small(self) -> None:
+        self.assertTrue(
+            demo.pointcloud_update_requires_readd(geometry_added=False, current_capacity=0, point_count=10)
+        )
+        self.assertFalse(
+            demo.pointcloud_update_requires_readd(
+                geometry_added=True,
+                current_capacity=200000,
+                point_count=187949,
+            )
+        )
+        self.assertFalse(
+            demo.pointcloud_update_requires_readd(
+                geometry_added=True,
+                current_capacity=200000,
+                point_count=200000,
+            )
+        )
+        self.assertTrue(
+            demo.pointcloud_update_requires_readd(
+                geometry_added=True,
+                current_capacity=187949,
+                point_count=200000,
+            )
+        )
 
     def test_image_backend_is_rejected_outside_camera_view(self) -> None:
         args = demo.build_parser().parse_args(["--view-mode", "orbit", "--render-backend", "image"])

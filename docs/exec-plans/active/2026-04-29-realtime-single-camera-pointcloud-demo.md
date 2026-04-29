@@ -12,7 +12,7 @@ Add an operator-facing realtime single-camera D455 demo that streams aligned `co
   - units: meters
   - axes: `x` right, `y` down, `z` forward
 - Do not load `calibrate.pkl` or apply multi-camera/world transforms.
-- Keep default quality fixed with `--stride 1` and `--max-points 0`.
+- Keep camera-view default quality fixed with `--stride 1` and `--max-points 0`; default orbit view to `--max-points 200000` for responsive 3D inspection unless the operator explicitly passes `--max-points 0`.
 - Keep the far-depth clip disabled by default with `--depth-max-m 0.0`; positive values opt into far clipping.
 - Default to `--view-mode camera`, which uses the D455 color intrinsics for a first-person camera projection; keep `--view-mode orbit` available for third-person inspection.
 - Default `--render-backend auto` to the fast `image` backend for camera view and the full `pointcloud` backend for orbit view.
@@ -64,6 +64,8 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Expanded `--fps` choices to `{5,15,30,60}` after a live D455 profile probe confirmed `848x480` RGB-D capture with depth-to-color alignment at about `59.8 FPS`.
 - Optimized the camera-view image backend mask path by converting metric depth bounds to raw `uint16` thresholds, using OpenCV `inRange`/`cvtColor`/`bitwise_and` when available, and keeping a NumPy fallback with identical valid-pixel semantics.
 - On a synthetic `848x480` frame in `FFS-max-sam31-rs`, the mask path median dropped from `8.61 ms` to `0.36 ms` while matching the previous float32 predicate output.
+- Updated orbit view defaults so omitted `--max-points` resolves to `200000`; camera view still resolves to uncapped `0`, and explicit `--max-points 0` keeps orbit uncapped.
+- Updated the point-cloud renderer to track Open3D geometry capacity and proactively re-add geometry when a later frame exceeds the current capacity, avoiding repeated `point count exceeds the existing point count` warnings after orbit capping ramps up to `200000`.
 
 Validation completed on 2026-04-29:
 

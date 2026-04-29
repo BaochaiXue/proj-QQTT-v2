@@ -32,7 +32,7 @@ coordinate contract is `camera_color_frame`, meters, `x` right, `y` down, and
 transform. Use `--help` to see the supported capture rates and profiles
 (`--fps {5,15,30,60}` and `--profile {848x480,640x480}`). The HUD reports render
 FPS, host receive-to-render latency, point count, stale capture drops, and the
-selected serial/profile/fps. Defaults preserve density (`--stride 1`,
+selected serial/profile/fps. Camera-view defaults preserve density (`--stride 1`,
 `--max-points 0`) and do not apply a far-depth clip (`--depth-max-m 0.0`).
 Set `--depth-max-m 1.5` or another positive value only when you want a near
 tabletop/room subset. The default view mode is first-person camera projection
@@ -40,8 +40,10 @@ tabletop/room subset. The default view mode is first-person camera projection
 for the older third-person point-cloud view. The default render backend is
 `--render-backend auto`: camera view uses the fast `image` backend, which
 preserves all aligned valid depth pixels and skips `depth -> XYZ -> Open3D
-geometry -> camera projection`; orbit view uses the full `pointcloud` backend.
-Use `--render-backend pointcloud` when you explicitly need Open3D point-cloud
+geometry -> camera projection`; orbit view uses the full `pointcloud` backend
+and defaults to `--max-points 200000` to reduce Open3D update pressure. Use
+`--max-points 0` with orbit when you explicitly want uncapped density, and use
+`--render-backend pointcloud` when you explicitly need Open3D point-cloud
 geometry in camera view. `--latency-target-ms` is only a warning threshold.
 
 When diagnosing depth-to-render cost, enable the profiler HUD and `1 Hz`

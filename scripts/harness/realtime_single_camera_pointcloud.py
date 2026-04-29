@@ -20,6 +20,8 @@ SUPPORTED_CAPTURE_FPS = (5, 15, 30, 60)
 SUPPORTED_PROFILES = ("848x480", "640x480")
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 30
+DEFAULT_CAMERA_MAX_POINTS = 0
+DEFAULT_ORBIT_MAX_POINTS = 200000
 COORDINATE_FRAME = "camera_color_frame"
 GEOMETRY_NAME = "single_d455_live_pointcloud"
 DEBUG_LOG_INTERVAL_S = 1.0
@@ -450,7 +452,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum rendered depth in meters. Use <=0 to disable far clipping.",
     )
     parser.add_argument("--stride", type=int, default=1, help="Pixel stride for point generation. Default preserves density.")
-    parser.add_argument("--max-points", type=int, default=0, help="Maximum rendered points. 0 means uncapped.")
+    parser.add_argument(
+        "--max-points",
+        type=int,
+        default=None,
+        help="Maximum rendered points. Omit for view default: camera=0 uncapped, orbit=200000. Set 0 to force uncapped.",
+    )
     parser.add_argument("--point-size", type=float, default=2.0, help="Open3D point size.")
     parser.add_argument(
         "--view-mode",
@@ -493,7 +500,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("expected --depth-max-m <= 0, or --depth-max-m > --depth-min-m")
     if args.stride < 1:
         raise ValueError("--stride must be >= 1")
-    if args.max_points < 0:
+    if args.max_points is not None and args.max_points < 0:
         raise ValueError("--max-points must be >= 0")
     if args.point_size <= 0:
         raise ValueError("--point-size must be > 0")
@@ -513,6 +520,23 @@ def resolve_render_backend(args: argparse.Namespace) -> str:
     if args.view_mode == "camera":
         return "image"
     return "pointcloud"
+
+
+def resolve_max_points(args: argparse.Namespace) -> int:
+    if args.max_points is not None:
+        return int(args.max_points)
+    if args.view_mode == "orbit":
+        return DEFAULT_ORBIT_MAX_POINTS
+    return DEFAULT_CAMERA_MAX_POINTS
+
+
+def apply_view_defaults(args: argparse.Namespace) -> argparse.Namespace:
+    args.max_points = resolve_max_points(args)
+    return args
+
+
+def pointcloud_update_requires_readd(*, geometry_added: bool, current_capacity: int, point_count: int) -> bool:
+    return (not geometry_added) or point_count > current_capacity
 
 
 def _load_realsense_module():
@@ -602,6 +626,8 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> tuple[object, object,
 
 class RealtimeSingleCameraPointCloudDemo:
     def __init__(self, args: argparse.Namespace) -> None:
+        if args.max_points is None:
+            apply_view_defaults(args)
         self.args = args
         self.width, self.height = parse_profile(args.profile)
         self.pixel_grid = build_pixel_grid(width=self.width, height=self.height, stride=args.stride)
@@ -824,6 +850,8 @@ class RealtimeSingleCameraPointCloudDemo:
         # Tensor.from_numpy shares CPU memory, so retain the current arrays until the next update.
         tensor_numpy_refs: dict[str, np.ndarray | None] = {"points": None, "colors": None}
         geometry_added = {"value": False}
+        geometry_capacity = {"value": 0}
+        camera_initialized = {"value": False}
         update_warned = {"value": False}
         render_stats = RenderStats()
         last_render_seq = {"value": -1}
@@ -878,6 +906,7 @@ class RealtimeSingleCameraPointCloudDemo:
                         pass
                     open3d_update_ms = _elapsed_ms(update_start_s, time.perf_counter())
                     geometry_added["value"] = False
+                    geometry_capacity["value"] = 0
             else:
                 assert scene_widget is not None
                 convert_start_s = time.perf_counter()
@@ -889,10 +918,27 @@ class RealtimeSingleCameraPointCloudDemo:
                 pcd.point.colors = o3c.Tensor.from_numpy(colors)
                 open3d_convert_ms = _elapsed_ms(convert_start_s, time.perf_counter())
                 update_start_s = time.perf_counter()
-                if geometry_added["value"]:
+                if pointcloud_update_requires_readd(
+                    geometry_added=geometry_added["value"],
+                    current_capacity=geometry_capacity["value"],
+                    point_count=packet.point_count,
+                ):
+                    if geometry_added["value"]:
+                        try:
+                            scene_widget.scene.remove_geometry(GEOMETRY_NAME)
+                        except Exception:
+                            pass
+                    scene_widget.scene.add_geometry(GEOMETRY_NAME, pcd, material)
+                    geometry_added["value"] = True
+                    geometry_capacity["value"] = packet.point_count
+                    if not camera_initialized["value"]:
+                        reset_camera()
+                        camera_initialized["value"] = True
+                else:
                     try:
                         flags = rendering.Scene.UPDATE_POINTS_FLAG | rendering.Scene.UPDATE_COLORS_FLAG
                         scene_widget.scene.scene.update_geometry(GEOMETRY_NAME, pcd, flags)
+                        geometry_capacity["value"] = packet.point_count
                     except Exception as exc:
                         if not update_warned["value"]:
                             print(
@@ -905,10 +951,11 @@ class RealtimeSingleCameraPointCloudDemo:
                         except Exception:
                             pass
                         scene_widget.scene.add_geometry(GEOMETRY_NAME, pcd, material)
-                else:
-                    scene_widget.scene.add_geometry(GEOMETRY_NAME, pcd, material)
-                    geometry_added["value"] = True
-                    reset_camera()
+                        geometry_added["value"] = True
+                        geometry_capacity["value"] = packet.point_count
+                        if not camera_initialized["value"]:
+                            reset_camera()
+                            camera_initialized["value"] = True
                 open3d_update_ms = _elapsed_ms(update_start_s, time.perf_counter())
 
             render_time_s = time.perf_counter()
@@ -1012,6 +1059,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         validate_args(args)
+        apply_view_defaults(args)
         return RealtimeSingleCameraPointCloudDemo(args).run()
     except (RuntimeError, ValueError) as exc:
         parser.exit(2, f"{parser.prog}: error: {exc}\n")
