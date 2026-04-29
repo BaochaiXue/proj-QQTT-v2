@@ -45,6 +45,13 @@
 | `check_scope.py` | Enforce repo scope boundaries. |
 | `check_visual_architecture.py` | Guard visualization layering and file-size constraints. |
 
+The default `check_all.py` quick profile is intentionally narrow: core camera
+entrypoint help, formal record/alignment help, repo guards, FFS geometry
+contracts, and a small current visualization smoke set. Use `--full` for broad
+experiment CLI coverage, realtime demo smoke tests, TensorRT/benchmark helper
+coverage, pytest probe schema checks, or changes that touch shared
+visualization/depth behavior.
+
 Run:
 
 ```bash

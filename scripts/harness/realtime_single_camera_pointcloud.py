@@ -3,11 +3,17 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from dataclasses import dataclass, replace
+import math
 import threading
 import time
 from typing import Callable, Generic, TypeVar
 
 import numpy as np
+
+try:
+    import cv2  # type: ignore
+except ImportError:
+    cv2 = None
 
 
 SUPPORTED_CAPTURE_FPS = (5, 15, 30, 60)
@@ -229,6 +235,51 @@ def build_projection_grid(
     return np.ascontiguousarray(ray_x, dtype=np.float32), np.ascontiguousarray(ray_y, dtype=np.float32)
 
 
+def _depth_bounds_to_u16(
+    *,
+    depth_scale_m_per_unit: float,
+    depth_min_m: float,
+    depth_max_m: float,
+) -> tuple[int, int]:
+    if not math.isfinite(depth_scale_m_per_unit) or depth_scale_m_per_unit <= 0:
+        raise ValueError("depth_scale_m_per_unit must be finite and positive")
+    if not math.isfinite(depth_min_m) or depth_min_m < 0:
+        raise ValueError("depth_min_m must be finite and >= 0")
+    if not math.isfinite(depth_max_m):
+        raise ValueError("depth_max_m must be finite")
+    if depth_max_m > 0 and depth_max_m <= depth_min_m:
+        raise ValueError("expected depth_max_m <= 0, or depth_max_m > depth_min_m")
+
+    u16_max = int(np.iinfo(np.uint16).max)
+    scale32 = np.float32(depth_scale_m_per_unit)
+    if not np.isfinite(scale32) or scale32 <= 0:
+        raise ValueError("depth_scale_m_per_unit must be representable as finite positive float32")
+
+    def scaled_m(raw_depth: int) -> float:
+        return float(np.float32(raw_depth) * scale32)
+
+    if scaled_m(u16_max) < depth_min_m:
+        return u16_max + 1, u16_max
+    lower = max(1, min(u16_max, int(math.floor(depth_min_m / float(scale32)))))
+    while lower > 1 and scaled_m(lower - 1) >= depth_min_m:
+        lower -= 1
+    while lower <= u16_max and scaled_m(lower) < depth_min_m:
+        lower += 1
+    if lower > u16_max:
+        return u16_max + 1, u16_max
+
+    upper = u16_max
+    if depth_max_m > 0:
+        if scaled_m(1) > depth_max_m:
+            return lower, 0
+        upper = max(0, min(u16_max, int(math.ceil(depth_max_m / float(scale32)))))
+        while upper < u16_max and scaled_m(upper + 1) <= depth_max_m:
+            upper += 1
+        while upper >= 0 and scaled_m(upper) > depth_max_m:
+            upper -= 1
+    return lower, upper
+
+
 def build_camera_view_image(
     *,
     color_bgr: np.ndarray,
@@ -244,30 +295,37 @@ def build_camera_view_image(
         raise ValueError("color_bgr must be an HxWx3 array")
     if color_bgr.shape[:2] != depth_u16.shape:
         raise ValueError("color and depth shapes must match after depth-to-color alignment")
-    if depth_scale_m_per_unit <= 0:
-        raise ValueError("depth_scale_m_per_unit must be positive")
-    if depth_min_m < 0:
-        raise ValueError("depth_min_m must be >= 0")
-    if depth_max_m > 0 and depth_max_m <= depth_min_m:
-        raise ValueError("expected depth_max_m <= 0, or depth_max_m > depth_min_m")
     if splat_px < 0:
         raise ValueError("splat_px must be >= 0")
 
-    depth_m = depth_u16.astype(np.float32, copy=False) * np.float32(depth_scale_m_per_unit)
-    valid = (depth_u16 > 0) & np.isfinite(depth_m) & (depth_m >= depth_min_m)
-    if depth_max_m > 0:
-        valid &= depth_m <= depth_max_m
-
+    lower_u16, upper_u16 = _depth_bounds_to_u16(
+        depth_scale_m_per_unit=depth_scale_m_per_unit,
+        depth_min_m=depth_min_m,
+        depth_max_m=depth_max_m,
+    )
     image_rgb = np.zeros(color_bgr.shape, dtype=np.uint8)
+    if lower_u16 > upper_u16:
+        return image_rgb, 0
+
+    if splat_px == 0 and cv2 is not None:
+        valid_mask_u8 = cv2.inRange(depth_u16, lower_u16, upper_u16)
+        valid_count = int(cv2.countNonZero(valid_mask_u8))
+        if valid_count == 0:
+            return image_rgb, 0
+        rgb = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
+        return np.ascontiguousarray(cv2.bitwise_and(rgb, rgb, mask=valid_mask_u8)), valid_count
+
+    valid = (depth_u16 >= lower_u16) & (depth_u16 <= upper_u16)
     valid_count = int(np.count_nonzero(valid))
     if valid_count == 0:
         return image_rgb, 0
 
+    source_rgb = np.ascontiguousarray(color_bgr[:, :, ::-1])
     if splat_px == 0:
-        image_rgb[valid] = color_bgr[valid][:, [2, 1, 0]]
-    else:
-        source_rgb = np.ascontiguousarray(color_bgr[:, :, [2, 1, 0]])
-        _splat_valid_rgb(image_rgb=image_rgb, source_rgb=source_rgb, valid=valid, radius=splat_px)
+        source_rgb[~valid] = 0
+        return source_rgb, valid_count
+
+    _splat_valid_rgb(image_rgb=image_rgb, source_rgb=source_rgb, valid=valid, radius=splat_px)
     return np.ascontiguousarray(image_rgb), valid_count
 
 

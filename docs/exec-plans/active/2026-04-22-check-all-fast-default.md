@@ -51,6 +51,17 @@ full deterministic validation path for broader coverage.
 - `python scripts/harness/check_all.py`
 - `python scripts/harness/check_all.py --full --help`
 
+## Progress
+
+- [x] Split quick/full profiles while preserving full deterministic coverage.
+- [x] Batched quick unittest modules into one Python invocation.
+- [x] Further trimmed default quick coverage to core camera/record/alignment,
+  repo guards, FFS geometry contracts, and current comparison visualization
+  smoke tests.
+- [x] Kept experiment CLIs, realtime demo smoke tests, TensorRT/benchmark
+  helpers, and pytest probe schema checks in `--full`.
+- [ ] Run targeted validation after the second quick-profile trim.
+
 ## Risks
 
 - shrinking the default validation set too aggressively could let some

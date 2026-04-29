@@ -62,6 +62,8 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Added `--image-splat-px` for optional image-space splatting in the fast camera-view backend.
 - Updated the true 3D pointcloud backend to use Open3D tensor point clouds with `float32` positions/colors, reuse the RGB float conversion buffer, and print a one-time warning if `update_geometry()` falls back to remove/add.
 - Expanded `--fps` choices to `{5,15,30,60}` after a live D455 profile probe confirmed `848x480` RGB-D capture with depth-to-color alignment at about `59.8 FPS`.
+- Optimized the camera-view image backend mask path by converting metric depth bounds to raw `uint16` thresholds, using OpenCV `inRange`/`cvtColor`/`bitwise_and` when available, and keeping a NumPy fallback with identical valid-pixel semantics.
+- On a synthetic `848x480` frame in `FFS-max-sam31-rs`, the mask path median dropped from `8.61 ms` to `0.36 ms` while matching the previous float32 predicate output.
 
 Validation completed on 2026-04-29:
 
@@ -71,4 +73,15 @@ conda run -n FFS-max-sam31-rs python -m unittest -v tests.test_realtime_single_c
 conda run -n FFS-max-sam31-rs python scripts/harness/check_all.py
 ```
 
-All commands exited successfully. No live D455 run was performed in this validation pass.
+All commands exited successfully. The full interactive demo was not hardware-validated in this validation pass.
+
+Manual D455 profile probe completed on 2026-04-29 with serial `338122303713`:
+
+```text
+active stream=depth format=z16 848x480@60
+active stream=color format=bgr8 848x480@60
+demo_path=wait+align
+framesets=299 wall_s=5.011 wall_fps=59.7
+unique_color_frames=299 unique_depth_frames=299
+color_ts_fps=59.82 depth_ts_fps=59.82
+```

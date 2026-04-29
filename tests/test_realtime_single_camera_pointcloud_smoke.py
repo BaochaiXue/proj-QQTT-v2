@@ -112,6 +112,67 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             ),
         )
 
+    def test_image_backend_depth_bounds_preserve_raw_threshold_edges(self) -> None:
+        self.assertEqual(
+            demo._depth_bounds_to_u16(
+                depth_scale_m_per_unit=0.001,
+                depth_min_m=0.1,
+                depth_max_m=0.102,
+            ),
+            (100, 101),
+        )
+        color_bgr = np.array(
+            [[[10, 20, 30], [11, 21, 31], [12, 22, 32], [13, 23, 33], [14, 24, 34]]],
+            dtype=np.uint8,
+        )
+        depth_u16 = np.array([[99, 100, 101, 102, 103]], dtype=np.uint16)
+        image_rgb, valid_count = demo.build_camera_view_image(
+            color_bgr=color_bgr,
+            depth_u16=depth_u16,
+            depth_scale_m_per_unit=0.001,
+            depth_min_m=0.1,
+            depth_max_m=0.102,
+            splat_px=0,
+        )
+        self.assertEqual(valid_count, 2)
+        np.testing.assert_array_equal(
+            image_rgb,
+            np.array([[[0, 0, 0], [31, 21, 11], [32, 22, 12], [0, 0, 0], [0, 0, 0]]], dtype=np.uint8),
+        )
+
+    def test_image_backend_numpy_fallback_matches_default_path(self) -> None:
+        color_bgr = np.array(
+            [
+                [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+                [[10, 11, 12], [13, 14, 15], [16, 17, 18]],
+            ],
+            dtype=np.uint8,
+        )
+        depth_u16 = np.array([[0, 100, 600], [999, 1000, 2000]], dtype=np.uint16)
+        default_image, default_count = demo.build_camera_view_image(
+            color_bgr=color_bgr,
+            depth_u16=depth_u16,
+            depth_scale_m_per_unit=0.001,
+            depth_min_m=0.1,
+            depth_max_m=1.0,
+            splat_px=0,
+        )
+        original_cv2 = demo.cv2
+        try:
+            demo.cv2 = None
+            fallback_image, fallback_count = demo.build_camera_view_image(
+                color_bgr=color_bgr,
+                depth_u16=depth_u16,
+                depth_scale_m_per_unit=0.001,
+                depth_min_m=0.1,
+                depth_max_m=1.0,
+                splat_px=0,
+            )
+        finally:
+            demo.cv2 = original_cv2
+        self.assertEqual(default_count, fallback_count)
+        np.testing.assert_array_equal(default_image, fallback_image)
+
     def test_image_backend_splat_keeps_original_valid_count(self) -> None:
         color_bgr = np.zeros((3, 3, 3), dtype=np.uint8)
         color_bgr[1, 1] = np.array([10, 20, 30], dtype=np.uint8)
