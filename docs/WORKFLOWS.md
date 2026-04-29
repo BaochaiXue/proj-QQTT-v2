@@ -18,6 +18,25 @@ Native preview now uses one background capture thread per active camera and a
 latest-frame render loop in the main thread, so preview freshness no longer
 depends on the render loop reaching every `wait_for_frames()` call in order.
 
+For a hand-held single-D455 realtime point-cloud demo in the camera color
+frame:
+
+```bash
+conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 30
+```
+
+This demo streams one D455 `color + depth`, aligns depth to color, backprojects
+with the color intrinsics, and renders the live point cloud in Open3D. The
+coordinate contract is `camera_color_frame`, meters, `x` right, `y` down, and
+`z` forward; it does not read `calibrate.pkl` or apply any multi-camera world
+transform. Use `--help` to see the supported capture rates and profiles
+(`--fps {5,15,30}` and `--profile {848x480,640x480}`). The HUD reports render
+FPS, host receive-to-render latency, point count, stale capture drops, and the
+selected serial/profile/fps. Defaults preserve density (`--stride 1`,
+`--max-points 0`) and do not apply a far-depth clip (`--depth-max-m 0.0`).
+Set `--depth-max-m 1.5` or another positive value only when you want a near
+tabletop/room subset. `--latency-target-ms` is only a warning threshold.
+
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:
 
