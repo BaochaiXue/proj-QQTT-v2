@@ -138,6 +138,68 @@ def draw_text_box(
     cv2.putText(image, text, (x0, y0), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness, cv2.LINE_AA)
 
 
+def _wrap_text_for_width(
+    text: str,
+    *,
+    max_width_px: int,
+    font_scale: float,
+    thickness: int,
+) -> list[str]:
+    wrapped_lines: list[str] = []
+    for raw_line in str(text).replace(" | ", "\n").splitlines():
+        words = [word for word in raw_line.strip().split(" ") if word]
+        if not words:
+            continue
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            text_width = cv2.getTextSize(candidate, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0][0]
+            if text_width <= max_width_px:
+                current = candidate
+            else:
+                wrapped_lines.append(current)
+                current = word
+        wrapped_lines.append(current)
+    return wrapped_lines or [str(text)]
+
+
+def _draw_centered_multiline_text(
+    image: np.ndarray,
+    *,
+    text: str,
+    x0: int,
+    y0: int,
+    width: int,
+    height: int,
+    color: tuple[int, int, int],
+    font_scale: float = 0.70,
+    thickness: int = 2,
+) -> None:
+    usable_width = max(1, int(width) - 24)
+    scale = float(font_scale)
+    while True:
+        lines = _wrap_text_for_width(
+            text,
+            max_width_px=usable_width,
+            font_scale=scale,
+            thickness=int(thickness),
+        )
+        text_sizes = [cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, int(thickness))[0] for line in lines]
+        line_height = max((size[1] for size in text_sizes), default=1)
+        line_gap = max(4, int(round(line_height * 0.45)))
+        total_height = len(lines) * line_height + max(0, len(lines) - 1) * line_gap
+        if total_height <= max(1, int(height) - 16) or scale <= 0.42:
+            break
+        scale = max(0.42, scale - 0.04)
+
+    start_y = int(y0) + max(line_height + 4, (int(height) - total_height) // 2 + line_height)
+    for line_idx, line in enumerate(lines):
+        size = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, int(thickness))[0]
+        text_x = int(x0) + max(10, (int(width) - size[0]) // 2)
+        text_y = start_y + line_idx * (line_height + line_gap)
+        cv2.putText(image, line, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, int(thickness), cv2.LINE_AA)
+
+
 def overlay_scalar_colorbar(
     image: np.ndarray,
     *,
@@ -410,7 +472,7 @@ def compose_registration_matrix_board(
     image_rows: list[list[np.ndarray]],
     legend_image: np.ndarray | None = None,
     background_bgr: tuple[int, int, int] = (14, 16, 20),
-    row_label_width: int = 176,
+    row_label_width: int = 240,
 ) -> np.ndarray:
     if not image_rows or not image_rows[0]:
         raise ValueError("compose_registration_matrix_board requires a non-empty image matrix.")
@@ -440,10 +502,15 @@ def compose_registration_matrix_board(
     for row_idx, row_images in enumerate(image_rows):
         y0 = padding + row_idx * (panel_h + gap)
         body[y0:y0 + panel_h, :row_label_w] = (18, 18, 20)
-        text_size = cv2.getTextSize(row_headers[row_idx], cv2.FONT_HERSHEY_SIMPLEX, 0.88, 2)[0]
-        text_x = max(10, (row_label_w - text_size[0]) // 2)
-        text_y = y0 + (panel_h + text_size[1]) // 2
-        cv2.putText(body, row_headers[row_idx], (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.88, (255, 255, 255), 2, cv2.LINE_AA)
+        _draw_centered_multiline_text(
+            body,
+            text=row_headers[row_idx],
+            x0=0,
+            y0=y0,
+            width=row_label_w,
+            height=panel_h,
+            color=(255, 255, 255),
+        )
         for col_idx, image in enumerate(row_images):
             x0 = row_label_w + padding + col_idx * (panel_w + gap)
             body[y0:y0 + panel_h, x0:x0 + panel_w] = image
@@ -457,14 +524,16 @@ def compose_registration_matrix_board(
         text_x = x0 + max(8, (panel_w - text_size[0]) // 2)
         cv2.putText(header_bar, header, (text_x, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (255, 255, 255), 2, cv2.LINE_AA)
 
+    title_line_count = min(len(title_lines), 3)
+    title_h = max(title_h, 44 + max(0, title_line_count - 1) * 24 + 20)
     title_bar = np.full((title_h, body_w, 3), (10, 12, 16), dtype=np.uint8)
-    for line_idx, line in enumerate(title_lines[:2]):
+    for line_idx, line in enumerate(title_lines[:3]):
         cv2.putText(
             title_bar,
             line,
-            (16, 32 + line_idx * 28),
+            (16, 32 + line_idx * 24),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.84 if line_idx == 0 else 0.58,
+            0.84 if line_idx == 0 else 0.54,
             (255, 255, 255) if line_idx == 0 else (224, 228, 234),
             2 if line_idx == 0 else 1,
             cv2.LINE_AA,

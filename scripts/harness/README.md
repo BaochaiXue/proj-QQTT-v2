@@ -115,10 +115,10 @@ These should stay thin wrappers around workflow modules under `data_process/visu
 | Script | Purpose |
 | --- | --- |
 | `experiments/run_ffs_confidence_filter_sweep.py` | FFS confidence filtering sweep runner. |
-| `experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py` | Native/FFS PCD compare under no postprocess, PT-like, and enhanced PT-like cleanup. |
-| `experiments/visual_compare_enhanced_phystwin_removed_overlay.py` | `5x3` RealSense-depth/FFS removed-point overlay; `--native_row_mode ir_pair` produces `6x3` IR-left/right boards. |
-| `experiments/visual_compare_ffs_confidence_filter_pcd.py` | `6x3` native/raw/confidence-filtered FFS PCD board. |
-| `experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py` | Threshold sweep over confidence-filtered FFS PCD boards. |
+| `experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py` | RealSense/Fast-FoundationStereo point-cloud compare under no cleanup, PhysTwin-like radius-neighbor cleanup, and enhanced component cleanup. |
+| `experiments/visual_compare_enhanced_phystwin_removed_overlay.py` | `5x3` RealSense-depth/Fast-FoundationStereo removed-point overlay with widened descriptive row labels; `--native_row_mode ir_pair` produces `6x3` infrared-left/right boards. |
+| `experiments/visual_compare_ffs_confidence_filter_pcd.py` | `6x3` RealSense / raw Fast-FoundationStereo / confidence-filtered Fast-FoundationStereo point-cloud board. |
+| `experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py` | Threshold sweep over confidence-filtered Fast-FoundationStereo point-cloud boards. |
 | `experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py` | Multipage mask-erosion sweep. |
 | `experiments/visual_compare_ffs_mask_erode_sweep_pcd.py` | Compact mask-erosion sweep. |
 | `experiments/visual_compare_native_ffs_fused_pcd.py` | Native, original FFS, and fused native/FFS PCD board. |

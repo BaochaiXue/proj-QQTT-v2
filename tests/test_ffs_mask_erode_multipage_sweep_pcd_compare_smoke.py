@@ -114,9 +114,27 @@ class FfsMaskErodeMultipageSweepPcdCompareSmokeTest(unittest.TestCase):
             self.assertEqual(round_summary["render_contract"]["rows"], "native_depth_ffs_original_ffs_mask_erode_multipage_sweep")
             for board_path in round_summary["board_paths"]:
                 self.assertTrue(Path(board_path).is_file())
-            self.assertEqual(round_summary["pages"][0]["row_headers"][0:2], ["Native depth | mask 0px", "Original FFS | mask 0px"])
-            self.assertEqual(round_summary["pages"][0]["row_headers"][2:], ["FFS | mask erode 1px", "FFS | mask erode 2px"])
-            self.assertEqual(round_summary["pages"][1]["row_headers"], ["FFS | mask erode 3px", "FFS | mask erode 4px"])
+            self.assertEqual(
+                round_summary["pages"][0]["row_headers"][0:2],
+                [
+                    "RealSense native depth\nobject mask unchanged",
+                    "Fast-FoundationStereo depth\nobject mask unchanged",
+                ],
+            )
+            self.assertEqual(
+                round_summary["pages"][0]["row_headers"][2:],
+                [
+                    "Fast-FoundationStereo depth\nobject mask eroded inward 1px",
+                    "Fast-FoundationStereo depth\nobject mask eroded inward 2px",
+                ],
+            )
+            self.assertEqual(
+                round_summary["pages"][1]["row_headers"],
+                [
+                    "Fast-FoundationStereo depth\nobject mask eroded inward 3px",
+                    "Fast-FoundationStereo depth\nobject mask eroded inward 4px",
+                ],
+            )
             self.assertFalse(round_summary["pages"][1]["include_baselines"])
             self.assertEqual(len(render_collector.calls), 18)
             self.assertIn("ffs_erode_4px", round_summary["fused_point_counts"])

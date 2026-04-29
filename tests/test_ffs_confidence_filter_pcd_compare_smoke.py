@@ -164,7 +164,14 @@ class FfsConfidenceFilterPcdCompareSmokeTest(unittest.TestCase):
             self.assertTrue((output_root / "round1" / "summary.json").is_file())
             self.assertEqual(
                 round_summary["row_headers"],
-                ["Native", "FFS raw", "margin 0.50", "maxsm 0.50", "entropy 0.50", "variance 0.50"],
+                [
+                    "RealSense native depth",
+                    "Fast-FoundationStereo depth\nno confidence filter",
+                    "Fast-FoundationStereo depth\nmargin confidence >= 0.50",
+                    "Fast-FoundationStereo depth\nmaximum softmax confidence >= 0.50",
+                    "Fast-FoundationStereo depth\nentropy confidence >= 0.50",
+                    "Fast-FoundationStereo depth\nvariance confidence >= 0.50",
+                ],
             )
             self.assertEqual(round_summary["confidence_modes"], ["margin", "max_softmax", "entropy", "variance"])
             self.assertFalse(round_summary["render_contract"]["formal_depth_written"])

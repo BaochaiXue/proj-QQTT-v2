@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--row_label_width",
         type=int,
-        default=340,
+        default=500,
         help="Left-side row-label band width in pixels. Increase this if row labels are clipped.",
     )
     parser.add_argument("--text_prompt", type=str, default="stuffed animal")

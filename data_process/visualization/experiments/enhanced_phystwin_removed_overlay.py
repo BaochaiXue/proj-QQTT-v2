@@ -80,7 +80,7 @@ DEFAULT_ENHANCED_PHYSTWIN_REMOVED_OVERLAY_ROUNDS: tuple[dict[str, str], ...] = (
 )
 DEFAULT_TILE_WIDTH = 480
 DEFAULT_TILE_HEIGHT = 360
-DEFAULT_ROW_LABEL_WIDTH = 300
+DEFAULT_ROW_LABEL_WIDTH = 460
 DEFAULT_HIGHLIGHT_COLOR_BGR = (255, 0, 255)
 DEFAULT_SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR: tuple[tuple[int, int, int], ...] = (
     (255, 0, 255),  # Cam0: magenta
@@ -291,38 +291,38 @@ def build_enhanced_phystwin_removed_overlay_board(
         raise ValueError("Enhanced removed overlay board requires a 5x3 or 6x3 image matrix.")
     selected_row_headers = row_headers or (
         [
-            "RGB + object mask",
-            "RealSense depth mask",
-            "PCD + removed",
-            "FFS depth + removed",
-            "RGB + removed",
+            "RGB image\nwith object mask",
+            "RealSense native depth\nwith object mask",
+            "Fast-FoundationStereo point cloud\nremoved points highlighted",
+            "Fast-FoundationStereo depth image\nremoved pixels highlighted",
+            "RGB image\nremoved pixels highlighted",
         ]
         if len(image_rows) == 5
         else [
-            "RGB + object mask",
-            "IR left",
-            "IR right",
-            "PCD + removed",
-            "FFS depth + removed",
-            "RGB + removed",
+            "RGB image\nwith object mask",
+            "Infrared left image",
+            "Infrared right image",
+            "Fast-FoundationStereo point cloud\nremoved points highlighted",
+            "Fast-FoundationStereo depth image\nremoved pixels highlighted",
+            "RGB image\nremoved pixels highlighted",
         ]
     )
     if len(selected_row_headers) != len(image_rows):
         raise ValueError("row_headers must match image_rows.")
     row_summary = (
-        "rows=RGB mask / RealSense depth / PCD + removed / FFS depth + removed / RGB + removed"
+        "rows=RGB object mask / RealSense native depth / Fast-FoundationStereo point cloud with removed points / Fast-FoundationStereo depth overlay / RGB overlay"
         if len(image_rows) == 5
-        else "rows=RGB mask / IR left / IR right / PCD + removed / FFS depth + removed / RGB + removed"
+        else "rows=RGB object mask / infrared left / infrared right / Fast-FoundationStereo point cloud with removed points / Fast-FoundationStereo depth overlay / RGB overlay"
     )
     return compose_registration_matrix_board(
         title_lines=[
-            f"Enhanced PT-like Removed Points Overlay | {round_label} | frame {int(frame_idx)}",
-            f"{row_summary} | highlight={model_config['highlight_scope']} | source-camera colors/pixels",
+            f"Enhanced PhysTwin-like Removed Points Overlay | {round_label} | frame {int(frame_idx)}",
+            f"{row_summary} | highlight scope={model_config['highlight_scope']} | colors identify source camera",
             (
-                f"radius={float(model_config['phystwin_radius_m']):.3f}m/"
-                f"{int(model_config['phystwin_nb_points'])}nn | "
-                f"component_voxel={float(model_config['enhanced_component_voxel_size_m']):.3f}m | "
-                f"alpha={float(model_config['highlight_alpha']):.2f}"
+                f"radius filter={float(model_config['phystwin_radius_m']):.3f}m, "
+                f"{int(model_config['phystwin_nb_points'])} neighbors | "
+                f"component voxel={float(model_config['enhanced_component_voxel_size_m']):.3f}m | "
+                f"overlay alpha={float(model_config['highlight_alpha']):.2f}"
             ),
         ],
         row_headers=selected_row_headers,
@@ -712,20 +712,20 @@ def run_enhanced_phystwin_removed_overlay_workflow(
         column_headers = [str(view_config["label"]) for view_config in view_configs]
         row_headers = (
             [
-                "RGB + object mask",
-                "RealSense depth mask",
-                "PCD + removed",
-                "FFS depth + removed",
-                "RGB + removed",
+                "RGB image\nwith object mask",
+                "RealSense native depth\nwith object mask",
+                "Fast-FoundationStereo point cloud\nremoved points highlighted",
+                "Fast-FoundationStereo depth image\nremoved pixels highlighted",
+                "RGB image\nremoved pixels highlighted",
             ]
             if native_row_mode == "native_depth"
             else [
-                "RGB + object mask",
-                "IR left",
-                "IR right",
-                "PCD + removed",
-                "FFS depth + removed",
-                "RGB + removed",
+                "RGB image\nwith object mask",
+                "Infrared left image",
+                "Infrared right image",
+                "Fast-FoundationStereo point cloud\nremoved points highlighted",
+                "Fast-FoundationStereo depth image\nremoved pixels highlighted",
+                "RGB image\nremoved pixels highlighted",
             ]
         )
         board = build_enhanced_phystwin_removed_overlay_board(

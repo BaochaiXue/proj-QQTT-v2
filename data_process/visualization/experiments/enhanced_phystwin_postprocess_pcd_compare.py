@@ -34,17 +34,42 @@ from .native_ffs_fused_pcd_compare import (
 
 DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.01
 DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.0
-DEFAULT_ROW_LABEL_WIDTH = 360
+DEFAULT_ROW_LABEL_WIDTH = 500
 
 
 def _variant_rows() -> list[dict[str, str]]:
     return [
-        {"key": "native_raw", "source": "native", "postprocess": "none", "row_header": "Native | no post"},
-        {"key": "native_pt", "source": "native", "postprocess": "phystwin_like", "row_header": "Native | PT-like"},
-        {"key": "native_enhanced", "source": "native", "postprocess": "enhanced", "row_header": "Native | enhanced PT-like"},
-        {"key": "ffs_raw", "source": "ffs", "postprocess": "none", "row_header": "FFS | no post"},
-        {"key": "ffs_pt", "source": "ffs", "postprocess": "phystwin_like", "row_header": "FFS | PT-like"},
-        {"key": "ffs_enhanced", "source": "ffs", "postprocess": "enhanced", "row_header": "FFS | enhanced PT-like"},
+        {"key": "native_raw", "source": "native", "postprocess": "none", "row_header": "RealSense native depth\nno postprocessing"},
+        {
+            "key": "native_pt",
+            "source": "native",
+            "postprocess": "phystwin_like",
+            "row_header": "RealSense native depth\nPhysTwin-like radius-neighbor filter",
+        },
+        {
+            "key": "native_enhanced",
+            "source": "native",
+            "postprocess": "enhanced",
+            "row_header": "RealSense native depth\nenhanced radius + component filter",
+        },
+        {
+            "key": "ffs_raw",
+            "source": "ffs",
+            "postprocess": "none",
+            "row_header": "Fast-FoundationStereo depth\nno postprocessing",
+        },
+        {
+            "key": "ffs_pt",
+            "source": "ffs",
+            "postprocess": "phystwin_like",
+            "row_header": "Fast-FoundationStereo depth\nPhysTwin-like radius-neighbor filter",
+        },
+        {
+            "key": "ffs_enhanced",
+            "source": "ffs",
+            "postprocess": "enhanced",
+            "row_header": "Fast-FoundationStereo depth\nenhanced radius + component filter",
+        },
     ]
 
 
@@ -109,16 +134,16 @@ def build_enhanced_phystwin_postprocess_pcd_board(
             raise ValueError("Enhanced PhysTwin postprocess board requires exactly 3 columns per row.")
     return compose_registration_matrix_board(
         title_lines=[
-            f"Static Object PCD Enhanced PT-like Postprocess | {round_label} | frame {int(frame_idx)}",
+            f"Static Object Point Cloud Enhanced PhysTwin-like Postprocess | {round_label} | frame {int(frame_idx)}",
             (
-                "rows=native none/PT/enhanced + FFS none/PT/enhanced | "
+                "rows=RealSense and Fast-FoundationStereo, each with no filter / radius-neighbor filter / enhanced component filter | "
                 f"object_mask={str(model_config['object_mask_enabled']).lower()} | "
                 f"mask_erode={int(model_config['mask_erode_pixels'])}px"
             ),
             (
-                f"radius={float(model_config['phystwin_radius_m']):.3f}m/"
-                f"{int(model_config['phystwin_nb_points'])}nn | "
-                f"component_voxel={float(model_config['enhanced_component_voxel_size_m']):.3f}m | "
+                f"radius filter={float(model_config['phystwin_radius_m']):.3f}m, "
+                f"{int(model_config['phystwin_nb_points'])} neighbors | "
+                f"component voxel={float(model_config['enhanced_component_voxel_size_m']):.3f}m | "
                 f"keep_gap={float(model_config['enhanced_keep_near_main_gap_m']):.3f}m"
             ),
         ],

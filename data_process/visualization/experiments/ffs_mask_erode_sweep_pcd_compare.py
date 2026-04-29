@@ -32,7 +32,7 @@ from .native_ffs_fused_pcd_compare import (
 
 
 DEFAULT_MASK_ERODE_PIXELS: tuple[int, ...] = tuple(range(1, 9))
-DEFAULT_ROW_LABEL_WIDTH = 340
+DEFAULT_ROW_LABEL_WIDTH = 500
 
 
 def build_default_mask_erode_multipage_specs() -> list[dict[str, Any]]:
@@ -40,27 +40,27 @@ def build_default_mask_erode_multipage_specs() -> list[dict[str, Any]]:
     return [
         {
             "page_id": "page1_erode_01_08",
-            "page_label": "Page 1/3 | native/original + erode 1..8px",
+            "page_label": "Page 1/3 | RealSense baseline, Fast-FoundationStereo baseline, erode 1..8px",
             "include_baselines": True,
             "erode_pixels": list(range(1, 9)),
             "expected_rows": 10,
-            "row_contract": "native 0px/original FFS 0px/FFS erode 1..8px",
+            "row_contract": "RealSense native mask unchanged / Fast-FoundationStereo mask unchanged / Fast-FoundationStereo mask eroded 1..8px",
         },
         {
             "page_id": "page2_erode_09_18",
-            "page_label": "Page 2/3 | FFS erode 9..18px",
+            "page_label": "Page 2/3 | Fast-FoundationStereo erode 9..18px",
             "include_baselines": False,
             "erode_pixels": list(range(9, 19)),
             "expected_rows": 10,
-            "row_contract": "FFS erode 9..18px only; baselines are on page 1",
+            "row_contract": "Fast-FoundationStereo mask eroded 9..18px only; baselines are on page 1",
         },
         {
             "page_id": "page3_erode_19_28",
-            "page_label": "Page 3/3 | FFS erode 19..28px",
+            "page_label": "Page 3/3 | Fast-FoundationStereo erode 19..28px",
             "include_baselines": False,
             "erode_pixels": list(range(19, 29)),
             "expected_rows": 10,
-            "row_contract": "FFS erode 19..28px only; baselines are on page 1",
+            "row_contract": "Fast-FoundationStereo mask eroded 19..28px only; baselines are on page 1",
         },
     ]
 
@@ -85,8 +85,16 @@ def _erode_key(erode_pixels: int) -> str:
 
 def _baseline_variant_rows() -> list[dict[str, str]]:
     return [
-        {"key": "native", "row_header": "Native depth | mask 0px", "summary_label": "native_depth_mask_0px"},
-        {"key": "ffs_original", "row_header": "Original FFS | mask 0px", "summary_label": "ffs_original_mask_0px"},
+        {
+            "key": "native",
+            "row_header": "RealSense native depth\nobject mask unchanged",
+            "summary_label": "native_depth_mask_0px",
+        },
+        {
+            "key": "ffs_original",
+            "row_header": "Fast-FoundationStereo depth\nobject mask unchanged",
+            "summary_label": "ffs_original_mask_0px",
+        },
     ]
 
 
@@ -95,7 +103,7 @@ def _variant_rows(erode_pixels: list[int]) -> list[dict[str, str]]:
     rows.extend(
         {
             "key": _erode_key(value),
-            "row_header": f"FFS | mask erode {int(value)}px",
+            "row_header": f"Fast-FoundationStereo depth\nobject mask eroded inward {int(value)}px",
             "summary_label": f"ffs_mask_erode_{int(value)}px",
         }
         for value in erode_pixels
@@ -107,7 +115,7 @@ def _erode_variant_rows(erode_pixels: list[int]) -> list[dict[str, str]]:
     return [
         {
             "key": _erode_key(value),
-            "row_header": f"FFS | mask erode {int(value)}px",
+            "row_header": f"Fast-FoundationStereo depth\nobject mask eroded inward {int(value)}px",
             "summary_label": f"ffs_mask_erode_{int(value)}px",
         }
         for value in erode_pixels
@@ -148,9 +156,9 @@ def _normalize_board_page_specs(board_page_specs: list[dict[str, Any]]) -> list[
         if not row_contract:
             erode_label = f"{min(erode_values)}..{max(erode_values)}px"
             row_contract = (
-                f"native 0px/original FFS 0px/FFS erode {erode_label}"
+                f"RealSense native mask unchanged / Fast-FoundationStereo mask unchanged / Fast-FoundationStereo mask eroded {erode_label}"
                 if include_baselines
-                else f"FFS erode {erode_label} only"
+                else f"Fast-FoundationStereo mask eroded {erode_label} only"
             )
 
         normalized.append(
@@ -200,16 +208,21 @@ def build_ffs_mask_erode_sweep_pcd_board(
     postprocess_label = "none"
     if bool(model_config.get("phystwin_like_postprocess_enabled", False)):
         postprocess_label = (
-            f"PhysTwin radius {float(model_config.get('phystwin_radius_m', 0.0)):.3f}m/"
-            f"{int(model_config.get('phystwin_nb_points', 0))}nn"
+            f"PhysTwin-like radius-neighbor filter: {float(model_config.get('phystwin_radius_m', 0.0)):.3f}m, "
+            f"{int(model_config.get('phystwin_nb_points', 0))} neighbors"
         )
     erode_values = [int(item) for item in model_config["mask_erode_pixels"]]
     erode_label = f"{min(erode_values)}..{max(erode_values)}px" if erode_values else "none"
-    row_contract_label = str(model_config.get("row_contract_label", "native 0px/original FFS 0px/FFS erode sweep"))
+    row_contract_label = str(
+        model_config.get(
+            "row_contract_label",
+            "RealSense native mask unchanged / Fast-FoundationStereo mask unchanged / Fast-FoundationStereo eroded-mask sweep",
+        )
+    )
     page_suffix = "" if page_label is None else f" | {page_label}"
     return compose_registration_matrix_board(
         title_lines=[
-            f"Static Object PCD FFS Mask-Erode Sweep | {round_label} | frame {int(frame_idx)}{page_suffix}",
+            f"Static Object Point Cloud Fast-FoundationStereo Mask-Erode Sweep | {round_label} | frame {int(frame_idx)}{page_suffix}",
             (
                 f"rows={row_contract_label} | "
                 f"object_mask={str(model_config['object_mask_enabled']).lower()} | "

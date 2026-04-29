@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--look_distance", type=float, default=1.0)
     parser.add_argument("--tile_width", type=int, default=480)
     parser.add_argument("--tile_height", type=int, default=360)
-    parser.add_argument("--row_label_width", type=int, default=300)
+    parser.add_argument("--row_label_width", type=int, default=460)
     parser.add_argument("--text_prompt", type=str, default="stuffed animal")
     parser.add_argument(
         "--max_points_per_camera",

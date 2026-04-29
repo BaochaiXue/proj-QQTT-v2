@@ -141,12 +141,12 @@ class EnhancedPhystwinRemovedOverlaySmokeTest(unittest.TestCase):
             column_headers=["Cam0", "Cam1", "Cam2"],
             image_rows=image_rows,
             row_headers=[
-                "RGB + object mask",
-                "IR left",
-                "IR right",
-                "PCD + removed",
-                "FFS depth + removed",
-                "RGB + removed",
+                "RGB image\nwith object mask",
+                "Infrared left image",
+                "Infrared right image",
+                "Fast-FoundationStereo point cloud\nremoved points highlighted",
+                "Fast-FoundationStereo depth image\nremoved pixels highlighted",
+                "RGB image\nremoved pixels highlighted",
             ],
         )
         self.assertEqual(board.ndim, 3)

@@ -183,12 +183,12 @@ class FfsConfidenceThresholdSweepPcdCompareSmokeTest(unittest.TestCase):
             self.assertEqual(
                 high_threshold["row_headers"],
                 [
-                    "Native depth",
-                    "Original FFS",
-                    "margin >= 0.50",
-                    "maxsm >= 0.50",
-                    "entropy >= 0.50",
-                    "variance >= 0.50",
+                    "RealSense native depth",
+                    "Fast-FoundationStereo depth\nno confidence filter",
+                    "Fast-FoundationStereo depth\nmargin confidence >= 0.50",
+                    "Fast-FoundationStereo depth\nmaximum softmax confidence >= 0.50",
+                    "Fast-FoundationStereo depth\nentropy confidence >= 0.50",
+                    "Fast-FoundationStereo depth\nvariance confidence >= 0.50",
                 ],
             )
 

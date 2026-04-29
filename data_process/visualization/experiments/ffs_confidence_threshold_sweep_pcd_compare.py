@@ -63,12 +63,32 @@ def _threshold_key(threshold: float) -> str:
 def _variant_rows(threshold: float) -> list[dict[str, str]]:
     suffix = f"{float(threshold):.2f}"
     return [
-        {"key": "native", "row_header": "Native depth", "summary_label": "native_depth"},
-        {"key": "ffs_original", "row_header": "Original FFS", "summary_label": "ffs_rerun_unfiltered"},
-        {"key": "ffs_margin", "row_header": f"margin >= {suffix}", "summary_label": "ffs_margin_filtered"},
-        {"key": "ffs_max_softmax", "row_header": f"maxsm >= {suffix}", "summary_label": "ffs_max_softmax_filtered"},
-        {"key": "ffs_entropy", "row_header": f"entropy >= {suffix}", "summary_label": "ffs_entropy_filtered"},
-        {"key": "ffs_variance", "row_header": f"variance >= {suffix}", "summary_label": "ffs_variance_filtered"},
+        {"key": "native", "row_header": "RealSense native depth", "summary_label": "native_depth"},
+        {
+            "key": "ffs_original",
+            "row_header": "Fast-FoundationStereo depth\nno confidence filter",
+            "summary_label": "ffs_rerun_unfiltered",
+        },
+        {
+            "key": "ffs_margin",
+            "row_header": f"Fast-FoundationStereo depth\nmargin confidence >= {suffix}",
+            "summary_label": "ffs_margin_filtered",
+        },
+        {
+            "key": "ffs_max_softmax",
+            "row_header": f"Fast-FoundationStereo depth\nmaximum softmax confidence >= {suffix}",
+            "summary_label": "ffs_max_softmax_filtered",
+        },
+        {
+            "key": "ffs_entropy",
+            "row_header": f"Fast-FoundationStereo depth\nentropy confidence >= {suffix}",
+            "summary_label": "ffs_entropy_filtered",
+        },
+        {
+            "key": "ffs_variance",
+            "row_header": f"Fast-FoundationStereo depth\nvariance confidence >= {suffix}",
+            "summary_label": "ffs_variance_filtered",
+        },
     ]
 
 
@@ -115,17 +135,17 @@ def build_confidence_threshold_sweep_pcd_board(
     postprocess_label = "none"
     if bool(model_config.get("phystwin_like_postprocess_enabled", False)):
         postprocess_label = (
-            f"PhysTwin radius {float(model_config.get('phystwin_radius_m', 0.0)):.3f}m/"
-            f"{int(model_config.get('phystwin_nb_points', 0))}nn"
+            f"PhysTwin-like radius-neighbor filter: {float(model_config.get('phystwin_radius_m', 0.0)):.3f}m, "
+            f"{int(model_config.get('phystwin_nb_points', 0))} neighbors"
         )
     return compose_registration_matrix_board(
         title_lines=[
             (
-                f"Static Object PCD Confidence Sweep | {round_label} | frame {int(frame_idx)} | "
+                f"Static Object Point Cloud Confidence Sweep | {round_label} | frame {int(frame_idx)} | "
                 f"keep confidence >= {float(confidence_threshold):.2f}"
             ),
             (
-                f"rows=native/original FFS/4 confidence filters | "
+                f"rows=RealSense native / Fast-FoundationStereo no confidence filter / four confidence filters | "
                 f"object_mask={str(model_config['object_mask_enabled']).lower()} "
                 f"erode={int(model_config['mask_erode_pixels'])}px | post={postprocess_label}"
             ),

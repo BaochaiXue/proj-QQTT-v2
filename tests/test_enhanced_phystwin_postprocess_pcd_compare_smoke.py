@@ -65,12 +65,12 @@ class EnhancedPhystwinPostprocessPcdCompareSmokeTest(unittest.TestCase):
     def test_build_board_returns_6x3_matrix(self) -> None:
         rendered_rows = [[np.full((40, 60, 3), 90, dtype=np.uint8) for _ in range(3)] for _ in range(6)]
         variant_rows = [
-            {"key": "native_raw", "row_header": "Native | no post"},
-            {"key": "native_pt", "row_header": "Native | PT-like"},
-            {"key": "native_enhanced", "row_header": "Native | enhanced PT-like"},
-            {"key": "ffs_raw", "row_header": "FFS | no post"},
-            {"key": "ffs_pt", "row_header": "FFS | PT-like"},
-            {"key": "ffs_enhanced", "row_header": "FFS | enhanced PT-like"},
+            {"key": "native_raw", "row_header": "RealSense native depth\nno postprocessing"},
+            {"key": "native_pt", "row_header": "RealSense native depth\nPhysTwin-like radius-neighbor filter"},
+            {"key": "native_enhanced", "row_header": "RealSense native depth\nenhanced radius + component filter"},
+            {"key": "ffs_raw", "row_header": "Fast-FoundationStereo depth\nno postprocessing"},
+            {"key": "ffs_pt", "row_header": "Fast-FoundationStereo depth\nPhysTwin-like radius-neighbor filter"},
+            {"key": "ffs_enhanced", "row_header": "Fast-FoundationStereo depth\nenhanced radius + component filter"},
         ]
         board = build_enhanced_phystwin_postprocess_pcd_board(
             round_label="Round 1",
@@ -145,12 +145,12 @@ class EnhancedPhystwinPostprocessPcdCompareSmokeTest(unittest.TestCase):
             self.assertEqual(
                 round_summary["row_headers"],
                 [
-                    "Native | no post",
-                    "Native | PT-like",
-                    "Native | enhanced PT-like",
-                    "FFS | no post",
-                    "FFS | PT-like",
-                    "FFS | enhanced PT-like",
+                    "RealSense native depth\nno postprocessing",
+                    "RealSense native depth\nPhysTwin-like radius-neighbor filter",
+                    "RealSense native depth\nenhanced radius + component filter",
+                    "Fast-FoundationStereo depth\nno postprocessing",
+                    "Fast-FoundationStereo depth\nPhysTwin-like radius-neighbor filter",
+                    "Fast-FoundationStereo depth\nenhanced radius + component filter",
                 ],
             )
             self.assertIn("native_enhanced", round_summary["postprocess_stats_by_variant"])

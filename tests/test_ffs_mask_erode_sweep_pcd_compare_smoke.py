@@ -49,12 +49,20 @@ class FfsMaskErodeSweepPcdCompareSmokeTest(unittest.TestCase):
     def test_build_board_returns_10x3_matrix_for_default_rows(self) -> None:
         rendered_rows = [[np.full((40, 60, 3), 90, dtype=np.uint8) for _ in range(3)] for _ in range(10)]
         variant_rows = [
-            {"key": "native", "row_header": "Native depth | mask 0px", "summary_label": "native_depth_mask_0px"},
-            {"key": "ffs_original", "row_header": "Original FFS | mask 0px", "summary_label": "ffs_original_mask_0px"},
+            {
+                "key": "native",
+                "row_header": "RealSense native depth\nobject mask unchanged",
+                "summary_label": "native_depth_mask_0px",
+            },
+            {
+                "key": "ffs_original",
+                "row_header": "Fast-FoundationStereo depth\nobject mask unchanged",
+                "summary_label": "ffs_original_mask_0px",
+            },
             *[
                 {
                     "key": f"ffs_erode_{idx}px",
-                    "row_header": f"FFS | mask erode {idx}px",
+                    "row_header": f"Fast-FoundationStereo depth\nobject mask eroded inward {idx}px",
                     "summary_label": f"ffs_mask_erode_{idx}px",
                 }
                 for idx in range(1, 9)
@@ -136,7 +144,12 @@ class FfsMaskErodeSweepPcdCompareSmokeTest(unittest.TestCase):
             self.assertEqual(round_summary["erode_pixels"], [1, 2])
             self.assertEqual(
                 round_summary["row_headers"],
-                ["Native depth | mask 0px", "Original FFS | mask 0px", "FFS | mask erode 1px", "FFS | mask erode 2px"],
+                [
+                    "RealSense native depth\nobject mask unchanged",
+                    "Fast-FoundationStereo depth\nobject mask unchanged",
+                    "Fast-FoundationStereo depth\nobject mask eroded inward 1px",
+                    "Fast-FoundationStereo depth\nobject mask eroded inward 2px",
+                ],
             )
             self.assertEqual(len(render_collector.calls), 12)
             self.assertEqual(round_summary["render_contract"]["rows"], "native_depth_ffs_original_ffs_mask_erode_sweep")
