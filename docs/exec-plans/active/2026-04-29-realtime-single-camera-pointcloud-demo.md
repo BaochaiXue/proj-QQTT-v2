@@ -76,6 +76,8 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Split realtime processing into three latest-wins stage boundaries: capture slot, depth/FFS slot, and render-prep slot. The native RealSense path remains `color + depth`, while FFS mode uses a separate TensorRT worker and does not require the native depth stream.
 - Split the FFS worker further so it publishes raw IR-left metric depth immediately after TensorRT. The render-prep worker now owns `IR-left depth -> color depth` alignment plus image mask / point-cloud packet generation, allowing FFS inference and color alignment to overlap in the live pipeline.
 - Added vectorized `align_ir_depth_to_color_fast()` using nearest-depth z-buffering via `np.minimum.at`, plus float-depth camera-image and point-cloud backprojection helpers so FFS depth stays metric `float32` until rendering.
+- Optimized the float-depth camera image backend with an OpenCV `float32` `inRange`/`cvtColor`/`bitwise_and` path for the non-splat case, keeping NumPy fallback semantics for invalid, NaN, Inf, and zero-depth pixels.
+- Precomputed and cached the IR-left ray grid for live FFS depth packets, so color alignment reuses `(x-cx)/fx` and `(y-cy)/fy` rays instead of rebuilding them every frame.
 - Expanded the HUD and debug line with `depth_source`, FFS TensorRT timing, FFS color-align timing, depth-stage drops, and render-slot drops.
 
 Validation completed on 2026-04-29:

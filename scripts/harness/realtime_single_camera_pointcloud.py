@@ -106,6 +106,7 @@ class RawFfsDepthPacket:
     k_ir_left: np.ndarray
     t_ir_left_to_color: np.ndarray
     k_color: np.ndarray
+    ir_projection_grid: tuple[np.ndarray, np.ndarray] | None
     receive_perf_s: float
     ffs_done_perf_s: float
     dropped_capture_frames: int
@@ -300,6 +301,23 @@ def build_projection_grid(
     return np.ascontiguousarray(ray_x, dtype=np.float32), np.ascontiguousarray(ray_y, dtype=np.float32)
 
 
+def build_projection_grid_from_matrix(
+    *,
+    width: int,
+    height: int,
+    K: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    k = np.asarray(K, dtype=np.float32).reshape(3, 3)
+    fx = np.float32(k[0, 0])
+    fy = np.float32(k[1, 1])
+    if fx <= 0 or fy <= 0:
+        raise ValueError("intrinsics fx/fy must be positive")
+    xs = (np.arange(width, dtype=np.float32) - np.float32(k[0, 2])) / fx
+    ys = (np.arange(height, dtype=np.float32) - np.float32(k[1, 2])) / fy
+    ray_x, ray_y = np.meshgrid(xs, ys, indexing="xy")
+    return np.ascontiguousarray(ray_x, dtype=np.float32), np.ascontiguousarray(ray_y, dtype=np.float32)
+
+
 def camera_intrinsics_from_rs(intrinsics: object) -> CameraIntrinsics:
     return CameraIntrinsics(
         fx=float(getattr(intrinsics, "fx")),
@@ -350,11 +368,11 @@ def align_ir_depth_to_color_fast(
     K_color: np.ndarray,
     output_shape: tuple[int, int],
     invalid_value: float = 0.0,
+    ir_projection_grid: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> np.ndarray:
     depth = np.asarray(depth_ir_m, dtype=np.float32)
     if depth.ndim != 2:
         raise ValueError("depth_ir_m must be a 2D array")
-    k_ir = np.asarray(K_ir_left, dtype=np.float32).reshape(3, 3)
     k_color = np.asarray(K_color, dtype=np.float32).reshape(3, 3)
     transform = np.asarray(T_ir_left_to_color, dtype=np.float32).reshape(4, 4)
     out_height, out_width = output_shape
@@ -365,10 +383,20 @@ def align_ir_depth_to_color_fast(
     if not np.any(valid):
         return np.full((out_height, out_width), np.float32(invalid_value), dtype=np.float32)
 
-    rows, cols = np.nonzero(valid)
-    z = depth[rows, cols].astype(np.float32, copy=False)
-    x = (cols.astype(np.float32) - np.float32(k_ir[0, 2])) * z / np.float32(k_ir[0, 0])
-    y = (rows.astype(np.float32) - np.float32(k_ir[1, 2])) * z / np.float32(k_ir[1, 1])
+    if ir_projection_grid is not None:
+        ray_x, ray_y = ir_projection_grid
+        if ray_x.shape != depth.shape or ray_y.shape != depth.shape:
+            raise ValueError("ir_projection_grid shape does not match depth_ir_m")
+        valid_flat = np.flatnonzero(valid.ravel())
+        z = depth.ravel()[valid_flat].astype(np.float32, copy=False)
+        x = ray_x.ravel()[valid_flat] * z
+        y = ray_y.ravel()[valid_flat] * z
+    else:
+        k_ir = np.asarray(K_ir_left, dtype=np.float32).reshape(3, 3)
+        rows, cols = np.nonzero(valid)
+        z = depth[rows, cols].astype(np.float32, copy=False)
+        x = (cols.astype(np.float32) - np.float32(k_ir[0, 2])) * z / np.float32(k_ir[0, 0])
+        y = (rows.astype(np.float32) - np.float32(k_ir[1, 2])) * z / np.float32(k_ir[1, 1])
 
     r = transform[:3, :3]
     t = transform[:3, 3]
@@ -621,11 +649,27 @@ def build_camera_view_image_from_depth_m(
         raise ValueError("color and depth shapes must match after depth-to-color alignment")
     if splat_px < 0:
         raise ValueError("splat_px must be >= 0")
+    if depth_min_m < 0:
+        raise ValueError("depth_min_m must be >= 0")
+    if depth_max_m > 0 and depth_max_m <= depth_min_m:
+        raise ValueError("expected depth_max_m <= 0, or depth_max_m > depth_min_m")
 
     depth = np.asarray(depth_m, dtype=np.float32)
+    image_rgb = np.zeros(color_bgr.shape, dtype=np.uint8)
+    if splat_px == 0 and cv2 is not None:
+        lower = np.float32(depth_min_m)
+        if lower <= 0:
+            lower = np.nextafter(np.float32(0.0), np.float32(1.0))
+        upper = np.float32(depth_max_m) if depth_max_m > 0 else np.finfo(np.float32).max
+        valid_mask_u8 = cv2.inRange(depth, float(lower), float(upper))
+        valid_count = int(cv2.countNonZero(valid_mask_u8))
+        if valid_count == 0:
+            return image_rgb, 0
+        rgb = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
+        return np.ascontiguousarray(cv2.bitwise_and(rgb, rgb, mask=valid_mask_u8)), valid_count
+
     valid = _valid_float_depth_mask(depth_m=depth, depth_min_m=depth_min_m, depth_max_m=depth_max_m)
     valid_count = int(np.count_nonzero(valid))
-    image_rgb = np.zeros(color_bgr.shape, dtype=np.uint8)
     if valid_count == 0:
         return image_rgb, 0
 
@@ -1182,6 +1226,8 @@ class RealtimeSingleCameraPointCloudDemo:
         self.k_color = np.eye(3, dtype=np.float32)
         self.k_ir_left: np.ndarray | None = None
         self.t_ir_left_to_color: np.ndarray | None = None
+        self.ir_projection_grid: tuple[np.ndarray, np.ndarray] | None = None
+        self._ir_projection_grid_key: tuple[tuple[int, int], tuple[float, ...]] | None = None
         self.ir_baseline_m = 0.0
         self.ffs_runner: object | None = None
         self._request_render_update: Callable[[], None] = lambda: None
@@ -1221,6 +1267,20 @@ class RealtimeSingleCameraPointCloudDemo:
         finally:
             self.stop()
         return 0
+
+    def _get_ir_projection_grid(
+        self,
+        *,
+        depth_shape: tuple[int, int],
+        k_ir_left: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        height, width = depth_shape
+        k = np.asarray(k_ir_left, dtype=np.float32).reshape(3, 3)
+        key = ((height, width), tuple(float(v) for v in k.ravel()))
+        if self._ir_projection_grid_key != key or self.ir_projection_grid is None:
+            self.ir_projection_grid = build_projection_grid_from_matrix(width=width, height=height, K=k)
+            self._ir_projection_grid_key = key
+        return self.ir_projection_grid
 
     def _create_ffs_runner(self) -> object:
         try:
@@ -1407,6 +1467,10 @@ class RealtimeSingleCameraPointCloudDemo:
                     k_ir_left=k_ir_left_used,
                     t_ir_left_to_color=frame.t_ir_left_to_color,
                     k_color=self.k_color,
+                    ir_projection_grid=self._get_ir_projection_grid(
+                        depth_shape=depth_ir_left_m.shape,
+                        k_ir_left=k_ir_left_used,
+                    ),
                     receive_perf_s=frame.receive_perf_s,
                     ffs_done_perf_s=ffs_done_s,
                     dropped_capture_frames=self.capture_slot.dropped_count,
@@ -1439,6 +1503,7 @@ class RealtimeSingleCameraPointCloudDemo:
                     frame.t_ir_left_to_color,
                     frame.k_color,
                     output_shape=frame.color_bgr.shape[:2],
+                    ir_projection_grid=frame.ir_projection_grid,
                 )
                 align_done_s = time.perf_counter()
                 mask_start_s = time.perf_counter()
@@ -1511,6 +1576,7 @@ class RealtimeSingleCameraPointCloudDemo:
                     frame.t_ir_left_to_color,
                     frame.k_color,
                     output_shape=frame.color_bgr.shape[:2],
+                    ir_projection_grid=frame.ir_projection_grid,
                 )
                 align_done_s = time.perf_counter()
                 backproject_start_s = time.perf_counter()

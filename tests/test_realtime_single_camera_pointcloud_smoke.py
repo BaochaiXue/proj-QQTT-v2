@@ -238,6 +238,38 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             ),
         )
 
+    def test_float_depth_image_backend_opencv_path_matches_numpy_fallback(self) -> None:
+        color_bgr = np.array(
+            [
+                [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+                [[10, 11, 12], [13, 14, 15], [16, 17, 18]],
+            ],
+            dtype=np.uint8,
+        )
+        depth_m = np.array([[0.0, 0.1, np.nan], [np.inf, 1.0, 2.0]], dtype=np.float32)
+        default_image, default_count = demo.build_camera_view_image_from_depth_m(
+            color_bgr=color_bgr,
+            depth_m=depth_m,
+            depth_min_m=0.0,
+            depth_max_m=1.0,
+            splat_px=0,
+        )
+        original_cv2 = demo.cv2
+        try:
+            demo.cv2 = None
+            fallback_image, fallback_count = demo.build_camera_view_image_from_depth_m(
+                color_bgr=color_bgr,
+                depth_m=depth_m,
+                depth_min_m=0.0,
+                depth_max_m=1.0,
+                splat_px=0,
+            )
+        finally:
+            demo.cv2 = original_cv2
+        self.assertEqual(default_count, fallback_count)
+        self.assertEqual(default_count, 2)
+        np.testing.assert_array_equal(default_image, fallback_image)
+
     def test_image_backend_depth_bounds_preserve_raw_threshold_edges(self) -> None:
         self.assertEqual(
             demo._depth_bounds_to_u16(
@@ -394,6 +426,22 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         expected = align_depth_to_color(depth_ir, K, T, K, output_shape=(2, 2))
         actual = demo.align_ir_depth_to_color_fast(depth_ir, K, T, K, output_shape=(2, 2))
         np.testing.assert_allclose(actual, expected)
+
+    def test_fast_ir_to_color_alignment_accepts_precomputed_ray_grid(self) -> None:
+        depth_ir = np.array([[1.0, 2.0], [0.0, 3.0]], dtype=np.float32)
+        K = np.array([[2.0, 0.0, 0.5], [0.0, 2.0, 0.5], [0.0, 0.0, 1.0]], dtype=np.float32)
+        T = np.eye(4, dtype=np.float32)
+        ray_grid = demo.build_projection_grid_from_matrix(width=2, height=2, K=K)
+        without_grid = demo.align_ir_depth_to_color_fast(depth_ir, K, T, K, output_shape=(2, 2))
+        with_grid = demo.align_ir_depth_to_color_fast(
+            depth_ir,
+            K,
+            T,
+            K,
+            output_shape=(2, 2),
+            ir_projection_grid=ray_grid,
+        )
+        np.testing.assert_allclose(with_grid, without_grid)
 
     def test_latest_wins_drops_across_depth_and_render_slots(self) -> None:
         depth_slot: demo.LatestSlot[DummyPacket] = demo.LatestSlot()
@@ -598,6 +646,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         viewer = demo.RealtimeSingleCameraPointCloudDemo(args)
         color_bgr = np.array([[[1, 2, 3], [4, 5, 6]]], dtype=np.uint8)
         K = np.eye(3, dtype=np.float32)
+        ray_grid = demo.build_projection_grid_from_matrix(width=2, height=1, K=K)
         packet = demo.RawFfsDepthPacket(
             seq=7,
             color_bgr=color_bgr,
@@ -606,6 +655,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             k_ir_left=K,
             t_ir_left_to_color=np.eye(4, dtype=np.float32),
             k_color=K,
+            ir_projection_grid=ray_grid,
             receive_perf_s=0.0,
             ffs_done_perf_s=1.0,
             dropped_capture_frames=4,
@@ -622,7 +672,9 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             K_color: np.ndarray,
             output_shape: tuple[int, int],
             invalid_value: float = 0.0,
+            ir_projection_grid: tuple[np.ndarray, np.ndarray] | None = None,
         ) -> np.ndarray:
+            self.assertIs(ir_projection_grid, ray_grid)
             calls.append((depth_ir_m.shape, output_shape))
             return np.array([[1.0, 0.0]], dtype=np.float32)
 
