@@ -21,3 +21,9 @@ Reduce local harness clutter and make `scripts/harness/README.md` easier to scan
 - Run focused registry tests if the registry remains referenced.
 - Run the deterministic quick harness profile:
   - `python scripts/harness/check_all.py`
+
+## Progress
+
+- Removed ignored `scripts/harness/**/__pycache__/` cache directories.
+- Compressed `scripts/harness/README.md` into grouped operating rules, defaults, script index, and retention policy.
+- Preserved public harness CLI names and runtime behavior.
