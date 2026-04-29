@@ -18,6 +18,15 @@ from ..workflows.masked_pointcloud_compare import (
     filter_camera_clouds_with_pixel_masks,
     load_union_masks_for_camera_clouds,
 )
+from .enhanced_phystwin_postprocess_pcd_compare import (
+    DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
+    DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
+)
+from .ffs_confidence_filter_pcd_compare import (
+    _apply_enhanced_phystwin_like_postprocess,
+    _apply_enhanced_phystwin_like_postprocess_with_trace,
+)
+from .native_ffs_fused_pcd_compare import DEFAULT_PHYSTWIN_NB_POINTS, DEFAULT_PHYSTWIN_RADIUS_M
 
 
 DEFAULT_STILL_OBJECT_CASE = (
@@ -37,7 +46,25 @@ DEFAULT_6X2_ERODE_SWEEP_OUTPUT_DIR = (
     "data/experiments/"
     "still_object_rope_frame0_cam0_orbit_6x2_mask_erode_sweep_gif_ffs203048_iter4_trt_level5"
 )
+DEFAULT_6X2_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR = (
+    "data/experiments/"
+    "still_object_rope_frame0_cam0_orbit_6x2_mask_erode_sweep_highlight_gif_ffs203048_iter4_trt_level5"
+)
+DEFAULT_6X2_ENHANCED_OUTPUT_DIR = (
+    "data/experiments/"
+    "still_object_rope_frame0_cam0_orbit_6x2_enhanced_pt_like_gif_ffs203048_iter4_trt_level5"
+)
+DEFAULT_3X4_REMOVED_HIGHLIGHT_OUTPUT_DIR = (
+    "data/experiments/"
+    "still_object_rope_frame0_cam0_orbit_3x4_removed_highlight_gif_ffs203048_iter4_trt_level5"
+)
 DEFAULT_6X2_ERODE_SWEEP_PIXELS: tuple[int, ...] = (1, 3, 5, 10)
+SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR: tuple[tuple[int, int, int], ...] = (
+    (255, 0, 255),
+    (255, 255, 0),
+    (0, 191, 255),
+)
+SOURCE_CAMERA_HIGHLIGHT_LABELS: tuple[str, ...] = ("Cam0 magenta", "Cam1 cyan", "Cam2 amber")
 
 
 def default_still_object_rope_6x2_case_specs(*, root: Path) -> list[dict[str, Any]]:
@@ -76,14 +103,42 @@ def default_still_object_rope_6x2_case_specs(*, root: Path) -> list[dict[str, An
     ]
 
 
-def _concat_clouds(camera_clouds: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
-    point_sets = [np.asarray(item["points"], dtype=np.float32) for item in camera_clouds if len(item["points"]) > 0]
-    color_sets = [np.asarray(item["colors"], dtype=np.uint8) for item in camera_clouds if len(item["points"]) > 0]
+def _source_camera_highlight_color_bgr(camera_idx: int) -> tuple[int, int, int]:
+    palette = SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR
+    return tuple(int(item) for item in palette[int(camera_idx) % len(palette)])
+
+
+def _source_camera_highlight_color_summary(camera_ids: list[int] | tuple[int, ...] = (0, 1, 2)) -> dict[str, list[int]]:
+    return {str(int(camera_idx)): list(_source_camera_highlight_color_bgr(int(camera_idx))) for camera_idx in camera_ids}
+
+
+def _concat_clouds(camera_clouds: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    point_sets: list[np.ndarray] = []
+    color_sets: list[np.ndarray] = []
+    source_sets: list[np.ndarray] = []
+    for item in camera_clouds:
+        points = np.asarray(item["points"], dtype=np.float32).reshape(-1, 3)
+        if len(points) == 0:
+            continue
+        colors = np.asarray(item["colors"], dtype=np.uint8).reshape(-1, 3)
+        source_camera_idx = np.asarray(
+            item.get("source_camera_idx", np.full((len(points),), int(item["camera_idx"]), dtype=np.int16)),
+            dtype=np.int16,
+        ).reshape(-1)
+        if len(colors) != len(points) or len(source_camera_idx) != len(points):
+            raise ValueError(f"Cloud arrays must align for camera {item.get('camera_idx')}.")
+        point_sets.append(points)
+        color_sets.append(colors)
+        source_sets.append(source_camera_idx)
     if not point_sets:
-        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
+        return (
+            np.empty((0, 3), dtype=np.float32),
+            np.empty((0, 3), dtype=np.uint8),
+            np.empty((0,), dtype=np.int16),
+        )
     if len(point_sets) == 1:
-        return point_sets[0], color_sets[0]
-    return np.concatenate(point_sets, axis=0), np.concatenate(color_sets, axis=0)
+        return point_sets[0], color_sets[0], source_sets[0]
+    return np.concatenate(point_sets, axis=0), np.concatenate(color_sets, axis=0), np.concatenate(source_sets, axis=0)
 
 
 def parse_mask_erode_pixels(erode_pixels: str | int | list[int] | tuple[int, ...]) -> list[int]:
@@ -203,7 +258,7 @@ def _load_masked_variant_cloud(
     depth_max_m: float,
     max_points_per_camera: int | None,
     use_float_ffs_depth_when_available: bool,
-) -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, Any]], dict[str, Any]]:
     camera_clouds, cloud_stats = load_case_frame_camera_clouds(
         case_dir=case_dir,
         metadata=metadata,
@@ -219,14 +274,155 @@ def _load_masked_variant_cloud(
         camera_clouds,
         pixel_mask_by_camera=masks_by_camera,
     )
-    points, colors = _concat_clouds(masked_clouds)
+    points, colors, source_camera_idx = _concat_clouds(masked_clouds)
     stats = {
         "depth_source": str(depth_source),
         "point_count": int(len(points)),
         "cloud_stats": cloud_stats,
         "mask_metrics": mask_metrics,
     }
-    return points, colors, masked_clouds, stats
+    return points, colors, source_camera_idx, masked_clouds, stats
+
+
+def _no_pt_like_postprocess_stats(point_count: int) -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "mode": "none",
+        "input_point_count": int(point_count),
+        "output_point_count": int(point_count),
+    }
+
+
+def _no_pt_like_removed_highlight_stats(point_count: int) -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "mode": "none",
+        "deletes_points": False,
+        "input_point_count": int(point_count),
+        "render_point_count": int(point_count),
+        "would_remove_point_count": 0,
+        "would_remove_point_ratio": 0.0,
+        "would_remove_point_count_by_source_camera": {"0": 0, "1": 0, "2": 0},
+    }
+
+
+def _enhanced_pt_like_removed_count_by_source(
+    *,
+    removed_mask: np.ndarray,
+    source_camera_idx: np.ndarray,
+    camera_ids: list[int],
+) -> dict[str, int]:
+    removed = np.asarray(removed_mask, dtype=bool).reshape(-1)
+    sources = np.asarray(source_camera_idx, dtype=np.int16).reshape(-1)
+    return {
+        str(int(camera_idx)): int(np.count_nonzero(removed & (sources == int(camera_idx))))
+        for camera_idx in camera_ids
+    }
+
+
+def _highlight_enhanced_pt_like_removed_if_enabled(
+    *,
+    points: np.ndarray,
+    colors: np.ndarray,
+    source_camera_idx: np.ndarray,
+    enabled: bool,
+    phystwin_radius_m: float,
+    phystwin_nb_points: int,
+    enhanced_component_voxel_size_m: float,
+    enhanced_keep_near_main_gap_m: float,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    color_array = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
+    source_array = np.asarray(source_camera_idx, dtype=np.int16).reshape(-1)
+    if len(color_array) != len(point_array) or len(source_array) != len(point_array):
+        raise ValueError("points, colors, and source_camera_idx must have the same length.")
+    if not bool(enabled):
+        return point_array, color_array, _no_pt_like_removed_highlight_stats(len(point_array))
+
+    _filtered_points, _filtered_colors, trace_stats, trace = _apply_enhanced_phystwin_like_postprocess_with_trace(
+        points=point_array,
+        colors=color_array,
+        enabled=True,
+        radius_m=float(phystwin_radius_m),
+        nb_points=int(phystwin_nb_points),
+        component_voxel_size_m=float(enhanced_component_voxel_size_m),
+        keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+    )
+    removed_mask = np.asarray(trace["removed_mask"], dtype=bool).reshape(-1)
+    radius_removed_mask = np.asarray(trace["radius_removed_mask"], dtype=bool).reshape(-1)
+    component_removed_mask = np.asarray(trace["component_removed_mask"], dtype=bool).reshape(-1)
+    if len(removed_mask) != len(point_array):
+        raise ValueError("Enhanced PT-like removed trace length does not match point count.")
+
+    camera_ids = sorted(set(range(len(SOURCE_CAMERA_HIGHLIGHT_COLORS_BGR))) | {int(item) for item in source_array.tolist()})
+    highlighted_colors = color_array.copy()
+    for camera_idx in camera_ids:
+        camera_removed_mask = removed_mask & (source_array == int(camera_idx))
+        if np.any(camera_removed_mask):
+            highlighted_colors[camera_removed_mask] = np.asarray(
+                _source_camera_highlight_color_bgr(int(camera_idx)),
+                dtype=np.uint8,
+            )
+
+    would_remove_count = int(np.count_nonzero(removed_mask))
+    stats = dict(trace_stats)
+    stats.update(
+        {
+            "enabled": True,
+            "mode": "enhanced_pt_like_removed_highlight_only",
+            "trace_postprocess_mode": str(trace_stats.get("mode", "unknown")),
+            "deletes_points": False,
+            "input_point_count": int(len(point_array)),
+            "render_point_count": int(len(point_array)),
+            "output_point_count_if_deleted": int(trace_stats.get("output_point_count", len(point_array))),
+            "would_remove_point_count": would_remove_count,
+            "would_remove_point_ratio": float(would_remove_count / max(1, len(point_array))),
+            "would_remove_point_count_by_source_camera": _enhanced_pt_like_removed_count_by_source(
+                removed_mask=removed_mask,
+                source_camera_idx=source_array,
+                camera_ids=camera_ids,
+            ),
+            "radius_would_remove_point_count_by_source_camera": _enhanced_pt_like_removed_count_by_source(
+                removed_mask=radius_removed_mask,
+                source_camera_idx=source_array,
+                camera_ids=camera_ids,
+            ),
+            "component_would_remove_point_count_by_source_camera": _enhanced_pt_like_removed_count_by_source(
+                removed_mask=component_removed_mask,
+                source_camera_idx=source_array,
+                camera_ids=camera_ids,
+            ),
+            "highlight_color_mode": "source_camera",
+            "source_camera_highlight_colors_bgr": _source_camera_highlight_color_summary(tuple(camera_ids)),
+            "source_camera_highlight_labels": list(SOURCE_CAMERA_HIGHLIGHT_LABELS),
+        }
+    )
+    return point_array, highlighted_colors, stats
+
+
+def _apply_enhanced_pt_like_postprocess_if_enabled(
+    *,
+    points: np.ndarray,
+    colors: np.ndarray,
+    enabled: bool,
+    phystwin_radius_m: float,
+    phystwin_nb_points: int,
+    enhanced_component_voxel_size_m: float,
+    enhanced_keep_near_main_gap_m: float,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    color_array = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
+    if not bool(enabled):
+        return point_array, color_array, _no_pt_like_postprocess_stats(len(point_array))
+    return _apply_enhanced_phystwin_like_postprocess(
+        points=point_array,
+        colors=color_array,
+        enabled=True,
+        radius_m=float(phystwin_radius_m),
+        nb_points=int(phystwin_nb_points),
+        component_voxel_size_m=float(enhanced_component_voxel_size_m),
+        keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+    )
 
 
 def _build_keyed_orbit_views(
@@ -332,6 +528,25 @@ def _estimate_global_ortho_scale(
     return float(max(scales) if scales else 1.0)
 
 
+def _label_tile_fit(image: np.ndarray, label: str, tile_size: tuple[int, int]) -> np.ndarray:
+    tile_w, tile_h = int(tile_size[0]), int(tile_size[1])
+    image_array = np.asarray(image)
+    if image_array.ndim == 2:
+        image_array = cv2.cvtColor(image_array, cv2.COLOR_GRAY2BGR)
+    tile = cv2.resize(image_array, (tile_w, tile_h), interpolation=cv2.INTER_AREA)
+    cv2.rectangle(tile, (0, 0), (tile.shape[1] - 1, 22), (0, 0, 0), -1)
+    _draw_text_fit(
+        tile,
+        text=str(label),
+        origin=(8, 16),
+        max_width=max(16, tile_w - 16),
+        font_scale=0.5,
+        color=(255, 255, 255),
+        thickness=1,
+    )
+    return tile
+
+
 def _render_variant_tile(
     *,
     points: np.ndarray,
@@ -361,7 +576,7 @@ def _render_variant_tile(
         projection_mode=str(projection_mode),
         ortho_scale=ortho_scale,
     )
-    return label_tile(rendered, label, (int(tile_width), int(tile_height)))
+    return _label_tile_fit(rendered, label, (int(tile_width), int(tile_height)))
 
 
 def _draw_text_fit(
@@ -462,6 +677,100 @@ def _compose_6x2_orbit_board(
     return np.vstack([title, header, body])
 
 
+def _compose_3x4_orbit_board(
+    *,
+    title_lines: list[str],
+    column_headers: list[str],
+    image_rows: list[list[np.ndarray]],
+) -> np.ndarray:
+    if len(column_headers) != 4:
+        raise ValueError("3x4 orbit board requires exactly 4 column headers.")
+    if any(len(row) != 4 for row in image_rows):
+        raise ValueError("Each 3x4 image row must contain exactly 4 tiles.")
+    if len(image_rows) != 3:
+        raise ValueError("3x4 orbit board requires exactly 3 image rows.")
+
+    tile_h, tile_w = image_rows[0][0].shape[:2]
+    if any(tile.shape[:2] != (tile_h, tile_w) for row in image_rows for tile in row):
+        raise ValueError("All tiles must have the same size.")
+
+    title_h = 106
+    header_h = 36
+    body_h = tile_h * 3
+    body_w = tile_w * 4
+    title = np.full((title_h, body_w, 3), (10, 10, 10), dtype=np.uint8)
+    title_origins = (30, 58, 84)
+    for line_idx, line in enumerate(title_lines[:3]):
+        _draw_text_fit(
+            title,
+            text=line,
+            origin=(16, title_origins[line_idx]),
+            max_width=body_w - 32,
+            font_scale=0.84 if line_idx == 0 else 0.56,
+            color=(255, 255, 255) if line_idx == 0 else (220, 220, 220),
+            thickness=2 if line_idx == 0 else 1,
+        )
+
+    header = np.full((header_h, body_w, 3), (18, 18, 18), dtype=np.uint8)
+    for col_idx, column_header in enumerate(column_headers):
+        x0 = col_idx * tile_w
+        _draw_text_fit(
+            header,
+            text=column_header,
+            origin=(x0 + 12, 25),
+            max_width=tile_w - 24,
+            font_scale=0.68,
+            color=(255, 255, 255),
+            thickness=2,
+        )
+
+    body = np.full((body_h, body_w, 3), (24, 24, 24), dtype=np.uint8)
+    for row_idx, row_tiles in enumerate(image_rows):
+        y0 = row_idx * tile_h
+        for col_idx, tile in enumerate(row_tiles):
+            x0 = col_idx * tile_w
+            body[y0 : y0 + tile_h, x0 : x0 + tile_w] = tile
+    return np.vstack([title, header, body])
+
+
+def _short_case_label(label: str) -> str:
+    text = str(label)
+    text = text.replace("Still Object", "Obj")
+    text = text.replace("Still Rope", "Rope")
+    return text.replace(" ", "")
+
+
+def _format_point_count(point_count: int) -> str:
+    count = int(point_count)
+    if count >= 1000:
+        return f"{count / 1000.0:.1f}k"
+    return str(count)
+
+
+def _format_removed_highlight_label(stats: dict[str, Any]) -> str:
+    if not bool(stats.get("enabled", False)):
+        return ""
+    removed_count = int(stats.get("would_remove_point_count", 0))
+    by_camera = stats.get("would_remove_point_count_by_source_camera", {})
+    c0 = int(by_camera.get("0", 0))
+    c1 = int(by_camera.get("1", 0))
+    c2 = int(by_camera.get("2", 0))
+    return f"rm={removed_count} C={c0}/{c1}/{c2}"
+
+
+def _orbit_tile_label(
+    *,
+    case_label: str,
+    point_count: int,
+    angle_deg: float,
+    removed_highlight_stats: dict[str, Any],
+) -> str:
+    highlight_label = _format_removed_highlight_label(removed_highlight_stats)
+    if highlight_label:
+        return f"{_short_case_label(case_label)} | {_format_point_count(point_count)} | {highlight_label} | {angle_deg:05.1f}deg"
+    return f"{_short_case_label(case_label)} | {_format_point_count(point_count)} pts | {angle_deg:05.1f}deg"
+
+
 def _prepare_orbit_case_payload(
     *,
     case_dir: Path,
@@ -481,7 +790,15 @@ def _prepare_orbit_case_payload(
     projection_mode: str,
     ortho_margin: float,
     mask_erode_pixels: int = 0,
+    enhanced_pt_like_postprocess: bool = False,
+    highlight_enhanced_pt_like_removed: bool = False,
+    phystwin_radius_m: float = DEFAULT_PHYSTWIN_RADIUS_M,
+    phystwin_nb_points: int = DEFAULT_PHYSTWIN_NB_POINTS,
+    enhanced_component_voxel_size_m: float = DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
+    enhanced_keep_near_main_gap_m: float = DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
 ) -> dict[str, Any]:
+    if bool(enhanced_pt_like_postprocess) and bool(highlight_enhanced_pt_like_removed):
+        raise ValueError("Use either enhanced_pt_like_postprocess deletion or highlight_enhanced_pt_like_removed, not both.")
     resolved_case_dir = Path(case_dir).resolve()
     selected_mask_root = (resolved_case_dir / "sam31_masks") if mask_root is None else Path(mask_root)
     selected_mask_root = selected_mask_root.resolve()
@@ -511,7 +828,7 @@ def _prepare_orbit_case_payload(
         masks_by_camera,
         erode_pixels=int(mask_erode_pixels),
     )
-    native_points, native_colors, _native_clouds, native_stats = _load_masked_variant_cloud(
+    native_points, native_colors, native_source_camera_idx, _native_clouds, native_stats = _load_masked_variant_cloud(
         case_dir=resolved_case_dir,
         metadata=metadata,
         frame_idx=selected_frame,
@@ -522,7 +839,7 @@ def _prepare_orbit_case_payload(
         max_points_per_camera=max_points_per_camera,
         use_float_ffs_depth_when_available=False,
     )
-    ffs_points, ffs_colors, _ffs_clouds, ffs_stats = _load_masked_variant_cloud(
+    ffs_points, ffs_colors, ffs_source_camera_idx, _ffs_clouds, ffs_stats = _load_masked_variant_cloud(
         case_dir=resolved_case_dir,
         metadata=metadata,
         frame_idx=selected_frame,
@@ -533,6 +850,50 @@ def _prepare_orbit_case_payload(
         max_points_per_camera=max_points_per_camera,
         use_float_ffs_depth_when_available=True,
     )
+    native_pt_like_stats = _no_pt_like_postprocess_stats(len(native_points))
+    ffs_pt_like_stats = _no_pt_like_postprocess_stats(len(ffs_points))
+    native_pt_like_removed_highlight_stats = _no_pt_like_removed_highlight_stats(len(native_points))
+    ffs_pt_like_removed_highlight_stats = _no_pt_like_removed_highlight_stats(len(ffs_points))
+    if bool(enhanced_pt_like_postprocess):
+        native_points, native_colors, native_pt_like_stats = _apply_enhanced_pt_like_postprocess_if_enabled(
+            points=native_points,
+            colors=native_colors,
+            enabled=True,
+            phystwin_radius_m=float(phystwin_radius_m),
+            phystwin_nb_points=int(phystwin_nb_points),
+            enhanced_component_voxel_size_m=float(enhanced_component_voxel_size_m),
+            enhanced_keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+        )
+        ffs_points, ffs_colors, ffs_pt_like_stats = _apply_enhanced_pt_like_postprocess_if_enabled(
+            points=ffs_points,
+            colors=ffs_colors,
+            enabled=True,
+            phystwin_radius_m=float(phystwin_radius_m),
+            phystwin_nb_points=int(phystwin_nb_points),
+            enhanced_component_voxel_size_m=float(enhanced_component_voxel_size_m),
+            enhanced_keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+        )
+    elif bool(highlight_enhanced_pt_like_removed):
+        native_points, native_colors, native_pt_like_removed_highlight_stats = _highlight_enhanced_pt_like_removed_if_enabled(
+            points=native_points,
+            colors=native_colors,
+            source_camera_idx=native_source_camera_idx,
+            enabled=True,
+            phystwin_radius_m=float(phystwin_radius_m),
+            phystwin_nb_points=int(phystwin_nb_points),
+            enhanced_component_voxel_size_m=float(enhanced_component_voxel_size_m),
+            enhanced_keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+        )
+        ffs_points, ffs_colors, ffs_pt_like_removed_highlight_stats = _highlight_enhanced_pt_like_removed_if_enabled(
+            points=ffs_points,
+            colors=ffs_colors,
+            source_camera_idx=ffs_source_camera_idx,
+            enabled=True,
+            phystwin_radius_m=float(phystwin_radius_m),
+            phystwin_nb_points=int(phystwin_nb_points),
+            enhanced_component_voxel_size_m=float(enhanced_component_voxel_size_m),
+            enhanced_keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+        )
     initial_bounds_min, initial_bounds_max = _robust_bounds(
         [native_points, ffs_points],
         percentile=float(robust_bounds_percentile),
@@ -565,6 +926,8 @@ def _prepare_orbit_case_payload(
         ffs_colors,
         max_points=max_points_per_variant,
     )
+    native_pt_like_removed_highlight_stats["final_render_point_count"] = int(len(native_points))
+    ffs_pt_like_removed_highlight_stats["final_render_point_count"] = int(len(ffs_points))
 
     c2w_list = load_calibration_transforms(
         resolved_case_dir / "calibrate.pkl",
@@ -622,6 +985,10 @@ def _prepare_orbit_case_payload(
         "mask_erode_debug": erode_debug,
         "native_stats": native_stats,
         "ffs_stats": ffs_stats,
+        "native_pt_like_stats": native_pt_like_stats,
+        "ffs_pt_like_stats": ffs_pt_like_stats,
+        "native_pt_like_removed_highlight_stats": native_pt_like_removed_highlight_stats,
+        "ffs_pt_like_removed_highlight_stats": ffs_pt_like_removed_highlight_stats,
         "native_cropped_point_count": int(native_cropped_point_count),
         "ffs_cropped_point_count": int(ffs_cropped_point_count),
         "orbit": orbit_summary,
@@ -652,6 +1019,11 @@ def run_still_object_orbit_gif_workflow(
     ortho_margin: float = 1.28,
     point_radius_px: int = 1,
     supersample_scale: int = 1,
+    highlight_enhanced_pt_like_removed: bool = True,
+    phystwin_radius_m: float = DEFAULT_PHYSTWIN_RADIUS_M,
+    phystwin_nb_points: int = DEFAULT_PHYSTWIN_NB_POINTS,
+    enhanced_component_voxel_size_m: float = DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
+    enhanced_keep_near_main_gap_m: float = DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
 ) -> dict[str, Any]:
     case_dir = Path(case_dir).resolve()
     output_dir = Path(output_dir).resolve()
@@ -683,7 +1055,7 @@ def run_still_object_orbit_gif_workflow(
         text_prompt=str(text_prompt),
     )
 
-    native_points, native_colors, _native_clouds, native_stats = _load_masked_variant_cloud(
+    native_points, native_colors, _native_source_camera_idx, _native_clouds, native_stats = _load_masked_variant_cloud(
         case_dir=case_dir,
         metadata=metadata,
         frame_idx=selected_frame,
@@ -694,7 +1066,7 @@ def run_still_object_orbit_gif_workflow(
         max_points_per_camera=max_points_per_camera,
         use_float_ffs_depth_when_available=False,
     )
-    ffs_points, ffs_colors, _ffs_clouds, ffs_stats = _load_masked_variant_cloud(
+    ffs_points, ffs_colors, _ffs_source_camera_idx, _ffs_clouds, ffs_stats = _load_masked_variant_cloud(
         case_dir=case_dir,
         metadata=metadata,
         frame_idx=selected_frame,
@@ -892,10 +1264,22 @@ def run_still_object_rope_6x2_orbit_gif_workflow(
     ortho_margin: float = 1.28,
     point_radius_px: int = 1,
     supersample_scale: int = 1,
+    layout: str = "6x2",
     mask_erode_pixels: int = 0,
+    enhanced_pt_like_postprocess: bool = False,
+    highlight_enhanced_pt_like_removed: bool = False,
+    phystwin_radius_m: float = DEFAULT_PHYSTWIN_RADIUS_M,
+    phystwin_nb_points: int = DEFAULT_PHYSTWIN_NB_POINTS,
+    enhanced_component_voxel_size_m: float = DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
+    enhanced_keep_near_main_gap_m: float = DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
 ) -> dict[str, Any]:
+    if bool(enhanced_pt_like_postprocess) and bool(highlight_enhanced_pt_like_removed):
+        raise ValueError("Use either enhanced_pt_like_postprocess deletion or highlight_enhanced_pt_like_removed, not both.")
     if len(case_specs) != 6:
         raise ValueError(f"6x2 orbit GIF requires exactly 6 case specs, got {len(case_specs)}.")
+    selected_layout = str(layout).lower()
+    if selected_layout not in {"6x2", "3x4"}:
+        raise ValueError(f"layout must be '6x2' or '3x4', got {layout!r}.")
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -919,6 +1303,12 @@ def run_still_object_rope_6x2_orbit_gif_workflow(
             projection_mode=str(projection_mode),
             ortho_margin=float(ortho_margin),
             mask_erode_pixels=int(mask_erode_pixels),
+            enhanced_pt_like_postprocess=bool(enhanced_pt_like_postprocess),
+            highlight_enhanced_pt_like_removed=bool(highlight_enhanced_pt_like_removed),
+            phystwin_radius_m=float(phystwin_radius_m),
+            phystwin_nb_points=int(phystwin_nb_points),
+            enhanced_component_voxel_size_m=float(enhanced_component_voxel_size_m),
+            enhanced_keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
         )
         payloads.append(payload)
 
@@ -926,70 +1316,168 @@ def run_still_object_rope_6x2_orbit_gif_workflow(
     ffs_model_name = str(first_ffs_config.get("model_name", "20-30-48"))
     ffs_valid_iters = int(first_ffs_config.get("valid_iters", 4))
     ffs_builder_level = int(first_ffs_config.get("builder_optimization_level", 5))
-    title_lines = [
-        f"Still Object R1-R4 + Rope R1-R2 | frame {int(frame_idx)} | Cam{int(start_camera_idx)} 6x2 orbit",
-        (
-            f"raw RGB point colors | no PT-like postprocess | FFS={ffs_model_name} "
-            f"iter{ffs_valid_iters} pad864 TRT L{ffs_builder_level} | mask erode={int(mask_erode_pixels)}px"
-        ),
-    ]
-    column_headers = ["Native Depth", f"FFS {ffs_model_name} iter{ffs_valid_iters} L{ffs_builder_level}"]
+    enhanced_setting_label = (
+        f"enhPT trace r={float(phystwin_radius_m):.3f}/{int(phystwin_nb_points)} "
+        f"comp={float(enhanced_component_voxel_size_m):.3f} gap={float(enhanced_keep_near_main_gap_m):.3f}"
+    )
+    if bool(enhanced_pt_like_postprocess):
+        postprocess_label = enhanced_setting_label.replace("trace", "delete", 1)
+        tile_mode_label = "enhPT delete"
+    elif bool(highlight_enhanced_pt_like_removed):
+        postprocess_label = f"{enhanced_setting_label} | removed points highlighted only"
+        tile_mode_label = f"erode {int(mask_erode_pixels)}px + mark"
+    else:
+        postprocess_label = "no PT-like postprocess"
+        tile_mode_label = f"erode {int(mask_erode_pixels)}px"
+    erode_title = f" | erode={int(mask_erode_pixels)}px" if selected_layout == "3x4" or int(mask_erode_pixels) != 0 else ""
+    if selected_layout == "3x4":
+        title_lines = [
+            (
+                f"Still Object R1-R4 + Rope R1-R2 | frame {int(frame_idx)} | "
+                f"Cam{int(start_camera_idx)} keyed orbit 3x4{erode_title}"
+            ),
+            "raw RGB point colors | enhanced PT-like discovery marks would-delete points; no points are deleted",
+            (
+                f"FFS={ffs_model_name} iter{ffs_valid_iters} pad864 TRT L{ffs_builder_level} | "
+                "colors: Cam0 magenta / Cam1 cyan / Cam2 amber"
+            ),
+        ]
+        column_headers = [
+            "Native Depth",
+            f"FFS {ffs_model_name} iter{ffs_valid_iters} L{ffs_builder_level}",
+            "Native Depth",
+            f"FFS {ffs_model_name} iter{ffs_valid_iters} L{ffs_builder_level}",
+        ]
+    else:
+        title_lines = [
+            (
+                f"Still Object R1-R4 + Rope R1-R2 | frame {int(frame_idx)} | "
+                f"Cam{int(start_camera_idx)} 6x2 orbit{erode_title}"
+            ),
+            (
+                f"raw RGB point colors | {postprocess_label} | FFS={ffs_model_name} "
+                f"iter{ffs_valid_iters} pad864 TRT L{ffs_builder_level}"
+            ),
+        ]
+        column_headers = ["Native Depth", f"FFS {ffs_model_name} iter{ffs_valid_iters} L{ffs_builder_level}"]
     row_headers = [str(payload["label"]) for payload in payloads]
     erode_suffix = "" if int(mask_erode_pixels) == 0 else f"_mask_erode_{int(mask_erode_pixels):02d}px"
-    gif_path = output_dir / f"still_object_rope_frame{int(frame_idx):04d}_cam{int(start_camera_idx)}_orbit_6x2{erode_suffix}.gif"
-    first_frame_path = output_dir / f"still_object_rope_frame{int(frame_idx):04d}_cam{int(start_camera_idx)}_orbit_6x2{erode_suffix}_first.png"
+    post_suffix = "_enhanced_pt_like" if bool(enhanced_pt_like_postprocess) else ""
+    if bool(highlight_enhanced_pt_like_removed):
+        post_suffix = "_enhanced_pt_like_marked"
+    gif_path = output_dir / (
+        f"still_object_rope_frame{int(frame_idx):04d}_cam{int(start_camera_idx)}_orbit_"
+        f"{selected_layout}{post_suffix}{erode_suffix}.gif"
+    )
+    first_frame_path = output_dir / (
+        f"still_object_rope_frame{int(frame_idx):04d}_cam{int(start_camera_idx)}_orbit_"
+        f"{selected_layout}{post_suffix}{erode_suffix}_first.png"
+    )
     summary_path = output_dir / "summary.json"
 
     selected_projection_mode = str(projection_mode)
     total_frames = max(1, int(num_frames))
     with imageio.get_writer(str(gif_path), mode="I", fps=max(1, int(fps)), loop=0) as writer:
         for frame_number in range(total_frames):
-            image_rows: list[list[np.ndarray]] = []
-            for payload in payloads:
-                view_config = payload["views"][frame_number]
-                angle = float(view_config["orbit_angle_deg"])
-                native_tile = _render_variant_tile(
-                    points=payload["native_points"],
-                    colors=payload["native_colors"],
-                    view_config=view_config,
-                    render_mode=str(render_mode),
-                    scalar_bounds=payload["scalar_bounds"],
-                    tile_width=int(tile_width),
-                    tile_height=int(tile_height),
-                    point_radius_px=int(point_radius_px),
-                    supersample_scale=int(supersample_scale),
-                    projection_mode=selected_projection_mode,
-                    ortho_scale=payload["ortho_scale"],
-                    label=(
-                        f"Native | erode {int(mask_erode_pixels)}px | "
-                        f"{len(payload['native_points'])} pts | {angle:05.1f} deg"
-                    ),
+            if selected_layout == "3x4":
+                image_rows = []
+                for left_idx in (0, 2, 4):
+                    row_tiles = []
+                    for payload in (payloads[left_idx], payloads[left_idx + 1]):
+                        view_config = payload["views"][frame_number]
+                        angle = float(view_config["orbit_angle_deg"])
+                        native_tile = _render_variant_tile(
+                            points=payload["native_points"],
+                            colors=payload["native_colors"],
+                            view_config=view_config,
+                            render_mode=str(render_mode),
+                            scalar_bounds=payload["scalar_bounds"],
+                            tile_width=int(tile_width),
+                            tile_height=int(tile_height),
+                            point_radius_px=int(point_radius_px),
+                            supersample_scale=int(supersample_scale),
+                            projection_mode=selected_projection_mode,
+                            ortho_scale=payload["ortho_scale"],
+                            label=_orbit_tile_label(
+                                case_label=str(payload["label"]),
+                                point_count=len(payload["native_points"]),
+                                angle_deg=angle,
+                                removed_highlight_stats=payload["native_pt_like_removed_highlight_stats"],
+                            ),
+                        )
+                        ffs_tile = _render_variant_tile(
+                            points=payload["ffs_points"],
+                            colors=payload["ffs_colors"],
+                            view_config=view_config,
+                            render_mode=str(render_mode),
+                            scalar_bounds=payload["scalar_bounds"],
+                            tile_width=int(tile_width),
+                            tile_height=int(tile_height),
+                            point_radius_px=int(point_radius_px),
+                            supersample_scale=int(supersample_scale),
+                            projection_mode=selected_projection_mode,
+                            ortho_scale=payload["ortho_scale"],
+                            label=_orbit_tile_label(
+                                case_label=str(payload["label"]),
+                                point_count=len(payload["ffs_points"]),
+                                angle_deg=angle,
+                                removed_highlight_stats=payload["ffs_pt_like_removed_highlight_stats"],
+                            ),
+                        )
+                        row_tiles.extend([native_tile, ffs_tile])
+                    image_rows.append(row_tiles)
+                board = _compose_3x4_orbit_board(
+                    title_lines=title_lines,
+                    column_headers=column_headers,
+                    image_rows=image_rows,
                 )
-                ffs_tile = _render_variant_tile(
-                    points=payload["ffs_points"],
-                    colors=payload["ffs_colors"],
-                    view_config=view_config,
-                    render_mode=str(render_mode),
-                    scalar_bounds=payload["scalar_bounds"],
-                    tile_width=int(tile_width),
-                    tile_height=int(tile_height),
-                    point_radius_px=int(point_radius_px),
-                    supersample_scale=int(supersample_scale),
-                    projection_mode=selected_projection_mode,
-                    ortho_scale=payload["ortho_scale"],
-                    label=(
-                        f"FFS pad864 L{ffs_builder_level} | erode {int(mask_erode_pixels)}px | "
-                        f"{len(payload['ffs_points'])} pts | {angle:05.1f} deg"
-                    ),
+            else:
+                image_rows = []
+                for payload in payloads:
+                    view_config = payload["views"][frame_number]
+                    angle = float(view_config["orbit_angle_deg"])
+                    native_tile = _render_variant_tile(
+                        points=payload["native_points"],
+                        colors=payload["native_colors"],
+                        view_config=view_config,
+                        render_mode=str(render_mode),
+                        scalar_bounds=payload["scalar_bounds"],
+                        tile_width=int(tile_width),
+                        tile_height=int(tile_height),
+                        point_radius_px=int(point_radius_px),
+                        supersample_scale=int(supersample_scale),
+                        projection_mode=selected_projection_mode,
+                        ortho_scale=payload["ortho_scale"],
+                        label=(
+                            f"Native | {tile_mode_label} | "
+                            f"{len(payload['native_points'])} pts | {angle:05.1f} deg"
+                        ),
+                    )
+                    ffs_tile = _render_variant_tile(
+                        points=payload["ffs_points"],
+                        colors=payload["ffs_colors"],
+                        view_config=view_config,
+                        render_mode=str(render_mode),
+                        scalar_bounds=payload["scalar_bounds"],
+                        tile_width=int(tile_width),
+                        tile_height=int(tile_height),
+                        point_radius_px=int(point_radius_px),
+                        supersample_scale=int(supersample_scale),
+                        projection_mode=selected_projection_mode,
+                        ortho_scale=payload["ortho_scale"],
+                        label=(
+                            f"FFS L{ffs_builder_level} | {tile_mode_label} | "
+                            f"{len(payload['ffs_points'])} pts | {angle:05.1f} deg"
+                        ),
+                    )
+                    image_rows.append([native_tile, ffs_tile])
+                board = _compose_6x2_orbit_board(
+                    title_lines=title_lines,
+                    row_headers=row_headers,
+                    column_headers=column_headers,
+                    image_rows=image_rows,
+                    row_label_width=int(row_label_width),
                 )
-                image_rows.append([native_tile, ffs_tile])
-            board = _compose_6x2_orbit_board(
-                title_lines=title_lines,
-                row_headers=row_headers,
-                column_headers=column_headers,
-                image_rows=image_rows,
-                row_label_width=int(row_label_width),
-            )
             if frame_number == 0:
                 write_image(first_frame_path, board)
             writer.append_data(cv2.cvtColor(board, cv2.COLOR_BGR2RGB))
@@ -1009,6 +1497,10 @@ def run_still_object_rope_6x2_orbit_gif_workflow(
                 "mask_erode_debug": payload["mask_erode_debug"],
                 "native_stats": payload["native_stats"],
                 "ffs_stats": payload["ffs_stats"],
+                "native_pt_like_stats": payload["native_pt_like_stats"],
+                "ffs_pt_like_stats": payload["ffs_pt_like_stats"],
+                "native_pt_like_removed_highlight_stats": payload["native_pt_like_removed_highlight_stats"],
+                "ffs_pt_like_removed_highlight_stats": payload["ffs_pt_like_removed_highlight_stats"],
                 "native_cropped_point_count": payload["native_cropped_point_count"],
                 "ffs_cropped_point_count": payload["ffs_cropped_point_count"],
                 "native_render_point_count": int(len(payload["native_points"])),
@@ -1027,6 +1519,7 @@ def run_still_object_rope_6x2_orbit_gif_workflow(
         "start_camera_idx": int(start_camera_idx),
         "num_frames": total_frames,
         "fps": int(fps),
+        "panel_layout": selected_layout,
         "tile_width": int(tile_width),
         "tile_height": int(tile_height),
         "row_label_width": int(row_label_width),
@@ -1040,7 +1533,18 @@ def run_still_object_rope_6x2_orbit_gif_workflow(
         "projection_mode": selected_projection_mode,
         "point_radius_px": int(point_radius_px),
         "mask_erode_pixels": int(mask_erode_pixels),
-        "pt_like_postprocess_enabled": False,
+        "pt_like_postprocess_enabled": bool(enhanced_pt_like_postprocess),
+        "pt_like_postprocess_mode": "enhanced_radius_then_component" if bool(enhanced_pt_like_postprocess) else "none",
+        "enhanced_pt_like_removed_highlight_enabled": bool(highlight_enhanced_pt_like_removed),
+        "enhanced_pt_like_removed_highlight_mode": (
+            "source_camera_color_mark_only" if bool(highlight_enhanced_pt_like_removed) else "none"
+        ),
+        "phystwin_radius_m": float(phystwin_radius_m),
+        "phystwin_nb_points": int(phystwin_nb_points),
+        "enhanced_component_voxel_size_m": float(enhanced_component_voxel_size_m),
+        "enhanced_keep_near_main_gap_m": float(enhanced_keep_near_main_gap_m),
+        "source_camera_highlight_colors_bgr": _source_camera_highlight_color_summary(),
+        "source_camera_highlight_labels": list(SOURCE_CAMERA_HIGHLIGHT_LABELS),
         "ffs_config": first_ffs_config,
         "case_summaries": case_summaries,
     }
@@ -1072,6 +1576,11 @@ def run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow(
     ortho_margin: float = 1.28,
     point_radius_px: int = 1,
     supersample_scale: int = 1,
+    highlight_enhanced_pt_like_removed: bool = True,
+    phystwin_radius_m: float = DEFAULT_PHYSTWIN_RADIUS_M,
+    phystwin_nb_points: int = DEFAULT_PHYSTWIN_NB_POINTS,
+    enhanced_component_voxel_size_m: float = DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
+    enhanced_keep_near_main_gap_m: float = DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
 ) -> dict[str, Any]:
     output_root = Path(output_root).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1103,6 +1612,12 @@ def run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow(
             point_radius_px=int(point_radius_px),
             supersample_scale=int(supersample_scale),
             mask_erode_pixels=int(erode_value),
+            enhanced_pt_like_postprocess=False,
+            highlight_enhanced_pt_like_removed=bool(highlight_enhanced_pt_like_removed),
+            phystwin_radius_m=float(phystwin_radius_m),
+            phystwin_nb_points=int(phystwin_nb_points),
+            enhanced_component_voxel_size_m=float(enhanced_component_voxel_size_m),
+            enhanced_keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
         )
         variant_summaries.append(
             {
@@ -1111,12 +1626,18 @@ def run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow(
                 "gif_path": variant_summary["gif_path"],
                 "first_frame_path": variant_summary["first_frame_path"],
                 "summary_path": str(variant_output_dir / "summary.json"),
+                "pt_like_postprocess_enabled": bool(variant_summary["pt_like_postprocess_enabled"]),
+                "enhanced_pt_like_removed_highlight_enabled": bool(
+                    variant_summary["enhanced_pt_like_removed_highlight_enabled"]
+                ),
                 "case_summaries": [
                     {
                         "label": item["label"],
                         "native_render_point_count": int(item["native_render_point_count"]),
                         "ffs_render_point_count": int(item["ffs_render_point_count"]),
                         "mask_erode_debug": item["mask_erode_debug"],
+                        "native_pt_like_removed_highlight_stats": item["native_pt_like_removed_highlight_stats"],
+                        "ffs_pt_like_removed_highlight_stats": item["ffs_pt_like_removed_highlight_stats"],
                     }
                     for item in variant_summary["case_summaries"]
                 ],
@@ -1136,6 +1657,13 @@ def run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow(
         "render_mode": str(render_mode),
         "projection_mode": str(projection_mode),
         "pt_like_postprocess_enabled": False,
+        "enhanced_pt_like_removed_highlight_enabled": bool(highlight_enhanced_pt_like_removed),
+        "phystwin_radius_m": float(phystwin_radius_m),
+        "phystwin_nb_points": int(phystwin_nb_points),
+        "enhanced_component_voxel_size_m": float(enhanced_component_voxel_size_m),
+        "enhanced_keep_near_main_gap_m": float(enhanced_keep_near_main_gap_m),
+        "source_camera_highlight_colors_bgr": _source_camera_highlight_color_summary(),
+        "source_camera_highlight_labels": list(SOURCE_CAMERA_HIGHLIGHT_LABELS),
         "variants": variant_summaries,
     }
     write_json(output_root / "summary.json", summary)

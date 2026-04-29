@@ -10,8 +10,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from data_process.visualization.experiments.still_object_orbit_gif import (  # noqa: E402
-    DEFAULT_6X2_ERODE_SWEEP_OUTPUT_DIR,
+    DEFAULT_6X2_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR,
     DEFAULT_6X2_ERODE_SWEEP_PIXELS,
+    DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
+    DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
+    DEFAULT_PHYSTWIN_NB_POINTS,
+    DEFAULT_PHYSTWIN_RADIUS_M,
     default_still_object_rope_6x2_case_specs,
     run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow,
 )
@@ -26,10 +30,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Render four 6x2 Native Depth vs FFS raw-RGB masked-object orbit GIFs "
-            "for still-object rounds 1-4 and still-rope rounds 1-2 with mask erosion."
+            "for still-object rounds 1-4 and still-rope rounds 1-2 with mask erosion "
+            "and no-delete enhanced PT-like removed-point highlighting."
         )
     )
-    parser.add_argument("--output_root", type=Path, default=ROOT / DEFAULT_6X2_ERODE_SWEEP_OUTPUT_DIR)
+    parser.add_argument("--output_root", type=Path, default=ROOT / DEFAULT_6X2_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR)
     parser.add_argument(
         "--erode_pixels",
         type=str,
@@ -73,6 +78,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ortho_margin", type=float, default=1.28)
     parser.add_argument("--point_radius_px", type=int, default=1)
     parser.add_argument("--supersample_scale", type=int, default=1)
+    parser.add_argument(
+        "--highlight_enhanced_pt_like_removed",
+        dest="highlight_enhanced_pt_like_removed",
+        action="store_true",
+        default=True,
+        help="Mark points that enhanced PT-like cleanup would delete, without deleting them.",
+    )
+    parser.add_argument(
+        "--no_highlight_enhanced_pt_like_removed",
+        dest="highlight_enhanced_pt_like_removed",
+        action="store_false",
+        help="Disable no-delete enhanced PT-like removed-point marking.",
+    )
+    parser.add_argument("--phystwin_radius_m", type=float, default=DEFAULT_PHYSTWIN_RADIUS_M)
+    parser.add_argument("--phystwin_nb_points", type=int, default=DEFAULT_PHYSTWIN_NB_POINTS)
+    parser.add_argument("--enhanced_component_voxel_size_m", type=float, default=DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M)
+    parser.add_argument("--enhanced_keep_near_main_gap_m", type=float, default=DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M)
     return parser.parse_args()
 
 
@@ -101,6 +123,11 @@ def main() -> int:
         ortho_margin=float(args.ortho_margin),
         point_radius_px=int(args.point_radius_px),
         supersample_scale=int(args.supersample_scale),
+        highlight_enhanced_pt_like_removed=bool(args.highlight_enhanced_pt_like_removed),
+        phystwin_radius_m=float(args.phystwin_radius_m),
+        phystwin_nb_points=int(args.phystwin_nb_points),
+        enhanced_component_voxel_size_m=float(args.enhanced_component_voxel_size_m),
+        enhanced_keep_near_main_gap_m=float(args.enhanced_keep_near_main_gap_m),
     )
     print(f"Sweep summary written to {Path(summary['output_root']) / 'summary.json'}")
     for variant in summary["variants"]:

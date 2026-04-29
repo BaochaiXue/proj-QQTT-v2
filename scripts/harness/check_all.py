@@ -108,6 +108,7 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_ffs_confidence_threshold_sweep_pcd_compare_smoke",
     "tests.test_ffs_mask_erode_multipage_sweep_pcd_compare_smoke",
     "tests.test_ffs_mask_erode_sweep_pcd_compare_smoke",
+    "tests.test_still_object_orbit_gif_smoke",
     "tests.test_native_ffs_fused_pcd_compare_smoke",
     "tests.test_ffs_reprojection_smoke",
     "tests.test_depth_quantization_smoke",

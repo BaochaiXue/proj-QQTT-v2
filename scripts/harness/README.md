@@ -89,8 +89,8 @@ These belong under `scripts/harness/experiments/` and call implementation module
 | `run_ffs_confidence_filter_sweep.py` | FFS confidence filtering sweep runner. |
 | `run_still_object_round1_projection_panel.py` | Still-object round1 native/FFS projected-PCD removal board. |
 | `visualize_still_object_orbit_gif.py` | Headless Native Depth vs FFS masked-object orbit GIF. |
-| `visualize_still_object_rope_6x2_orbit_gif.py` | Headless 6x2 raw-RGB Native Depth vs FFS orbit GIF for still-object rounds 1-4 and still-rope rounds 1-2. |
-| `visualize_still_object_rope_6x2_orbit_erode_sweep_gif.py` | Four 6x2 orbit GIFs with 1/3/5/10px object-mask erosion. |
+| `visualize_still_object_rope_6x2_orbit_gif.py` | Headless 6x2 raw-RGB Native Depth vs FFS orbit GIF for still-object rounds 1-4 and still-rope rounds 1-2; supports optional enhanced PT-like postprocess. |
+| `visualize_still_object_rope_6x2_orbit_erode_sweep_gif.py` | Four 6x2 orbit GIFs with 1/3/5/10px object-mask erosion; defaults to no-delete enhanced PT-like removed-point marking by source camera color. |
 | `visual_compare_enhanced_phystwin_postprocess_pcd.py` | No cleanup vs PhysTwin-like radius-neighbor cleanup vs enhanced component cleanup. |
 | `visual_compare_enhanced_phystwin_removed_overlay.py` | `5x3` removed-point overlay; `--native_row_mode ir_pair` produces `6x3` infrared-left/right boards. |
 | `visual_compare_ffs_confidence_filter_pcd.py`, `visual_compare_ffs_confidence_threshold_sweep_pcd.py` | Confidence-filtered Fast-FoundationStereo point-cloud boards and threshold sweeps. |
