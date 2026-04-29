@@ -80,6 +80,16 @@ def detect_radius_outlier_indices(
         empty = np.empty((0,), dtype=np.int32)
         return {"inlier_indices": empty, "outlier_indices": empty}
 
+    if point_count <= 4096:
+        radius_sq = float(radius_m) * float(radius_m)
+        deltas = cloud[:, None, :] - cloud[None, :, :]
+        neighbor_counts = np.count_nonzero(np.sum(deltas * deltas, axis=2) <= radius_sq + 1e-12, axis=1)
+        inliers = np.flatnonzero(neighbor_counts >= int(nb_points)).astype(np.int32)
+        keep_mask = np.zeros((point_count,), dtype=bool)
+        keep_mask[inliers] = True
+        outliers = np.flatnonzero(~keep_mask).astype(np.int32)
+        return {"inlier_indices": inliers, "outlier_indices": outliers}
+
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(cloud)
     _, inlier_indices = pcd.remove_radius_outlier(

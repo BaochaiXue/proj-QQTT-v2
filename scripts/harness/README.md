@@ -1,144 +1,128 @@
 # Harness Script Map
 
-This folder is intentionally limited to thin command-line wrappers, probe/check utilities, and a small number of bounded one-off diagnostics.
+`scripts/harness/` is for thin operator-facing CLIs, probes, guards, and bounded diagnostics. Shared math, rendering, calibration, depth, and point-cloud logic belongs under `data_process/`.
 
-Rule of thumb:
+## Operating Rules
 
-- keep orchestration, rendering, and analysis logic in `data_process/visualization/` or `data_process/depth_backends/`
-- keep `scripts/harness/` as the user-facing CLI shell around that logic
-- keep experiment-only CLIs under `scripts/harness/experiments/`
-- keep RealSense / environment checks here because they are operational harness utilities, not production library code
+- Keep orchestration and reusable logic in `data_process/visualization/` or `data_process/depth_backends/`; harness files should mostly parse args and call those modules.
+- Keep one-off experiment CLIs under `scripts/harness/experiments/`; do not add root-level compatibility wrappers for experiment scripts.
+- Keep RealSense, external dependency, and environment proof-of-life utilities here because they are operator tools, not production library code.
+- Do not grow this folder with reusable point-cloud IO, crop logic, layout builders, calibration loaders, or view-planning helpers.
 
-FFS performance benchmark rule:
+## FFS Defaults
 
-- New realtime and visualization FFS work defaults to environment `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, `max_disp=192`, and the two-stage ONNX/TensorRT artifact built with `builder_optimization_level=5`.
-- The default level-5 artifact is `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`.
-- PyTorch-only confidence-logit experiments still use the same checkpoint and iteration defaults, because confidence logits are not exported by the current TRT artifact.
-- QQTT performance claims must use the repo's real RealSense image size, `848x480`, with local recorded/static `ir_left` / `ir_right` images unless a different input source is explicitly named as a synthetic/control run.
-- For model shapes that need multiples of `32`, pad `848x480` to `864x480` and unpad outputs afterward; do not resize down to `640x480` and report that as QQTT runtime.
-- `640x480` runs are allowed only as official-table reproduction/control benchmarks, and their reports must say they are not representative of the real QQTT `848x480` pipeline.
+- New realtime and visualization FFS work defaults to env `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, `max_disp=192`, and two-stage ONNX/TensorRT.
+- Current default TensorRT artifact: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`.
+- QQTT performance claims must use real RealSense `848x480` inputs from local recorded/static `ir_left` and `ir_right` unless explicitly labeled as synthetic/control.
+- Models needing multiples of `32` should pad `848x480` to `864x480` and unpad outputs afterward; do not report resized `640x480` as QQTT runtime.
+- `640x480` runs are allowed only as official-table reproduction/control benchmarks and must be labeled as such.
+- PyTorch-only confidence-logit experiments still use the same checkpoint/iteration defaults because the current TRT artifact does not export confidence logits.
+- `experiments/run_still_object_round1_projection_panel.py` aligns still-object round1 with this default level-5 TRT setting, writes masks inside the experiment folder, and renders the 13-row native/FFS projected-PCD removal board.
 
-## Keep Here
+## Object Cases
 
-### Checks / Guards
+- Use `scripts.harness.object_case_registry` for raw object-case lookup by `(object_set, round_id)`.
+- Keep previous `static_object` captures separate from 2026-04-28 `still_object` captures; do not silently reuse `static_round1` names.
+- Current still-object raw captures:
+  - `data_collect/both_30_still_object_round1_20260428`
+  - `data_collect/both_30_still_object_round2_20260428`
+  - `data_collect/both_30_still_object_round3_20260428`
+  - `data_collect/both_30_still_object_round4_20260428`
+  - `data_collect/both_30_still_object_round7_20260428` (intentional round5-6 skip)
+  - `data_collect/both_30_still_object_round8_20260428` (intentional non-contiguous sequence)
+- When aligned, still-object outputs should use a distinct namespace such as `data/still_object/`.
 
-- `check_all.py`
-- `check_experiment_boundaries.py`
-- `check_scope.py`
-- `check_visual_architecture.py`
+| Helper | Purpose |
+| --- | --- |
+| `object_case_registry.py` | Shared raw object capture registry for harness scripts and tests. |
 
-`check_all.py` now has two deterministic profiles:
+## Checks
 
-- default `python scripts/harness/check_all.py`
-  - fast quick profile
-  - intended to finish in under one minute on a healthy repo environment
-- explicit `python scripts/harness/check_all.py --full`
-  - broader legacy validation surface
-  - use for larger refactors or when you need the old wide regression net
+| Script | Purpose |
+| --- | --- |
+| `check_all.py` | Deterministic quick/full validation runner. Default quick profile should stay under roughly one minute. |
+| `check_experiment_boundaries.py` | Prevent experiment-only modules from leaking into formal runtime code. |
+| `check_scope.py` | Enforce repo scope boundaries. |
+| `check_visual_architecture.py` | Guard visualization layering and file-size constraints. |
 
-### Hardware / External Proof-of-Life
+Run:
 
-- `verify_ffs_demo.py`
-- `verify_ffs_tensorrt_windows.py`
-- `verify_ffs_tensorrt_wsl.py`
-- `probe_d455_ir_pair.py`
-- `probe_d455_stream_capability.py`
-- `render_d455_stream_probe_report.py`
-- `run_ffs_on_saved_pair.py`
-- `reproject_ffs_to_color.py`
-- `generate_sam31_masks.py`
+```bash
+python scripts/harness/check_all.py
+python scripts/harness/check_all.py --full
+```
 
-### Data Cleanup
+## Hardware And External Proofs
 
-- `cleanup_different_types_cases.py`
+| Script | Purpose |
+| --- | --- |
+| `benchmark_ffs_configs.py` | FFS config benchmark wrapper. |
+| `probe_d455_ir_pair.py` | Manual D455 IR-pair capability probe. |
+| `probe_d455_stream_capability.py` | Manual D455 stream/profile probe. |
+| `render_d455_stream_probe_report.py` | Convert probe JSON to a readable report. |
+| `run_ffs_static_replay_matrix.py` | Static replay benchmark matrix over recorded RealSense pairs. |
+| `verify_ffs_demo.py` | External FFS demo proof-of-life. |
+| `verify_ffs_single_engine_tensorrt_wsl.py` | Single-engine TensorRT proof on WSL. |
+| `verify_ffs_tensorrt_windows.py` | TensorRT proof on Windows side. |
+| `verify_ffs_tensorrt_wsl.py` | TensorRT proof on WSL. |
+| `run_ffs_on_saved_pair.py` | Run external FFS on one saved stereo pair. |
+| `reproject_ffs_to_color.py` | Reproject FFS output into the color camera frame. |
+| `generate_sam31_masks.py` | Operator-side SAM 3.1 sidecar mask generation. |
+| `sam31_mask_helper.py` | Shared implementation for the SAM 3.1 sidecar CLI and tests. |
 
-This script is for downstream-facing final-case cleanup under `data/different_types/` and is intentionally separate from the repo-internal aligned-case visualization workflows.
-It preserves the canonical `color/` and `depth/` frame trees plus optional `color/0.mp4`, `1.mp4`, and `2.mp4` RGB sidecars when present. Execute mode also backfills those color mp4 sidecars from `color/<camera>/*.png` if they are missing.
+External repos, checkpoints, and SAM assets stay outside this repo and are passed by path or resolved from environment/cache.
 
-### Current User-Facing Compare CLIs
+## Formal Cleanup
 
-- `visual_compare_depth_panels.py`
-- `visual_compare_reprojection.py`
-- `visual_compare_depth_video.py`
-- `visual_compare_depth_triplet_ply.py`
-- `visual_compare_depth_triplet_video.py`
-- `visual_compare_masked_pointcloud.py`
-- `visual_compare_masked_camera_views.py`
-- `visual_compare_turntable.py`
-- `visual_compare_rerun.py`
-- `visual_make_match_board.py`
-- `visual_make_professor_triptych.py`
+| Script | Purpose |
+| --- | --- |
+| `cleanup_different_types_cases.py` | Dry-run or execute downstream-facing cleanup under `data/different_types/`; preserves canonical `color/`, `depth/`, and optional color MP4 sidecars. |
+
+## Current Compare CLIs
 
 These should stay thin wrappers around workflow modules under `data_process/visualization/workflows/`.
 
-### Experiment-Only CLIs
+| Script | Purpose |
+| --- | --- |
+| `visual_compare_depth_panels.py` | Per-camera RealSense-vs-FFS depth diagnostic panels. |
+| `visual_compare_reprojection.py` | Cross-view reprojection diagnostics. |
+| `visual_compare_depth_video.py` | Older temporal fused depth compare. |
+| `visual_compare_depth_triplet_ply.py` | Single-frame native / FFS raw / FFS postprocess fused PLY compare. |
+| `visual_compare_depth_triplet_video.py` | Multi-frame native / FFS raw / FFS postprocess point-cloud video compare. |
+| `visual_compare_masked_pointcloud.py` | Single-frame SAM-masked native-vs-FFS point-cloud board. |
+| `visual_compare_masked_camera_views.py` | Masked native-vs-FFS views from original calibrated cameras. |
+| `visual_compare_turntable.py` | Current single-frame professor-facing compare. |
+| `visual_compare_rerun.py` | Rerun export plus fused PLYs for native-vs-FFS removed-invisible inspection. |
+| `visual_make_match_board.py` | Professor-facing 3-view point-cloud match board. |
+| `visual_make_professor_triptych.py` | Three-figure professor-facing summary pack. |
 
-- `experiments/run_ffs_confidence_filter_sweep.py`
-- `experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py`
-- `experiments/visual_compare_enhanced_phystwin_removed_overlay.py`
-- `experiments/visual_compare_ffs_confidence_filter_pcd.py`
-- `experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py`
-- `experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py`
-- `experiments/visual_compare_ffs_mask_erode_sweep_pcd.py`
-- `experiments/visual_compare_native_ffs_fused_pcd.py`
-- `experiments/visualize_ffs_static_confidence_panels.py`
-- `experiments/visualize_ffs_static_confidence_pcd_panels.py`
+## Experiment CLIs
 
-These are the only supported command paths for one-off FFS experiments. Do not
-add root-level compatibility wrappers for experiment CLIs; old wrappers were
-removed so the harness directory stays focused on current user-facing tools.
+| Script | Purpose |
+| --- | --- |
+| `experiments/run_ffs_confidence_filter_sweep.py` | FFS confidence filtering sweep runner. |
+| `experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py` | Native/FFS PCD compare under no postprocess, PT-like, and enhanced PT-like cleanup. |
+| `experiments/visual_compare_enhanced_phystwin_removed_overlay.py` | `5x3` RealSense-depth/FFS removed-point overlay; `--native_row_mode ir_pair` produces `6x3` IR-left/right boards. |
+| `experiments/visual_compare_ffs_confidence_filter_pcd.py` | `6x3` native/raw/confidence-filtered FFS PCD board. |
+| `experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py` | Threshold sweep over confidence-filtered FFS PCD boards. |
+| `experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py` | Multipage mask-erosion sweep. |
+| `experiments/visual_compare_ffs_mask_erode_sweep_pcd.py` | Compact mask-erosion sweep. |
+| `experiments/visual_compare_native_ffs_fused_pcd.py` | Native, original FFS, and fused native/FFS PCD board. |
+| `experiments/visualize_ffs_static_confidence_panels.py` | Static masked RGB/depth/confidence panel boards. |
+| `experiments/visualize_ffs_static_confidence_pcd_panels.py` | Static masked RGB/PCD/confidence panel boards. |
 
-`experiments/visual_compare_ffs_confidence_filter_pcd.py` renders the static round 1-3 frame-0 object-mask `6x3` Open3D boards for native, raw FFS, and four confidence-filtered FFS variants. Use `--phystwin_like_postprocess --phystwin_radius_m 0.01 --phystwin_nb_points 40` when the displayed clouds should match the PhysTwin-like radius-neighbor cleanup.
+## Focused Diagnostics
 
-`experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py` renders the same `6x3` board shape as one experiment over thresholds `0.01,0.05,0.10,0.15,0.20,0.25,0.50`. The default experiment uses the object mask, erodes the mask inward by `1px`, and applies the PhysTwin-like radius-neighbor cleanup before rendering each row.
+| Script | Purpose |
+| --- | --- |
+| `audit_ffs_left_right.py` | Focused FFS left/right ordering audit. |
+| `compare_face_smoothness.py` | Fixed face-patch smoothness/noise comparison. |
+| `diagnose_floating_point_sources.py` | Floating-point source diagnostics for aligned cases. |
+| `visual_compare_stereo_order_pcd.py` | Current-vs-swapped stereo-order registration board. |
 
-`experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py` renders static round 1-3 frame-0 object-only `6x3` boards comparing native and original FFS point clouds under no postprocess, the existing PhysTwin-like radius-neighbor postprocess, and the enhanced radius-plus-3D-component postprocess. The enhanced mode keeps the main component and records removed component bbox/gap stats for tuning.
+## Retention Policy
 
-`experiments/visual_compare_enhanced_phystwin_removed_overlay.py` renders static round 1-6 source-camera `5x3` diagnostic boards with RGB object masks, object-masked RealSense depth, fused PCD removed-point highlights, FFS depth removed overlays, and RGB removed overlays. `--native_row_mode ir_pair` replaces the RealSense-depth row with `IR left` and `IR right` rows, producing a `6x3` board for projector-off IR inspection. Removed-point colors encode source camera (`Cam0` magenta, `Cam1` cyan, `Cam2` amber). The default highlight scope includes both radius-neighbor outliers and component-filter removals.
-
-`experiments/visual_compare_ffs_mask_erode_sweep_pcd.py` renders static round 1-3 frame-0 object-only `10x3` Open3D boards for native depth, original FFS depth, and original FFS depth with mask erosion from `1px` through `8px`. The default experiment keeps all outputs under one result folder, applies display-only PhysTwin-like radius-neighbor cleanup before rendering each row, and uses a wider left label band; adjust `--row_label_width` if labels still need more room.
-
-`experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py` renders the extended static round 1-3 frame-0 object-only mask-erode experiment as three `10x3` pages per round. Page 1 contains native depth, original FFS, and erode `1..8px`; pages 2 and 3 continue with erode `9..18px` and `19..28px` only so each page remains `10x3`. The experiment uses one result folder and applies display-only PhysTwin-like radius-neighbor cleanup before rendering.
-
-`experiments/visual_compare_native_ffs_fused_pcd.py` renders the static round 1-3 frame-0 object-only `3x3` PCD boards for native, original FFS, and fused native/FFS depth. The fused row keeps every valid native depth pixel and uses FFS only where native depth is missing; it reuses the existing static SAM mask and applies display-only PhysTwin-like radius-neighbor cleanup before rendering.
-
-### Focused Diagnostics
-
-- `audit_ffs_left_right.py`
-- `compare_face_smoothness.py`
-- `visual_compare_stereo_order_pcd.py`
-
-These remain in harness because they are bounded, investigation-oriented tools rather than core product workflows.
-
-### External Sidecars
-
-- `generate_sam31_masks.py`
-
-This is a workspace-local helper for running external `SAM 3.1` segmentation against QQTT case assets.
-It is intentionally kept out of `data_process/segment*.py` because the repo scope guard bans reintroducing that PhysTwin-era file surface.
-Use it only as an operator-side sidecar:
-
-- it reads `color/<camera>.mp4` when present, otherwise `color/<camera>/*.png`
-- it writes mask artifacts under a caller-selected output directory, defaulting to `<case_root>/sam31_masks/`
-- it expects `sam3` to be installed in the active environment and Hugging Face auth/checkpoint access to be handled outside the repo
-- checkpoints remain external and should be passed by path or resolved from Hugging Face cache via login / `QQTT_SAM31_CHECKPOINT`
-- for current PyPI `sam3`, keep `bpe_simple_vocab_16e6.txt.gz` external as well, preferably next to the checkpoint, or set `QQTT_SAM31_BPE_PATH`
-
-## Do Not Grow Here
-
-- large shared rendering/math helpers
-- reusable point-cloud IO or crop logic
-- reusable layout builders
-- reusable calibration / view-planning logic
-
-Those belong under `data_process/visualization/` and should be imported by these wrappers.
-
-## Current Cleanup Result
-
-- thin wrappers remain in `scripts/harness/`
-- old cache/junk directories have been removed
-- root-level experiment compatibility wrappers have been removed; use
-  `scripts/harness/experiments/`
-- tests import shared FFS geometry from `data_process/depth_backends/geometry.py`
-  directly instead of through a harness shim
-- legacy duplicate generated-doc references have been collapsed onto the newer cleanup docs under `docs/generated/`
+- Keep current user-facing CLIs, deterministic checks, hardware probes, and bounded diagnostics.
+- Remove local cache directories such as `__pycache__/`.
+- Move reusable implementation out of harness before it becomes shared behavior.
+- Record external dependency proof-of-life outcomes under `docs/generated/`, not in script comments.
