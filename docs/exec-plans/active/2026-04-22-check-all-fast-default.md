@@ -60,7 +60,14 @@ full deterministic validation path for broader coverage.
   smoke tests.
 - [x] Kept experiment CLIs, realtime demo smoke tests, TensorRT/benchmark
   helpers, and pytest probe schema checks in `--full`.
-- [ ] Run targeted validation after the second quick-profile trim.
+- [x] Run targeted validation after the second quick-profile trim.
+
+## Latest Validation
+
+- `conda run -n FFS-max-sam31-rs python -m unittest -v tests.test_check_all_smoke`: passed.
+- `conda run -n FFS-max-sam31-rs python scripts/harness/check_all.py --help`: passed.
+- `conda run -n FFS-max-sam31-rs python scripts/harness/check_all.py`: passed in `18.70s`.
+- `conda run -n FFS-max-sam31-rs python scripts/harness/check_all.py --full --help`: passed.
 
 ## Risks
 
