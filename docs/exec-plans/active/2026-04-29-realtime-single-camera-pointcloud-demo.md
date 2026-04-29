@@ -21,7 +21,7 @@ Add an operator-facing realtime single-camera D455 demo that streams aligned `co
 ## Implementation Plan
 
 1. Add a CLI with explicit supported capture profiles:
-   - `--fps {5,15,30}`, default `30`
+   - `--fps {5,15,30,60}`, default `30`
    - `--profile {848x480,640x480}`, default `848x480`
    - serial, emitter, clipping, stride, point-size, latency-target, and duration controls.
 2. Implement a three-stage async pipeline:
@@ -60,6 +60,8 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Added `--debug` profiler HUD and `1 Hz` console timing for wait, align, copy, backprojection, Open3D conversion/update, and receive-to-render latency.
 - Added `--render-backend {auto,image,pointcloud}`. Camera view defaults to the image backend, which preserves aligned valid depth pixels while skipping XYZ/Open3D geometry work; pointcloud remains available explicitly and for orbit view.
 - Added `--image-splat-px` for optional image-space splatting in the fast camera-view backend.
+- Updated the true 3D pointcloud backend to use Open3D tensor point clouds with `float32` positions/colors, reuse the RGB float conversion buffer, and print a one-time warning if `update_geometry()` falls back to remove/add.
+- Expanded `--fps` choices to `{5,15,30,60}` after a live D455 profile probe confirmed `848x480` RGB-D capture with depth-to-color alignment at about `59.8 FPS`.
 
 Validation completed on 2026-04-29:
 

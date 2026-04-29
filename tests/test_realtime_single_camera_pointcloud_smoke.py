@@ -31,7 +31,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        self.assertIn("--fps {5,15,30}", result.stdout)
+        self.assertIn("--fps {5,15,30,60}", result.stdout)
         self.assertIn("--profile {848x480,640x480}", result.stdout)
         self.assertIn("--view-mode {camera,orbit}", result.stdout)
         self.assertIn("--render-backend {auto,image,pointcloud}", result.stdout)
@@ -44,6 +44,8 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
     def test_profile_parsing_and_argparse_rejection(self) -> None:
         self.assertEqual(demo.parse_profile("848x480"), (848, 480))
         self.assertEqual(demo.parse_profile("640x480"), (640, 480))
+        args = demo.build_parser().parse_args(["--fps", "60"])
+        self.assertEqual(args.fps, 60)
         with self.assertRaises(ValueError):
             demo.parse_profile("320x240")
         with contextlib.redirect_stderr(io.StringIO()):
@@ -126,6 +128,26 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertEqual(valid_count, 1)
         self.assertEqual(int(np.count_nonzero(np.any(image_rgb != 0, axis=2))), 9)
         np.testing.assert_array_equal(image_rgb[0, 0], np.array([30, 20, 10], dtype=np.uint8))
+
+    def test_pointcloud_upload_helpers_keep_float32_and_reuse_color_buffer(self) -> None:
+        points = np.arange(12, dtype=np.float32).reshape(4, 3)
+        same_points = demo.ensure_float32_c_contiguous(points)
+        self.assertIs(same_points, points)
+
+        sliced = np.arange(24, dtype=np.float64).reshape(8, 3)[::2]
+        converted = demo.ensure_float32_c_contiguous(sliced)
+        self.assertEqual(converted.dtype, np.float32)
+        self.assertTrue(converted.flags["C_CONTIGUOUS"])
+
+        color_buffer = demo.ColorFloat32Buffer()
+        colors = np.array([[0, 127, 255], [255, 0, 64]], dtype=np.uint8)
+        colors_float = color_buffer.convert(colors)
+        self.assertEqual(colors_float.dtype, np.float32)
+        np.testing.assert_allclose(
+            colors_float,
+            np.array([[0.0, 127.0 / 255.0, 1.0], [1.0, 0.0, 64.0 / 255.0]], dtype=np.float32),
+        )
+        self.assertIs(color_buffer.convert(np.zeros_like(colors)), colors_float)
 
     def test_synthetic_backprojection_returns_expected_xyz_and_rgb(self) -> None:
         color_bgr = np.array(

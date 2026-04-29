@@ -30,7 +30,7 @@ with the color intrinsics, and renders the live point cloud in Open3D. The
 coordinate contract is `camera_color_frame`, meters, `x` right, `y` down, and
 `z` forward; it does not read `calibrate.pkl` or apply any multi-camera world
 transform. Use `--help` to see the supported capture rates and profiles
-(`--fps {5,15,30}` and `--profile {848x480,640x480}`). The HUD reports render
+(`--fps {5,15,30,60}` and `--profile {848x480,640x480}`). The HUD reports render
 FPS, host receive-to-render latency, point count, stale capture drops, and the
 selected serial/profile/fps. Defaults preserve density (`--stride 1`,
 `--max-points 0`) and do not apply a far-depth clip (`--depth-max-m 0.0`).

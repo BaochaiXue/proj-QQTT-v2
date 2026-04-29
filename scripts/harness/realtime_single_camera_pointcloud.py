@@ -10,7 +10,7 @@ from typing import Callable, Generic, TypeVar
 import numpy as np
 
 
-SUPPORTED_CAPTURE_FPS = (5, 15, 30)
+SUPPORTED_CAPTURE_FPS = (5, 15, 30, 60)
 SUPPORTED_PROFILES = ("848x480", "640x480")
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 30
@@ -169,6 +169,32 @@ def _packet_seq(packet: object) -> int:
         return int(getattr(packet, "seq"))
     except AttributeError as exc:
         raise TypeError("latest-slot packets must expose an integer seq attribute") from exc
+
+
+class ColorFloat32Buffer:
+    """Reusable RGB uint8 -> float32 [0, 1] conversion buffer."""
+
+    def __init__(self) -> None:
+        self._arr: np.ndarray | None = None
+
+    def convert(self, colors_rgb_u8: np.ndarray) -> np.ndarray:
+        if colors_rgb_u8.ndim != 2 or colors_rgb_u8.shape[1] != 3:
+            raise ValueError("colors_rgb_u8 must be an Nx3 array")
+        n_points = colors_rgb_u8.shape[0]
+        arr = self._arr
+        if arr is None or arr.shape != (n_points, 3):
+            arr = np.empty((n_points, 3), dtype=np.float32)
+            self._arr = arr
+        np.multiply(colors_rgb_u8, np.float32(1.0 / 255.0), out=arr, casting="unsafe")
+        return arr
+
+
+def ensure_float32_c_contiguous(points_xyz_m: np.ndarray) -> np.ndarray:
+    if points_xyz_m.ndim != 2 or points_xyz_m.shape[1] != 3:
+        raise ValueError("points_xyz_m must be an Nx3 array")
+    if points_xyz_m.dtype == np.float32 and points_xyz_m.flags["C_CONTIGUOUS"]:
+        return points_xyz_m
+    return np.ascontiguousarray(points_xyz_m, dtype=np.float32)
 
 
 def parse_profile(profile: str) -> tuple[int, int]:
@@ -691,6 +717,8 @@ class RealtimeSingleCameraPointCloudDemo:
 
     def _run_open3d_viewer(self) -> None:
         o3d, gui, rendering = _load_open3d_modules()
+        o3c = o3d.core
+        device = o3c.Device("CPU:0")
         app = gui.Application.instance
         app.initialize()
         window = app.create_window("Realtime Single D455 Point Cloud", 1280, 800)
@@ -733,8 +761,12 @@ class RealtimeSingleCameraPointCloudDemo:
         material = rendering.MaterialRecord()
         material.shader = "defaultUnlit"
         material.point_size = float(self.args.point_size)
-        pcd = o3d.geometry.PointCloud()
+        pcd = o3d.t.geometry.PointCloud(device)
+        color_float_buffer = ColorFloat32Buffer()
+        # Tensor.from_numpy shares CPU memory, so retain the current arrays until the next update.
+        tensor_numpy_refs: dict[str, np.ndarray | None] = {"points": None, "colors": None}
         geometry_added = {"value": False}
+        update_warned = {"value": False}
         render_stats = RenderStats()
         last_render_seq = {"value": -1}
         post_lock = threading.Lock()
@@ -791,16 +823,25 @@ class RealtimeSingleCameraPointCloudDemo:
             else:
                 assert scene_widget is not None
                 convert_start_s = time.perf_counter()
-                pcd.points = o3d.utility.Vector3dVector(packet.points_xyz_m.astype(np.float64, copy=False))
-                colors_float = packet.colors_rgb_u8.astype(np.float64, copy=False) / 255.0
-                pcd.colors = o3d.utility.Vector3dVector(colors_float)
+                points = ensure_float32_c_contiguous(packet.points_xyz_m)
+                colors = color_float_buffer.convert(packet.colors_rgb_u8)
+                tensor_numpy_refs["points"] = points
+                tensor_numpy_refs["colors"] = colors
+                pcd.point.positions = o3c.Tensor.from_numpy(points)
+                pcd.point.colors = o3c.Tensor.from_numpy(colors)
                 open3d_convert_ms = _elapsed_ms(convert_start_s, time.perf_counter())
                 update_start_s = time.perf_counter()
                 if geometry_added["value"]:
                     try:
                         flags = rendering.Scene.UPDATE_POINTS_FLAG | rendering.Scene.UPDATE_COLORS_FLAG
                         scene_widget.scene.scene.update_geometry(GEOMETRY_NAME, pcd, flags)
-                    except Exception:
+                    except Exception as exc:
+                        if not update_warned["value"]:
+                            print(
+                                f"[WARN] update_geometry fallback: {type(exc).__name__}: {exc}",
+                                flush=True,
+                            )
+                            update_warned["value"] = True
                         try:
                             scene_widget.scene.remove_geometry(GEOMETRY_NAME)
                         except Exception:
