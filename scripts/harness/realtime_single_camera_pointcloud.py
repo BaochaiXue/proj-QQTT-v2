@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import threading
 import time
-from typing import Generic, TypeVar
+from typing import Callable, Generic, TypeVar
 
 import numpy as np
 
@@ -37,12 +37,12 @@ DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
 DEFAULT_CAMERA_MAX_POINTS = 0
 DEFAULT_ORBIT_MAX_POINTS = 200000
+DEFAULT_CAMERA_POINT_SIZE = 2.0
+DEFAULT_ORBIT_POINT_SIZE = 1.0
 COORDINATE_FRAME = "camera_color_frame"
 GEOMETRY_NAME = "single_d455_live_pointcloud"
 DEBUG_LOG_INTERVAL_S = 1.0
 DROP_STATS_WARMUP_S = 2.0
-GUI_RENDER_PULL_HZ = 60.0
-
 
 @dataclass(frozen=True)
 class CameraIntrinsics:
@@ -190,6 +190,12 @@ class LatestSlot(Generic[T]):
             self._last_taken_seq_window = seq
             return self._packet
 
+    def latest_seq(self) -> int:
+        with self._lock:
+            if self._packet is None:
+                return -1
+            return _packet_seq(self._packet)
+
     def reset_dropped_count(self) -> None:
         with self._lock:
             self._dropped = 0
@@ -262,14 +268,6 @@ def depth_to_render_ms(timing: PipelineTiming) -> float:
         + timing.open3d_convert_ms
         + timing.open3d_update_ms
     )
-
-
-def fixed_rate_pull_step(*, now_s: float, next_pull_s: float, interval_s: float) -> tuple[float, bool]:
-    if interval_s <= 0:
-        raise ValueError("interval_s must be positive")
-    if now_s < next_pull_s:
-        return next_pull_s, False
-    return now_s + interval_s, True
 
 
 class CoalescedPostGate:
@@ -1214,7 +1212,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum rendered points. Omit for view default: camera=0 uncapped, orbit=200000. Set 0 to force uncapped.",
     )
-    parser.add_argument("--point-size", type=float, default=2.0, help="Open3D point size.")
+    parser.add_argument(
+        "--point-size",
+        type=float,
+        default=None,
+        help="Open3D point size. Omit for view default: camera=2.0, orbit=1.0.",
+    )
     parser.add_argument(
         "--view-mode",
         choices=("camera", "orbit"),
@@ -1288,7 +1291,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--stride must be >= 1")
     if args.max_points is not None and args.max_points < 0:
         raise ValueError("--max-points must be >= 0")
-    if args.point_size <= 0:
+    if args.point_size is not None and args.point_size <= 0:
         raise ValueError("--point-size must be > 0")
     if args.render_backend == "image" and args.view_mode != "camera":
         raise ValueError("--render-backend image requires --view-mode camera")
@@ -1322,8 +1325,17 @@ def resolve_max_points(args: argparse.Namespace) -> int:
     return DEFAULT_CAMERA_MAX_POINTS
 
 
+def resolve_point_size(args: argparse.Namespace) -> float:
+    if args.point_size is not None:
+        return float(args.point_size)
+    if args.view_mode == "orbit":
+        return DEFAULT_ORBIT_POINT_SIZE
+    return DEFAULT_CAMERA_POINT_SIZE
+
+
 def apply_view_defaults(args: argparse.Namespace) -> argparse.Namespace:
     args.max_points = resolve_max_points(args)
+    args.point_size = resolve_point_size(args)
     return args
 
 
@@ -1459,7 +1471,7 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
 
 class RealtimeSingleCameraPointCloudDemo:
     def __init__(self, args: argparse.Namespace) -> None:
-        if args.max_points is None:
+        if args.max_points is None or args.point_size is None:
             apply_view_defaults(args)
         self.args = args
         self.width, self.height = parse_profile(args.profile)
@@ -1496,6 +1508,7 @@ class RealtimeSingleCameraPointCloudDemo:
         self._drop_stats_start_s = time.perf_counter()
         self._drop_stats_reset_done = False
         self._last_drop_window_counts = (0, 0, 0)
+        self._request_render_update: Callable[[], None] = lambda: None
 
     def run(self) -> int:
         if self.args.depth_source == "ffs":
@@ -1879,6 +1892,7 @@ class RealtimeSingleCameraPointCloudDemo:
                 timing=timing,
             )
         )
+        self._request_render_update()
 
     def _process_pointcloud_frame(self, frame: DepthFramePacket | RawFfsDepthPacket) -> None:
         projection_grid = self.projection_grid
@@ -1967,6 +1981,7 @@ class RealtimeSingleCameraPointCloudDemo:
                 timing=timing,
             )
         )
+        self._request_render_update()
 
     def _run_open3d_viewer(self) -> None:
         o3d, gui, rendering = _load_open3d_modules()
@@ -2027,8 +2042,6 @@ class RealtimeSingleCameraPointCloudDemo:
         self._drop_stats_start_s = time.perf_counter()
         self._drop_stats_reset_done = False
         self._last_drop_window_counts = (0, 0, 0)
-        render_interval_s = 1.0 / GUI_RENDER_PULL_HZ
-        render_scheduler_stop = threading.Event()
         render_post_gate = CoalescedPostGate()
 
         def reset_camera() -> None:
@@ -2156,40 +2169,30 @@ class RealtimeSingleCameraPointCloudDemo:
                         pass
             finally:
                 render_post_gate.mark_done()
+                if (
+                    not self.stop_event.is_set()
+                    and self.render_slot.latest_seq() > last_render_seq["value"]
+                ):
+                    request_render_update()
 
-        def render_scheduler_loop() -> None:
-            next_pull_s = time.perf_counter()
-            while not self.stop_event.is_set() and not render_scheduler_stop.is_set():
-                now_s = time.perf_counter()
-                next_pull_s, should_pull = fixed_rate_pull_step(
-                    now_s=now_s,
-                    next_pull_s=next_pull_s,
-                    interval_s=render_interval_s,
-                )
-                if not should_pull:
-                    render_scheduler_stop.wait(max(0.0, next_pull_s - now_s))
-                    continue
-                if not render_post_gate.try_mark_pending():
-                    continue
-                try:
-                    app.post_to_main_thread(window, render_latest_on_main_thread)
-                except Exception:
-                    render_post_gate.mark_done()
-                    return
+        def request_render_update() -> None:
+            if self.stop_event.is_set():
+                return
+            if not render_post_gate.try_mark_pending():
+                return
+            try:
+                app.post_to_main_thread(window, render_latest_on_main_thread)
+            except Exception:
+                render_post_gate.mark_done()
 
         def on_close() -> bool:
             self.stop_event.set()
-            render_scheduler_stop.set()
+            self._request_render_update = lambda: None
             return True
 
         window.set_on_close(on_close)
+        self._request_render_update = request_render_update
         self._start_threads()
-        render_scheduler_thread = threading.Thread(
-            target=render_scheduler_loop,
-            name="single-d455-render-pull",
-            daemon=True,
-        )
-        render_scheduler_thread.start()
 
         timer: threading.Timer | None = None
         if self.args.duration_s > 0:
@@ -2202,8 +2205,7 @@ class RealtimeSingleCameraPointCloudDemo:
         try:
             app.run()
         finally:
-            render_scheduler_stop.set()
-            render_scheduler_thread.join(timeout=1.0)
+            self._request_render_update = lambda: None
             if timer is not None:
                 timer.cancel()
 

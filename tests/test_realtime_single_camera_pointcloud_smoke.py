@@ -45,6 +45,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--image-splat-px IMAGE_SPLAT_PX", result.stdout)
         self.assertIn("--debug", result.stdout)
         self.assertIn("orbit=200000", result.stdout)
+        self.assertIn("orbit=1.0", result.stdout)
         self.assertIn(demo.COORDINATE_FRAME, result.stdout)
         self.assertIn("Use <=0 to disable", result.stdout)
         self.assertIn("far clipping", result.stdout)
@@ -149,6 +150,20 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
 
         demo.apply_view_defaults(orbit_args)
         self.assertEqual(orbit_args.max_points, 200000)
+        self.assertEqual(orbit_args.point_size, 1.0)
+
+    def test_point_size_defaults_are_view_specific_unless_explicit(self) -> None:
+        camera_args = demo.build_parser().parse_args([])
+        orbit_args = demo.build_parser().parse_args(["--view-mode", "orbit"])
+        explicit_orbit_args = demo.build_parser().parse_args(["--view-mode", "orbit", "--point-size", "2"])
+
+        demo.validate_args(camera_args)
+        demo.validate_args(orbit_args)
+        demo.validate_args(explicit_orbit_args)
+
+        self.assertEqual(demo.resolve_point_size(camera_args), 2.0)
+        self.assertEqual(demo.resolve_point_size(orbit_args), 1.0)
+        self.assertEqual(demo.resolve_point_size(explicit_orbit_args), 2.0)
 
     def test_pointcloud_update_readds_only_when_capacity_is_too_small(self) -> None:
         self.assertTrue(
@@ -654,10 +669,12 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         slot: demo.LatestSlot[DummyPacket] = demo.LatestSlot()
         self.assertEqual(slot.dropped_count, 0)
         self.assertEqual(slot.total_dropped_count, 0)
+        self.assertEqual(slot.latest_seq(), -1)
         slot.put(DummyPacket(seq=1))
         slot.put(DummyPacket(seq=2))
         self.assertEqual(slot.dropped_count, 1)
         self.assertEqual(slot.total_dropped_count, 1)
+        self.assertEqual(slot.latest_seq(), 2)
         packet = slot.get_latest_after(-1)
         self.assertIsNotNone(packet)
         self.assertEqual(packet.seq, 2)
@@ -691,20 +708,6 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(stats.render_fps, 2.0)
         self.assertAlmostEqual(stats.latest_latency_ms, 30.0)
         self.assertAlmostEqual(stats.mean_latency_ms, 20.0)
-
-    def test_fixed_rate_pull_step_does_not_catch_up_in_bursts(self) -> None:
-        interval = 1.0 / demo.GUI_RENDER_PULL_HZ
-        next_pull, should_pull = demo.fixed_rate_pull_step(now_s=0.0, next_pull_s=interval, interval_s=interval)
-        self.assertFalse(should_pull)
-        self.assertAlmostEqual(next_pull, interval)
-        next_pull, should_pull = demo.fixed_rate_pull_step(now_s=interval, next_pull_s=interval, interval_s=interval)
-        self.assertTrue(should_pull)
-        self.assertAlmostEqual(next_pull, interval * 2.0)
-        delayed_next, should_pull = demo.fixed_rate_pull_step(now_s=1.0, next_pull_s=next_pull, interval_s=interval)
-        self.assertTrue(should_pull)
-        self.assertAlmostEqual(delayed_next, 1.0 + interval)
-        with self.assertRaises(ValueError):
-            demo.fixed_rate_pull_step(now_s=0.0, next_pull_s=0.0, interval_s=0.0)
 
     def test_coalesced_post_gate_allows_only_one_pending_callback(self) -> None:
         gate = demo.CoalescedPostGate()

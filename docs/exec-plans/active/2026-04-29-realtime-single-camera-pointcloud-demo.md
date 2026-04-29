@@ -67,6 +67,7 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Optimized the camera-view image backend mask path by converting metric depth bounds to raw `uint16` thresholds, using OpenCV `inRange`/`cvtColor`/`bitwise_and` when available, and keeping a NumPy fallback with identical valid-pixel semantics.
 - On a synthetic `848x480` frame in `FFS-max-sam31-rs`, the mask path median dropped from `8.61 ms` to `0.36 ms` while matching the previous float32 predicate output.
 - Updated orbit view defaults so omitted `--max-points` resolves to `200000`; camera view still resolves to uncapped `0`, and explicit `--max-points 0` keeps orbit uncapped.
+- Updated orbit point rendering defaults so omitted `--point-size` resolves to `1.0` in orbit view to reduce point rasterization load at `200000` points, while explicit `--point-size` values still override the default.
 - Updated the point-cloud renderer to track Open3D geometry capacity and proactively re-add geometry when a later frame exceeds the current capacity, avoiding repeated `point count exceeds the existing point count` warnings after orbit capping ramps up to `200000`.
 - Optimized point-cloud backprojection so `--max-points` sampling happens before XYZ/RGB materialization, preserving the existing `linspace` valid-pixel sampling order while avoiding full valid-point allocation when orbit view is capped.
 - Installed `numba==0.65.1` and `llvmlite==0.47.0` into `FFS-max-sam31-rs` with pip after saving pre-install conda/pip snapshots under `docs/generated/`.
@@ -81,7 +82,8 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Added a single-thread Numba fused IR-left to color-frame z-buffer align kernel for the cached FFS aligner, with the existing NumPy `np.minimum.at` path retained as fallback. The Numba path intentionally stays non-parallel to avoid races when multiple IR pixels project to the same color pixel.
 - Expanded the HUD and debug line with `depth_source`, FFS TensorRT timing, FFS color-align timing, depth-stage drops, and render-slot drops.
 - Split realtime drop statistics into total, after-warmup, and last-debug-window deltas. The viewer resets steady-state drop counters after a short startup warmup while preserving total counters, so live logs distinguish launch/warmup drops from ongoing pipeline drops.
-- Changed Open3D GUI rendering to a coalesced fixed-60Hz `post_to_main_thread` pull from the latest render packet instead of posting one GUI callback per prepared packet or depending on `set_on_tick_event` cadence, avoiding callback burst buildup while preserving latest-wins freshness.
+- Changed Open3D GUI rendering to a coalesced `post_to_main_thread` request when render-prep publishes a packet. The UI still pulls only the latest packet and avoids callback burst buildup, but no longer depends on a fixed timer or `set_on_tick_event` cadence.
+- Marked fixed-60Hz UI schedulers as the wrong design for this Open3D orbit path. Manual validation showed that a timer-driven pull can be throttled by GUI/SceneWidget draw cadence and produce steady render-slot drops, even when render-prep and Open3D CPU update timings are small. The correct design is packet-arrival coalesced main-thread rendering.
 
 Validation completed on 2026-04-29:
 

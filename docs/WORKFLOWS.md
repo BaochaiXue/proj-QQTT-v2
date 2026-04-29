@@ -77,9 +77,15 @@ Open3D image/geometry update, total receive-to-render latency, the active
 drop counters, last-window drop deltas, and the `depth_to_render_ms` subtotal
 excluding camera wait.
 
-The Open3D UI uses a coalesced fixed-`60 Hz` `post_to_main_thread` scheduler to
-pull the latest prepared image or point-cloud packet; render workers publish
-latest-wins packets and do not enqueue one GUI callback per packet.
+The Open3D UI uses a coalesced `post_to_main_thread` request when render-prep
+publishes a packet; it pulls only the latest prepared image or point-cloud
+packet and does not enqueue one GUI callback per packet.
+Do not replace this with a fixed-60Hz UI scheduler. Manual orbit validation
+showed timer-driven pulls can be throttled by GUI/SceneWidget draw cadence and
+create steady render-slot drops even when CPU update timings look small.
+Orbit point-cloud mode defaults to `--max-points 200000 --point-size 1.0` so
+the draw path is less dominated by point rasterization; pass explicit values
+when you want denser or larger splats for inspection.
 
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:
