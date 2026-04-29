@@ -36,9 +36,10 @@ conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_poin
 This demo streams one D455. The default `--depth-source realsense` captures
 `color + depth` and aligns native depth to color; `--depth-source ffs` captures
 `color + infrared(1) + infrared(2)`, runs the default two-stage TensorRT FFS
-engine, publishes raw IR-left metric depth, aligns FFS metric depth into the
-color frame in the render-prep stage with cached projection coefficients and a
-Numba fused z-buffer path when available, and renders RGB in the same
+engine with runner-internal pinned/fixed buffer reuse for live batch-1, publishes
+raw IR-left metric depth, aligns FFS metric depth into the color frame in the
+render-prep stage with cached projection coefficients and a Numba fused z-buffer
+path when available, and renders RGB in the same
 `camera_color_frame` contract. The coordinate contract is meters, `x`
 right, `y` down, and `z` forward; it does not read `calibrate.pkl` or apply any
 multi-camera world transform. Use `--help` to see the supported capture rates and profiles

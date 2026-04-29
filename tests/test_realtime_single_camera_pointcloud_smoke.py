@@ -12,6 +12,7 @@ import unittest
 import numpy as np
 
 from data_process.depth_backends import DEFAULT_FFS_REPO, DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
+from data_process.depth_backends import fast_foundation_stereo as ffs_backend
 from data_process.depth_backends.geometry import align_depth_to_color
 from scripts.harness import realtime_single_camera_pointcloud as demo
 
@@ -22,6 +23,87 @@ ROOT = Path(__file__).resolve().parents[1]
 @dataclass(frozen=True)
 class DummyPacket:
     seq: int
+
+
+class FakeCudaTensor:
+    _next_ptr = 1000
+
+    def __init__(self, shape, dtype="float32", contiguous=True):
+        self.shape = tuple(shape)
+        self.dtype = dtype
+        self._contiguous = bool(contiguous)
+        self._ptr = FakeCudaTensor._next_ptr
+        FakeCudaTensor._next_ptr += 1000
+
+    def to(self, dtype):
+        return FakeCudaTensor(self.shape, dtype=dtype, contiguous=True)
+
+    def is_contiguous(self):
+        return self._contiguous
+
+    def contiguous(self):
+        return FakeCudaTensor(self.shape, dtype=self.dtype, contiguous=True)
+
+    def data_ptr(self):
+        return self._ptr
+
+
+class FakeTorchStream:
+    cuda_stream = 7
+
+
+class FakeTorchCuda:
+    @staticmethod
+    def current_stream():
+        return FakeTorchStream()
+
+
+class FakeTorch:
+    float32 = "float32"
+    cuda = FakeTorchCuda()
+
+    @staticmethod
+    def empty(shape, *, device=None, dtype=None, pin_memory=False):
+        return FakeCudaTensor(shape, dtype=dtype)
+
+
+class FakeTrt:
+    class TensorIOMode:
+        OUTPUT = "output"
+
+
+class FakeTensorRtEngine:
+    def get_tensor_dtype(self, name):
+        return "float32"
+
+
+class FakeTensorRtContext:
+    def __init__(self):
+        self.shape_calls = []
+        self.address_calls = []
+        self.execute_calls = 0
+
+    def set_input_shape(self, name, shape):
+        self.shape_calls.append((name, tuple(shape)))
+
+    def get_tensor_shape(self, name):
+        return (1, 1, 2, 3)
+
+    def set_tensor_address(self, name, address):
+        self.address_calls.append((name, int(address)))
+
+    def execute_async_v3(self, stream):
+        self.execute_calls += 1
+        return stream == FakeTorchStream.cuda_stream
+
+
+class FakeTensorRtRunner:
+    def trt_dtype_to_torch(self, dtype):
+        return dtype
+
+    def get_io_tensor_names(self, engine, mode):
+        self.assert_mode = mode
+        return ["disp"]
 
 
 class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
@@ -85,6 +167,27 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "feature_runner.engine"):
                 demo.validate_args(args)
+
+    def test_cached_tensorrt_run_reuses_outputs_and_returns_fresh_dict(self) -> None:
+        cached_run = ffs_backend._CachedTensorRTRun(
+            torch_module=FakeTorch(),
+            trt_module=FakeTrt,
+            trt_runner=FakeTensorRtRunner(),
+        )
+        engine = FakeTensorRtEngine()
+        context = FakeTensorRtContext()
+        image = FakeCudaTensor((1, 3, 2, 3), dtype="float32")
+
+        first = cached_run.run_trt(engine, context, {"left": image})
+        second = cached_run.run_trt(engine, context, {"left": image})
+        del first["disp"]
+        third = cached_run.run_trt(engine, context, {"left": image})
+
+        self.assertIs(second["disp"], third["disp"])
+        self.assertEqual(context.shape_calls, [("left", (1, 3, 2, 3))])
+        self.assertEqual(context.execute_calls, 3)
+        self.assertIn("disp", third)
+        self.assertEqual(context.address_calls, [("left", image.data_ptr()), ("disp", second["disp"].data_ptr())])
 
     def test_default_depth_max_disables_far_clipping(self) -> None:
         args = demo.build_parser().parse_args([])

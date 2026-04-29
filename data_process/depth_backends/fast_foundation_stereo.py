@@ -438,6 +438,112 @@ def run_forward_on_non_default_cuda_stream(
     return output
 
 
+class _PinnedSinglePairImageInputBuffers:
+    def __init__(self, *, torch_module: Any, image_shape: tuple[int, int, int]) -> None:
+        self.torch = torch_module
+        self.image_shape = tuple(int(item) for item in image_shape)
+        if len(self.image_shape) != 3 or self.image_shape[2] != 3:
+            raise ValueError(f"Expected HxWx3 image shape, got {self.image_shape!r}.")
+        height, width, channels = self.image_shape
+        self.left_host = torch_module.empty(self.image_shape, dtype=torch_module.uint8, pin_memory=True)
+        self.right_host = torch_module.empty(self.image_shape, dtype=torch_module.uint8, pin_memory=True)
+        self.left_device = torch_module.empty(
+            (1, channels, height, width),
+            device="cuda",
+            dtype=torch_module.float32,
+        )
+        self.right_device = torch_module.empty(
+            (1, channels, height, width),
+            device="cuda",
+            dtype=torch_module.float32,
+        )
+
+    def load(self, left_image: np.ndarray, right_image: np.ndarray) -> tuple[Any, Any]:
+        left = np.ascontiguousarray(left_image)
+        right = np.ascontiguousarray(right_image)
+        if tuple(left.shape) != self.image_shape or tuple(right.shape) != self.image_shape:
+            raise ValueError(
+                "Pinned TensorRT input buffer shape mismatch. "
+                f"expected={self.image_shape!r} left={left.shape!r} right={right.shape!r}"
+            )
+        if left.dtype != np.uint8 or right.dtype != np.uint8:
+            raise ValueError(f"Expected uint8 TensorRT inputs, got {left.dtype!r} and {right.dtype!r}.")
+
+        torch = self.torch
+        self.left_host.copy_(torch.as_tensor(left, dtype=torch.uint8))
+        self.right_host.copy_(torch.as_tensor(right, dtype=torch.uint8))
+        self.left_device[0].copy_(self.left_host.permute(2, 0, 1), non_blocking=True)
+        self.right_device[0].copy_(self.right_host.permute(2, 0, 1), non_blocking=True)
+        return self.left_device, self.right_device
+
+
+class _CachedTensorRTRun:
+    def __init__(self, *, torch_module: Any, trt_module: Any, trt_runner: Any) -> None:
+        self.torch = torch_module
+        self.trt = trt_module
+        self.trt_runner = trt_runner
+        self._outputs: dict[tuple[int, str, tuple[int, ...], Any], Any] = {}
+        self._input_shapes: dict[tuple[int, str], tuple[int, ...]] = {}
+        self._tensor_addresses: dict[tuple[int, str], int] = {}
+
+    def _set_input_shape_if_needed(self, context: Any, name: str, shape: tuple[int, ...]) -> bool:
+        key = (id(context), name)
+        if self._input_shapes.get(key) != shape:
+            context.set_input_shape(name, shape)
+            self._input_shapes[key] = shape
+            return True
+        return False
+
+    def _set_tensor_address_if_needed(self, context: Any, name: str, tensor: Any, *, force: bool = False) -> None:
+        address = int(tensor.data_ptr())
+        key = (id(context), name)
+        if force or self._tensor_addresses.get(key) != address:
+            context.set_tensor_address(name, address)
+            self._tensor_addresses[key] = address
+
+    def _cached_output_tensor(self, engine: Any, context: Any, name: str) -> Any:
+        shape = tuple(int(item) for item in context.get_tensor_shape(name))
+        dtype = self.trt_runner.trt_dtype_to_torch(engine.get_tensor_dtype(name))
+        key = (id(context), name, shape, dtype)
+        tensor = self._outputs.get(key)
+        if tensor is None:
+            tensor = self.torch.empty(shape, device="cuda", dtype=dtype)
+            self._outputs[key] = tensor
+        return tensor
+
+    def run_trt(self, engine: Any, context: Any, inputs_by_name: dict[str, Any]) -> dict[str, Any]:
+        prepared_inputs: dict[str, Any] = {}
+        shape_changed = False
+        for name, tensor in inputs_by_name.items():
+            expected_dtype = self.trt_runner.trt_dtype_to_torch(engine.get_tensor_dtype(name))
+            if tensor.dtype != expected_dtype:
+                tensor = tensor.to(expected_dtype)
+            if not tensor.is_contiguous():
+                tensor = tensor.contiguous()
+            prepared_inputs[name] = tensor
+            shape_changed = (
+                self._set_input_shape_if_needed(context, name, tuple(int(item) for item in tensor.shape))
+                or shape_changed
+            )
+
+        output_names = self.trt_runner.get_io_tensor_names(engine, self.trt.TensorIOMode.OUTPUT)
+        outputs = {
+            name: self._cached_output_tensor(engine, context, name)
+            for name in output_names
+        }
+
+        for name, tensor in prepared_inputs.items():
+            self._set_tensor_address_if_needed(context, name, tensor, force=shape_changed)
+        for name, tensor in outputs.items():
+            self._set_tensor_address_if_needed(context, name, tensor, force=shape_changed)
+
+        stream = self.torch.cuda.current_stream().cuda_stream
+        ok = context.execute_async_v3(stream)
+        if not ok:
+            raise RuntimeError("TensorRT execute_async_v3 returned failure.")
+        return dict(outputs)
+
+
 def resolve_tensorrt_image_transform(
     *,
     input_height: int,
@@ -860,6 +966,7 @@ class FastFoundationStereoTensorRTRunner:
 
         self._dll_handles = _configure_tensorrt_runtime_search_paths(self.trt_root)
         foundation_stereo = _load_official_tensorrt_foundation_stereo(ffs_repo=self.ffs_repo)
+        import tensorrt as trt
         from Utils import set_logging_format, set_seed
 
         cfg_dict = load_tensorrt_model_config(self.model_dir)
@@ -878,6 +985,14 @@ class FastFoundationStereoTensorRTRunner:
             str(self.feature_engine_path),
             str(self.post_engine_path),
         )
+        self._input_buffers: _PinnedSinglePairImageInputBuffers | None = None
+        self._disparity_host_buffer: Any | None = None
+        self._cached_trt_run = _CachedTensorRTRun(
+            torch_module=torch,
+            trt_module=trt,
+            trt_runner=self.model,
+        )
+        self.model.run_trt = self._cached_trt_run.run_trt
 
     def _prepare_image(self, image: np.ndarray) -> tuple[np.ndarray, dict[str, int | float | str]]:
         image = np.asarray(image)
@@ -892,6 +1007,61 @@ class FastFoundationStereoTensorRTRunner:
         )
         image = apply_tensorrt_image_transform(image, transform=transform)
         return image, transform
+
+    def _build_input_tensors(
+        self,
+        prepared_left: list[np.ndarray],
+        prepared_right: list[np.ndarray],
+    ) -> tuple[Any, Any]:
+        torch = self.torch
+        if (
+            len(prepared_left) == 1
+            and len(prepared_right) == 1
+            and prepared_left[0].ndim == 3
+            and prepared_right[0].ndim == 3
+            and prepared_left[0].shape == prepared_right[0].shape
+            and prepared_left[0].dtype == np.uint8
+            and prepared_right[0].dtype == np.uint8
+        ):
+            image_shape = tuple(int(item) for item in prepared_left[0].shape)
+            if self._input_buffers is None or self._input_buffers.image_shape != image_shape:
+                self._input_buffers = _PinnedSinglePairImageInputBuffers(
+                    torch_module=torch,
+                    image_shape=image_shape,
+                )
+            return self._input_buffers.load(prepared_left[0], prepared_right[0])
+
+        left_tensor = torch.stack(
+            [torch.as_tensor(left).cuda().float().permute(2, 0, 1) for left in prepared_left],
+            dim=0,
+        )
+        right_tensor = torch.stack(
+            [torch.as_tensor(right).cuda().float().permute(2, 0, 1) for right in prepared_right],
+            dim=0,
+        )
+        return left_tensor, right_tensor
+
+    def _copy_disparity_to_numpy(self, disparity: Any, *, stable_copy: bool) -> np.ndarray:
+        tensor = disparity.detach()
+        if not getattr(tensor, "is_cuda", False) or not tensor.is_contiguous():
+            array = tensor.cpu().numpy()
+            return array.copy() if stable_copy else array
+
+        shape = tuple(int(item) for item in tensor.shape)
+        if (
+            self._disparity_host_buffer is None
+            or tuple(int(item) for item in self._disparity_host_buffer.shape) != shape
+            or self._disparity_host_buffer.dtype != tensor.dtype
+        ):
+            self._disparity_host_buffer = self.torch.empty(
+                shape,
+                dtype=tensor.dtype,
+                pin_memory=True,
+            )
+        self._disparity_host_buffer.copy_(tensor, non_blocking=True)
+        self.torch.cuda.current_stream().synchronize()
+        array = self._disparity_host_buffer.numpy()
+        return array.copy() if stable_copy else array
 
     def run_batch(
         self,
@@ -921,24 +1091,20 @@ class FastFoundationStereoTensorRTRunner:
             prepared_left.append(left)
             prepared_right.append(right)
 
-        torch = self.torch
-        left_tensor = torch.stack(
-            [torch.as_tensor(left).cuda().float().permute(2, 0, 1) for left in prepared_left],
-            dim=0,
-        )
-        right_tensor = torch.stack(
-            [torch.as_tensor(right).cuda().float().permute(2, 0, 1) for right in prepared_right],
-            dim=0,
-        )
+        left_tensor, right_tensor = self._build_input_tensors(prepared_left, prepared_right)
         disparity = run_forward_on_non_default_cuda_stream(
-            torch_module=torch,
+            torch_module=self.torch,
             stream=self.inference_stream,
             forward_fn=self.model.forward,
             image1=left_tensor,
             image2=right_tensor,
         )
+        disparity_raw = self._copy_disparity_to_numpy(
+            disparity,
+            stable_copy=any(bool(sample.get("audit_mode", False)) for sample in batch_samples),
+        )
         return finalize_tensorrt_disparity_batch_outputs(
-            disparity.data.cpu().numpy(),
+            disparity_raw,
             transform=batch_transform or resolve_tensorrt_image_transform(
                 input_height=self.engine_height,
                 input_width=self.engine_width,
