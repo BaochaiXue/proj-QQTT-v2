@@ -63,6 +63,7 @@
 - Current validated runtime packages:
   - `pyrealsense2`
   - `sam3`
+  - `atomics==1.0.3`
   - `tensorrt==10.16.1.11`
   - `triton==3.6.0`
   - `open3d==0.19.0`

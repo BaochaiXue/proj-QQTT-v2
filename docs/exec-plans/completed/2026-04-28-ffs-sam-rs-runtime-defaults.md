@@ -23,3 +23,11 @@ Make the current harness-engineering default for visualization and realtime FFS 
 
 - Inspect the selected artifact metadata.
 - Run deterministic quick checks after edits.
+
+## Result
+
+- Added shared FFS defaults for `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, `max_disp=192`, and the level-5 two-stage TensorRT artifact.
+- Updated realtime/viewer and visualization harness defaults and docs to use the shared policy.
+- Kept PyTorch as the explicit path for confidence-logit experiments because the current TensorRT artifact does not export confidence logits.
+- Installed `atomics==1.0.3` into `FFS-SAM-RS` so the QQTT RealSense runtime imports cleanly.
+- Validation passed with `/home/zhangxinjie/miniconda3/envs/FFS-SAM-RS/bin/python scripts/harness/check_all.py`.

@@ -359,6 +359,9 @@ class CamerasViewerFfsSmokeTest(unittest.TestCase):
         self.assertEqual(args.ffs_trt_mode, "two_stage")
         self.assertEqual(args.ffs_worker_mode, "per_camera")
         self.assertEqual(args.ffs_batch_mode, "off")
+        self.assertEqual(args.ffs_valid_iters, 4)
+        self.assertEqual(args.ffs_max_disp, 192)
+        self.assertIn("20-30-48", str(args.ffs_trt_model_dir))
         self.assertEqual(args.render_mode, "panel")
         self.assertEqual(args.depth_render_mode, "colormap")
 

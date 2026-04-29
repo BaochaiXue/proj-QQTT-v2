@@ -20,30 +20,32 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - `python cameras_viewer.py` launches successfully
 - each camera shows live color and depth
 - each panel reports negotiated `configured fps` plus live `measured fps`
-- `python cameras_viewer_FFS.py --ffs_repo <repo>` launches successfully with the default TensorRT engine path
+- `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo <repo>` launches successfully with the default TensorRT engine path
+- default realtime / visualization FFS uses checkpoint `20-30-48`, `valid_iters=4`, two-stage ONNX/TensorRT, and a `builder_optimization_level=5` engine
 - each FFS panel shows live RGB on top and color-aligned FFS depth on bottom
 - each FFS panel reports negotiated profile plus live `capture` and `ffs` fps
 - default worker topology launches successfully:
-  - `python cameras_viewer_FFS.py --ffs_repo <repo>`
+  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo <repo>`
   - startup logs report `FFS worker topology: per_camera`
+  - startup logs report `848x480` capture is symmetrically padded to the `864x480` TRT engine, not resized down
 - optional shared-worker viewer mode launches successfully when requested explicitly:
-  - `python cameras_viewer_FFS.py --ffs_repo <repo> --ffs_worker_mode shared`
+  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo <repo> --ffs_worker_mode shared`
   - startup logs report `FFS worker topology: shared`
 - optional strict 3-camera batch mode launches successfully when requested explicitly:
-  - `python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo <repo> --ffs_model_path <weights> --ffs_worker_mode shared --ffs_batch_mode strict3`
+  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo <repo> --ffs_model_path <weights> --ffs_worker_mode shared --ffs_batch_mode strict3`
   - startup logs report `batch_mode=strict3`
   - startup validation rejects non-shared worker mode or fewer/more than 3 active cameras
 - optional PyTorch viewer mode launches successfully when requested explicitly:
-  - `python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo <repo> --ffs_model_path <weights>`
+  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo <repo> --ffs_model_path <weights>`
 - optional two-stage TensorRT viewer mode launches successfully with prebuilt engines:
-  - `python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_repo <repo> --ffs_trt_model_dir <engine_dir> --ffs_trt_root <tensorrt_root>`
+  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_repo <repo> --ffs_trt_model_dir <engine_dir> --ffs_trt_root <tensorrt_root>`
   - strict batch mode requires a batch-3 engine directory such as `trt_two_stage_batch3_864x480_wsl`
 - optional single-engine TensorRT viewer mode launches successfully with an explicit single-engine engine directory:
-  - `python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo <repo> --ffs_trt_model_dir <single_engine_dir> --ffs_trt_root <tensorrt_root>`
+  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo <repo> --ffs_trt_model_dir <single_engine_dir> --ffs_trt_root <tensorrt_root>`
   - strict batch mode requires a batch-3 single-engine directory such as `trt_single_engine_batch3_864x480_wsl_fp32`
   - if engine size differs from capture size, startup output reports whether frames will be symmetrically padded or resized before inference
 - timed benchmark mode works:
-  - `python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-interval-s 5 --ffs_repo <repo> --ffs_model_path <weights>`
+  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-interval-s 5 --ffs_repo <repo> --ffs_model_path <weights>`
   - stdout prints aggregate and per-camera runtime stats during the run
   - both TensorRT modes should also print aggregate and per-camera runtime stats when `--ffs_backend tensorrt` is selected
 
