@@ -31,6 +31,7 @@ These record what the current machine and D455 topology actually supported durin
 - `ffs_depth_backend_integration_validation.md`
 - `ffs_comparison_workflow_validation.md`
 - `ffs_left_right_codepath_audit.md`
+- `ffs_max_sam31_realsense_env_validation.md`
 
 These document external FFS proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 

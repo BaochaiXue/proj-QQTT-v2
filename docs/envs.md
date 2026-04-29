@@ -83,6 +83,44 @@
   - visualization harnesses that need both SAM 3.1 masks and FFS depth
   - current operator-side experiments unless a task explicitly calls for legacy `qqtt-ffs-compat`, `ffs-official-trt`, or `FFS-max`
 
+## `FFS-max-sam31-rs`
+
+- Purpose: cloned `FFS-max` environment for FFS max torch/CUDA/TensorRT experiments that also need QQTT RealSense entrypoints and SAM 3.1 masks
+- Created from:
+  - `conda create -y -n FFS-max-sam31-rs --clone FFS-max`
+- Current validated Python:
+  - `3.12.13`
+- Current preserved torch / CUDA stack:
+  - `torch==2.11.0+cu130`
+  - `torchvision==0.26.0`
+  - `cuda-toolkit==13.0.2`
+  - `nvidia-cuda-runtime==13.0.96`
+  - `tensorrt-cu13==10.16.1.11`
+  - `triton==3.6.0`
+- Current RealSense / QQTT camera add-on:
+  - `pyrealsense2==2.56.5.9235`
+  - `atomics==1.0.3`
+  - `pynput==1.8.1`
+  - `threadpoolctl==3.6.0`
+- Current SAM 3.1 add-on:
+  - `sam3==0.1.0` installed from `git+https://github.com/facebookresearch/sam3.git@main`
+  - install resolved official commit `c97c893969003d3e6803fd5d679f21e515aef5ce`
+  - `QQTT_SAM31_CHECKPOINT=/home/xinjie/.cache/huggingface/qqtt_sam31/sam3.1_multiplex.pt`
+- Current caveat:
+  - `sam3` declares `numpy<2,>=1.26`, but this clone intentionally preserves `FFS-max`'s `numpy==2.4.4`
+  - runtime validation succeeded despite that metadata mismatch; see `docs/generated/ffs_max_sam31_realsense_env_validation.md`
+- Validation commands:
+  - `conda run -n FFS-max-sam31-rs python -c "import torch; print(torch.__version__, torch.version.cuda)"`
+  - `conda run -n FFS-max-sam31-rs python -c "import pyrealsense2 as rs; print(getattr(rs, '__version__', 'import-ok'))"`
+  - `conda run -n FFS-max-sam31-rs python -c "from qqtt.env import CameraSystem; print(CameraSystem.__name__)"`
+  - `conda run -n FFS-max-sam31-rs python -c "import sam3, sam3.model_builder as mb; print(getattr(sam3, '__version__', 'unknown'), hasattr(mb, 'build_sam3_video_predictor'))"`
+  - `conda run -n FFS-max-sam31-rs python -m unittest -v tests.test_sam31_mask_helper_smoke`
+  - `conda run -n FFS-max-sam31-rs python scripts/harness/check_all.py`
+- Expected use:
+  - FFS max-stack experiments that must keep `torch==2.11.0+cu130` and CUDA 13.0
+  - QQTT RealSense CLI/runtime imports
+  - SAM 3.1 object-mask sidecar generation from aligned cases
+
 ## `qqtt-ffs-compat`
 
 - Purpose: run QQTT-side proof-of-life scripts that need both RealSense access and FFS-compatible Python packages
