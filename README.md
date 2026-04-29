@@ -72,20 +72,32 @@ python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
 Live RGB + Fast-FoundationStereo preview:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo
 ```
 
 True no-render FFS throughput probe:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --render-mode none
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --render-mode none
 ```
 
 In `--render-mode none`, the viewer skips panel assembly / `imshow()`, does not
 reproject FFS depth into the color frame, and prints periodic console FPS stats
 instead.
 
-The default live FFS mode is still the current two-stage TensorRT path:
+The default realtime / visualization FFS path is:
+
+- environment: `FFS-SAM-RS`
+- checkpoint: `20-30-48`
+- `--ffs_valid_iters 4`
+- `--ffs_max_disp 192`
+- backend: `--ffs_backend tensorrt --ffs_trt_mode two_stage`
+- TensorRT artifact: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
+- TensorRT build level: `builder_optimization_level=5`
+
+For actual QQTT performance, use the recorded `848x480` RealSense image size. If the TRT shape needs a multiple of `32`, pad `848x480` to `864x480` and unpad the output; do not resize down to `640x480` and report that as QQTT runtime.
+
+Available live FFS modes:
 
 - `--ffs_backend tensorrt --ffs_trt_mode two_stage`
   - default
@@ -97,7 +109,7 @@ The default live FFS mode is still the current two-stage TensorRT path:
 The default FFS viewer topology is still `--ffs_worker_mode per_camera`, which means one FFS worker process per active camera. You can also force a single shared FFS worker process for all active cameras:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_worker_mode shared
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_worker_mode shared
 ```
 
 Strict 3-camera batch mode is now also available:
@@ -114,21 +126,21 @@ Strict 3-camera batch mode is now also available:
 Strict 3-camera batch preview examples:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth --ffs_worker_mode shared --ffs_batch_mode strict3
-python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl --ffs_worker_mode shared --ffs_batch_mode strict3
-python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32 --ffs_worker_mode shared --ffs_batch_mode strict3
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_valid_iters 4 --ffs_worker_mode shared --ffs_batch_mode strict3
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl --ffs_worker_mode shared --ffs_batch_mode strict3
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32 --ffs_worker_mode shared --ffs_batch_mode strict3
 ```
 
 Explicit single-engine TensorRT preview:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir /path/to/single_engine_trt_dir
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir /path/to/single_engine_trt_dir
 ```
 
 Static-round TRT matrix replay + PPTX export:
 
 ```bash
-conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/ffs_static_replay_matrix_20260422_fullrun/artifacts --reuse_artifacts
+conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/ffs_static_replay_matrix_20260422_fullrun/artifacts --reuse_artifacts
 ```
 
 This workflow is the current offline realtime-proxy harness for the three static FFS rounds. It:
@@ -143,7 +155,7 @@ This workflow is the current offline realtime-proxy harness for the three static
 
 Important:
 
-- run it from `qqtt-ffs-compat`
+- run new realtime-proxy visualization work from `FFS-SAM-RS`
 - `python-pptx` and `onnx` must be available in that environment
 - `--artifact_root` can point at an older artifact tree so TRT engines are reused without reusing old benchmark results
 - the harness uses `stuffed animal` masks at `frame_idx=10`

@@ -9,6 +9,14 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from data_process.depth_backends.ffs_defaults import (
+    DEFAULT_FFS_MAX_DISP,
+    DEFAULT_FFS_MODEL_PATH,
+    DEFAULT_FFS_REPO,
+    DEFAULT_FFS_SCALE,
+    DEFAULT_FFS_VALID_ITERS,
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a single 3D point-cloud stereo-order registration board.")
@@ -18,8 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ffs_case", type=str, default=None)
     parser.add_argument("--frame_idx", type=int, default=0)
     parser.add_argument("--output_dir", type=Path, default=None)
-    parser.add_argument("--ffs_repo", type=Path, required=True)
-    parser.add_argument("--model_path", type=Path, required=True)
+    parser.add_argument("--ffs_repo", type=Path, default=DEFAULT_FFS_REPO)
+    parser.add_argument("--model_path", type=Path, default=DEFAULT_FFS_MODEL_PATH)
     parser.add_argument("--scene_crop_mode", choices=("none", "auto_table_bbox", "auto_object_bbox", "manual_xyz_roi"), default="auto_object_bbox")
     parser.add_argument("--focus_mode", choices=("none", "table"), default="table")
     parser.add_argument("--crop_margin_xy", type=float, default=0.12)
@@ -45,9 +53,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--panel_height", type=int, default=300)
     parser.add_argument("--display_frame", choices=("calibration_world", "semantic_world"), default="semantic_world")
     parser.add_argument("--alpha", type=float, default=0.34)
-    parser.add_argument("--scale", type=float, default=1.0)
-    parser.add_argument("--valid_iters", type=int, default=8)
-    parser.add_argument("--max_disp", type=int, default=192)
+    parser.add_argument("--scale", type=float, default=DEFAULT_FFS_SCALE)
+    parser.add_argument("--valid_iters", type=int, default=DEFAULT_FFS_VALID_ITERS)
+    parser.add_argument("--max_disp", type=int, default=DEFAULT_FFS_MAX_DISP)
     parser.add_argument("--use_float_ffs_depth_when_available", dest="use_float_ffs_depth_when_available", action="store_true")
     parser.add_argument("--no_use_float_ffs_depth_when_available", dest="use_float_ffs_depth_when_available", action="store_false")
     parser.add_argument("--write_debug", dest="write_debug", action="store_true")

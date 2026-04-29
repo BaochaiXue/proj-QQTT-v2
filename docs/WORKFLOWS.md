@@ -31,10 +31,10 @@ The viewer uses the same `TURBO` metric-depth colormap as the aligned-case depth
 python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
 ```
 
-FFS preview for live RGB plus color-aligned FFS depth now defaults to the repo-local TensorRT path:
+FFS preview for live RGB plus color-aligned FFS depth now defaults to the repo-local `20-30-48 / iter4 / builderOpt5` TensorRT path. Run realtime and visualization experiments from `FFS-SAM-RS` unless a task explicitly names another environment:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo
 ```
 
 Use this as a debug viewer only:
@@ -48,14 +48,14 @@ When you want a cheaper FFS-viewer throughput probe, replace the lower FFS
 depth colormap with a black placeholder that only reports received FFS FPS:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --depth-render-mode fps_placeholder
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --depth-render-mode fps_placeholder
 ```
 
 When you want a true no-render throughput probe, disable panel rendering and
 skip the worker-side color reprojection entirely:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --render-mode none
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --render-mode none
 ```
 
 Notes:
@@ -68,6 +68,7 @@ Live FFS mode selection is now:
 
 - `--ffs_backend tensorrt --ffs_trt_mode two_stage`
   - default live path
+  - default model directory: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
   - official-style two-stage TensorRT path: `feature_runner.engine` + Triton GWC + `post_runner.engine`
   - requires a working Triton kernel runtime in the active Python environment
 - `--ffs_backend pytorch`
@@ -79,7 +80,7 @@ Live FFS mode selection is now:
 If you explicitly want the current original PyTorch viewer path instead of the default two-stage TensorRT engines:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo /home/zhangxinjie/Fast-FoundationStereo --ffs_model_path /home/zhangxinjie/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_valid_iters 4
 ```
 
 If you want the single-engine TensorRT viewer path:
@@ -154,10 +155,17 @@ Use this first when the main question is:
 - how much reference-depth drift appears when we lower `scale` or `valid_iters`?
 - which config is the best compromise for a target FPS threshold?
 
+Important QQTT performance rule:
+
+- New realtime and visualization experiments default to `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, and the level-5 two-stage ONNX/TRT artifact unless the experiment explicitly needs PyTorch logits.
+- For our actual RealSense setup, benchmark at the native recorded image size `848x480`.
+- If the FFS/TensorRT model shape needs a multiple of `32`, use `848x480 -> 864x480` padding and unpad the result. Do not resize to `640x480` and use that number as the QQTT runtime.
+- `640x480` results are only official-table reproduction/control numbers and must be labeled as not representative of the real QQTT image size.
+
 Static-round TRT matrix replay + PPTX:
 
 ```bash
-conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/ffs_static_replay_matrix_20260422_fullrun/artifacts --reuse_artifacts
+conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/ffs_static_replay_matrix_20260422_fullrun/artifacts --reuse_artifacts
 ```
 
 This harness is the current offline realtime-proxy workflow for the three static aligned FFS rounds. It:
@@ -186,7 +194,7 @@ This harness is the current offline realtime-proxy workflow for the three static
 
 Operator notes:
 
-- use `qqtt-ffs-compat`
+- use `FFS-SAM-RS` for new realtime-proxy visualization runs
 - ensure `python-pptx` and `onnx` are installed in that environment
 - point `--artifact_root` at an existing artifact tree when you want fresh benchmark results without rebuilding TRT engines
 - the harness uses `stuffed animal` as the mask prompt
@@ -195,7 +203,7 @@ Operator notes:
 Static-round masked FFS confidence panels:
 
 ```bash
-conda run -n qqtt-ffs-compat python scripts/harness/experiments/visualize_ffs_static_confidence_panels.py
+conda run -n FFS-SAM-RS python scripts/harness/experiments/visualize_ffs_static_confidence_panels.py
 ```
 
 This offline static-only workflow:
@@ -233,7 +241,7 @@ Use this when the question is specifically:
 Static-round masked FFS confidence + PCD panels:
 
 ```bash
-conda run -n qqtt-ffs-compat python scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py
+conda run -n FFS-SAM-RS python scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py
 ```
 
 This offline static-only workflow:

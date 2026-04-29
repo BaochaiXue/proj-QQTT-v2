@@ -52,6 +52,36 @@
   - official-style two-stage TensorRT inference: `feature_runner.engine -> Triton GWC -> post_runner.engine`
   - live/viewer or static replay tests that specifically need official two-stage TRT latency behavior
 
+## `FFS-SAM-RS`
+
+- Purpose: default environment for new QQTT realtime and visualization experiments that need RealSense, Fast-FoundationStereo, TensorRT, and SAM 3.1 in the same process.
+- Current validated Python:
+  - `3.12.13`
+- Current validated torch stack:
+  - `torch==2.11.0+cu130`
+  - CUDA available through `torch.version.cuda == 13.0`
+- Current validated runtime packages:
+  - `pyrealsense2`
+  - `sam3`
+  - `tensorrt==10.16.1.11`
+  - `triton==3.6.0`
+  - `open3d==0.19.0`
+- Default FFS runtime policy:
+  - checkpoint: `/home/zhangxinjie/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth`
+  - valid iterations: `4`
+  - max disparity: `192`
+  - two-stage ONNX/TensorRT artifact: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
+  - builder optimization level: `5`
+  - input policy: keep real `848x480` images, edge-pad to `864x480`, then unpad outputs
+- Validation note:
+  - `docs/generated/sam31_env_validation.md` records SAM 3.1 helper validation.
+  - `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/report.md` records the current level-5 TRT speed table.
+- Expected use:
+  - live `cameras_viewer_FFS.py` TensorRT preview
+  - realtime FFS probes
+  - visualization harnesses that need both SAM 3.1 masks and FFS depth
+  - current operator-side experiments unless a task explicitly calls for legacy `qqtt-ffs-compat`, `ffs-official-trt`, or `FFS-max`
+
 ## `qqtt-ffs-compat`
 
 - Purpose: run QQTT-side proof-of-life scripts that need both RealSense access and FFS-compatible Python packages

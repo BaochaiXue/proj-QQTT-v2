@@ -10,8 +10,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-DEFAULT_FFS_REPO = Path("/home/zhangxinjie/Fast-FoundationStereo")
-DEFAULT_MODEL_PATH = DEFAULT_FFS_REPO / "weights" / "23-36-37" / "model_best_bp2_serialize.pth"
+from data_process.depth_backends.ffs_defaults import (
+    DEFAULT_FFS_MAX_DISP,
+    DEFAULT_FFS_MODEL_PATH,
+    DEFAULT_FFS_REPO,
+    DEFAULT_FFS_SCALE,
+    DEFAULT_FFS_VALID_ITERS,
+)
 DEFAULT_OUTPUT_ROOT = ROOT / "data" / "static" / "ffs_confidence_pcd_panels_frame_0000_stuffed_animal"
 
 
@@ -22,10 +27,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aligned_root", type=Path, default=ROOT / "data")
     parser.add_argument("--output_root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--ffs_repo", type=Path, default=DEFAULT_FFS_REPO)
-    parser.add_argument("--model_path", type=Path, default=DEFAULT_MODEL_PATH)
-    parser.add_argument("--scale", type=float, default=1.0)
-    parser.add_argument("--valid_iters", type=int, default=8)
-    parser.add_argument("--max_disp", type=int, default=192)
+    parser.add_argument("--model_path", type=Path, default=DEFAULT_FFS_MODEL_PATH)
+    parser.add_argument("--scale", type=float, default=DEFAULT_FFS_SCALE)
+    parser.add_argument("--valid_iters", type=int, default=DEFAULT_FFS_VALID_ITERS)
+    parser.add_argument("--max_disp", type=int, default=DEFAULT_FFS_MAX_DISP)
     parser.add_argument("--frame_idx", type=int, default=0)
     parser.add_argument("--text_prompt", type=str, default="stuffed animal")
     parser.add_argument("--depth_min_m", type=float, default=0.0)

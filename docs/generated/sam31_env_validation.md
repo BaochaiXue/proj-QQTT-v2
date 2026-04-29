@@ -190,3 +190,97 @@ Observed result:
 ### Updated Conclusion
 
 After replacing the PyPI wheel with the latest official `facebookresearch/sam3` code, the local `qqtt-ffs-compat` environment can now initialize QQTT's `SAM 3.1` helper against the downloaded Hugging Face `sam3.1_multiplex.pt` checkpoint.
+
+## Update: `FFS-SAM-RS` Clone From `FFS-max`
+
+- Date: `2026-04-28`
+- Source env: `FFS-max`
+- New env: `FFS-SAM-RS`
+- Goal: preserve the newer local FFS stack while adding the official `SAM 3.1` runtime path.
+- Checkpoint: `/home/zhangxinjie/.cache/huggingface/qqtt_sam31/sam3.1_multiplex.pt`
+
+### Commands
+
+```text
+conda create -y -n FFS-SAM-RS --clone FFS-max
+conda run -n FFS-SAM-RS python -m pip install --no-deps --force-reinstall git+https://github.com/facebookresearch/sam3.git@main
+conda run -n FFS-SAM-RS python -m pip install iopath fvcore hydra-core ftfy regex
+conda run -n FFS-SAM-RS python -m pip install pycocotools ftfy==6.1.1
+```
+
+The official `sam3` install resolved GitHub commit:
+
+```text
+c97c893969003d3e6803fd5d679f21e515aef5ce
+```
+
+### Version Sanity
+
+```text
+python_env=FFS-SAM-RS
+torch 2.11.0+cu130 cuda 13.0 cuda_available True
+tensorrt 10.16.1.11
+pyrealsense2 2.57.7.10387
+sam3 0.1.0 /home/zhangxinjie/miniconda3/envs/FFS-SAM-RS/lib/python3.12/site-packages/sam3/__init__.py
+numpy 2.4.4
+ftfy 6.1.1
+```
+
+The source env was not modified by the SAM install:
+
+```text
+env=FFS-max
+torch 2.11.0+cu130 cuda 13.0
+pyrealsense2 import_ok
+sam3_installed False
+```
+
+### Dependency Caveat
+
+`pip check` reports one intentional incompatibility:
+
+```text
+sam3 0.1.0 has requirement numpy<2,>=1.26, but you have numpy 2.4.4.
+```
+
+This was left unresolved because downgrading NumPy would defeat the purpose of preserving the newer `FFS-max` stack. Treat this env as a validated compatibility probe, not a fully upstream-conformant `sam3` package environment.
+
+### Runtime Probe
+
+QQTT's helper successfully initialized a SAM 3.1 multiplex predictor in `FFS-SAM-RS`:
+
+```text
+predictor_type Sam3MultiplexVideoPredictor
+checkpoint /home/zhangxinjie/.cache/huggingface/qqtt_sam31/sam3.1_multiplex.pt
+sam31_predictor_init_ok
+```
+
+A real mask-generation probe also completed using an existing aligned case:
+
+```text
+conda run -n FFS-SAM-RS python scripts/harness/generate_sam31_masks.py \
+  --case_root data/static/static_ir_only_proj_off_round1_20260428 \
+  --output_dir /tmp/ffssamrs_sam31_probe \
+  --text_prompt 'stuffed animal' \
+  --camera_ids 0 \
+  --source_mode frames \
+  --ann_frame_index 0 \
+  --checkpoint /home/zhangxinjie/.cache/huggingface/qqtt_sam31/sam3.1_multiplex.pt \
+  --max_num_objects 1 \
+  --overwrite
+```
+
+Observed result:
+
+```text
+SAM 3.1 masks written to /tmp/ffssamrs_sam31_probe
+/tmp/ffssamrs_sam31_probe/mask/0/0/0.png
+/tmp/ffssamrs_sam31_probe/mask/0/0/1.png
+...
+```
+
+The probe output directory was removed after validation.
+
+### Conclusion
+
+`FFS-SAM-RS` can keep the current `FFS-max` Python 3.12 / Torch CUDA 13 / TensorRT 10.16 / RealSense stack and still run the repo's SAM 3.1 helper path. The remaining risk is the official `sam3` metadata requirement for `numpy<2`; the validated helper initialization and one-camera mask generation path work with `numpy 2.4.4`, but broader `sam3` APIs are not exhaustively validated.

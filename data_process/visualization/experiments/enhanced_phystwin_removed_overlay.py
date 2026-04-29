@@ -292,7 +292,7 @@ def build_enhanced_phystwin_removed_overlay_board(
     selected_row_headers = row_headers or (
         [
             "RGB + object mask",
-            "Native depth mask",
+            "RealSense depth mask",
             "PCD + removed",
             "FFS depth + removed",
             "RGB + removed",
@@ -310,7 +310,7 @@ def build_enhanced_phystwin_removed_overlay_board(
     if len(selected_row_headers) != len(image_rows):
         raise ValueError("row_headers must match image_rows.")
     row_summary = (
-        "rows=RGB mask / native depth / PCD + removed / FFS depth + removed / RGB + removed"
+        "rows=RGB mask / RealSense depth / PCD + removed / FFS depth + removed / RGB + removed"
         if len(image_rows) == 5
         else "rows=RGB mask / IR left / IR right / PCD + removed / FFS depth + removed / RGB + removed"
     )
@@ -713,7 +713,7 @@ def run_enhanced_phystwin_removed_overlay_workflow(
         row_headers = (
             [
                 "RGB + object mask",
-                "Native depth mask",
+                "RealSense depth mask",
                 "PCD + removed",
                 "FFS depth + removed",
                 "RGB + removed",

@@ -36,6 +36,10 @@ from cameras_viewer import (
     _update_recent_frame_times,
 )
 from data_process.depth_backends import (
+    DEFAULT_FFS_MAX_DISP,
+    DEFAULT_FFS_SCALE,
+    DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
+    DEFAULT_FFS_VALID_ITERS,
     FastFoundationStereoRunner,
     FastFoundationStereoSingleEngineTensorRTRunner,
     FastFoundationStereoTensorRTRunner,
@@ -61,7 +65,7 @@ LATEST_QUEUE_SIZE = 1
 CAPTURE_QUEUE_TIMEOUT_MS = 100
 RESULT_QUEUE_TIMEOUT_S = 0.1
 SHARED_WORKER_IDLE_SLEEP_S = 0.005
-DEFAULT_FFS_TRT_MODEL_DIR = Path(__file__).resolve().parent / "data" / "ffs_proof_of_life" / "trt_two_stage_864x480_wsl"
+DEFAULT_FFS_TRT_MODEL_DIR = DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
 DEPTH_RENDER_MODE_CHOICES = ("colormap", "fps_placeholder")
 RENDER_MODE_CHOICES = ("panel", "none")
 FFS_BATCH_MODE_CHOICES = ("off", "strict3")
@@ -1163,9 +1167,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ffs_backend", choices=("pytorch", "tensorrt"), default="tensorrt")
     parser.add_argument("--ffs_repo", type=Path, required=True)
     parser.add_argument("--ffs_model_path", type=Path, default=None)
-    parser.add_argument("--ffs_scale", type=float, default=1.0)
-    parser.add_argument("--ffs_valid_iters", type=int, default=8)
-    parser.add_argument("--ffs_max_disp", type=int, default=192)
+    parser.add_argument("--ffs_scale", type=float, default=DEFAULT_FFS_SCALE)
+    parser.add_argument("--ffs_valid_iters", type=int, default=DEFAULT_FFS_VALID_ITERS)
+    parser.add_argument("--ffs_max_disp", type=int, default=DEFAULT_FFS_MAX_DISP)
     parser.add_argument("--ffs_worker_mode", choices=("per_camera", "shared"), default="per_camera")
     parser.add_argument("--ffs_batch_mode", choices=FFS_BATCH_MODE_CHOICES, default="off")
     parser.add_argument("--ffs_trt_mode", choices=("two_stage", "single_engine"), default="two_stage")

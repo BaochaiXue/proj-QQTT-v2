@@ -14,6 +14,14 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from data_process.depth_backends.ffs_defaults import (
+    DEFAULT_FFS_MAX_DISP,
+    DEFAULT_FFS_MODEL_PATH,
+    DEFAULT_FFS_REPO,
+    DEFAULT_FFS_SCALE,
+    DEFAULT_FFS_VALID_ITERS,
+)
+
 
 def _parse_csv_items(value: str, *, item_type=str) -> list[Any]:
     items = [item.strip() for item in str(value).split(",") if item.strip()]
@@ -129,11 +137,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--case_name", type=str, required=True)
     parser.add_argument("--start", type=int, required=True)
     parser.add_argument("--end", type=int, required=True)
-    parser.add_argument("--ffs_repo", type=str, required=True)
-    parser.add_argument("--ffs_model_path", type=str, required=True)
-    parser.add_argument("--ffs_scale", type=float, default=1.0)
-    parser.add_argument("--ffs_valid_iters", type=int, default=4)
-    parser.add_argument("--ffs_max_disp", type=int, default=192)
+    parser.add_argument("--ffs_repo", type=str, default=str(DEFAULT_FFS_REPO))
+    parser.add_argument("--ffs_model_path", type=str, default=str(DEFAULT_FFS_MODEL_PATH))
+    parser.add_argument("--ffs_scale", type=float, default=DEFAULT_FFS_SCALE)
+    parser.add_argument("--ffs_valid_iters", type=int, default=DEFAULT_FFS_VALID_ITERS)
+    parser.add_argument("--ffs_max_disp", type=int, default=DEFAULT_FFS_MAX_DISP)
     parser.add_argument("--modes", type=str, default="margin,max_softmax,entropy,variance")
     parser.add_argument("--thresholds", type=str, default="0.3,0.4,0.5,0.6,0.7,0.8")
     parser.add_argument("--depth_min_m", type=float, default=0.2)

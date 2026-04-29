@@ -7,6 +7,9 @@ import cv2
 import numpy as np
 
 from data_process.depth_backends import (
+    DEFAULT_FFS_MAX_DISP,
+    DEFAULT_FFS_SCALE,
+    DEFAULT_FFS_VALID_ITERS,
     FastFoundationStereoRunner,
     align_depth_to_color,
     derive_ir_right_to_color,
@@ -120,9 +123,9 @@ def run_ffs_left_right_audit_workflow(
     camera_idx: int = 0,
     ffs_repo: str | Path,
     model_path: str | Path,
-    scale: float = 1.0,
-    valid_iters: int = 8,
-    max_disp: int = 192,
+    scale: float = DEFAULT_FFS_SCALE,
+    valid_iters: int = DEFAULT_FFS_VALID_ITERS,
+    max_disp: int = DEFAULT_FFS_MAX_DISP,
     face_patches_json: str | Path | None = None,
     runner_factory=FastFoundationStereoRunner,
 ) -> dict[str, Any]:
@@ -263,9 +266,9 @@ def run_face_smoothness_workflow(
     face_patches_json: str | Path,
     ffs_repo: str | Path,
     model_path: str | Path,
-    scale: float = 1.0,
-    valid_iters: int = 8,
-    max_disp: int = 192,
+    scale: float = DEFAULT_FFS_SCALE,
+    valid_iters: int = DEFAULT_FFS_VALID_ITERS,
+    max_disp: int = DEFAULT_FFS_MAX_DISP,
     runner_factory=FastFoundationStereoRunner,
 ) -> dict[str, Any]:
     aligned_root = Path(aligned_root).resolve()
@@ -782,9 +785,9 @@ def run_stereo_order_registration_workflow(
     panel_width: int = 380,
     panel_height: int = 300,
     alpha: float = 0.34,
-    scale: float = 1.0,
-    valid_iters: int = 8,
-    max_disp: int = 192,
+    scale: float = DEFAULT_FFS_SCALE,
+    valid_iters: int = DEFAULT_FFS_VALID_ITERS,
+    max_disp: int = DEFAULT_FFS_MAX_DISP,
     write_debug: bool = False,
     write_closeup: bool = False,
     display_frame: str = "semantic_world",

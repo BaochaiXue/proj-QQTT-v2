@@ -9,6 +9,14 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from data_process.depth_backends.ffs_defaults import (
+    DEFAULT_FFS_MAX_DISP,
+    DEFAULT_FFS_MODEL_PATH,
+    DEFAULT_FFS_REPO,
+    DEFAULT_FFS_SCALE,
+    DEFAULT_FFS_VALID_ITERS,
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare Native / FFS / FFS-swapped face-patch smoothness on one aligned frame.")
@@ -19,11 +27,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame_idx", type=int, default=0)
     parser.add_argument("--face_patches_json", type=Path, required=True)
     parser.add_argument("--output_dir", type=Path, default=None)
-    parser.add_argument("--ffs_repo", type=Path, required=True)
-    parser.add_argument("--model_path", type=Path, required=True)
-    parser.add_argument("--scale", type=float, default=1.0)
-    parser.add_argument("--valid_iters", type=int, default=8)
-    parser.add_argument("--max_disp", type=int, default=192)
+    parser.add_argument("--ffs_repo", type=Path, default=DEFAULT_FFS_REPO)
+    parser.add_argument("--model_path", type=Path, default=DEFAULT_FFS_MODEL_PATH)
+    parser.add_argument("--scale", type=float, default=DEFAULT_FFS_SCALE)
+    parser.add_argument("--valid_iters", type=int, default=DEFAULT_FFS_VALID_ITERS)
+    parser.add_argument("--max_disp", type=int, default=DEFAULT_FFS_MAX_DISP)
     return parser.parse_args()
 
 

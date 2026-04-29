@@ -7,6 +7,9 @@ import cv2
 import numpy as np
 
 from data_process.depth_backends import (
+    DEFAULT_FFS_MAX_DISP,
+    DEFAULT_FFS_SCALE,
+    DEFAULT_FFS_VALID_ITERS,
     FastFoundationStereoRunner,
     align_depth_to_color,
     align_ir_scalar_to_color,
@@ -185,9 +188,9 @@ def run_ffs_static_confidence_panels_workflow(
     output_root: Path,
     ffs_repo: str | Path,
     model_path: str | Path,
-    scale: float = 1.0,
-    valid_iters: int = 8,
-    max_disp: int = 192,
+    scale: float = DEFAULT_FFS_SCALE,
+    valid_iters: int = DEFAULT_FFS_VALID_ITERS,
+    max_disp: int = DEFAULT_FFS_MAX_DISP,
     depth_min_m: float = 0.0,
     depth_max_m: float = 1.5,
     metrics: str = "both",

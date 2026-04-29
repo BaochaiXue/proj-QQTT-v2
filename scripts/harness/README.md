@@ -9,6 +9,15 @@ Rule of thumb:
 - keep experiment-only CLIs under `scripts/harness/experiments/`
 - keep RealSense / environment checks here because they are operational harness utilities, not production library code
 
+FFS performance benchmark rule:
+
+- New realtime and visualization FFS work defaults to environment `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, `max_disp=192`, and the two-stage ONNX/TensorRT artifact built with `builder_optimization_level=5`.
+- The default level-5 artifact is `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`.
+- PyTorch-only confidence-logit experiments still use the same checkpoint and iteration defaults, because confidence logits are not exported by the current TRT artifact.
+- QQTT performance claims must use the repo's real RealSense image size, `848x480`, with local recorded/static `ir_left` / `ir_right` images unless a different input source is explicitly named as a synthetic/control run.
+- For model shapes that need multiples of `32`, pad `848x480` to `864x480` and unpad outputs afterward; do not resize down to `640x480` and report that as QQTT runtime.
+- `640x480` runs are allowed only as official-table reproduction/control benchmarks, and their reports must say they are not representative of the real QQTT `848x480` pipeline.
+
 ## Keep Here
 
 ### Checks / Guards
@@ -85,7 +94,7 @@ removed so the harness directory stays focused on current user-facing tools.
 
 `experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py` renders static round 1-3 frame-0 object-only `6x3` boards comparing native and original FFS point clouds under no postprocess, the existing PhysTwin-like radius-neighbor postprocess, and the enhanced radius-plus-3D-component postprocess. The enhanced mode keeps the main component and records removed component bbox/gap stats for tuning.
 
-`experiments/visual_compare_enhanced_phystwin_removed_overlay.py` renders static round 1-6 source-camera `5x3` diagnostic boards with RGB object masks, object-masked native depth, fused PCD removed-point highlights, FFS depth removed overlays, and RGB removed overlays. `--native_row_mode ir_pair` replaces the native-depth row with `IR left` and `IR right` rows, producing a `6x3` board for projector-off IR inspection. Removed-point colors encode source camera (`Cam0` magenta, `Cam1` cyan, `Cam2` amber). The default highlight scope includes both radius-neighbor outliers and component-filter removals.
+`experiments/visual_compare_enhanced_phystwin_removed_overlay.py` renders static round 1-6 source-camera `5x3` diagnostic boards with RGB object masks, object-masked RealSense depth, fused PCD removed-point highlights, FFS depth removed overlays, and RGB removed overlays. `--native_row_mode ir_pair` replaces the RealSense-depth row with `IR left` and `IR right` rows, producing a `6x3` board for projector-off IR inspection. Removed-point colors encode source camera (`Cam0` magenta, `Cam1` cyan, `Cam2` amber). The default highlight scope includes both radius-neighbor outliers and component-filter removals.
 
 `experiments/visual_compare_ffs_mask_erode_sweep_pcd.py` renders static round 1-3 frame-0 object-only `10x3` Open3D boards for native depth, original FFS depth, and original FFS depth with mask erosion from `1px` through `8px`. The default experiment keeps all outputs under one result folder, applies display-only PhysTwin-like radius-neighbor cleanup before rendering each row, and uses a wider left label band; adjust `--row_label_width` if labels still need more room.
 
