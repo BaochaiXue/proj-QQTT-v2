@@ -44,7 +44,7 @@ Run:
 
 ```bash
 conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --help
-conda run -n FFS-max-sam31-rs python -m unittest -v tests.test_realtime_single_camera_pointcloud_smoke
+conda run -n FFS-max-sam31-rs python -m unittest -v tests.test_realtime_single_camera_pointcloud_smoke tests.test_cameras_viewer_ffs_smoke
 conda run -n FFS-max-sam31-rs python scripts/harness/check_all.py
 ```
 
@@ -71,6 +71,11 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Optimized point-cloud backprojection so `--max-points` sampling happens before XYZ/RGB materialization, preserving the existing `linspace` valid-pixel sampling order while avoiding full valid-point allocation when orbit view is capped.
 - Installed `numba==0.65.1` and `llvmlite==0.47.0` into `FFS-max-sam31-rs` with pip after saving pre-install conda/pip snapshots under `docs/generated/`.
 - Added `--backproject-backend {auto,numpy,numba}`. `auto` uses Numba when available for the stride-1 projection-grid point-cloud path, otherwise NumPy; the HUD and debug log show the effective backend.
+- Added `--depth-source {realsense,ffs}`. The FFS path captures live `color + infrared(1) + infrared(2)`, runs the repo-local two-stage TensorRT FFS artifact, aligns `depth_ir_left_m` into `camera_color_frame`, and renders it through the existing camera/orbit backends.
+- Added `--ffs-repo`, `--ffs-trt-model-dir`, and `--ffs-trt-root`; explicit CLI overrides are preserved, while defaults use the central repo-relative FFS defaults.
+- Split realtime processing into three latest-wins stage boundaries: capture slot, depth/FFS slot, and render-prep slot. The native RealSense path remains `color + depth`, while FFS mode uses a separate TensorRT worker and does not require the native depth stream.
+- Added vectorized `align_ir_depth_to_color_fast()` using nearest-depth z-buffering via `np.minimum.at`, plus float-depth camera-image and point-cloud backprojection helpers so FFS depth stays metric `float32` until rendering.
+- Expanded the HUD and debug line with `depth_source`, FFS TensorRT timing, FFS color-align timing, depth-stage drops, and render-slot drops.
 
 Validation completed on 2026-04-29:
 

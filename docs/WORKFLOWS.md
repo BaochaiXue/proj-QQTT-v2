@@ -25,14 +25,24 @@ frame:
 conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60
 ```
 
-This demo streams one D455 `color + depth`, aligns depth to color, backprojects
-with the color intrinsics, and renders the live point cloud in Open3D. The
-coordinate contract is `camera_color_frame`, meters, `x` right, `y` down, and
-`z` forward; it does not read `calibrate.pkl` or apply any multi-camera world
-transform. Use `--help` to see the supported capture rates and profiles
+For the same single-camera viewer using live FFS depth from the D455 IR stereo
+pair and repo-local two-stage TensorRT artifact:
+
+```bash
+conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py \
+  --profile 848x480 --fps 60 --depth-source ffs --view-mode camera --debug
+```
+
+This demo streams one D455. The default `--depth-source realsense` captures
+`color + depth` and aligns native depth to color; `--depth-source ffs` captures
+`color + infrared(1) + infrared(2)`, runs the default two-stage TensorRT FFS
+engine, aligns FFS metric depth into the color frame, and renders RGB in the
+same `camera_color_frame` contract. The coordinate contract is meters, `x`
+right, `y` down, and `z` forward; it does not read `calibrate.pkl` or apply any
+multi-camera world transform. Use `--help` to see the supported capture rates and profiles
 (`--fps {5,15,30,60}` and `--profile {848x480,640x480}`). The HUD reports render
-FPS, host receive-to-render latency, point count, stale capture drops, and the
-selected serial/profile/fps. Camera-view defaults preserve density (`--stride 1`,
+FPS, host receive-to-render latency, point count, stale capture/depth/render
+drops, selected depth source, and the selected serial/profile/fps. Camera-view defaults preserve density (`--stride 1`,
 `--max-points 0`) and do not apply a far-depth clip (`--depth-max-m 0.0`).
 Set `--depth-max-m 1.5` or another positive value only when you want a near
 tabletop/room subset. The default view mode is first-person camera projection
@@ -58,10 +68,11 @@ conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_poin
 ```
 
 The profiler reports camera wait, RealSense align, frame copy, valid-depth image
-masking or the selected backprojection backend, Open3D image/geometry
-conversion, Open3D image/geometry update, total receive-to-render latency, the
-active `backproject_backend`, and the `depth_to_render_ms` subtotal excluding
-camera wait.
+masking or the selected backprojection backend, FFS TensorRT and FFS color-align
+time when `--depth-source ffs` is active, Open3D image/geometry conversion,
+Open3D image/geometry update, total receive-to-render latency, the active
+`backproject_backend`, and the `depth_to_render_ms` subtotal excluding camera
+wait.
 
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:

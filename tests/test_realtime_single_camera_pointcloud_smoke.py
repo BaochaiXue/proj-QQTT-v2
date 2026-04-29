@@ -6,10 +6,13 @@ import io
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 
 import numpy as np
 
+from data_process.depth_backends import DEFAULT_FFS_REPO, DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
+from data_process.depth_backends.geometry import align_depth_to_color
 from scripts.harness import realtime_single_camera_pointcloud as demo
 
 
@@ -33,6 +36,9 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         )
         self.assertIn("--fps {5,15,30,60}", result.stdout)
         self.assertIn("--profile {848x480,640x480}", result.stdout)
+        self.assertIn("--depth-source {realsense,ffs}", result.stdout)
+        self.assertIn("--ffs-repo FFS_REPO", result.stdout)
+        self.assertIn("--ffs-trt-model-dir FFS_TRT_MODEL_DIR", result.stdout)
         self.assertIn("--view-mode {camera,orbit}", result.stdout)
         self.assertIn("--render-backend {auto,image,pointcloud}", result.stdout)
         self.assertIn("--backproject-backend {auto,numpy,numba}", result.stdout)
@@ -48,6 +54,9 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertEqual(demo.parse_profile("640x480"), (640, 480))
         args = demo.build_parser().parse_args(["--fps", "60"])
         self.assertEqual(args.fps, 60)
+        self.assertEqual(args.depth_source, "realsense")
+        self.assertEqual(Path(args.ffs_repo), DEFAULT_FFS_REPO)
+        self.assertEqual(Path(args.ffs_trt_model_dir), DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR)
         backend_args = demo.build_parser().parse_args(["--backproject-backend", "numpy"])
         self.assertEqual(backend_args.backproject_backend, "numpy")
         with self.assertRaises(ValueError):
@@ -55,6 +64,26 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 demo.build_parser().parse_args(["--profile", "320x240"])
+
+    def test_ffs_mode_rejects_missing_tensorrt_artifacts_before_camera_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ffs_repo = root / "Fast-FoundationStereo"
+            model_dir = root / "engines"
+            ffs_repo.mkdir()
+            model_dir.mkdir()
+            args = demo.build_parser().parse_args(
+                [
+                    "--depth-source",
+                    "ffs",
+                    "--ffs-repo",
+                    str(ffs_repo),
+                    "--ffs-trt-model-dir",
+                    str(model_dir),
+                ]
+            )
+            with self.assertRaisesRegex(ValueError, "feature_runner.engine"):
+                demo.validate_args(args)
 
     def test_default_depth_max_disables_far_clipping(self) -> None:
         args = demo.build_parser().parse_args([])
@@ -176,6 +205,34 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
                 [
                     [[3, 2, 1], [0, 0, 0]],
                     [[9, 8, 7], [0, 0, 0]],
+                ],
+                dtype=np.uint8,
+            ),
+        )
+
+    def test_float_depth_image_backend_preserves_valid_depth_pixels(self) -> None:
+        color_bgr = np.array(
+            [
+                [[1, 2, 3], [4, 5, 6]],
+                [[7, 8, 9], [10, 11, 12]],
+            ],
+            dtype=np.uint8,
+        )
+        depth_m = np.array([[1.0, 0.0], [np.nan, 2.0]], dtype=np.float32)
+        image_rgb, valid_count = demo.build_camera_view_image_from_depth_m(
+            color_bgr=color_bgr,
+            depth_m=depth_m,
+            depth_min_m=0.1,
+            depth_max_m=1.5,
+            splat_px=0,
+        )
+        self.assertEqual(valid_count, 1)
+        np.testing.assert_array_equal(
+            image_rgb,
+            np.array(
+                [
+                    [[3, 2, 1], [0, 0, 0]],
+                    [[0, 0, 0], [0, 0, 0]],
                 ],
                 dtype=np.uint8,
             ),
@@ -304,6 +361,52 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             np.array([[0.0, 0.0, 1.0], [0.0, 2.0, 2.0], [3.0, 3.0, 3.0]], dtype=np.float32),
         )
         np.testing.assert_array_equal(colors, np.array([[3, 2, 1], [9, 8, 7], [12, 11, 10]], dtype=np.uint8))
+
+    def test_float_depth_backprojection_returns_expected_xyz_and_rgb(self) -> None:
+        color_bgr = np.array(
+            [
+                [[1, 2, 3], [4, 5, 6]],
+                [[7, 8, 9], [10, 11, 12]],
+            ],
+            dtype=np.uint8,
+        )
+        depth_m = np.array([[1.0, 0.0], [2.0, 3.0]], dtype=np.float32)
+        points, colors = demo.backproject_aligned_rgbd_depth_m(
+            color_bgr=color_bgr,
+            depth_m=depth_m,
+            intrinsics=demo.CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0),
+            depth_min_m=0.1,
+            depth_max_m=5.0,
+            stride=1,
+            max_points=0,
+            pixel_grid=demo.build_pixel_grid(width=2, height=2, stride=1),
+        )
+        np.testing.assert_allclose(
+            points,
+            np.array([[0.0, 0.0, 1.0], [0.0, 2.0, 2.0], [3.0, 3.0, 3.0]], dtype=np.float32),
+        )
+        np.testing.assert_array_equal(colors, np.array([[3, 2, 1], [9, 8, 7], [12, 11, 10]], dtype=np.uint8))
+
+    def test_fast_ir_to_color_alignment_matches_reference(self) -> None:
+        depth_ir = np.array([[1.0, 2.0], [0.0, 3.0]], dtype=np.float32)
+        K = np.array([[2.0, 0.0, 0.5], [0.0, 2.0, 0.5], [0.0, 0.0, 1.0]], dtype=np.float32)
+        T = np.eye(4, dtype=np.float32)
+        expected = align_depth_to_color(depth_ir, K, T, K, output_shape=(2, 2))
+        actual = demo.align_ir_depth_to_color_fast(depth_ir, K, T, K, output_shape=(2, 2))
+        np.testing.assert_allclose(actual, expected)
+
+    def test_latest_wins_drops_across_depth_and_render_slots(self) -> None:
+        depth_slot: demo.LatestSlot[DummyPacket] = demo.LatestSlot()
+        render_slot: demo.LatestSlot[DummyPacket] = demo.LatestSlot()
+        depth_slot.put(DummyPacket(seq=1))
+        depth_slot.put(DummyPacket(seq=2))
+        self.assertEqual(depth_slot.dropped_count, 1)
+        self.assertEqual(depth_slot.get_latest_after(-1).seq, 2)  # type: ignore[union-attr]
+        render_slot.put(DummyPacket(seq=2))
+        render_slot.put(DummyPacket(seq=3))
+        render_slot.put(DummyPacket(seq=4))
+        self.assertEqual(render_slot.dropped_count, 2)
+        self.assertEqual(render_slot.get_latest_after(-1).seq, 4)  # type: ignore[union-attr]
 
     def test_backprojection_max_points_preserves_linspace_valid_sampling(self) -> None:
         color_bgr = np.arange(3 * 4 * 3, dtype=np.uint8).reshape(3, 4, 3)
@@ -458,13 +561,37 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             wait_ms=33.0,
             align_ms=1.0,
             frame_copy_ms=2.0,
+            ffs_ms=6.0,
+            ffs_align_ms=1.5,
             image_mask_ms=0.5,
             backproject_ms=3.0,
             open3d_convert_ms=4.0,
             open3d_update_ms=5.0,
             receive_to_render_ms=20.0,
         )
-        self.assertAlmostEqual(demo.depth_to_render_ms(timing), 15.5)
+        self.assertAlmostEqual(demo.depth_to_render_ms(timing), 23.0)
+
+    def test_debug_hud_includes_ffs_stage_timing(self) -> None:
+        args = demo.build_parser().parse_args(["--debug", "--depth-source", "ffs"])
+        viewer = demo.RealtimeSingleCameraPointCloudDemo(args)
+        stats = demo.RenderStats()
+        timing = demo.PipelineTiming(ffs_ms=9.5, ffs_align_ms=0.7, receive_to_render_ms=20.0)
+        packet = demo.ImagePacket(
+            seq=1,
+            image_rgb_u8=np.zeros((1, 1, 3), dtype=np.uint8),
+            valid_count=1,
+            depth_source="ffs",
+            receive_perf_s=0.0,
+            process_done_perf_s=0.0,
+            dropped_capture_frames=2,
+            dropped_ffs_frames=3,
+            timing=timing,
+        )
+        text = viewer._format_hud(packet=packet, stats=stats, timing=timing)
+        self.assertIn("depth source: ffs", text)
+        self.assertIn("dropped depth/render packets: 3/0", text)
+        self.assertIn("ffs=9.50", text)
+        self.assertIn("ffs_align=0.70", text)
 
 
 if __name__ == "__main__":

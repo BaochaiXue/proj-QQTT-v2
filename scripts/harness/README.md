@@ -13,6 +13,7 @@
 
 - New realtime and visualization FFS work defaults to env `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, `max_disp=192`, and two-stage ONNX/TensorRT.
 - Current default TensorRT artifact: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`.
+- Single-camera realtime FFS depth rendering uses `realtime_single_camera_pointcloud.py --depth-source ffs`, captures `RGB + IR-left + IR-right`, runs the default two-stage TensorRT artifact, aligns FFS depth to `camera_color_frame`, and keeps capture, FFS, and render-prep stages latest-wins.
 - QQTT performance claims must use real RealSense `848x480` inputs from local recorded/static `ir_left` and `ir_right` unless explicitly labeled as synthetic/control.
 - Models needing multiples of `32` should pad `848x480` to `864x480` and unpad outputs afterward; do not report resized `640x480` as QQTT runtime.
 - `640x480` runs are allowed only as official-table reproduction/control benchmarks and must be labeled as such.
@@ -66,7 +67,7 @@ python scripts/harness/check_all.py --full
 | `benchmark_ffs_configs.py` | FFS config benchmark wrapper. |
 | `probe_d455_ir_pair.py` | Manual D455 IR-pair capability probe. |
 | `probe_d455_stream_capability.py` | Manual D455 stream/profile probe. |
-| `realtime_single_camera_pointcloud.py` | Manual single-D455 realtime `camera_color_frame` RGB-D viewer with fast camera-view image backend, point-cloud backend, and Open3D FPS/latency HUD. |
+| `realtime_single_camera_pointcloud.py` | Manual single-D455 realtime `camera_color_frame` RGB-D viewer with RealSense or FFS depth, fast camera-view image backend, point-cloud backend, and Open3D FPS/latency HUD. |
 | `render_d455_stream_probe_report.py` | Convert probe JSON to a readable report. |
 | `run_ffs_static_replay_matrix.py` | Static replay benchmark matrix over recorded RealSense pairs. |
 | `verify_ffs_demo.py` | External FFS demo proof-of-life. |

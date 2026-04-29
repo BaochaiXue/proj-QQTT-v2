@@ -4,11 +4,19 @@ import argparse
 from collections import deque
 from dataclasses import dataclass, replace
 import math
+from pathlib import Path
+import sys
 import threading
 import time
 from typing import Callable, Generic, TypeVar
 
 import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from data_process.depth_backends import DEFAULT_FFS_REPO, DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
 
 try:
     import cv2  # type: ignore
@@ -24,6 +32,7 @@ except ImportError:
 SUPPORTED_CAPTURE_FPS = (5, 15, 30, 60)
 SUPPORTED_PROFILES = ("848x480", "640x480")
 BACKPROJECT_BACKENDS = ("auto", "numpy", "numba")
+DEPTH_SOURCES = ("realsense", "ffs")
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
 DEFAULT_CAMERA_MAX_POINTS = 0
@@ -46,6 +55,8 @@ class PipelineTiming:
     wait_ms: float = 0.0
     align_ms: float = 0.0
     frame_copy_ms: float = 0.0
+    ffs_ms: float = 0.0
+    ffs_align_ms: float = 0.0
     image_mask_ms: float = 0.0
     backproject_ms: float = 0.0
     open3d_convert_ms: float = 0.0
@@ -57,11 +68,33 @@ class PipelineTiming:
 class FramePacket:
     seq: int
     color_bgr: np.ndarray
-    depth_u16: np.ndarray
     intrinsics: CameraIntrinsics
-    depth_scale_m_per_unit: float
     receive_perf_s: float
     timing: PipelineTiming
+    depth_source: str
+    depth_u16: np.ndarray | None = None
+    depth_scale_m_per_unit: float = 0.0
+    ir_left_u8: np.ndarray | None = None
+    ir_right_u8: np.ndarray | None = None
+    k_ir_left: np.ndarray | None = None
+    t_ir_left_to_color: np.ndarray | None = None
+    ir_baseline_m: float = 0.0
+
+
+@dataclass(frozen=True)
+class DepthFramePacket:
+    seq: int
+    color_bgr: np.ndarray
+    depth_source: str
+    intrinsics: CameraIntrinsics
+    receive_perf_s: float
+    process_done_perf_s: float
+    dropped_capture_frames: int
+    dropped_ffs_frames: int
+    timing: PipelineTiming
+    depth_m: np.ndarray | None = None
+    depth_u16: np.ndarray | None = None
+    depth_scale_m_per_unit: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -70,9 +103,11 @@ class PointCloudPacket:
     points_xyz_m: np.ndarray
     colors_rgb_u8: np.ndarray
     backproject_backend: str
+    depth_source: str
     receive_perf_s: float
     process_done_perf_s: float
     dropped_capture_frames: int
+    dropped_ffs_frames: int
     timing: PipelineTiming
 
     @property
@@ -85,9 +120,11 @@ class ImagePacket:
     seq: int
     image_rgb_u8: np.ndarray
     valid_count: int
+    depth_source: str
     receive_perf_s: float
     process_done_perf_s: float
     dropped_capture_frames: int
+    dropped_ffs_frames: int
     timing: PipelineTiming
 
     @property
@@ -168,6 +205,8 @@ def depth_to_render_ms(timing: PipelineTiming) -> float:
     return float(
         timing.align_ms
         + timing.frame_copy_ms
+        + timing.ffs_ms
+        + timing.ffs_align_ms
         + timing.image_mask_ms
         + timing.backproject_ms
         + timing.open3d_convert_ms
@@ -242,6 +281,105 @@ def build_projection_grid(
     ray_x = (grid_x - np.float32(intrinsics.cx)) / np.float32(intrinsics.fx)
     ray_y = (grid_y - np.float32(intrinsics.cy)) / np.float32(intrinsics.fy)
     return np.ascontiguousarray(ray_x, dtype=np.float32), np.ascontiguousarray(ray_y, dtype=np.float32)
+
+
+def camera_intrinsics_from_rs(intrinsics: object) -> CameraIntrinsics:
+    return CameraIntrinsics(
+        fx=float(getattr(intrinsics, "fx")),
+        fy=float(getattr(intrinsics, "fy")),
+        cx=float(getattr(intrinsics, "ppx")),
+        cy=float(getattr(intrinsics, "ppy")),
+    )
+
+
+def camera_intrinsics_to_matrix(intrinsics: CameraIntrinsics) -> np.ndarray:
+    return np.array(
+        [
+            [float(intrinsics.fx), 0.0, float(intrinsics.cx)],
+            [0.0, float(intrinsics.fy), float(intrinsics.cy)],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+
+def rs_intrinsics_to_matrix(intrinsics: object) -> np.ndarray:
+    return camera_intrinsics_to_matrix(camera_intrinsics_from_rs(intrinsics))
+
+
+def rs_extrinsics_to_matrix(extrinsics: object) -> np.ndarray:
+    rotation = list(map(float, getattr(extrinsics, "rotation")))
+    translation = list(map(float, getattr(extrinsics, "translation")))
+    return np.array(
+        [
+            [rotation[0], rotation[1], rotation[2], translation[0]],
+            [rotation[3], rotation[4], rotation[5], translation[1]],
+            [rotation[6], rotation[7], rotation[8], translation[2]],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+
+def rs_translation_norm(extrinsics: object) -> float:
+    tx, ty, tz = map(float, getattr(extrinsics, "translation"))
+    return float(math.sqrt(tx * tx + ty * ty + tz * tz))
+
+
+def align_ir_depth_to_color_fast(
+    depth_ir_m: np.ndarray,
+    K_ir_left: np.ndarray,
+    T_ir_left_to_color: np.ndarray,
+    K_color: np.ndarray,
+    output_shape: tuple[int, int],
+    invalid_value: float = 0.0,
+) -> np.ndarray:
+    depth = np.asarray(depth_ir_m, dtype=np.float32)
+    if depth.ndim != 2:
+        raise ValueError("depth_ir_m must be a 2D array")
+    k_ir = np.asarray(K_ir_left, dtype=np.float32).reshape(3, 3)
+    k_color = np.asarray(K_color, dtype=np.float32).reshape(3, 3)
+    transform = np.asarray(T_ir_left_to_color, dtype=np.float32).reshape(4, 4)
+    out_height, out_width = output_shape
+    if out_height <= 0 or out_width <= 0:
+        raise ValueError("output_shape must be positive")
+
+    valid = np.isfinite(depth) & (depth > 0.0)
+    if not np.any(valid):
+        return np.full((out_height, out_width), np.float32(invalid_value), dtype=np.float32)
+
+    rows, cols = np.nonzero(valid)
+    z = depth[rows, cols].astype(np.float32, copy=False)
+    x = (cols.astype(np.float32) - np.float32(k_ir[0, 2])) * z / np.float32(k_ir[0, 0])
+    y = (rows.astype(np.float32) - np.float32(k_ir[1, 2])) * z / np.float32(k_ir[1, 1])
+
+    r = transform[:3, :3]
+    t = transform[:3, 3]
+    x_color = r[0, 0] * x + r[0, 1] * y + r[0, 2] * z + t[0]
+    y_color = r[1, 0] * x + r[1, 1] * y + r[1, 2] * z + t[1]
+    z_color = r[2, 0] * x + r[2, 1] * y + r[2, 2] * z + t[2]
+
+    front = np.isfinite(z_color) & (z_color > 0.0)
+    if not np.any(front):
+        return np.full((out_height, out_width), np.float32(invalid_value), dtype=np.float32)
+
+    x_color = x_color[front]
+    y_color = y_color[front]
+    z_color = z_color[front]
+    u = np.rint((x_color / z_color) * np.float32(k_color[0, 0]) + np.float32(k_color[0, 2])).astype(np.int32)
+    v = np.rint((y_color / z_color) * np.float32(k_color[1, 1]) + np.float32(k_color[1, 2])).astype(np.int32)
+
+    inside = (u >= 0) & (u < out_width) & (v >= 0) & (v < out_height)
+    if not np.any(inside):
+        return np.full((out_height, out_width), np.float32(invalid_value), dtype=np.float32)
+
+    flat_idx = (v[inside] * out_width + u[inside]).astype(np.int64, copy=False)
+    z_inside = z_color[inside].astype(np.float32, copy=False)
+    nearest = np.full(out_height * out_width, np.inf, dtype=np.float32)
+    np.minimum.at(nearest, flat_idx, z_inside)
+    output = nearest.reshape(out_height, out_width)
+    output[~np.isfinite(output)] = np.float32(invalid_value)
+    return np.ascontiguousarray(output, dtype=np.float32)
 
 
 def _depth_bounds_to_u16(
@@ -439,6 +577,50 @@ def build_camera_view_image(
     return np.ascontiguousarray(image_rgb), valid_count
 
 
+def _valid_float_depth_mask(*, depth_m: np.ndarray, depth_min_m: float, depth_max_m: float) -> np.ndarray:
+    if depth_min_m < 0:
+        raise ValueError("depth_min_m must be >= 0")
+    if depth_max_m > 0 and depth_max_m <= depth_min_m:
+        raise ValueError("expected depth_max_m <= 0, or depth_max_m > depth_min_m")
+    valid = np.isfinite(depth_m) & (depth_m > 0.0) & (depth_m >= np.float32(depth_min_m))
+    if depth_max_m > 0:
+        valid &= depth_m <= np.float32(depth_max_m)
+    return valid
+
+
+def build_camera_view_image_from_depth_m(
+    *,
+    color_bgr: np.ndarray,
+    depth_m: np.ndarray,
+    depth_min_m: float,
+    depth_max_m: float,
+    splat_px: int = 0,
+) -> tuple[np.ndarray, int]:
+    if depth_m.ndim != 2:
+        raise ValueError("depth_m must be a 2D array")
+    if color_bgr.ndim != 3 or color_bgr.shape[2] != 3:
+        raise ValueError("color_bgr must be an HxWx3 array")
+    if color_bgr.shape[:2] != depth_m.shape:
+        raise ValueError("color and depth shapes must match after depth-to-color alignment")
+    if splat_px < 0:
+        raise ValueError("splat_px must be >= 0")
+
+    depth = np.asarray(depth_m, dtype=np.float32)
+    valid = _valid_float_depth_mask(depth_m=depth, depth_min_m=depth_min_m, depth_max_m=depth_max_m)
+    valid_count = int(np.count_nonzero(valid))
+    image_rgb = np.zeros(color_bgr.shape, dtype=np.uint8)
+    if valid_count == 0:
+        return image_rgb, 0
+
+    source_rgb = np.ascontiguousarray(color_bgr[:, :, ::-1])
+    if splat_px == 0:
+        source_rgb[~valid] = 0
+        return source_rgb, valid_count
+
+    _splat_valid_rgb(image_rgb=image_rgb, source_rgb=source_rgb, valid=valid, radius=splat_px)
+    return np.ascontiguousarray(image_rgb), valid_count
+
+
 def _splat_valid_rgb(*, image_rgb: np.ndarray, source_rgb: np.ndarray, valid: np.ndarray, radius: int) -> None:
     height, width = valid.shape
     for dy in range(-radius, radius + 1):
@@ -575,11 +757,92 @@ def backproject_aligned_rgbd(
     return points, colors_rgb_u8
 
 
+def backproject_aligned_rgbd_depth_m(
+    *,
+    color_bgr: np.ndarray,
+    depth_m: np.ndarray,
+    intrinsics: CameraIntrinsics,
+    depth_min_m: float,
+    depth_max_m: float,
+    stride: int,
+    max_points: int,
+    pixel_grid: tuple[np.ndarray, np.ndarray] | None = None,
+    projection_grid: tuple[np.ndarray, np.ndarray] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if depth_m.ndim != 2:
+        raise ValueError("depth_m must be a 2D array")
+    if color_bgr.ndim != 3 or color_bgr.shape[2] != 3:
+        raise ValueError("color_bgr must be an HxWx3 array")
+    if color_bgr.shape[:2] != depth_m.shape:
+        raise ValueError("color and depth shapes must match after depth-to-color alignment")
+    if depth_min_m < 0:
+        raise ValueError("depth_min_m must be >= 0")
+    if depth_max_m > 0 and depth_max_m <= depth_min_m:
+        raise ValueError("expected depth_max_m <= 0, or depth_max_m > depth_min_m")
+    if stride < 1:
+        raise ValueError("stride must be >= 1")
+    if max_points < 0:
+        raise ValueError("max_points must be >= 0")
+
+    depth_view = np.asarray(depth_m, dtype=np.float32)[::stride, ::stride]
+    color_view = color_bgr[::stride, ::stride, :]
+    if projection_grid is not None:
+        ray_x, ray_y = projection_grid
+        if ray_x.shape != depth_view.shape or ray_y.shape != depth_view.shape:
+            raise ValueError("projection_grid shape does not match strided depth shape")
+    else:
+        if pixel_grid is None:
+            ray_x, ray_y = build_projection_grid(
+                width=depth_m.shape[1],
+                height=depth_m.shape[0],
+                stride=stride,
+                intrinsics=intrinsics,
+            )
+        else:
+            grid_x, grid_y = pixel_grid
+            if grid_x.shape != depth_view.shape or grid_y.shape != depth_view.shape:
+                raise ValueError("pixel_grid shape does not match strided depth shape")
+            ray_x = (grid_x - np.float32(intrinsics.cx)) / np.float32(intrinsics.fx)
+            ray_y = (grid_y - np.float32(intrinsics.cy)) / np.float32(intrinsics.fy)
+
+    valid = _valid_float_depth_mask(depth_m=depth_view, depth_min_m=depth_min_m, depth_max_m=depth_max_m)
+    valid_flat = np.flatnonzero(valid.ravel())
+    n_valid = int(valid_flat.size)
+    if n_valid == 0:
+        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
+
+    if max_points > 0 and n_valid > max_points:
+        indices = np.linspace(0, n_valid - 1, max_points, dtype=np.int64)
+        valid_flat = valid_flat[indices]
+
+    n_points = int(valid_flat.size)
+    depth_flat = depth_view.ravel()
+    ray_x_flat = ray_x.ravel()
+    ray_y_flat = ray_y.ravel()
+    z = depth_flat[valid_flat].astype(np.float32, copy=False)
+    points = np.empty((n_points, 3), dtype=np.float32)
+    points[:, 0] = ray_x_flat[valid_flat] * z
+    points[:, 1] = ray_y_flat[valid_flat] * z
+    points[:, 2] = z
+
+    if stride == 1 and color_bgr.flags["C_CONTIGUOUS"]:
+        color_flat = color_bgr.reshape(-1, 3)
+    else:
+        color_flat = np.ascontiguousarray(color_view).reshape(-1, 3)
+
+    colors_rgb_u8 = np.empty((n_points, 3), dtype=np.uint8)
+    colors_rgb_u8[:, 0] = color_flat[valid_flat, 2]
+    colors_rgb_u8[:, 1] = color_flat[valid_flat, 1]
+    colors_rgb_u8[:, 2] = color_flat[valid_flat, 0]
+    return points, colors_rgb_u8
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Realtime single-D455 camera-frame RGB-D demo. Streams color + depth, aligns depth to "
-            "color, and renders either a fast camera-view valid-depth image or an Open3D point cloud."
+            "Realtime single-D455 camera-frame RGB-D demo. Streams RealSense color+depth or "
+            "FFS RGB+IR stereo depth, aligns metric depth to color, and renders either a fast "
+            "camera-view valid-depth image or an Open3D point cloud."
         ),
         epilog=(
             f"Point-cloud backend contract: frame={COORDINATE_FRAME}, units=meters, axes=x right/y down/z forward. "
@@ -594,6 +857,30 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SUPPORTED_PROFILES,
         default=DEFAULT_PROFILE,
         help="Color/depth stream resolution.",
+    )
+    parser.add_argument(
+        "--depth-source",
+        choices=DEPTH_SOURCES,
+        default="realsense",
+        help="Depth source. realsense streams color+depth; ffs streams color+IR-left+IR-right and runs two-stage TensorRT FFS.",
+    )
+    parser.add_argument(
+        "--ffs-repo",
+        type=Path,
+        default=DEFAULT_FFS_REPO,
+        help="Fast-FoundationStereo repo path. Defaults to the repo-root-relative sibling ../Fast-FoundationStereo.",
+    )
+    parser.add_argument(
+        "--ffs-trt-model-dir",
+        type=Path,
+        default=DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
+        help="Two-stage TensorRT FFS engine directory.",
+    )
+    parser.add_argument(
+        "--ffs-trt-root",
+        type=Path,
+        default=None,
+        help="Optional TensorRT Python package/root override forwarded to the FFS runner.",
     )
     parser.add_argument("--emitter", choices=("auto", "on", "off"), default="auto", help="Depth emitter mode.")
     parser.add_argument("--depth-min-m", type=float, default=0.1, help="Minimum rendered depth in meters.")
@@ -650,8 +937,32 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def validate_ffs_paths(*, ffs_repo: Path, model_dir: Path) -> None:
+    if not ffs_repo.exists():
+        raise ValueError(f"--ffs-repo does not exist: {ffs_repo}")
+    if not ffs_repo.is_dir():
+        raise ValueError(f"--ffs-repo is not a directory: {ffs_repo}")
+    if not model_dir.exists():
+        raise ValueError(f"--ffs-trt-model-dir does not exist: {model_dir}")
+    if not model_dir.is_dir():
+        raise ValueError(f"--ffs-trt-model-dir is not a directory: {model_dir}")
+    missing = [
+        str(path)
+        for path in (
+            model_dir / "feature_runner.engine",
+            model_dir / "post_runner.engine",
+            model_dir / "onnx.yaml",
+        )
+        if not path.is_file()
+    ]
+    if missing:
+        raise ValueError("missing required two-stage TensorRT FFS artifact files: " + ", ".join(missing))
+
+
 def validate_args(args: argparse.Namespace) -> None:
     parse_profile(args.profile)
+    if args.depth_source not in DEPTH_SOURCES:
+        raise ValueError(f"--depth-source must be one of {', '.join(DEPTH_SOURCES)}")
     if args.depth_min_m < 0:
         raise ValueError("--depth-min-m must be >= 0")
     if args.depth_max_m > 0 and args.depth_max_m <= args.depth_min_m:
@@ -674,6 +985,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--latency-target-ms must be > 0")
     if args.duration_s < 0:
         raise ValueError("--duration-s must be >= 0")
+    if args.depth_source == "ffs":
+        validate_ffs_paths(ffs_repo=Path(args.ffs_repo), model_dir=Path(args.ffs_trt_model_dir))
 
 
 def resolve_render_backend(args: argparse.Namespace) -> str:
@@ -761,7 +1074,20 @@ def _apply_emitter(profile: object, emitter: str, rs: object) -> None:
         raise RuntimeError(f"failed to set emitter {emitter!r}: {exc}") from exc
 
 
-def _start_realsense_pipeline(args: argparse.Namespace) -> tuple[object, object, str, CameraIntrinsics, float]:
+@dataclass(frozen=True)
+class RealtimeCameraRuntime:
+    pipeline: object
+    align: object | None
+    serial: str
+    intrinsics: CameraIntrinsics
+    depth_scale_m_per_unit: float
+    k_color: np.ndarray
+    k_ir_left: np.ndarray | None = None
+    t_ir_left_to_color: np.ndarray | None = None
+    ir_baseline_m: float = 0.0
+
+
+def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime:
     rs = _load_realsense_module()
     width, height = parse_profile(args.profile)
     serial = resolve_serial(rs, args.serial)
@@ -770,20 +1096,48 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> tuple[object, object,
     config = rs.config()
     config.enable_device(serial)
     config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, args.fps)
-    config.enable_stream(rs.stream.depth, width, height, rs.format.z16, args.fps)
+    if args.depth_source == "ffs":
+        config.enable_stream(rs.stream.infrared, 1, width, height, rs.format.y8, args.fps)
+        config.enable_stream(rs.stream.infrared, 2, width, height, rs.format.y8, args.fps)
+    else:
+        config.enable_stream(rs.stream.depth, width, height, rs.format.z16, args.fps)
     profile = pipeline.start(config)
     try:
         _apply_emitter(profile, args.emitter, rs)
-        align = rs.align(rs.stream.color)
         depth_sensor = profile.get_device().first_depth_sensor()
         depth_scale = float(depth_sensor.get_depth_scale())
         color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
         intr = color_stream.get_intrinsics()
-        intrinsics = CameraIntrinsics(fx=float(intr.fx), fy=float(intr.fy), cx=float(intr.ppx), cy=float(intr.ppy))
+        intrinsics = camera_intrinsics_from_rs(intr)
+        k_color = rs_intrinsics_to_matrix(intr)
+        if args.depth_source == "ffs":
+            ir_left_profile = profile.get_stream(rs.stream.infrared, 1).as_video_stream_profile()
+            ir_right_profile = profile.get_stream(rs.stream.infrared, 2).as_video_stream_profile()
+            ir_left_to_right = ir_left_profile.get_extrinsics_to(ir_right_profile)
+            ir_left_to_color = ir_left_profile.get_extrinsics_to(color_stream)
+            return RealtimeCameraRuntime(
+                pipeline=pipeline,
+                align=None,
+                serial=serial,
+                intrinsics=intrinsics,
+                depth_scale_m_per_unit=depth_scale,
+                k_color=k_color,
+                k_ir_left=rs_intrinsics_to_matrix(ir_left_profile.get_intrinsics()),
+                t_ir_left_to_color=rs_extrinsics_to_matrix(ir_left_to_color),
+                ir_baseline_m=rs_translation_norm(ir_left_to_right),
+            )
+        align = rs.align(rs.stream.color)
     except Exception:
         pipeline.stop()
         raise
-    return pipeline, align, serial, intrinsics, depth_scale
+    return RealtimeCameraRuntime(
+        pipeline=pipeline,
+        align=align,
+        serial=serial,
+        intrinsics=intrinsics,
+        depth_scale_m_per_unit=depth_scale,
+        k_color=k_color,
+    )
 
 
 class RealtimeSingleCameraPointCloudDemo:
@@ -797,22 +1151,38 @@ class RealtimeSingleCameraPointCloudDemo:
         self.render_backend = resolve_render_backend(args)
         self.backproject_backend = "none"
         self.capture_slot: LatestSlot[FramePacket] = LatestSlot()
+        self.depth_slot: LatestSlot[DepthFramePacket] = LatestSlot()
         self.render_slot: LatestSlot[PointCloudPacket | ImagePacket] = LatestSlot()
         self.stop_event = threading.Event()
         self.capture_thread: threading.Thread | None = None
-        self.worker_thread: threading.Thread | None = None
+        self.depth_thread: threading.Thread | None = None
+        self.render_worker_thread: threading.Thread | None = None
         self.pipeline: object | None = None
         self.align: object | None = None
         self.serial = ""
         self.intrinsics = CameraIntrinsics(0.0, 0.0, 0.0, 0.0)
         self.depth_scale_m_per_unit = 0.0
+        self.k_color = np.eye(3, dtype=np.float32)
+        self.k_ir_left: np.ndarray | None = None
+        self.t_ir_left_to_color: np.ndarray | None = None
+        self.ir_baseline_m = 0.0
+        self.ffs_runner: object | None = None
         self._request_render_update: Callable[[], None] = lambda: None
         self._last_debug_log_s = 0.0
 
     def run(self) -> int:
-        self.pipeline, self.align, self.serial, self.intrinsics, self.depth_scale_m_per_unit = _start_realsense_pipeline(
-            self.args
-        )
+        if self.args.depth_source == "ffs":
+            self.ffs_runner = self._create_ffs_runner()
+        runtime = _start_realsense_pipeline(self.args)
+        self.pipeline = runtime.pipeline
+        self.align = runtime.align
+        self.serial = runtime.serial
+        self.intrinsics = runtime.intrinsics
+        self.depth_scale_m_per_unit = runtime.depth_scale_m_per_unit
+        self.k_color = runtime.k_color
+        self.k_ir_left = runtime.k_ir_left
+        self.t_ir_left_to_color = runtime.t_ir_left_to_color
+        self.ir_baseline_m = runtime.ir_baseline_m
         if self.render_backend == "pointcloud":
             self.projection_grid = build_projection_grid(
                 width=self.width,
@@ -827,11 +1197,25 @@ class RealtimeSingleCameraPointCloudDemo:
             )
             if self.backproject_backend == "numba":
                 warm_up_numba_backprojection()
+        elif self.args.depth_source == "realsense" and self.args.backproject_backend == "numba":
+            warm_up_numba_backprojection()
         try:
             self._run_open3d_viewer()
         finally:
             self.stop()
         return 0
+
+    def _create_ffs_runner(self) -> object:
+        try:
+            from data_process.depth_backends import FastFoundationStereoTensorRTRunner
+
+            return FastFoundationStereoTensorRTRunner(
+                ffs_repo=Path(self.args.ffs_repo),
+                model_dir=Path(self.args.ffs_trt_model_dir),
+                trt_root=None if self.args.ffs_trt_root is None else Path(self.args.ffs_trt_root),
+            )
+        except Exception as exc:
+            raise RuntimeError(f"failed to start FFS TensorRT runner: {type(exc).__name__}: {exc}") from exc
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -842,36 +1226,63 @@ class RealtimeSingleCameraPointCloudDemo:
             except Exception:
                 pass
             self.pipeline = None
-        for thread in (self.capture_thread, self.worker_thread):
+        for thread in (self.capture_thread, self.depth_thread, self.render_worker_thread):
             if thread is not None and thread.is_alive():
                 thread.join(timeout=2.0)
 
     def _start_threads(self) -> None:
         self.capture_thread = threading.Thread(target=self._capture_loop, name="single-d455-capture", daemon=True)
-        self.worker_thread = threading.Thread(target=self._postprocess_loop, name="single-d455-postprocess", daemon=True)
+        depth_target = self._ffs_depth_loop if self.args.depth_source == "ffs" else self._native_depth_loop
+        self.depth_thread = threading.Thread(target=depth_target, name="single-d455-depth", daemon=True)
+        self.render_worker_thread = threading.Thread(
+            target=self._render_prep_loop,
+            name="single-d455-render-prep",
+            daemon=True,
+        )
         self.capture_thread.start()
-        self.worker_thread.start()
+        self.depth_thread.start()
+        self.render_worker_thread.start()
 
     def _capture_loop(self) -> None:
         assert self.pipeline is not None
-        assert self.align is not None
         seq = 0
         while not self.stop_event.is_set():
             try:
                 wait_start_s = time.perf_counter()
                 frames = self.pipeline.wait_for_frames(1000)
                 receive_perf_s = time.perf_counter()
-                aligned = self.align.process(frames)
-                align_done_s = time.perf_counter()
-                color_frame = aligned.get_color_frame()
-                depth_frame = aligned.get_depth_frame()
-                if not color_frame or not depth_frame:
-                    continue
+                if self.args.depth_source == "ffs":
+                    align_done_s = receive_perf_s
+                    color_frame = frames.get_color_frame()
+                    ir_left_frame = frames.get_infrared_frame(1)
+                    ir_right_frame = frames.get_infrared_frame(2)
+                    if not color_frame or not ir_left_frame or not ir_right_frame:
+                        continue
+                else:
+                    assert self.align is not None
+                    aligned = self.align.process(frames)
+                    align_done_s = time.perf_counter()
+                    color_frame = aligned.get_color_frame()
+                    depth_frame = aligned.get_depth_frame()
+                    if not color_frame or not depth_frame:
+                        continue
                 copy_start_s = time.perf_counter()
                 color_bgr = np.ascontiguousarray(np.asanyarray(color_frame.get_data()).copy())
-                depth_u16 = np.ascontiguousarray(np.asanyarray(depth_frame.get_data()).copy())
+                if self.args.depth_source == "ffs":
+                    ir_left_u8 = np.ascontiguousarray(np.asanyarray(ir_left_frame.get_data()).copy())
+                    ir_right_u8 = np.ascontiguousarray(np.asanyarray(ir_right_frame.get_data()).copy())
+                    depth_u16 = None
+                else:
+                    depth_u16 = np.ascontiguousarray(np.asanyarray(depth_frame.get_data()).copy())
+                    ir_left_u8 = None
+                    ir_right_u8 = None
                 copy_done_s = time.perf_counter()
-                if color_bgr.shape[:2] != (self.height, self.width) or depth_u16.shape != (self.height, self.width):
+                if color_bgr.shape[:2] != (self.height, self.width):
+                    continue
+                if self.args.depth_source == "ffs":
+                    if ir_left_u8.shape != (self.height, self.width) or ir_right_u8.shape != (self.height, self.width):
+                        continue
+                elif depth_u16 is None or depth_u16.shape != (self.height, self.width):
                     continue
                 seq += 1
                 timing = PipelineTiming(
@@ -883,18 +1294,24 @@ class RealtimeSingleCameraPointCloudDemo:
                     FramePacket(
                         seq=seq,
                         color_bgr=color_bgr,
-                        depth_u16=depth_u16,
                         intrinsics=self.intrinsics,
-                        depth_scale_m_per_unit=self.depth_scale_m_per_unit,
                         receive_perf_s=receive_perf_s,
                         timing=timing,
+                        depth_source=str(self.args.depth_source),
+                        depth_u16=depth_u16,
+                        depth_scale_m_per_unit=self.depth_scale_m_per_unit,
+                        ir_left_u8=ir_left_u8,
+                        ir_right_u8=ir_right_u8,
+                        k_ir_left=self.k_ir_left,
+                        t_ir_left_to_color=self.t_ir_left_to_color,
+                        ir_baseline_m=self.ir_baseline_m,
                     )
                 )
             except Exception:
                 if not self.stop_event.is_set():
                     self.stop_event.wait(0.01)
 
-    def _postprocess_loop(self) -> None:
+    def _native_depth_loop(self) -> None:
         last_frame_seq = -1
         while not self.stop_event.is_set():
             frame = self.capture_slot.get_latest_after(last_frame_seq)
@@ -902,22 +1319,128 @@ class RealtimeSingleCameraPointCloudDemo:
                 self.stop_event.wait(0.001)
                 continue
             last_frame_seq = frame.seq
+            if frame.depth_u16 is None:
+                continue
+            depth_done_s = time.perf_counter()
+            self.depth_slot.put(
+                DepthFramePacket(
+                    seq=frame.seq,
+                    color_bgr=frame.color_bgr,
+                    depth_source=frame.depth_source,
+                    intrinsics=frame.intrinsics,
+                    receive_perf_s=frame.receive_perf_s,
+                    process_done_perf_s=depth_done_s,
+                    dropped_capture_frames=self.capture_slot.dropped_count,
+                    dropped_ffs_frames=self.depth_slot.dropped_count,
+                    timing=frame.timing,
+                    depth_u16=frame.depth_u16,
+                    depth_scale_m_per_unit=frame.depth_scale_m_per_unit,
+                )
+            )
+
+    def _ffs_depth_loop(self) -> None:
+        runner = self.ffs_runner
+        if runner is None:
+            if not self.stop_event.is_set():
+                print("[ERROR] FFS depth worker started without a TensorRT runner", flush=True)
+                self.stop_event.set()
+            return
+
+        last_frame_seq = -1
+        while not self.stop_event.is_set():
+            frame = self.capture_slot.get_latest_after(last_frame_seq)
+            if frame is None:
+                self.stop_event.wait(0.001)
+                continue
+            last_frame_seq = frame.seq
+            if (
+                frame.ir_left_u8 is None
+                or frame.ir_right_u8 is None
+                or frame.k_ir_left is None
+                or frame.t_ir_left_to_color is None
+                or frame.ir_baseline_m <= 0
+            ):
+                continue
+            try:
+                ffs_start_s = time.perf_counter()
+                output = runner.run_pair(
+                    frame.ir_left_u8,
+                    frame.ir_right_u8,
+                    K_ir_left=frame.k_ir_left,
+                    baseline_m=float(frame.ir_baseline_m),
+                )
+                ffs_done_s = time.perf_counter()
+                depth_ir_left_m = np.asarray(output["depth_ir_left_m"], dtype=np.float32)
+                k_ir_left_used = np.asarray(output.get("K_ir_left_used", frame.k_ir_left), dtype=np.float32)
+                align_start_s = time.perf_counter()
+                depth_color_m = align_ir_depth_to_color_fast(
+                    depth_ir_left_m,
+                    k_ir_left_used,
+                    frame.t_ir_left_to_color,
+                    self.k_color,
+                    output_shape=(self.height, self.width),
+                )
+                align_done_s = time.perf_counter()
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    print(f"[WARN] FFS depth frame {frame.seq} failed: {type(exc).__name__}: {exc}", flush=True)
+                continue
+
+            timing = replace(
+                frame.timing,
+                ffs_ms=_elapsed_ms(ffs_start_s, ffs_done_s),
+                ffs_align_ms=_elapsed_ms(align_start_s, align_done_s),
+            )
+            self.depth_slot.put(
+                DepthFramePacket(
+                    seq=frame.seq,
+                    color_bgr=frame.color_bgr,
+                    depth_source=frame.depth_source,
+                    intrinsics=frame.intrinsics,
+                    receive_perf_s=frame.receive_perf_s,
+                    process_done_perf_s=time.perf_counter(),
+                    dropped_capture_frames=self.capture_slot.dropped_count,
+                    dropped_ffs_frames=self.depth_slot.dropped_count,
+                    timing=timing,
+                    depth_m=depth_color_m,
+                )
+            )
+
+    def _render_prep_loop(self) -> None:
+        last_depth_seq = -1
+        while not self.stop_event.is_set():
+            frame = self.depth_slot.get_latest_after(last_depth_seq)
+            if frame is None:
+                self.stop_event.wait(0.001)
+                continue
+            last_depth_seq = frame.seq
             if self.render_backend == "image":
                 self._process_image_frame(frame)
             else:
                 self._process_pointcloud_frame(frame)
 
-    def _process_image_frame(self, frame: FramePacket) -> None:
+    def _process_image_frame(self, frame: DepthFramePacket) -> None:
         try:
             mask_start_s = time.perf_counter()
-            image_rgb, valid_count = build_camera_view_image(
-                color_bgr=frame.color_bgr,
-                depth_u16=frame.depth_u16,
-                depth_scale_m_per_unit=frame.depth_scale_m_per_unit,
-                depth_min_m=self.args.depth_min_m,
-                depth_max_m=self.args.depth_max_m,
-                splat_px=self.args.image_splat_px,
-            )
+            if frame.depth_u16 is not None:
+                image_rgb, valid_count = build_camera_view_image(
+                    color_bgr=frame.color_bgr,
+                    depth_u16=frame.depth_u16,
+                    depth_scale_m_per_unit=frame.depth_scale_m_per_unit,
+                    depth_min_m=self.args.depth_min_m,
+                    depth_max_m=self.args.depth_max_m,
+                    splat_px=self.args.image_splat_px,
+                )
+            elif frame.depth_m is not None:
+                image_rgb, valid_count = build_camera_view_image_from_depth_m(
+                    color_bgr=frame.color_bgr,
+                    depth_m=frame.depth_m,
+                    depth_min_m=self.args.depth_min_m,
+                    depth_max_m=self.args.depth_max_m,
+                    splat_px=self.args.image_splat_px,
+                )
+            else:
+                return
             mask_done_s = time.perf_counter()
         except Exception:
             return
@@ -927,32 +1450,50 @@ class RealtimeSingleCameraPointCloudDemo:
                 seq=frame.seq,
                 image_rgb_u8=image_rgb,
                 valid_count=valid_count,
+                depth_source=frame.depth_source,
                 receive_perf_s=frame.receive_perf_s,
                 process_done_perf_s=time.perf_counter(),
-                dropped_capture_frames=self.capture_slot.dropped_count,
+                dropped_capture_frames=frame.dropped_capture_frames,
+                dropped_ffs_frames=self.depth_slot.dropped_count,
                 timing=timing,
             )
         )
         self._request_render_update()
 
-    def _process_pointcloud_frame(self, frame: FramePacket) -> None:
+    def _process_pointcloud_frame(self, frame: DepthFramePacket) -> None:
         projection_grid = self.projection_grid
         if projection_grid is None:
             return
         try:
             backproject_start_s = time.perf_counter()
-            points, colors = backproject_aligned_rgbd(
-                color_bgr=frame.color_bgr,
-                depth_u16=frame.depth_u16,
-                intrinsics=frame.intrinsics,
-                depth_scale_m_per_unit=frame.depth_scale_m_per_unit,
-                depth_min_m=self.args.depth_min_m,
-                depth_max_m=self.args.depth_max_m,
-                stride=self.args.stride,
-                max_points=self.args.max_points,
-                projection_grid=projection_grid,
-                backproject_backend=self.backproject_backend,
-            )
+            backproject_backend = self.backproject_backend
+            if frame.depth_u16 is not None:
+                points, colors = backproject_aligned_rgbd(
+                    color_bgr=frame.color_bgr,
+                    depth_u16=frame.depth_u16,
+                    intrinsics=frame.intrinsics,
+                    depth_scale_m_per_unit=frame.depth_scale_m_per_unit,
+                    depth_min_m=self.args.depth_min_m,
+                    depth_max_m=self.args.depth_max_m,
+                    stride=self.args.stride,
+                    max_points=self.args.max_points,
+                    projection_grid=projection_grid,
+                    backproject_backend=self.backproject_backend,
+                )
+            elif frame.depth_m is not None:
+                points, colors = backproject_aligned_rgbd_depth_m(
+                    color_bgr=frame.color_bgr,
+                    depth_m=frame.depth_m,
+                    intrinsics=frame.intrinsics,
+                    depth_min_m=self.args.depth_min_m,
+                    depth_max_m=self.args.depth_max_m,
+                    stride=self.args.stride,
+                    max_points=self.args.max_points,
+                    projection_grid=projection_grid,
+                )
+                backproject_backend = "float32-numpy"
+            else:
+                return
             backproject_done_s = time.perf_counter()
         except Exception:
             return
@@ -962,10 +1503,12 @@ class RealtimeSingleCameraPointCloudDemo:
                 seq=frame.seq,
                 points_xyz_m=points,
                 colors_rgb_u8=colors,
-                backproject_backend=self.backproject_backend,
+                backproject_backend=backproject_backend,
+                depth_source=frame.depth_source,
                 receive_perf_s=frame.receive_perf_s,
                 process_done_perf_s=time.perf_counter(),
-                dropped_capture_frames=self.capture_slot.dropped_count,
+                dropped_capture_frames=frame.dropped_capture_frames,
+                dropped_ffs_frames=self.depth_slot.dropped_count,
                 timing=timing,
             )
         )
@@ -1010,7 +1553,7 @@ class RealtimeSingleCameraPointCloudDemo:
                 rect.x + 0.5 * em,
                 rect.y + 0.5 * em,
                 max(preferred.width, 640),
-                max(preferred.height, (11.0 if self.args.debug else 8.0) * em),
+                max(preferred.height, (12.0 if self.args.debug else 9.0) * em),
             )
 
         window.set_on_layout(on_layout)
@@ -1182,7 +1725,9 @@ class RealtimeSingleCameraPointCloudDemo:
             f"mean latency: {stats.mean_latency_ms:.1f} ms\n"
             f"points: {packet.point_count}  max-points: {max_points}\n"
             f"dropped capture frames: {packet.dropped_capture_frames}\n"
+            f"dropped depth/render packets: {packet.dropped_ffs_frames}/{self.render_slot.dropped_count}\n"
             f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
+            f"depth source: {packet.depth_source}\n"
             f"view/backend/backproject: {self.args.view_mode}/{self.render_backend}/{backproject_backend}\n"
             f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
         )
@@ -1191,6 +1736,7 @@ class RealtimeSingleCameraPointCloudDemo:
                 "\n"
                 f"profiler ms: depth_to_render={depth_to_render_ms(timing):.2f} "
                 f"wait={timing.wait_ms:.2f} align={timing.align_ms:.2f} copy={timing.frame_copy_ms:.2f}\n"
+                f"ffs={timing.ffs_ms:.2f} ffs_align={timing.ffs_align_ms:.2f} "
                 f"mask={timing.image_mask_ms:.2f} backproject={timing.backproject_ms:.2f} "
                 f"o3d_convert={timing.open3d_convert_ms:.2f} o3d_update={timing.open3d_update_ms:.2f}"
             )
@@ -1213,9 +1759,12 @@ class RealtimeSingleCameraPointCloudDemo:
             f"render_fps={stats.render_fps:.1f} "
             f"receive_to_render_ms={timing.receive_to_render_ms:.2f} "
             f"depth_to_render_ms={depth_to_render_ms(timing):.2f} "
+            f"depth_source={packet.depth_source} "
             f"wait_ms={timing.wait_ms:.2f} "
             f"align_ms={timing.align_ms:.2f} "
             f"copy_ms={timing.frame_copy_ms:.2f} "
+            f"ffs_ms={timing.ffs_ms:.2f} "
+            f"ffs_align_ms={timing.ffs_align_ms:.2f} "
             f"mask_ms={timing.image_mask_ms:.2f} "
             f"backproject_ms={timing.backproject_ms:.2f} "
             f"o3d_convert_ms={timing.open3d_convert_ms:.2f} "
@@ -1223,7 +1772,9 @@ class RealtimeSingleCameraPointCloudDemo:
             f"backend={self.render_backend} "
             f"backproject_backend={getattr(packet, 'backproject_backend', self.backproject_backend)} "
             f"points={packet.point_count} "
-            f"dropped_capture={packet.dropped_capture_frames}",
+            f"dropped_capture={packet.dropped_capture_frames} "
+            f"dropped_depth={packet.dropped_ffs_frames} "
+            f"dropped_render={self.render_slot.dropped_count}",
             flush=True,
         )
 
