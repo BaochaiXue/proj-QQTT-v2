@@ -1041,11 +1041,19 @@ class FastFoundationStereoTensorRTRunner:
         )
         return left_tensor, right_tensor
 
-    def _copy_disparity_to_numpy(self, disparity: Any, *, stable_copy: bool) -> np.ndarray:
+    def _copy_disparity_to_numpy(
+        self,
+        disparity: Any,
+        *,
+        stable_copy: bool,
+        sync_stream: Any | None = None,
+    ) -> np.ndarray:
         tensor = disparity.detach()
-        if not getattr(tensor, "is_cuda", False) or not tensor.is_contiguous():
+        if not getattr(tensor, "is_cuda", False):
             array = tensor.cpu().numpy()
             return array.copy() if stable_copy else array
+        if not tensor.is_contiguous():
+            tensor = tensor.contiguous()
 
         shape = tuple(int(item) for item in tensor.shape)
         if (
@@ -1059,7 +1067,7 @@ class FastFoundationStereoTensorRTRunner:
                 pin_memory=True,
             )
         self._disparity_host_buffer.copy_(tensor, non_blocking=True)
-        self.torch.cuda.current_stream().synchronize()
+        (sync_stream or self.torch.cuda.current_stream()).synchronize()
         array = self._disparity_host_buffer.numpy()
         return array.copy() if stable_copy else array
 
@@ -1091,18 +1099,15 @@ class FastFoundationStereoTensorRTRunner:
             prepared_left.append(left)
             prepared_right.append(right)
 
-        left_tensor, right_tensor = self._build_input_tensors(prepared_left, prepared_right)
-        disparity = run_forward_on_non_default_cuda_stream(
-            torch_module=self.torch,
-            stream=self.inference_stream,
-            forward_fn=self.model.forward,
-            image1=left_tensor,
-            image2=right_tensor,
-        )
-        disparity_raw = self._copy_disparity_to_numpy(
-            disparity,
-            stable_copy=any(bool(sample.get("audit_mode", False)) for sample in batch_samples),
-        )
+        stable_copy = any(bool(sample.get("audit_mode", False)) for sample in batch_samples)
+        with self.torch.cuda.stream(self.inference_stream):
+            left_tensor, right_tensor = self._build_input_tensors(prepared_left, prepared_right)
+            disparity = self.model.forward(image1=left_tensor, image2=right_tensor)
+            disparity_raw = self._copy_disparity_to_numpy(
+                disparity,
+                stable_copy=stable_copy,
+                sync_stream=self.inference_stream,
+            )
         return finalize_tensorrt_disparity_batch_outputs(
             disparity_raw,
             transform=batch_transform or resolve_tensorrt_image_transform(
