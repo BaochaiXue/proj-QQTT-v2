@@ -443,6 +443,72 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         )
         np.testing.assert_allclose(with_grid, without_grid)
 
+    def test_ffs_ir_to_color_aligner_matches_reference_and_reuses_output(self) -> None:
+        depth_ir = np.array([[1.0, 2.0], [0.0, 3.0]], dtype=np.float32)
+        K = np.array([[2.0, 0.0, 0.5], [0.0, 2.0, 0.5], [0.0, 0.0, 1.0]], dtype=np.float32)
+        T = np.eye(4, dtype=np.float32)
+        aligner = demo.FfsIrToColorAligner(
+            k_ir_left=K,
+            t_ir_left_to_color=T,
+            k_color=K,
+            ir_shape=depth_ir.shape,
+            color_shape=(2, 2),
+        )
+        expected = align_depth_to_color(depth_ir, K, T, K, output_shape=(2, 2))
+        actual = aligner.align(depth_ir)
+        np.testing.assert_allclose(actual, expected)
+        self.assertIs(actual, aligner.output)
+        self.assertIs(aligner.align(depth_ir), actual)
+
+    def test_numba_ffs_ir_to_color_aligner_matches_numpy_when_available(self) -> None:
+        if not demo.numba_ffs_align_available():
+            self.skipTest("numba is not installed")
+        depth_ir = np.array(
+            [
+                [2.0, 1.0, np.nan],
+                [np.inf, 0.5, -1.0],
+                [1.5, 3.0, 4.0],
+            ],
+            dtype=np.float32,
+        )
+        K_ir = np.array([[3.0, 0.0, 1.0], [0.0, 2.5, 1.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+        T = np.array(
+            [
+                [1.0, 0.0, 0.0, 0.02],
+                [0.0, 1.0, 0.0, -0.01],
+                [0.0, 0.0, 1.0, 0.03],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        K_color = np.array([[2.2, 0.0, 1.1], [0.0, 2.0, 0.8], [0.0, 0.0, 1.0]], dtype=np.float32)
+        numba_aligner = demo.FfsIrToColorAligner(
+            k_ir_left=K_ir,
+            t_ir_left_to_color=T,
+            k_color=K_color,
+            ir_shape=depth_ir.shape,
+            color_shape=(3, 4),
+        )
+        self.assertEqual(numba_aligner.align_backend, "numba")
+        numba_output = numba_aligner.align(depth_ir, invalid_value=-1.0).copy()
+
+        original_numba_align = demo._align_ir_to_color_numba
+        try:
+            demo._align_ir_to_color_numba = None  # type: ignore[assignment]
+            numpy_aligner = demo.FfsIrToColorAligner(
+                k_ir_left=K_ir,
+                t_ir_left_to_color=T,
+                k_color=K_color,
+                ir_shape=depth_ir.shape,
+                color_shape=(3, 4),
+            )
+            self.assertEqual(numpy_aligner.align_backend, "numpy")
+            numpy_output = numpy_aligner.align(depth_ir, invalid_value=-1.0).copy()
+        finally:
+            demo._align_ir_to_color_numba = original_numba_align  # type: ignore[assignment]
+
+        np.testing.assert_allclose(numba_output, numpy_output)
+
     def test_latest_wins_drops_across_depth_and_render_slots(self) -> None:
         depth_slot: demo.LatestSlot[DummyPacket] = demo.LatestSlot()
         render_slot: demo.LatestSlot[DummyPacket] = demo.LatestSlot()
@@ -534,7 +600,9 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             "sys.modules[spec.name] = module; "
             "spec.loader.exec_module(module); "
             "module.warm_up_numba_backprojection(); "
-            "print(module.resolve_backproject_backend('auto', stride=1, projection_grid_available=True))"
+            "module.warm_up_numba_ffs_align(); "
+            "print(module.resolve_backproject_backend('auto', stride=1, projection_grid_available=True)); "
+            "print(module.numba_ffs_align_available())"
         )
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -545,6 +613,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             stderr=subprocess.PIPE,
         )
         self.assertIn("numba", result.stdout)
+        self.assertIn("True", result.stdout)
 
     def test_projection_grid_matches_pixel_grid_backprojection(self) -> None:
         color_bgr = np.array(
@@ -584,16 +653,35 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
     def test_latest_slot_drops_stale_packets(self) -> None:
         slot: demo.LatestSlot[DummyPacket] = demo.LatestSlot()
         self.assertEqual(slot.dropped_count, 0)
+        self.assertEqual(slot.total_dropped_count, 0)
         slot.put(DummyPacket(seq=1))
         slot.put(DummyPacket(seq=2))
         self.assertEqual(slot.dropped_count, 1)
+        self.assertEqual(slot.total_dropped_count, 1)
         packet = slot.get_latest_after(-1)
         self.assertIsNotNone(packet)
         self.assertEqual(packet.seq, 2)
         self.assertIsNone(slot.get_latest_after(2))
         slot.put(DummyPacket(seq=3))
         self.assertEqual(slot.dropped_count, 1)
+        self.assertEqual(slot.total_dropped_count, 1)
         self.assertEqual(slot.get_latest_after(2).seq, 3)  # type: ignore[union-attr]
+
+    def test_latest_slot_reset_splits_total_and_steady_state_drops(self) -> None:
+        slot: demo.LatestSlot[DummyPacket] = demo.LatestSlot()
+        slot.put(DummyPacket(seq=1))
+        slot.put(DummyPacket(seq=2))
+        self.assertEqual(slot.dropped_count, 1)
+        self.assertEqual(slot.total_dropped_count, 1)
+        slot.reset_dropped_count()
+        self.assertEqual(slot.dropped_count, 0)
+        self.assertEqual(slot.total_dropped_count, 1)
+        slot.put(DummyPacket(seq=3))
+        self.assertEqual(slot.dropped_count, 0)
+        self.assertEqual(slot.total_dropped_count, 2)
+        slot.put(DummyPacket(seq=4))
+        self.assertEqual(slot.dropped_count, 1)
+        self.assertEqual(slot.total_dropped_count, 3)
 
     def test_render_stats_are_deterministic(self) -> None:
         stats = demo.RenderStats(window_s=1.0)
@@ -603,6 +691,45 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(stats.render_fps, 2.0)
         self.assertAlmostEqual(stats.latest_latency_ms, 30.0)
         self.assertAlmostEqual(stats.mean_latency_ms, 20.0)
+
+    def test_fixed_rate_pull_step_does_not_catch_up_in_bursts(self) -> None:
+        interval = 1.0 / demo.GUI_RENDER_PULL_HZ
+        next_pull, should_pull = demo.fixed_rate_pull_step(now_s=0.0, next_pull_s=interval, interval_s=interval)
+        self.assertFalse(should_pull)
+        self.assertAlmostEqual(next_pull, interval)
+        next_pull, should_pull = demo.fixed_rate_pull_step(now_s=interval, next_pull_s=interval, interval_s=interval)
+        self.assertTrue(should_pull)
+        self.assertAlmostEqual(next_pull, interval * 2.0)
+        delayed_next, should_pull = demo.fixed_rate_pull_step(now_s=1.0, next_pull_s=next_pull, interval_s=interval)
+        self.assertTrue(should_pull)
+        self.assertAlmostEqual(delayed_next, 1.0 + interval)
+        with self.assertRaises(ValueError):
+            demo.fixed_rate_pull_step(now_s=0.0, next_pull_s=0.0, interval_s=0.0)
+
+    def test_drop_stats_snapshot_reports_total_after_warmup_and_window_delta(self) -> None:
+        args = demo.build_parser().parse_args(["--debug"])
+        viewer = demo.RealtimeSingleCameraPointCloudDemo(args)
+        viewer.capture_slot.put(DummyPacket(seq=1))
+        viewer.capture_slot.put(DummyPacket(seq=2))
+        before_reset = viewer._drop_stats_snapshot(update_window=True)
+        self.assertEqual(before_reset.capture_total, 1)
+        self.assertEqual(before_reset.capture_after_warmup, 1)
+        self.assertEqual(before_reset.capture_delta_last_window, 1)
+        viewer._drop_stats_start_s = 10.0
+        viewer._maybe_reset_drop_stats(10.0 + demo.DROP_STATS_WARMUP_S + 0.1)
+        after_reset = viewer._drop_stats_snapshot(update_window=True)
+        self.assertEqual(after_reset.capture_total, 1)
+        self.assertEqual(after_reset.capture_after_warmup, 0)
+        self.assertEqual(after_reset.capture_delta_last_window, 0)
+        viewer.capture_slot.put(DummyPacket(seq=3))
+        straddling = viewer._drop_stats_snapshot(update_window=True)
+        self.assertEqual(straddling.capture_total, 2)
+        self.assertEqual(straddling.capture_after_warmup, 0)
+        viewer.capture_slot.put(DummyPacket(seq=4))
+        steady = viewer._drop_stats_snapshot(update_window=True)
+        self.assertEqual(steady.capture_total, 3)
+        self.assertEqual(steady.capture_after_warmup, 1)
+        self.assertEqual(steady.capture_delta_last_window, 1)
 
     def test_depth_to_render_profiler_sum_excludes_camera_wait(self) -> None:
         timing = demo.PipelineTiming(
@@ -638,8 +765,39 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         text = viewer._format_hud(packet=packet, stats=stats, timing=timing)
         self.assertIn("depth source: ffs", text)
         self.assertIn("dropped depth/render packets: 3/0", text)
+        self.assertIn("dropped capture frames: 2 (total 2)", text)
         self.assertIn("ffs=9.50", text)
         self.assertIn("ffs_align=0.70", text)
+
+    def test_debug_log_uses_explicit_drop_stat_fields(self) -> None:
+        args = demo.build_parser().parse_args(["--debug", "--depth-source", "ffs"])
+        viewer = demo.RealtimeSingleCameraPointCloudDemo(args)
+        viewer.capture_slot.put(DummyPacket(seq=1))
+        viewer.capture_slot.put(DummyPacket(seq=2))
+        viewer.depth_slot.put(DummyPacket(seq=1))
+        viewer.depth_slot.put(DummyPacket(seq=2))
+        viewer.render_slot.put(DummyPacket(seq=1))
+        viewer.render_slot.put(DummyPacket(seq=2))
+        viewer._last_debug_log_s = -999.0
+        packet = demo.ImagePacket(
+            seq=2,
+            image_rgb_u8=np.zeros((1, 1, 3), dtype=np.uint8),
+            valid_count=1,
+            depth_source="ffs",
+            receive_perf_s=0.0,
+            process_done_perf_s=0.0,
+            dropped_capture_frames=0,
+            dropped_ffs_frames=0,
+            timing=demo.PipelineTiming(ffs_ms=9.5, ffs_align_ms=0.7, receive_to_render_ms=20.0),
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as stdout:
+            viewer._maybe_log_debug(packet=packet, stats=demo.RenderStats(), timing=packet.timing, now_s=0.0)
+        text = stdout.getvalue()
+        self.assertIn("dropped_capture_total=1", text)
+        self.assertIn("dropped_capture_after_warmup=1", text)
+        self.assertIn("dropped_capture_delta_last_window=1", text)
+        self.assertIn("dropped_depth_delta_last_window=1", text)
+        self.assertIn("dropped_render_delta_last_window=1", text)
 
     def test_raw_ffs_depth_aligns_in_render_prep_stage(self) -> None:
         args = demo.build_parser().parse_args(["--depth-source", "ffs"])
@@ -647,6 +805,14 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         color_bgr = np.array([[[1, 2, 3], [4, 5, 6]]], dtype=np.uint8)
         K = np.eye(3, dtype=np.float32)
         ray_grid = demo.build_projection_grid_from_matrix(width=2, height=1, K=K)
+        calls: list[tuple[tuple[int, int], tuple[int, int]]] = []
+
+        class FakeAligner:
+            def align(self, depth_ir_m: np.ndarray) -> np.ndarray:
+                calls.append((depth_ir_m.shape, color_bgr.shape[:2]))
+                return np.array([[1.0, 0.0]], dtype=np.float32)
+
+        fake_aligner = FakeAligner()
         packet = demo.RawFfsDepthPacket(
             seq=7,
             color_bgr=color_bgr,
@@ -656,33 +822,14 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             t_ir_left_to_color=np.eye(4, dtype=np.float32),
             k_color=K,
             ir_projection_grid=ray_grid,
+            ir_to_color_aligner=fake_aligner,  # type: ignore[arg-type]
             receive_perf_s=0.0,
             ffs_done_perf_s=1.0,
             dropped_capture_frames=4,
             dropped_ffs_frames=0,
             timing=demo.PipelineTiming(ffs_ms=10.0),
         )
-        calls: list[tuple[tuple[int, int], tuple[int, int]]] = []
-        original_align = demo.align_ir_depth_to_color_fast
-
-        def fake_align(
-            depth_ir_m: np.ndarray,
-            K_ir_left: np.ndarray,
-            T_ir_left_to_color: np.ndarray,
-            K_color: np.ndarray,
-            output_shape: tuple[int, int],
-            invalid_value: float = 0.0,
-            ir_projection_grid: tuple[np.ndarray, np.ndarray] | None = None,
-        ) -> np.ndarray:
-            self.assertIs(ir_projection_grid, ray_grid)
-            calls.append((depth_ir_m.shape, output_shape))
-            return np.array([[1.0, 0.0]], dtype=np.float32)
-
-        try:
-            demo.align_ir_depth_to_color_fast = fake_align
-            viewer._process_image_frame(packet)
-        finally:
-            demo.align_ir_depth_to_color_fast = original_align
+        viewer._process_image_frame(packet)
 
         render_packet = viewer.render_slot.get_latest_after(-1)
         self.assertIsInstance(render_packet, demo.ImagePacket)

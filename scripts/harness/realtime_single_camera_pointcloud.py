@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import threading
 import time
-from typing import Callable, Generic, TypeVar
+from typing import Generic, TypeVar
 
 import numpy as np
 
@@ -40,6 +40,8 @@ DEFAULT_ORBIT_MAX_POINTS = 200000
 COORDINATE_FRAME = "camera_color_frame"
 GEOMETRY_NAME = "single_d455_live_pointcloud"
 DEBUG_LOG_INTERVAL_S = 1.0
+DROP_STATS_WARMUP_S = 2.0
+GUI_RENDER_PULL_HZ = 60.0
 
 
 @dataclass(frozen=True)
@@ -107,6 +109,7 @@ class RawFfsDepthPacket:
     t_ir_left_to_color: np.ndarray
     k_color: np.ndarray
     ir_projection_grid: tuple[np.ndarray, np.ndarray] | None
+    ir_to_color_aligner: FfsIrToColorAligner | None
     receive_perf_s: float
     ffs_done_perf_s: float
     dropped_capture_frames: int
@@ -159,15 +162,19 @@ class LatestSlot(Generic[T]):
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._packet: T | None = None
-        self._last_taken_seq = -1
+        self._last_taken_seq_total = -1
+        self._last_taken_seq_window = -1
         self._dropped = 0
+        self._dropped_total = 0
 
     def put(self, packet: T) -> int:
         seq = _packet_seq(packet)
         with self._lock:
             if self._packet is not None:
                 current_seq = _packet_seq(self._packet)
-                if current_seq > self._last_taken_seq:
+                if current_seq > self._last_taken_seq_total:
+                    self._dropped_total += max(1, seq - current_seq)
+                if current_seq > self._last_taken_seq_window:
                     self._dropped += max(1, seq - current_seq)
             self._packet = packet
             return self._dropped
@@ -179,13 +186,25 @@ class LatestSlot(Generic[T]):
             seq = _packet_seq(self._packet)
             if seq <= last_seq:
                 return None
-            self._last_taken_seq = seq
+            self._last_taken_seq_total = seq
+            self._last_taken_seq_window = seq
             return self._packet
+
+    def reset_dropped_count(self) -> None:
+        with self._lock:
+            self._dropped = 0
+            if self._packet is not None:
+                self._last_taken_seq_window = max(self._last_taken_seq_window, _packet_seq(self._packet))
 
     @property
     def dropped_count(self) -> int:
         with self._lock:
             return self._dropped
+
+    @property
+    def total_dropped_count(self) -> int:
+        with self._lock:
+            return self._dropped_total
 
 
 class RenderStats:
@@ -219,6 +238,19 @@ class RenderStats:
         return float(sum(latency for _, latency in self._samples) / len(self._samples))
 
 
+@dataclass(frozen=True)
+class DropStatsSnapshot:
+    capture_total: int = 0
+    capture_after_warmup: int = 0
+    capture_delta_last_window: int = 0
+    depth_total: int = 0
+    depth_after_warmup: int = 0
+    depth_delta_last_window: int = 0
+    render_total: int = 0
+    render_after_warmup: int = 0
+    render_delta_last_window: int = 0
+
+
 def depth_to_render_ms(timing: PipelineTiming) -> float:
     return float(
         timing.align_ms
@@ -230,6 +262,14 @@ def depth_to_render_ms(timing: PipelineTiming) -> float:
         + timing.open3d_convert_ms
         + timing.open3d_update_ms
     )
+
+
+def fixed_rate_pull_step(*, now_s: float, next_pull_s: float, interval_s: float) -> tuple[float, bool]:
+    if interval_s <= 0:
+        raise ValueError("interval_s must be positive")
+    if now_s < next_pull_s:
+        return next_pull_s, False
+    return now_s + interval_s, True
 
 
 def _elapsed_ms(start_s: float, end_s: float) -> float:
@@ -359,6 +399,200 @@ def rs_extrinsics_to_matrix(extrinsics: object) -> np.ndarray:
 def rs_translation_norm(extrinsics: object) -> float:
     tx, ty, tz = map(float, getattr(extrinsics, "translation"))
     return float(math.sqrt(tx * tx + ty * ty + tz * tz))
+
+
+if njit is not None:
+
+    @njit
+    def _align_ir_to_color_numba(
+        depth_ir_m: np.ndarray,
+        a_x_flat: np.ndarray,
+        a_y_flat: np.ndarray,
+        a_z_flat: np.ndarray,
+        tx: np.float32,
+        ty: np.float32,
+        tz: np.float32,
+        color_fx: np.float32,
+        color_fy: np.float32,
+        color_cx: np.float32,
+        color_cy: np.float32,
+        out_flat: np.ndarray,
+        out_width: int,
+        out_height: int,
+        invalid_value: np.float32,
+    ) -> None:
+        for i in range(out_flat.shape[0]):
+            out_flat[i] = np.inf
+
+        ir_height, ir_width = depth_ir_m.shape
+        for y in range(ir_height):
+            row_offset = y * ir_width
+            for x in range(ir_width):
+                z = depth_ir_m[y, x]
+                if not np.isfinite(z) or z <= 0.0:
+                    continue
+
+                coeff_idx = row_offset + x
+                z_color = a_z_flat[coeff_idx] * z + tz
+                if not np.isfinite(z_color) or z_color <= 0.0:
+                    continue
+
+                x_color = a_x_flat[coeff_idx] * z + tx
+                y_color = a_y_flat[coeff_idx] * z + ty
+                u = int(np.rint((x_color / z_color) * color_fx + color_cx))
+                v = int(np.rint((y_color / z_color) * color_fy + color_cy))
+                if 0 <= u < out_width and 0 <= v < out_height:
+                    out_idx = v * out_width + u
+                    if z_color < out_flat[out_idx]:
+                        out_flat[out_idx] = z_color
+
+        for i in range(out_flat.shape[0]):
+            if not np.isfinite(out_flat[i]):
+                out_flat[i] = invalid_value
+
+else:
+    _align_ir_to_color_numba = None
+
+
+def numba_ffs_align_available() -> bool:
+    return _align_ir_to_color_numba is not None
+
+
+def warm_up_numba_ffs_align() -> None:
+    if _align_ir_to_color_numba is None:
+        return
+    depth = np.array([[1.0]], dtype=np.float32)
+    coeff = np.ones(1, dtype=np.float32)
+    output = np.empty(1, dtype=np.float32)
+    _align_ir_to_color_numba(
+        depth,
+        coeff,
+        coeff,
+        coeff,
+        np.float32(0.0),
+        np.float32(0.0),
+        np.float32(0.0),
+        np.float32(1.0),
+        np.float32(1.0),
+        np.float32(0.0),
+        np.float32(0.0),
+        output,
+        1,
+        1,
+        np.float32(0.0),
+    )
+
+
+class FfsIrToColorAligner:
+    """Reusable IR-left metric depth to color-frame depth aligner.
+
+    The returned aligned depth array is reused on the next align call.
+    Callers that need to retain it must copy it before calling align again.
+    """
+
+    def __init__(
+        self,
+        *,
+        k_ir_left: np.ndarray,
+        t_ir_left_to_color: np.ndarray,
+        k_color: np.ndarray,
+        ir_shape: tuple[int, int],
+        color_shape: tuple[int, int],
+    ) -> None:
+        ir_height, ir_width = (int(ir_shape[0]), int(ir_shape[1]))
+        color_height, color_width = (int(color_shape[0]), int(color_shape[1]))
+        if ir_height <= 0 or ir_width <= 0 or color_height <= 0 or color_width <= 0:
+            raise ValueError("ir_shape and color_shape must be positive")
+
+        k_color_arr = np.asarray(k_color, dtype=np.float32).reshape(3, 3)
+        transform = np.asarray(t_ir_left_to_color, dtype=np.float32).reshape(4, 4)
+        ray_x, ray_y = build_projection_grid_from_matrix(width=ir_width, height=ir_height, K=k_ir_left)
+        r = transform[:3, :3]
+
+        self.ir_shape = (ir_height, ir_width)
+        self.color_shape = (color_height, color_width)
+        self.color_width = color_width
+        self.color_fx = np.float32(k_color_arr[0, 0])
+        self.color_fy = np.float32(k_color_arr[1, 1])
+        self.color_cx = np.float32(k_color_arr[0, 2])
+        self.color_cy = np.float32(k_color_arr[1, 2])
+        self.tx = np.float32(transform[0, 3])
+        self.ty = np.float32(transform[1, 3])
+        self.tz = np.float32(transform[2, 3])
+        self.a_x = np.ascontiguousarray(r[0, 0] * ray_x + r[0, 1] * ray_y + r[0, 2], dtype=np.float32)
+        self.a_y = np.ascontiguousarray(r[1, 0] * ray_x + r[1, 1] * ray_y + r[1, 2], dtype=np.float32)
+        self.a_z = np.ascontiguousarray(r[2, 0] * ray_x + r[2, 1] * ray_y + r[2, 2], dtype=np.float32)
+        self.a_x_flat = self.a_x.ravel()
+        self.a_y_flat = self.a_y.ravel()
+        self.a_z_flat = self.a_z.ravel()
+        self.nearest = np.empty(color_height * color_width, dtype=np.float32)
+        self.output = self.nearest.reshape(color_height, color_width)
+        self.align_backend = "numba" if numba_ffs_align_available() else "numpy"
+
+    def align(self, depth_ir_m: np.ndarray, *, invalid_value: float = 0.0) -> np.ndarray:
+        depth = np.asarray(depth_ir_m, dtype=np.float32)
+        if depth.shape != self.ir_shape:
+            raise ValueError("depth_ir_m shape does not match aligner ir_shape")
+
+        invalid = np.float32(invalid_value)
+        if _align_ir_to_color_numba is not None:
+            out_height, out_width = self.color_shape
+            _align_ir_to_color_numba(
+                depth,
+                self.a_x_flat,
+                self.a_y_flat,
+                self.a_z_flat,
+                self.tx,
+                self.ty,
+                self.tz,
+                self.color_fx,
+                self.color_fy,
+                self.color_cx,
+                self.color_cy,
+                self.nearest,
+                out_width,
+                out_height,
+                invalid,
+            )
+            return self.output
+
+        return self._align_numpy(depth, invalid)
+
+    def _align_numpy(self, depth: np.ndarray, invalid: np.float32) -> np.ndarray:
+        self.nearest.fill(np.inf)
+        depth_flat = depth.ravel()
+        valid_flat = np.flatnonzero(np.isfinite(depth_flat) & (depth_flat > 0.0))
+        if valid_flat.size == 0:
+            self.output.fill(invalid)
+            return self.output
+
+        z = depth_flat[valid_flat].astype(np.float32, copy=False)
+        x_color = self.a_x_flat[valid_flat] * z + self.tx
+        y_color = self.a_y_flat[valid_flat] * z + self.ty
+        z_color = self.a_z_flat[valid_flat] * z + self.tz
+
+        front = np.isfinite(z_color) & (z_color > 0.0)
+        if not np.any(front):
+            self.output.fill(invalid)
+            return self.output
+
+        x_color = x_color[front]
+        y_color = y_color[front]
+        z_color = z_color[front]
+        u = np.rint((x_color / z_color) * self.color_fx + self.color_cx).astype(np.int32)
+        v = np.rint((y_color / z_color) * self.color_fy + self.color_cy).astype(np.int32)
+
+        out_height, out_width = self.color_shape
+        inside = (u >= 0) & (u < out_width) & (v >= 0) & (v < out_height)
+        if not np.any(inside):
+            self.output.fill(invalid)
+            return self.output
+
+        flat_idx = (v[inside] * self.color_width + u[inside]).astype(np.int64, copy=False)
+        z_inside = z_color[inside].astype(np.float32, copy=False)
+        np.minimum.at(self.nearest, flat_idx, z_inside)
+        self.output[~np.isfinite(self.output)] = invalid
+        return self.output
 
 
 def align_ir_depth_to_color_fast(
@@ -1226,16 +1460,25 @@ class RealtimeSingleCameraPointCloudDemo:
         self.k_color = np.eye(3, dtype=np.float32)
         self.k_ir_left: np.ndarray | None = None
         self.t_ir_left_to_color: np.ndarray | None = None
-        self.ir_projection_grid: tuple[np.ndarray, np.ndarray] | None = None
-        self._ir_projection_grid_key: tuple[tuple[int, int], tuple[float, ...]] | None = None
+        self.ir_to_color_aligner: FfsIrToColorAligner | None = None
+        self._ir_to_color_aligner_key: tuple[
+            tuple[int, int],
+            tuple[int, int],
+            tuple[float, ...],
+            tuple[float, ...],
+            tuple[float, ...],
+        ] | None = None
         self.ir_baseline_m = 0.0
         self.ffs_runner: object | None = None
-        self._request_render_update: Callable[[], None] = lambda: None
         self._last_debug_log_s = 0.0
+        self._drop_stats_start_s = time.perf_counter()
+        self._drop_stats_reset_done = False
+        self._last_drop_window_counts = (0, 0, 0)
 
     def run(self) -> int:
         if self.args.depth_source == "ffs":
             self.ffs_runner = self._create_ffs_runner()
+            warm_up_numba_ffs_align()
         runtime = _start_realsense_pipeline(self.args)
         self.pipeline = runtime.pipeline
         self.align = runtime.align
@@ -1268,19 +1511,66 @@ class RealtimeSingleCameraPointCloudDemo:
             self.stop()
         return 0
 
-    def _get_ir_projection_grid(
+    def _get_ir_to_color_aligner(
         self,
         *,
         depth_shape: tuple[int, int],
+        color_shape: tuple[int, int],
         k_ir_left: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        height, width = depth_shape
-        k = np.asarray(k_ir_left, dtype=np.float32).reshape(3, 3)
-        key = ((height, width), tuple(float(v) for v in k.ravel()))
-        if self._ir_projection_grid_key != key or self.ir_projection_grid is None:
-            self.ir_projection_grid = build_projection_grid_from_matrix(width=width, height=height, K=k)
-            self._ir_projection_grid_key = key
-        return self.ir_projection_grid
+        t_ir_left_to_color: np.ndarray,
+        k_color: np.ndarray,
+    ) -> FfsIrToColorAligner:
+        k_ir = np.asarray(k_ir_left, dtype=np.float32).reshape(3, 3)
+        transform = np.asarray(t_ir_left_to_color, dtype=np.float32).reshape(4, 4)
+        k_col = np.asarray(k_color, dtype=np.float32).reshape(3, 3)
+        key = (
+            (int(depth_shape[0]), int(depth_shape[1])),
+            (int(color_shape[0]), int(color_shape[1])),
+            tuple(float(v) for v in k_ir.ravel()),
+            tuple(float(v) for v in transform.ravel()),
+            tuple(float(v) for v in k_col.ravel()),
+        )
+        if self._ir_to_color_aligner_key != key or self.ir_to_color_aligner is None:
+            self.ir_to_color_aligner = FfsIrToColorAligner(
+                k_ir_left=k_ir,
+                t_ir_left_to_color=transform,
+                k_color=k_col,
+                ir_shape=depth_shape,
+                color_shape=color_shape,
+            )
+            self._ir_to_color_aligner_key = key
+        return self.ir_to_color_aligner
+
+    def _maybe_reset_drop_stats(self, now_s: float) -> None:
+        if self._drop_stats_reset_done:
+            return
+        if now_s - self._drop_stats_start_s < DROP_STATS_WARMUP_S:
+            return
+        self.capture_slot.reset_dropped_count()
+        self.depth_slot.reset_dropped_count()
+        self.render_slot.reset_dropped_count()
+        self._last_drop_window_counts = (0, 0, 0)
+        self._drop_stats_reset_done = True
+
+    def _drop_stats_snapshot(self, *, update_window: bool) -> DropStatsSnapshot:
+        capture_after = self.capture_slot.dropped_count
+        depth_after = self.depth_slot.dropped_count
+        render_after = self.render_slot.dropped_count
+        last_capture, last_depth, last_render = self._last_drop_window_counts
+        snapshot = DropStatsSnapshot(
+            capture_total=self.capture_slot.total_dropped_count,
+            capture_after_warmup=capture_after,
+            capture_delta_last_window=max(0, capture_after - last_capture),
+            depth_total=self.depth_slot.total_dropped_count,
+            depth_after_warmup=depth_after,
+            depth_delta_last_window=max(0, depth_after - last_depth),
+            render_total=self.render_slot.total_dropped_count,
+            render_after_warmup=render_after,
+            render_delta_last_window=max(0, render_after - last_render),
+        )
+        if update_window:
+            self._last_drop_window_counts = (capture_after, depth_after, render_after)
+        return snapshot
 
     def _create_ffs_runner(self) -> object:
         try:
@@ -1467,9 +1757,13 @@ class RealtimeSingleCameraPointCloudDemo:
                     k_ir_left=k_ir_left_used,
                     t_ir_left_to_color=frame.t_ir_left_to_color,
                     k_color=self.k_color,
-                    ir_projection_grid=self._get_ir_projection_grid(
+                    ir_projection_grid=None,
+                    ir_to_color_aligner=self._get_ir_to_color_aligner(
                         depth_shape=depth_ir_left_m.shape,
+                        color_shape=frame.color_bgr.shape[:2],
                         k_ir_left=k_ir_left_used,
+                        t_ir_left_to_color=frame.t_ir_left_to_color,
+                        k_color=self.k_color,
                     ),
                     receive_perf_s=frame.receive_perf_s,
                     ffs_done_perf_s=ffs_done_s,
@@ -1497,14 +1791,17 @@ class RealtimeSingleCameraPointCloudDemo:
         try:
             if isinstance(frame, RawFfsDepthPacket):
                 align_start_s = time.perf_counter()
-                depth_color_m = align_ir_depth_to_color_fast(
-                    frame.depth_left_m,
-                    frame.k_ir_left,
-                    frame.t_ir_left_to_color,
-                    frame.k_color,
-                    output_shape=frame.color_bgr.shape[:2],
-                    ir_projection_grid=frame.ir_projection_grid,
-                )
+                if frame.ir_to_color_aligner is not None:
+                    depth_color_m = frame.ir_to_color_aligner.align(frame.depth_left_m)
+                else:
+                    depth_color_m = align_ir_depth_to_color_fast(
+                        frame.depth_left_m,
+                        frame.k_ir_left,
+                        frame.t_ir_left_to_color,
+                        frame.k_color,
+                        output_shape=frame.color_bgr.shape[:2],
+                        ir_projection_grid=frame.ir_projection_grid,
+                    )
                 align_done_s = time.perf_counter()
                 mask_start_s = time.perf_counter()
                 image_rgb, valid_count = build_camera_view_image_from_depth_m(
@@ -1560,7 +1857,6 @@ class RealtimeSingleCameraPointCloudDemo:
                 timing=timing,
             )
         )
-        self._request_render_update()
 
     def _process_pointcloud_frame(self, frame: DepthFramePacket | RawFfsDepthPacket) -> None:
         projection_grid = self.projection_grid
@@ -1570,14 +1866,17 @@ class RealtimeSingleCameraPointCloudDemo:
             backproject_backend = self.backproject_backend
             if isinstance(frame, RawFfsDepthPacket):
                 align_start_s = time.perf_counter()
-                depth_color_m = align_ir_depth_to_color_fast(
-                    frame.depth_left_m,
-                    frame.k_ir_left,
-                    frame.t_ir_left_to_color,
-                    frame.k_color,
-                    output_shape=frame.color_bgr.shape[:2],
-                    ir_projection_grid=frame.ir_projection_grid,
-                )
+                if frame.ir_to_color_aligner is not None:
+                    depth_color_m = frame.ir_to_color_aligner.align(frame.depth_left_m)
+                else:
+                    depth_color_m = align_ir_depth_to_color_fast(
+                        frame.depth_left_m,
+                        frame.k_ir_left,
+                        frame.t_ir_left_to_color,
+                        frame.k_color,
+                        output_shape=frame.color_bgr.shape[:2],
+                        ir_projection_grid=frame.ir_projection_grid,
+                    )
                 align_done_s = time.perf_counter()
                 backproject_start_s = time.perf_counter()
                 points, colors = backproject_aligned_rgbd_depth_m(
@@ -1646,7 +1945,6 @@ class RealtimeSingleCameraPointCloudDemo:
                 timing=timing,
             )
         )
-        self._request_render_update()
 
     def _run_open3d_viewer(self) -> None:
         o3d, gui, rendering = _load_open3d_modules()
@@ -1704,8 +2002,11 @@ class RealtimeSingleCameraPointCloudDemo:
         update_warned = {"value": False}
         render_stats = RenderStats()
         last_render_seq = {"value": -1}
-        post_lock = threading.Lock()
-        callback_pending = {"value": False}
+        self._drop_stats_start_s = time.perf_counter()
+        self._drop_stats_reset_done = False
+        self._last_drop_window_counts = (0, 0, 0)
+        render_interval_s = 1.0 / GUI_RENDER_PULL_HZ
+        next_render_pull_s = {"value": time.perf_counter()}
 
         def reset_camera() -> None:
             assert scene_widget is not None
@@ -1728,12 +2029,10 @@ class RealtimeSingleCameraPointCloudDemo:
                 bounds = o3d.geometry.AxisAlignedBoundingBox([-0.5, -0.35, 0.1], [0.5, 0.35, 1.5])
                 scene_widget.setup_camera(60.0, bounds, [0.0, 0.0, 0.0])
 
-        def render_latest() -> None:
-            with post_lock:
-                callback_pending["value"] = False
+        def render_latest() -> bool:
             packet = self.render_slot.get_latest_after(last_render_seq["value"])
             if packet is None:
-                return
+                return False
             last_render_seq["value"] = packet.seq
             open3d_convert_ms = 0.0
             open3d_update_ms = 0.0
@@ -1816,22 +2115,31 @@ class RealtimeSingleCameraPointCloudDemo:
                 receive_to_render_ms=latency_ms,
             )
             render_stats.record_render(render_time_s=render_time_s, latency_ms=latency_ms)
-            hud_label.text = self._format_hud(packet=packet, stats=render_stats, timing=timing)
+            self._maybe_reset_drop_stats(render_time_s)
+            drop_stats = self._drop_stats_snapshot(update_window=False)
+            hud_label.text = self._format_hud(packet=packet, stats=render_stats, timing=timing, drops=drop_stats)
             self._maybe_log_debug(packet=packet, stats=render_stats, timing=timing, now_s=render_time_s)
-            window.post_redraw()
+            return True
 
-        def request_render_update() -> None:
-            with post_lock:
-                if callback_pending["value"] or self.stop_event.is_set():
-                    return
-                callback_pending["value"] = True
-            app.post_to_main_thread(window, render_latest)
+        def on_tick() -> bool:
+            if self.stop_event.is_set():
+                return False
+            now_s = time.perf_counter()
+            next_pull_s, should_pull = fixed_rate_pull_step(
+                now_s=now_s,
+                next_pull_s=next_render_pull_s["value"],
+                interval_s=render_interval_s,
+            )
+            next_render_pull_s["value"] = next_pull_s
+            if not should_pull:
+                return False
+            return render_latest()
 
         def on_close() -> bool:
             self.stop_event.set()
             return True
 
-        self._request_render_update = request_render_update
+        window.set_on_tick_event(on_tick)
         window.set_on_close(on_close)
         self._start_threads()
 
@@ -1849,17 +2157,35 @@ class RealtimeSingleCameraPointCloudDemo:
             if timer is not None:
                 timer.cancel()
 
-    def _format_hud(self, *, packet: PointCloudPacket | ImagePacket, stats: RenderStats, timing: PipelineTiming) -> str:
+    def _format_hud(
+        self,
+        *,
+        packet: PointCloudPacket | ImagePacket,
+        stats: RenderStats,
+        timing: PipelineTiming,
+        drops: DropStatsSnapshot | None = None,
+    ) -> str:
         status = "late" if timing.receive_to_render_ms > self.args.latency_target_ms else "ok"
         max_points = "uncapped" if self.args.max_points == 0 else str(self.args.max_points)
         backproject_backend = getattr(packet, "backproject_backend", self.backproject_backend)
+        if drops is None:
+            render_dropped = self.render_slot.dropped_count
+            drops = DropStatsSnapshot(
+                capture_total=packet.dropped_capture_frames,
+                capture_after_warmup=packet.dropped_capture_frames,
+                depth_total=packet.dropped_ffs_frames,
+                depth_after_warmup=packet.dropped_ffs_frames,
+                render_total=render_dropped,
+                render_after_warmup=render_dropped,
+            )
         text = (
             f"render FPS: {stats.render_fps:.1f}\n"
             f"latency: {timing.receive_to_render_ms:.1f} ms ({status}, target {self.args.latency_target_ms:.1f} ms)\n"
             f"mean latency: {stats.mean_latency_ms:.1f} ms\n"
             f"points: {packet.point_count}  max-points: {max_points}\n"
-            f"dropped capture frames: {packet.dropped_capture_frames}\n"
-            f"dropped depth/render packets: {packet.dropped_ffs_frames}/{self.render_slot.dropped_count}\n"
+            f"dropped capture frames: {drops.capture_after_warmup} (total {drops.capture_total})\n"
+            f"dropped depth/render packets: {drops.depth_after_warmup}/{drops.render_after_warmup} "
+            f"(total {drops.depth_total}/{drops.render_total})\n"
             f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
             f"depth source: {packet.depth_source}\n"
             f"view/backend/backproject: {self.args.view_mode}/{self.render_backend}/{backproject_backend}\n"
@@ -1887,6 +2213,7 @@ class RealtimeSingleCameraPointCloudDemo:
         if not self.args.debug or now_s - self._last_debug_log_s < DEBUG_LOG_INTERVAL_S:
             return
         self._last_debug_log_s = now_s
+        drops = self._drop_stats_snapshot(update_window=True)
         print(
             "[pcd-debug] "
             f"seq={packet.seq} "
@@ -1906,9 +2233,15 @@ class RealtimeSingleCameraPointCloudDemo:
             f"backend={self.render_backend} "
             f"backproject_backend={getattr(packet, 'backproject_backend', self.backproject_backend)} "
             f"points={packet.point_count} "
-            f"dropped_capture={packet.dropped_capture_frames} "
-            f"dropped_depth={packet.dropped_ffs_frames} "
-            f"dropped_render={self.render_slot.dropped_count}",
+            f"dropped_capture_total={drops.capture_total} "
+            f"dropped_capture_after_warmup={drops.capture_after_warmup} "
+            f"dropped_capture_delta_last_window={drops.capture_delta_last_window} "
+            f"dropped_depth_total={drops.depth_total} "
+            f"dropped_depth_after_warmup={drops.depth_after_warmup} "
+            f"dropped_depth_delta_last_window={drops.depth_delta_last_window} "
+            f"dropped_render_total={drops.render_total} "
+            f"dropped_render_after_warmup={drops.render_after_warmup} "
+            f"dropped_render_delta_last_window={drops.render_delta_last_window}",
             flush=True,
         )
 

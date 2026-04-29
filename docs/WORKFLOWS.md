@@ -37,7 +37,8 @@ This demo streams one D455. The default `--depth-source realsense` captures
 `color + depth` and aligns native depth to color; `--depth-source ffs` captures
 `color + infrared(1) + infrared(2)`, runs the default two-stage TensorRT FFS
 engine, publishes raw IR-left metric depth, aligns FFS metric depth into the
-color frame in the render-prep stage, and renders RGB in the same
+color frame in the render-prep stage with cached projection coefficients and a
+Numba fused z-buffer path when available, and renders RGB in the same
 `camera_color_frame` contract. The coordinate contract is meters, `x`
 right, `y` down, and `z` forward; it does not read `calibrate.pkl` or apply any
 multi-camera world transform. Use `--help` to see the supported capture rates and profiles
@@ -72,8 +73,13 @@ The profiler reports camera wait, RealSense align, frame copy, valid-depth image
 masking or the selected backprojection backend, FFS TensorRT and FFS color-align
 time when `--depth-source ffs` is active, Open3D image/geometry conversion,
 Open3D image/geometry update, total receive-to-render latency, the active
-`backproject_backend`, and the `depth_to_render_ms` subtotal excluding camera
-wait.
+`backproject_backend`, startup-preserving total drop counters, after-warmup
+drop counters, last-window drop deltas, and the `depth_to_render_ms` subtotal
+excluding camera wait.
+
+The Open3D UI pulls the latest prepared image or point-cloud packet from the
+main thread at fixed `60 Hz`; render workers publish latest-wins packets and do
+not enqueue one GUI callback per packet.
 
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:
