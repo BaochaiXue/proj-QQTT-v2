@@ -21,7 +21,7 @@ Add an operator-facing realtime single-camera D455 demo that streams aligned `co
 ## Implementation Plan
 
 1. Add a CLI with explicit supported capture profiles:
-   - `--fps {5,15,30,60}`, default `30`
+   - `--fps {5,15,30,60}`, default `60`
    - `--profile {848x480,640x480}`, default `848x480`
    - serial, emitter, clipping, stride, point-size, latency-target, and duration controls.
 2. Implement a three-stage async pipeline:
@@ -62,10 +62,12 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Added `--image-splat-px` for optional image-space splatting in the fast camera-view backend.
 - Updated the true 3D pointcloud backend to use Open3D tensor point clouds with `float32` positions/colors, reuse the RGB float conversion buffer, and print a one-time warning if `update_geometry()` falls back to remove/add.
 - Expanded `--fps` choices to `{5,15,30,60}` after a live D455 profile probe confirmed `848x480` RGB-D capture with depth-to-color alignment at about `59.8 FPS`.
+- Updated the default RGB-D capture rate to `60 FPS`; operators can still pass `--fps 30` for the older lower-rate capture path.
 - Optimized the camera-view image backend mask path by converting metric depth bounds to raw `uint16` thresholds, using OpenCV `inRange`/`cvtColor`/`bitwise_and` when available, and keeping a NumPy fallback with identical valid-pixel semantics.
 - On a synthetic `848x480` frame in `FFS-max-sam31-rs`, the mask path median dropped from `8.61 ms` to `0.36 ms` while matching the previous float32 predicate output.
 - Updated orbit view defaults so omitted `--max-points` resolves to `200000`; camera view still resolves to uncapped `0`, and explicit `--max-points 0` keeps orbit uncapped.
 - Updated the point-cloud renderer to track Open3D geometry capacity and proactively re-add geometry when a later frame exceeds the current capacity, avoiding repeated `point count exceeds the existing point count` warnings after orbit capping ramps up to `200000`.
+- Optimized point-cloud backprojection so `--max-points` sampling happens before XYZ/RGB materialization, preserving the existing `linspace` valid-pixel sampling order while avoiding full valid-point allocation when orbit view is capped.
 
 Validation completed on 2026-04-29:
 

@@ -22,7 +22,7 @@ For a hand-held single-D455 realtime point-cloud demo in the camera color
 frame:
 
 ```bash
-conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 30
+conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60
 ```
 
 This demo streams one D455 `color + depth`, aligns depth to color, backprojects
@@ -50,7 +50,7 @@ When diagnosing depth-to-render cost, enable the profiler HUD and `1 Hz`
 console timing summary:
 
 ```bash
-conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 30 --debug
+conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60 --debug
 ```
 
 The profiler reports camera wait, RealSense align, frame copy, NumPy

@@ -55,6 +55,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
 
     def test_default_depth_max_disables_far_clipping(self) -> None:
         args = demo.build_parser().parse_args([])
+        self.assertEqual(args.fps, 60)
         self.assertEqual(args.depth_max_m, 0.0)
         self.assertEqual(args.view_mode, "camera")
         self.assertEqual(demo.resolve_render_backend(args), "image")
@@ -278,6 +279,36 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             np.array([[0.0, 0.0, 1.0], [0.0, 2.0, 2.0], [3.0, 3.0, 3.0]], dtype=np.float32),
         )
         np.testing.assert_array_equal(colors, np.array([[3, 2, 1], [9, 8, 7], [12, 11, 10]], dtype=np.uint8))
+
+    def test_backprojection_max_points_preserves_linspace_valid_sampling(self) -> None:
+        color_bgr = np.arange(3 * 4 * 3, dtype=np.uint8).reshape(3, 4, 3)
+        depth_u16 = np.arange(1, 13, dtype=np.uint16).reshape(3, 4)
+        intrinsics = demo.CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0)
+        full_points, full_colors = demo.backproject_aligned_rgbd(
+            color_bgr=color_bgr,
+            depth_u16=depth_u16,
+            intrinsics=intrinsics,
+            depth_scale_m_per_unit=0.001,
+            depth_min_m=0.001,
+            depth_max_m=0.0,
+            stride=1,
+            max_points=0,
+            projection_grid=demo.build_projection_grid(width=4, height=3, stride=1, intrinsics=intrinsics),
+        )
+        capped_points, capped_colors = demo.backproject_aligned_rgbd(
+            color_bgr=color_bgr,
+            depth_u16=depth_u16,
+            intrinsics=intrinsics,
+            depth_scale_m_per_unit=0.001,
+            depth_min_m=0.001,
+            depth_max_m=0.0,
+            stride=1,
+            max_points=5,
+            projection_grid=demo.build_projection_grid(width=4, height=3, stride=1, intrinsics=intrinsics),
+        )
+        expected_indices = np.linspace(0, full_points.shape[0] - 1, 5, dtype=np.int64)
+        np.testing.assert_allclose(capped_points, full_points[expected_indices])
+        np.testing.assert_array_equal(capped_colors, full_colors[expected_indices])
 
     def test_projection_grid_matches_pixel_grid_backprojection(self) -> None:
         color_bgr = np.array(

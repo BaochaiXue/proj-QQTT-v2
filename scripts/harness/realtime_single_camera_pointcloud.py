@@ -19,7 +19,7 @@ except ImportError:
 SUPPORTED_CAPTURE_FPS = (5, 15, 30, 60)
 SUPPORTED_PROFILES = ("848x480", "640x480")
 DEFAULT_PROFILE = "848x480"
-DEFAULT_FPS = 30
+DEFAULT_FPS = 60
 DEFAULT_CAMERA_MAX_POINTS = 0
 DEFAULT_ORBIT_MAX_POINTS = 200000
 COORDINATE_FRAME = "camera_color_frame"
@@ -401,26 +401,51 @@ def backproject_aligned_rgbd(
             ray_x = (grid_x - np.float32(intrinsics.cx)) / np.float32(intrinsics.fx)
             ray_y = (grid_y - np.float32(intrinsics.cy)) / np.float32(intrinsics.fy)
 
-    depth_m = depth_view.astype(np.float32, copy=False) * np.float32(depth_scale_m_per_unit)
-    valid = (depth_view > 0) & np.isfinite(depth_m) & (depth_m >= depth_min_m)
-    if depth_max_m > 0:
-        valid &= depth_m <= depth_max_m
-    if not np.any(valid):
+    lower_u16, upper_u16 = _depth_bounds_to_u16(
+        depth_scale_m_per_unit=depth_scale_m_per_unit,
+        depth_min_m=depth_min_m,
+        depth_max_m=depth_max_m,
+    )
+    if lower_u16 > upper_u16:
         return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
 
-    z = depth_m[valid]
-    points = np.empty((z.size, 3), dtype=np.float32)
-    points[:, 0] = ray_x[valid] * z
-    points[:, 1] = ray_y[valid] * z
+    if stride == 1 and cv2 is not None:
+        valid_mask = cv2.inRange(depth_view, lower_u16, upper_u16)
+        valid_flat = np.flatnonzero(valid_mask.ravel())
+    else:
+        valid = (depth_view >= lower_u16) & (depth_view <= upper_u16)
+        valid_flat = np.flatnonzero(valid.ravel())
+
+    n_valid = int(valid_flat.size)
+    if n_valid == 0:
+        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
+
+    if max_points > 0 and n_valid > max_points:
+        indices = np.linspace(0, n_valid - 1, max_points, dtype=np.int64)
+        valid_flat = valid_flat[indices]
+
+    n_points = int(valid_flat.size)
+    depth_flat = depth_view.ravel()
+    ray_x_flat = ray_x.ravel()
+    ray_y_flat = ray_y.ravel()
+
+    z = depth_flat[valid_flat].astype(np.float32, copy=False) * np.float32(depth_scale_m_per_unit)
+    points = np.empty((n_points, 3), dtype=np.float32)
+    points[:, 0] = ray_x_flat[valid_flat] * z
+    points[:, 1] = ray_y_flat[valid_flat] * z
     points[:, 2] = z
-    colors_rgb_u8 = color_view[valid][:, [2, 1, 0]]
 
-    if max_points > 0 and points.shape[0] > max_points:
-        indices = np.linspace(0, points.shape[0] - 1, max_points, dtype=np.int64)
-        points = points[indices]
-        colors_rgb_u8 = colors_rgb_u8[indices]
+    if stride == 1 and color_bgr.flags["C_CONTIGUOUS"]:
+        color_flat = color_bgr.reshape(-1, 3)
+    else:
+        color_flat = np.ascontiguousarray(color_view).reshape(-1, 3)
 
-    return np.ascontiguousarray(points), np.ascontiguousarray(colors_rgb_u8)
+    colors_rgb_u8 = np.empty((n_points, 3), dtype=np.uint8)
+    colors_rgb_u8[:, 0] = color_flat[valid_flat, 2]
+    colors_rgb_u8[:, 1] = color_flat[valid_flat, 1]
+    colors_rgb_u8[:, 2] = color_flat[valid_flat, 0]
+
+    return points, colors_rgb_u8
 
 
 def build_parser() -> argparse.ArgumentParser:
