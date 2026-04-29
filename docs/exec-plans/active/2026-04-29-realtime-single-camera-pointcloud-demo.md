@@ -15,6 +15,8 @@ Add an operator-facing realtime single-camera D455 demo that streams aligned `co
 - Keep default quality fixed with `--stride 1` and `--max-points 0`.
 - Keep the far-depth clip disabled by default with `--depth-max-m 0.0`; positive values opt into far clipping.
 - Default to `--view-mode camera`, which uses the D455 color intrinsics for a first-person camera projection; keep `--view-mode orbit` available for third-person inspection.
+- Default `--render-backend auto` to the fast `image` backend for camera view and the full `pointcloud` backend for orbit view.
+- Keep profiler output opt-in through `--debug` so normal operation is not slowed by console logging.
 
 ## Implementation Plan
 
@@ -55,6 +57,9 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Documented the run command in `scripts/harness/README.md` and `docs/WORKFLOWS.md`.
 - Updated the depth range default so `--depth-max-m 0.0` disables far clipping unless the operator opts in.
 - Added `--view-mode {camera,orbit}` and made `camera` the default.
+- Added `--debug` profiler HUD and `1 Hz` console timing for wait, align, copy, backprojection, Open3D conversion/update, and receive-to-render latency.
+- Added `--render-backend {auto,image,pointcloud}`. Camera view defaults to the image backend, which preserves aligned valid depth pixels while skipping XYZ/Open3D geometry work; pointcloud remains available explicitly and for orbit view.
+- Added `--image-splat-px` for optional image-space splatting in the fast camera-view backend.
 
 Validation completed on 2026-04-29:
 

@@ -37,8 +37,24 @@ selected serial/profile/fps. Defaults preserve density (`--stride 1`,
 Set `--depth-max-m 1.5` or another positive value only when you want a near
 tabletop/room subset. The default view mode is first-person camera projection
 (`--view-mode camera`), using the D455 color intrinsics; use `--view-mode orbit`
-for the older third-person point-cloud view. `--latency-target-ms` is only a
-warning threshold.
+for the older third-person point-cloud view. The default render backend is
+`--render-backend auto`: camera view uses the fast `image` backend, which
+preserves all aligned valid depth pixels and skips `depth -> XYZ -> Open3D
+geometry -> camera projection`; orbit view uses the full `pointcloud` backend.
+Use `--render-backend pointcloud` when you explicitly need Open3D point-cloud
+geometry in camera view. `--latency-target-ms` is only a warning threshold.
+
+When diagnosing depth-to-render cost, enable the profiler HUD and `1 Hz`
+console timing summary:
+
+```bash
+conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 30 --debug
+```
+
+The profiler reports camera wait, RealSense align, frame copy, NumPy
+valid-depth image masking or NumPy backprojection, Open3D image/geometry
+conversion, Open3D image/geometry update, total receive-to-render latency, and
+the `depth_to_render_ms` subtotal excluding camera wait.
 
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:
