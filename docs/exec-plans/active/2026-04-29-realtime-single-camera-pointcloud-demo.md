@@ -23,7 +23,7 @@ Add an operator-facing realtime single-camera D455 demo that streams aligned `co
 1. Add a CLI with explicit supported capture profiles:
    - `--fps {5,15,30,60}`, default `60`
    - `--profile {848x480,640x480}`, default `848x480`
-   - serial, emitter, clipping, stride, point-size, latency-target, and duration controls.
+   - serial, emitter, clipping, stride, point-size, backproject-backend, latency-target, and duration controls.
 2. Implement a three-stage async pipeline:
    - capture thread waits on RealSense, aligns depth to color, and publishes the newest RGB-D frame.
    - point-cloud worker consumes only the newest RGB-D frame and drops stale work.
@@ -32,6 +32,7 @@ Add an operator-facing realtime single-camera D455 demo that streams aligned `co
 4. Optimize postprocessing without automatic quality reduction:
    - precompute pixel grids once per profile/stride.
    - vectorized NumPy `float32` backprojection.
+   - optional Numba fused rank-sampling backprojection for the stride-1 projection-grid point-cloud path.
    - one combined depth validity mask.
    - keep `uint8` color until the Open3D upload boundary.
 5. Add deterministic smoke tests for CLI help, profile parsing, synthetic backprojection, latest-slot drops, and FPS/latency stats.
@@ -68,6 +69,8 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Updated orbit view defaults so omitted `--max-points` resolves to `200000`; camera view still resolves to uncapped `0`, and explicit `--max-points 0` keeps orbit uncapped.
 - Updated the point-cloud renderer to track Open3D geometry capacity and proactively re-add geometry when a later frame exceeds the current capacity, avoiding repeated `point count exceeds the existing point count` warnings after orbit capping ramps up to `200000`.
 - Optimized point-cloud backprojection so `--max-points` sampling happens before XYZ/RGB materialization, preserving the existing `linspace` valid-pixel sampling order while avoiding full valid-point allocation when orbit view is capped.
+- Installed `numba==0.65.1` and `llvmlite==0.47.0` into `FFS-max-sam31-rs` with pip after saving pre-install conda/pip snapshots under `docs/generated/`.
+- Added `--backproject-backend {auto,numpy,numba}`. `auto` uses Numba when available for the stride-1 projection-grid point-cloud path, otherwise NumPy; the HUD and debug log show the effective backend.
 
 Validation completed on 2026-04-29:
 

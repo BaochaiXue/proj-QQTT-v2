@@ -44,7 +44,11 @@ geometry -> camera projection`; orbit view uses the full `pointcloud` backend
 and defaults to `--max-points 200000` to reduce Open3D update pressure. Use
 `--max-points 0` with orbit when you explicitly want uncapped density, and use
 `--render-backend pointcloud` when you explicitly need Open3D point-cloud
-geometry in camera view. `--latency-target-ms` is only a warning threshold.
+geometry in camera view. Point-cloud backprojection defaults to
+`--backproject-backend auto`, which uses Numba in `FFS-max-sam31-rs` for the
+stride-1 projection-grid path and falls back to NumPy otherwise; pass
+`--backproject-backend numpy` to force the pure NumPy path. `--latency-target-ms`
+is only a warning threshold.
 
 When diagnosing depth-to-render cost, enable the profiler HUD and `1 Hz`
 console timing summary:
@@ -53,10 +57,11 @@ console timing summary:
 conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60 --debug
 ```
 
-The profiler reports camera wait, RealSense align, frame copy, NumPy
-valid-depth image masking or NumPy backprojection, Open3D image/geometry
-conversion, Open3D image/geometry update, total receive-to-render latency, and
-the `depth_to_render_ms` subtotal excluding camera wait.
+The profiler reports camera wait, RealSense align, frame copy, valid-depth image
+masking or the selected backprojection backend, Open3D image/geometry
+conversion, Open3D image/geometry update, total receive-to-render latency, the
+active `backproject_backend`, and the `depth_to_render_ms` subtotal excluding
+camera wait.
 
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:

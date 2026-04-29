@@ -102,6 +102,8 @@
   - `atomics==1.0.3`
   - `pynput==1.8.1`
   - `threadpoolctl==3.6.0`
+  - `numba==0.65.1`
+  - `llvmlite==0.47.0`
 - Current SAM 3.1 add-on:
   - `sam3==0.1.0` installed from `git+https://github.com/facebookresearch/sam3.git@main`
   - install resolved official commit `c97c893969003d3e6803fd5d679f21e515aef5ce`
@@ -109,9 +111,11 @@
 - Current caveat:
   - `sam3` declares `numpy<2,>=1.26`, but this clone intentionally preserves `FFS-max`'s `numpy==2.4.4`
   - runtime validation succeeded despite that metadata mismatch; see `docs/generated/ffs_max_sam31_realsense_env_validation.md`
+  - Numba was added with `pip install numba` after a conda dry run showed a larger solver change set; pre-install conda and pip snapshots are in `docs/generated/ffs-max-sam31-rs-pre-numba-20260429-explicit.txt` and `docs/generated/ffs-max-sam31-rs-pre-numba-20260429-pip-freeze.txt`
 - Validation commands:
   - `conda run -n FFS-max-sam31-rs python -c "import torch; print(torch.__version__, torch.version.cuda)"`
   - `conda run -n FFS-max-sam31-rs python -c "import pyrealsense2 as rs; print(getattr(rs, '__version__', 'import-ok'))"`
+  - `conda run -n FFS-max-sam31-rs python -c "import numba, llvmlite, numpy; print(numba.__version__, llvmlite.__version__, numpy.__version__)"`
   - `conda run -n FFS-max-sam31-rs python -c "from qqtt.env import CameraSystem; print(CameraSystem.__name__)"`
   - `conda run -n FFS-max-sam31-rs python -c "import sam3, sam3.model_builder as mb; print(getattr(sam3, '__version__', 'unknown'), hasattr(mb, 'build_sam3_video_predictor'))"`
   - `conda run -n FFS-max-sam31-rs python -m unittest -v tests.test_sam31_mask_helper_smoke`

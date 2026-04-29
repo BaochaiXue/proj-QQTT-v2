@@ -35,6 +35,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--profile {848x480,640x480}", result.stdout)
         self.assertIn("--view-mode {camera,orbit}", result.stdout)
         self.assertIn("--render-backend {auto,image,pointcloud}", result.stdout)
+        self.assertIn("--backproject-backend {auto,numpy,numba}", result.stdout)
         self.assertIn("--image-splat-px IMAGE_SPLAT_PX", result.stdout)
         self.assertIn("--debug", result.stdout)
         self.assertIn("orbit=200000", result.stdout)
@@ -47,6 +48,8 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertEqual(demo.parse_profile("640x480"), (640, 480))
         args = demo.build_parser().parse_args(["--fps", "60"])
         self.assertEqual(args.fps, 60)
+        backend_args = demo.build_parser().parse_args(["--backproject-backend", "numpy"])
+        self.assertEqual(backend_args.backproject_backend, "numpy")
         with self.assertRaises(ValueError):
             demo.parse_profile("320x240")
         with contextlib.redirect_stderr(io.StringIO()):
@@ -79,6 +82,28 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         args = demo.build_parser().parse_args(["--view-mode", "orbit"])
         demo.validate_args(args)
         self.assertEqual(demo.resolve_render_backend(args), "pointcloud")
+
+    def test_backproject_backend_resolution(self) -> None:
+        self.assertEqual(
+            demo.resolve_backproject_backend("numpy", stride=1, projection_grid_available=True),
+            "numpy",
+        )
+        self.assertEqual(
+            demo.resolve_backproject_backend("auto", stride=2, projection_grid_available=True),
+            "numpy",
+        )
+        expected_auto = "numba" if demo.numba_backprojection_available() else "numpy"
+        self.assertEqual(
+            demo.resolve_backproject_backend("auto", stride=1, projection_grid_available=True),
+            expected_auto,
+        )
+        if demo.numba_backprojection_available():
+            self.assertEqual(
+                demo.resolve_backproject_backend("numba", stride=1, projection_grid_available=True),
+                "numba",
+            )
+            with self.assertRaises(ValueError):
+                demo.resolve_backproject_backend("numba", stride=2, projection_grid_available=True)
 
     def test_orbit_view_defaults_to_200k_points_unless_explicit(self) -> None:
         camera_args = demo.build_parser().parse_args([])
@@ -309,6 +334,66 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         expected_indices = np.linspace(0, full_points.shape[0] - 1, 5, dtype=np.int64)
         np.testing.assert_allclose(capped_points, full_points[expected_indices])
         np.testing.assert_array_equal(capped_colors, full_colors[expected_indices])
+
+    def test_numba_backprojection_matches_numpy_when_available(self) -> None:
+        if not demo.numba_backprojection_available():
+            self.skipTest("numba is not installed")
+        color_bgr = np.arange(4 * 5 * 3, dtype=np.uint8).reshape(4, 5, 3)
+        depth_u16 = np.arange(1, 21, dtype=np.uint16).reshape(4, 5)
+        depth_u16[0, 1] = 0
+        depth_u16[3, 4] = 1000
+        intrinsics = demo.CameraIntrinsics(fx=2.0, fy=3.0, cx=1.0, cy=1.5)
+        projection_grid = demo.build_projection_grid(width=5, height=4, stride=1, intrinsics=intrinsics)
+        numpy_points, numpy_colors = demo.backproject_aligned_rgbd(
+            color_bgr=color_bgr,
+            depth_u16=depth_u16,
+            intrinsics=intrinsics,
+            depth_scale_m_per_unit=0.001,
+            depth_min_m=0.001,
+            depth_max_m=0.02,
+            stride=1,
+            max_points=7,
+            projection_grid=projection_grid,
+            backproject_backend="numpy",
+        )
+        numba_points, numba_colors = demo.backproject_aligned_rgbd(
+            color_bgr=color_bgr,
+            depth_u16=depth_u16,
+            intrinsics=intrinsics,
+            depth_scale_m_per_unit=0.001,
+            depth_min_m=0.001,
+            depth_max_m=0.02,
+            stride=1,
+            max_points=7,
+            projection_grid=projection_grid,
+            backproject_backend="numba",
+        )
+        np.testing.assert_allclose(numba_points, numpy_points)
+        np.testing.assert_array_equal(numba_colors, numpy_colors)
+
+    def test_direct_script_style_numba_warmup(self) -> None:
+        if not demo.numba_backprojection_available():
+            self.skipTest("numba is not installed")
+        script = (
+            "import importlib.util, pathlib, sys; "
+            "path = pathlib.Path('scripts/harness/realtime_single_camera_pointcloud.py'); "
+            "sys.path.insert(0, str(path.parent)); "
+            "spec = importlib.util.spec_from_file_location('realtime_single_camera_pointcloud_direct', path); "
+            "module = importlib.util.module_from_spec(spec); "
+            "sys.modules[spec.name] = module; "
+            "spec.loader.exec_module(module); "
+            "module.warm_up_numba_backprojection(); "
+            "print(module.resolve_backproject_backend('auto', stride=1, projection_grid_available=True))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertIn("numba", result.stdout)
 
     def test_projection_grid_matches_pixel_grid_backprojection(self) -> None:
         color_bgr = np.array(

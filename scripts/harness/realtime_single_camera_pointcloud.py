@@ -15,9 +15,15 @@ try:
 except ImportError:
     cv2 = None
 
+try:
+    from numba import njit  # type: ignore
+except ImportError:
+    njit = None
+
 
 SUPPORTED_CAPTURE_FPS = (5, 15, 30, 60)
 SUPPORTED_PROFILES = ("848x480", "640x480")
+BACKPROJECT_BACKENDS = ("auto", "numpy", "numba")
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
 DEFAULT_CAMERA_MAX_POINTS = 0
@@ -63,6 +69,7 @@ class PointCloudPacket:
     seq: int
     points_xyz_m: np.ndarray
     colors_rgb_u8: np.ndarray
+    backproject_backend: str
     receive_perf_s: float
     process_done_perf_s: float
     dropped_capture_frames: int
@@ -282,6 +289,107 @@ def _depth_bounds_to_u16(
     return lower, upper
 
 
+if njit is not None:
+
+    @njit
+    def _backproject_numba_rank_sample(
+        depth_u16: np.ndarray,
+        color_bgr: np.ndarray,
+        ray_x: np.ndarray,
+        ray_y: np.ndarray,
+        depth_scale: np.float32,
+        lower_u16: int,
+        upper_u16: int,
+        max_points: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        height, width = depth_u16.shape
+        n_valid = 0
+        for y in range(height):
+            for x in range(width):
+                depth = int(depth_u16[y, x])
+                if lower_u16 <= depth <= upper_u16:
+                    n_valid += 1
+
+        if n_valid == 0:
+            return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
+
+        if max_points > 0 and n_valid > max_points:
+            n_out = max_points
+        else:
+            n_out = n_valid
+
+        points = np.empty((n_out, 3), dtype=np.float32)
+        colors = np.empty((n_out, 3), dtype=np.uint8)
+        valid_rank = 0
+        out_idx = 0
+
+        for y in range(height):
+            for x in range(width):
+                depth = int(depth_u16[y, x])
+                if lower_u16 <= depth <= upper_u16:
+                    take = False
+                    if n_out == n_valid:
+                        take = True
+                    elif n_out == 1:
+                        take = valid_rank == 0
+                    else:
+                        target_rank = (out_idx * (n_valid - 1)) // (n_out - 1)
+                        take = valid_rank == target_rank
+
+                    if take and out_idx < n_out:
+                        z = np.float32(depth) * depth_scale
+                        points[out_idx, 0] = ray_x[y, x] * z
+                        points[out_idx, 1] = ray_y[y, x] * z
+                        points[out_idx, 2] = z
+                        colors[out_idx, 0] = color_bgr[y, x, 2]
+                        colors[out_idx, 1] = color_bgr[y, x, 1]
+                        colors[out_idx, 2] = color_bgr[y, x, 0]
+                        out_idx += 1
+
+                    valid_rank += 1
+
+        return points, colors
+
+else:
+    _backproject_numba_rank_sample = None
+
+
+def numba_backprojection_available() -> bool:
+    return _backproject_numba_rank_sample is not None
+
+
+def resolve_backproject_backend(
+    requested_backend: str,
+    *,
+    stride: int,
+    projection_grid_available: bool,
+) -> str:
+    if requested_backend not in BACKPROJECT_BACKENDS:
+        raise ValueError(f"unsupported backproject backend {requested_backend!r}")
+    can_use_numba = numba_backprojection_available() and stride == 1 and projection_grid_available
+    if requested_backend == "numpy":
+        return "numpy"
+    if requested_backend == "numba":
+        if not numba_backprojection_available():
+            raise ValueError("--backproject-backend numba requires numba to be installed")
+        if stride != 1:
+            raise ValueError("--backproject-backend numba requires --stride 1")
+        if not projection_grid_available:
+            raise ValueError("--backproject-backend numba requires a precomputed projection grid")
+        return "numba"
+    return "numba" if can_use_numba else "numpy"
+
+
+def warm_up_numba_backprojection() -> None:
+    if _backproject_numba_rank_sample is None:
+        return
+    depth = np.array([[1]], dtype=np.uint16)
+    color = np.zeros((1, 1, 3), dtype=np.uint8)
+    ray_x = np.zeros((1, 1), dtype=np.float32)
+    ray_y = np.zeros((1, 1), dtype=np.float32)
+    _backproject_numba_rank_sample(depth, color, ray_x, ray_y, np.float32(0.001), 1, 1, 1)
+
+
 def build_camera_view_image(
     *,
     color_bgr: np.ndarray,
@@ -362,6 +470,7 @@ def backproject_aligned_rgbd(
     max_points: int,
     pixel_grid: tuple[np.ndarray, np.ndarray] | None = None,
     projection_grid: tuple[np.ndarray, np.ndarray] | None = None,
+    backproject_backend: str = "auto",
 ) -> tuple[np.ndarray, np.ndarray]:
     if depth_u16.ndim != 2:
         raise ValueError("depth_u16 must be a 2D array")
@@ -379,6 +488,11 @@ def backproject_aligned_rgbd(
         raise ValueError("stride must be >= 1")
     if max_points < 0:
         raise ValueError("max_points must be >= 0")
+    effective_backend = resolve_backproject_backend(
+        backproject_backend,
+        stride=stride,
+        projection_grid_available=projection_grid is not None,
+    )
 
     depth_view = depth_u16[::stride, ::stride]
     color_view = color_bgr[::stride, ::stride, :]
@@ -408,6 +522,19 @@ def backproject_aligned_rgbd(
     )
     if lower_u16 > upper_u16:
         return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
+
+    if effective_backend == "numba":
+        assert _backproject_numba_rank_sample is not None
+        return _backproject_numba_rank_sample(
+            depth_view,
+            color_view,
+            ray_x,
+            ray_y,
+            np.float32(depth_scale_m_per_unit),
+            int(lower_u16),
+            int(upper_u16),
+            int(max_points),
+        )
 
     if stride == 1 and cv2 is not None:
         valid_mask = cv2.inRange(depth_view, lower_u16, upper_u16)
@@ -497,6 +624,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Render backend. auto uses image for camera view and pointcloud for orbit view.",
     )
     parser.add_argument(
+        "--backproject-backend",
+        choices=BACKPROJECT_BACKENDS,
+        default="auto",
+        help="Point-cloud backprojection backend. auto uses numba when available for the stride-1 projection-grid path.",
+    )
+    parser.add_argument(
         "--image-splat-px",
         type=int,
         default=0,
@@ -531,6 +664,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--point-size must be > 0")
     if args.render_backend == "image" and args.view_mode != "camera":
         raise ValueError("--render-backend image requires --view-mode camera")
+    if args.backproject_backend not in BACKPROJECT_BACKENDS:
+        raise ValueError(f"--backproject-backend must be one of {', '.join(BACKPROJECT_BACKENDS)}")
+    if resolve_render_backend(args) == "pointcloud":
+        resolve_backproject_backend(args.backproject_backend, stride=args.stride, projection_grid_available=True)
     if args.image_splat_px < 0:
         raise ValueError("--image-splat-px must be >= 0")
     if args.latency_target_ms <= 0:
@@ -658,6 +795,7 @@ class RealtimeSingleCameraPointCloudDemo:
         self.pixel_grid = build_pixel_grid(width=self.width, height=self.height, stride=args.stride)
         self.projection_grid: tuple[np.ndarray, np.ndarray] | None = None
         self.render_backend = resolve_render_backend(args)
+        self.backproject_backend = "none"
         self.capture_slot: LatestSlot[FramePacket] = LatestSlot()
         self.render_slot: LatestSlot[PointCloudPacket | ImagePacket] = LatestSlot()
         self.stop_event = threading.Event()
@@ -682,6 +820,13 @@ class RealtimeSingleCameraPointCloudDemo:
                 stride=self.args.stride,
                 intrinsics=self.intrinsics,
             )
+            self.backproject_backend = resolve_backproject_backend(
+                self.args.backproject_backend,
+                stride=self.args.stride,
+                projection_grid_available=True,
+            )
+            if self.backproject_backend == "numba":
+                warm_up_numba_backprojection()
         try:
             self._run_open3d_viewer()
         finally:
@@ -806,6 +951,7 @@ class RealtimeSingleCameraPointCloudDemo:
                 stride=self.args.stride,
                 max_points=self.args.max_points,
                 projection_grid=projection_grid,
+                backproject_backend=self.backproject_backend,
             )
             backproject_done_s = time.perf_counter()
         except Exception:
@@ -816,6 +962,7 @@ class RealtimeSingleCameraPointCloudDemo:
                 seq=frame.seq,
                 points_xyz_m=points,
                 colors_rgb_u8=colors,
+                backproject_backend=self.backproject_backend,
                 receive_perf_s=frame.receive_perf_s,
                 process_done_perf_s=time.perf_counter(),
                 dropped_capture_frames=self.capture_slot.dropped_count,
@@ -963,7 +1110,7 @@ class RealtimeSingleCameraPointCloudDemo:
                     try:
                         flags = rendering.Scene.UPDATE_POINTS_FLAG | rendering.Scene.UPDATE_COLORS_FLAG
                         scene_widget.scene.scene.update_geometry(GEOMETRY_NAME, pcd, flags)
-                        geometry_capacity["value"] = packet.point_count
+                        geometry_capacity["value"] = max(geometry_capacity["value"], packet.point_count)
                     except Exception as exc:
                         if not update_warned["value"]:
                             print(
@@ -1025,9 +1172,10 @@ class RealtimeSingleCameraPointCloudDemo:
             if timer is not None:
                 timer.cancel()
 
-    def _format_hud(self, *, packet: PointCloudPacket, stats: RenderStats, timing: PipelineTiming) -> str:
+    def _format_hud(self, *, packet: PointCloudPacket | ImagePacket, stats: RenderStats, timing: PipelineTiming) -> str:
         status = "late" if timing.receive_to_render_ms > self.args.latency_target_ms else "ok"
         max_points = "uncapped" if self.args.max_points == 0 else str(self.args.max_points)
+        backproject_backend = getattr(packet, "backproject_backend", self.backproject_backend)
         text = (
             f"render FPS: {stats.render_fps:.1f}\n"
             f"latency: {timing.receive_to_render_ms:.1f} ms ({status}, target {self.args.latency_target_ms:.1f} ms)\n"
@@ -1035,7 +1183,7 @@ class RealtimeSingleCameraPointCloudDemo:
             f"points: {packet.point_count}  max-points: {max_points}\n"
             f"dropped capture frames: {packet.dropped_capture_frames}\n"
             f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
-            f"view/backend: {self.args.view_mode}/{self.render_backend}\n"
+            f"view/backend/backproject: {self.args.view_mode}/{self.render_backend}/{backproject_backend}\n"
             f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
         )
         if self.args.debug:
@@ -1051,7 +1199,7 @@ class RealtimeSingleCameraPointCloudDemo:
     def _maybe_log_debug(
         self,
         *,
-        packet: PointCloudPacket,
+        packet: PointCloudPacket | ImagePacket,
         stats: RenderStats,
         timing: PipelineTiming,
         now_s: float,
@@ -1073,6 +1221,7 @@ class RealtimeSingleCameraPointCloudDemo:
             f"o3d_convert_ms={timing.open3d_convert_ms:.2f} "
             f"o3d_update_ms={timing.open3d_update_ms:.2f} "
             f"backend={self.render_backend} "
+            f"backproject_backend={getattr(packet, 'backproject_backend', self.backproject_backend)} "
             f"points={packet.point_count} "
             f"dropped_capture={packet.dropped_capture_frames}",
             flush=True,
