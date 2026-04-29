@@ -10,10 +10,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from data_process.visualization.experiments.still_object_orbit_gif import (  # noqa: E402
-    DEFAULT_OUTPUT_DIR,
-    DEFAULT_STILL_OBJECT_CASE,
-    DEFAULT_TEXT_PROMPT,
-    run_still_object_orbit_gif_workflow,
+    DEFAULT_6X2_ERODE_SWEEP_OUTPUT_DIR,
+    DEFAULT_6X2_ERODE_SWEEP_PIXELS,
+    default_still_object_rope_6x2_case_specs,
+    run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow,
 )
 
 
@@ -25,24 +25,28 @@ def _positive_int_or_none(value: str) -> int | None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Render a 1x2 Native Depth vs FFS masked-object point-cloud orbit GIF "
-            "for still-object aligned cases."
+            "Render four 6x2 Native Depth vs FFS raw-RGB masked-object orbit GIFs "
+            "for still-object rounds 1-4 and still-rope rounds 1-2 with mask erosion."
         )
     )
-    parser.add_argument("--case_dir", type=Path, default=ROOT / DEFAULT_STILL_OBJECT_CASE)
-    parser.add_argument("--mask_root", type=Path, default=None)
-    parser.add_argument("--output_dir", type=Path, default=ROOT / DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--output_root", type=Path, default=ROOT / DEFAULT_6X2_ERODE_SWEEP_OUTPUT_DIR)
+    parser.add_argument(
+        "--erode_pixels",
+        type=str,
+        default=",".join(str(item) for item in DEFAULT_6X2_ERODE_SWEEP_PIXELS),
+        help="Comma-separated positive mask erosion values in pixels.",
+    )
     parser.add_argument("--frame_idx", type=int, default=0)
-    parser.add_argument("--text_prompt", type=str, default=DEFAULT_TEXT_PROMPT)
     parser.add_argument("--start_camera_idx", type=int, default=0)
     parser.add_argument("--num_frames", type=int, default=360)
     parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--tile_width", type=int, default=480)
-    parser.add_argument("--tile_height", type=int, default=360)
+    parser.add_argument("--tile_width", type=int, default=360)
+    parser.add_argument("--tile_height", type=int, default=220)
+    parser.add_argument("--row_label_width", type=int, default=180)
     parser.add_argument("--depth_min_m", type=float, default=0.2)
     parser.add_argument("--depth_max_m", type=float, default=1.5)
     parser.add_argument("--max_points_per_camera", type=_positive_int_or_none, default=None)
-    parser.add_argument("--max_points_per_variant", type=_positive_int_or_none, default=160000)
+    parser.add_argument("--max_points_per_variant", type=_positive_int_or_none, default=120000)
     parser.add_argument("--robust_bounds_percentile", type=float, default=1.0)
     parser.add_argument(
         "--crop_to_robust_bounds",
@@ -58,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--crop_margin_ratio", type=float, default=0.25)
     parser.add_argument(
         "--render_mode",
-        choices=("neutral_gray_shaded", "color_by_rgb", "color_by_height", "color_by_depth", "color_by_normals"),
+        choices=("color_by_rgb", "color_by_height", "color_by_depth", "color_by_normals", "neutral_gray_shaded"),
         default="color_by_rgb",
     )
     parser.add_argument(
@@ -74,17 +78,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    summary = run_still_object_orbit_gif_workflow(
-        case_dir=args.case_dir,
-        output_dir=args.output_dir,
+    summary = run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow(
+        case_specs=default_still_object_rope_6x2_case_specs(root=ROOT),
+        output_root=args.output_root,
+        erode_pixels=str(args.erode_pixels),
         frame_idx=int(args.frame_idx),
-        mask_root=args.mask_root,
-        text_prompt=str(args.text_prompt),
         start_camera_idx=int(args.start_camera_idx),
         num_frames=int(args.num_frames),
         fps=int(args.fps),
         tile_width=int(args.tile_width),
         tile_height=int(args.tile_height),
+        row_label_width=int(args.row_label_width),
         depth_min_m=float(args.depth_min_m),
         depth_max_m=float(args.depth_max_m),
         max_points_per_camera=args.max_points_per_camera,
@@ -98,9 +102,9 @@ def main() -> int:
         point_radius_px=int(args.point_radius_px),
         supersample_scale=int(args.supersample_scale),
     )
-    print(f"GIF written to {summary['gif_path']}")
-    print(f"First frame written to {summary['first_frame_path']}")
-    print(f"Summary written to {Path(summary['output_dir']) / 'summary.json'}")
+    print(f"Sweep summary written to {Path(summary['output_root']) / 'summary.json'}")
+    for variant in summary["variants"]:
+        print(f"erode {variant['mask_erode_pixels']}px: {variant['gif_path']}")
     return 0
 
 

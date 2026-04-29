@@ -35,6 +35,7 @@ Prototype a headless 1x2 GIF panel for `still_object round1 frame0`:
 - Native render points: `32803`
 - FFS render points: `88583`
 - Key node relative angles: Cam0 `0.0`, Cam2 `149.0`, Cam1 `236.3`
+- Render mode updated to raw RGB point colors: `color_by_rgb`, `point_radius_px=1`.
 
 ## Checks
 
