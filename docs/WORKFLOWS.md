@@ -35,7 +35,10 @@ FPS, host receive-to-render latency, point count, stale capture drops, and the
 selected serial/profile/fps. Defaults preserve density (`--stride 1`,
 `--max-points 0`) and do not apply a far-depth clip (`--depth-max-m 0.0`).
 Set `--depth-max-m 1.5` or another positive value only when you want a near
-tabletop/room subset. `--latency-target-ms` is only a warning threshold.
+tabletop/room subset. The default view mode is first-person camera projection
+(`--view-mode camera`), using the D455 color intrinsics; use `--view-mode orbit`
+for the older third-person point-cloud view. `--latency-target-ms` is only a
+warning threshold.
 
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:

@@ -33,6 +33,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         )
         self.assertIn("--fps {5,15,30}", result.stdout)
         self.assertIn("--profile {848x480,640x480}", result.stdout)
+        self.assertIn("--view-mode {camera,orbit}", result.stdout)
         self.assertIn(demo.COORDINATE_FRAME, result.stdout)
         self.assertIn("Use <=0 to disable", result.stdout)
         self.assertIn("far clipping", result.stdout)
@@ -49,6 +50,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
     def test_default_depth_max_disables_far_clipping(self) -> None:
         args = demo.build_parser().parse_args([])
         self.assertEqual(args.depth_max_m, 0.0)
+        self.assertEqual(args.view_mode, "camera")
         demo.validate_args(args)
         color_bgr = np.array([[[10, 20, 30], [40, 50, 60]]], dtype=np.uint8)
         depth_u16 = np.array([[1000, 6000]], dtype=np.uint16)

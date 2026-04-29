@@ -234,6 +234,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-points", type=int, default=0, help="Maximum rendered points. 0 means uncapped.")
     parser.add_argument("--point-size", type=float, default=2.0, help="Open3D point size.")
     parser.add_argument(
+        "--view-mode",
+        choices=("camera", "orbit"),
+        default="camera",
+        help="Open3D view. camera uses D455 color intrinsics; orbit uses a third-person view.",
+    )
+    parser.add_argument(
         "--latency-target-ms",
         type=float,
         default=50.0,
@@ -479,7 +485,12 @@ class RealtimeSingleCameraPointCloudDemo:
             scene_widget.frame = rect
             em = window.theme.font_size
             preferred = hud_panel.calc_preferred_size(layout_context, gui.Widget.Constraints())
-            hud_panel.frame = gui.Rect(rect.x + 0.5 * em, rect.y + 0.5 * em, max(preferred.width, 520), preferred.height)
+            hud_panel.frame = gui.Rect(
+                rect.x + 0.5 * em,
+                rect.y + 0.5 * em,
+                max(preferred.width, 640),
+                max(preferred.height, 8.0 * em),
+            )
 
         window.set_on_layout(on_layout)
         material = rendering.MaterialRecord()
@@ -493,6 +504,19 @@ class RealtimeSingleCameraPointCloudDemo:
         callback_pending = {"value": False}
 
         def reset_camera() -> None:
+            if self.args.view_mode == "camera":
+                intrinsic_matrix = np.array(
+                    [
+                        [self.intrinsics.fx, 0.0, self.intrinsics.cx],
+                        [0.0, self.intrinsics.fy, self.intrinsics.cy],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float64,
+                )
+                extrinsic = np.eye(4, dtype=np.float64)
+                bounds = o3d.geometry.AxisAlignedBoundingBox([-10.0, -10.0, 0.01], [10.0, 10.0, 20.0])
+                scene_widget.setup_camera(intrinsic_matrix, extrinsic, self.width, self.height, bounds)
+                return
             try:
                 scene_widget.look_at([0.0, 0.0, 0.8], [0.0, 0.0, -1.0], [0.0, -1.0, 0.0])
             except Exception:
@@ -577,6 +601,7 @@ class RealtimeSingleCameraPointCloudDemo:
             f"points: {packet.point_count}  max-points: {max_points}\n"
             f"dropped capture frames: {packet.dropped_capture_frames}\n"
             f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
+            f"view mode: {self.args.view_mode}\n"
             f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
         )
 

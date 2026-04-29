@@ -14,6 +14,7 @@ Add an operator-facing realtime single-camera D455 demo that streams aligned `co
 - Do not load `calibrate.pkl` or apply multi-camera/world transforms.
 - Keep default quality fixed with `--stride 1` and `--max-points 0`.
 - Keep the far-depth clip disabled by default with `--depth-max-m 0.0`; positive values opt into far clipping.
+- Default to `--view-mode camera`, which uses the D455 color intrinsics for a first-person camera projection; keep `--view-mode orbit` available for third-person inspection.
 
 ## Implementation Plan
 
@@ -53,6 +54,7 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Added the CLI to quick/full `scripts/harness/check_all.py` help checks.
 - Documented the run command in `scripts/harness/README.md` and `docs/WORKFLOWS.md`.
 - Updated the depth range default so `--depth-max-m 0.0` disables far clipping unless the operator opts in.
+- Added `--view-mode {camera,orbit}` and made `camera` the default.
 
 Validation completed on 2026-04-29:
 
