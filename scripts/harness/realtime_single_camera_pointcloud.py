@@ -4,6 +4,7 @@ import argparse
 from collections import deque
 from dataclasses import dataclass, replace
 import math
+import os
 from pathlib import Path
 import sys
 import threading
@@ -43,6 +44,20 @@ COORDINATE_FRAME = "camera_color_frame"
 GEOMETRY_NAME = "single_d455_live_pointcloud"
 DEBUG_LOG_INTERVAL_S = 1.0
 DROP_STATS_WARMUP_S = 2.0
+WSLG_OPEN3D_ENV_UNSET_KEYS = (
+    "VK_ICD_FILENAMES",
+    "__GLX_VENDOR_LIBRARY_NAME",
+    "__EGL_VENDOR_LIBRARY_FILENAMES",
+)
+WSLG_OPEN3D_ENV_DEFAULTS = {
+    "WAYLAND_DISPLAY": "",
+    "EGL_PLATFORM": "x11",
+    "GALLIUM_DRIVER": "d3d12",
+    "MESA_LOADER_DRIVER_OVERRIDE": "d3d12",
+    "LIBGL_ALWAYS_SOFTWARE": "0",
+    "QQTT_WSLG_OPEN3D_FAST_EXIT": "1",
+    "MESA_D3D12_DEFAULT_ADAPTER_NAME": "NVIDIA",
+}
 
 @dataclass(frozen=True)
 class CameraIntrinsics:
@@ -1352,12 +1367,42 @@ def _load_realsense_module():
 
 
 def _load_open3d_modules():
+    apply_wslg_open3d_env_defaults()
     try:
         import open3d as o3d  # type: ignore
         from open3d.visualization import gui, rendering  # type: ignore
     except ImportError as exc:
         raise RuntimeError("open3d is required to render the realtime point cloud") from exc
     return o3d, gui, rendering
+
+
+def running_under_wsl() -> bool:
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/version").read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
+
+
+def apply_wslg_open3d_env_defaults() -> dict[str, str]:
+    if os.environ.get("QQTT_DISABLE_WSLG_OPEN3D_DEFAULTS") == "1":
+        return {}
+    if not running_under_wsl():
+        return {}
+
+    applied: dict[str, str] = {}
+    for key in WSLG_OPEN3D_ENV_UNSET_KEYS:
+        if key in os.environ:
+            os.environ.pop(key, None)
+            applied[key] = "<unset>"
+    for key, value in WSLG_OPEN3D_ENV_DEFAULTS.items():
+        if key == "MESA_D3D12_DEFAULT_ADAPTER_NAME" and key in os.environ:
+            continue
+        if os.environ.get(key) != value:
+            os.environ[key] = value
+            applied[key] = value
+    return applied
 
 
 def _device_info(device: object, info_key: object) -> str:
@@ -2185,20 +2230,39 @@ class RealtimeSingleCameraPointCloudDemo:
             except Exception:
                 render_post_gate.mark_done()
 
-        def on_close() -> bool:
+        fast_exit_after_open3d = os.environ.get("QQTT_WSLG_OPEN3D_FAST_EXIT") == "1"
+
+        def stop_and_quit_open3d() -> None:
             self.stop_event.set()
             self._request_render_update = lambda: None
+            if fast_exit_after_open3d:
+                self.stop()
+                os._exit(0)
+            try:
+                app.quit()
+            except Exception:
+                pass
+
+        def on_close() -> bool:
+            stop_and_quit_open3d()
             return True
 
         window.set_on_close(on_close)
         self._request_render_update = request_render_update
         self._start_threads()
 
+        def close_window_and_quit() -> None:
+            stop_and_quit_open3d()
+            try:
+                window.close()
+            except Exception:
+                pass
+
         timer: threading.Timer | None = None
         if self.args.duration_s > 0:
             timer = threading.Timer(
                 self.args.duration_s,
-                lambda: app.post_to_main_thread(window, lambda: (self.stop_event.set(), window.close())),
+                lambda: app.post_to_main_thread(window, close_window_and_quit),
             )
             timer.daemon = True
             timer.start()

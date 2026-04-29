@@ -71,7 +71,8 @@ python scripts/harness/check_all.py --full
 | `benchmark_ffs_configs.py` | FFS config benchmark wrapper. |
 | `probe_d455_ir_pair.py` | Manual D455 IR-pair capability probe. |
 | `probe_d455_stream_capability.py` | Manual D455 stream/profile probe. |
-| `realtime_single_camera_pointcloud.py` | Manual single-D455 realtime `camera_color_frame` RGB-D viewer with RealSense or FFS depth, fast camera-view image backend, point-cloud backend, and Open3D FPS/latency HUD. |
+| `realtime_single_camera_pointcloud.py` | Manual single-D455 realtime `camera_color_frame` RGB-D viewer with RealSense or FFS depth, fast camera-view image backend, point-cloud backend, Open3D FPS/latency HUD, and WSLg d3d12 Open3D defaults on this workstation. |
+| `run_wslg_open3d.sh` | WSLg Open3D GUI wrapper for standalone probes or scripts that need XWayland plus Mesa `d3d12` outside the realtime harness. |
 | `render_d455_stream_probe_report.py` | Convert probe JSON to a readable report. |
 | `run_ffs_static_replay_matrix.py` | Static replay benchmark matrix over recorded RealSense pairs. |
 | `verify_ffs_demo.py` | External FFS demo proof-of-life. |

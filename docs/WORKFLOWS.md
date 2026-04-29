@@ -33,6 +33,29 @@ conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_poin
   --profile 848x480 --fps 60 --depth-source ffs --view-mode camera --debug
 ```
 
+On this WSLg workstation, the realtime harness applies the required Open3D GUI
+defaults before importing Open3D, so the direct command uses Mesa `d3d12` instead
+of accidentally trying Zink/Vulkan:
+
+```bash
+python scripts/harness/realtime_single_camera_pointcloud.py \
+  --depth-source realsense \
+  --profile 848x480 \
+  --fps 30 \
+  --view-mode orbit
+```
+
+The harness clears common EGL/Vulkan override variables, sets an empty
+`WAYLAND_DISPLAY` to prefer XWayland on this rig, sets `EGL_PLATFORM=x11`,
+defaults `GALLIUM_DRIVER=d3d12`, `MESA_LOADER_DRIVER_OVERRIDE=d3d12`, and uses
+`MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA` when no adapter is already set. It also
+sets `QQTT_WSLG_OPEN3D_FAST_EXIT=1`, so the harness stops the camera pipeline
+and exits directly when the Open3D window closes, avoiding the WSLg
+Open3D/Filament teardown crash. Use `QQTT_DISABLE_WSLG_OPEN3D_DEFAULTS=1` only
+when intentionally testing a different WSLg GL configuration. The
+`scripts/harness/run_wslg_open3d.sh` wrapper remains available for standalone
+Open3D probes or other Python scripts.
+
 This demo streams one D455. The default `--depth-source realsense` captures
 `color + depth` and aligns native depth to color; `--depth-source ffs` captures
 `color + infrared(1) + infrared(2)`, runs the default two-stage TensorRT FFS

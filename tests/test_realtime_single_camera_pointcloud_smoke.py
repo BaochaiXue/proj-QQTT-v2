@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 import contextlib
 import io
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -131,6 +133,39 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn(demo.COORDINATE_FRAME, result.stdout)
         self.assertIn("Use <=0 to disable", result.stdout)
         self.assertIn("far clipping", result.stdout)
+
+    def test_wslg_open3d_wrapper_pins_d3d12_xwayland_defaults(self) -> None:
+        wrapper = ROOT / "scripts" / "harness" / "run_wslg_open3d.sh"
+        text = wrapper.read_text(encoding="utf-8")
+        self.assertTrue(wrapper.exists())
+        self.assertIn('export WAYLAND_DISPLAY=""', text)
+        self.assertIn('EGL_PLATFORM="${EGL_PLATFORM:-x11}"', text)
+        self.assertIn('GALLIUM_DRIVER="${GALLIUM_DRIVER:-d3d12}"', text)
+        self.assertIn('MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-d3d12}"', text)
+        self.assertIn('LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-0}"', text)
+        self.assertIn('QQTT_WSLG_OPEN3D_FAST_EXIT="${QQTT_WSLG_OPEN3D_FAST_EXIT:-1}"', text)
+        self.assertIn('MESA_D3D12_DEFAULT_ADAPTER_NAME="${MESA_D3D12_DEFAULT_ADAPTER_NAME:-NVIDIA}"', text)
+        self.assertIn('exec "$@"', text)
+
+    def test_script_applies_wslg_open3d_defaults_before_import(self) -> None:
+        env = {
+            "WSL_DISTRO_NAME": "Ubuntu",
+            "WAYLAND_DISPLAY": "wayland-0",
+            "VK_ICD_FILENAMES": "bad-vulkan.json",
+            "MESA_D3D12_DEFAULT_ADAPTER_NAME": "Intel",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            applied = demo.apply_wslg_open3d_env_defaults()
+            self.assertEqual(os.environ["WAYLAND_DISPLAY"], "")
+            self.assertEqual(os.environ["EGL_PLATFORM"], "x11")
+            self.assertEqual(os.environ["GALLIUM_DRIVER"], "d3d12")
+            self.assertEqual(os.environ["MESA_LOADER_DRIVER_OVERRIDE"], "d3d12")
+            self.assertEqual(os.environ["LIBGL_ALWAYS_SOFTWARE"], "0")
+            self.assertEqual(os.environ["QQTT_WSLG_OPEN3D_FAST_EXIT"], "1")
+            self.assertEqual(os.environ["MESA_D3D12_DEFAULT_ADAPTER_NAME"], "Intel")
+            self.assertNotIn("VK_ICD_FILENAMES", os.environ)
+            self.assertEqual(applied["WAYLAND_DISPLAY"], "")
+            self.assertEqual(applied["VK_ICD_FILENAMES"], "<unset>")
 
     def test_profile_parsing_and_argparse_rejection(self) -> None:
         self.assertEqual(demo.parse_profile("848x480"), (848, 480))
