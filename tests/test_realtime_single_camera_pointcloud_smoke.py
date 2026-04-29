@@ -706,6 +706,16 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             demo.fixed_rate_pull_step(now_s=0.0, next_pull_s=0.0, interval_s=0.0)
 
+    def test_coalesced_post_gate_allows_only_one_pending_callback(self) -> None:
+        gate = demo.CoalescedPostGate()
+        self.assertFalse(gate.pending)
+        self.assertTrue(gate.try_mark_pending())
+        self.assertTrue(gate.pending)
+        self.assertFalse(gate.try_mark_pending())
+        gate.mark_done()
+        self.assertFalse(gate.pending)
+        self.assertTrue(gate.try_mark_pending())
+
     def test_drop_stats_snapshot_reports_total_after_warmup_and_window_delta(self) -> None:
         args = demo.build_parser().parse_args(["--debug"])
         viewer = demo.RealtimeSingleCameraPointCloudDemo(args)

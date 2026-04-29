@@ -77,9 +77,9 @@ Open3D image/geometry update, total receive-to-render latency, the active
 drop counters, last-window drop deltas, and the `depth_to_render_ms` subtotal
 excluding camera wait.
 
-The Open3D UI pulls the latest prepared image or point-cloud packet from the
-main thread at fixed `60 Hz`; render workers publish latest-wins packets and do
-not enqueue one GUI callback per packet.
+The Open3D UI uses a coalesced fixed-`60 Hz` `post_to_main_thread` scheduler to
+pull the latest prepared image or point-cloud packet; render workers publish
+latest-wins packets and do not enqueue one GUI callback per packet.
 
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:

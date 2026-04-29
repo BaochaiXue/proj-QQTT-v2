@@ -81,7 +81,7 @@ Manual D455 validation remains separate; do not claim hardware capture results u
 - Added a single-thread Numba fused IR-left to color-frame z-buffer align kernel for the cached FFS aligner, with the existing NumPy `np.minimum.at` path retained as fallback. The Numba path intentionally stays non-parallel to avoid races when multiple IR pixels project to the same color pixel.
 - Expanded the HUD and debug line with `depth_source`, FFS TensorRT timing, FFS color-align timing, depth-stage drops, and render-slot drops.
 - Split realtime drop statistics into total, after-warmup, and last-debug-window deltas. The viewer resets steady-state drop counters after a short startup warmup while preserving total counters, so live logs distinguish launch/warmup drops from ongoing pipeline drops.
-- Changed Open3D GUI rendering to fixed-60Hz main-thread pull from the latest render packet instead of posting one GUI callback per prepared packet, avoiding callback burst buildup while preserving latest-wins freshness.
+- Changed Open3D GUI rendering to a coalesced fixed-60Hz `post_to_main_thread` pull from the latest render packet instead of posting one GUI callback per prepared packet or depending on `set_on_tick_event` cadence, avoiding callback burst buildup while preserving latest-wins freshness.
 
 Validation completed on 2026-04-29:
 

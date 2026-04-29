@@ -272,6 +272,28 @@ def fixed_rate_pull_step(*, now_s: float, next_pull_s: float, interval_s: float)
     return now_s + interval_s, True
 
 
+class CoalescedPostGate:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._pending = False
+
+    def try_mark_pending(self) -> bool:
+        with self._lock:
+            if self._pending:
+                return False
+            self._pending = True
+            return True
+
+    def mark_done(self) -> None:
+        with self._lock:
+            self._pending = False
+
+    @property
+    def pending(self) -> bool:
+        with self._lock:
+            return self._pending
+
+
 def _elapsed_ms(start_s: float, end_s: float) -> float:
     return float((end_s - start_s) * 1000.0)
 
@@ -2006,7 +2028,8 @@ class RealtimeSingleCameraPointCloudDemo:
         self._drop_stats_reset_done = False
         self._last_drop_window_counts = (0, 0, 0)
         render_interval_s = 1.0 / GUI_RENDER_PULL_HZ
-        next_render_pull_s = {"value": time.perf_counter()}
+        render_scheduler_stop = threading.Event()
+        render_post_gate = CoalescedPostGate()
 
         def reset_camera() -> None:
             assert scene_widget is not None
@@ -2121,27 +2144,52 @@ class RealtimeSingleCameraPointCloudDemo:
             self._maybe_log_debug(packet=packet, stats=render_stats, timing=timing, now_s=render_time_s)
             return True
 
-        def on_tick() -> bool:
-            if self.stop_event.is_set():
-                return False
-            now_s = time.perf_counter()
-            next_pull_s, should_pull = fixed_rate_pull_step(
-                now_s=now_s,
-                next_pull_s=next_render_pull_s["value"],
-                interval_s=render_interval_s,
-            )
-            next_render_pull_s["value"] = next_pull_s
-            if not should_pull:
-                return False
-            return render_latest()
+        def render_latest_on_main_thread() -> None:
+            try:
+                if self.stop_event.is_set():
+                    return
+                rendered = render_latest()
+                if rendered and hasattr(window, "post_redraw"):
+                    try:
+                        window.post_redraw()
+                    except Exception:
+                        pass
+            finally:
+                render_post_gate.mark_done()
+
+        def render_scheduler_loop() -> None:
+            next_pull_s = time.perf_counter()
+            while not self.stop_event.is_set() and not render_scheduler_stop.is_set():
+                now_s = time.perf_counter()
+                next_pull_s, should_pull = fixed_rate_pull_step(
+                    now_s=now_s,
+                    next_pull_s=next_pull_s,
+                    interval_s=render_interval_s,
+                )
+                if not should_pull:
+                    render_scheduler_stop.wait(max(0.0, next_pull_s - now_s))
+                    continue
+                if not render_post_gate.try_mark_pending():
+                    continue
+                try:
+                    app.post_to_main_thread(window, render_latest_on_main_thread)
+                except Exception:
+                    render_post_gate.mark_done()
+                    return
 
         def on_close() -> bool:
             self.stop_event.set()
+            render_scheduler_stop.set()
             return True
 
-        window.set_on_tick_event(on_tick)
         window.set_on_close(on_close)
         self._start_threads()
+        render_scheduler_thread = threading.Thread(
+            target=render_scheduler_loop,
+            name="single-d455-render-pull",
+            daemon=True,
+        )
+        render_scheduler_thread.start()
 
         timer: threading.Timer | None = None
         if self.args.duration_s > 0:
@@ -2154,6 +2202,8 @@ class RealtimeSingleCameraPointCloudDemo:
         try:
             app.run()
         finally:
+            render_scheduler_stop.set()
+            render_scheduler_thread.join(timeout=1.0)
             if timer is not None:
                 timer.cancel()
 

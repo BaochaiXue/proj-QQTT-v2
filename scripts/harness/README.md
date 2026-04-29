@@ -14,7 +14,7 @@
 - New realtime and visualization FFS work defaults to env `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, `max_disp=192`, and two-stage ONNX/TensorRT.
 - Current default TensorRT artifact: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`.
 - Single-camera realtime FFS depth rendering uses `realtime_single_camera_pointcloud.py --depth-source ffs`, captures `RGB + IR-left + IR-right`, runs the default two-stage TensorRT artifact, publishes raw IR-left metric depth from the FFS stage, aligns FFS depth to `camera_color_frame` in render-prep with cached projection coefficients and a Numba fused z-buffer path when available, and keeps capture, FFS, render-prep, and UI stages latest-wins.
-- The single-camera Open3D UI pulls the latest prepared render packet from the main thread at fixed `60 Hz`; render-prep workers only publish to the latest slot and do not post one GUI callback per packet.
+- The single-camera Open3D UI uses a coalesced fixed-`60 Hz` `post_to_main_thread` scheduler to pull the latest prepared render packet; render-prep workers only publish to the latest slot and do not post one GUI callback per packet.
 - Single-camera realtime debug logs split latest-wins drops into all-time totals, post-warmup counters, and last-window deltas so startup warmup drops are not confused with steady-state throughput drops.
 - QQTT performance claims must use real RealSense `848x480` inputs from local recorded/static `ir_left` and `ir_right` unless explicitly labeled as synthetic/control.
 - Models needing multiples of `32` should pad `848x480` to `864x480` and unpad outputs afterward; do not report resized `640x480` as QQTT runtime.
