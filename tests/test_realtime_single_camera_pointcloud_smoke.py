@@ -593,6 +593,56 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("ffs=9.50", text)
         self.assertIn("ffs_align=0.70", text)
 
+    def test_raw_ffs_depth_aligns_in_render_prep_stage(self) -> None:
+        args = demo.build_parser().parse_args(["--depth-source", "ffs"])
+        viewer = demo.RealtimeSingleCameraPointCloudDemo(args)
+        color_bgr = np.array([[[1, 2, 3], [4, 5, 6]]], dtype=np.uint8)
+        K = np.eye(3, dtype=np.float32)
+        packet = demo.RawFfsDepthPacket(
+            seq=7,
+            color_bgr=color_bgr,
+            depth_left_m=np.array([[1.0, 2.0]], dtype=np.float32),
+            intrinsics=demo.CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0),
+            k_ir_left=K,
+            t_ir_left_to_color=np.eye(4, dtype=np.float32),
+            k_color=K,
+            receive_perf_s=0.0,
+            ffs_done_perf_s=1.0,
+            dropped_capture_frames=4,
+            dropped_ffs_frames=0,
+            timing=demo.PipelineTiming(ffs_ms=10.0),
+        )
+        calls: list[tuple[tuple[int, int], tuple[int, int]]] = []
+        original_align = demo.align_ir_depth_to_color_fast
+
+        def fake_align(
+            depth_ir_m: np.ndarray,
+            K_ir_left: np.ndarray,
+            T_ir_left_to_color: np.ndarray,
+            K_color: np.ndarray,
+            output_shape: tuple[int, int],
+            invalid_value: float = 0.0,
+        ) -> np.ndarray:
+            calls.append((depth_ir_m.shape, output_shape))
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+        try:
+            demo.align_ir_depth_to_color_fast = fake_align
+            viewer._process_image_frame(packet)
+        finally:
+            demo.align_ir_depth_to_color_fast = original_align
+
+        render_packet = viewer.render_slot.get_latest_after(-1)
+        self.assertIsInstance(render_packet, demo.ImagePacket)
+        assert isinstance(render_packet, demo.ImagePacket)
+        self.assertEqual(calls, [((1, 2), (1, 2))])
+        self.assertEqual(render_packet.valid_count, 1)
+        self.assertEqual(render_packet.depth_source, "ffs")
+        self.assertEqual(render_packet.dropped_capture_frames, 4)
+        self.assertEqual(render_packet.timing.ffs_ms, 10.0)
+        self.assertGreaterEqual(render_packet.timing.ffs_align_ms, 0.0)
+        self.assertGreaterEqual(render_packet.timing.image_mask_ms, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

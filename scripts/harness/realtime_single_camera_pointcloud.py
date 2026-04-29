@@ -98,6 +98,23 @@ class DepthFramePacket:
 
 
 @dataclass(frozen=True)
+class RawFfsDepthPacket:
+    seq: int
+    color_bgr: np.ndarray
+    depth_left_m: np.ndarray
+    intrinsics: CameraIntrinsics
+    k_ir_left: np.ndarray
+    t_ir_left_to_color: np.ndarray
+    k_color: np.ndarray
+    receive_perf_s: float
+    ffs_done_perf_s: float
+    dropped_capture_frames: int
+    dropped_ffs_frames: int
+    timing: PipelineTiming
+    depth_source: str = "ffs"
+
+
+@dataclass(frozen=True)
 class PointCloudPacket:
     seq: int
     points_xyz_m: np.ndarray
@@ -1151,7 +1168,7 @@ class RealtimeSingleCameraPointCloudDemo:
         self.render_backend = resolve_render_backend(args)
         self.backproject_backend = "none"
         self.capture_slot: LatestSlot[FramePacket] = LatestSlot()
-        self.depth_slot: LatestSlot[DepthFramePacket] = LatestSlot()
+        self.depth_slot: LatestSlot[DepthFramePacket | RawFfsDepthPacket] = LatestSlot()
         self.render_slot: LatestSlot[PointCloudPacket | ImagePacket] = LatestSlot()
         self.stop_event = threading.Event()
         self.capture_thread: threading.Thread | None = None
@@ -1372,15 +1389,6 @@ class RealtimeSingleCameraPointCloudDemo:
                 ffs_done_s = time.perf_counter()
                 depth_ir_left_m = np.asarray(output["depth_ir_left_m"], dtype=np.float32)
                 k_ir_left_used = np.asarray(output.get("K_ir_left_used", frame.k_ir_left), dtype=np.float32)
-                align_start_s = time.perf_counter()
-                depth_color_m = align_ir_depth_to_color_fast(
-                    depth_ir_left_m,
-                    k_ir_left_used,
-                    frame.t_ir_left_to_color,
-                    self.k_color,
-                    output_shape=(self.height, self.width),
-                )
-                align_done_s = time.perf_counter()
             except Exception as exc:
                 if not self.stop_event.is_set():
                     print(f"[WARN] FFS depth frame {frame.seq} failed: {type(exc).__name__}: {exc}", flush=True)
@@ -1389,20 +1397,22 @@ class RealtimeSingleCameraPointCloudDemo:
             timing = replace(
                 frame.timing,
                 ffs_ms=_elapsed_ms(ffs_start_s, ffs_done_s),
-                ffs_align_ms=_elapsed_ms(align_start_s, align_done_s),
             )
             self.depth_slot.put(
-                DepthFramePacket(
+                RawFfsDepthPacket(
                     seq=frame.seq,
                     color_bgr=frame.color_bgr,
-                    depth_source=frame.depth_source,
+                    depth_left_m=depth_ir_left_m,
                     intrinsics=frame.intrinsics,
+                    k_ir_left=k_ir_left_used,
+                    t_ir_left_to_color=frame.t_ir_left_to_color,
+                    k_color=self.k_color,
                     receive_perf_s=frame.receive_perf_s,
-                    process_done_perf_s=time.perf_counter(),
+                    ffs_done_perf_s=ffs_done_s,
                     dropped_capture_frames=self.capture_slot.dropped_count,
                     dropped_ffs_frames=self.depth_slot.dropped_count,
+                    depth_source=frame.depth_source,
                     timing=timing,
-                    depth_m=depth_color_m,
                 )
             )
 
@@ -1419,10 +1429,34 @@ class RealtimeSingleCameraPointCloudDemo:
             else:
                 self._process_pointcloud_frame(frame)
 
-    def _process_image_frame(self, frame: DepthFramePacket) -> None:
+    def _process_image_frame(self, frame: DepthFramePacket | RawFfsDepthPacket) -> None:
         try:
-            mask_start_s = time.perf_counter()
-            if frame.depth_u16 is not None:
+            if isinstance(frame, RawFfsDepthPacket):
+                align_start_s = time.perf_counter()
+                depth_color_m = align_ir_depth_to_color_fast(
+                    frame.depth_left_m,
+                    frame.k_ir_left,
+                    frame.t_ir_left_to_color,
+                    frame.k_color,
+                    output_shape=frame.color_bgr.shape[:2],
+                )
+                align_done_s = time.perf_counter()
+                mask_start_s = time.perf_counter()
+                image_rgb, valid_count = build_camera_view_image_from_depth_m(
+                    color_bgr=frame.color_bgr,
+                    depth_m=depth_color_m,
+                    depth_min_m=self.args.depth_min_m,
+                    depth_max_m=self.args.depth_max_m,
+                    splat_px=self.args.image_splat_px,
+                )
+                mask_done_s = time.perf_counter()
+                timing = replace(
+                    frame.timing,
+                    ffs_align_ms=_elapsed_ms(align_start_s, align_done_s),
+                    image_mask_ms=_elapsed_ms(mask_start_s, mask_done_s),
+                )
+            elif frame.depth_u16 is not None:
+                mask_start_s = time.perf_counter()
                 image_rgb, valid_count = build_camera_view_image(
                     color_bgr=frame.color_bgr,
                     depth_u16=frame.depth_u16,
@@ -1431,7 +1465,10 @@ class RealtimeSingleCameraPointCloudDemo:
                     depth_max_m=self.args.depth_max_m,
                     splat_px=self.args.image_splat_px,
                 )
+                mask_done_s = time.perf_counter()
+                timing = replace(frame.timing, image_mask_ms=_elapsed_ms(mask_start_s, mask_done_s))
             elif frame.depth_m is not None:
+                mask_start_s = time.perf_counter()
                 image_rgb, valid_count = build_camera_view_image_from_depth_m(
                     color_bgr=frame.color_bgr,
                     depth_m=frame.depth_m,
@@ -1439,12 +1476,12 @@ class RealtimeSingleCameraPointCloudDemo:
                     depth_max_m=self.args.depth_max_m,
                     splat_px=self.args.image_splat_px,
                 )
+                mask_done_s = time.perf_counter()
+                timing = replace(frame.timing, image_mask_ms=_elapsed_ms(mask_start_s, mask_done_s))
             else:
                 return
-            mask_done_s = time.perf_counter()
         except Exception:
             return
-        timing = replace(frame.timing, image_mask_ms=_elapsed_ms(mask_start_s, mask_done_s))
         self.render_slot.put(
             ImagePacket(
                 seq=frame.seq,
@@ -1460,14 +1497,42 @@ class RealtimeSingleCameraPointCloudDemo:
         )
         self._request_render_update()
 
-    def _process_pointcloud_frame(self, frame: DepthFramePacket) -> None:
+    def _process_pointcloud_frame(self, frame: DepthFramePacket | RawFfsDepthPacket) -> None:
         projection_grid = self.projection_grid
         if projection_grid is None:
             return
         try:
-            backproject_start_s = time.perf_counter()
             backproject_backend = self.backproject_backend
-            if frame.depth_u16 is not None:
+            if isinstance(frame, RawFfsDepthPacket):
+                align_start_s = time.perf_counter()
+                depth_color_m = align_ir_depth_to_color_fast(
+                    frame.depth_left_m,
+                    frame.k_ir_left,
+                    frame.t_ir_left_to_color,
+                    frame.k_color,
+                    output_shape=frame.color_bgr.shape[:2],
+                )
+                align_done_s = time.perf_counter()
+                backproject_start_s = time.perf_counter()
+                points, colors = backproject_aligned_rgbd_depth_m(
+                    color_bgr=frame.color_bgr,
+                    depth_m=depth_color_m,
+                    intrinsics=frame.intrinsics,
+                    depth_min_m=self.args.depth_min_m,
+                    depth_max_m=self.args.depth_max_m,
+                    stride=self.args.stride,
+                    max_points=self.args.max_points,
+                    projection_grid=projection_grid,
+                )
+                backproject_done_s = time.perf_counter()
+                backproject_backend = "float32-numpy"
+                timing = replace(
+                    frame.timing,
+                    ffs_align_ms=_elapsed_ms(align_start_s, align_done_s),
+                    backproject_ms=_elapsed_ms(backproject_start_s, backproject_done_s),
+                )
+            elif frame.depth_u16 is not None:
+                backproject_start_s = time.perf_counter()
                 points, colors = backproject_aligned_rgbd(
                     color_bgr=frame.color_bgr,
                     depth_u16=frame.depth_u16,
@@ -1480,7 +1545,10 @@ class RealtimeSingleCameraPointCloudDemo:
                     projection_grid=projection_grid,
                     backproject_backend=self.backproject_backend,
                 )
+                backproject_done_s = time.perf_counter()
+                timing = replace(frame.timing, backproject_ms=_elapsed_ms(backproject_start_s, backproject_done_s))
             elif frame.depth_m is not None:
+                backproject_start_s = time.perf_counter()
                 points, colors = backproject_aligned_rgbd_depth_m(
                     color_bgr=frame.color_bgr,
                     depth_m=frame.depth_m,
@@ -1491,13 +1559,13 @@ class RealtimeSingleCameraPointCloudDemo:
                     max_points=self.args.max_points,
                     projection_grid=projection_grid,
                 )
+                backproject_done_s = time.perf_counter()
                 backproject_backend = "float32-numpy"
+                timing = replace(frame.timing, backproject_ms=_elapsed_ms(backproject_start_s, backproject_done_s))
             else:
                 return
-            backproject_done_s = time.perf_counter()
         except Exception:
             return
-        timing = replace(frame.timing, backproject_ms=_elapsed_ms(backproject_start_s, backproject_done_s))
         self.render_slot.put(
             PointCloudPacket(
                 seq=frame.seq,

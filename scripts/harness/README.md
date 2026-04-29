@@ -13,7 +13,7 @@
 
 - New realtime and visualization FFS work defaults to env `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, `max_disp=192`, and two-stage ONNX/TensorRT.
 - Current default TensorRT artifact: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`.
-- Single-camera realtime FFS depth rendering uses `realtime_single_camera_pointcloud.py --depth-source ffs`, captures `RGB + IR-left + IR-right`, runs the default two-stage TensorRT artifact, aligns FFS depth to `camera_color_frame`, and keeps capture, FFS, and render-prep stages latest-wins.
+- Single-camera realtime FFS depth rendering uses `realtime_single_camera_pointcloud.py --depth-source ffs`, captures `RGB + IR-left + IR-right`, runs the default two-stage TensorRT artifact, publishes raw IR-left metric depth from the FFS stage, aligns FFS depth to `camera_color_frame` in render-prep, and keeps capture, FFS, render-prep, and UI stages latest-wins.
 - QQTT performance claims must use real RealSense `848x480` inputs from local recorded/static `ir_left` and `ir_right` unless explicitly labeled as synthetic/control.
 - Models needing multiples of `32` should pad `848x480` to `864x480` and unpad outputs afterward; do not report resized `640x480` as QQTT runtime.
 - `640x480` runs are allowed only as official-table reproduction/control benchmarks and must be labeled as such.
