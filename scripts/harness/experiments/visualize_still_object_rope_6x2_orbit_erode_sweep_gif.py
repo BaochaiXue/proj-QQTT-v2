@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from data_process.visualization.experiments.still_object_orbit_gif import (  # noqa: E402
-    DEFAULT_6X2_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR,
+    DEFAULT_3X4_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR,
     DEFAULT_6X2_ERODE_SWEEP_PIXELS,
     DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
     DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
@@ -29,12 +29,12 @@ def _positive_int_or_none(value: str) -> int | None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Render four 6x2 Native Depth vs FFS raw-RGB masked-object orbit GIFs "
+            "Render four 3x4 Native Depth vs FFS raw-RGB masked-object orbit GIFs "
             "for still-object rounds 1-4 and still-rope rounds 1-2 with mask erosion "
             "and no-delete enhanced PT-like removed-point highlighting."
         )
     )
-    parser.add_argument("--output_root", type=Path, default=ROOT / DEFAULT_6X2_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR)
+    parser.add_argument("--output_root", type=Path, default=ROOT / DEFAULT_3X4_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR)
     parser.add_argument(
         "--erode_pixels",
         type=str,
@@ -48,6 +48,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tile_width", type=int, default=360)
     parser.add_argument("--tile_height", type=int, default=220)
     parser.add_argument("--row_label_width", type=int, default=180)
+    parser.add_argument(
+        "--layout",
+        choices=("3x4", "6x2"),
+        default="3x4",
+        help="Panel layout. 3x4 places two rounds per row; 6x2 keeps one round per row.",
+    )
     parser.add_argument("--depth_min_m", type=float, default=0.2)
     parser.add_argument("--depth_max_m", type=float, default=1.5)
     parser.add_argument("--max_points_per_camera", type=_positive_int_or_none, default=None)
@@ -123,6 +129,7 @@ def main() -> int:
         ortho_margin=float(args.ortho_margin),
         point_radius_px=int(args.point_radius_px),
         supersample_scale=int(args.supersample_scale),
+        layout=str(args.layout),
         highlight_enhanced_pt_like_removed=bool(args.highlight_enhanced_pt_like_removed),
         phystwin_radius_m=float(args.phystwin_radius_m),
         phystwin_nb_points=int(args.phystwin_nb_points),

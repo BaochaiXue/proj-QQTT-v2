@@ -50,6 +50,10 @@ DEFAULT_6X2_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR = (
     "data/experiments/"
     "still_object_rope_frame0_cam0_orbit_6x2_mask_erode_sweep_highlight_gif_ffs203048_iter4_trt_level5"
 )
+DEFAULT_3X4_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR = (
+    "data/experiments/"
+    "still_object_rope_frame0_cam0_orbit_3x4_mask_erode_sweep_highlight_gif_ffs203048_iter4_trt_level5"
+)
 DEFAULT_6X2_ENHANCED_OUTPUT_DIR = (
     "data/experiments/"
     "still_object_rope_frame0_cam0_orbit_6x2_enhanced_pt_like_gif_ffs203048_iter4_trt_level5"
@@ -735,9 +739,9 @@ def _compose_3x4_orbit_board(
 
 def _short_case_label(label: str) -> str:
     text = str(label)
-    text = text.replace("Still Object", "Obj")
+    text = text.replace("Still Object", "Object")
     text = text.replace("Still Rope", "Rope")
-    return text.replace(" ", "")
+    return text
 
 
 def _format_point_count(point_count: int) -> str:
@@ -1576,6 +1580,7 @@ def run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow(
     ortho_margin: float = 1.28,
     point_radius_px: int = 1,
     supersample_scale: int = 1,
+    layout: str = "3x4",
     highlight_enhanced_pt_like_removed: bool = True,
     phystwin_radius_m: float = DEFAULT_PHYSTWIN_RADIUS_M,
     phystwin_nb_points: int = DEFAULT_PHYSTWIN_NB_POINTS,
@@ -1611,6 +1616,7 @@ def run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow(
             ortho_margin=float(ortho_margin),
             point_radius_px=int(point_radius_px),
             supersample_scale=int(supersample_scale),
+            layout=str(layout),
             mask_erode_pixels=int(erode_value),
             enhanced_pt_like_postprocess=False,
             highlight_enhanced_pt_like_removed=bool(highlight_enhanced_pt_like_removed),
@@ -1626,6 +1632,7 @@ def run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow(
                 "gif_path": variant_summary["gif_path"],
                 "first_frame_path": variant_summary["first_frame_path"],
                 "summary_path": str(variant_output_dir / "summary.json"),
+                "panel_layout": str(variant_summary["panel_layout"]),
                 "pt_like_postprocess_enabled": bool(variant_summary["pt_like_postprocess_enabled"]),
                 "enhanced_pt_like_removed_highlight_enabled": bool(
                     variant_summary["enhanced_pt_like_removed_highlight_enabled"]
@@ -1654,6 +1661,7 @@ def run_still_object_rope_6x2_orbit_gif_erode_sweep_workflow(
         "tile_width": int(tile_width),
         "tile_height": int(tile_height),
         "row_label_width": int(row_label_width),
+        "panel_layout": str(layout).lower(),
         "render_mode": str(render_mode),
         "projection_mode": str(projection_mode),
         "pt_like_postprocess_enabled": False,

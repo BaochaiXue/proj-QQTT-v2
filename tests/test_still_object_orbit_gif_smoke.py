@@ -62,6 +62,7 @@ class StillObjectOrbitGifSmokeTest(unittest.TestCase):
 
             self.assertTrue((tmp_root / "output" / "summary.json").is_file())
             self.assertEqual(summary["erode_pixels"], [1, 3])
+            self.assertEqual(summary["panel_layout"], "3x4")
             self.assertFalse(summary["pt_like_postprocess_enabled"])
             self.assertTrue(summary["enhanced_pt_like_removed_highlight_enabled"])
             self.assertEqual(len(summary["variants"]), 2)
@@ -69,6 +70,8 @@ class StillObjectOrbitGifSmokeTest(unittest.TestCase):
                 self.assertTrue(Path(variant["gif_path"]).is_file())
                 self.assertTrue(Path(variant["first_frame_path"]).is_file())
                 self.assertTrue(Path(variant["summary_path"]).is_file())
+                self.assertEqual(variant["panel_layout"], "3x4")
+                self.assertIn("_3x4_", Path(variant["gif_path"]).name)
                 self.assertFalse(variant["pt_like_postprocess_enabled"])
                 self.assertTrue(variant["enhanced_pt_like_removed_highlight_enabled"])
                 first_case = variant["case_summaries"][0]
