@@ -51,7 +51,7 @@ python scripts/harness/check_all.py --full
 | --- | --- |
 | `benchmark_ffs_configs.py` | FFS config benchmark wrapper. |
 | `probe_d455_ir_pair.py`, `probe_d455_stream_capability.py` | Manual D455 IR/profile probes. |
-| `realtime_single_camera_pointcloud.py` | Manual single-D455 realtime RGB-D viewer with RealSense or FFS depth and Open3D HUD. |
+| `realtime_single_camera_pointcloud.py` | Harness compatibility path for the active single-D455 realtime demo in `demo_v2/`; `demo_v1/` remains the baseline copy. |
 | `run_wslg_open3d.sh` | WSLg Open3D GUI wrapper. |
 | `render_d455_stream_probe_report.py` | Convert stream probe JSON to a readable report. |
 | `run_ffs_static_replay_matrix.py` | Static replay benchmark matrix over recorded RealSense pairs. |

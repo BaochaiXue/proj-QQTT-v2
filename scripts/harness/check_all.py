@@ -26,6 +26,8 @@ FULL_HELP_SCRIPTS: tuple[str, ...] = (
     "record_data.py",
     "record_data_realtime_align.py",
     "data_process/record_data_align.py",
+    "demo_v1/realtime_single_camera_pointcloud.py",
+    "demo_v2/realtime_single_camera_pointcloud.py",
     "scripts/harness/realtime_single_camera_pointcloud.py",
     "scripts/harness/verify_ffs_demo.py",
     "scripts/harness/verify_ffs_tensorrt_wsl.py",

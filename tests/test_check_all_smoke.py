@@ -63,6 +63,8 @@ class CheckAllSmokeTest(unittest.TestCase):
         commands = check_all.build_commands(python="python", profile="full")
         self.assertGreater(len(commands), len(check_all.build_commands(python="python", profile="quick")))
         self.assertIn(["python", "cameras_viewer_FFS.py", "--help"], commands)
+        self.assertIn(["python", "demo_v1/realtime_single_camera_pointcloud.py", "--help"], commands)
+        self.assertIn(["python", "demo_v2/realtime_single_camera_pointcloud.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/realtime_single_camera_pointcloud.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/verify_ffs_demo.py", "--help"], commands)

@@ -16,6 +16,8 @@ import numpy as np
 from data_process.depth_backends import DEFAULT_FFS_REPO, DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
 from data_process.depth_backends import fast_foundation_stereo as ffs_backend
 from data_process.depth_backends.geometry import align_depth_to_color
+from demo_v1 import realtime_single_camera_pointcloud as demo_v1
+from demo_v2 import realtime_single_camera_pointcloud as demo_v2
 from scripts.harness import realtime_single_camera_pointcloud as demo
 
 
@@ -110,42 +112,55 @@ class FakeTensorRtRunner:
 
 class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
     def test_help_exposes_supported_capture_rates_and_profiles(self) -> None:
-        result = subprocess.run(
-            [sys.executable, "scripts/harness/realtime_single_camera_pointcloud.py", "--help"],
-            cwd=ROOT,
-            check=True,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        self.assertIn("--fps {5,15,30,60}", result.stdout)
-        self.assertIn("--profile {848x480,640x480}", result.stdout)
-        self.assertIn("--depth-source {realsense,ffs}", result.stdout)
-        self.assertIn("--ffs-repo FFS_REPO", result.stdout)
-        self.assertIn("--ffs-trt-model-dir FFS_TRT_MODEL_DIR", result.stdout)
-        self.assertIn("--view-mode {camera,orbit}", result.stdout)
-        self.assertIn("--render-backend {auto,image,pointcloud}", result.stdout)
-        self.assertIn("--backproject-backend {auto,numpy,numba}", result.stdout)
-        self.assertIn("--image-splat-px IMAGE_SPLAT_PX", result.stdout)
-        self.assertIn("--debug", result.stdout)
-        self.assertIn("orbit=200000", result.stdout)
-        self.assertIn("orbit=1.0", result.stdout)
-        self.assertIn(demo.COORDINATE_FRAME, result.stdout)
-        self.assertIn("Use <=0 to disable", result.stdout)
-        self.assertIn("far clipping", result.stdout)
+        for script_path in (
+            "demo_v1/realtime_single_camera_pointcloud.py",
+            "demo_v2/realtime_single_camera_pointcloud.py",
+            "scripts/harness/realtime_single_camera_pointcloud.py",
+        ):
+            with self.subTest(script_path=script_path):
+                result = subprocess.run(
+                    [sys.executable, script_path, "--help"],
+                    cwd=ROOT,
+                    check=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                self.assertIn("--fps {5,15,30,60}", result.stdout)
+                self.assertIn("--profile {848x480,640x480}", result.stdout)
+                self.assertIn("--depth-source {realsense,ffs}", result.stdout)
+                self.assertIn("--ffs-repo FFS_REPO", result.stdout)
+                self.assertIn("--ffs-trt-model-dir FFS_TRT_MODEL_DIR", result.stdout)
+                self.assertIn("--view-mode {camera,orbit}", result.stdout)
+                self.assertIn("--render-backend {auto,image,pointcloud}", result.stdout)
+                self.assertIn("--backproject-backend {auto,numpy,numba}", result.stdout)
+                self.assertIn("--image-splat-px IMAGE_SPLAT_PX", result.stdout)
+                self.assertIn("--debug", result.stdout)
+                self.assertIn("orbit=200000", result.stdout)
+                self.assertIn("orbit=1.0", result.stdout)
+                self.assertIn(demo.COORDINATE_FRAME, result.stdout)
+                self.assertIn("Use <=0 to disable", result.stdout)
+                self.assertIn("far clipping", result.stdout)
+        self.assertEqual(demo_v1.REPO_ROOT, ROOT)
+        self.assertEqual(demo_v2.REPO_ROOT, ROOT)
 
     def test_wslg_open3d_wrapper_pins_d3d12_xwayland_defaults(self) -> None:
-        wrapper = ROOT / "scripts" / "harness" / "run_wslg_open3d.sh"
-        text = wrapper.read_text(encoding="utf-8")
-        self.assertTrue(wrapper.exists())
-        self.assertIn('export WAYLAND_DISPLAY=""', text)
-        self.assertIn('EGL_PLATFORM="${EGL_PLATFORM:-x11}"', text)
-        self.assertIn('GALLIUM_DRIVER="${GALLIUM_DRIVER:-d3d12}"', text)
-        self.assertIn('MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-d3d12}"', text)
-        self.assertIn('LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-0}"', text)
-        self.assertIn('QQTT_WSLG_OPEN3D_FAST_EXIT="${QQTT_WSLG_OPEN3D_FAST_EXIT:-1}"', text)
-        self.assertIn('MESA_D3D12_DEFAULT_ADAPTER_NAME="${MESA_D3D12_DEFAULT_ADAPTER_NAME:-NVIDIA}"', text)
-        self.assertIn('exec "$@"', text)
+        for wrapper in (
+            ROOT / "demo_v1" / "run_wslg_open3d.sh",
+            ROOT / "demo_v2" / "run_wslg_open3d.sh",
+            ROOT / "scripts" / "harness" / "run_wslg_open3d.sh",
+        ):
+            with self.subTest(wrapper=wrapper):
+                text = wrapper.read_text(encoding="utf-8")
+                self.assertTrue(wrapper.exists())
+                self.assertIn('export WAYLAND_DISPLAY=""', text)
+                self.assertIn('EGL_PLATFORM="${EGL_PLATFORM:-x11}"', text)
+                self.assertIn('GALLIUM_DRIVER="${GALLIUM_DRIVER:-d3d12}"', text)
+                self.assertIn('MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-d3d12}"', text)
+                self.assertIn('LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-0}"', text)
+                self.assertIn('QQTT_WSLG_OPEN3D_FAST_EXIT="${QQTT_WSLG_OPEN3D_FAST_EXIT:-1}"', text)
+                self.assertIn('MESA_D3D12_DEFAULT_ADAPTER_NAME="${MESA_D3D12_DEFAULT_ADAPTER_NAME:-NVIDIA}"', text)
+                self.assertIn('exec "$@"', text)
 
     def test_script_applies_wslg_open3d_defaults_before_import(self) -> None:
         env = {
@@ -746,7 +761,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             self.skipTest("numba is not installed")
         script = (
             "import importlib.util, pathlib, sys; "
-            "path = pathlib.Path('scripts/harness/realtime_single_camera_pointcloud.py'); "
+            "path = pathlib.Path('demo_v2/realtime_single_camera_pointcloud.py'); "
             "sys.path.insert(0, str(path.parent)); "
             "spec = importlib.util.spec_from_file_location('realtime_single_camera_pointcloud_direct', path); "
             "module = importlib.util.module_from_spec(spec); "

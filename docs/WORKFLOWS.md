@@ -22,14 +22,14 @@ For a hand-held single-D455 realtime point-cloud demo in the camera color
 frame:
 
 ```bash
-conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60
+conda run -n FFS-SAM-RS python demo_v2/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60
 ```
 
 For the same single-camera viewer using live FFS depth from the D455 IR stereo
 pair and repo-local two-stage TensorRT artifact:
 
 ```bash
-conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py \
+conda run -n FFS-SAM-RS python demo_v2/realtime_single_camera_pointcloud.py \
   --profile 848x480 --fps 60 --depth-source ffs --view-mode camera --debug
 ```
 
@@ -38,7 +38,7 @@ defaults before importing Open3D, so the direct command uses Mesa `d3d12` instea
 of accidentally trying Zink/Vulkan:
 
 ```bash
-python scripts/harness/realtime_single_camera_pointcloud.py \
+python demo_v2/realtime_single_camera_pointcloud.py \
   --depth-source realsense \
   --profile 848x480 \
   --fps 30 \
@@ -53,8 +53,8 @@ sets `QQTT_WSLG_OPEN3D_FAST_EXIT=1`, so the harness stops the camera pipeline
 and exits directly when the Open3D window closes, avoiding the WSLg
 Open3D/Filament teardown crash. Use `QQTT_DISABLE_WSLG_OPEN3D_DEFAULTS=1` only
 when intentionally testing a different WSLg GL configuration. The
-`scripts/harness/run_wslg_open3d.sh` wrapper remains available for standalone
-Open3D probes or other Python scripts.
+`demo_v2/run_wslg_open3d.sh` wrapper remains available for standalone Open3D
+probes or other Python scripts.
 
 This demo streams one D455. The default `--depth-source realsense` captures
 `color + depth` and aligns native depth to color; `--depth-source ffs` captures
@@ -81,7 +81,7 @@ and defaults to `--max-points 200000` to reduce Open3D update pressure. Use
 `--max-points 0` with orbit when you explicitly want uncapped density, and use
 `--render-backend pointcloud` when you explicitly need Open3D point-cloud
 geometry in camera view. Point-cloud backprojection defaults to
-`--backproject-backend auto`, which uses Numba in `FFS-max-sam31-rs` for the
+`--backproject-backend auto`, which uses Numba in `FFS-SAM-RS` for the
 stride-1 projection-grid path and falls back to NumPy otherwise; pass
 `--backproject-backend numpy` to force the pure NumPy path. `--latency-target-ms`
 is only a warning threshold.
@@ -90,7 +90,7 @@ When diagnosing depth-to-render cost, enable the profiler HUD and `1 Hz`
 console timing summary:
 
 ```bash
-conda run -n FFS-max-sam31-rs python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60 --debug
+conda run -n FFS-SAM-RS python demo_v2/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60 --debug
 ```
 
 The profiler reports camera wait, RealSense align, frame copy, valid-depth image

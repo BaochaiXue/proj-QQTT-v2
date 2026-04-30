@@ -75,6 +75,15 @@ Live RGB + Fast-FoundationStereo preview:
 conda run -n FFS-SAM-RS python cameras_viewer_FFS.py
 ```
 
+Single-D455 realtime demo:
+
+```bash
+conda run -n FFS-SAM-RS python demo_v2/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60
+```
+
+See [demo_v2/README.md](demo_v2/README.md) for native RealSense, FFS depth,
+and WSLg/Open3D commands. `demo_v1/` is kept as the baseline copy.
+
 True no-render FFS throughput probe:
 
 ```bash
