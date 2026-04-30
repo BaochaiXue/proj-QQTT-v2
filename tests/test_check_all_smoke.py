@@ -17,13 +17,14 @@ class CheckAllSmokeTest(unittest.TestCase):
 
     def test_quick_profile_uses_curated_batched_commands(self) -> None:
         commands = check_all.build_commands(python="python", profile="quick")
-        self.assertEqual(len(commands), 12)
+        self.assertEqual(len(commands), 13)
         self.assertIn(["python", "cameras_viewer.py", "--help"], commands)
         self.assertIn(["python", "record_data_realtime_align.py", "--help"], commands)
         self.assertIn(["python", "data_process/record_data_align.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visual_compare_depth_panels.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visual_compare_reprojection.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visual_compare_turntable.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/check_harness_catalog.py"], commands)
         self.assertIn(["python", "scripts/harness/check_experiment_boundaries.py"], commands)
         self.assertIn(["python", "scripts/harness/check_visual_architecture.py"], commands)
         self.assertIn(
@@ -48,6 +49,7 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_ffs_intrinsic_file_format",
                 "tests.test_ffs_reprojection_smoke",
                 "tests.test_ffs_remove_invisible_mask_smoke",
+                "tests.test_sam31_still_object_benchmark_smoke",
                 "tests.test_visual_compare_depth_panels_smoke",
                 "tests.test_visual_compare_reprojection_smoke",
                 "tests.test_visual_compare_turntable_smoke",

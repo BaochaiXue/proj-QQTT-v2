@@ -7,69 +7,36 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-QUICK_HELP_SCRIPTS: tuple[str, ...] = (
+from scripts.harness._catalog import help_scripts
+
+
+QUICK_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
     "cameras_viewer.py",
     "cameras_calibrate.py",
     "record_data.py",
     "record_data_realtime_align.py",
     "data_process/record_data_align.py",
-    "scripts/harness/visual_compare_depth_panels.py",
-    "scripts/harness/visual_compare_reprojection.py",
-    "scripts/harness/visual_compare_turntable.py",
 )
 
-FULL_HELP_SCRIPTS: tuple[str, ...] = (
+FULL_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
     "cameras_viewer.py",
     "cameras_viewer_FFS.py",
     "cameras_calibrate.py",
     "record_data.py",
     "record_data_realtime_align.py",
     "data_process/record_data_align.py",
+)
+
+DEMO_HELP_SCRIPTS: tuple[str, ...] = (
     "demo_v1/realtime_single_camera_pointcloud.py",
     "demo_v2/realtime_single_camera_pointcloud.py",
-    "scripts/harness/realtime_single_camera_pointcloud.py",
-    "scripts/harness/verify_ffs_demo.py",
-    "scripts/harness/verify_ffs_tensorrt_wsl.py",
-    "scripts/harness/verify_ffs_single_engine_tensorrt_wsl.py",
-    "scripts/harness/probe_d455_ir_pair.py",
-    "scripts/harness/probe_d455_stream_capability.py",
-    "scripts/harness/render_d455_stream_probe_report.py",
-    "scripts/harness/generate_sam31_masks.py",
-    "scripts/harness/visual_compare_depth_panels.py",
-    "scripts/harness/diagnose_floating_point_sources.py",
-    "scripts/harness/benchmark_ffs_configs.py",
-    "scripts/harness/run_ffs_static_replay_matrix.py",
-    "scripts/harness/experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py",
-    "scripts/harness/experiments/visual_compare_enhanced_phystwin_removed_overlay.py",
-    "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py",
-    "scripts/harness/experiments/visualize_still_object_orbit_gif.py",
-    "scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_gif.py",
-    "scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_erode_sweep_gif.py",
-    "scripts/harness/experiments/visual_compare_ffs_confidence_filter_pcd.py",
-    "scripts/harness/experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py",
-    "scripts/harness/experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py",
-    "scripts/harness/experiments/visual_compare_ffs_mask_erode_sweep_pcd.py",
-    "scripts/harness/experiments/visual_compare_native_ffs_fused_pcd.py",
-    "scripts/harness/experiments/visualize_ffs_static_confidence_panels.py",
-    "scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py",
-    "scripts/harness/visual_compare_masked_pointcloud.py",
-    "scripts/harness/visual_compare_masked_camera_views.py",
-    "scripts/harness/visual_compare_reprojection.py",
-    "scripts/harness/visual_compare_depth_video.py",
-    "scripts/harness/visual_compare_depth_triplet_ply.py",
-    "scripts/harness/visual_compare_depth_triplet_video.py",
-    "scripts/harness/visual_compare_rerun.py",
-    "scripts/harness/visual_compare_turntable.py",
-    "scripts/harness/visual_compare_stereo_order_pcd.py",
-    "scripts/harness/visual_make_professor_triptych.py",
-    "scripts/harness/visual_make_match_board.py",
-    "scripts/harness/audit_ffs_left_right.py",
-    "scripts/harness/compare_face_smoothness.py",
-    "scripts/harness/run_ffs_on_saved_pair.py",
-    "scripts/harness/reproject_ffs_to_color.py",
-    "scripts/harness/cleanup_different_types_cases.py",
 )
+
+QUICK_HELP_SCRIPTS: tuple[str, ...] = (*QUICK_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))
+FULL_HELP_SCRIPTS: tuple[str, ...] = (*FULL_FORMAL_HELP_SCRIPTS, *DEMO_HELP_SCRIPTS, *help_scripts("full"))
 
 QUICK_UNITTEST_BATCHES: tuple[tuple[str, ...], ...] = (
     (
@@ -89,6 +56,7 @@ QUICK_UNITTEST_BATCHES: tuple[tuple[str, ...], ...] = (
         "tests.test_ffs_intrinsic_file_format",
         "tests.test_ffs_reprojection_smoke",
         "tests.test_ffs_remove_invisible_mask_smoke",
+        "tests.test_sam31_still_object_benchmark_smoke",
         "tests.test_visual_compare_depth_panels_smoke",
         "tests.test_visual_compare_reprojection_smoke",
         "tests.test_visual_compare_turntable_smoke",
@@ -124,6 +92,7 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_original_camera_view_config_smoke",
     "tests.test_masked_camera_view_compare_smoke",
     "tests.test_sam31_mask_helper_smoke",
+    "tests.test_sam31_still_object_benchmark_smoke",
     "tests.test_recording_metadata_schema_v2",
     "tests.test_calibration_metadata_smoke",
     "tests.test_camera_system_partial_stall_smoke",
@@ -230,6 +199,7 @@ PYTEST_BATCHES: tuple[tuple[str, ...], ...] = (
 )
 
 CHECK_COMMANDS: tuple[tuple[str, ...], ...] = (
+    ("scripts/harness/check_harness_catalog.py",),
     ("scripts/harness/check_experiment_boundaries.py",),
     ("scripts/harness/check_visual_architecture.py",),
     ("-m", "scripts.harness.check_scope"),
