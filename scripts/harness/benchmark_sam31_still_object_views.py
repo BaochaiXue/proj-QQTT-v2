@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import shutil
 import sys
@@ -99,6 +101,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--async_loading_frames", action="store_true")
     parser.add_argument("--compile_model", action="store_true")
     parser.add_argument("--max_num_objects", type=int, default=16)
+    parser.add_argument(
+        "--show_model_load_logs",
+        action="store_true",
+        help="Do not suppress verbose upstream checkpoint-load logs.",
+    )
     return parser.parse_args(argv)
 
 
@@ -192,6 +199,7 @@ def _run_camera_benchmark(
     async_loading_frames: bool,
     compile_model: bool,
     max_num_objects: int,
+    show_model_load_logs: bool,
 ) -> CameraBenchmarkTiming:
     _, np, torch_module, _, _, _ = _load_runtime_deps()
     prompts = parse_text_prompts(text_prompt)
@@ -214,13 +222,22 @@ def _run_camera_benchmark(
         torch_module=torch_module,
     )
 
-    predictor_build_seconds, predictor_result = _seconds_for(
-        lambda: build_sam31_video_predictor(
+    def _build_predictor():
+        return build_sam31_video_predictor(
             checkpoint_path=checkpoint_path,
             async_loading_frames=async_loading_frames,
             compile_model=compile_model,
             max_num_objects=max_num_objects,
-        ),
+        )
+
+    def _build_predictor_with_optional_log_suppression():
+        if show_model_load_logs:
+            return _build_predictor()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return _build_predictor()
+
+    predictor_build_seconds, predictor_result = _seconds_for(
+        _build_predictor_with_optional_log_suppression,
         torch_module=torch_module,
     )
     predictor, _ = predictor_result
@@ -439,6 +456,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             async_loading_frames=args.async_loading_frames,
             compile_model=args.compile_model,
             max_num_objects=args.max_num_objects,
+            show_model_load_logs=args.show_model_load_logs,
         )
         camera_timings.append(timing)
 
