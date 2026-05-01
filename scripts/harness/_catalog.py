@@ -218,6 +218,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/run_edgetam_vs_sam21_compile_ablation.py",
+        "experiments",
+        "Official-style EdgeTAM compile-mode vs SAM2.1 Small/Tiny speed ablation.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/experiments/run_edgetam_video_masks.py",
         "experiments",
         "EdgeTAM video mask worker used by the dynamics 3x6 panel experiment.",

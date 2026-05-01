@@ -38,6 +38,7 @@ These record what the current machine and D455 topology actually supported durin
 - `sam21_dynamics_checkpoint_ladder_benchmark.md`
 - `edgetam_max_env_validation.md`
 - `edgetam_dynamics_round1_3x6_panel_benchmark.md`
+- `edgetam_vs_sam21_speed_ablation.md`
 
 These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 
@@ -74,6 +75,7 @@ These record repo-structure, scope, and metadata-contract hardening passes.
 - `sam21_dynamics_checkpoint_ladder_results.json`
 - `sam21_dynamics_checkpoint_ladder_mask_quality.json`
 - `edgetam_dynamics_round1_3x6_panel_results.json`
+- `edgetam_vs_sam21_speed_ablation.json`
 
 These are not general datasets. They are small helper assets used by specific validation and visualization workflows.
 
