@@ -34,7 +34,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Benchmark Fast-FoundationStereo config tradeoffs on saved aligned stereo pairs. "
-            "Measures warmup-adjusted latency/FPS and agreement relative to a reference config."
+            "Measures warmup-adjusted latency/FPS and agreement relative to a reference config. "
+            "This is offline PyTorch screening, not live 3-camera realtime validation."
         )
     )
     parser.add_argument("--aligned_root", type=Path, default=ROOT / "data")

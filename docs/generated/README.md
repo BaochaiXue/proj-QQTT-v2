@@ -27,6 +27,7 @@ These record what the current machine and D455 topology actually supported durin
 - `ffs_static_replay_matrix_validation.md`
 - `ffs_static_replay_matrix_concurrent3view_validation.md`
 - `ffs_live_3cam_benchmark_validation.md`
+- `ffs_live_vs_proxy_boundary.md`
 - `ffs_live_trt_viewer_validation.md`
 - `ffs_depth_backend_integration_validation.md`
 - `ffs_comparison_workflow_validation.md`

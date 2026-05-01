@@ -1,5 +1,7 @@
 # Static Replay FFS Matrix Validation
 
+Status: historical static replay note only. This run used obsolete single-camera sequential benchmark semantics and must not be used for current realtime conclusions. Use `docs/generated/ffs_static_replay_matrix_concurrent3view_validation.md` for the corrected concurrent static replay proxy, and use `docs/generated/ffs_live_3cam_benchmark_validation.md` for live PyTorch 3-camera status.
+
 ## Environment Prep
 
 Executed in `qqtt-ffs-compat`.

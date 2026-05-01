@@ -41,6 +41,13 @@ python scripts/harness/check_all.py --full
 - Models requiring multiples of `32` pad `848x480` to `864x480` and unpad outputs afterward.
 - `640x480` runs are official-table reproduction/control benchmarks only.
 
+## FFS Performance Boundary
+
+- Live PyTorch 3-camera FFS is not realtime on the RTX 5090 laptop. The best recorded `20-30-48 / valid_iters=4 / scale=0.5` live run reached about `22.6` aggregate FFS FPS, or about `7.5` FPS per camera. Source: `docs/generated/ffs_live_3cam_benchmark_validation.md`.
+- Static replay / TensorRT proxy is a separate result family. The current proxy target is `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5`, and it has basically reached the target. Source: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/report.md`.
+- Do not label saved-pair, static replay, or TensorRT proxy numbers as "live PyTorch 3-camera realtime".
+- `benchmark_ffs_configs.py` is for saved-pair PyTorch screening; `run_ffs_static_replay_matrix.py` is for offline static replay / TensorRT proxy measurement; `cameras_viewer_FFS.py --ffs_backend pytorch` is the authoritative live PyTorch path.
+
 ## Primary Entrypoints
 
 - Checks: `check_all.py`, `check_harness_catalog.py`, `check_scope.py`, `check_experiment_boundaries.py`, `check_visual_architecture.py`.

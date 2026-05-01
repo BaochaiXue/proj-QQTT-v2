@@ -15,6 +15,7 @@ from data_process.visualization.experiments.sam21_checkpoint_ladder_panel import
     DEFAULT_SAM2_CHECKPOINT_CACHE,
     run_ladder_workflow,
     run_sam21_worker,
+    run_sam21_stable_worker,
 )
 
 
@@ -49,6 +50,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-sam2", action="store_true", help="Reuse existing SAM2 masks/timings and only render/report.")
     parser.add_argument("--skip-render", action="store_true", help="Run SAM2 workers and reports without rendering GIFs.")
     parser.add_argument(
+        "--stable-throughput",
+        action="store_true",
+        help=(
+            "Benchmark one long-lived worker per checkpoint. Each case/camera job gets "
+            "five no-output warmup propagations, then a no-output speed pass; mask "
+            "collection is performed separately for panel rendering."
+        ),
+    )
+    parser.add_argument("--stable-warmup-runs", type=int, default=5)
+    parser.add_argument(
+        "--stable-no-speed-step-marker",
+        action="store_true",
+        help=(
+            "Do not call torch.compiler.cudagraph_mark_step_begin() during stable "
+            "warmup/speed propagation. This is closer to upstream benchmark.py but "
+            "can fail on the local CUDA Graph path."
+        ),
+    )
+    parser.add_argument(
         "--no-download-missing-checkpoints",
         action="store_true",
         help="Fail if a SAM2.1 checkpoint is missing instead of downloading it.",
@@ -71,11 +91,47 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     worker.add_argument("--config", help=argparse.SUPPRESS)
     worker.add_argument("--output-mask-root", type=Path, help=argparse.SUPPRESS)
     worker.add_argument("--result-json", type=Path, help=argparse.SUPPRESS)
+    worker.add_argument("--stable-worker", action="store_true", help=argparse.SUPPRESS)
+    worker.add_argument("--job-manifest", type=Path, help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.stable_worker:
+        missing = [
+            name
+            for name in (
+                "checkpoint_key",
+                "checkpoint_label",
+                "checkpoint",
+                "config",
+                "job_manifest",
+                "result_json",
+            )
+            if getattr(args, name) is None
+        ]
+        if missing:
+            raise ValueError(f"Missing stable worker arguments: {', '.join(missing)}")
+        summary = run_sam21_stable_worker(
+            checkpoint_key=str(args.checkpoint_key),
+            checkpoint_label=str(args.checkpoint_label),
+            checkpoint_path=Path(args.checkpoint),
+            config=str(args.config),
+            job_manifest=Path(args.job_manifest),
+            result_json=Path(args.result_json),
+            warmup_runs=int(args.stable_warmup_runs),
+            speed_use_step_marker=not bool(args.stable_no_speed_step_marker),
+            overwrite=bool(args.overwrite),
+        )
+        print(
+            f"[sam21-stable-worker] {summary['checkpoint_key']}: "
+            f"{summary['aggregate_ms_per_frame']:.2f} ms/frame "
+            f"{summary['aggregate_fps']:.2f} FPS over {summary['total_timed_frames']} frames",
+            flush=True,
+        )
+        return 0
+
     if args.worker:
         missing = [
             name
@@ -138,6 +194,9 @@ def main(argv: list[str] | None = None) -> int:
         run_sam2=not bool(args.skip_sam2),
         render_gifs=not bool(args.skip_render),
         overwrite=bool(args.overwrite),
+        stable_throughput=bool(args.stable_throughput),
+        stable_warmup_runs=int(args.stable_warmup_runs),
+        stable_speed_use_step_marker=not bool(args.stable_no_speed_step_marker),
         save_first_frame_ply=not bool(args.no_first_frame_ply),
         phystwin_radius_m=float(args.phystwin_radius_m),
         phystwin_nb_points=int(args.phystwin_nb_points),

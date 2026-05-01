@@ -44,7 +44,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
     HarnessEntry(
         "scripts/harness/benchmark_ffs_configs.py",
         "hardware_external",
-        "FFS config benchmark wrapper.",
+        "Saved-pair PyTorch FFS config screening; not live 3-camera realtime.",
         "full",
     ),
     HarnessEntry(
@@ -86,7 +86,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
     HarnessEntry(
         "scripts/harness/run_ffs_static_replay_matrix.py",
         "hardware_external",
-        "Static replay benchmark matrix over recorded RealSense pairs.",
+        "Offline static replay / TensorRT proxy matrix; not live PyTorch realtime.",
         "full",
     ),
     HarnessEntry(

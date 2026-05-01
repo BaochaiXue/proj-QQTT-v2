@@ -54,7 +54,7 @@
 
 ## `FFS-SAM-RS`
 
-- Purpose: default environment for new QQTT realtime and visualization experiments that need RealSense, Fast-FoundationStereo, TensorRT, and SAM 3.1 in the same process.
+- Purpose: default environment for new QQTT viewer, static replay / TensorRT proxy, and visualization experiments that need RealSense, Fast-FoundationStereo, TensorRT, and SAM 3.1 in the same process.
 - Current validated Python:
   - `3.12.13`
 - Current validated torch stack:
@@ -74,12 +74,17 @@
   - two-stage ONNX/TensorRT artifact: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
   - builder optimization level: `5`
   - input policy: keep real `848x480` images, edge-pad to `864x480`, then unpad outputs
+- Performance boundary:
+  - the level-5 TensorRT artifact is the current static replay / TensorRT proxy target and has basically reached that proxy goal
+  - live PyTorch 3-camera FFS remains not realtime on the RTX 5090 laptop; best recorded `scale=0.5` reached about `22.6` aggregate FFS FPS, or about `7.5` FPS per camera
+  - keep static replay / TensorRT proxy claims separate from live PyTorch realtime claims
 - Validation note:
   - `docs/generated/sam31_env_validation.md` records SAM 3.1 helper validation.
   - `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/report.md` records the current level-5 TRT speed table.
 - Expected use:
   - live `cameras_viewer_FFS.py` TensorRT preview
-  - realtime FFS probes
+  - live FFS probes with explicit backend labeling
+  - static replay / TensorRT proxy benchmarking
   - visualization harnesses that need both SAM 3.1 masks and FFS depth
   - current operator-side experiments unless a task explicitly calls for legacy `qqtt-ffs-compat`, `ffs-official-trt`, or `FFS-max`
 

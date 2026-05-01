@@ -21,7 +21,9 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - each camera shows live color and depth
 - each panel reports negotiated `configured fps` plus live `measured fps`
 - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo <repo>` launches successfully with the default TensorRT engine path
-- default realtime / visualization FFS uses checkpoint `20-30-48`, `valid_iters=4`, two-stage ONNX/TensorRT, and a `builder_optimization_level=5` engine
+- default TensorRT viewer / visualization FFS uses checkpoint `20-30-48`, `valid_iters=4`, two-stage ONNX/TensorRT, and a `builder_optimization_level=5` engine
+- current `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5` success is a static replay / TensorRT proxy result, not a live PyTorch realtime claim
+- current live PyTorch 3-camera status remains not realtime: best recorded `scale=0.5` reached about `22.6` aggregate FFS FPS, or about `7.5` FPS per camera
 - each FFS panel shows live RGB on top and color-aligned FFS depth on bottom
 - each FFS panel reports negotiated profile plus live `capture` and `ffs` fps
 - default worker topology launches successfully:

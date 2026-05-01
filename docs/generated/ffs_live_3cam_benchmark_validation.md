@@ -5,6 +5,9 @@
 - GPU: `NVIDIA GeForce RTX 5090 Laptop GPU`
 - Environment: `qqtt-ffs-compat`
 - Purpose: measure the real `cameras_viewer_FFS.py` online path with **3 cameras active at once**
+- Current status: `RED / not live realtime`
+
+Boundary: this file is the live PyTorch 3-camera status. Do not combine it with static replay, saved-pair screening, or TensorRT proxy numbers. The current static replay / TensorRT proxy target is documented separately in `docs/generated/ffs_live_vs_proxy_boundary.md`.
 
 ## Why This Replaces The Earlier Online Conclusion
 

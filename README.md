@@ -94,7 +94,7 @@ In `--render-mode none`, the viewer skips panel assembly / `imshow()`, does not
 reproject FFS depth into the color frame, and prints periodic console FPS stats
 instead.
 
-The default realtime / visualization FFS path is:
+The default TensorRT FFS path for viewer, proxy, and visualization runs is:
 
 - environment: `FFS-SAM-RS`
 - external repo default: sibling `../Fast-FoundationStereo`
@@ -106,6 +106,12 @@ The default realtime / visualization FFS path is:
 - TensorRT build level: `builder_optimization_level=5`
 
 For actual QQTT performance, use the recorded `848x480` RealSense image size. If the TRT shape needs a multiple of `32`, pad `848x480` to `864x480` and unpad the output; do not resize down to `640x480` and report that as QQTT runtime.
+
+Performance boundary:
+
+- Live PyTorch 3-camera FFS is not realtime on the RTX 5090 laptop. The best measured `20-30-48 / valid_iters=4 / scale=0.5` live PyTorch run reached only about `22.6` aggregate FFS FPS, or about `7.5` FPS per camera.
+- The `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5` result is the current TensorRT static replay / proxy target and has basically reached that proxy goal.
+- Do not merge static replay or TensorRT proxy numbers into a "live PyTorch 3-camera realtime" claim.
 
 Available live FFS modes:
 
@@ -153,7 +159,7 @@ Static-round TRT matrix replay + PPTX export:
 conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/ffs_static_replay_matrix_20260422_fullrun/artifacts --reuse_artifacts
 ```
 
-This workflow is the current offline realtime-proxy harness for the three static FFS rounds. It:
+This workflow is the current offline static replay / TensorRT proxy harness for the three static FFS rounds. It:
 
 - replays `static/ffs_30_static_round1_20260410_235202`, `round2`, and `round3`
 - searches the fixed `3 models × 3 scales × 3 valid_iters × 2 TRT engines = 54` matrix
@@ -165,7 +171,7 @@ This workflow is the current offline realtime-proxy harness for the three static
 
 Important:
 
-- run new realtime-proxy visualization work from `FFS-SAM-RS`
+- run new static replay / TensorRT proxy visualization work from `FFS-SAM-RS`
 - `python-pptx` and `onnx` must be available in that environment
 - `--artifact_root` can point at an older artifact tree so TRT engines are reused without reusing old benchmark results
 - the harness uses `stuffed animal` masks at `frame_idx=10`

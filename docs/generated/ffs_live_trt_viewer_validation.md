@@ -7,6 +7,7 @@
 - TensorRT Python runtime: `10.16.1.11`
 - Engine directory: `/home/zhangxinjie/proj-QQTT-v2/data/ffs_proof_of_life/trt_two_stage_864x480_wsl`
 - Scope note: this validates the live `cameras_viewer_FFS.py` viewer path only. It does not change or validate QQTT aligned-case TRT integration.
+- Status note: this is an older live TensorRT smoke note, not the current `builderOptimizationLevel=5` static replay / TensorRT proxy target and not proof of live realtime. Current reporting boundaries are in `docs/generated/ffs_live_vs_proxy_boundary.md`.
 
 ## Commands
 

@@ -44,6 +44,7 @@ DEFAULT_DOC_QUALITY_JSON = Path("docs/generated/sam21_max_round2_mask_quality.js
 DEFAULT_CAMERA_IDS: tuple[int, ...] = (0, 1, 2)
 DEFAULT_VARIANT_ORDER: tuple[str, ...] = ("sam31", "large", "base_plus", "small", "tiny")
 SAM21_OBJECT_ID = 0
+DEFAULT_STABLE_WARMUP_RUNS = 5
 
 
 @dataclass(frozen=True)
@@ -581,6 +582,443 @@ def run_sam21_worker(
         shutil.rmtree(temp_root, ignore_errors=True)
         if predictor is not None and hasattr(predictor, "reset_state"):
             pass
+
+
+def build_stable_job_manifest(
+    *,
+    case_specs: Sequence[LadderCaseSpec],
+    checkpoint_spec: LadderCheckpointSpec,
+    checkpoint_cache: str | Path,
+    output_dir: str | Path,
+    frames: int,
+    camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    bbox_padding_px: int = 0,
+) -> dict[str, Any]:
+    return {
+        "checkpoint_key": checkpoint_spec.key,
+        "checkpoint_label": checkpoint_spec.label,
+        "checkpoint_path": str(checkpoint_spec.checkpoint_path(Path(checkpoint_cache))),
+        "config": checkpoint_spec.config,
+        "frames": int(frames),
+        "bbox_padding_px": int(bbox_padding_px),
+        "camera_ids": [int(item) for item in camera_ids],
+        "jobs": [
+            {
+                "case_key": case_spec.key,
+                "case_label": case_spec.label,
+                "case_dir": str(case_spec.case_dir),
+                "text_prompt": case_spec.text_prompt,
+                "camera_idx": int(camera_idx),
+                "output_mask_root": str(Path(output_dir).resolve() / "masks" / case_spec.key / checkpoint_spec.key),
+            }
+            for case_spec in case_specs
+            for camera_idx in [int(item) for item in camera_ids]
+        ],
+    }
+
+
+def _prepare_stable_job(
+    *,
+    job: dict[str, Any],
+    frames: int,
+    bbox_padding_px: int,
+    temp_root: Path,
+) -> dict[str, Any]:
+    case_dir = Path(job["case_dir"]).resolve()
+    camera_idx = int(job["camera_idx"])
+    text_prompt = str(job["text_prompt"])
+    frame_tokens = sorted_case_frame_tokens(case_dir, camera_idx=camera_idx, frames=int(frames))
+    sam31_mask = load_union_mask(
+        mask_root=case_dir / "sam31_masks",
+        case_dir=case_dir,
+        camera_idx=camera_idx,
+        frame_token=frame_tokens[0],
+        text_prompt=text_prompt,
+    )
+    object_label = (
+        matched_mask_labels(
+            mask_root=case_dir / "sam31_masks",
+            camera_idx=camera_idx,
+            text_prompt=text_prompt,
+        )
+        or parse_text_prompts(text_prompt)
+        or [text_prompt]
+    )[0]
+    box_xyxy = bbox_xyxy_from_mask(sam31_mask, padding_px=int(bbox_padding_px))
+    video_dir = temp_root / "video_jpg" / str(job["case_key"]) / f"cam{camera_idx}"
+    prepare_jpeg_video_dir(
+        case_dir=case_dir,
+        camera_idx=camera_idx,
+        frame_tokens=frame_tokens,
+        work_dir=video_dir,
+    )
+    return {
+        **job,
+        "case_dir": str(case_dir),
+        "camera_idx": camera_idx,
+        "frame_tokens": [str(item) for item in frame_tokens],
+        "sam21_object_label": str(object_label),
+        "bbox_source": "sam31_frame0_union_mask",
+        "bbox_xyxy": [float(item) for item in box_xyxy],
+        "video_dir": str(video_dir),
+    }
+
+
+def run_sam21_stable_worker(
+    *,
+    checkpoint_key: str,
+    checkpoint_label: str,
+    checkpoint_path: str | Path,
+    config: str,
+    job_manifest: str | Path,
+    result_json: str | Path,
+    warmup_runs: int = DEFAULT_STABLE_WARMUP_RUNS,
+    speed_use_step_marker: bool = True,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    import torch
+    from sam2.build_sam import build_sam2_video_predictor
+
+    _configure_torch_for_sam21(torch)
+    checkpoint_path = Path(checkpoint_path).expanduser().resolve()
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"Missing SAM2.1 checkpoint: {checkpoint_path}")
+    manifest = json.loads(Path(job_manifest).read_text(encoding="utf-8"))
+    frames = int(manifest.get("frames", 30))
+    bbox_padding_px = int(manifest.get("bbox_padding_px", 0))
+    raw_jobs = list(manifest.get("jobs", []))
+    if not raw_jobs:
+        raise ValueError(f"Stable SAM2.1 worker manifest has no jobs: {job_manifest}")
+
+    result_path = Path(result_json).resolve()
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_root = Path(tempfile.mkdtemp(prefix=f"sam21_stable_{checkpoint_key}_", dir=str(result_path.parent)))
+    predictor = None
+    try:
+        prepared_jobs = [
+            _prepare_stable_job(
+                job=dict(job),
+                frames=frames,
+                bbox_padding_px=bbox_padding_px,
+                temp_root=temp_root,
+            )
+            for job in raw_jobs
+        ]
+        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+            predictor = build_sam2_video_predictor(
+                str(config),
+                str(checkpoint_path),
+                device="cuda",
+                vos_optimized=True,
+            )
+
+            def init_state(job: dict[str, Any]) -> Any:
+                return predictor.init_state(
+                    video_path=str(job["video_dir"]),
+                    offload_video_to_cpu=False,
+                    offload_state_to_cpu=False,
+                    async_loading_frames=False,
+                )
+
+            def prompt_state(state: Any, job: dict[str, Any]) -> Any:
+                return predictor.add_new_points_or_box(
+                    inference_state=state,
+                    frame_idx=0,
+                    obj_id=int(SAM21_OBJECT_ID),
+                    box=np.asarray(job["bbox_xyxy"], dtype=np.float32),
+                )
+
+            def propagate_state(
+                state: Any,
+                job: dict[str, Any],
+                *,
+                collect: bool,
+                use_step_marker: bool,
+            ) -> tuple[int, dict[str, np.ndarray]]:
+                frame_tokens = [str(item) for item in job["frame_tokens"]]
+                outputs: dict[str, np.ndarray] = {}
+                iterator = predictor.propagate_in_video(
+                    state,
+                    start_frame_idx=0,
+                    max_frame_num_to_track=len(frame_tokens),
+                    reverse=False,
+                )
+                output_count = 0
+                while True:
+                    if use_step_marker:
+                        _mark_compile_step(torch)
+                    try:
+                        out_frame_idx, _out_obj_ids, out_mask_logits = next(iterator)
+                    except StopIteration:
+                        break
+                    output_count += 1
+                    if collect:
+                        token = frame_tokens[int(out_frame_idx)]
+                        mask_tensor = (out_mask_logits[0] > 0).detach()
+                        outputs[str(token)] = mask_tensor.squeeze().cpu().numpy().astype(bool)
+                _cuda_sync(torch)
+                return output_count, outputs
+
+            warmup_records: list[dict[str, Any]] = []
+            for job in prepared_jobs:
+                state, warm_init_ms = _time_ms(torch, lambda job=job: init_state(job))
+                _prompt_response, warm_prompt_ms = _time_ms(
+                    torch,
+                    lambda state=state, job=job: prompt_state(state, job),
+                )
+                warmup_ms: list[float] = []
+                warmup_frame_counts: list[int] = []
+                for _warmup_idx in range(max(0, int(warmup_runs))):
+                    (frame_count, _outputs), elapsed_ms = _time_ms(
+                        torch,
+                        lambda state=state, job=job: propagate_state(
+                            state,
+                            job,
+                            collect=False,
+                            use_step_marker=bool(speed_use_step_marker),
+                        ),
+                    )
+                    warmup_ms.append(float(elapsed_ms))
+                    warmup_frame_counts.append(int(frame_count))
+                warmup_records.append(
+                    {
+                        "case_key": str(job["case_key"]),
+                        "camera_idx": int(job["camera_idx"]),
+                        "init_state_ms": float(warm_init_ms),
+                        "prompt_ms": float(warm_prompt_ms),
+                        "warmup_runs": int(warmup_runs),
+                        "warmup_propagate_ms": warmup_ms,
+                        "warmup_frame_counts": warmup_frame_counts,
+                    }
+                )
+                del state
+
+            timing_records: list[dict[str, Any]] = []
+            speed_phase_started = time.perf_counter()
+            for job in prepared_jobs:
+                state, init_state_ms = _time_ms(torch, lambda job=job: init_state(job))
+                prompt_response, prompt_ms = _time_ms(
+                    torch,
+                    lambda state=state, job=job: prompt_state(state, job),
+                )
+                (timed_frame_count, _speed_outputs), timed_propagate_ms = _time_ms(
+                    torch,
+                    lambda state=state, job=job: propagate_state(
+                        state,
+                        job,
+                        collect=False,
+                        use_step_marker=bool(speed_use_step_marker),
+                    ),
+                )
+                try:
+                    prompt_obj_ids = [int(item) for item in prompt_response[1]]
+                except Exception:
+                    prompt_obj_ids = []
+                record = {
+                    "case_key": str(job["case_key"]),
+                    "case_dir": str(job["case_dir"]),
+                    "text_prompt": str(job["text_prompt"]),
+                    "sam21_object_label": str(job["sam21_object_label"]),
+                    "camera_idx": int(job["camera_idx"]),
+                    "checkpoint_key": str(checkpoint_key),
+                    "checkpoint_label": str(checkpoint_label),
+                    "checkpoint_path": str(checkpoint_path),
+                    "config": str(config),
+                    "bbox_source": str(job["bbox_source"]),
+                    "bbox_xyxy": [float(item) for item in job["bbox_xyxy"]],
+                    "frames_requested": int(len(job["frame_tokens"])),
+                    "frame_tokens": [str(item) for item in job["frame_tokens"]],
+                    "warmup_runs": int(warmup_runs),
+                    "timed_frame_count": int(timed_frame_count),
+                    "init_state_ms": float(init_state_ms),
+                    "prompt_ms": float(prompt_ms),
+                    "timed_propagate_ms": float(timed_propagate_ms),
+                    "inference_ms_per_frame": float(timed_propagate_ms / max(1, timed_frame_count)),
+                    "fps": float(1000.0 * timed_frame_count / max(1e-9, timed_propagate_ms)),
+                    "timing_contract": (
+                        "stable_throughput_no_output_"
+                        f"{'marker' if speed_use_step_marker else 'no_marker'}_after_"
+                        f"{int(warmup_runs)}_warmup_propagations_per_job"
+                    ),
+                    "prompt_obj_ids": prompt_obj_ids,
+                    "process_guard": {
+                        "mode": "single_checkpoint_stable_throughput_worker",
+                        "pid": int(os.getpid()),
+                        "python": sys.executable,
+                        "cuda_device_name": torch.cuda.get_device_name(0),
+                        "torch": torch.__version__,
+                        "torch_cuda": torch.version.cuda,
+                        "vos_optimized_requested": True,
+                        "bfloat16_autocast": True,
+                        "speed_pass_collects_masks": False,
+                        "speed_pass_uses_cudagraph_step_marker": bool(speed_use_step_marker),
+                    },
+                }
+                timing_records.append(record)
+                del state
+            _cuda_sync(torch)
+            speed_phase_wall_ms = float((time.perf_counter() - speed_phase_started) * 1000.0)
+
+            for record, job in zip(timing_records, prepared_jobs, strict=True):
+                state, _collect_init_ms = _time_ms(torch, lambda job=job: init_state(job))
+                _collect_prompt_response, _collect_prompt_ms = _time_ms(
+                    torch,
+                    lambda state=state, job=job: prompt_state(state, job),
+                )
+                (collect_frame_count, masks_by_frame), collect_ms = _time_ms(
+                    torch,
+                    lambda state=state, job=job: propagate_state(
+                        state,
+                        job,
+                        collect=True,
+                        use_step_marker=True,
+                    ),
+                )
+                if len(masks_by_frame) != len(job["frame_tokens"]):
+                    raise RuntimeError(
+                        f"SAM2.1 stable worker saved {len(masks_by_frame)} masks, "
+                        f"expected {len(job['frame_tokens'])}"
+                    )
+                write_summary = write_single_object_masks(
+                    mask_root=job["output_mask_root"],
+                    camera_idx=int(job["camera_idx"]),
+                    object_label=str(job["sam21_object_label"]),
+                    masks_by_frame_token=masks_by_frame,
+                    overwrite=bool(overwrite),
+                )
+                record["mask_output"] = write_summary
+                record["mask_collection_frame_count"] = int(collect_frame_count)
+                record["mask_collection_ms"] = float(collect_ms)
+                record["mask_collection_uses_cudagraph_step_marker"] = True
+                del state
+            torch.cuda.empty_cache()
+
+        total_timed_frames = int(sum(int(record["timed_frame_count"]) for record in timing_records))
+        total_timed_ms = float(sum(float(record["timed_propagate_ms"]) for record in timing_records))
+        summary = {
+            "checkpoint_key": str(checkpoint_key),
+            "checkpoint_label": str(checkpoint_label),
+            "checkpoint_path": str(checkpoint_path),
+            "config": str(config),
+            "job_count": int(len(timing_records)),
+            "warmup_runs_per_job": int(warmup_runs),
+            "total_timed_frames": total_timed_frames,
+            "total_timed_propagate_ms": total_timed_ms,
+            "aggregate_ms_per_frame": float(total_timed_ms / max(1, total_timed_frames)),
+            "aggregate_fps": float(1000.0 * total_timed_frames / max(1e-9, total_timed_ms)),
+            "speed_phase_wall_ms": speed_phase_wall_ms,
+            "speed_phase_wall_fps_including_state_setup": float(
+                1000.0 * total_timed_frames / max(1e-9, speed_phase_wall_ms)
+            ),
+            "timing_contract": (
+                "one checkpoint worker, all selected jobs, no-output warmup propagations "
+                "per job, then no-output speed propagation; "
+                "mask collection is separate and excluded"
+            ),
+            "speed_pass_uses_cudagraph_step_marker": bool(speed_use_step_marker),
+            "warmup_records": warmup_records,
+            "timing_records": timing_records,
+        }
+        write_json(result_path, summary)
+        return summary
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+        if predictor is not None and hasattr(predictor, "reset_state"):
+            pass
+
+
+def run_sam21_stable_workers_by_checkpoint(
+    *,
+    script_path: str | Path,
+    case_specs: Sequence[LadderCaseSpec],
+    checkpoint_specs: Sequence[LadderCheckpointSpec],
+    checkpoint_cache: str | Path,
+    output_dir: str | Path,
+    frames: int,
+    camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    bbox_padding_px: int = 0,
+    warmup_runs: int = DEFAULT_STABLE_WARMUP_RUNS,
+    speed_use_step_marker: bool = True,
+    overwrite: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    output_dir = Path(output_dir).resolve()
+    checkpoint_cache = Path(checkpoint_cache).expanduser().resolve()
+    timing_dir = output_dir / "timings"
+    manifest_dir = output_dir / "stable_manifests"
+    summary_dir = output_dir / "stable_checkpoint_summaries"
+    worker_log_dir = output_dir / "logs" / "sam21_stable_workers"
+    for path in (timing_dir, manifest_dir, summary_dir, worker_log_dir):
+        path.mkdir(parents=True, exist_ok=True)
+    all_records: list[dict[str, Any]] = []
+    checkpoint_summaries: list[dict[str, Any]] = []
+    for checkpoint_spec in checkpoint_specs:
+        manifest = build_stable_job_manifest(
+            case_specs=case_specs,
+            checkpoint_spec=checkpoint_spec,
+            checkpoint_cache=checkpoint_cache,
+            output_dir=output_dir,
+            frames=int(frames),
+            camera_ids=camera_ids,
+            bbox_padding_px=int(bbox_padding_px),
+        )
+        manifest_path = manifest_dir / f"{checkpoint_spec.key}.json"
+        summary_path = summary_dir / f"{checkpoint_spec.key}.json"
+        write_json(manifest_path, manifest)
+        command = [
+            sys.executable,
+            str(Path(script_path).resolve()),
+            "--stable-worker",
+            "--checkpoint-key",
+            checkpoint_spec.key,
+            "--checkpoint-label",
+            checkpoint_spec.label,
+            "--checkpoint",
+            str(checkpoint_spec.checkpoint_path(checkpoint_cache)),
+            "--config",
+            checkpoint_spec.config,
+            "--job-manifest",
+            str(manifest_path),
+            "--result-json",
+            str(summary_path),
+            "--stable-warmup-runs",
+            str(int(warmup_runs)),
+        ]
+        if not speed_use_step_marker:
+            command.append("--stable-no-speed-step-marker")
+        if overwrite:
+            command.append("--overwrite")
+        print(
+            f"[sam21] stable worker checkpoint={checkpoint_spec.key} jobs={len(manifest['jobs'])}",
+            flush=True,
+        )
+        log_path = worker_log_dir / f"{checkpoint_spec.key}.log"
+        env = os.environ.copy()
+        env.setdefault("TQDM_DISABLE", "1")
+        with log_path.open("w", encoding="utf-8") as log_handle:
+            try:
+                subprocess.run(
+                    command,
+                    check=True,
+                    cwd=Path(__file__).resolve().parents[3],
+                    env=env,
+                    stdout=log_handle,
+                    stderr=subprocess.STDOUT,
+                )
+            except subprocess.CalledProcessError:
+                log_handle.flush()
+                tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-80:])
+                print(f"[sam21] stable worker failed; log tail from {log_path}:\n{tail}", flush=True)
+                raise
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["worker_log_path"] = str(log_path)
+        write_json(summary_path, summary)
+        checkpoint_summaries.append(summary)
+        for record in summary.get("timing_records", []):
+            record["worker_log_path"] = str(log_path)
+            result_json = timing_dir / f"{record['case_key']}_cam{int(record['camera_idx'])}_{checkpoint_spec.key}.json"
+            write_json(result_json, record)
+            all_records.append(record)
+    return all_records, checkpoint_summaries
 
 
 def run_sam21_workers_sequentially(
@@ -1429,6 +1867,24 @@ def write_benchmark_report(
             f"| {checkpoint_key} | {float(item['mean_inference_ms_per_frame']):.2f} | "
             f"{float(item['mean_fps']):.2f} | {int(item['sample_count'])} |"
         )
+    stable_summaries = benchmark_payload.get("stable_checkpoint_summaries", [])
+    if stable_summaries:
+        lines.extend(
+            [
+                "",
+                "## Stable Worker Aggregate",
+                "",
+                "| checkpoint | prop-only ms/frame | prop-only FPS | sweep wall FPS incl. setup | timed frames |",
+                "| --- | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for item in stable_summaries:
+            lines.append(
+                f"| {item['checkpoint_key']} | {float(item['aggregate_ms_per_frame']):.2f} | "
+                f"{float(item['aggregate_fps']):.2f} | "
+                f"{float(item['speed_phase_wall_fps_including_state_setup']):.2f} | "
+                f"{int(item['total_timed_frames'])} |"
+            )
     lines.extend(
         [
             "",
@@ -1450,8 +1906,29 @@ def write_benchmark_report(
             "",
             "## Timing Contract",
             "",
-            "The reported SAM2.1 FPS is propagate-only inference timing from the timed pass. "
-            "Model load, JPEG preparation, init_state, prompt, and full warmup propagation are recorded but excluded.",
+        ]
+    )
+    if benchmark_payload.get("sam21_timing_protocol") == "stable_throughput":
+        marker_label = (
+            "with per-step cudagraph markers"
+            if benchmark_payload.get("stable_speed_uses_cudagraph_step_marker", True)
+            else "without per-step cudagraph markers"
+        )
+        lines.append(
+            "The reported SAM2.1 FPS is no-output propagation timing "
+            f"{marker_label} after "
+            f"{int(benchmark_payload.get('stable_warmup_runs', DEFAULT_STABLE_WARMUP_RUNS))} "
+            "warmup propagations per case/camera job in one long-lived checkpoint worker. "
+            "Model load, JPEG preparation, init_state, prompt, warmup propagation, and separate mask collection are excluded."
+        )
+    else:
+        lines.append(
+            "The reported SAM2.1 FPS is propagate timing from the timed pass in the diagnostic worker. "
+            "Model load, JPEG preparation, init_state, prompt, and full warmup propagation are recorded but excluded; "
+            "the timed pass materializes masks for panel output."
+        )
+    lines.extend(
+        [
             "",
         ]
     )
@@ -1508,6 +1985,9 @@ def run_ladder_workflow(
     run_sam2: bool = True,
     render_gifs: bool = True,
     overwrite: bool = False,
+    stable_throughput: bool = False,
+    stable_warmup_runs: int = DEFAULT_STABLE_WARMUP_RUNS,
+    stable_speed_use_step_marker: bool = True,
     save_first_frame_ply: bool = True,
     phystwin_radius_m: float = DEFAULT_PHYSTWIN_RADIUS_M,
     phystwin_nb_points: int = DEFAULT_PHYSTWIN_NB_POINTS,
@@ -1545,24 +2025,41 @@ def run_ladder_workflow(
     )
 
     timing_records: list[dict[str, Any]]
+    stable_checkpoint_summaries: list[dict[str, Any]] = []
     timing_dir = output_dir / "timings"
     if run_sam2:
-        timing_records = run_sam21_workers_sequentially(
-            script_path=script_path,
-            case_specs=cases,
-            checkpoint_specs=checkpoints,
-            checkpoint_cache=Path(checkpoint_cache),
-            output_dir=output_dir,
-            frames=int(frames),
-            camera_ids=DEFAULT_CAMERA_IDS,
-            bbox_padding_px=int(bbox_padding_px),
-            overwrite=bool(overwrite),
-        )
+        if stable_throughput:
+            timing_records, stable_checkpoint_summaries = run_sam21_stable_workers_by_checkpoint(
+                script_path=script_path,
+                case_specs=cases,
+                checkpoint_specs=checkpoints,
+                checkpoint_cache=Path(checkpoint_cache),
+                output_dir=output_dir,
+                frames=int(frames),
+                camera_ids=DEFAULT_CAMERA_IDS,
+                bbox_padding_px=int(bbox_padding_px),
+                warmup_runs=int(stable_warmup_runs),
+                speed_use_step_marker=bool(stable_speed_use_step_marker),
+                overwrite=bool(overwrite),
+            )
+        else:
+            timing_records = run_sam21_workers_sequentially(
+                script_path=script_path,
+                case_specs=cases,
+                checkpoint_specs=checkpoints,
+                checkpoint_cache=Path(checkpoint_cache),
+                output_dir=output_dir,
+                frames=int(frames),
+                camera_ids=DEFAULT_CAMERA_IDS,
+                bbox_padding_px=int(bbox_padding_px),
+                overwrite=bool(overwrite),
+            )
     else:
         timing_records = [
             json.loads(path.read_text(encoding="utf-8"))
             for path in sorted(timing_dir.glob("*.json"))
         ]
+        stable_checkpoint_summaries = list(existing_summary.get("stable_checkpoint_summaries", []))
 
     gif_summaries: list[dict[str, Any]] = []
     if render_gifs:
@@ -1608,6 +2105,9 @@ def run_ladder_workflow(
         "tile_width": int(tile_width),
         "tile_height": int(tile_height),
         "row_label_width": int(row_label_width),
+        "sam21_timing_protocol": "stable_throughput" if stable_throughput else "diagnostic_mask_output",
+        "stable_warmup_runs": int(stable_warmup_runs) if stable_throughput else None,
+        "stable_speed_uses_cudagraph_step_marker": bool(stable_speed_use_step_marker) if stable_throughput else None,
         "depth_source": "ffs",
         "use_float_ffs_depth_when_available": True,
         "enhanced_phystwin_like_postprocess": {
@@ -1619,6 +2119,7 @@ def run_ladder_workflow(
         },
         "timing_records": timing_records,
         "timing_aggregate": aggregate_timing_records(timing_records),
+        "stable_checkpoint_summaries": stable_checkpoint_summaries,
         "gif_summaries": gif_summaries,
         "environment": collect_environment_report(),
     }

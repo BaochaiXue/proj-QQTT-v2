@@ -160,8 +160,9 @@ class RoundCaseBundle:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the static-round FFS replay matrix, render masked RGB/PCD frame-10 boards, "
-            "and export a ranked PPTX."
+            "Run the offline static-round FFS TensorRT proxy matrix, render masked "
+            "RGB/PCD frame-10 boards, and export a ranked PPTX. This is not a live "
+            "PyTorch 3-camera realtime benchmark."
         )
     )
     parser.add_argument("--aligned_root", type=Path, default=ROOT / "data")

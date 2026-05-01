@@ -82,6 +82,43 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
         )
         self.assertAlmostEqual(aggregate["by_checkpoint"]["tiny"]["mean_fps"], 1000.0 / 15.0)
 
+    def test_stable_report_describes_no_output_timing_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            report_path = Path(tmp_dir) / "report.md"
+            ladder.write_benchmark_report(
+                markdown_path=report_path,
+                benchmark_payload={
+                    "sam21_timing_protocol": "stable_throughput",
+                    "stable_warmup_runs": 5,
+                    "stable_speed_uses_cudagraph_step_marker": True,
+                    "timing_aggregate": {
+                        "by_checkpoint": {
+                            "tiny": {
+                                "mean_inference_ms_per_frame": 8.0,
+                                "mean_fps": 125.0,
+                                "sample_count": 18,
+                            }
+                        }
+                    },
+                    "stable_checkpoint_summaries": [
+                        {
+                            "checkpoint_key": "tiny",
+                            "aggregate_ms_per_frame": 8.0,
+                            "aggregate_fps": 125.0,
+                            "speed_phase_wall_fps_including_state_setup": 80.0,
+                            "total_timed_frames": 540,
+                        }
+                    ],
+                    "gif_summaries": [],
+                    "environment": {},
+                },
+                quality_payload={"cases": {}},
+            )
+            text = report_path.read_text(encoding="utf-8")
+            self.assertIn("no-output propagation timing with per-step cudagraph markers", text)
+            self.assertIn("separate mask collection are excluded", text)
+            self.assertIn("| tiny | 8.00 | 125.00 | 80.00 | 540 |", text)
+
     def test_compose_3x5_panel_shape(self) -> None:
         rows = [
             [np.full((12, 16, 3), 30 + row * 20 + col, dtype=np.uint8) for col in range(5)]

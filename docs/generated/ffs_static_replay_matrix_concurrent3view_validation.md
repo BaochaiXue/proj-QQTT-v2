@@ -9,6 +9,8 @@
   - fresh benchmark results
   - reused TRT artifacts only
 
+Current interpretation (`2026-05-01`): this is an offline static replay / TensorRT proxy report, not a live realtime report. Keep it separate from `docs/generated/ffs_live_3cam_benchmark_validation.md`, where live PyTorch 3-camera remains `RED / not realtime`.
+
 ## Command
 
 ```bash
@@ -78,6 +80,12 @@ Top 3 configs by concurrent-3-view `overall_mean_fps`:
    - overall mean FPS: `35.308`
 3. `two_stage_fp16__model_20-26-39__scale_0p5__iters_2`
    - overall mean FPS: `32.368`
+
+Proxy reporting note:
+
+- these are concurrent static replay proxy FPS values over recorded aligned rounds
+- they do not prove live PyTorch 3-camera realtime
+- the current level-5 proxy artifact default is `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5`
 
 Bottom 3 configs:
 

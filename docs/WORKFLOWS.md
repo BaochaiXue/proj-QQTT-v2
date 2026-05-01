@@ -124,7 +124,7 @@ The viewer uses the same `TURBO` metric-depth colormap as the aligned-case depth
 python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
 ```
 
-FFS preview for live RGB plus color-aligned FFS depth now defaults to the repo-local `20-30-48 / iter4 / builderOpt5` TensorRT path. Run realtime and visualization experiments from `FFS-SAM-RS` unless a task explicitly names another environment:
+FFS preview for live RGB plus color-aligned FFS depth now defaults to the repo-local `20-30-48 / iter4 / builderOpt5` TensorRT path. Run viewer, proxy, and visualization experiments from `FFS-SAM-RS` unless a task explicitly names another environment:
 
 ```bash
 conda run -n FFS-SAM-RS python cameras_viewer_FFS.py
@@ -136,6 +136,13 @@ Use this as a debug viewer only:
 - bottom = latest available color-aligned FFS depth
 - overlay = negotiated stream profile plus live `capture` and `ffs` fps
 - preview favors freshness over completeness and may drop stale stereo work while FFS catches up
+
+Performance boundary:
+
+- live PyTorch 3-camera FFS is still not realtime on the RTX 5090 laptop
+- the best measured PyTorch live 3-camera setting, `20-30-48 / valid_iters=4 / scale=0.5`, reached about `22.6` aggregate FFS FPS, or about `7.5` FPS per camera
+- the `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5` result is a separate static replay / TensorRT proxy target result
+- do not report static replay or TensorRT proxy numbers as "live PyTorch 3-camera realtime"
 
 When you want a cheaper FFS-viewer throughput probe, replace the lower FFS
 depth colormap with a black placeholder that only reports received FFS FPS:
@@ -245,13 +252,15 @@ This benchmark-only workflow:
 
 Use this first when the main question is:
 
-- can current PyTorch FFS reach online-setting FPS on our machine?
+- which current PyTorch FFS configs are worth promoting into a real live 3-camera test?
 - how much reference-depth drift appears when we lower `scale` or `valid_iters`?
 - which config is the best compromise for a target FPS threshold?
 
 Important QQTT performance rule:
 
-- New realtime and visualization experiments default to `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, and the level-5 two-stage ONNX/TRT artifact unless the experiment explicitly needs PyTorch logits.
+- New viewer, proxy, and visualization experiments default to `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, and the level-5 two-stage ONNX/TRT artifact unless the experiment explicitly needs PyTorch logits.
+- Current target-reaching `builderOptimizationLevel=5` numbers are static replay / TensorRT proxy numbers, not proof that live PyTorch 3-camera FFS is realtime.
+- Current live PyTorch 3-camera status is red: best recorded `scale=0.5` reached about `22.6` aggregate FFS FPS and about `7.5` FPS per camera.
 - For our actual RealSense setup, benchmark at the native recorded image size `848x480`.
 - If the FFS/TensorRT model shape needs a multiple of `32`, use `848x480 -> 864x480` padding and unpad the result. Do not resize to `640x480` and use that number as the QQTT runtime.
 - `640x480` results are only official-table reproduction/control numbers and must be labeled as not representative of the real QQTT image size.
@@ -262,7 +271,7 @@ Static-round TRT matrix replay + PPTX:
 conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/ffs_static_replay_matrix_20260422_fullrun/artifacts --reuse_artifacts
 ```
 
-This harness is the current offline realtime-proxy workflow for the three static aligned FFS rounds. It:
+This harness is the current offline static replay / TensorRT proxy workflow for the three static aligned FFS rounds. It:
 
 - uses:
   - `static/ffs_30_static_round1_20260410_235202`
@@ -288,7 +297,7 @@ This harness is the current offline realtime-proxy workflow for the three static
 
 Operator notes:
 
-- use `FFS-SAM-RS` for new realtime-proxy visualization runs
+- use `FFS-SAM-RS` for new static replay / TensorRT proxy visualization runs
 - ensure `python-pptx` and `onnx` are installed in that environment
 - point `--artifact_root` at an existing artifact tree when you want fresh benchmark results without rebuilding TRT engines
 - the harness uses `stuffed animal` as the mask prompt
@@ -371,7 +380,7 @@ Use this when the question is specifically:
 Realistic live 3-camera FFS benchmark:
 
 ```bash
-python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-interval-s 5 --ffs_repo ../Fast-FoundationStereo --ffs_model_path ../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_scale 0.75 --ffs_valid_iters 4 --ffs_max_disp 192
+python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-interval-s 5 --ffs_repo ../Fast-FoundationStereo --ffs_model_path ../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_scale 0.5 --ffs_valid_iters 4 --ffs_max_disp 192
 ```
 
 Use this when the main question is the real online path:
@@ -400,6 +409,14 @@ The logged stats include:
 - per-camera `seq_gap` between the latest captured frame id and the latest completed FFS result id
 
 Treat this live 3-camera viewer benchmark as the authoritative online-setting measurement. The saved-pair benchmark above is still useful for offline checkpoint/parameter screening, but it is not a substitute for simultaneous 3-camera runtime behavior.
+
+Current live PyTorch status:
+
+- not realtime for 3 cameras on the RTX 5090 laptop
+- best recorded live PyTorch setting: `20-30-48 / valid_iters=4 / scale=0.5 / max_disp=192`
+- aggregate FFS FPS: about `22.6`
+- per-camera FFS FPS: about `7.5`
+- keep this conclusion separate from static replay / TensorRT proxy results
 
 ## 2. Calibrate
 
