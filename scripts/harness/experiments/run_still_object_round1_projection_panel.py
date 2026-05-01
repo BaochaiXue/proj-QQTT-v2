@@ -29,7 +29,7 @@ from data_process.depth_backends import (
 
 
 DEFAULT_RAW_CASE_NAME = "both_30_still_object_round1_20260428"
-DEFAULT_OUTPUT_ROOT = ROOT / "data" / "experiments" / "still_object_round1_projection_panel_13x3_ffs203048_iter4_trt_level5"
+DEFAULT_OUTPUT_ROOT = ROOT / "result" / "still_object_round1_projection_panel_13x3_ffs203048_iter4_trt_level5"
 
 
 class _DefaultTwoStageTrtRunner:

@@ -75,13 +75,13 @@ After environment validation, EdgeTAM was run on a real still-object case:
 
 Outputs:
 
-- `/home/zhangxinjie/proj-QQTT-v2/data/experiments/edgetam_still_object_round1_cam0_validation_20260501/summary.json`
-- `/home/zhangxinjie/proj-QQTT-v2/data/experiments/edgetam_still_object_round1_cam0_validation_20260501/mask/overlay_frame_0000.png`
-- `/home/zhangxinjie/proj-QQTT-v2/data/experiments/edgetam_still_object_round1_cam0_validation_20260501/mask/overlay_frame_0015.png`
-- `/home/zhangxinjie/proj-QQTT-v2/data/experiments/edgetam_still_object_round1_cam0_validation_20260501/mask/overlay_frame_0029.png`
-- `/home/zhangxinjie/proj-QQTT-v2/data/experiments/edgetam_still_object_round1_cam0_validation_20260501/box/overlay_frame_0000.png`
-- `/home/zhangxinjie/proj-QQTT-v2/data/experiments/edgetam_still_object_round1_cam0_validation_20260501/box/overlay_frame_0015.png`
-- `/home/zhangxinjie/proj-QQTT-v2/data/experiments/edgetam_still_object_round1_cam0_validation_20260501/box/overlay_frame_0029.png`
+- `/home/zhangxinjie/proj-QQTT-v2/result/edgetam_still_object_round1_cam0_validation_20260501/summary.json`
+- `/home/zhangxinjie/proj-QQTT-v2/result/edgetam_still_object_round1_cam0_validation_20260501/mask/overlay_frame_0000.png`
+- `/home/zhangxinjie/proj-QQTT-v2/result/edgetam_still_object_round1_cam0_validation_20260501/mask/overlay_frame_0015.png`
+- `/home/zhangxinjie/proj-QQTT-v2/result/edgetam_still_object_round1_cam0_validation_20260501/mask/overlay_frame_0029.png`
+- `/home/zhangxinjie/proj-QQTT-v2/result/edgetam_still_object_round1_cam0_validation_20260501/box/overlay_frame_0000.png`
+- `/home/zhangxinjie/proj-QQTT-v2/result/edgetam_still_object_round1_cam0_validation_20260501/box/overlay_frame_0015.png`
+- `/home/zhangxinjie/proj-QQTT-v2/result/edgetam_still_object_round1_cam0_validation_20260501/box/overlay_frame_0029.png`
 
 ## Environment Hooks
 

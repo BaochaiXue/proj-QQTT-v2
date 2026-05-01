@@ -27,7 +27,7 @@ Create a headless 6x2 GIF panel for frame 0:
 
 - Workflow module: `data_process/visualization/experiments/still_object_orbit_gif.py`
 - Harness CLI: `scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_gif.py`
-- Output root: `data/experiments/still_object_rope_frame0_cam0_orbit_6x2_gif_ffs203048_iter4_trt_level5`
+- Output root: `result/still_object_rope_frame0_cam0_orbit_6x2_gif_ffs203048_iter4_trt_level5`
 - GIF: `still_object_rope_frame0000_cam0_orbit_6x2.gif`
 - First-frame PNG: `still_object_rope_frame0000_cam0_orbit_6x2_first.png`
 - Summary JSON: `summary.json`
@@ -41,7 +41,7 @@ Create a headless 6x2 GIF panel for frame 0:
 
 - `python -m py_compile data_process/visualization/experiments/still_object_orbit_gif.py scripts/harness/experiments/visualize_still_object_orbit_gif.py scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_gif.py`
 - `python scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_gif.py --help`
-- `python scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_gif.py --num_frames 6 --fps 6 --tile_width 300 --tile_height 180 --row_label_width 160 --max_points_per_variant 80000 --output_dir data/experiments/still_object_rope_frame0_cam0_orbit_6x2_gif_ffs203048_iter4_trt_level5_smoke`
-- `python scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_gif.py --num_frames 360 --fps 30 --start_camera_idx 0 --frame_idx 0 --output_dir data/experiments/still_object_rope_frame0_cam0_orbit_6x2_gif_ffs203048_iter4_trt_level5`
+- `python scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_gif.py --num_frames 6 --fps 6 --tile_width 300 --tile_height 180 --row_label_width 160 --max_points_per_variant 80000 --output_dir result/still_object_rope_frame0_cam0_orbit_6x2_gif_ffs203048_iter4_trt_level5_smoke`
+- `python scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_gif.py --num_frames 360 --fps 30 --start_camera_idx 0 --frame_idx 0 --output_dir result/still_object_rope_frame0_cam0_orbit_6x2_gif_ffs203048_iter4_trt_level5`
 - `python scripts/harness/check_experiment_boundaries.py`
 - `python scripts/harness/check_visual_architecture.py`

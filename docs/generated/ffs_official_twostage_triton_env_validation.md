@@ -105,7 +105,7 @@ left = cv2.imread(str(case_dir / 'ir_left/0/0.png'), cv2.IMREAD_GRAYSCALE)
 right = cv2.imread(str(case_dir / 'ir_right/0/0.png'), cv2.IMREAD_GRAYSCALE)
 meta = json.loads((case_dir / 'metadata.json').read_text())
 K = np.asarray(meta['intrinsics'][0], dtype=np.float32)
-artifact_dir = ROOT / 'data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts/two_stage_fp16/model_20-30-48/scale_1p0_iters_4'
+artifact_dir = ROOT / 'result/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts/two_stage_fp16/model_20-30-48/scale_1p0_iters_4'
 runner = FastFoundationStereoTensorRTRunner(ffs_repo=FFS_REPO, model_dir=artifact_dir)
 
 for _ in range(5):
@@ -159,7 +159,7 @@ python cameras_viewer_FFS.py \
   --ffs_backend tensorrt \
   --ffs_trt_mode two_stage \
   --ffs_repo /home/zhangxinjie/Fast-FoundationStereo \
-  --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts/two_stage_fp16/model_20-30-48/scale_1p0_iters_4
+  --ffs_trt_model_dir /home/zhangxinjie/proj-QQTT-v2/result/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts/two_stage_fp16/model_20-30-48/scale_1p0_iters_4
 ```
 
 Keep `qqtt-ffs-compat` for the broader QQTT harness unless a command specifically needs official two-stage TensorRT with Triton.

@@ -86,7 +86,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--output_dir",
         type=Path,
         default=None,
-        help="Where to write timing summary and optional masks. Defaults under data/experiments/.",
+        help="Where to write timing summary and optional masks. Defaults under result/.",
     )
     parser.add_argument(
         "--checkpoint",
@@ -119,7 +119,7 @@ def _resolve_case_root(args: argparse.Namespace) -> tuple[Path, str]:
 
 
 def _default_output_dir(raw_case_name: str) -> Path:
-    return ROOT / "data" / "experiments" / f"sam31_still_object_view_benchmark_{raw_case_name}"
+    return ROOT / "result" / f"sam31_still_object_view_benchmark_{raw_case_name}"
 
 
 def _limited_frame_source(source: ColorSource, *, frame_count: int) -> ColorSource:

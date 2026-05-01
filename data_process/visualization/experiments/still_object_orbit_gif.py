@@ -34,32 +34,32 @@ DEFAULT_STILL_OBJECT_CASE = (
     "both_30_still_object_round1_20260428"
 )
 DEFAULT_OUTPUT_DIR = (
-    "data/experiments/"
+    "result/"
     "still_object_round1_frame0_cam0_orbit_gif_ffs203048_iter4_trt_level5"
 )
 DEFAULT_TEXT_PROMPT = "stuffed animal"
 DEFAULT_6X2_OUTPUT_DIR = (
-    "data/experiments/"
+    "result/"
     "still_object_rope_frame0_cam0_orbit_6x2_gif_ffs203048_iter4_trt_level5"
 )
 DEFAULT_6X2_ERODE_SWEEP_OUTPUT_DIR = (
-    "data/experiments/"
+    "result/"
     "still_object_rope_frame0_cam0_orbit_6x2_mask_erode_sweep_gif_ffs203048_iter4_trt_level5"
 )
 DEFAULT_6X2_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR = (
-    "data/experiments/"
+    "result/"
     "still_object_rope_frame0_cam0_orbit_6x2_mask_erode_sweep_highlight_gif_ffs203048_iter4_trt_level5"
 )
 DEFAULT_3X4_ERODE_SWEEP_HIGHLIGHT_OUTPUT_DIR = (
-    "data/experiments/"
+    "result/"
     "still_object_rope_frame0_cam0_orbit_3x4_mask_erode_sweep_highlight_gif_ffs203048_iter4_trt_level5"
 )
 DEFAULT_6X2_ENHANCED_OUTPUT_DIR = (
-    "data/experiments/"
+    "result/"
     "still_object_rope_frame0_cam0_orbit_6x2_enhanced_pt_like_gif_ffs203048_iter4_trt_level5"
 )
 DEFAULT_3X4_REMOVED_HIGHLIGHT_OUTPUT_DIR = (
-    "data/experiments/"
+    "result/"
     "still_object_rope_frame0_cam0_orbit_3x4_removed_highlight_gif_ffs203048_iter4_trt_level5"
 )
 DEFAULT_6X2_ERODE_SWEEP_PIXELS: tuple[int, ...] = (1, 3, 5, 10)

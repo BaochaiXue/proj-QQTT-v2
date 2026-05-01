@@ -133,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--base_path", type=Path, default=ROOT / "data_collect")
-    parser.add_argument("--output_root", type=Path, default=ROOT / "data" / "experiments" / "ffs_confidence_filter_sweep")
+    parser.add_argument("--output_root", type=Path, default=ROOT / "result" / "ffs_confidence_filter_sweep")
     parser.add_argument("--case_name", type=str, required=True)
     parser.add_argument("--start", type=int, required=True)
     parser.add_argument("--end", type=int, required=True)

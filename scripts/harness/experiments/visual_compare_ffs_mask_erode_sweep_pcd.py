@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-DEFAULT_OUTPUT_ROOT = ROOT / "data" / "experiments" / "ffs_mask_erode_sweep_object_pcd_10x3_frame_0000_phystwin"
+DEFAULT_OUTPUT_ROOT = ROOT / "result" / "ffs_mask_erode_sweep_object_pcd_10x3_frame_0000_phystwin"
 DEFAULT_ERODE_PIXELS = "1,2,3,4,5,6,7,8"
 
 

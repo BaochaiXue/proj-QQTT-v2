@@ -23,5 +23,5 @@ The RGB slide is removed.
 ## Validation Plan
 
 - `python -m unittest -v tests.test_ffs_static_replay_matrix_smoke`
-- regenerate the PPT from `data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun`
+- regenerate the PPT from `result/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun`
 - verify final slide count is `48`

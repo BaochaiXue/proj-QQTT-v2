@@ -1258,7 +1258,7 @@ def run_experiment_matrix(args: argparse.Namespace) -> dict[str, Any]:
     output_root = (
         Path(args.output_root).resolve()
         if args.output_root is not None
-        else (ROOT / "data" / "experiments" / f"ffs_static_replay_matrix_{timestamp_token()}").resolve()
+        else (ROOT / "result" / f"ffs_static_replay_matrix_{timestamp_token()}").resolve()
     )
     artifacts_root = (
         Path(args.artifact_root).resolve()

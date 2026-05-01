@@ -43,11 +43,11 @@ from data_process.depth_backends import (
 
 
 DEFAULT_OUTPUT_DIR = (
-    "data/experiments/"
+    "result/"
     "sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5"
 )
 DEFAULT_DYNAMICS_OUTPUT_DIR = (
-    "data/experiments/"
+    "result/"
     "sam21_dynamics_checkpoint_ladder_3x5_time_gifs_"
     "ffs203048_iter4_trt_level5_maskinit_stable_throughput"
 )

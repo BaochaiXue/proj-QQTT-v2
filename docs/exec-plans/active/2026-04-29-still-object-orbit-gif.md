@@ -14,7 +14,7 @@ Prototype a headless 1x2 GIF panel for `still_object round1 frame0`:
 - Reuse the aligned still-object case and existing `sam31_masks`.
 - Keep implementation in experiment-only visualization/harness code.
 - Avoid Open3D windows; render with the existing headless fallback point-cloud renderer.
-- Produce a GIF, a first-frame PNG, and a JSON summary under `data/experiments/`.
+- Produce a GIF, a first-frame PNG, and a JSON summary under `result/`.
 
 ## Validation
 
@@ -26,7 +26,7 @@ Prototype a headless 1x2 GIF panel for `still_object round1 frame0`:
 
 - Workflow module: `data_process/visualization/experiments/still_object_orbit_gif.py`
 - Harness CLI: `scripts/harness/experiments/visualize_still_object_orbit_gif.py`
-- Output root: `data/experiments/still_object_round1_frame0_cam0_orbit_gif_ffs203048_iter4_trt_level5`
+- Output root: `result/still_object_round1_frame0_cam0_orbit_gif_ffs203048_iter4_trt_level5`
 - GIF: `still_object_round1_frame0000_cam0_orbit_1x2.gif`
 - First-frame PNG: `still_object_round1_frame0000_cam0_orbit_first.png`
 - Summary JSON: `summary.json`
@@ -41,7 +41,7 @@ Prototype a headless 1x2 GIF panel for `still_object round1 frame0`:
 
 - `python -m py_compile data_process/visualization/experiments/still_object_orbit_gif.py scripts/harness/experiments/visualize_still_object_orbit_gif.py`
 - `python scripts/harness/experiments/visualize_still_object_orbit_gif.py --help`
-- `python scripts/harness/experiments/visualize_still_object_orbit_gif.py --num_frames 12 --fps 12 --tile_width 320 --tile_height 240 --point_radius_px 1 --output_dir data/experiments/still_object_round1_frame0_cam0_orbit_gif_ffs203048_iter4_trt_level5_smoke_crop`
-- `python scripts/harness/experiments/visualize_still_object_orbit_gif.py --num_frames 360 --fps 30 --start_camera_idx 0 --frame_idx 0 --output_dir data/experiments/still_object_round1_frame0_cam0_orbit_gif_ffs203048_iter4_trt_level5`
+- `python scripts/harness/experiments/visualize_still_object_orbit_gif.py --num_frames 12 --fps 12 --tile_width 320 --tile_height 240 --point_radius_px 1 --output_dir result/still_object_round1_frame0_cam0_orbit_gif_ffs203048_iter4_trt_level5_smoke_crop`
+- `python scripts/harness/experiments/visualize_still_object_orbit_gif.py --num_frames 360 --fps 30 --start_camera_idx 0 --frame_idx 0 --output_dir result/still_object_round1_frame0_cam0_orbit_gif_ffs203048_iter4_trt_level5`
 - `python scripts/harness/check_experiment_boundaries.py`
 - `python scripts/harness/check_visual_architecture.py`

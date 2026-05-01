@@ -88,7 +88,7 @@
 已完成实验：
 
 - 新 workflow：`scripts/harness/visual_compare_ffs_confidence_threshold_sweep_pcd.py`
-- 结果目录：`data/experiments/ffs_confidence_threshold_sweep_object_pcd_frame_0000_erode1_phystwin/`
+- 结果目录：`result/ffs_confidence_threshold_sweep_object_pcd_frame_0000_erode1_phystwin/`
 - 范围：static `round1/round2/round3`，`frame 0`
 - thresholds：`0.01, 0.05, 0.10, 0.15, 0.20, 0.25, 0.50`
 - 每个 threshold 一张 `6x3` Open3D panel：

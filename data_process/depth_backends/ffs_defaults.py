@@ -20,8 +20,7 @@ DEFAULT_FFS_TRT_INPUT_SIZE = (480, 848)
 DEFAULT_FFS_TRT_ENGINE_SIZE = (480, 864)
 DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR = (
     REPO_ROOT
-    / "data"
-    / "experiments"
+    / "result"
     / "ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428"
     / "engines"
     / "model_20-30-48_iters_4_res_480x864"

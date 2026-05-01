@@ -79,7 +79,7 @@ python scripts/harness/experiments/run_ffs_confidence_filter_sweep.py \
   --thresholds 0.3,0.4,0.5,0.6,0.7,0.8 \
   --depth_min_m 0.2 \
   --depth_max_m 1.5 \
-  --output_root ./data/experiments/ffs_confidence_filter_sweep
+  --output_root ./result/ffs_confidence_filter_sweep
 ```
 
 The sweep writes `results.csv`, `summary.json`, and one experiment directory per

@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-DEFAULT_OUTPUT_ROOT = ROOT / "data" / "experiments" / "ffs_mask_erode_multipage_object_pcd_10x3_frame_0000_phystwin"
+DEFAULT_OUTPUT_ROOT = ROOT / "result" / "ffs_mask_erode_multipage_object_pcd_10x3_frame_0000_phystwin"
 
 
 def parse_args() -> argparse.Namespace:

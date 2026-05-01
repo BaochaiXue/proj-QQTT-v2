@@ -88,7 +88,7 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - checkpoint: `../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth`
   - valid iterations: `4`
   - max disparity: `192`
-  - two-stage ONNX/TensorRT artifact: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
+  - two-stage ONNX/TensorRT artifact: `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
   - builder optimization level: `5`
   - input policy: keep real `848x480` images, edge-pad to `864x480`, then unpad outputs
 - Performance boundary:
@@ -97,7 +97,7 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - keep static replay / TensorRT proxy claims separate from live PyTorch realtime claims
 - Validation note:
   - `docs/generated/sam31_env_validation.md` records SAM 3.1 helper validation.
-  - `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/report.md` records the current level-5 TRT speed table.
+  - `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/report.md` records the current level-5 TRT speed table.
 - Expected use:
   - live `cameras_viewer_FFS.py` TensorRT preview
   - live FFS probes with explicit backend labeling

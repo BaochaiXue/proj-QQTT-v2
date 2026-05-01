@@ -15,7 +15,7 @@ Add one offline experiment harness that:
 
 - new orchestration CLI under `scripts/harness/`
 - reuse the existing FFS runners, SAM 3.1 mask helper, PhysTwin-like mask refinement, and Open3D hidden-window renderer
-- keep the experiment output under `data/experiments/`
+- keep the experiment output under `result/`
 - update docs, tests, and generated validation notes
 
 ## Non-Goals

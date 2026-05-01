@@ -17,7 +17,7 @@ from data_process.depth_backends.ffs_defaults import (
     DEFAULT_FFS_SCALE,
     DEFAULT_FFS_VALID_ITERS,
 )
-DEFAULT_OUTPUT_ROOT = ROOT / "data" / "experiments" / "ffs_confidence_threshold_sweep_object_pcd_frame_0000_erode1_phystwin"
+DEFAULT_OUTPUT_ROOT = ROOT / "result" / "ffs_confidence_threshold_sweep_object_pcd_frame_0000_erode1_phystwin"
 DEFAULT_THRESHOLDS = "0.01,0.05,0.10,0.15,0.20,0.25,0.50"
 
 

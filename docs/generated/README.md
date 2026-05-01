@@ -57,6 +57,7 @@ These are the main source of truth for current visualization workflows, ownershi
 - `repo_hardening_validation.md`
 - `contract_hardening_validation.md`
 - `results_retention_cleanup_20260501.md`
+- `result_root_unification_20260501.md`
 
 These record repo-structure, scope, and metadata-contract hardening passes.
 

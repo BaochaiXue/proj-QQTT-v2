@@ -57,7 +57,7 @@ export TORCH_CUDA_ARCH_LIST=12.0
 
 - Environment: `FFS-SAM-RS`.
 - Checkpoint/config: `20-30-48`, `valid_iters=4`, `max_disp=192`, two-stage ONNX/TensorRT.
-- TensorRT artifact: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`.
+- TensorRT artifact: `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`.
 - Local performance claims should use real RealSense `848x480` `ir_left` / `ir_right` inputs unless explicitly labeled synthetic or control.
 - Models requiring multiples of `32` pad `848x480` to `864x480` and unpad outputs afterward.
 - `640x480` runs are official-table reproduction/control benchmarks only.
@@ -65,7 +65,7 @@ export TORCH_CUDA_ARCH_LIST=12.0
 ## FFS Performance Boundary
 
 - Live PyTorch 3-camera FFS is not realtime on the RTX 5090 laptop. The best recorded `20-30-48 / valid_iters=4 / scale=0.5` live run reached about `22.6` aggregate FFS FPS, or about `7.5` FPS per camera. Source: `docs/generated/ffs_live_3cam_benchmark_validation.md`.
-- Static replay / TensorRT proxy is a separate result family. The current proxy target is `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5`, and it has basically reached the target. Source: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/report.md`.
+- Static replay / TensorRT proxy is a separate result family. The current proxy target is `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5`, and it has basically reached the target. Source: `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/report.md`.
 - Do not label saved-pair, static replay, or TensorRT proxy numbers as "live PyTorch 3-camera realtime".
 - `benchmark_ffs_configs.py` is for saved-pair PyTorch screening; `run_ffs_static_replay_matrix.py` is for offline static replay / TensorRT proxy measurement; `cameras_viewer_FFS.py --ffs_backend pytorch` is the authoritative live PyTorch path.
 
@@ -93,7 +93,7 @@ Keep current user-facing CLIs, deterministic checks, hardware probes, and bounde
 Result retention policy:
 
 - Delete local smoke, preview, interrupted, and debug-only result roots once the corresponding full result exists.
-- Keep obsolete-but-useful artifacts under `data/experiments/_archived_obsolete/`.
-- Keep invalid-for-QQTT controls under `data/experiments/_archived_invalid_for_qqtt/`.
+- Keep obsolete-but-useful artifacts under `result/_archived_obsolete/`.
+- Keep invalid-for-QQTT controls under `result/_archived_invalid_for_qqtt/`.
 - Keep saved-pair offline FFS screening under `data/ffs_benchmarks/_archived_saved_pair_offline/`.
 - Prefer the top-level `builderopt5`, `concurrent3view`, `stable_throughput`, and `live_3cam_scale*.log` results for current reporting.

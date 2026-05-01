@@ -169,7 +169,7 @@ Live FFS mode selection is now:
 - `--ffs_backend tensorrt --ffs_trt_mode two_stage`
   - default live path
   - default external repo: sibling `../Fast-FoundationStereo`, resolved from the QQTT repo root
-  - default model directory: `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
+  - default model directory: `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
   - official-style two-stage TensorRT path: `feature_runner.engine` + Triton GWC + `post_runner.engine`
   - requires a working Triton kernel runtime in the active Python environment
 - `--ffs_backend pytorch`
@@ -268,7 +268,7 @@ Important QQTT performance rule:
 Static-round TRT matrix replay + PPTX:
 
 ```bash
-conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts --reuse_artifacts
+conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./result/ffs_static_replay_matrix_my_run --artifact_root ./result/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts --reuse_artifacts
 ```
 
 This harness is the current offline static replay / TensorRT proxy workflow for the three static aligned FFS rounds. It:

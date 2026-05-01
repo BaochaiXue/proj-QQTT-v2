@@ -7,7 +7,7 @@ and current results.
 
 ## Scope
 
-- Inventory top-level result folders under `data/experiments/` and
+- Inventory top-level result folders under `result/` and
   `data/ffs_benchmarks/`.
 - Delete folders whose names explicitly identify smoke-test output.
 - Rename obsolete but still useful result roots with an `archived_obsolete_`

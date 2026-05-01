@@ -19,8 +19,8 @@
 
 ## Outputs
 
-- FFS Dynamics R1: `/home/zhangxinjie/proj-QQTT-v2/data/experiments/sam21_dynamics_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_maskinit_stable_throughput/gifs/ffs_dynamics_round1_3x5_time.gif`
-- FFS Dynamics R2: `/home/zhangxinjie/proj-QQTT-v2/data/experiments/sam21_dynamics_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_maskinit_stable_throughput/gifs/ffs_dynamics_round2_3x5_time.gif`
+- FFS Dynamics R1: `/home/zhangxinjie/proj-QQTT-v2/result/sam21_dynamics_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_maskinit_stable_throughput/gifs/ffs_dynamics_round1_3x5_time.gif`
+- FFS Dynamics R2: `/home/zhangxinjie/proj-QQTT-v2/result/sam21_dynamics_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_maskinit_stable_throughput/gifs/ffs_dynamics_round2_3x5_time.gif`
 
 ## SAM2.1 Speed Ladder
 

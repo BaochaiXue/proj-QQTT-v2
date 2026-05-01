@@ -1,11 +1,11 @@
 # Results Retention Cleanup
 
 - Date: `2026-05-01`
-- Scope: local result folders under `data/experiments/` and `data/ffs_benchmarks/`
+- Scope: local result folders under `result/` and `data/ffs_benchmarks/`
 
 ## Deleted Result Folders
 
-Smoke or preview outputs removed from `data/experiments/`:
+Smoke or preview outputs removed from `result/`:
 
 - `_smoke_single_config`
 - `still_object_rope_frame0_cam0_orbit_3x4_mask_erode_sweep_highlight_gif_ffs203048_iter4_trt_level5_smoke`
@@ -32,7 +32,7 @@ Interrupted or debug-only local outputs removed:
 
 ## Archived / Renamed
 
-Moved obsolete but potentially useful roots under `data/experiments/_archived_obsolete/`:
+Moved obsolete but potentially useful roots under `result/_archived_obsolete/`:
 
 - `ffs_static_replay_matrix_20260422_fullrun` ->
   `ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun`
@@ -42,7 +42,7 @@ Moved obsolete but potentially useful roots under `data/experiments/_archived_ob
   `realtime_orbit_wsl_diagnosis_debug_20260429`
 
 Moved invalid-for-QQTT TensorRT control roots under
-`data/experiments/_archived_invalid_for_qqtt/`:
+`result/_archived_invalid_for_qqtt/`:
 
 - `ffs_official_table_trt_rtx5090_laptop_20260428` ->
   `ffs_official_table_trt_640x480_random_invalid_for_qqtt_20260428`
@@ -62,9 +62,9 @@ Moved saved-pair offline PyTorch screening roots under
 
 ## Current Top-Level Results To Prefer
 
-- `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428`
-- `data/experiments/ffs_static_replay_matrix_concurrent3view_20260422_fullrun`
-- `data/experiments/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput`
+- `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428`
+- `result/ffs_static_replay_matrix_concurrent3view_20260422_fullrun`
+- `result/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput`
 - `data/ffs_benchmarks/live_3cam_scale*.log`
 
 Reporting rule: use archived roots only for historical context or artifact reuse. Do not cite archived smoke, invalid QQTT controls, or obsolete sequential static replay as current performance results.

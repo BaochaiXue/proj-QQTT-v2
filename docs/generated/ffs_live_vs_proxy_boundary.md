@@ -8,7 +8,7 @@
 | Result family | Current status | Config | Measured result | Source |
 | --- | --- | --- | --- | --- |
 | Live PyTorch 3-camera | RED: not realtime | `20-30-48`, `valid_iters=4`, `scale=0.5`, `max_disp=192`, 3 D455 cameras | about `22.6` aggregate FFS FPS, about `7.5` FPS per camera | `docs/generated/ffs_live_3cam_benchmark_validation.md` |
-| Static replay / TensorRT proxy | Target basically reached | `20-30-48`, `valid_iters=4`, real `848x480` inputs padded to `864x480`, `builderOptimizationLevel=5` | level-5 TRT static-image table records `14.00 ms` mean, about `71.43 FPS` for the single-pair proxy measurement | `data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/report.md` |
+| Static replay / TensorRT proxy | Target basically reached | `20-30-48`, `valid_iters=4`, real `848x480` inputs padded to `864x480`, `builderOptimizationLevel=5` | level-5 TRT static-image table records `14.00 ms` mean, about `71.43 FPS` for the single-pair proxy measurement | `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/report.md` |
 | Concurrent 3-view static replay proxy | Offline proxy only | concurrent `3` subprocess workers over static aligned rounds | best `20-30-48 / scale=0.5 / valid_iters=4` two-stage FP16 result recorded `35.308` overall mean FPS | `docs/generated/ffs_static_replay_matrix_concurrent3view_validation.md` |
 
 ## Reporting Rule

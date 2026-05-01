@@ -12,12 +12,12 @@
 
 ## Outputs
 
-- Still Object R1: `/home/zhangxinjie/proj-QQTT-v2/data/experiments/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_object_round1_3x5_time.gif`
-- Still Object R2: `/home/zhangxinjie/proj-QQTT-v2/data/experiments/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_object_round2_3x5_time.gif`
-- Still Object R3: `/home/zhangxinjie/proj-QQTT-v2/data/experiments/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_object_round3_3x5_time.gif`
-- Still Object R4: `/home/zhangxinjie/proj-QQTT-v2/data/experiments/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_object_round4_3x5_time.gif`
-- Still Rope R1: `/home/zhangxinjie/proj-QQTT-v2/data/experiments/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_rope_round1_3x5_time.gif`
-- Still Rope R2: `/home/zhangxinjie/proj-QQTT-v2/data/experiments/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_rope_round2_3x5_time.gif`
+- Still Object R1: `/home/zhangxinjie/proj-QQTT-v2/result/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_object_round1_3x5_time.gif`
+- Still Object R2: `/home/zhangxinjie/proj-QQTT-v2/result/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_object_round2_3x5_time.gif`
+- Still Object R3: `/home/zhangxinjie/proj-QQTT-v2/result/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_object_round3_3x5_time.gif`
+- Still Object R4: `/home/zhangxinjie/proj-QQTT-v2/result/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_object_round4_3x5_time.gif`
+- Still Rope R1: `/home/zhangxinjie/proj-QQTT-v2/result/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_rope_round1_3x5_time.gif`
+- Still Rope R2: `/home/zhangxinjie/proj-QQTT-v2/result/sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_stable_throughput/gifs/still_rope_round2_3x5_time.gif`
 
 ## SAM2.1 Speed Ladder
 

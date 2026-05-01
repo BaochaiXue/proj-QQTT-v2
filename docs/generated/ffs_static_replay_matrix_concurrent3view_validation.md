@@ -14,7 +14,7 @@ Current interpretation (`2026-05-01`): this is an offline static replay / Tensor
 ## Command
 
 ```bash
-conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix.py --output_root /home/zhangxinjie/proj-QQTT-v2/data/experiments/ffs_static_replay_matrix_concurrent3view_20260422_fullrun --artifact_root /home/zhangxinjie/proj-QQTT-v2/data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts --reuse_artifacts
+conda run -n qqtt-ffs-compat python scripts/harness/run_ffs_static_replay_matrix.py --output_root /home/zhangxinjie/proj-QQTT-v2/result/ffs_static_replay_matrix_concurrent3view_20260422_fullrun --artifact_root /home/zhangxinjie/proj-QQTT-v2/result/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts --reuse_artifacts
 ```
 
 ## Inputs
@@ -42,9 +42,9 @@ Semantics:
 ## Output Roots
 
 - new benchmark output root:
-  - `/home/zhangxinjie/proj-QQTT-v2/data/experiments/ffs_static_replay_matrix_concurrent3view_20260422_fullrun`
+  - `/home/zhangxinjie/proj-QQTT-v2/result/ffs_static_replay_matrix_concurrent3view_20260422_fullrun`
 - reused artifact root:
-  - `/home/zhangxinjie/proj-QQTT-v2/data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts`
+  - `/home/zhangxinjie/proj-QQTT-v2/result/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts`
 
 Key outputs:
 
@@ -120,7 +120,7 @@ So the benchmark and PCD boards are fresh, but the frame-10 masks still come fro
 
 The older output root:
 
-- `/home/zhangxinjie/proj-QQTT-v2/data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun`
+- `/home/zhangxinjie/proj-QQTT-v2/result/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun`
 
 used the obsolete single-camera sequential benchmark semantics and should now be treated as historical only. It may still be reused as an artifact cache, but not as the source of current benchmark conclusions.
 
