@@ -14,7 +14,7 @@ Current grouping:
 
 These record what the current machine and D455 topology actually supported during probe or capture checks.
 
-## FFS / Integration Validation
+## FFS / SAM-family Integration Validation
 
 - `ffs_demo_validation.md`
 - `wsl_env_bootstrap_validation.md`
@@ -36,8 +36,9 @@ These record what the current machine and D455 topology actually supported durin
 - `sam21_max_env_validation.md`
 - `sam21_max_round2_benchmark.md`
 - `sam21_dynamics_checkpoint_ladder_benchmark.md`
+- `edgetam_max_env_validation.md`
 
-These document external FFS proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
+These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 
 ## Visualization Validation
 

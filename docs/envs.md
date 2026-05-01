@@ -1,5 +1,22 @@
 # Environments
 
+## Shared CUDA 13 Toolkit Policy
+
+- Current shared WSL toolkit: `/usr/local/cuda`, resolved to `/usr/local/cuda-13.2`.
+- Current shared `nvcc`: CUDA 13.2.78.
+- For future CUDA 13-family extension builds, use the shared toolkit:
+
+```bash
+export CUDA_HOME=/usr/local/cuda
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+export TORCH_CUDA_ARCH_LIST=12.0
+```
+
+- Do not install another env-local CUDA toolkit or `cuda-nvcc` package in new conda environments unless a specific validation plan explains why the shared toolkit is unusable.
+- Do not install `cuda`, `cuda-drivers`, or Linux NVIDIA driver packages inside WSL.
+- Existing validated environments such as `edgetam-max` may continue using their recorded env-local CUDA path until they are deliberately rebuilt.
+
 ## `ffs-standalone`
 
 - Purpose: validate the external Fast-FoundationStereo repo in isolation
@@ -129,6 +146,44 @@
   - FFS max-stack experiments that must keep `torch==2.11.0+cu130` and CUDA 13.0
   - QQTT RealSense CLI/runtime imports
   - SAM 3.1 object-mask sidecar generation from aligned cases
+
+## `edgetam-max`
+
+- Purpose: isolated EdgeTAM validation environment for RTX 5090 Laptop WSL2 without touching `SAM21-max`.
+- Current validated Python:
+  - `3.12.13`
+- Current validated torch stack:
+  - `torch==2.11.0+cu130`
+  - `torchvision==0.26.0+cu130`
+  - CUDA available through `torch.version.cuda == 13.0`
+- Current validated CUDA toolkit:
+  - conda-local `nvcc` CUDA 13.0.88
+  - `CUDA_HOME=/home/zhangxinjie/miniconda3/envs/edgetam-max`
+  - activation hooks add CUDA 13 and PyTorch `torch/lib` to `LD_LIBRARY_PATH`
+- Current caveat:
+  - this env was built before the shared WSL CUDA 13 toolkit policy was established
+  - keep it as-is while it remains validated; future EdgeTAM rebuilds should start from `/usr/local/cuda`
+- Current EdgeTAM source:
+  - repo: `/home/zhangxinjie/EdgeTAM`
+  - commit: `7711e012a30a2402c4eaab637bdb00a521302c91`
+  - checkpoint: `/home/zhangxinjie/EdgeTAM/checkpoints/edgetam.pt`
+  - config: `/home/zhangxinjie/EdgeTAM/configs/edgetam.yaml`
+- Current runtime packages:
+  - `timm==1.0.15`
+  - `hydra-core==1.3.2`
+  - `iopath==0.1.10`
+  - `opencv-python-headless==4.13.0.92`
+  - `eva-decord==0.6.1`
+- Validation commands:
+  - `conda activate edgetam-max`
+  - `python /home/zhangxinjie/EdgeTAM/verify_edgetam_max.py`
+  - `python -c "import sam2._C; print('sam2._C OK')"`
+- Validation note:
+  - `docs/generated/edgetam_max_env_validation.md`
+- Expected use:
+  - EdgeTAM image predictor smoke tests
+  - EdgeTAM video predictor smoke tests with initial mask and box prompt
+  - follow-up still-object case experiments
 
 ## `qqtt-ffs-compat`
 

@@ -64,6 +64,9 @@ DEFAULT_VARIANT_ORDER: tuple[str, ...] = ("sam31", "large", "base_plus", "small"
 DEFAULT_CASE_SET = "still_object_rope"
 CASE_SET_STILL_OBJECT_ROPE = "still_object_rope"
 CASE_SET_DYNAMICS = "dynamics"
+DEFAULT_SAM31_PROMPT_ALIASES: dict[str, tuple[str, ...]] = {
+    "sloth": ("sloth", "stuffed animal"),
+}
 SAM21_INIT_BOX = "box"
 SAM21_INIT_MASK = "mask"
 SAM21_OBJECT_ID = 0
@@ -1289,9 +1292,13 @@ def ensure_sam31_masks_for_cases(
     frames: int | None,
     camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
     env_name: str = DEFAULT_FFS_ENV_NAME,
+    log_dir: str | Path | None = None,
     overwrite_missing_or_partial: bool = True,
 ) -> list[dict[str, Any]]:
     repo_root = Path(root).resolve()
+    log_root = None if log_dir is None else Path(log_dir).resolve()
+    if log_root is not None:
+        log_root.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
     for case_spec in case_specs:
         covered = sam31_masks_cover_case(
@@ -1307,27 +1314,72 @@ def ensure_sam31_masks_for_cases(
             "covered_before": bool(covered),
         }
         if not covered:
-            command = [
-                "conda",
-                "run",
-                "--no-capture-output",
-                "-n",
-                str(env_name),
-                "python",
-                str(repo_root / "scripts/harness/generate_sam31_masks.py"),
-                "--case_root",
-                str(case_spec.case_dir),
-                "--text_prompt",
-                case_spec.text_prompt,
-                "--source_mode",
-                "frames",
-                "--camera_ids",
-                *[str(int(item)) for item in camera_ids],
-            ]
-            if overwrite_missing_or_partial:
-                command.append("--overwrite")
-            print(f"[sam21] generating SAM3.1 masks case={case_spec.key}", flush=True)
-            subprocess.run(command, check=True, cwd=repo_root)
+            candidate_prompts = DEFAULT_SAM31_PROMPT_ALIASES.get(
+                " ".join(case_spec.text_prompt.strip().lower().split()),
+                (case_spec.text_prompt,),
+            )
+            errors: list[str] = []
+            successful_command: list[str] | None = None
+            successful_prompt: str | None = None
+            successful_log_path: Path | None = None
+            for candidate_idx, candidate_prompt in enumerate(candidate_prompts):
+                command = [
+                    "conda",
+                    "run",
+                    "--no-capture-output",
+                    "-n",
+                    str(env_name),
+                    "python",
+                    str(repo_root / "scripts/harness/generate_sam31_masks.py"),
+                    "--case_root",
+                    str(case_spec.case_dir),
+                    "--text_prompt",
+                    str(candidate_prompt),
+                    "--source_mode",
+                    "frames",
+                    "--camera_ids",
+                    *[str(int(item)) for item in camera_ids],
+                ]
+                if overwrite_missing_or_partial:
+                    command.append("--overwrite")
+                print(
+                    f"[sam21] generating SAM3.1 masks case={case_spec.key} prompt={candidate_prompt!r}",
+                    flush=True,
+                )
+                log_path = None if log_root is None else log_root / f"{case_spec.key}_try{candidate_idx}.log"
+                try:
+                    if log_path is None:
+                        subprocess.run(command, check=True, cwd=repo_root)
+                    else:
+                        with log_path.open("w", encoding="utf-8") as log_handle:
+                            subprocess.run(
+                                command,
+                                check=True,
+                                cwd=repo_root,
+                                stdout=log_handle,
+                                stderr=subprocess.STDOUT,
+                            )
+                    successful_command = command
+                    successful_prompt = str(candidate_prompt)
+                    successful_log_path = log_path
+                    break
+                except subprocess.CalledProcessError as exc:
+                    session_root = case_spec.case_dir / "sam31_masks" / "_sam31_session_frames"
+                    shutil.rmtree(session_root, ignore_errors=True)
+                    tail = ""
+                    if log_path is not None and log_path.is_file():
+                        tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-40:])
+                    errors.append(f"prompt={candidate_prompt!r} exit={exc.returncode}\n{tail}")
+            if successful_command is None or successful_prompt is None:
+                raise RuntimeError(
+                    f"SAM3.1 mask generation failed for {case_spec.key}. "
+                    + "\n".join(errors)
+                )
+            _rewrite_mask_info_labels(
+                mask_root=case_spec.case_dir / "sam31_masks",
+                camera_ids=camera_ids,
+                object_label=case_spec.text_prompt,
+            )
             covered = sam31_masks_cover_case(
                 case_spec=case_spec,
                 frames=frames,
@@ -1336,12 +1388,35 @@ def ensure_sam31_masks_for_cases(
             if not covered:
                 raise RuntimeError(f"SAM3.1 mask generation did not cover required frames for {case_spec.key}")
             record["generated"] = True
-            record["command"] = command
+            record["sam31_prompt_used"] = successful_prompt
+            record["command"] = successful_command
+            if successful_log_path is not None:
+                record["worker_log_path"] = str(successful_log_path)
         else:
             record["generated"] = False
         record["covered_after"] = bool(covered)
         records.append(record)
     return records
+
+
+def _rewrite_mask_info_labels(
+    *,
+    mask_root: str | Path,
+    camera_ids: Sequence[int],
+    object_label: str,
+) -> None:
+    root = _resolve_mask_root(mask_root)
+    for camera_idx in [int(item) for item in camera_ids]:
+        info_path = root / "mask" / f"mask_info_{camera_idx}.json"
+        if not info_path.is_file():
+            continue
+        payload = json.loads(info_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            continue
+        info_path.write_text(
+            json.dumps({str(key): str(object_label) for key in payload}, indent=2),
+            encoding="utf-8",
+        )
 
 
 def ffs_depth_cache_root_for_case(*, output_dir: str | Path, case_spec: LadderCaseSpec) -> Path:
@@ -2474,6 +2549,7 @@ def run_ladder_workflow(
             frames=frames,
             camera_ids=DEFAULT_CAMERA_IDS,
             env_name=sam31_env_name,
+            log_dir=output_dir / "logs" / "sam31_preflight",
         )
 
     depth_override_roots: dict[str, Path] = {}

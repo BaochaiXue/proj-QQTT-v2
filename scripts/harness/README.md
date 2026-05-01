@@ -32,6 +32,23 @@ python scripts/harness/check_all.py
 python scripts/harness/check_all.py --full
 ```
 
+## CUDA 13 Toolkit Policy
+
+- Shared CUDA 13 toolkit is `/usr/local/cuda`, currently resolved through alternatives to `/usr/local/cuda-13.2`.
+- Future CUDA 13-family extension builds from harness or external proof workflows should reuse this shared toolkit instead of installing another env-local CUDA toolkit.
+- Standard build exports:
+
+```bash
+export CUDA_HOME=/usr/local/cuda
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+export TORCH_CUDA_ARCH_LIST=12.0
+```
+
+- Do not install duplicate `cuda-toolkit`, `cuda-nvcc`, or similar compiler stacks into new conda environments just to build CUDA 13 extensions.
+- Do not install `cuda`, `cuda-drivers`, or Linux NVIDIA driver packages inside WSL.
+- Existing validated environments may keep their current env-local CUDA paths until they are intentionally rebuilt; new CUDA 13 build work should start from the shared toolkit policy above.
+
 ## FFS Defaults
 
 - Environment: `FFS-SAM-RS`.
