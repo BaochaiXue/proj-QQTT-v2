@@ -33,6 +33,7 @@ These record what the current machine and D455 topology actually supported durin
 - `ffs_left_right_codepath_audit.md`
 - `ffs_max_sam31_realsense_env_validation.md`
 - `sam21_max_env_validation.md`
+- `sam21_max_round2_benchmark.md`
 
 These document external FFS proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 
@@ -62,6 +63,8 @@ These record repo-structure, scope, and metadata-contract hardening passes.
 - `object_only_manual_image_roi_fullhead_native_30_static_frame_0000.json`
 - `sam21_max_still_object_video_benchmark.py`
 - `sam21_max_still_object_video_benchmark_results.json`
+- `sam21_max_round2_benchmark_results.json`
+- `sam21_max_round2_mask_quality.json`
 
 These are not general datasets. They are small helper assets used by specific validation and visualization workflows.
 

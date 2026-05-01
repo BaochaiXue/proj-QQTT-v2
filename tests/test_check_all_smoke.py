@@ -50,6 +50,7 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_ffs_reprojection_smoke",
                 "tests.test_ffs_remove_invisible_mask_smoke",
                 "tests.test_sam31_still_object_benchmark_smoke",
+                "tests.test_sam21_checkpoint_ladder_panel_smoke",
                 "tests.test_visual_compare_depth_panels_smoke",
                 "tests.test_visual_compare_reprojection_smoke",
                 "tests.test_visual_compare_turntable_smoke",

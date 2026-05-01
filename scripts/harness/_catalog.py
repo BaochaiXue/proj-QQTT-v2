@@ -224,6 +224,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/run_sam21_checkpoint_ladder_3x5_gifs.py",
+        "experiments",
+        "SAM3.1 vs SAM2.1 checkpoint ladder 3x5 time GIF benchmark.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/experiments/run_still_object_round1_projection_panel.py",
         "experiments",
         "Still-object round1 native/FFS projected-PCD removal board.",
