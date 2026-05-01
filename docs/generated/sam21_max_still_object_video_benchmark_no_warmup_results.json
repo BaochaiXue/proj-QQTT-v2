@@ -1,0 +1,92 @@
+{
+  "bfloat16_autocast": true,
+  "case_dir": "/home/zhangxinjie/proj-QQTT-v2/data_collect/both_30_still_object_round1_20260428",
+  "checkpoint": "/home/zhangxinjie/.cache/huggingface/sam2.1/sam2.1_hiera_large.pt",
+  "config": "configs/sam2.1/sam2.1_hiera_l.yaml",
+  "device": "NVIDIA GeForce RTX 5090 Laptop GPU",
+  "frames_per_camera": 30,
+  "torch": "2.11.0+cu130",
+  "torch_cuda": "13.0",
+  "video": {
+    "cameras": [
+      {
+        "box_xyxy": [
+          285.0,
+          95.0,
+          610.0,
+          479.0
+        ],
+        "camera": "0",
+        "frames_output": 30,
+        "frames_requested": 30,
+        "init_ms": 12146.283772999595,
+        "last_mask_pixels": 70587,
+        "obj_ids": [
+          1
+        ],
+        "pipeline_ms_per_requested_frame": 1089.071648533233,
+        "prompt_mask_pixels": 70829,
+        "prompt_ms": 3141.6429989985772,
+        "propagate_ms": 17384.222683998814,
+        "propagate_ms_per_output_frame": 579.4740894666271,
+        "video_dir": "/tmp/qqtt_sam21_max_video_benchmark/camera_0_jpg"
+      },
+      {
+        "box_xyxy": [
+          600.0,
+          135.0,
+          820.0,
+          360.0
+        ],
+        "camera": "1",
+        "frames_output": 30,
+        "frames_requested": 30,
+        "init_ms": 540.5226259972551,
+        "last_mask_pixels": 9133,
+        "obj_ids": [
+          1
+        ],
+        "pipeline_ms_per_requested_frame": 76.22947276662065,
+        "prompt_mask_pixels": 10104,
+        "prompt_ms": 13.260649000585545,
+        "propagate_ms": 1733.1009080007789,
+        "propagate_ms_per_output_frame": 57.77003026669263,
+        "video_dir": "/tmp/qqtt_sam21_max_video_benchmark/camera_1_jpg"
+      },
+      {
+        "box_xyxy": [
+          90.0,
+          65.0,
+          340.0,
+          330.0
+        ],
+        "camera": "2",
+        "frames_output": 30,
+        "frames_requested": 30,
+        "init_ms": 528.4168799989857,
+        "last_mask_pixels": 13150,
+        "obj_ids": [
+          1
+        ],
+        "pipeline_ms_per_requested_frame": 58.58289623332288,
+        "prompt_mask_pixels": 13019,
+        "prompt_ms": 4.14481399639044,
+        "propagate_ms": 1224.9251930043101,
+        "propagate_ms_per_output_frame": 40.830839766810335,
+        "video_dir": "/tmp/qqtt_sam21_max_video_benchmark/camera_2_jpg"
+      }
+    ],
+    "compile_image_encoder_requested": true,
+    "compiled_vos_components_requested": [
+      "image_encoder",
+      "memory_encoder",
+      "memory_attention",
+      "sam_prompt_encoder",
+      "sam_mask_decoder"
+    ],
+    "mean_pipeline_ms_per_requested_frame": 407.96133917772545,
+    "mean_propagate_ms_per_output_frame": 226.02498650004335,
+    "predictor_class": "SAM2VideoPredictorVOS",
+    "vos_optimized_requested": true
+  }
+}

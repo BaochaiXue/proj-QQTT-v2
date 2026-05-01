@@ -1,0 +1,114 @@
+{
+  "bfloat16_autocast": true,
+  "case_dir": "/home/zhangxinjie/proj-QQTT-v2/data_collect/both_30_still_object_round1_20260428",
+  "checkpoint": "/home/zhangxinjie/.cache/huggingface/sam2.1/sam2.1_hiera_large.pt",
+  "config": "configs/sam2.1/sam2.1_hiera_l.yaml",
+  "device": "NVIDIA GeForce RTX 5090 Laptop GPU",
+  "frames_per_camera": 30,
+  "torch": "2.11.0+cu130",
+  "torch_cuda": "13.0",
+  "video": {
+    "cameras": [
+      {
+        "box_xyxy": [
+          285.0,
+          95.0,
+          610.0,
+          479.0
+        ],
+        "camera": "0",
+        "frames_output": 30,
+        "frames_requested": 30,
+        "init_ms": 510.6460850001895,
+        "last_mask_pixels": 70577,
+        "obj_ids": [
+          1
+        ],
+        "pipeline_ms_per_requested_frame": 66.93782566677935,
+        "prompt_mask_pixels": 70818,
+        "prompt_ms": 12.451468006474897,
+        "propagate_ms": 1485.0372169967159,
+        "propagate_ms_per_output_frame": 49.50124056655719,
+        "video_dir": "/tmp/qqtt_sam21_max_video_benchmark/camera_0_jpg"
+      },
+      {
+        "box_xyxy": [
+          600.0,
+          135.0,
+          820.0,
+          360.0
+        ],
+        "camera": "1",
+        "frames_output": 30,
+        "frames_requested": 30,
+        "init_ms": 534.7573510007351,
+        "last_mask_pixels": 9239,
+        "obj_ids": [
+          1
+        ],
+        "pipeline_ms_per_requested_frame": 58.41125856677536,
+        "prompt_mask_pixels": 10126,
+        "prompt_ms": 3.0260380008257926,
+        "propagate_ms": 1214.5543680017,
+        "propagate_ms_per_output_frame": 40.48514560005666,
+        "video_dir": "/tmp/qqtt_sam21_max_video_benchmark/camera_1_jpg"
+      },
+      {
+        "box_xyxy": [
+          90.0,
+          65.0,
+          340.0,
+          330.0
+        ],
+        "camera": "2",
+        "frames_output": 30,
+        "frames_requested": 30,
+        "init_ms": 517.0554290016298,
+        "last_mask_pixels": 12787,
+        "obj_ids": [
+          1
+        ],
+        "pipeline_ms_per_requested_frame": 58.41435753342618,
+        "prompt_mask_pixels": 13010,
+        "prompt_ms": 4.0343790024053305,
+        "propagate_ms": 1231.3409179987502,
+        "propagate_ms_per_output_frame": 41.04469726662501,
+        "video_dir": "/tmp/qqtt_sam21_max_video_benchmark/camera_2_jpg"
+      }
+    ],
+    "compile_image_encoder_requested": true,
+    "compiled_vos_components_requested": [
+      "image_encoder",
+      "memory_encoder",
+      "memory_attention",
+      "sam_prompt_encoder",
+      "sam_mask_decoder"
+    ],
+    "mean_pipeline_ms_per_requested_frame": 61.25448058899363,
+    "mean_propagate_ms_per_output_frame": 43.67702781107962,
+    "predictor_class": "SAM2VideoPredictorVOS",
+    "vos_optimized_requested": true,
+    "warmup": {
+      "box_xyxy": [
+        285.0,
+        95.0,
+        610.0,
+        479.0
+      ],
+      "camera": "0",
+      "frames_output": 30,
+      "frames_requested": 30,
+      "init_ms": 8070.911298003921,
+      "last_mask_pixels": 70577,
+      "obj_ids": [
+        1
+      ],
+      "pipeline_ms_per_requested_frame": 753.0681902668827,
+      "prompt_mask_pixels": 70818,
+      "prompt_ms": 2602.5461400058703,
+      "propagate_ms": 11918.58826999669,
+      "propagate_ms_per_output_frame": 397.2862756665563,
+      "video_dir": "/tmp/qqtt_sam21_max_video_benchmark/camera_0_jpg"
+    }
+  }
+}
