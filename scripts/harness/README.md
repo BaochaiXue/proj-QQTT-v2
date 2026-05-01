@@ -32,6 +32,10 @@ python scripts/harness/check_all.py
 python scripts/harness/check_all.py --full
 ```
 
+`check_all.py` defaults to the quick profile: help-surface checks, deterministic
+guards, and non-rendering core smoke tests. Render-heavy visualization smoke
+tests that create temporary image/video outputs run in `check_all.py --full`.
+
 ## CUDA 13 Toolkit Policy
 
 - Shared CUDA 13 toolkit is `/usr/local/cuda`, currently resolved through alternatives to `/usr/local/cuda-13.2`.

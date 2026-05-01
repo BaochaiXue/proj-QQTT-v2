@@ -51,9 +51,6 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_ffs_remove_invisible_mask_smoke",
                 "tests.test_sam31_still_object_benchmark_smoke",
                 "tests.test_sam21_checkpoint_ladder_panel_smoke",
-                "tests.test_visual_compare_depth_panels_smoke",
-                "tests.test_visual_compare_reprojection_smoke",
-                "tests.test_visual_compare_turntable_smoke",
                 "tests.test_check_all_smoke",
             ],
             commands,
@@ -61,6 +58,9 @@ class CheckAllSmokeTest(unittest.TestCase):
         flat_items = [item for command in commands for item in command]
         self.assertFalse(any(item.startswith("scripts/harness/experiments/") for item in flat_items))
         self.assertFalse(any(cmd[:3] == ["python", "-m", "pytest"] for cmd in commands))
+        self.assertNotIn("tests.test_visual_compare_depth_panels_smoke", flat_items)
+        self.assertNotIn("tests.test_visual_compare_reprojection_smoke", flat_items)
+        self.assertNotIn("tests.test_visual_compare_turntable_smoke", flat_items)
 
     def test_full_profile_keeps_pytest_and_broader_command_surface(self) -> None:
         commands = check_all.build_commands(python="python", profile="full")
@@ -72,6 +72,10 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertIn(["python", "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/verify_ffs_demo.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/verify_ffs_single_engine_tensorrt_wsl.py", "--help"], commands)
+        flat_items = [item for command in commands for item in command]
+        self.assertIn("tests.test_visual_compare_depth_panels_smoke", flat_items)
+        self.assertIn("tests.test_visual_compare_reprojection_smoke", flat_items)
+        self.assertIn("tests.test_visual_compare_turntable_smoke", flat_items)
         self.assertIn(
             ["python", "-m", "pytest", "tests/test_d455_probe_matrix_builder.py", "tests/test_d455_probe_result_schema.py"],
             commands,
