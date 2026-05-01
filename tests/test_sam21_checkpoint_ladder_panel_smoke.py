@@ -70,9 +70,30 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
 
     def test_timing_aggregate_uses_inference_ms_without_warmup(self) -> None:
         records = [
-            {"case_key": "a", "camera_idx": 0, "checkpoint_key": "tiny", "inference_ms_per_frame": 10.0},
-            {"case_key": "a", "camera_idx": 1, "checkpoint_key": "tiny", "inference_ms_per_frame": 20.0},
-            {"case_key": "a", "camera_idx": 0, "checkpoint_key": "large", "inference_ms_per_frame": 50.0},
+            {
+                "case_key": "a",
+                "camera_idx": 0,
+                "checkpoint_key": "tiny",
+                "warmup_propagate_ms": 999.0,
+                "mask_collection_ms": 888.0,
+                "inference_ms_per_frame": 10.0,
+            },
+            {
+                "case_key": "a",
+                "camera_idx": 1,
+                "checkpoint_key": "tiny",
+                "warmup_propagate_ms": 999.0,
+                "mask_collection_ms": 888.0,
+                "inference_ms_per_frame": 20.0,
+            },
+            {
+                "case_key": "a",
+                "camera_idx": 0,
+                "checkpoint_key": "large",
+                "warmup_propagate_ms": 999.0,
+                "mask_collection_ms": 888.0,
+                "inference_ms_per_frame": 50.0,
+            },
         ]
         aggregate = ladder.aggregate_timing_records(records)
         self.assertEqual(aggregate["record_count"], 3)
@@ -81,6 +102,38 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             15.0,
         )
         self.assertAlmostEqual(aggregate["by_checkpoint"]["tiny"]["mean_fps"], 1000.0 / 15.0)
+
+    def test_dynamics_case_specs_resolve_expected_cases(self) -> None:
+        root = Path("/repo")
+        cases = ladder.default_ladder_case_specs_for_set(root=root, case_set=ladder.CASE_SET_DYNAMICS)
+        self.assertEqual([case.key for case in cases], ["ffs_dynamics_round1", "ffs_dynamics_round2"])
+        self.assertEqual([case.text_prompt for case in cases], ["sloth", "sloth"])
+        self.assertEqual(cases[0].output_name, "ffs_dynamics_round1_3x5_time")
+        self.assertEqual(
+            cases[1].case_dir,
+            root / "data/dynamics/ffs_dynamics_round2_20260415",
+        )
+
+    def test_stable_manifest_records_mask_init_mode(self) -> None:
+        case = ladder.LadderCaseSpec(
+            key="dyn",
+            label="Dyn",
+            output_name="dyn",
+            case_dir=Path("/case"),
+            text_prompt="sloth",
+        )
+        checkpoint = ladder.default_ladder_checkpoint_specs()[0]
+        manifest = ladder.build_stable_job_manifest(
+            case_specs=[case],
+            checkpoint_spec=checkpoint,
+            checkpoint_cache=Path("/ckpt"),
+            output_dir=Path("/out"),
+            frames=None,
+            sam21_init_mode=ladder.SAM21_INIT_MASK,
+            camera_ids=[0],
+        )
+        self.assertIsNone(manifest["frames"])
+        self.assertEqual(manifest["sam21_init_mode"], ladder.SAM21_INIT_MASK)
 
     def test_stable_report_describes_no_output_timing_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -162,6 +215,55 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
         )
         self.assertTrue(np.array_equal(image[5, 5], np.asarray([0, 255, 0], dtype=np.uint8)))
         self.assertTrue(np.array_equal(image[5, 7], np.asarray([255, 0, 0], dtype=np.uint8)))
+
+    def test_depth_override_root_is_used_for_frame_cells(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            make_visualization_case(case_dir, include_depth_ffs_float_m=True, frame_num=1)
+            make_sam31_masks(case_dir, prompt_labels_by_object={0: "object"}, frame_tokens=["0"])
+            output_dir = root / "out"
+            sam2_mask = np.zeros((8, 10), dtype=bool)
+            sam2_mask[2:6, 2:7] = True
+            for checkpoint_spec in ladder.default_ladder_checkpoint_specs():
+                for camera_idx in range(3):
+                    ladder.write_single_object_masks(
+                        mask_root=output_dir / "masks" / "case" / checkpoint_spec.key,
+                        camera_idx=camera_idx,
+                        object_label="object",
+                        masks_by_frame_token={"0": sam2_mask},
+                        overwrite=False,
+                    )
+
+            override = root / "depth_override"
+            for camera_idx in range(3):
+                depth_dir = override / "depth_ffs_float_m" / str(camera_idx)
+                depth_dir.mkdir(parents=True)
+                np.save(depth_dir / "0.npy", np.full((8, 10), 0.42, dtype=np.float32))
+
+            case_spec = ladder.LadderCaseSpec(
+                key="case",
+                label="Case",
+                output_name="case",
+                case_dir=case_dir,
+                text_prompt="object",
+            )
+            _cells, stats = ladder.build_frame_cells(
+                case_spec=case_spec,
+                metadata=ladder.load_case_metadata(case_dir),
+                output_dir=output_dir,
+                checkpoint_specs=ladder.default_ladder_checkpoint_specs(),
+                frame_idx=0,
+                depth_override_root=override,
+                depth_min_m=0.2,
+                depth_max_m=1.5,
+                max_points_per_camera=None,
+                phystwin_radius_m=0.01,
+                phystwin_nb_points=1,
+                enhanced_component_voxel_size_m=0.01,
+                enhanced_keep_near_main_gap_m=0.0,
+            )
+            self.assertIn(str(override), stats["per_camera"][0]["depth_path"])
 
 
 if __name__ == "__main__":

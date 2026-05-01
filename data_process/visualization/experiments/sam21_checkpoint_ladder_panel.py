@@ -30,19 +30,42 @@ from .enhanced_phystwin_postprocess_pcd_compare import (
 )
 from .ffs_confidence_filter_pcd_compare import _apply_enhanced_phystwin_like_postprocess
 from .native_ffs_fused_pcd_compare import DEFAULT_PHYSTWIN_NB_POINTS, DEFAULT_PHYSTWIN_RADIUS_M
+from data_process.depth_backends import (
+    DEFAULT_FFS_ENV_NAME,
+    DEFAULT_FFS_MODEL_NAME,
+    DEFAULT_FFS_REPO,
+    DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL,
+    DEFAULT_FFS_TRT_ENGINE_SIZE,
+    DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
+    DEFAULT_FFS_VALID_ITERS,
+    align_depth_to_color,
+)
 
 
 DEFAULT_OUTPUT_DIR = (
     "data/experiments/"
     "sam21_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5"
 )
+DEFAULT_DYNAMICS_OUTPUT_DIR = (
+    "data/experiments/"
+    "sam21_dynamics_checkpoint_ladder_3x5_time_gifs_"
+    "ffs203048_iter4_trt_level5_maskinit_stable_throughput"
+)
 DEFAULT_SAM2_CHECKPOINT_CACHE = Path.home() / ".cache" / "huggingface" / "sam2.1"
 DEFAULT_SAM2_BASE_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/092824"
 DEFAULT_DOC_BENCHMARK_MD = Path("docs/generated/sam21_max_round2_benchmark.md")
 DEFAULT_DOC_BENCHMARK_JSON = Path("docs/generated/sam21_max_round2_benchmark_results.json")
 DEFAULT_DOC_QUALITY_JSON = Path("docs/generated/sam21_max_round2_mask_quality.json")
+DEFAULT_DYNAMICS_DOC_BENCHMARK_MD = Path("docs/generated/sam21_dynamics_checkpoint_ladder_benchmark.md")
+DEFAULT_DYNAMICS_DOC_BENCHMARK_JSON = Path("docs/generated/sam21_dynamics_checkpoint_ladder_results.json")
+DEFAULT_DYNAMICS_DOC_QUALITY_JSON = Path("docs/generated/sam21_dynamics_checkpoint_ladder_mask_quality.json")
 DEFAULT_CAMERA_IDS: tuple[int, ...] = (0, 1, 2)
 DEFAULT_VARIANT_ORDER: tuple[str, ...] = ("sam31", "large", "base_plus", "small", "tiny")
+DEFAULT_CASE_SET = "still_object_rope"
+CASE_SET_STILL_OBJECT_ROPE = "still_object_rope"
+CASE_SET_DYNAMICS = "dynamics"
+SAM21_INIT_BOX = "box"
+SAM21_INIT_MASK = "mask"
 SAM21_OBJECT_ID = 0
 DEFAULT_STABLE_WARMUP_RUNS = 5
 
@@ -114,6 +137,34 @@ def default_ladder_case_specs(*, root: Path) -> list[LadderCaseSpec]:
             text_prompt="white twisted rope lying on the wooden table",
         ),
     ]
+
+
+def default_dynamics_ladder_case_specs(*, root: Path) -> list[LadderCaseSpec]:
+    repo_root = Path(root).resolve()
+    return [
+        LadderCaseSpec(
+            key="ffs_dynamics_round1",
+            label="FFS Dynamics R1",
+            output_name="ffs_dynamics_round1_3x5_time",
+            case_dir=repo_root / "data/dynamics/ffs_dynamics_round1_20260414",
+            text_prompt="sloth",
+        ),
+        LadderCaseSpec(
+            key="ffs_dynamics_round2",
+            label="FFS Dynamics R2",
+            output_name="ffs_dynamics_round2_3x5_time",
+            case_dir=repo_root / "data/dynamics/ffs_dynamics_round2_20260415",
+            text_prompt="sloth",
+        ),
+    ]
+
+
+def default_ladder_case_specs_for_set(*, root: Path, case_set: str) -> list[LadderCaseSpec]:
+    if str(case_set) == CASE_SET_STILL_OBJECT_ROPE:
+        return default_ladder_case_specs(root=root)
+    if str(case_set) == CASE_SET_DYNAMICS:
+        return default_dynamics_ladder_case_specs(root=root)
+    raise ValueError(f"Unsupported case_set: {case_set}")
 
 
 def default_ladder_checkpoint_specs() -> list[LadderCheckpointSpec]:
@@ -392,6 +443,13 @@ def _configure_torch_for_sam21(torch_module: Any) -> None:
         torch_module.backends.cudnn.allow_tf32 = True
 
 
+def normalize_sam21_init_mode(value: str) -> str:
+    mode = str(value).strip().lower()
+    if mode not in {SAM21_INIT_BOX, SAM21_INIT_MASK}:
+        raise ValueError(f"Unsupported SAM2.1 init mode: {value!r}")
+    return mode
+
+
 def _time_ms(torch_module: Any, fn: Any) -> tuple[Any, float]:
     _cuda_sync(torch_module)
     start = time.perf_counter()
@@ -412,7 +470,8 @@ def run_sam21_worker(
     config: str,
     output_mask_root: str | Path,
     result_json: str | Path,
-    frames: int,
+    frames: int | None,
+    sam21_init_mode: str = SAM21_INIT_BOX,
     bbox_padding_px: int = 0,
     overwrite: bool = False,
 ) -> dict[str, Any]:
@@ -421,11 +480,12 @@ def run_sam21_worker(
 
     _configure_torch_for_sam21(torch)
     case_dir = Path(case_dir).resolve()
+    init_mode = normalize_sam21_init_mode(sam21_init_mode)
     checkpoint_path = Path(checkpoint_path).expanduser().resolve()
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Missing SAM2.1 checkpoint: {checkpoint_path}")
 
-    frame_tokens = sorted_case_frame_tokens(case_dir, camera_idx=int(camera_idx), frames=int(frames))
+    frame_tokens = sorted_case_frame_tokens(case_dir, camera_idx=int(camera_idx), frames=frames)
     sam31_mask = load_union_mask(
         mask_root=case_dir / "sam31_masks",
         case_dir=case_dir,
@@ -476,6 +536,13 @@ def run_sam21_worker(
 
             def prompt_state(state: Any) -> Any:
                 _mark_compile_step(torch)
+                if init_mode == SAM21_INIT_MASK:
+                    return predictor.add_new_mask(
+                        inference_state=state,
+                        frame_idx=0,
+                        obj_id=int(SAM21_OBJECT_ID),
+                        mask=np.asarray(sam31_mask, dtype=bool),
+                    )
                 return predictor.add_new_points_or_box(
                     inference_state=state,
                     frame_idx=0,
@@ -549,6 +616,8 @@ def run_sam21_worker(
             "checkpoint_label": str(checkpoint_label),
             "checkpoint_path": str(checkpoint_path),
             "config": str(config),
+            "sam21_init_mode": init_mode,
+            "prompt_source": "sam31_frame0_union_mask" if init_mode == SAM21_INIT_MASK else "sam31_frame0_union_mask_bbox",
             "bbox_source": "sam31_frame0_union_mask",
             "bbox_xyxy": [float(item) for item in box_xyxy],
             "frames_requested": int(len(frame_tokens)),
@@ -590,16 +659,19 @@ def build_stable_job_manifest(
     checkpoint_spec: LadderCheckpointSpec,
     checkpoint_cache: str | Path,
     output_dir: str | Path,
-    frames: int,
+    frames: int | None,
     camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    sam21_init_mode: str = SAM21_INIT_BOX,
     bbox_padding_px: int = 0,
 ) -> dict[str, Any]:
+    init_mode = normalize_sam21_init_mode(sam21_init_mode)
     return {
         "checkpoint_key": checkpoint_spec.key,
         "checkpoint_label": checkpoint_spec.label,
         "checkpoint_path": str(checkpoint_spec.checkpoint_path(Path(checkpoint_cache))),
         "config": checkpoint_spec.config,
-        "frames": int(frames),
+        "frames": None if frames is None else int(frames),
+        "sam21_init_mode": init_mode,
         "bbox_padding_px": int(bbox_padding_px),
         "camera_ids": [int(item) for item in camera_ids],
         "jobs": [
@@ -620,14 +692,16 @@ def build_stable_job_manifest(
 def _prepare_stable_job(
     *,
     job: dict[str, Any],
-    frames: int,
+    frames: int | None,
+    sam21_init_mode: str,
     bbox_padding_px: int,
     temp_root: Path,
 ) -> dict[str, Any]:
     case_dir = Path(job["case_dir"]).resolve()
     camera_idx = int(job["camera_idx"])
     text_prompt = str(job["text_prompt"])
-    frame_tokens = sorted_case_frame_tokens(case_dir, camera_idx=camera_idx, frames=int(frames))
+    init_mode = normalize_sam21_init_mode(sam21_init_mode)
+    frame_tokens = sorted_case_frame_tokens(case_dir, camera_idx=camera_idx, frames=frames)
     sam31_mask = load_union_mask(
         mask_root=case_dir / "sam31_masks",
         case_dir=case_dir,
@@ -658,8 +732,11 @@ def _prepare_stable_job(
         "camera_idx": camera_idx,
         "frame_tokens": [str(item) for item in frame_tokens],
         "sam21_object_label": str(object_label),
+        "sam21_init_mode": init_mode,
+        "prompt_source": "sam31_frame0_union_mask" if init_mode == SAM21_INIT_MASK else "sam31_frame0_union_mask_bbox",
         "bbox_source": "sam31_frame0_union_mask",
         "bbox_xyxy": [float(item) for item in box_xyxy],
+        "sam31_frame0_mask": np.asarray(sam31_mask, dtype=bool),
         "video_dir": str(video_dir),
     }
 
@@ -684,7 +761,9 @@ def run_sam21_stable_worker(
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Missing SAM2.1 checkpoint: {checkpoint_path}")
     manifest = json.loads(Path(job_manifest).read_text(encoding="utf-8"))
-    frames = int(manifest.get("frames", 30))
+    raw_frames = manifest.get("frames", 30)
+    frames = None if raw_frames is None else int(raw_frames)
+    init_mode = normalize_sam21_init_mode(manifest.get("sam21_init_mode", SAM21_INIT_BOX))
     bbox_padding_px = int(manifest.get("bbox_padding_px", 0))
     raw_jobs = list(manifest.get("jobs", []))
     if not raw_jobs:
@@ -699,6 +778,7 @@ def run_sam21_stable_worker(
             _prepare_stable_job(
                 job=dict(job),
                 frames=frames,
+                sam21_init_mode=init_mode,
                 bbox_padding_px=bbox_padding_px,
                 temp_root=temp_root,
             )
@@ -721,6 +801,13 @@ def run_sam21_stable_worker(
                 )
 
             def prompt_state(state: Any, job: dict[str, Any]) -> Any:
+                if str(job["sam21_init_mode"]) == SAM21_INIT_MASK:
+                    return predictor.add_new_mask(
+                        inference_state=state,
+                        frame_idx=0,
+                        obj_id=int(SAM21_OBJECT_ID),
+                        mask=np.asarray(job["sam31_frame0_mask"], dtype=bool),
+                    )
                 return predictor.add_new_points_or_box(
                     inference_state=state,
                     frame_idx=0,
@@ -824,6 +911,8 @@ def run_sam21_stable_worker(
                     "checkpoint_label": str(checkpoint_label),
                     "checkpoint_path": str(checkpoint_path),
                     "config": str(config),
+                    "sam21_init_mode": str(job["sam21_init_mode"]),
+                    "prompt_source": str(job["prompt_source"]),
                     "bbox_source": str(job["bbox_source"]),
                     "bbox_xyxy": [float(item) for item in job["bbox_xyxy"]],
                     "frames_requested": int(len(job["frame_tokens"])),
@@ -900,6 +989,7 @@ def run_sam21_stable_worker(
             "checkpoint_label": str(checkpoint_label),
             "checkpoint_path": str(checkpoint_path),
             "config": str(config),
+            "sam21_init_mode": init_mode,
             "job_count": int(len(timing_records)),
             "warmup_runs_per_job": int(warmup_runs),
             "total_timed_frames": total_timed_frames,
@@ -934,8 +1024,9 @@ def run_sam21_stable_workers_by_checkpoint(
     checkpoint_specs: Sequence[LadderCheckpointSpec],
     checkpoint_cache: str | Path,
     output_dir: str | Path,
-    frames: int,
+    frames: int | None,
     camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    sam21_init_mode: str = SAM21_INIT_BOX,
     bbox_padding_px: int = 0,
     warmup_runs: int = DEFAULT_STABLE_WARMUP_RUNS,
     speed_use_step_marker: bool = True,
@@ -957,8 +1048,9 @@ def run_sam21_stable_workers_by_checkpoint(
             checkpoint_spec=checkpoint_spec,
             checkpoint_cache=checkpoint_cache,
             output_dir=output_dir,
-            frames=int(frames),
+            frames=frames,
             camera_ids=camera_ids,
+            sam21_init_mode=sam21_init_mode,
             bbox_padding_px=int(bbox_padding_px),
         )
         manifest_path = manifest_dir / f"{checkpoint_spec.key}.json"
@@ -1028,8 +1120,9 @@ def run_sam21_workers_sequentially(
     checkpoint_specs: Sequence[LadderCheckpointSpec],
     checkpoint_cache: str | Path,
     output_dir: str | Path,
-    frames: int,
+    frames: int | None,
     camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    sam21_init_mode: str = SAM21_INIT_BOX,
     bbox_padding_px: int = 0,
     overwrite: bool = False,
 ) -> list[dict[str, Any]]:
@@ -1064,15 +1157,19 @@ def run_sam21_workers_sequentially(
                     str(checkpoint_spec.checkpoint_path(checkpoint_cache)),
                     "--config",
                     checkpoint_spec.config,
+                    "--sam21-init-mode",
+                    normalize_sam21_init_mode(sam21_init_mode),
                     "--output-mask-root",
                     str(mask_root),
                     "--result-json",
                     str(result_json),
-                    "--frames",
-                    str(int(frames)),
                     "--bbox-padding-px",
                     str(int(bbox_padding_px)),
                 ]
+                if frames is None:
+                    command.append("--all-frames")
+                else:
+                    command.extend(["--frames", str(int(frames))])
                 if overwrite:
                     command.append("--overwrite")
                 print(
@@ -1150,6 +1247,325 @@ def aggregate_timing_records(timing_records: Sequence[dict[str, Any]]) -> dict[s
         "by_case_checkpoint": case_summary,
         "record_count": int(len(timing_records)),
     }
+
+
+def sam31_masks_cover_case(
+    *,
+    case_spec: LadderCaseSpec,
+    frames: int | None,
+    camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+) -> bool:
+    mask_root = case_spec.case_dir / "sam31_masks"
+    if not (mask_root / "mask").is_dir():
+        return False
+    try:
+        for camera_idx in [int(item) for item in camera_ids]:
+            frame_tokens = sorted_case_frame_tokens(case_spec.case_dir, camera_idx=camera_idx, frames=frames)
+            if not matched_mask_labels(
+                mask_root=mask_root,
+                camera_idx=camera_idx,
+                text_prompt=case_spec.text_prompt,
+            ):
+                return False
+            for frame_token in frame_tokens:
+                mask = load_union_mask(
+                    mask_root=mask_root,
+                    case_dir=case_spec.case_dir,
+                    camera_idx=camera_idx,
+                    frame_token=str(frame_token),
+                    text_prompt=case_spec.text_prompt,
+                )
+                if not np.any(mask):
+                    return False
+    except Exception:
+        return False
+    return True
+
+
+def ensure_sam31_masks_for_cases(
+    *,
+    root: str | Path,
+    case_specs: Sequence[LadderCaseSpec],
+    frames: int | None,
+    camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    env_name: str = DEFAULT_FFS_ENV_NAME,
+    overwrite_missing_or_partial: bool = True,
+) -> list[dict[str, Any]]:
+    repo_root = Path(root).resolve()
+    records: list[dict[str, Any]] = []
+    for case_spec in case_specs:
+        covered = sam31_masks_cover_case(
+            case_spec=case_spec,
+            frames=frames,
+            camera_ids=camera_ids,
+        )
+        record: dict[str, Any] = {
+            "case_key": case_spec.key,
+            "case_dir": str(case_spec.case_dir),
+            "mask_root": str(case_spec.case_dir / "sam31_masks"),
+            "text_prompt": case_spec.text_prompt,
+            "covered_before": bool(covered),
+        }
+        if not covered:
+            command = [
+                "conda",
+                "run",
+                "--no-capture-output",
+                "-n",
+                str(env_name),
+                "python",
+                str(repo_root / "scripts/harness/generate_sam31_masks.py"),
+                "--case_root",
+                str(case_spec.case_dir),
+                "--text_prompt",
+                case_spec.text_prompt,
+                "--source_mode",
+                "frames",
+                "--camera_ids",
+                *[str(int(item)) for item in camera_ids],
+            ]
+            if overwrite_missing_or_partial:
+                command.append("--overwrite")
+            print(f"[sam21] generating SAM3.1 masks case={case_spec.key}", flush=True)
+            subprocess.run(command, check=True, cwd=repo_root)
+            covered = sam31_masks_cover_case(
+                case_spec=case_spec,
+                frames=frames,
+                camera_ids=camera_ids,
+            )
+            if not covered:
+                raise RuntimeError(f"SAM3.1 mask generation did not cover required frames for {case_spec.key}")
+            record["generated"] = True
+            record["command"] = command
+        else:
+            record["generated"] = False
+        record["covered_after"] = bool(covered)
+        records.append(record)
+    return records
+
+
+def ffs_depth_cache_root_for_case(*, output_dir: str | Path, case_spec: LadderCaseSpec) -> Path:
+    return Path(output_dir).resolve() / "ffs_depth_cache" / case_spec.key
+
+
+def ffs_depth_cache_covers_case(
+    *,
+    case_spec: LadderCaseSpec,
+    depth_cache_root: str | Path,
+    frames: int | None,
+    camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+) -> bool:
+    root = Path(depth_cache_root).resolve()
+    depth_root = root / "depth_ffs_float_m"
+    if not depth_root.is_dir():
+        return False
+    for camera_idx in [int(item) for item in camera_ids]:
+        try:
+            frame_tokens = sorted_case_frame_tokens(case_spec.case_dir, camera_idx=camera_idx, frames=frames)
+        except Exception:
+            return False
+        for frame_token in frame_tokens:
+            if not (depth_root / str(camera_idx) / f"{frame_token}.npy").is_file():
+                return False
+    return True
+
+
+def run_ffs_depth_cache_worker(
+    *,
+    case_key: str,
+    case_dir: str | Path,
+    depth_cache_root: str | Path,
+    frames: int | None,
+    ffs_repo: str | Path = DEFAULT_FFS_REPO,
+    ffs_trt_model_dir: str | Path = DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
+    camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    from data_process.depth_backends import FastFoundationStereoTensorRTRunner
+
+    case_dir = Path(case_dir).resolve()
+    root = Path(depth_cache_root).resolve()
+    if overwrite and root.exists():
+        shutil.rmtree(root)
+    depth_root = root / "depth_ffs_float_m"
+    depth_root.mkdir(parents=True, exist_ok=True)
+    metadata = load_case_metadata(case_dir)
+    runner = None
+    per_camera: list[dict[str, Any]] = []
+    try:
+        runner = FastFoundationStereoTensorRTRunner(
+            ffs_repo=Path(ffs_repo),
+            model_dir=Path(ffs_trt_model_dir),
+        )
+        for camera_idx in [int(item) for item in camera_ids]:
+            frame_tokens = sorted_case_frame_tokens(case_dir, camera_idx=camera_idx, frames=frames)
+            camera_out = depth_root / str(camera_idx)
+            camera_out.mkdir(parents=True, exist_ok=True)
+            k_ir_left = np.asarray(metadata["K_ir_left"][camera_idx], dtype=np.float32)
+            k_color = np.asarray(metadata.get("K_color", metadata["intrinsics"])[camera_idx], dtype=np.float32)
+            t_ir_left_to_color = np.asarray(metadata["T_ir_left_to_color"][camera_idx], dtype=np.float32)
+            baseline_m = float(metadata["ir_baseline_m"][camera_idx])
+            saved = 0
+            for frame_token in frame_tokens:
+                output_path = camera_out / f"{frame_token}.npy"
+                if output_path.is_file() and not overwrite:
+                    saved += 1
+                    continue
+                left_path = case_dir / "ir_left" / str(camera_idx) / f"{frame_token}.png"
+                right_path = case_dir / "ir_right" / str(camera_idx) / f"{frame_token}.png"
+                color_path = case_dir / "color" / str(camera_idx) / f"{frame_token}.png"
+                left_image = cv2.imread(str(left_path), cv2.IMREAD_UNCHANGED)
+                right_image = cv2.imread(str(right_path), cv2.IMREAD_UNCHANGED)
+                color_image = cv2.imread(str(color_path), cv2.IMREAD_COLOR)
+                if left_image is None or right_image is None or color_image is None:
+                    raise FileNotFoundError(
+                        f"Missing FFS input frame case={case_key} cam={camera_idx} frame={frame_token}"
+                    )
+                output = runner.run_pair(
+                    left_image,
+                    right_image,
+                    K_ir_left=k_ir_left,
+                    baseline_m=baseline_m,
+                    audit_mode=False,
+                )
+                depth_color_m = align_depth_to_color(
+                    np.asarray(output["depth_ir_left_m"], dtype=np.float32),
+                    np.asarray(output["K_ir_left_used"], dtype=np.float32),
+                    t_ir_left_to_color,
+                    k_color,
+                    output_shape=tuple(int(item) for item in color_image.shape[:2]),
+                )
+                np.save(output_path, np.asarray(depth_color_m, dtype=np.float32))
+                saved += 1
+            per_camera.append(
+                {
+                    "camera_idx": int(camera_idx),
+                    "frame_count": int(len(frame_tokens)),
+                    "saved_or_reused_count": int(saved),
+                }
+            )
+    finally:
+        torch_module = None if runner is None else getattr(runner, "torch", None)
+        if torch_module is not None and torch_module.cuda.is_available():
+            torch_module.cuda.synchronize()
+            torch_module.cuda.empty_cache()
+
+    summary = {
+        "case_key": str(case_key),
+        "case_dir": str(case_dir),
+        "depth_cache_root": str(root),
+        "depth_dir": str(depth_root),
+        "depth_format": "float32_meters",
+        "source": "FastFoundationStereoTensorRTRunner",
+        "ffs_config": {
+            "model_name": DEFAULT_FFS_MODEL_NAME,
+            "valid_iters": int(DEFAULT_FFS_VALID_ITERS),
+            "engine_size_hw": [int(item) for item in DEFAULT_FFS_TRT_ENGINE_SIZE],
+            "builder_optimization_level": int(DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL),
+            "ffs_repo": str(Path(ffs_repo).resolve()),
+            "trt_model_dir": str(Path(ffs_trt_model_dir).resolve()),
+        },
+        "frames": None if frames is None else int(frames),
+        "camera_ids": [int(item) for item in camera_ids],
+        "per_camera": per_camera,
+    }
+    write_json(root / "summary.json", summary)
+    return summary
+
+
+def ensure_ffs_depth_caches_for_cases(
+    *,
+    script_path: str | Path,
+    output_dir: str | Path,
+    case_specs: Sequence[LadderCaseSpec],
+    frames: int | None,
+    camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    env_name: str = DEFAULT_FFS_ENV_NAME,
+    ffs_repo: str | Path = DEFAULT_FFS_REPO,
+    ffs_trt_model_dir: str | Path = DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
+    overwrite: bool = False,
+) -> tuple[dict[str, Path], list[dict[str, Any]]]:
+    output_dir = Path(output_dir).resolve()
+    log_dir = output_dir / "logs" / "ffs_depth_cache"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    depth_roots: dict[str, Path] = {}
+    records: list[dict[str, Any]] = []
+    for case_spec in case_specs:
+        cache_root = ffs_depth_cache_root_for_case(output_dir=output_dir, case_spec=case_spec)
+        depth_roots[case_spec.key] = cache_root
+        covered = (not overwrite) and ffs_depth_cache_covers_case(
+            case_spec=case_spec,
+            depth_cache_root=cache_root,
+            frames=frames,
+            camera_ids=camera_ids,
+        )
+        record: dict[str, Any] = {
+            "case_key": case_spec.key,
+            "depth_cache_root": str(cache_root),
+            "covered_before": bool(covered),
+        }
+        if not covered:
+            command = [
+                "conda",
+                "run",
+                "--no-capture-output",
+                "-n",
+                str(env_name),
+                "python",
+                str(Path(script_path).resolve()),
+                "--ffs-depth-worker",
+                "--case-key",
+                case_spec.key,
+                "--case-dir",
+                str(case_spec.case_dir),
+                "--depth-cache-root",
+                str(cache_root),
+                "--ffs-repo",
+                str(ffs_repo),
+                "--ffs-trt-model-dir",
+                str(ffs_trt_model_dir),
+            ]
+            if frames is None:
+                command.append("--all-frames")
+            else:
+                command.extend(["--frames", str(int(frames))])
+            if overwrite:
+                command.append("--overwrite")
+            log_path = log_dir / f"{case_spec.key}.log"
+            print(f"[sam21] generating FFS depth cache case={case_spec.key}", flush=True)
+            with log_path.open("w", encoding="utf-8") as log_handle:
+                try:
+                    subprocess.run(
+                        command,
+                        check=True,
+                        cwd=Path(script_path).resolve().parents[3],
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                    )
+                except subprocess.CalledProcessError:
+                    log_handle.flush()
+                    tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-80:])
+                    print(f"[sam21] FFS depth cache worker failed; log tail from {log_path}:\n{tail}", flush=True)
+                    raise
+            record["generated"] = True
+            record["command"] = command
+            record["worker_log_path"] = str(log_path)
+        else:
+            record["generated"] = False
+        covered_after = ffs_depth_cache_covers_case(
+            case_spec=case_spec,
+            depth_cache_root=cache_root,
+            frames=frames,
+            camera_ids=camera_ids,
+        )
+        if not covered_after:
+            raise RuntimeError(f"FFS depth cache does not cover required frames for {case_spec.key}: {cache_root}")
+        record["covered_after"] = bool(covered_after)
+        summary_path = cache_root / "summary.json"
+        if summary_path.is_file():
+            record["summary"] = json.loads(summary_path.read_text(encoding="utf-8"))
+        records.append(record)
+    return depth_roots, records
 
 
 def _format_point_count(point_count: int) -> str:
@@ -1307,10 +1723,11 @@ def _cell_label(
     camera_idx: int,
     variant_key: str,
     point_count: int,
+    sam31_mask_label: str,
     timing_by_cell: dict[tuple[str, int, str], dict[str, Any]],
 ) -> str:
     if variant_key == "sam31":
-        return f"SAM3.1 | existing mask | {_format_point_count(point_count)} pts"
+        return f"SAM3.1 | {sam31_mask_label} | {_format_point_count(point_count)} pts"
     timing = timing_by_cell.get((str(case_key), int(camera_idx), str(variant_key)), {})
     ms = float(timing.get("inference_ms_per_frame", 0.0))
     fps = float(timing.get("fps", 0.0))
@@ -1342,6 +1759,7 @@ def build_frame_cells(
     output_dir: Path,
     checkpoint_specs: Sequence[LadderCheckpointSpec],
     frame_idx: int,
+    depth_override_root: str | Path | None,
     depth_min_m: float,
     depth_max_m: float,
     max_points_per_camera: int | None,
@@ -1353,6 +1771,7 @@ def build_frame_cells(
     variant_roots = _build_variant_roots(case_spec=case_spec, output_dir=output_dir, checkpoint_specs=checkpoint_specs)
     camera_clouds, camera_stats = load_case_frame_camera_clouds(
         case_dir=case_spec.case_dir,
+        depth_case_dir=None if depth_override_root is None else Path(depth_override_root),
         metadata=metadata,
         frame_idx=int(frame_idx),
         depth_source="ffs",
@@ -1536,7 +1955,9 @@ def render_case_ladder_gif(
     checkpoint_specs: Sequence[LadderCheckpointSpec],
     output_dir: str | Path,
     timing_records: Sequence[dict[str, Any]],
-    frames: int = 30,
+    depth_override_root: str | Path | None = None,
+    sam31_mask_label: str = "existing mask",
+    frames: int | None = 30,
     gif_fps: int = 6,
     tile_width: int = 260,
     tile_height: int = 180,
@@ -1558,7 +1979,8 @@ def render_case_ladder_gif(
     gif_path = gif_dir / f"{case_spec.output_name}.gif"
     first_frame_path = first_dir / f"{case_spec.output_name}_first.png"
     metadata = load_case_metadata(case_spec.case_dir)
-    available_frames = min(int(frames), get_frame_count(metadata))
+    frame_count = get_frame_count(metadata)
+    available_frames = frame_count if frames is None else min(int(frames), frame_count)
     if available_frames <= 0:
         raise RuntimeError(f"No frames available for {case_spec.case_dir}")
     timing_by_cell = timing_lookup(timing_records)
@@ -1569,6 +1991,7 @@ def render_case_ladder_gif(
         output_dir=output_dir,
         checkpoint_specs=checkpoint_specs,
         frame_idx=0,
+        depth_override_root=depth_override_root,
         depth_min_m=float(depth_min_m),
         depth_max_m=float(depth_max_m),
         max_points_per_camera=max_points_per_camera,
@@ -1593,7 +2016,7 @@ def render_case_ladder_gif(
                     np.asarray(cell["colors"], dtype=np.uint8),
                 )
 
-    column_headers = ["SAM3.1 existing", *[_variant_label(item.key, checkpoint_specs) for item in checkpoint_specs]]
+    column_headers = [f"SAM3.1 {sam31_mask_label}", *[_variant_label(item.key, checkpoint_specs) for item in checkpoint_specs]]
     row_headers = [f"cam{camera_idx}" for camera_idx in DEFAULT_CAMERA_IDS]
     title_lines = [
         f"{case_spec.label} | SAM3.1 vs SAM2.1 checkpoint ladder | FFS RGB PCD after mask",
@@ -1618,6 +2041,7 @@ def render_case_ladder_gif(
                     output_dir=output_dir,
                     checkpoint_specs=checkpoint_specs,
                     frame_idx=frame_idx,
+                    depth_override_root=depth_override_root,
                     depth_min_m=float(depth_min_m),
                     depth_max_m=float(depth_max_m),
                     max_points_per_camera=max_points_per_camera,
@@ -1648,6 +2072,7 @@ def render_case_ladder_gif(
                         camera_idx=int(camera_idx),
                         variant_key=variant_key,
                         point_count=int(cell["point_count"]),
+                        sam31_mask_label=str(sam31_mask_label),
                         timing_by_cell=timing_by_cell,
                     )
                     row_tiles.append(
@@ -1685,6 +2110,7 @@ def render_case_ladder_gif(
         "case_key": case_spec.key,
         "case_label": case_spec.label,
         "case_dir": str(case_spec.case_dir),
+        "depth_override_root": None if depth_override_root is None else str(Path(depth_override_root).resolve()),
         "gif_path": str(gif_path),
         "first_frame_path": str(first_frame_path),
         "first_frame_ply_dir": str(ply_dir) if save_first_frame_ply else None,
@@ -1792,13 +2218,13 @@ def compute_ladder_mask_quality(
     case_specs: Sequence[LadderCaseSpec],
     checkpoint_specs: Sequence[LadderCheckpointSpec],
     output_dir: str | Path,
-    frames: int,
+    frames: int | None,
     camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
 ) -> dict[str, Any]:
     output_dir = Path(output_dir).resolve()
     cases: dict[str, Any] = {}
     for case_spec in case_specs:
-        frame_tokens = sorted_case_frame_tokens(case_spec.case_dir, camera_idx=0, frames=int(frames))
+        frame_tokens = sorted_case_frame_tokens(case_spec.case_dir, camera_idx=0, frames=frames)
         variant_roots = _build_variant_roots(case_spec=case_spec, output_dir=output_dir, checkpoint_specs=checkpoint_specs)
         case_payload: dict[str, Any] = {
             "label": case_spec.label,
@@ -1818,7 +2244,7 @@ def compute_ladder_mask_quality(
             case_payload["variants"][variant_key] = variant_payload
         cases[case_spec.key] = case_payload
     return {
-        "frames": int(frames),
+        "frames": None if frames is None else int(frames),
         "camera_ids": [int(item) for item in camera_ids],
         "cases": cases,
     }
@@ -1831,8 +2257,13 @@ def write_benchmark_report(
     quality_payload: dict[str, Any],
 ) -> None:
     aggregate = benchmark_payload.get("timing_aggregate", {}).get("by_checkpoint", {})
+    title = (
+        "SAM21 Dynamics Checkpoint Ladder Benchmark"
+        if benchmark_payload.get("case_set") == CASE_SET_DYNAMICS
+        else "SAM21-max Round2 Benchmark"
+    )
     lines = [
-        "# SAM21-max Round2 Benchmark",
+        f"# {title}",
         "",
         "## Environment",
         "",
@@ -1843,6 +2274,13 @@ def write_benchmark_report(
             lines.append(f"- {key}: `{env[key]}`")
     lines.extend(
         [
+            "",
+            "## Protocol",
+            "",
+            f"- case_set: `{benchmark_payload.get('case_set', DEFAULT_CASE_SET)}`",
+            f"- frames: `{benchmark_payload.get('frames')}`",
+            f"- SAM2.1 init mode: `{benchmark_payload.get('sam21_init_mode', SAM21_INIT_BOX)}`",
+            f"- depth override roots: `{bool(benchmark_payload.get('depth_override_roots'))}`",
             "",
             "## Outputs",
             "",
@@ -1968,10 +2406,11 @@ def run_ladder_workflow(
     script_path: str | Path,
     root: str | Path,
     output_dir: str | Path,
+    case_set: str = DEFAULT_CASE_SET,
     checkpoint_cache: str | Path = DEFAULT_SAM2_CHECKPOINT_CACHE,
     case_keys: Sequence[str] | None = None,
     checkpoint_keys: Sequence[str] | None = None,
-    frames: int = 30,
+    frames: int | None = 30,
     gif_fps: int = 6,
     tile_width: int = 260,
     tile_height: int = 180,
@@ -1981,6 +2420,13 @@ def run_ladder_workflow(
     max_points_per_camera: int | None = None,
     max_points_per_render: int | None = 80_000,
     bbox_padding_px: int = 0,
+    sam21_init_mode: str = SAM21_INIT_BOX,
+    ensure_sam31_masks: bool = False,
+    sam31_env_name: str = DEFAULT_FFS_ENV_NAME,
+    ensure_ffs_depth_cache: bool = False,
+    ffs_env_name: str = DEFAULT_FFS_ENV_NAME,
+    ffs_repo: str | Path = DEFAULT_FFS_REPO,
+    ffs_trt_model_dir: str | Path = DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
     download_missing_checkpoints: bool = True,
     run_sam2: bool = True,
     render_gifs: bool = True,
@@ -2005,7 +2451,9 @@ def run_ladder_workflow(
     if existing_summary_path.exists():
         existing_summary = json.loads(existing_summary_path.read_text(encoding="utf-8"))
 
-    cases = default_ladder_case_specs(root=root)
+    selected_case_set = str(case_set)
+    init_mode = normalize_sam21_init_mode(sam21_init_mode)
+    cases = default_ladder_case_specs_for_set(root=root, case_set=selected_case_set)
     if case_keys is not None:
         allowed = {str(item) for item in case_keys}
         cases = [item for item in cases if item.key in allowed]
@@ -2017,6 +2465,36 @@ def run_ladder_workflow(
         raise ValueError("No cases selected.")
     if not checkpoints:
         raise ValueError("No checkpoints selected.")
+
+    sam31_preflight_records: list[dict[str, Any]] = []
+    if ensure_sam31_masks:
+        sam31_preflight_records = ensure_sam31_masks_for_cases(
+            root=root,
+            case_specs=cases,
+            frames=frames,
+            camera_ids=DEFAULT_CAMERA_IDS,
+            env_name=sam31_env_name,
+        )
+
+    depth_override_roots: dict[str, Path] = {}
+    ffs_depth_cache_records: list[dict[str, Any]] = []
+    if ensure_ffs_depth_cache:
+        depth_override_roots, ffs_depth_cache_records = ensure_ffs_depth_caches_for_cases(
+            script_path=script_path,
+            output_dir=output_dir,
+            case_specs=cases,
+            frames=frames,
+            camera_ids=DEFAULT_CAMERA_IDS,
+            env_name=ffs_env_name,
+            ffs_repo=ffs_repo,
+            ffs_trt_model_dir=ffs_trt_model_dir,
+            overwrite=bool(overwrite),
+        )
+    elif existing_summary.get("depth_override_roots"):
+        depth_override_roots = {
+            str(key): Path(value)
+            for key, value in dict(existing_summary.get("depth_override_roots", {})).items()
+        }
 
     checkpoint_records = ensure_sam21_checkpoints(
         checkpoints,
@@ -2035,8 +2513,9 @@ def run_ladder_workflow(
                 checkpoint_specs=checkpoints,
                 checkpoint_cache=Path(checkpoint_cache),
                 output_dir=output_dir,
-                frames=int(frames),
+                frames=frames,
                 camera_ids=DEFAULT_CAMERA_IDS,
+                sam21_init_mode=init_mode,
                 bbox_padding_px=int(bbox_padding_px),
                 warmup_runs=int(stable_warmup_runs),
                 speed_use_step_marker=bool(stable_speed_use_step_marker),
@@ -2049,8 +2528,9 @@ def run_ladder_workflow(
                 checkpoint_specs=checkpoints,
                 checkpoint_cache=Path(checkpoint_cache),
                 output_dir=output_dir,
-                frames=int(frames),
+                frames=frames,
                 camera_ids=DEFAULT_CAMERA_IDS,
+                sam21_init_mode=init_mode,
                 bbox_padding_px=int(bbox_padding_px),
                 overwrite=bool(overwrite),
             )
@@ -2070,7 +2550,9 @@ def run_ladder_workflow(
                     checkpoint_specs=checkpoints,
                     output_dir=output_dir,
                     timing_records=timing_records,
-                    frames=int(frames),
+                    depth_override_root=depth_override_roots.get(case_spec.key),
+                    sam31_mask_label="generated mask" if selected_case_set == CASE_SET_DYNAMICS else "existing mask",
+                    frames=frames,
                     gif_fps=int(gif_fps),
                     tile_width=int(tile_width),
                     tile_height=int(tile_height),
@@ -2093,22 +2575,27 @@ def run_ladder_workflow(
         case_specs=cases,
         checkpoint_specs=checkpoints,
         output_dir=output_dir,
-        frames=int(frames),
+        frames=frames,
         camera_ids=DEFAULT_CAMERA_IDS,
     )
     benchmark_payload = {
         "output_dir": str(output_dir),
+        "case_set": selected_case_set,
         "cases": [case_to_json(item) for item in cases],
         "checkpoints": checkpoint_records,
-        "frames": int(frames),
+        "frames": None if frames is None else int(frames),
         "gif_fps": int(gif_fps),
         "tile_width": int(tile_width),
         "tile_height": int(tile_height),
         "row_label_width": int(row_label_width),
         "sam21_timing_protocol": "stable_throughput" if stable_throughput else "diagnostic_mask_output",
+        "sam21_init_mode": init_mode,
         "stable_warmup_runs": int(stable_warmup_runs) if stable_throughput else None,
         "stable_speed_uses_cudagraph_step_marker": bool(stable_speed_use_step_marker) if stable_throughput else None,
         "depth_source": "ffs",
+        "depth_override_roots": {key: str(path) for key, path in sorted(depth_override_roots.items())},
+        "sam31_preflight": sam31_preflight_records,
+        "ffs_depth_cache": ffs_depth_cache_records,
         "use_float_ffs_depth_when_available": True,
         "enhanced_phystwin_like_postprocess": {
             "enabled": True,
@@ -2127,9 +2614,14 @@ def run_ladder_workflow(
     write_json(output_dir / "mask_quality.json", quality_payload)
 
     docs_root = root if docs_generated_root is None else Path(docs_generated_root).resolve()
-    benchmark_json_path = docs_root / DEFAULT_DOC_BENCHMARK_JSON
-    quality_json_path = docs_root / DEFAULT_DOC_QUALITY_JSON
-    benchmark_md_path = docs_root / DEFAULT_DOC_BENCHMARK_MD
+    if selected_case_set == CASE_SET_DYNAMICS:
+        benchmark_json_path = docs_root / DEFAULT_DYNAMICS_DOC_BENCHMARK_JSON
+        quality_json_path = docs_root / DEFAULT_DYNAMICS_DOC_QUALITY_JSON
+        benchmark_md_path = docs_root / DEFAULT_DYNAMICS_DOC_BENCHMARK_MD
+    else:
+        benchmark_json_path = docs_root / DEFAULT_DOC_BENCHMARK_JSON
+        quality_json_path = docs_root / DEFAULT_DOC_QUALITY_JSON
+        benchmark_md_path = docs_root / DEFAULT_DOC_BENCHMARK_MD
     write_json(benchmark_json_path, benchmark_payload)
     write_json(quality_json_path, quality_payload)
     write_benchmark_report(

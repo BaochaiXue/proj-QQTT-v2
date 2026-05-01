@@ -156,7 +156,7 @@ conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ff
 Static-round TRT matrix replay + PPTX export:
 
 ```bash
-conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/ffs_static_replay_matrix_20260422_fullrun/artifacts --reuse_artifacts
+conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts --reuse_artifacts
 ```
 
 This workflow is the current offline static replay / TensorRT proxy harness for the three static FFS rounds. It:

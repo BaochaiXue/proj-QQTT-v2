@@ -30,12 +30,17 @@ C:\Users\zhang\miniconda3\envs\ffs-standalone\python.exe scripts/harness/benchma
 
 ## Outputs
 
-- `data\ffs_benchmarks\2026-04-19_tradeoff_baseline\summary.json`
-- `data\ffs_benchmarks\2026-04-19_tradeoff_baseline\report.md`
-- `data\ffs_benchmarks\2026-04-19_tradeoff_multiscale\summary.json`
-- `data\ffs_benchmarks\2026-04-19_tradeoff_multiscale\report.md`
-- `data\ffs_benchmarks\2026-04-19_tradeoff_extreme\summary.json`
-- `data\ffs_benchmarks\2026-04-19_tradeoff_extreme\report.md`
+Local saved-pair benchmark result folders were moved under
+`data\ffs_benchmarks\_archived_saved_pair_offline\` during the `2026-05-01`
+results retention cleanup because they are offline screening results, not live
+3-camera benchmark outputs.
+
+- `data\ffs_benchmarks\_archived_saved_pair_offline\2026-04-19_tradeoff_baseline\summary.json`
+- `data\ffs_benchmarks\_archived_saved_pair_offline\2026-04-19_tradeoff_baseline\report.md`
+- `data\ffs_benchmarks\_archived_saved_pair_offline\2026-04-19_tradeoff_multiscale\summary.json`
+- `data\ffs_benchmarks\_archived_saved_pair_offline\2026-04-19_tradeoff_multiscale\report.md`
+- `data\ffs_benchmarks\_archived_saved_pair_offline\2026-04-19_tradeoff_extreme\summary.json`
+- `data\ffs_benchmarks\_archived_saved_pair_offline\2026-04-19_tradeoff_extreme\report.md`
 
 ## Key Findings
 
@@ -142,9 +147,4 @@ Observed startup output:
 - all 3 cameras started successfully at `848x480@30`
 - viewer stayed alive for a `20s` smoke window until manually terminated by the validation harness
 
-Captured logs:
-
-- `data\ffs_benchmarks\viewer_run_2026-04-19_stdout.log`
-- `data\ffs_benchmarks\viewer_run_2026-04-19_stderr.log`
-- `data\ffs_benchmarks\viewer_run_2026-04-19_allcams_stdout.log`
-- `data\ffs_benchmarks\viewer_run_2026-04-19_allcams_stderr.log`
+Captured smoke logs were removed during the `2026-05-01` results retention cleanup. The retained live 3-camera benchmark logs are listed in `docs/generated/ffs_live_3cam_benchmark_validation.md`.

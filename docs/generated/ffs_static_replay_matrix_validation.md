@@ -1,6 +1,6 @@
 # Static Replay FFS Matrix Validation
 
-Status: historical static replay note only. This run used obsolete single-camera sequential benchmark semantics and must not be used for current realtime conclusions. Use `docs/generated/ffs_static_replay_matrix_concurrent3view_validation.md` for the corrected concurrent static replay proxy, and use `docs/generated/ffs_live_3cam_benchmark_validation.md` for live PyTorch 3-camera status.
+Status: historical static replay note only. This run used obsolete single-camera sequential benchmark semantics and must not be used for current realtime conclusions. The local result root has been renamed to `data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun` so it is not confused with the current concurrent static replay result. Use `docs/generated/ffs_static_replay_matrix_concurrent3view_validation.md` for the corrected concurrent static replay proxy, and use `docs/generated/ffs_live_3cam_benchmark_validation.md` for live PyTorch 3-camera status.
 
 ## Environment Prep
 
@@ -77,13 +77,13 @@ If a future run needs all `54` slides regenerated under the now-working SAM 3.1 
 ## Outputs
 
 - output root:
-  - `/home/zhangxinjie/proj-QQTT-v2/data/experiments/ffs_static_replay_matrix_20260422_fullrun`
+  - `/home/zhangxinjie/proj-QQTT-v2/data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun`
 - ranked CSV:
-  - `/home/zhangxinjie/proj-QQTT-v2/data/experiments/ffs_static_replay_matrix_20260422_fullrun/results.csv`
+  - `/home/zhangxinjie/proj-QQTT-v2/data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/results.csv`
 - manifest:
-  - `/home/zhangxinjie/proj-QQTT-v2/data/experiments/ffs_static_replay_matrix_20260422_fullrun/manifest.json`
+  - `/home/zhangxinjie/proj-QQTT-v2/data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/manifest.json`
 - PPTX:
-  - `/home/zhangxinjie/proj-QQTT-v2/data/experiments/ffs_static_replay_matrix_20260422_fullrun/ppt/ffs_static_replay_matrix.pptx`
+  - `/home/zhangxinjie/proj-QQTT-v2/data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/ppt/ffs_static_replay_matrix.pptx`
 
 ## Outcome
 

@@ -239,6 +239,7 @@ def choose_depth_stream(
 def load_depth_frame(
     *,
     case_dir: Path,
+    depth_case_dir: Path | None = None,
     metadata: dict[str, Any],
     camera_idx: int,
     frame_idx: int,
@@ -247,14 +248,15 @@ def load_depth_frame(
     native_depth_postprocess: bool = False,
     ffs_native_like_postprocess: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    depth_root = Path(case_dir if depth_case_dir is None else depth_case_dir)
     depth_dir_name, use_float = choose_depth_stream(
-        case_dir,
+        depth_root,
         metadata,
         depth_source,
         use_float_ffs_depth_when_available,
         ffs_native_like_postprocess=ffs_native_like_postprocess,
     )
-    depth_path = case_dir / depth_dir_name / str(camera_idx) / f"{frame_idx}.npy"
+    depth_path = depth_root / depth_dir_name / str(camera_idx) / f"{frame_idx}.npy"
     if not depth_path.exists():
         raise FileNotFoundError(f"Missing depth frame: {depth_path}")
 
@@ -308,6 +310,7 @@ def load_depth_frame(
     return depth_raw, depth_m, {
         "depth_dir_used": depth_dir_name,
         "source_depth_dir_used": raw_depth_dir_name,
+        "depth_case_dir": str(depth_root),
         "used_float_depth": bool(use_float),
         "depth_path": str(depth_path),
         "native_depth_postprocess_enabled": bool(native_depth_postprocess if depth_source == "realsense" else False),
@@ -322,6 +325,7 @@ def load_depth_frame(
 def load_case_frame_camera_clouds(
     *,
     case_dir: Path,
+    depth_case_dir: Path | None = None,
     metadata: dict[str, Any],
     frame_idx: int,
     depth_source: str,
@@ -350,6 +354,7 @@ def load_case_frame_camera_clouds(
             raise FileNotFoundError(f"Missing color frame: {color_path}")
         _, depth_m, depth_info = load_depth_frame(
             case_dir=case_dir,
+            depth_case_dir=depth_case_dir,
             metadata=metadata,
             camera_idx=camera_idx,
             frame_idx=frame_idx,
@@ -397,6 +402,7 @@ def load_case_frame_camera_clouds(
 def load_case_frame_cloud(
     *,
     case_dir: Path,
+    depth_case_dir: Path | None = None,
     metadata: dict[str, Any],
     frame_idx: int,
     depth_source: str,
@@ -411,6 +417,7 @@ def load_case_frame_cloud(
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     per_camera_clouds, camera_stats = load_case_frame_camera_clouds(
         case_dir=case_dir,
+        depth_case_dir=depth_case_dir,
         metadata=metadata,
         frame_idx=frame_idx,
         depth_source=depth_source,
@@ -441,6 +448,7 @@ def load_case_frame_cloud(
 def load_case_frame_cloud_with_sources(
     *,
     case_dir: Path,
+    depth_case_dir: Path | None = None,
     metadata: dict[str, Any],
     frame_idx: int,
     depth_source: str,
@@ -455,6 +463,7 @@ def load_case_frame_cloud_with_sources(
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any], list[dict[str, Any]]]:
     per_camera_clouds, camera_stats = load_case_frame_camera_clouds(
         case_dir=case_dir,
+        depth_case_dir=depth_case_dir,
         metadata=metadata,
         frame_idx=frame_idx,
         depth_source=depth_source,

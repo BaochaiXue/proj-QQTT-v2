@@ -11,9 +11,18 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from data_process.visualization.experiments.sam21_checkpoint_ladder_panel import (
+    CASE_SET_DYNAMICS,
+    CASE_SET_STILL_OBJECT_ROPE,
+    DEFAULT_DYNAMICS_OUTPUT_DIR,
+    DEFAULT_FFS_ENV_NAME,
+    DEFAULT_FFS_REPO,
+    DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SAM2_CHECKPOINT_CACHE,
+    SAM21_INIT_BOX,
+    SAM21_INIT_MASK,
     run_ladder_workflow,
+    run_ffs_depth_cache_worker,
     run_sam21_worker,
     run_sam21_stable_worker,
 )
@@ -29,12 +38,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Generate SAM3.1 vs SAM2.1 large/base+/small/tiny 3x5 time GIF panels "
-            "for still-object and still-rope aligned cases."
+            "for aligned diagnostic cases."
         )
     )
-    parser.add_argument("--output-dir", type=Path, default=ROOT / DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--case-set",
+        choices=(CASE_SET_STILL_OBJECT_ROPE, CASE_SET_DYNAMICS),
+        default=CASE_SET_STILL_OBJECT_ROPE,
+    )
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--checkpoint-cache", type=Path, default=DEFAULT_SAM2_CHECKPOINT_CACHE)
     parser.add_argument("--frames", type=int, default=30)
+    parser.add_argument("--all-frames", action="store_true")
     parser.add_argument("--gif-fps", type=int, default=6)
     parser.add_argument("--tile-width", type=int, default=260)
     parser.add_argument("--tile-height", type=int, default=180)
@@ -44,6 +59,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-points-per-camera", type=int)
     parser.add_argument("--max-points-per-render", type=int, default=80_000)
     parser.add_argument("--bbox-padding-px", type=int, default=0)
+    parser.add_argument("--sam21-init-mode", choices=(SAM21_INIT_BOX, SAM21_INIT_MASK))
     parser.add_argument("--case-keys", help="Comma-separated subset of case keys for debugging.")
     parser.add_argument("--checkpoint-keys", help="Comma-separated subset of checkpoint keys for debugging.")
     parser.add_argument("--overwrite", action="store_true")
@@ -74,6 +90,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Fail if a SAM2.1 checkpoint is missing instead of downloading it.",
     )
     parser.add_argument("--no-first-frame-ply", action="store_true")
+    parser.add_argument("--skip-sam31-preflight", action="store_true")
+    parser.add_argument("--sam31-env-name", default=DEFAULT_FFS_ENV_NAME)
+    parser.add_argument("--skip-ffs-depth-cache", action="store_true")
+    parser.add_argument("--ffs-env-name", default=DEFAULT_FFS_ENV_NAME)
+    parser.add_argument("--ffs-repo", type=Path, default=DEFAULT_FFS_REPO)
+    parser.add_argument("--ffs-trt-model-dir", type=Path, default=DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR)
     parser.add_argument("--phystwin-radius-m", type=float, default=0.01)
     parser.add_argument("--phystwin-nb-points", type=int, default=40)
     parser.add_argument("--enhanced-component-voxel-size-m", type=float, default=0.01)
@@ -93,11 +115,48 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     worker.add_argument("--result-json", type=Path, help=argparse.SUPPRESS)
     worker.add_argument("--stable-worker", action="store_true", help=argparse.SUPPRESS)
     worker.add_argument("--job-manifest", type=Path, help=argparse.SUPPRESS)
+    worker.add_argument("--ffs-depth-worker", action="store_true", help=argparse.SUPPRESS)
+    worker.add_argument("--depth-cache-root", type=Path, help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    selected_frames = None if bool(args.all_frames) else int(args.frames)
+    selected_output_dir = (
+        Path(args.output_dir)
+        if args.output_dir is not None
+        else ROOT / (DEFAULT_DYNAMICS_OUTPUT_DIR if args.case_set == CASE_SET_DYNAMICS else DEFAULT_OUTPUT_DIR)
+    )
+    selected_init_mode = (
+        str(args.sam21_init_mode)
+        if args.sam21_init_mode is not None
+        else (SAM21_INIT_MASK if args.case_set == CASE_SET_DYNAMICS else SAM21_INIT_BOX)
+    )
+
+    if args.ffs_depth_worker:
+        missing = [
+            name
+            for name in ("case_key", "case_dir", "depth_cache_root")
+            if getattr(args, name) is None
+        ]
+        if missing:
+            raise ValueError(f"Missing FFS depth worker arguments: {', '.join(missing)}")
+        summary = run_ffs_depth_cache_worker(
+            case_key=str(args.case_key),
+            case_dir=Path(args.case_dir),
+            depth_cache_root=Path(args.depth_cache_root),
+            frames=selected_frames,
+            ffs_repo=Path(args.ffs_repo),
+            ffs_trt_model_dir=Path(args.ffs_trt_model_dir),
+            overwrite=bool(args.overwrite),
+        )
+        print(
+            f"[ffs-depth-worker] {summary['case_key']}: {summary['depth_dir']}",
+            flush=True,
+        )
+        return 0
+
     if args.stable_worker:
         missing = [
             name
@@ -162,7 +221,8 @@ def main(argv: list[str] | None = None) -> int:
             config=str(args.config),
             output_mask_root=Path(args.output_mask_root),
             result_json=Path(args.result_json),
-            frames=int(args.frames),
+            frames=selected_frames,
+            sam21_init_mode=selected_init_mode,
             bbox_padding_px=int(args.bbox_padding_px),
             overwrite=bool(args.overwrite),
         )
@@ -176,11 +236,12 @@ def main(argv: list[str] | None = None) -> int:
     summary = run_ladder_workflow(
         script_path=Path(__file__),
         root=ROOT,
-        output_dir=Path(args.output_dir),
+        output_dir=selected_output_dir,
+        case_set=str(args.case_set),
         checkpoint_cache=Path(args.checkpoint_cache),
         case_keys=_comma_list(args.case_keys),
         checkpoint_keys=_comma_list(args.checkpoint_keys),
-        frames=int(args.frames),
+        frames=None if (bool(args.all_frames) or args.case_set == CASE_SET_DYNAMICS) else int(args.frames),
         gif_fps=int(args.gif_fps),
         tile_width=int(args.tile_width),
         tile_height=int(args.tile_height),
@@ -190,11 +251,18 @@ def main(argv: list[str] | None = None) -> int:
         max_points_per_camera=args.max_points_per_camera,
         max_points_per_render=args.max_points_per_render,
         bbox_padding_px=int(args.bbox_padding_px),
+        sam21_init_mode=selected_init_mode,
+        ensure_sam31_masks=(args.case_set == CASE_SET_DYNAMICS and not bool(args.skip_sam31_preflight)),
+        sam31_env_name=str(args.sam31_env_name),
+        ensure_ffs_depth_cache=(args.case_set == CASE_SET_DYNAMICS and not bool(args.skip_ffs_depth_cache)),
+        ffs_env_name=str(args.ffs_env_name),
+        ffs_repo=Path(args.ffs_repo),
+        ffs_trt_model_dir=Path(args.ffs_trt_model_dir),
         download_missing_checkpoints=not bool(args.no_download_missing_checkpoints),
         run_sam2=not bool(args.skip_sam2),
         render_gifs=not bool(args.skip_render),
         overwrite=bool(args.overwrite),
-        stable_throughput=bool(args.stable_throughput),
+        stable_throughput=bool(args.stable_throughput or args.case_set == CASE_SET_DYNAMICS),
         stable_warmup_runs=int(args.stable_warmup_runs),
         stable_speed_use_step_marker=not bool(args.stable_no_speed_step_marker),
         save_first_frame_ply=not bool(args.no_first_frame_ply),

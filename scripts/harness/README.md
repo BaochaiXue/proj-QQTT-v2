@@ -68,3 +68,11 @@ python scripts/harness/check_all.py --full
 ## Retention Policy
 
 Keep current user-facing CLIs, deterministic checks, hardware probes, and bounded diagnostics. Remove ignored cache directories, keep reusable implementation out of harness, and record durable external-dependency proof results under `docs/generated/`.
+
+Result retention policy:
+
+- Delete local smoke, preview, interrupted, and debug-only result roots once the corresponding full result exists.
+- Keep obsolete-but-useful artifacts under `data/experiments/_archived_obsolete/`.
+- Keep invalid-for-QQTT controls under `data/experiments/_archived_invalid_for_qqtt/`.
+- Keep saved-pair offline FFS screening under `data/ffs_benchmarks/_archived_saved_pair_offline/`.
+- Prefer the top-level `builderopt5`, `concurrent3view`, `stable_throughput`, and `live_3cam_scale*.log` results for current reporting.

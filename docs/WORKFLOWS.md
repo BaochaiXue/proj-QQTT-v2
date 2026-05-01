@@ -268,7 +268,7 @@ Important QQTT performance rule:
 Static-round TRT matrix replay + PPTX:
 
 ```bash
-conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/ffs_static_replay_matrix_20260422_fullrun/artifacts --reuse_artifacts
+conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./data/experiments/ffs_static_replay_matrix_my_run --artifact_root ./data/experiments/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts --reuse_artifacts
 ```
 
 This harness is the current offline static replay / TensorRT proxy workflow for the three static aligned FFS rounds. It:

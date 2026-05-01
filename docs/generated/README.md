@@ -35,6 +35,7 @@ These record what the current machine and D455 topology actually supported durin
 - `ffs_max_sam31_realsense_env_validation.md`
 - `sam21_max_env_validation.md`
 - `sam21_max_round2_benchmark.md`
+- `sam21_dynamics_checkpoint_ladder_benchmark.md`
 
 These document external FFS proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 
@@ -54,6 +55,7 @@ These are the main source of truth for current visualization workflows, ownershi
 - `repo_hardening_inventory.md`
 - `repo_hardening_validation.md`
 - `contract_hardening_validation.md`
+- `results_retention_cleanup_20260501.md`
 
 These record repo-structure, scope, and metadata-contract hardening passes.
 
@@ -66,6 +68,8 @@ These record repo-structure, scope, and metadata-contract hardening passes.
 - `sam21_max_still_object_video_benchmark_results.json`
 - `sam21_max_round2_benchmark_results.json`
 - `sam21_max_round2_mask_quality.json`
+- `sam21_dynamics_checkpoint_ladder_results.json`
+- `sam21_dynamics_checkpoint_ladder_mask_quality.json`
 
 These are not general datasets. They are small helper assets used by specific validation and visualization workflows.
 
