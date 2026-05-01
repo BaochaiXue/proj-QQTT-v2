@@ -15,10 +15,17 @@ from qqtt.env.camera.calibration_metadata import (
     calibration_metadata_path_for,
     load_calibration_reference_serials,
 )
-from qqtt.env.camera.preflight import evaluate_capture_preflight, format_capture_preflight_summary
+from qqtt.env.camera.preflight import (
+    evaluate_capture_preflight,
+    format_capture_preflight_summary,
+)
 
 _PROJECT_ROOT = next(
-    (p for p in [Path(__file__).resolve().parent, *Path(__file__).resolve().parents] if (p / ".git").exists()),
+    (
+        p
+        for p in [Path(__file__).resolve().parent, *Path(__file__).resolve().parents]
+        if (p / ".git").exists()
+    ),
     Path(__file__).resolve().parent,
 )
 
@@ -33,7 +40,9 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--case_name", type=str, default=None)
-    parser.add_argument("--output_dir", type=str, default=str(_resolve_path("./data_collect")))
+    parser.add_argument(
+        "--output_dir", type=str, default=str(_resolve_path("./data_collect"))
+    )
     parser.add_argument(
         "--calibrate_path",
         type=str,
@@ -75,7 +84,9 @@ def _print_preflight_summary(*, decision, stage_label: str) -> None:
     print(format_capture_preflight_summary(decision, stage_label=stage_label))
 
 
-def _raise_if_preflight_blocked(*, decision, stage_label: str, camera_system=None) -> None:
+def _raise_if_preflight_blocked(
+    *, decision, stage_label: str, camera_system=None
+) -> None:
     if decision.allowed_to_record:
         return
     if camera_system is not None:
@@ -84,6 +95,7 @@ def _raise_if_preflight_blocked(*, decision, stage_label: str, camera_system=Non
         f"Recording preflight blocked this capture profile {stage_label}. "
         f"{decision.reason} See {decision.probe_results_md}."
     )
+
 
 def main() -> int:
     args = build_parser().parse_args()
@@ -109,15 +121,23 @@ def main() -> int:
     )
     _print_preflight_summary(
         decision=initial_preflight,
-        stage_label="before camera discovery" if selected_serials is None else "before camera startup",
+        stage_label=(
+            "before camera discovery"
+            if selected_serials is None
+            else "before camera startup"
+        ),
     )
     if effective_serials:
-        _raise_if_preflight_blocked(decision=initial_preflight, stage_label="before camera startup")
+        _raise_if_preflight_blocked(
+            decision=initial_preflight, stage_label="before camera startup"
+        )
 
     calibrate_path = Path(args.calibrate_path).resolve()
     calibration_reference_serials = None
     if calibrate_path.exists():
-        calibration_reference_serials = load_calibration_reference_serials(calibrate_path)
+        calibration_reference_serials = load_calibration_reference_serials(
+            calibrate_path
+        )
         if calibration_reference_serials is None:
             print(
                 "[record] warning: calibration metadata sidecar was not found next to "
@@ -145,7 +165,9 @@ def main() -> int:
         fps=args.fps,
         emitter=args.emitter,
     )
-    _print_preflight_summary(decision=final_preflight, stage_label="after camera discovery")
+    _print_preflight_summary(
+        decision=final_preflight, stage_label="after camera discovery"
+    )
     _raise_if_preflight_blocked(
         decision=final_preflight,
         stage_label="after camera discovery",
@@ -169,7 +191,9 @@ def main() -> int:
         if sidecar_path.exists():
             copy2(sidecar_path, output_path / sidecar_path.name)
     else:
-        print(f"[record] warning: calibrate file not found, skipping copy: {calibrate_path}")
+        print(
+            f"[record] warning: calibrate file not found, skipping copy: {calibrate_path}"
+        )
     return 0
 
 

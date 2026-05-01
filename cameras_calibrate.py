@@ -4,7 +4,6 @@ import argparse
 
 from qqtt.env.camera.defaults import DEFAULT_NUM_CAM
 
-
 CALIBRATE_DEFAULT_WIDTH = 1280
 CALIBRATE_DEFAULT_HEIGHT = 720
 CALIBRATE_DEFAULT_FPS = 5

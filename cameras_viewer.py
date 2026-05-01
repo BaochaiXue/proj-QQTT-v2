@@ -21,7 +21,10 @@ def _is_wsl_environment() -> bool:
     if os.environ.get("WSL_DISTRO_NAME"):
         return True
     try:
-        return "microsoft" in Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8").lower()
+        return (
+            "microsoft"
+            in Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8").lower()
+        )
     except OSError:
         return False
 
@@ -40,7 +43,12 @@ from data_process.visualization.depth_colormap import (
     DEFAULT_DEPTH_VIS_MIN_M,
     colorize_depth_units,
 )
-from qqtt.env.camera.defaults import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_NUM_CAM, DEFAULT_WIDTH
+from qqtt.env.camera.defaults import (
+    DEFAULT_FPS,
+    DEFAULT_HEIGHT,
+    DEFAULT_NUM_CAM,
+    DEFAULT_WIDTH,
+)
 
 if TYPE_CHECKING:
     import cv2
@@ -54,6 +62,7 @@ def _runtime_imports():
     import pyrealsense2 as rs
 
     return cv2, np, rs
+
 
 DEFAULT_EXPOSURE_OVERRIDES = {
     "239222303506": 156.0,
@@ -145,7 +154,9 @@ def _start_pipeline(
                 flush=True,
             )
             time.sleep(0.2)
-    raise RuntimeError(f"Failed to start pipeline with candidates={profiles}: {last_err}")
+    raise RuntimeError(
+        f"Failed to start pipeline with candidates={profiles}: {last_err}"
+    )
 
 
 def _build_profiles(
@@ -220,7 +231,9 @@ def _make_panel(
         depth_min_m=float(depth_vis_min_m),
         depth_max_m=float(depth_vis_max_m),
     )
-    return _compose_panel(color=color, bottom_image=depth_colormap, label_lines=label_lines)
+    return _compose_panel(
+        color=color, bottom_image=depth_colormap, label_lines=label_lines
+    )
 
 
 def _compose_panel(
@@ -283,7 +296,9 @@ def _format_panel_label_lines(
     measured_sample_count: int,
 ) -> Tuple[str, str]:
     usb_label = usb_desc or "unknown"
-    line1 = f"{serial} usb={usb_label} {stream_w}x{stream_h}@{float(configured_fps):.1f}fps"
+    line1 = (
+        f"{serial} usb={usb_label} {stream_w}x{stream_h}@{float(configured_fps):.1f}fps"
+    )
     measured_label = _format_measured_rate_label(
         fps_value=measured_fps,
         sample_count=measured_sample_count,
@@ -343,10 +358,11 @@ def _make_message_bottom(
     thickness = 2
     line_gap = 18
     line_sizes = [
-        cv2.getTextSize(line, font, font_scale, thickness)[0]
-        for line in message_lines
+        cv2.getTextSize(line, font, font_scale, thickness)[0] for line in message_lines
     ]
-    total_height = sum(size[1] for size in line_sizes) + line_gap * max(0, len(line_sizes) - 1)
+    total_height = sum(size[1] for size in line_sizes) + line_gap * max(
+        0, len(line_sizes) - 1
+    )
     y = max(24, (height - total_height) // 2 + line_sizes[0][1])
     for line, size in zip(message_lines, line_sizes):
         x = max(8, (width - size[0]) // 2)
@@ -397,17 +413,21 @@ def _fit_to_canvas(
     scale = min(target_width / src_width, target_height / src_height)
     scaled_width = max(1, int(round(src_width * scale)))
     scaled_height = max(1, int(round(src_height * scale)))
-    resized = cv2.resize(image, (scaled_width, scaled_height), interpolation=interpolation)
+    resized = cv2.resize(
+        image, (scaled_width, scaled_height), interpolation=interpolation
+    )
 
     if image.ndim == 2:
         canvas = np.full((target_height, target_width), fill_value, dtype=image.dtype)
     else:
         channels = image.shape[2]
-        canvas = np.full((target_height, target_width, channels), fill_value, dtype=image.dtype)
+        canvas = np.full(
+            (target_height, target_width, channels), fill_value, dtype=image.dtype
+        )
 
     y0 = (target_height - scaled_height) // 2
     x0 = (target_width - scaled_width) // 2
-    canvas[y0:y0 + scaled_height, x0:x0 + scaled_width] = resized
+    canvas[y0 : y0 + scaled_height, x0 : x0 + scaled_width] = resized
     return canvas
 
 
@@ -537,7 +557,9 @@ def _order_devices_by_serial(
     if serials:
         missing = [serial for serial in serials if serial not in by_serial]
         if missing:
-            raise ValueError(f"Requested serials not detected by librealsense: {missing}")
+            raise ValueError(
+                f"Requested serials not detected by librealsense: {missing}"
+            )
         return [by_serial[serial] for serial in serials]
     return sorted(devices, key=_device_serial)[: int(max_cams)]
 
@@ -653,8 +675,16 @@ def _render_panel(
         configured_fps = float(cam_state["fps"])
         measured_fps = float(cam_state["measured_fps"])
         measured_sample_count = len(cam_state["frame_times"])
-        latest_color = None if cam_state["last_color"] is None else np.asarray(cam_state["last_color"]).copy()
-        latest_depth = None if cam_state["last_depth"] is None else np.asarray(cam_state["last_depth"]).copy()
+        latest_color = (
+            None
+            if cam_state["last_color"] is None
+            else np.asarray(cam_state["last_color"]).copy()
+        )
+        latest_depth = (
+            None
+            if cam_state["last_depth"] is None
+            else np.asarray(cam_state["last_depth"]).copy()
+        )
         depth_scale_m_per_unit = float(cam_state["last_depth_scale_m_per_unit"])
 
     label_lines = _format_panel_label_lines(
@@ -699,8 +729,12 @@ def main() -> int:
     parser.add_argument("--auto-exposure", action="store_true")
     parser.add_argument("--exposure", type=float, default=70.0)
     parser.add_argument("--gain", type=float, default=60.0)
-    parser.add_argument("--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M)
-    parser.add_argument("--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M)
+    parser.add_argument(
+        "--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M
+    )
+    parser.add_argument(
+        "--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M
+    )
     parser.add_argument(
         "--depth-render-mode",
         choices=DEPTH_RENDER_MODE_CHOICES,
@@ -752,7 +786,9 @@ def main() -> int:
                 profiles=profiles,
             )
         except Exception as e:
-            print(f"[ERROR] Could not start {serial}: {type(e).__name__}: {e}", flush=True)
+            print(
+                f"[ERROR] Could not start {serial}: {type(e).__name__}: {e}", flush=True
+            )
             continue
 
         target_exposure = float(DEFAULT_EXPOSURE_OVERRIDES.get(serial, args.exposure))

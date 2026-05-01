@@ -21,9 +21,12 @@ from qqtt.env.camera.defaults import (
     DEFAULT_WIDTH,
 )
 
-
 PROJECT_ROOT = next(
-    (p for p in [Path(__file__).resolve().parent, *Path(__file__).resolve().parents] if (p / ".git").exists()),
+    (
+        p
+        for p in [Path(__file__).resolve().parent, *Path(__file__).resolve().parents]
+        if (p / ".git").exists()
+    ),
     Path(__file__).resolve().parent,
 )
 
@@ -53,8 +56,14 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--case_name", type=str, default=None)
-    parser.add_argument("--output_root", type=Path, default=_resolve_path("./data/different_types_real_time"))
-    parser.add_argument("--calibrate_path", type=Path, default=_resolve_path("./calibrate.pkl"))
+    parser.add_argument(
+        "--output_root",
+        type=Path,
+        default=_resolve_path("./data/different_types_real_time"),
+    )
+    parser.add_argument(
+        "--calibrate_path", type=Path, default=_resolve_path("./calibrate.pkl")
+    )
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
@@ -80,13 +89,19 @@ def _prepare_case_dir(case_dir: Path, *, num_cameras: int, overwrite: bool) -> N
         if overwrite:
             shutil.rmtree(case_dir)
         elif any(case_dir.iterdir()):
-            raise FileExistsError(f"Realtime output case already exists and is not empty: {case_dir}")
+            raise FileExistsError(
+                f"Realtime output case already exists and is not empty: {case_dir}"
+            )
     for stream_name in ("color", "depth"):
         for camera_idx in range(num_cameras):
-            (case_dir / stream_name / str(camera_idx)).mkdir(parents=True, exist_ok=True)
+            (case_dir / stream_name / str(camera_idx)).mkdir(
+                parents=True, exist_ok=True
+            )
 
 
-def _legacy_metadata(*, recording_metadata: dict[str, Any], frame_count: int) -> dict[str, Any]:
+def _legacy_metadata(
+    *, recording_metadata: dict[str, Any], frame_count: int
+) -> dict[str, Any]:
     end_step = int(frame_count) - 1 if int(frame_count) > 0 else -1
     metadata = {
         "intrinsics": recording_metadata["intrinsics"],
@@ -126,11 +141,20 @@ def _atomic_write_png(path: Path, image: np.ndarray) -> None:
     tmp_path.replace(path)
 
 
-def _write_metadata(case_dir: Path, recording_metadata: dict[str, Any], frame_count: int) -> None:
-    _atomic_write_json(case_dir / "metadata.json", _legacy_metadata(recording_metadata=recording_metadata, frame_count=frame_count))
+def _write_metadata(
+    case_dir: Path, recording_metadata: dict[str, Any], frame_count: int
+) -> None:
+    _atomic_write_json(
+        case_dir / "metadata.json",
+        _legacy_metadata(
+            recording_metadata=recording_metadata, frame_count=frame_count
+        ),
+    )
 
 
-def _write_normalized_calibration(case_dir: Path, calibrate_path: Path, recording_metadata: dict[str, Any]) -> None:
+def _write_normalized_calibration(
+    case_dir: Path, calibrate_path: Path, recording_metadata: dict[str, Any]
+) -> None:
     transforms = _load_calibration_transforms(
         calibrate_path,
         serial_numbers=list(recording_metadata["serial_numbers"]),
@@ -148,12 +172,18 @@ def _write_normalized_calibration(case_dir: Path, calibrate_path: Path, recordin
 def _validate_transform_matrix(matrix: Any, *, index: int) -> np.ndarray:
     item = np.asarray(matrix, dtype=np.float32)
     if item.shape != (4, 4):
-        raise ValueError(f"Unsupported calibration transform shape at index {index}: {item.shape}")
+        raise ValueError(
+            f"Unsupported calibration transform shape at index {index}: {item.shape}"
+        )
     if not np.all(np.isfinite(item)):
-        raise ValueError(f"Calibration transform at index {index} contains non-finite values.")
+        raise ValueError(
+            f"Calibration transform at index {index} contains non-finite values."
+        )
     expected_bottom = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
     if not np.allclose(item[3], expected_bottom, atol=1e-4):
-        raise ValueError(f"Calibration transform at index {index} has invalid homogeneous bottom row.")
+        raise ValueError(
+            f"Calibration transform at index {index} has invalid homogeneous bottom row."
+        )
     return item
 
 
@@ -161,11 +191,15 @@ def _coerce_transform_list(raw: Any) -> list[np.ndarray]:
     if isinstance(raw, np.ndarray):
         if raw.ndim != 3 or raw.shape[1:] != (4, 4):
             raise ValueError(f"Unsupported calibration ndarray shape: {raw.shape}")
-        return [_validate_transform_matrix(item, index=idx) for idx, item in enumerate(raw)]
+        return [
+            _validate_transform_matrix(item, index=idx) for idx, item in enumerate(raw)
+        ]
     if isinstance(raw, (list, tuple)):
         if not raw:
             raise ValueError("Calibration transform list is empty.")
-        return [_validate_transform_matrix(item, index=idx) for idx, item in enumerate(raw)]
+        return [
+            _validate_transform_matrix(item, index=idx) for idx, item in enumerate(raw)
+        ]
     raise ValueError(f"Unsupported calibrate.pkl object type: {type(raw).__name__}")
 
 
@@ -183,37 +217,63 @@ def _load_calibration_transforms(
             "Calibration transform count does not match calibration_reference_serials length. "
             f"transform_count={len(transforms)}, calibration_reference_serials={len(calibration_reference_serials)}"
         )
-    index_by_serial = {serial: idx for idx, serial in enumerate(calibration_reference_serials)}
+    index_by_serial = {
+        serial: idx for idx, serial in enumerate(calibration_reference_serials)
+    }
     missing = [serial for serial in serial_numbers if serial not in index_by_serial]
     if missing:
-        raise ValueError(f"Calibration serial mapping is incomplete. Missing serials: {missing}")
+        raise ValueError(
+            f"Calibration serial mapping is incomplete. Missing serials: {missing}"
+        )
     return [transforms[index_by_serial[serial]] for serial in serial_numbers]
 
 
-def _frame_step_tuple(observation: dict[int, dict[str, Any]], *, num_cameras: int) -> tuple[int, ...]:
-    return tuple(int(observation[camera_idx]["step_idx"]) for camera_idx in range(num_cameras))
+def _frame_step_tuple(
+    observation: dict[int, dict[str, Any]], *, num_cameras: int
+) -> tuple[int, ...]:
+    return tuple(
+        int(observation[camera_idx]["step_idx"]) for camera_idx in range(num_cameras)
+    )
 
 
-def _frame_timestamps(observation: dict[int, dict[str, Any]], *, num_cameras: int) -> list[float]:
-    return [float(observation[camera_idx]["timestamp"]) for camera_idx in range(num_cameras)]
+def _frame_timestamps(
+    observation: dict[int, dict[str, Any]], *, num_cameras: int
+) -> list[float]:
+    return [
+        float(observation[camera_idx]["timestamp"]) for camera_idx in range(num_cameras)
+    ]
 
 
-def _validate_observation(observation: dict[int, dict[str, Any]], *, num_cameras: int) -> None:
+def _validate_observation(
+    observation: dict[int, dict[str, Any]], *, num_cameras: int
+) -> None:
     for camera_idx in range(num_cameras):
         if camera_idx not in observation:
             raise RuntimeError(f"Missing camera {camera_idx} in realtime observation")
         for key in ("color", "depth", "timestamp", "step_idx"):
             if key not in observation[camera_idx]:
-                raise RuntimeError(f"Missing {key!r} for camera {camera_idx} in realtime observation")
+                raise RuntimeError(
+                    f"Missing {key!r} for camera {camera_idx} in realtime observation"
+                )
 
 
-def _write_frame_set(case_dir: Path, observation: dict[int, dict[str, Any]], *, frame_idx: int, num_cameras: int) -> float:
+def _write_frame_set(
+    case_dir: Path,
+    observation: dict[int, dict[str, Any]],
+    *,
+    frame_idx: int,
+    num_cameras: int,
+) -> float:
     start_s = time.monotonic()
     for camera_idx in range(num_cameras):
         color = np.asarray(observation[camera_idx]["color"], dtype=np.uint8)
         depth = np.asarray(observation[camera_idx]["depth"], dtype=np.uint16)
-        _atomic_write_png(case_dir / "color" / str(camera_idx) / f"{frame_idx}.png", color)
-        _atomic_write_npy(case_dir / "depth" / str(camera_idx) / f"{frame_idx}.npy", depth)
+        _atomic_write_png(
+            case_dir / "color" / str(camera_idx) / f"{frame_idx}.png", color
+        )
+        _atomic_write_npy(
+            case_dir / "depth" / str(camera_idx) / f"{frame_idx}.npy", depth
+        )
     return (time.monotonic() - start_s) * 1000.0
 
 
@@ -225,12 +285,18 @@ def _build_stats_row(*, state: RealtimeExportState, now_s: float) -> dict[str, A
         "aligned_frame_set_fps_window": float(window_frames / window_elapsed_s),
         "aligned_frame_set_fps_total": float(state.frame_count / elapsed_s),
         "frame_num": int(state.frame_count),
-        "per_camera_step_idx": [] if state.last_accepted_step_tuple is None else list(state.last_accepted_step_tuple),
+        "per_camera_step_idx": (
+            []
+            if state.last_accepted_step_tuple is None
+            else list(state.last_accepted_step_tuple)
+        ),
         "per_camera_timestamp": list(state.last_accepted_timestamps),
         "sync_delta_ms": float(state.last_sync_delta_ms),
         "sync_reject_count": int(state.sync_reject_count),
         "duplicate_skip_count": int(state.duplicate_skip_count),
-        "write_ms_avg": float(np.mean(state.write_ms_samples)) if state.write_ms_samples else 0.0,
+        "write_ms_avg": (
+            float(np.mean(state.write_ms_samples)) if state.write_ms_samples else 0.0
+        ),
         "elapsed_s": float(elapsed_s),
     }
 
@@ -267,7 +333,9 @@ def run_realtime_export(
 ) -> dict[str, Any]:
     calibrate_path = Path(args.calibrate_path).resolve()
     if not calibrate_path.is_file():
-        raise FileNotFoundError(f"Missing calibrate.pkl required for realtime aligned export: {calibrate_path}")
+        raise FileNotFoundError(
+            f"Missing calibrate.pkl required for realtime aligned export: {calibrate_path}"
+        )
     calibration_reference_serials = load_calibration_reference_serials(calibrate_path)
     if calibration_reference_serials is None:
         print(
@@ -288,7 +356,9 @@ def run_realtime_export(
         summary_path.unlink(missing_ok=True)
 
     if case_dir.exists() and any(case_dir.iterdir()) and not bool(args.overwrite):
-        raise FileExistsError(f"Realtime output case already exists and is not empty: {case_dir}")
+        raise FileExistsError(
+            f"Realtime output case already exists and is not empty: {case_dir}"
+        )
 
     if camera_system_factory is None:
         from qqtt.env import CameraSystem
@@ -304,16 +374,22 @@ def run_realtime_export(
         capture_mode="rgbd",
         enable_keyboard_listener=False,
     )
-    state = RealtimeExportState(start_time_s=monotonic_fn(), last_stats_time_s=monotonic_fn())
+    state = RealtimeExportState(
+        start_time_s=monotonic_fn(), last_stats_time_s=monotonic_fn()
+    )
     final_row: dict[str, Any] | None = None
 
     try:
         recording_metadata = camera_system.build_recording_metadata()
         num_cameras = len(recording_metadata["serial_numbers"])
         if num_cameras != int(args.num_cam):
-            raise RuntimeError(f"Camera count mismatch: expected {args.num_cam}, got {num_cameras}")
+            raise RuntimeError(
+                f"Camera count mismatch: expected {args.num_cam}, got {num_cameras}"
+            )
 
-        _prepare_case_dir(case_dir, num_cameras=num_cameras, overwrite=bool(args.overwrite))
+        _prepare_case_dir(
+            case_dir, num_cameras=num_cameras, overwrite=bool(args.overwrite)
+        )
         _write_normalized_calibration(case_dir, calibrate_path, recording_metadata)
         _write_metadata(case_dir, recording_metadata, frame_count=0)
 
@@ -343,13 +419,20 @@ def run_realtime_export(
                     sleep_fn(0.001)
                 else:
                     frame_idx = state.frame_count
-                    write_ms = _write_frame_set(case_dir, observation, frame_idx=frame_idx, num_cameras=num_cameras)
+                    write_ms = _write_frame_set(
+                        case_dir,
+                        observation,
+                        frame_idx=frame_idx,
+                        num_cameras=num_cameras,
+                    )
                     state.write_ms_samples.append(write_ms)
                     state.frame_count += 1
                     state.last_accepted_step_tuple = step_tuple
                     state.last_accepted_timestamps = timestamps
                     state.last_sync_delta_ms = sync_delta_s * 1000.0
-                    _write_metadata(case_dir, recording_metadata, frame_count=state.frame_count)
+                    _write_metadata(
+                        case_dir, recording_metadata, frame_count=state.frame_count
+                    )
 
             now_s = monotonic_fn()
             if now_s - state.last_stats_time_s >= stats_interval_s:
@@ -394,7 +477,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run_realtime_export(args)
     except KeyboardInterrupt:
-        print("[realtime-align] interrupted; summary was written before shutdown.", flush=True)
+        print(
+            "[realtime-align] interrupted; summary was written before shutdown.",
+            flush=True,
+        )
         return 130
     print(json.dumps(result, indent=2))
     return 0

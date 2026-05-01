@@ -55,7 +55,12 @@ from data_process.visualization.depth_colormap import (
     DEFAULT_DEPTH_VIS_MIN_M,
     colorize_depth_meters,
 )
-from qqtt.env.camera.defaults import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_NUM_CAM, DEFAULT_WIDTH
+from qqtt.env.camera.defaults import (
+    DEFAULT_FPS,
+    DEFAULT_HEIGHT,
+    DEFAULT_NUM_CAM,
+    DEFAULT_WIDTH,
+)
 
 if TYPE_CHECKING:
     import cv2
@@ -100,8 +105,12 @@ def _extract_runtime_geometry(pipeline: Any) -> dict[str, Any]:
     _, _, rs = _runtime_imports()
     profile = pipeline.get_active_profile()
     color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
-    ir_left_profile = profile.get_stream(rs.stream.infrared, 1).as_video_stream_profile()
-    ir_right_profile = profile.get_stream(rs.stream.infrared, 2).as_video_stream_profile()
+    ir_left_profile = profile.get_stream(
+        rs.stream.infrared, 1
+    ).as_video_stream_profile()
+    ir_right_profile = profile.get_stream(
+        rs.stream.infrared, 2
+    ).as_video_stream_profile()
     ir_left_to_color = ir_left_profile.get_extrinsics_to(color_profile)
     ir_left_to_right = ir_left_profile.get_extrinsics_to(ir_right_profile)
     return {
@@ -156,7 +165,9 @@ def _start_pipeline_ffs(
                 flush=True,
             )
             time.sleep(0.2)
-    raise RuntimeError(f"Failed to start pipeline with candidates={profiles}: {last_err}")
+    raise RuntimeError(
+        f"Failed to start pipeline with candidates={profiles}: {last_err}"
+    )
 
 
 def _rate_label(*, fps_value: float, sample_count: int) -> str:
@@ -178,7 +189,9 @@ def _format_panel_label_lines(
     ffs_sample_count: int,
 ) -> Tuple[str, str]:
     usb_label = usb_desc or "unknown"
-    line1 = f"{serial} usb={usb_label} {stream_w}x{stream_h}@{float(configured_fps):.1f}fps"
+    line1 = (
+        f"{serial} usb={usb_label} {stream_w}x{stream_h}@{float(configured_fps):.1f}fps"
+    )
     line2 = (
         f"capture: {_rate_label(fps_value=capture_fps, sample_count=capture_sample_count)}"
         f" | ffs: {_rate_label(fps_value=ffs_fps, sample_count=ffs_sample_count)}"
@@ -222,13 +235,19 @@ def _make_depth_debug_bottom(
 def _summarize_runtime_stats(per_camera_stats: List[dict[str, Any]]) -> dict[str, Any]:
     return {
         "camera_count": int(len(per_camera_stats)),
-        "aggregate_capture_fps": float(sum(float(item["capture_fps"]) for item in per_camera_stats)),
-        "aggregate_ffs_fps": float(sum(float(item["ffs_fps"]) for item in per_camera_stats)),
+        "aggregate_capture_fps": float(
+            sum(float(item["capture_fps"]) for item in per_camera_stats)
+        ),
+        "aggregate_ffs_fps": float(
+            sum(float(item["ffs_fps"]) for item in per_camera_stats)
+        ),
         "per_camera": list(per_camera_stats),
     }
 
 
-def _format_runtime_stats_lines(*, elapsed_s: float, runtime_stats: dict[str, Any]) -> Tuple[str, ...]:
+def _format_runtime_stats_lines(
+    *, elapsed_s: float, runtime_stats: dict[str, Any]
+) -> Tuple[str, ...]:
     lines: list[str] = [
         (
             f"[stats t={float(elapsed_s):.1f}s cams={int(runtime_stats['camera_count'])}] "
@@ -268,9 +287,14 @@ def _collect_runtime_stats(cams: List[dict[str, Any]]) -> dict[str, Any]:
                     "capture_sample_count": int(len(cam_state["capture_frame_times"])),
                     "ffs_fps": float(cam_state["ffs_fps"]),
                     "ffs_sample_count": int(len(cam_state["ffs_frame_times"])),
-                    "latest_inference_ms": float(cam_state["last_inference_s"]) * 1000.0,
+                    "latest_inference_ms": float(cam_state["last_inference_s"])
+                    * 1000.0,
                     "seq_gap": int(seq_gap),
-                    "worker_error": None if cam_state["worker_error"] is None else str(cam_state["worker_error"]),
+                    "worker_error": (
+                        None
+                        if cam_state["worker_error"] is None
+                        else str(cam_state["worker_error"])
+                    ),
                 }
             )
     per_camera_stats.sort(key=lambda item: int(item["camera_idx"]))
@@ -345,7 +369,9 @@ def _compose_panel(
 def _empty_panel(width: int, height: int, label_lines: Tuple[str, str]) -> np.ndarray:
     panel = _compose_panel(
         color=np.zeros((height, width, 3), dtype=np.uint8),
-        bottom_image=_make_waiting_bottom(width, height, message="Waiting for color + IR"),
+        bottom_image=_make_waiting_bottom(
+            width, height, message="Waiting for color + IR"
+        ),
         label_lines=label_lines,
     )
     return panel
@@ -406,7 +432,9 @@ def _payload_has_successful_result(payload: Any) -> bool:
     return "capture_seq" in payload
 
 
-def _effective_stats_log_interval_s(*, render_mode: str, requested_interval_s: float) -> float:
+def _effective_stats_log_interval_s(
+    *, render_mode: str, requested_interval_s: float
+) -> float:
     if float(requested_interval_s) > 0.0:
         return float(requested_interval_s)
     if str(render_mode) == "none":
@@ -419,7 +447,9 @@ def _validate_ffs_batch_mode_args(*, worker_mode: str, batch_mode: str) -> None:
         raise ValueError("--ffs_batch_mode strict3 requires --ffs_worker_mode shared.")
 
 
-def _validate_ffs_batch_mode_active_camera_count(*, batch_mode: str, active_camera_count: int) -> None:
+def _validate_ffs_batch_mode_active_camera_count(
+    *, batch_mode: str, active_camera_count: int
+) -> None:
     if str(batch_mode) == "strict3" and int(active_camera_count) != 3:
         raise ValueError(
             "--ffs_batch_mode strict3 requires exactly 3 active cameras after startup. "
@@ -461,7 +491,9 @@ def _build_ffs_runner(
             )
         if trt_mode == "single_engine":
             if trt_model_path is None:
-                raise ValueError("Missing trt_model_path for single-engine TensorRT FFS backend.")
+                raise ValueError(
+                    "Missing trt_model_path for single-engine TensorRT FFS backend."
+                )
             return FastFoundationStereoSingleEngineTensorRTRunner(
                 ffs_repo=ffs_repo,
                 model_dir=trt_model_dir,
@@ -527,12 +559,16 @@ def _drain_shared_worker_strict_batch_requests(
                 break
             pending[camera_idx] = payload
 
-    active_camera_order = [int(camera_idx) for camera_idx in camera_order if int(camera_idx) not in closed]
+    active_camera_order = [
+        int(camera_idx) for camera_idx in camera_order if int(camera_idx) not in closed
+    ]
     if len(active_camera_order) != len(camera_order):
         return None, pending, closed
     if any(camera_idx not in pending for camera_idx in active_camera_order):
         return None, pending, closed
-    batch_payloads = [(camera_idx, pending.pop(camera_idx)) for camera_idx in active_camera_order]
+    batch_payloads = [
+        (camera_idx, pending.pop(camera_idx)) for camera_idx in active_camera_order
+    ]
     return batch_payloads, pending, closed
 
 
@@ -570,7 +606,9 @@ def _resolve_ffs_worker_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     if args.ffs_trt_model_dir is None:
         raise ValueError("--ffs_trt_model_dir is required for --ffs_backend tensorrt")
     if not args.ffs_trt_model_dir.exists():
-        raise FileNotFoundError(f"Missing --ffs_trt_model_dir: {args.ffs_trt_model_dir}")
+        raise FileNotFoundError(
+            f"Missing --ffs_trt_model_dir: {args.ffs_trt_model_dir}"
+        )
     trt_mode = str(args.ffs_trt_mode)
     worker_kwargs["trt_mode"] = trt_mode
     if trt_mode == "two_stage":
@@ -583,8 +621,12 @@ def _resolve_ffs_worker_kwargs(args: argparse.Namespace) -> dict[str, Any]:
             model_path=args.ffs_trt_model_dir / "feature_runner.engine",
         )
     elif trt_mode == "single_engine":
-        trt_model_path = resolve_single_engine_tensorrt_model_path(args.ffs_trt_model_dir)
-        cfg = load_tensorrt_model_config(args.ffs_trt_model_dir, model_path=trt_model_path)
+        trt_model_path = resolve_single_engine_tensorrt_model_path(
+            args.ffs_trt_model_dir
+        )
+        cfg = load_tensorrt_model_config(
+            args.ffs_trt_model_dir, model_path=trt_model_path
+        )
         worker_kwargs["trt_model_path"] = str(trt_model_path.resolve())
     else:
         raise ValueError(f"Unsupported --ffs_trt_mode: {trt_mode}")
@@ -662,21 +704,30 @@ def _capture_loop(
                 color_np = np.asanyarray(color_frame.get_data())
                 ir_left_np = np.asanyarray(ir_left_frame.get_data())
                 ir_right_np = np.asanyarray(ir_right_frame.get_data())
-                if color_np.shape[1] != target_width or color_np.shape[0] != target_height:
+                if (
+                    color_np.shape[1] != target_width
+                    or color_np.shape[0] != target_height
+                ):
                     color_np = _fit_to_canvas(
                         color_np,
                         target_width,
                         target_height,
                         interpolation=cv2.INTER_LINEAR,
                     )
-                if ir_left_np.shape[1] != target_width or ir_left_np.shape[0] != target_height:
+                if (
+                    ir_left_np.shape[1] != target_width
+                    or ir_left_np.shape[0] != target_height
+                ):
                     ir_left_np = _fit_to_canvas(
                         ir_left_np,
                         target_width,
                         target_height,
                         interpolation=cv2.INTER_NEAREST,
                     )
-                if ir_right_np.shape[1] != target_width or ir_right_np.shape[0] != target_height:
+                if (
+                    ir_right_np.shape[1] != target_width
+                    or ir_right_np.shape[0] != target_height
+                ):
                     ir_right_np = _fit_to_canvas(
                         ir_right_np,
                         target_width,
@@ -694,7 +745,9 @@ def _capture_loop(
                         now_s=now_s,
                         frame_received=True,
                     )
-                    cam_state["capture_fps"] = _compute_measured_fps(cam_state["capture_frame_times"])
+                    cam_state["capture_fps"] = _compute_measured_fps(
+                        cam_state["capture_frame_times"]
+                    )
                 _put_latest(
                     cam_state["request_queue"],
                     {
@@ -714,7 +767,9 @@ def _capture_loop(
                     now_s=now_s,
                     frame_received=False,
                 )
-                cam_state["capture_fps"] = _compute_measured_fps(cam_state["capture_frame_times"])
+                cam_state["capture_fps"] = _compute_measured_fps(
+                    cam_state["capture_frame_times"]
+                )
 
 
 def _ffs_worker_loop(
@@ -790,8 +845,12 @@ def _ffs_worker_loop(
             if _should_publish_depth_color(render_mode=render_mode):
                 result_payload["depth_color_m"] = _reproject_ffs_depth_to_color(
                     np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
-                    K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
-                    T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
+                    K_ir_left=np.asarray(
+                        run_output["K_ir_left_used"], dtype=np.float32
+                    ),
+                    T_ir_left_to_color=np.asarray(
+                        geometry["T_ir_left_to_color"], dtype=np.float32
+                    ),
                     K_color=np.asarray(geometry["K_color"], dtype=np.float32),
                     output_shape=output_shape,
                 )
@@ -874,11 +933,13 @@ def _shared_ffs_worker_loop(
     pending_batch_payloads: dict[int, Any] = {}
     while True:
         if str(batch_mode) == "strict3":
-            batch_payloads, pending_batch_payloads, closed_camera_indices = _drain_shared_worker_strict_batch_requests(
-                camera_order=camera_order,
-                request_queues=request_queues,
-                pending_payloads=pending_batch_payloads,
-                closed_camera_indices=closed_camera_indices,
+            batch_payloads, pending_batch_payloads, closed_camera_indices = (
+                _drain_shared_worker_strict_batch_requests(
+                    camera_order=camera_order,
+                    request_queues=request_queues,
+                    pending_payloads=pending_batch_payloads,
+                    closed_camera_indices=closed_camera_indices,
+                )
             )
             if len(closed_camera_indices) >= len(camera_order):
                 return
@@ -894,8 +955,12 @@ def _shared_ffs_worker_loop(
                     {
                         "left_image": payload["ir_left"],
                         "right_image": payload["ir_right"],
-                        "K_ir_left": np.asarray(geometries[int(camera_idx)]["K_ir_left"], dtype=np.float32),
-                        "baseline_m": float(geometries[int(camera_idx)]["ir_baseline_m"]),
+                        "K_ir_left": np.asarray(
+                            geometries[int(camera_idx)]["K_ir_left"], dtype=np.float32
+                        ),
+                        "baseline_m": float(
+                            geometries[int(camera_idx)]["ir_baseline_m"]
+                        ),
                     }
                     for camera_idx, payload in batch_payloads
                 ]
@@ -906,7 +971,9 @@ def _shared_ffs_worker_loop(
                         f"Expected {len(batch_payloads)} got {len(run_outputs)}."
                     )
                 result_time_s = time.perf_counter()
-                for (camera_idx, payload), run_output in zip(batch_payloads, run_outputs):
+                for (camera_idx, payload), run_output in zip(
+                    batch_payloads, run_outputs
+                ):
                     camera_idx = int(camera_idx)
                     geometry = geometries[camera_idx]
                     output_shape = output_shapes[camera_idx]
@@ -919,8 +986,12 @@ def _shared_ffs_worker_loop(
                     if _should_publish_depth_color(render_mode=render_mode):
                         result_payload["depth_color_m"] = _reproject_ffs_depth_to_color(
                             np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
-                            K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
-                            T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
+                            K_ir_left=np.asarray(
+                                run_output["K_ir_left_used"], dtype=np.float32
+                            ),
+                            T_ir_left_to_color=np.asarray(
+                                geometry["T_ir_left_to_color"], dtype=np.float32
+                            ),
                             K_color=np.asarray(geometry["K_color"], dtype=np.float32),
                             output_shape=output_shape,
                         )
@@ -929,7 +1000,9 @@ def _shared_ffs_worker_loop(
                         now_s=result_time_s,
                         frame_received=True,
                     )
-                    result_payload["worker_ffs_fps"] = _compute_measured_fps(result_frame_times[camera_idx])
+                    result_payload["worker_ffs_fps"] = _compute_measured_fps(
+                        result_frame_times[camera_idx]
+                    )
                     result_payload["inference_s"] = float(result_time_s - infer_start_s)
                     result_payload["result_time_s"] = result_time_s
                     _put_latest(result_queues[camera_idx], result_payload)
@@ -946,11 +1019,13 @@ def _shared_ffs_worker_loop(
                     )
             continue
 
-        camera_idx, payload, cursor, closed_camera_indices = _drain_shared_worker_next_request(
-            camera_order=camera_order,
-            request_queues=request_queues,
-            closed_camera_indices=closed_camera_indices,
-            start_cursor=cursor,
+        camera_idx, payload, cursor, closed_camera_indices = (
+            _drain_shared_worker_next_request(
+                camera_order=camera_order,
+                request_queues=request_queues,
+                closed_camera_indices=closed_camera_indices,
+                start_cursor=cursor,
+            )
         )
         if payload is None:
             if len(closed_camera_indices) >= len(camera_order):
@@ -978,8 +1053,12 @@ def _shared_ffs_worker_loop(
             if _should_publish_depth_color(render_mode=render_mode):
                 result_payload["depth_color_m"] = _reproject_ffs_depth_to_color(
                     np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
-                    K_ir_left=np.asarray(run_output["K_ir_left_used"], dtype=np.float32),
-                    T_ir_left_to_color=np.asarray(geometry["T_ir_left_to_color"], dtype=np.float32),
+                    K_ir_left=np.asarray(
+                        run_output["K_ir_left_used"], dtype=np.float32
+                    ),
+                    T_ir_left_to_color=np.asarray(
+                        geometry["T_ir_left_to_color"], dtype=np.float32
+                    ),
                     K_color=np.asarray(geometry["K_color"], dtype=np.float32),
                     output_shape=output_shape,
                 )
@@ -989,7 +1068,9 @@ def _shared_ffs_worker_loop(
                 now_s=result_time_s,
                 frame_received=True,
             )
-            result_payload["worker_ffs_fps"] = _compute_measured_fps(result_frame_times[camera_idx])
+            result_payload["worker_ffs_fps"] = _compute_measured_fps(
+                result_frame_times[camera_idx]
+            )
             result_payload["inference_s"] = float(result_time_s - infer_start_s)
             result_payload["result_time_s"] = result_time_s
             _put_latest(result_queues[camera_idx], result_payload)
@@ -1022,7 +1103,11 @@ def _result_loop(cam_state: dict[str, Any], *, stop_event: threading.Event) -> N
                     cam_state["worker_error"] = str(payload["error"])
                 else:
                     cam_state["worker_error"] = None
-                    cam_state["latest_ffs_depth_m"] = None if "depth_color_m" not in payload else payload["depth_color_m"]
+                    cam_state["latest_ffs_depth_m"] = (
+                        None
+                        if "depth_color_m" not in payload
+                        else payload["depth_color_m"]
+                    )
                     cam_state["latest_ffs_capture_seq"] = int(payload["capture_seq"])
                     cam_state["last_worker_ffs_fps"] = float(payload["worker_ffs_fps"])
                     cam_state["last_inference_s"] = float(payload["inference_s"])
@@ -1032,7 +1117,11 @@ def _result_loop(cam_state: dict[str, Any], *, stop_event: threading.Event) -> N
                 frame_received=got_result and _payload_has_successful_result(payload),
             )
             cam_state["ffs_fps"] = _compute_measured_fps(cam_state["ffs_frame_times"])
-        if stop_event.is_set() and not cam_state["worker_process"].is_alive() and not got_result:
+        if (
+            stop_event.is_set()
+            and not cam_state["worker_process"].is_alive()
+            and not got_result
+        ):
             break
 
 
@@ -1098,8 +1187,16 @@ def _render_panel(
         capture_sample_count = len(cam_state["capture_frame_times"])
         ffs_fps = float(cam_state["ffs_fps"])
         ffs_sample_count = len(cam_state["ffs_frame_times"])
-        latest_color = None if cam_state["latest_color"] is None else np.asarray(cam_state["latest_color"]).copy()
-        latest_ffs_depth_m = None if cam_state["latest_ffs_depth_m"] is None else np.asarray(cam_state["latest_ffs_depth_m"]).copy()
+        latest_color = (
+            None
+            if cam_state["latest_color"] is None
+            else np.asarray(cam_state["latest_color"]).copy()
+        )
+        latest_ffs_depth_m = (
+            None
+            if cam_state["latest_ffs_depth_m"] is None
+            else np.asarray(cam_state["latest_ffs_depth_m"]).copy()
+        )
         worker_error = cam_state["worker_error"]
 
     label_lines = _format_panel_label_lines(
@@ -1138,7 +1235,9 @@ def _render_panel(
             depth_min_m=float(depth_vis_min_m),
             depth_max_m=float(depth_vis_max_m),
         )
-    panel = _compose_panel(color=latest_color, bottom_image=lower, label_lines=label_lines)
+    panel = _compose_panel(
+        color=latest_color, bottom_image=lower, label_lines=label_lines
+    )
     if panel.shape[0] != height * 2 or panel.shape[1] != width:
         panel = _fit_to_canvas(
             panel,
@@ -1161,20 +1260,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--auto-exposure", action="store_true")
     parser.add_argument("--exposure", type=float, default=70.0)
     parser.add_argument("--gain", type=float, default=60.0)
-    parser.add_argument("--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M)
-    parser.add_argument("--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M)
+    parser.add_argument(
+        "--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M
+    )
+    parser.add_argument(
+        "--depth-vis-max-m", type=float, default=DEFAULT_DEPTH_VIS_MAX_M
+    )
     parser.add_argument("--render-mode", choices=RENDER_MODE_CHOICES, default="panel")
-    parser.add_argument("--depth-render-mode", choices=DEPTH_RENDER_MODE_CHOICES, default="colormap")
-    parser.add_argument("--ffs_backend", choices=("pytorch", "tensorrt"), default="tensorrt")
+    parser.add_argument(
+        "--depth-render-mode", choices=DEPTH_RENDER_MODE_CHOICES, default="colormap"
+    )
+    parser.add_argument(
+        "--ffs_backend", choices=("pytorch", "tensorrt"), default="tensorrt"
+    )
     parser.add_argument("--ffs_repo", type=Path, default=DEFAULT_FFS_REPO)
     parser.add_argument("--ffs_model_path", type=Path, default=None)
     parser.add_argument("--ffs_scale", type=float, default=DEFAULT_FFS_SCALE)
     parser.add_argument("--ffs_valid_iters", type=int, default=DEFAULT_FFS_VALID_ITERS)
     parser.add_argument("--ffs_max_disp", type=int, default=DEFAULT_FFS_MAX_DISP)
-    parser.add_argument("--ffs_worker_mode", choices=("per_camera", "shared"), default="per_camera")
-    parser.add_argument("--ffs_batch_mode", choices=FFS_BATCH_MODE_CHOICES, default="off")
-    parser.add_argument("--ffs_trt_mode", choices=("two_stage", "single_engine"), default="two_stage")
-    parser.add_argument("--ffs_trt_model_dir", type=Path, default=DEFAULT_FFS_TRT_MODEL_DIR)
+    parser.add_argument(
+        "--ffs_worker_mode", choices=("per_camera", "shared"), default="per_camera"
+    )
+    parser.add_argument(
+        "--ffs_batch_mode", choices=FFS_BATCH_MODE_CHOICES, default="off"
+    )
+    parser.add_argument(
+        "--ffs_trt_mode", choices=("two_stage", "single_engine"), default="two_stage"
+    )
+    parser.add_argument(
+        "--ffs_trt_model_dir", type=Path, default=DEFAULT_FFS_TRT_MODEL_DIR
+    )
     parser.add_argument("--ffs_trt_root", type=Path, default=None)
     parser.add_argument("--duration-s", type=float, default=0.0)
     parser.add_argument("--stats-log-interval-s", type=float, default=0.0)
@@ -1242,7 +1357,10 @@ def main() -> int:
                 profiles=profiles,
             )
         except Exception as exc:
-            print(f"[ERROR] Could not start {serial}: {type(exc).__name__}: {exc}", flush=True)
+            print(
+                f"[ERROR] Could not start {serial}: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
             continue
 
         target_exposure = float(DEFAULT_EXPOSURE_OVERRIDES.get(serial, args.exposure))
@@ -1317,13 +1435,16 @@ def main() -> int:
             target=_shared_ffs_worker_loop,
             kwargs={
                 "request_queues": {
-                    int(spec["camera_idx"]): spec["request_queue"] for spec in camera_specs
+                    int(spec["camera_idx"]): spec["request_queue"]
+                    for spec in camera_specs
                 },
                 "result_queues": {
-                    int(spec["camera_idx"]): spec["result_queue"] for spec in camera_specs
+                    int(spec["camera_idx"]): spec["result_queue"]
+                    for spec in camera_specs
                 },
                 "camera_serials": {
-                    int(spec["camera_idx"]): str(spec["serial"]) for spec in camera_specs
+                    int(spec["camera_idx"]): str(spec["serial"])
+                    for spec in camera_specs
                 },
                 **worker_runner_kwargs,
                 "render_mode": render_mode,
@@ -1331,7 +1452,10 @@ def main() -> int:
                     int(spec["camera_idx"]): spec["geometry"] for spec in camera_specs
                 },
                 "output_shapes": {
-                    int(spec["camera_idx"]): (int(spec["stream_h"]), int(spec["stream_w"]))
+                    int(spec["camera_idx"]): (
+                        int(spec["stream_h"]),
+                        int(spec["stream_w"]),
+                    )
                     for spec in camera_specs
                 },
             },
@@ -1424,7 +1548,9 @@ def main() -> int:
         requested_interval_s=float(args.stats_log_interval_s),
     )
     next_stats_log_s: Optional[float] = (
-        loop_start_s + effective_stats_log_interval_s if effective_stats_log_interval_s > 0.0 else None
+        loop_start_s + effective_stats_log_interval_s
+        if effective_stats_log_interval_s > 0.0
+        else None
     )
     if render_mode == "panel":
         window_flags = cv2.WINDOW_NORMAL
@@ -1450,7 +1576,9 @@ def main() -> int:
                         )
                     )
                 grid = _tile_panels(panels, panel_h, panel_w)
-                display_grid = _fit_grid_for_window(grid, window_name="RealSense FFS Viewer")
+                display_grid = _fit_grid_for_window(
+                    grid, window_name="RealSense FFS Viewer"
+                )
                 cv2.imshow("RealSense FFS Viewer", display_grid)
                 key = cv2.waitKey(1) & 0xFF
             else:
@@ -1464,7 +1592,9 @@ def main() -> int:
                 ):
                     print(line, flush=True)
                 next_stats_log_s = now_s + effective_stats_log_interval_s
-            if float(args.duration_s) > 0 and (now_s - loop_start_s) >= float(args.duration_s):
+            if float(args.duration_s) > 0 and (now_s - loop_start_s) >= float(
+                args.duration_s
+            ):
                 print(
                     f"Reached --duration-s={float(args.duration_s):.1f}. Stopping viewer.",
                     flush=True,
