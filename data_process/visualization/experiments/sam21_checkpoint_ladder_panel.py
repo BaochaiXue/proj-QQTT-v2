@@ -11,7 +11,7 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import cv2
 import imageio.v2 as imageio
@@ -61,6 +61,14 @@ DEFAULT_DYNAMICS_DOC_BENCHMARK_JSON = Path("docs/generated/sam21_dynamics_checkp
 DEFAULT_DYNAMICS_DOC_QUALITY_JSON = Path("docs/generated/sam21_dynamics_checkpoint_ladder_mask_quality.json")
 DEFAULT_CAMERA_IDS: tuple[int, ...] = (0, 1, 2)
 DEFAULT_VARIANT_ORDER: tuple[str, ...] = ("sam31", "large", "base_plus", "small", "tiny")
+EDGE_TAM_VARIANT_KEY = "edgetam"
+DEFAULT_EDGETAM_ENV_NAME = "edgetam-max"
+DEFAULT_EDGETAM_REPO = Path.home() / "EdgeTAM"
+DEFAULT_EDGETAM_CHECKPOINT = DEFAULT_EDGETAM_REPO / "checkpoints" / "edgetam.pt"
+DEFAULT_EDGETAM_MODEL_CFG = "configs/edgetam.yaml"
+DEFAULT_EDGETAM_ROUND1_3X6_OUTPUT_NAME = "ffs_dynamics_round1_3x6_time_edgetam"
+DEFAULT_EDGETAM_ROUND1_3X6_DOC_MD = Path("docs/generated/edgetam_dynamics_round1_3x6_panel_benchmark.md")
+DEFAULT_EDGETAM_ROUND1_3X6_DOC_JSON = Path("docs/generated/edgetam_dynamics_round1_3x6_panel_results.json")
 DEFAULT_CASE_SET = "still_object_rope"
 CASE_SET_STILL_OBJECT_ROPE = "still_object_rope"
 CASE_SET_DYNAMICS = "dynamics"
@@ -1204,6 +1212,92 @@ def run_sam21_workers_sequentially(
     return result_records
 
 
+def run_edgetam_workers_sequentially(
+    *,
+    edgetam_script_path: str | Path,
+    case_specs: Sequence[LadderCaseSpec],
+    output_dir: str | Path,
+    frames: int | None,
+    camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    env_name: str = DEFAULT_EDGETAM_ENV_NAME,
+    edgetam_repo: str | Path = DEFAULT_EDGETAM_REPO,
+    checkpoint: str | Path = DEFAULT_EDGETAM_CHECKPOINT,
+    model_cfg: str = DEFAULT_EDGETAM_MODEL_CFG,
+    warmup_runs: int = DEFAULT_STABLE_WARMUP_RUNS,
+    overwrite: bool = False,
+) -> list[dict[str, Any]]:
+    output_dir = Path(output_dir).resolve()
+    timing_dir = output_dir / "timings"
+    worker_log_dir = output_dir / "logs" / "edgetam_workers"
+    timing_dir.mkdir(parents=True, exist_ok=True)
+    worker_log_dir.mkdir(parents=True, exist_ok=True)
+    repo = Path(edgetam_repo).expanduser().resolve()
+    if not repo.is_dir():
+        raise FileNotFoundError(f"Missing EdgeTAM repo: {repo}")
+    result_records: list[dict[str, Any]] = []
+    for case_spec in case_specs:
+        for camera_idx in [int(item) for item in camera_ids]:
+            mask_root = output_dir / "masks" / case_spec.key / EDGE_TAM_VARIANT_KEY
+            result_json = timing_dir / f"{case_spec.key}_cam{camera_idx}_{EDGE_TAM_VARIANT_KEY}.json"
+            command = [
+                "conda",
+                "run",
+                "--no-capture-output",
+                "-n",
+                str(env_name),
+                "python",
+                str(Path(edgetam_script_path).resolve()),
+                "--case-key",
+                case_spec.key,
+                "--case-dir",
+                str(case_spec.case_dir),
+                "--text-prompt",
+                case_spec.text_prompt,
+                "--camera-idx",
+                str(camera_idx),
+                "--output-mask-root",
+                str(mask_root),
+                "--result-json",
+                str(result_json),
+                "--checkpoint",
+                str(checkpoint),
+                "--model-cfg",
+                str(model_cfg),
+                "--warmup-runs",
+                str(int(warmup_runs)),
+            ]
+            if frames is None:
+                command.append("--all-frames")
+            else:
+                command.extend(["--frames", str(int(frames))])
+            if overwrite:
+                command.append("--overwrite")
+            print(f"[edgetam] worker case={case_spec.key} cam={camera_idx}", flush=True)
+            log_path = worker_log_dir / f"{case_spec.key}_cam{camera_idx}.log"
+            env = os.environ.copy()
+            env.setdefault("TQDM_DISABLE", "1")
+            with log_path.open("w", encoding="utf-8") as log_handle:
+                try:
+                    subprocess.run(
+                        command,
+                        check=True,
+                        cwd=repo,
+                        env=env,
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                    )
+                except subprocess.CalledProcessError:
+                    log_handle.flush()
+                    tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-80:])
+                    print(f"[edgetam] worker failed; log tail from {log_path}:\n{tail}", flush=True)
+                    raise
+            record = json.loads(result_json.read_text(encoding="utf-8"))
+            record["worker_log_path"] = str(log_path)
+            write_json(result_json, record)
+            result_records.append(record)
+    return result_records
+
+
 def timing_lookup(timing_records: Sequence[dict[str, Any]]) -> dict[tuple[str, int, str], dict[str, Any]]:
     lookup: dict[tuple[str, int, str], dict[str, Any]] = {}
     for record in timing_records:
@@ -1695,28 +1789,30 @@ def label_tile(image: np.ndarray, *, label: str, tile_width: int, tile_height: i
     return tile
 
 
-def compose_3x5_panel(
+def compose_panel(
     *,
     title_lines: Sequence[str],
     row_headers: Sequence[str],
     column_headers: Sequence[str],
     image_rows: Sequence[Sequence[np.ndarray]],
     row_label_width: int = 92,
+    expected_rows: int = 3,
 ) -> np.ndarray:
-    if len(row_headers) != 3:
-        raise ValueError(f"3x5 panel requires 3 row headers, got {len(row_headers)}")
-    if len(column_headers) != 5:
-        raise ValueError(f"3x5 panel requires 5 column headers, got {len(column_headers)}")
-    if len(image_rows) != 3 or any(len(row) != 5 for row in image_rows):
-        raise ValueError("3x5 panel requires exactly 3 rows of 5 images.")
+    expected_cols = int(len(column_headers))
+    if len(row_headers) != int(expected_rows):
+        raise ValueError(f"Panel requires {expected_rows} row headers, got {len(row_headers)}")
+    if expected_cols <= 0:
+        raise ValueError("Panel requires at least one column header.")
+    if len(image_rows) != int(expected_rows) or any(len(row) != expected_cols for row in image_rows):
+        raise ValueError(f"Panel requires exactly {expected_rows} rows of {expected_cols} images.")
     tile_h, tile_w = image_rows[0][0].shape[:2]
     if any(tile.shape[:2] != (tile_h, tile_w) for row in image_rows for tile in row):
-        raise ValueError("All 3x5 panel tiles must have the same shape.")
+        raise ValueError("All panel tiles must have the same shape.")
 
     title_h = 84
     header_h = 38
-    body_h = tile_h * 3
-    body_w = int(row_label_width) + tile_w * 5
+    body_h = tile_h * int(expected_rows)
+    body_w = int(row_label_width) + tile_w * expected_cols
     title = np.full((title_h, body_w, 3), (10, 10, 10), dtype=np.uint8)
     for line_idx, line in enumerate(list(title_lines)[:2]):
         _draw_text_fit(
@@ -1762,6 +1858,26 @@ def compose_3x5_panel(
     return np.vstack([title, header, body])
 
 
+def compose_3x5_panel(
+    *,
+    title_lines: Sequence[str],
+    row_headers: Sequence[str],
+    column_headers: Sequence[str],
+    image_rows: Sequence[Sequence[np.ndarray]],
+    row_label_width: int = 92,
+) -> np.ndarray:
+    if len(column_headers) != 5:
+        raise ValueError(f"3x5 panel requires 5 column headers, got {len(column_headers)}")
+    return compose_panel(
+        title_lines=title_lines,
+        row_headers=row_headers,
+        column_headers=column_headers,
+        image_rows=image_rows,
+        row_label_width=int(row_label_width),
+        expected_rows=3,
+    )
+
+
 def _deterministic_point_cap(points: np.ndarray, colors: np.ndarray, *, max_points: int | None) -> tuple[np.ndarray, np.ndarray]:
     point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     color_array = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
@@ -1776,16 +1892,22 @@ def _build_variant_roots(
     case_spec: LadderCaseSpec,
     output_dir: Path,
     checkpoint_specs: Sequence[LadderCheckpointSpec],
+    extra_variant_roots: Mapping[str, str | Path] | None = None,
 ) -> dict[str, Path]:
     roots = {"sam31": case_spec.case_dir / "sam31_masks"}
     for checkpoint_spec in checkpoint_specs:
         roots[checkpoint_spec.key] = output_dir / "masks" / case_spec.key / checkpoint_spec.key
+    if extra_variant_roots:
+        for key, value in extra_variant_roots.items():
+            roots[str(key)] = Path(value).resolve()
     return roots
 
 
 def _variant_label(variant_key: str, checkpoint_specs: Sequence[LadderCheckpointSpec]) -> str:
     if variant_key == "sam31":
         return "SAM3.1"
+    if variant_key == EDGE_TAM_VARIANT_KEY:
+        return "EdgeTAM"
     for spec in checkpoint_specs:
         if spec.key == variant_key:
             return spec.label.replace("SAM2.1 ", "")
@@ -1800,13 +1922,15 @@ def _cell_label(
     point_count: int,
     sam31_mask_label: str,
     timing_by_cell: dict[tuple[str, int, str], dict[str, Any]],
+    variant_display_labels: Mapping[str, str] | None = None,
 ) -> str:
     if variant_key == "sam31":
         return f"SAM3.1 | {sam31_mask_label} | {_format_point_count(point_count)} pts"
     timing = timing_by_cell.get((str(case_key), int(camera_idx), str(variant_key)), {})
     ms = float(timing.get("inference_ms_per_frame", 0.0))
     fps = float(timing.get("fps", 0.0))
-    return f"{variant_key} | {ms:.1f} ms/f | {fps:.1f} FPS | {_format_point_count(point_count)} pts"
+    display = str((variant_display_labels or {}).get(variant_key, _variant_label(variant_key, [])))
+    return f"{display} | {ms:.1f} ms/f | {fps:.1f} FPS | {_format_point_count(point_count)} pts"
 
 
 def _fuse_cloud_arrays(camera_clouds: Sequence[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
@@ -1842,8 +1966,16 @@ def build_frame_cells(
     phystwin_nb_points: int,
     enhanced_component_voxel_size_m: float,
     enhanced_keep_near_main_gap_m: float,
+    variant_keys: Sequence[str] = DEFAULT_VARIANT_ORDER,
+    extra_variant_roots: Mapping[str, str | Path] | None = None,
 ) -> tuple[dict[int, dict[str, dict[str, Any]]], dict[str, Any]]:
-    variant_roots = _build_variant_roots(case_spec=case_spec, output_dir=output_dir, checkpoint_specs=checkpoint_specs)
+    selected_variant_keys = tuple(str(item) for item in variant_keys)
+    variant_roots = _build_variant_roots(
+        case_spec=case_spec,
+        output_dir=output_dir,
+        checkpoint_specs=checkpoint_specs,
+        extra_variant_roots=extra_variant_roots,
+    )
     camera_clouds, camera_stats = load_case_frame_camera_clouds(
         case_dir=case_spec.case_dir,
         depth_case_dir=None if depth_override_root is None else Path(depth_override_root),
@@ -1856,7 +1988,9 @@ def build_frame_cells(
         depth_max_m=float(depth_max_m),
     )
     cells_by_variant: dict[str, dict[str, Any]] = {}
-    for variant_key in DEFAULT_VARIANT_ORDER:
+    for variant_key in selected_variant_keys:
+        if variant_key not in variant_roots:
+            raise KeyError(f"No mask root configured for variant {variant_key!r}")
         pixel_mask_by_camera: dict[int, np.ndarray] = {}
         for camera_cloud in camera_clouds:
             camera_idx = int(camera_cloud["camera_idx"])
@@ -2030,6 +2164,10 @@ def render_case_ladder_gif(
     checkpoint_specs: Sequence[LadderCheckpointSpec],
     output_dir: str | Path,
     timing_records: Sequence[dict[str, Any]],
+    variant_keys: Sequence[str] = DEFAULT_VARIANT_ORDER,
+    extra_variant_roots: Mapping[str, str | Path] | None = None,
+    variant_display_labels: Mapping[str, str] | None = None,
+    output_name: str | None = None,
     depth_override_root: str | Path | None = None,
     sam31_mask_label: str = "existing mask",
     frames: int | None = 30,
@@ -2051,8 +2189,10 @@ def render_case_ladder_gif(
     gif_dir = output_dir / "gifs"
     first_dir = output_dir / "first_frames"
     ply_dir = output_dir / "first_frame_ply" / case_spec.key
-    gif_path = gif_dir / f"{case_spec.output_name}.gif"
-    first_frame_path = first_dir / f"{case_spec.output_name}_first.png"
+    selected_variant_keys = tuple(str(item) for item in variant_keys)
+    selected_output_name = str(output_name or case_spec.output_name)
+    gif_path = gif_dir / f"{selected_output_name}.gif"
+    first_frame_path = first_dir / f"{selected_output_name}_first.png"
     metadata = load_case_metadata(case_spec.case_dir)
     frame_count = get_frame_count(metadata)
     available_frames = frame_count if frames is None else min(int(frames), frame_count)
@@ -2074,6 +2214,8 @@ def render_case_ladder_gif(
         phystwin_nb_points=int(phystwin_nb_points),
         enhanced_component_voxel_size_m=float(enhanced_component_voxel_size_m),
         enhanced_keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+        variant_keys=selected_variant_keys,
+        extra_variant_roots=extra_variant_roots,
     )
     view_specs = _build_original_camera_view_specs(
         first_camera_stats,
@@ -2083,7 +2225,7 @@ def render_case_ladder_gif(
 
     if save_first_frame_ply:
         for camera_idx in DEFAULT_CAMERA_IDS:
-            for variant_key in DEFAULT_VARIANT_ORDER:
+            for variant_key in selected_variant_keys:
                 cell = first_cells[int(camera_idx)][variant_key]
                 write_ply_ascii(
                     ply_dir / f"{case_spec.key}_cam{int(camera_idx)}_{variant_key}_frame0000.ply",
@@ -2091,10 +2233,16 @@ def render_case_ladder_gif(
                     np.asarray(cell["colors"], dtype=np.uint8),
                 )
 
-    column_headers = [f"SAM3.1 {sam31_mask_label}", *[_variant_label(item.key, checkpoint_specs) for item in checkpoint_specs]]
+    column_headers = [
+        f"SAM3.1 {sam31_mask_label}" if variant_key == "sam31" else (variant_display_labels or {}).get(
+            variant_key,
+            _variant_label(variant_key, checkpoint_specs),
+        )
+        for variant_key in selected_variant_keys
+    ]
     row_headers = [f"cam{camera_idx}" for camera_idx in DEFAULT_CAMERA_IDS]
     title_lines = [
-        f"{case_spec.label} | SAM3.1 vs SAM2.1 checkpoint ladder | FFS RGB PCD after mask",
+        f"{case_spec.label} | mask ladder | FFS RGB PCD after mask",
         (
             f"enhanced PT-like postprocess r={float(phystwin_radius_m):.3f}m/"
             f"{int(phystwin_nb_points)}nn comp={float(enhanced_component_voxel_size_m):.3f}m | "
@@ -2124,12 +2272,14 @@ def render_case_ladder_gif(
                     phystwin_nb_points=int(phystwin_nb_points),
                     enhanced_component_voxel_size_m=float(enhanced_component_voxel_size_m),
                     enhanced_keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+                    variant_keys=selected_variant_keys,
+                    extra_variant_roots=extra_variant_roots,
                 )
             image_rows: list[list[np.ndarray]] = []
             frame_cell_stats: list[dict[str, Any]] = []
             for camera_idx in DEFAULT_CAMERA_IDS:
                 row_tiles: list[np.ndarray] = []
-                for variant_key in DEFAULT_VARIANT_ORDER:
+                for variant_key in selected_variant_keys:
                     cell = frame_cells[int(camera_idx)][variant_key]
                     frame_cell_stats.append(
                         {
@@ -2149,6 +2299,7 @@ def render_case_ladder_gif(
                         point_count=int(cell["point_count"]),
                         sam31_mask_label=str(sam31_mask_label),
                         timing_by_cell=timing_by_cell,
+                        variant_display_labels=variant_display_labels,
                     )
                     row_tiles.append(
                         _render_cell_tile(
@@ -2161,12 +2312,13 @@ def render_case_ladder_gif(
                         )
                     )
                 image_rows.append(row_tiles)
-            board = compose_3x5_panel(
+            board = compose_panel(
                 title_lines=title_lines,
                 row_headers=row_headers,
                 column_headers=column_headers,
                 image_rows=image_rows,
                 row_label_width=int(row_label_width),
+                expected_rows=3,
             )
             if frame_idx == 0:
                 write_image(first_frame_path, board)
@@ -2185,6 +2337,7 @@ def render_case_ladder_gif(
         "case_key": case_spec.key,
         "case_label": case_spec.label,
         "case_dir": str(case_spec.case_dir),
+        "variant_keys": [str(item) for item in selected_variant_keys],
         "depth_override_root": None if depth_override_root is None else str(Path(depth_override_root).resolve()),
         "gif_path": str(gif_path),
         "first_frame_path": str(first_frame_path),
@@ -2295,12 +2448,18 @@ def compute_ladder_mask_quality(
     output_dir: str | Path,
     frames: int | None,
     camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    extra_variant_roots_by_case: Mapping[str, Mapping[str, str | Path]] | None = None,
 ) -> dict[str, Any]:
     output_dir = Path(output_dir).resolve()
     cases: dict[str, Any] = {}
     for case_spec in case_specs:
         frame_tokens = sorted_case_frame_tokens(case_spec.case_dir, camera_idx=0, frames=frames)
-        variant_roots = _build_variant_roots(case_spec=case_spec, output_dir=output_dir, checkpoint_specs=checkpoint_specs)
+        variant_roots = _build_variant_roots(
+            case_spec=case_spec,
+            output_dir=output_dir,
+            checkpoint_specs=checkpoint_specs,
+            extra_variant_roots=(extra_variant_roots_by_case or {}).get(case_spec.key),
+        )
         case_payload: dict[str, Any] = {
             "label": case_spec.label,
             "case_dir": str(case_spec.case_dir),
@@ -2712,3 +2871,275 @@ def run_ladder_workflow(
     }
     write_json(output_dir / "summary.json", benchmark_payload)
     return benchmark_payload
+
+
+def _load_existing_timing_records_for_case(
+    *,
+    output_dir: str | Path,
+    case_key: str,
+    checkpoint_keys: Sequence[str],
+    camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+) -> list[dict[str, Any]]:
+    timing_dir = Path(output_dir).resolve() / "timings"
+    records: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for camera_idx in [int(item) for item in camera_ids]:
+        for checkpoint_key in [str(item) for item in checkpoint_keys]:
+            path = timing_dir / f"{case_key}_cam{camera_idx}_{checkpoint_key}.json"
+            if not path.is_file():
+                missing.append(str(path))
+                continue
+            records.append(json.loads(path.read_text(encoding="utf-8")))
+    if missing:
+        raise FileNotFoundError(
+            "Missing existing SAM2.1 timing records needed for 3x6 render:\n"
+            + "\n".join(missing)
+        )
+    return records
+
+
+def write_edgetam_round1_3x6_report(
+    *,
+    markdown_path: str | Path,
+    payload: dict[str, Any],
+    quality_payload: dict[str, Any],
+) -> None:
+    lines = [
+        "# EdgeTAM Dynamics Round1 3x6 Panel Benchmark",
+        "",
+        "## Protocol",
+        "",
+        f"- case: `{payload.get('case_key')}`",
+        f"- frames: `{payload.get('gif_summary', {}).get('frames', payload.get('frames'))}`",
+        "- panel columns: `SAM3.1`, `SAM2.1 large/base_plus/small/tiny`, `EdgeTAM`",
+        "- EdgeTAM init: `SAM3.1 frame0 union mask` via `add_new_mask(...)`",
+        "- EdgeTAM timing: no-output propagation after warmup; model load, JPEG prep, init_state, prompt, warmup, and mask collection are excluded.",
+        f"- depth override root: `{payload.get('depth_override_root')}`",
+        "",
+        "## Output",
+        "",
+        f"- GIF: `{payload.get('gif_summary', {}).get('gif_path')}`",
+        f"- first frame: `{payload.get('gif_summary', {}).get('first_frame_path')}`",
+        "",
+        "## EdgeTAM Speed",
+        "",
+        "| cam | ms/frame | FPS | frames |",
+        "| ---: | ---: | ---: | ---: |",
+    ]
+    for record in payload.get("edgetam_timing_records", []):
+        lines.append(
+            f"| {int(record['camera_idx'])} | {float(record['inference_ms_per_frame']):.2f} | "
+            f"{float(record['fps']):.2f} | {int(record['timed_frame_count'])} |"
+        )
+    edge_values = [float(item["inference_ms_per_frame"]) for item in payload.get("edgetam_timing_records", [])]
+    if edge_values:
+        mean_ms = float(np.mean(edge_values))
+        lines.extend(
+            [
+                f"| **mean** | **{mean_ms:.2f}** | **{1000.0 / max(1e-9, mean_ms):.2f}** |  |",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Mask Stability",
+            "",
+            "| variant | cam | area std/mean | min IoU(frame,0) |",
+            "| --- | ---: | ---: | ---: |",
+        ]
+    )
+    case_payload = quality_payload.get("cases", {}).get(str(payload.get("case_key")), {})
+    for variant_key, by_camera in case_payload.get("variants", {}).items():
+        for camera_key, stats in by_camera.items():
+            lines.append(
+                f"| {variant_key} | {camera_key} | "
+                f"{float(stats['area_std_over_mean']):.4f} | {float(stats['iou_to_frame0_min']):.4f} |"
+            )
+    Path(markdown_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(markdown_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def run_edgetam_dynamics_round1_3x6_workflow(
+    *,
+    root: str | Path,
+    output_dir: str | Path,
+    edgetam_script_path: str | Path,
+    frames: int | None = None,
+    gif_fps: int = 6,
+    tile_width: int = 260,
+    tile_height: int = 180,
+    row_label_width: int = 92,
+    depth_min_m: float = 0.2,
+    depth_max_m: float = 1.5,
+    max_points_per_camera: int | None = None,
+    max_points_per_render: int | None = 80_000,
+    ensure_sam31_masks: bool = True,
+    sam31_env_name: str = DEFAULT_FFS_ENV_NAME,
+    ensure_ffs_depth_cache: bool = True,
+    ffs_script_path: str | Path | None = None,
+    ffs_env_name: str = DEFAULT_FFS_ENV_NAME,
+    ffs_repo: str | Path = DEFAULT_FFS_REPO,
+    ffs_trt_model_dir: str | Path = DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
+    run_edgetam: bool = True,
+    edgetam_env_name: str = DEFAULT_EDGETAM_ENV_NAME,
+    edgetam_repo: str | Path = DEFAULT_EDGETAM_REPO,
+    edgetam_checkpoint: str | Path = DEFAULT_EDGETAM_CHECKPOINT,
+    edgetam_model_cfg: str = DEFAULT_EDGETAM_MODEL_CFG,
+    edgetam_warmup_runs: int = DEFAULT_STABLE_WARMUP_RUNS,
+    overwrite_edgetam: bool = False,
+    save_first_frame_ply: bool = True,
+    phystwin_radius_m: float = DEFAULT_PHYSTWIN_RADIUS_M,
+    phystwin_nb_points: int = DEFAULT_PHYSTWIN_NB_POINTS,
+    enhanced_component_voxel_size_m: float = DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
+    enhanced_keep_near_main_gap_m: float = DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
+) -> dict[str, Any]:
+    root = Path(root).resolve()
+    output_dir = Path(output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    case_spec = [
+        item
+        for item in default_dynamics_ladder_case_specs(root=root)
+        if item.key == "ffs_dynamics_round1"
+    ][0]
+    checkpoint_specs = default_ladder_checkpoint_specs()
+
+    if ensure_sam31_masks:
+        ensure_sam31_masks_for_cases(
+            root=root,
+            case_specs=[case_spec],
+            frames=frames,
+            camera_ids=DEFAULT_CAMERA_IDS,
+            env_name=sam31_env_name,
+            log_dir=output_dir / "logs" / "sam31_preflight",
+        )
+
+    existing_summary_path = output_dir / "summary.json"
+    existing_summary = (
+        json.loads(existing_summary_path.read_text(encoding="utf-8"))
+        if existing_summary_path.is_file()
+        else {}
+    )
+    depth_override_root: Path | None = None
+    if ensure_ffs_depth_cache:
+        script_for_ffs = Path(ffs_script_path) if ffs_script_path is not None else root / "scripts/harness/experiments/run_sam21_checkpoint_ladder_3x5_gifs.py"
+        depth_roots, _records = ensure_ffs_depth_caches_for_cases(
+            script_path=script_for_ffs,
+            output_dir=output_dir,
+            case_specs=[case_spec],
+            frames=frames,
+            camera_ids=DEFAULT_CAMERA_IDS,
+            env_name=ffs_env_name,
+            ffs_repo=ffs_repo,
+            ffs_trt_model_dir=ffs_trt_model_dir,
+            overwrite=False,
+        )
+        depth_override_root = depth_roots[case_spec.key]
+    elif existing_summary.get("depth_override_roots", {}).get(case_spec.key):
+        depth_override_root = Path(existing_summary["depth_override_roots"][case_spec.key])
+
+    checkpoint_keys = [item.key for item in checkpoint_specs]
+    sam21_timing_records = _load_existing_timing_records_for_case(
+        output_dir=output_dir,
+        case_key=case_spec.key,
+        checkpoint_keys=checkpoint_keys,
+        camera_ids=DEFAULT_CAMERA_IDS,
+    )
+
+    if run_edgetam:
+        edgetam_records = run_edgetam_workers_sequentially(
+            edgetam_script_path=edgetam_script_path,
+            case_specs=[case_spec],
+            output_dir=output_dir,
+            frames=frames,
+            camera_ids=DEFAULT_CAMERA_IDS,
+            env_name=edgetam_env_name,
+            edgetam_repo=edgetam_repo,
+            checkpoint=edgetam_checkpoint,
+            model_cfg=edgetam_model_cfg,
+            warmup_runs=int(edgetam_warmup_runs),
+            overwrite=bool(overwrite_edgetam),
+        )
+    else:
+        edgetam_records = _load_existing_timing_records_for_case(
+            output_dir=output_dir,
+            case_key=case_spec.key,
+            checkpoint_keys=[EDGE_TAM_VARIANT_KEY],
+            camera_ids=DEFAULT_CAMERA_IDS,
+        )
+
+    variant_keys = (*DEFAULT_VARIANT_ORDER, EDGE_TAM_VARIANT_KEY)
+    extra_roots = {
+        EDGE_TAM_VARIANT_KEY: output_dir / "masks" / case_spec.key / EDGE_TAM_VARIANT_KEY,
+    }
+    all_timing_records = [*sam21_timing_records, *edgetam_records]
+    gif_summary = render_case_ladder_gif(
+        case_spec=case_spec,
+        checkpoint_specs=checkpoint_specs,
+        output_dir=output_dir,
+        timing_records=all_timing_records,
+        variant_keys=variant_keys,
+        extra_variant_roots=extra_roots,
+        variant_display_labels={EDGE_TAM_VARIANT_KEY: "EdgeTAM"},
+        output_name=DEFAULT_EDGETAM_ROUND1_3X6_OUTPUT_NAME,
+        depth_override_root=depth_override_root,
+        sam31_mask_label="generated mask",
+        frames=frames,
+        gif_fps=int(gif_fps),
+        tile_width=int(tile_width),
+        tile_height=int(tile_height),
+        row_label_width=int(row_label_width),
+        depth_min_m=float(depth_min_m),
+        depth_max_m=float(depth_max_m),
+        max_points_per_camera=max_points_per_camera,
+        max_points_per_render=max_points_per_render,
+        save_first_frame_ply=bool(save_first_frame_ply),
+        phystwin_radius_m=float(phystwin_radius_m),
+        phystwin_nb_points=int(phystwin_nb_points),
+        enhanced_component_voxel_size_m=float(enhanced_component_voxel_size_m),
+        enhanced_keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+    )
+    quality_payload = compute_ladder_mask_quality(
+        case_specs=[case_spec],
+        checkpoint_specs=checkpoint_specs,
+        output_dir=output_dir,
+        frames=frames,
+        camera_ids=DEFAULT_CAMERA_IDS,
+        extra_variant_roots_by_case={case_spec.key: extra_roots},
+    )
+    payload = {
+        "output_dir": str(output_dir),
+        "case_key": case_spec.key,
+        "case_label": case_spec.label,
+        "case_dir": str(case_spec.case_dir),
+        "frames": None if frames is None else int(frames),
+        "variant_keys": [str(item) for item in variant_keys],
+        "depth_override_root": None if depth_override_root is None else str(Path(depth_override_root).resolve()),
+        "edgetam": {
+            "env_name": str(edgetam_env_name),
+            "repo": str(Path(edgetam_repo).expanduser().resolve()),
+            "checkpoint": str(edgetam_checkpoint),
+            "model_cfg": str(edgetam_model_cfg),
+            "warmup_runs": int(edgetam_warmup_runs),
+        },
+        "sam21_timing_records": sam21_timing_records,
+        "edgetam_timing_records": edgetam_records,
+        "timing_aggregate": aggregate_timing_records(all_timing_records),
+        "gif_summary": gif_summary,
+        "environment": collect_environment_report(),
+    }
+    write_json(output_dir / "summary_edgetam_round1_3x6.json", payload)
+    write_json(output_dir / "mask_quality_edgetam_round1_3x6.json", quality_payload)
+    benchmark_json_path = root / DEFAULT_EDGETAM_ROUND1_3X6_DOC_JSON
+    benchmark_md_path = root / DEFAULT_EDGETAM_ROUND1_3X6_DOC_MD
+    write_json(benchmark_json_path, payload)
+    write_edgetam_round1_3x6_report(
+        markdown_path=benchmark_md_path,
+        payload=payload,
+        quality_payload=quality_payload,
+    )
+    payload["docs"] = {
+        "benchmark_md": str(benchmark_md_path),
+        "benchmark_json": str(benchmark_json_path),
+    }
+    write_json(output_dir / "summary_edgetam_round1_3x6.json", payload)
+    return payload

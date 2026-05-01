@@ -218,6 +218,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/run_edgetam_video_masks.py",
+        "experiments",
+        "EdgeTAM video mask worker used by the dynamics 3x6 panel experiment.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py",
         "experiments",
         "FFS confidence filtering sweep runner.",

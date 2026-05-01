@@ -14,6 +14,10 @@ from data_process.visualization.experiments.sam21_checkpoint_ladder_panel import
     CASE_SET_DYNAMICS,
     CASE_SET_STILL_OBJECT_ROPE,
     DEFAULT_DYNAMICS_OUTPUT_DIR,
+    DEFAULT_EDGETAM_CHECKPOINT,
+    DEFAULT_EDGETAM_ENV_NAME,
+    DEFAULT_EDGETAM_MODEL_CFG,
+    DEFAULT_EDGETAM_REPO,
     DEFAULT_FFS_ENV_NAME,
     DEFAULT_FFS_REPO,
     DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
@@ -22,6 +26,7 @@ from data_process.visualization.experiments.sam21_checkpoint_ladder_panel import
     SAM21_INIT_BOX,
     SAM21_INIT_MASK,
     run_ladder_workflow,
+    run_edgetam_dynamics_round1_3x6_workflow,
     run_ffs_depth_cache_worker,
     run_sam21_worker,
     run_sam21_stable_worker,
@@ -96,6 +101,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ffs-env-name", default=DEFAULT_FFS_ENV_NAME)
     parser.add_argument("--ffs-repo", type=Path, default=DEFAULT_FFS_REPO)
     parser.add_argument("--ffs-trt-model-dir", type=Path, default=DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR)
+    parser.add_argument(
+        "--edgetam-round1-3x6",
+        action="store_true",
+        help="Add EdgeTAM as a sixth column and render the ffs_dynamics_round1 3x6 panel.",
+    )
+    parser.add_argument("--skip-edgetam", action="store_true")
+    parser.add_argument("--edgetam-env-name", default=DEFAULT_EDGETAM_ENV_NAME)
+    parser.add_argument("--edgetam-repo", type=Path, default=DEFAULT_EDGETAM_REPO)
+    parser.add_argument("--edgetam-checkpoint", default=str(DEFAULT_EDGETAM_CHECKPOINT))
+    parser.add_argument("--edgetam-model-cfg", default=DEFAULT_EDGETAM_MODEL_CFG)
+    parser.add_argument("--edgetam-warmup-runs", type=int, default=5)
     parser.add_argument("--phystwin-radius-m", type=float, default=0.01)
     parser.add_argument("--phystwin-nb-points", type=int, default=40)
     parser.add_argument("--enhanced-component-voxel-size-m", type=float, default=0.01)
@@ -126,7 +142,12 @@ def main(argv: list[str] | None = None) -> int:
     selected_output_dir = (
         Path(args.output_dir)
         if args.output_dir is not None
-        else ROOT / (DEFAULT_DYNAMICS_OUTPUT_DIR if args.case_set == CASE_SET_DYNAMICS else DEFAULT_OUTPUT_DIR)
+        else ROOT
+        / (
+            DEFAULT_DYNAMICS_OUTPUT_DIR
+            if (args.case_set == CASE_SET_DYNAMICS or bool(args.edgetam_round1_3x6))
+            else DEFAULT_OUTPUT_DIR
+        )
     )
     selected_init_mode = (
         str(args.sam21_init_mode)
@@ -231,6 +252,46 @@ def main(argv: list[str] | None = None) -> int:
             f"{result['checkpoint_key']}: {result['inference_ms_per_frame']:.2f} ms/frame",
             flush=True,
         )
+        return 0
+
+    if args.edgetam_round1_3x6:
+        summary = run_edgetam_dynamics_round1_3x6_workflow(
+            root=ROOT,
+            output_dir=selected_output_dir,
+            edgetam_script_path=ROOT / "scripts/harness/experiments/run_edgetam_video_masks.py",
+            frames=None if (bool(args.all_frames) or args.case_set == CASE_SET_DYNAMICS or bool(args.edgetam_round1_3x6)) else int(args.frames),
+            gif_fps=int(args.gif_fps),
+            tile_width=int(args.tile_width),
+            tile_height=int(args.tile_height),
+            row_label_width=int(args.row_label_width),
+            depth_min_m=float(args.depth_min_m),
+            depth_max_m=float(args.depth_max_m),
+            max_points_per_camera=args.max_points_per_camera,
+            max_points_per_render=args.max_points_per_render,
+            ensure_sam31_masks=not bool(args.skip_sam31_preflight),
+            sam31_env_name=str(args.sam31_env_name),
+            ensure_ffs_depth_cache=not bool(args.skip_ffs_depth_cache),
+            ffs_script_path=Path(__file__),
+            ffs_env_name=str(args.ffs_env_name),
+            ffs_repo=Path(args.ffs_repo),
+            ffs_trt_model_dir=Path(args.ffs_trt_model_dir),
+            run_edgetam=not bool(args.skip_edgetam),
+            edgetam_env_name=str(args.edgetam_env_name),
+            edgetam_repo=Path(args.edgetam_repo),
+            edgetam_checkpoint=str(args.edgetam_checkpoint),
+            edgetam_model_cfg=str(args.edgetam_model_cfg),
+            edgetam_warmup_runs=int(args.edgetam_warmup_runs),
+            overwrite_edgetam=bool(args.overwrite),
+            save_first_frame_ply=not bool(args.no_first_frame_ply),
+            phystwin_radius_m=float(args.phystwin_radius_m),
+            phystwin_nb_points=int(args.phystwin_nb_points),
+            enhanced_component_voxel_size_m=float(args.enhanced_component_voxel_size_m),
+            enhanced_keep_near_main_gap_m=float(args.enhanced_keep_near_main_gap_m),
+        )
+        print(f"[edgetam-3x6] gif: {summary['gif_summary']['gif_path']}", flush=True)
+        docs = summary.get("docs", {})
+        if docs:
+            print(f"[edgetam-3x6] report: {docs.get('benchmark_md')}", flush=True)
         return 0
 
     summary = run_ladder_workflow(

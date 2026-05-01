@@ -186,6 +186,20 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
         )
         self.assertEqual(board.shape, (84 + 38 + 3 * 12, 20 + 5 * 16, 3))
 
+    def test_compose_3x6_panel_shape(self) -> None:
+        rows = [
+            [np.full((12, 16, 3), 30 + row * 20 + col, dtype=np.uint8) for col in range(6)]
+            for row in range(3)
+        ]
+        board = ladder.compose_panel(
+            title_lines=["title", "subtitle"],
+            row_headers=["cam0", "cam1", "cam2"],
+            column_headers=["sam31", "large", "base+", "small", "tiny", "edgetam"],
+            image_rows=rows,
+            row_label_width=20,
+        )
+        self.assertEqual(board.shape, (84 + 38 + 3 * 12, 20 + 6 * 16, 3))
+
     def test_pinhole_renderer_uses_original_camera_z_buffer(self) -> None:
         points = np.asarray(
             [
@@ -234,6 +248,14 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
                         masks_by_frame_token={"0": sam2_mask},
                         overwrite=False,
                     )
+            for camera_idx in range(3):
+                ladder.write_single_object_masks(
+                    mask_root=output_dir / "masks" / "case" / ladder.EDGE_TAM_VARIANT_KEY,
+                    camera_idx=camera_idx,
+                    object_label="object",
+                    masks_by_frame_token={"0": sam2_mask},
+                    overwrite=False,
+                )
 
             override = root / "depth_override"
             for camera_idx in range(3):
@@ -262,8 +284,13 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
                 phystwin_nb_points=1,
                 enhanced_component_voxel_size_m=0.01,
                 enhanced_keep_near_main_gap_m=0.0,
+                variant_keys=(*ladder.DEFAULT_VARIANT_ORDER, ladder.EDGE_TAM_VARIANT_KEY),
+                extra_variant_roots={
+                    ladder.EDGE_TAM_VARIANT_KEY: output_dir / "masks" / "case" / ladder.EDGE_TAM_VARIANT_KEY,
+                },
             )
             self.assertIn(str(override), stats["per_camera"][0]["depth_path"])
+            self.assertIn(ladder.EDGE_TAM_VARIANT_KEY, _cells[0])
 
 
 if __name__ == "__main__":
