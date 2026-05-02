@@ -8,6 +8,7 @@ import numpy as np
 
 from data_process.visualization.experiments import sam21_checkpoint_ladder_panel as ladder
 from data_process.visualization.experiments import sam21_mask_overlay_panel as mask_overlay
+from data_process.visualization.experiments import sam21_pcd_overlay_panel as pcd_overlay
 from tests.visualization_test_utils import make_sam31_masks, make_visualization_case
 
 
@@ -223,6 +224,21 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
         )
         self.assertEqual(board.shape, (84 + 38 + 3 * 12, 20 + 6 * 16, 3))
 
+    def test_compose_2x3_pcd_overlay_panel_shape(self) -> None:
+        rows = [
+            [np.full((12, 16, 3), 30 + row * 20 + col, dtype=np.uint8) for col in range(3)]
+            for row in range(2)
+        ]
+        board = ladder.compose_panel(
+            title_lines=["title", "subtitle"],
+            row_headers=["small", "edgetam"],
+            column_headers=["cam0", "cam1", "cam2"],
+            image_rows=rows,
+            row_label_width=28,
+            expected_rows=2,
+        )
+        self.assertEqual(board.shape, (84 + 38 + 2 * 12, 28 + 3 * 16, 3))
+
     def test_edgetam_round1_cli_defaults_to_compiled_mode(self) -> None:
         from scripts.harness.experiments.run_sam21_checkpoint_ladder_3x5_gifs import parse_args
 
@@ -267,6 +283,103 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
         self.assertTrue(np.array_equal(overlay[0, 0], np.zeros(3, dtype=np.uint8)))
         self.assertTrue(np.any(overlay[2, 2] > 0))
         self.assertTrue(np.any(overlay[3, 3] > 0))
+
+    def test_pcd_overlay_category_coloring_and_point_iou(self) -> None:
+        reference = np.asarray([[True, True], [False, False]], dtype=bool)
+        candidate = np.asarray([[True, False], [True, False]], dtype=bool)
+        camera_clouds = [
+            {
+                "camera_idx": 0,
+                "points": np.asarray(
+                    [
+                        [0.0, 0.0, 1.0],
+                        [1.0, 0.0, 1.0],
+                        [0.0, 1.0, 1.0],
+                        [1.0, 1.0, 1.0],
+                    ],
+                    dtype=np.float32,
+                ),
+                "colors": np.asarray(
+                    [
+                        [10, 20, 30],
+                        [40, 50, 60],
+                        [70, 80, 90],
+                        [100, 110, 120],
+                    ],
+                    dtype=np.uint8,
+                ),
+                "source_pixel_uv": np.asarray([[0, 0], [1, 0], [0, 1], [1, 1]], dtype=np.int32),
+            }
+        ]
+        points, colors, categories, stats = pcd_overlay.build_category_colored_cloud(
+            camera_clouds=camera_clouds,
+            reference_masks={0: reference},
+            candidate_masks={0: candidate},
+        )
+        self.assertEqual(len(points), 3)
+        self.assertTrue(np.array_equal(colors[0], np.asarray([10, 20, 30], dtype=np.uint8)))
+        self.assertTrue(np.array_equal(colors[1], pcd_overlay.SAM31_ONLY_BGR))
+        self.assertTrue(np.array_equal(colors[2], pcd_overlay.CANDIDATE_ONLY_BGR))
+        self.assertEqual(pcd_overlay.category_counts(categories)["overlap_point_count"], 1)
+        self.assertAlmostEqual(stats["point_weighted_iou"], 1.0 / 3.0)
+
+    def test_pcd_overlay_depth_scale_override_is_recorded_for_missing_metadata(self) -> None:
+        metadata, used = pcd_overlay.metadata_with_depth_scale_override(
+            {"serial_numbers": ["a", "b", "c"], "intrinsics": [1, 2, 3]},
+            depth_scale_override_m_per_unit=0.001,
+        )
+        self.assertTrue(used)
+        self.assertEqual(metadata["depth_scale_m_per_unit"], [0.001, 0.001, 0.001])
+
+    def test_pcd_overlay_render_smoke_writes_2x3_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            make_visualization_case(case_dir, frame_num=1)
+            sam31_root = make_sam31_masks(
+                case_dir,
+                prompt_labels_by_object={0: "object"},
+                frame_tokens=["0"],
+            )
+            candidate_mask = np.zeros((8, 10), dtype=bool)
+            candidate_mask[1:4, 1:4] = True
+            output_dir = root / "out"
+            small_root = root / "small_masks"
+            edgetam_root = root / "edgetam_masks"
+            for camera_idx in range(3):
+                ladder.write_single_object_masks(
+                    mask_root=small_root,
+                    camera_idx=camera_idx,
+                    object_label="object",
+                    masks_by_frame_token={"0": candidate_mask},
+                    overwrite=False,
+                )
+                ladder.write_single_object_masks(
+                    mask_root=edgetam_root,
+                    camera_idx=camera_idx,
+                    object_label="object",
+                    masks_by_frame_token={"0": candidate_mask},
+                    overwrite=False,
+                )
+            summary = pcd_overlay.render_fused_pcd_overlay_2x3_gif(
+                root=root,
+                case_dir=case_dir,
+                output_dir=output_dir,
+                text_prompt="object",
+                sam31_mask_root=sam31_root,
+                variant_roots={"small": small_root, "edgetam": edgetam_root},
+                frames=1,
+                tile_width=48,
+                tile_height=32,
+                row_label_width=34,
+                phystwin_nb_points=1,
+                max_points_per_render=None,
+            )
+            self.assertEqual(summary["frames"], 1)
+            self.assertEqual([item["key"] for item in summary["variants"]], ["small", "edgetam"])
+            self.assertTrue(Path(summary["gif_path"]).is_file())
+            self.assertTrue(Path(summary["first_frame_path"]).is_file())
+            self.assertTrue((Path(summary["first_frame_ply_dir"]) / "sloth_base_motion_ffs_small_frame0000_fused_pcd_overlay.ply").is_file())
 
     def test_pinhole_renderer_uses_original_camera_z_buffer(self) -> None:
         points = np.asarray(

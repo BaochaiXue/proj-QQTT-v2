@@ -248,6 +248,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/run_sloth_base_motion_fused_pcd_overlay_2x3_gif.py",
+        "experiments",
+        "Render sloth_base_motion Small/compiled EdgeTAM fused-PCD overlay GIF against SAM3.1.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/experiments/run_still_object_round1_projection_panel.py",
         "experiments",
         "Still-object round1 native/FFS projected-PCD removal board.",

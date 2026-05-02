@@ -23,7 +23,7 @@ Current catalog summary:
 | `mask_support` | 4 | SAM 3.1 mask generation, mask helper, object-case registry, and single-pair reprojection. |
 | `formal_cleanup` | 1 | Downstream-facing cleanup for `data/different_types/`. |
 | `current_compare` | 12 | In-scope aligned native-vs-FFS comparison visualizations. |
-| `experiments` | 19 | Experiment-only visualization workflows under `scripts/harness/experiments/`. |
+| `experiments` | 20 | Experiment-only visualization workflows under `scripts/harness/experiments/`. |
 | `focused_diagnostics` | 3 | Narrow audits and quality diagnostics. |
 
 ```bash
