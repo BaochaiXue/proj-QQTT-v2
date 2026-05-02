@@ -1,0 +1,15 @@
+loading model: yonigozlan/EdgeTAM-hf
+session: transformers.models.edgetam_video.modeling_edgetam_video.EdgeTamVideoInferenceSession
+frame=0, latency_ms=566.51, mask_shape=(1, 1, 540, 960), mask_mean=-11.886794
+frame=1, latency_ms=37.14, mask_shape=(1, 1, 540, 960), mask_mean=-20.810583
+frame=2, latency_ms=19.68, mask_shape=(1, 1, 540, 960), mask_mean=-18.138641
+frame=3, latency_ms=18.05, mask_shape=(1, 1, 540, 960), mask_mean=-20.348970
+frame=4, latency_ms=17.98, mask_shape=(1, 1, 540, 960), mask_mean=-19.220907
+frame=5, latency_ms=16.59, mask_shape=(1, 1, 540, 960), mask_mean=-17.227367
+frame=6, latency_ms=18.39, mask_shape=(1, 1, 540, 960), mask_mean=-21.149357
+frame=7, latency_ms=18.09, mask_shape=(1, 1, 540, 960), mask_mean=-21.719955
+frame=8, latency_ms=19.59, mask_shape=(1, 1, 540, 960), mask_mean=-19.132315
+frame=9, latency_ms=17.50, mask_shape=(1, 1, 540, 960), mask_mean=-18.460169
+wrote JSON: docs/generated/hf_edgetam_streaming_results.json
+wrote markdown: docs/generated/hf_edgetam_streaming_validation.md
+HF EdgeTAM streaming smoke PASS

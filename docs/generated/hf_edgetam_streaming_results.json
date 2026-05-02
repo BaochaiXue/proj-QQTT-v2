@@ -1,0 +1,145 @@
+{
+  "timestamp_utc": "2026-05-02T03:00:34.744918+00:00",
+  "status": "pass",
+  "environment": "edgetam-hf-stream",
+  "model_id": "yonigozlan/EdgeTAM-hf",
+  "frames": 10,
+  "width": 960,
+  "height": 540,
+  "dtype": "bfloat16",
+  "env": {
+    "transformers": "5.7.0",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "cuda_available": true,
+    "device": "cuda",
+    "classes": {
+      "EdgeTamVideoModel": "transformers.models.edgetam_video.modeling_edgetam_video",
+      "Sam2VideoProcessor": "transformers.models.sam2_video.processing_sam2_video",
+      "EdgeTamVideoInferenceSession": "transformers.models.edgetam_video.modeling_edgetam_video"
+    },
+    "gpu": "NVIDIA GeForce RTX 5090 Laptop GPU"
+  },
+  "session": {
+    "init_mode": "edgetam",
+    "class": "transformers.models.edgetam_video.modeling_edgetam_video.EdgeTamVideoInferenceSession"
+  },
+  "latency_ms": {
+    "mean": 74.9508387008973,
+    "median": 18.238762000692077,
+    "min": 16.593608001130633,
+    "max": 566.5137870018953
+  },
+  "per_frame": [
+    {
+      "frame_idx": 0,
+      "latency_ms": 566.5137870018953,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -11.886794090270996
+    },
+    {
+      "frame_idx": 1,
+      "latency_ms": 37.13625600357773,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -20.810583114624023
+    },
+    {
+      "frame_idx": 2,
+      "latency_ms": 19.676509997225367,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -18.138641357421875
+    },
+    {
+      "frame_idx": 3,
+      "latency_ms": 18.047140001726802,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -20.348970413208008
+    },
+    {
+      "frame_idx": 4,
+      "latency_ms": 17.977217001316603,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -19.22090721130371
+    },
+    {
+      "frame_idx": 5,
+      "latency_ms": 16.593608001130633,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -17.227367401123047
+    },
+    {
+      "frame_idx": 6,
+      "latency_ms": 18.3885869992082,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -21.149356842041016
+    },
+    {
+      "frame_idx": 7,
+      "latency_ms": 18.088937002175953,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -21.719955444335938
+    },
+    {
+      "frame_idx": 8,
+      "latency_ms": 19.59106299909763,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -19.132314682006836
+    },
+    {
+      "frame_idx": 9,
+      "latency_ms": 17.49528200161876,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -18.460168838500977
+    }
+  ]
+}

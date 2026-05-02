@@ -95,6 +95,14 @@
   "benchmark": {
     "json": "result/edgetam_onnx_trt_probe_20260501/trt_component_benchmark_sloth_base_motion_ffs.json",
     "method": "TensorRT Python runtime, fixed CUDA buffers, non-default CUDA stream, CUDA event timing, 10 warmups and 100 timed iterations per camera.",
+    "mask_output_semantics": {
+      "prompt_mode": "Per-frame box and center-point prompts derived from existing SAM3.1 mask sidecars.",
+      "uses_propagate_in_video": false,
+      "uses_inference_state": false,
+      "uses_temporal_memory": false,
+      "allowed_label": "EdgeTAM ONNX/TRT per-frame component sanity mask",
+      "disallowed_label": "EdgeTAM ONNX/TRT video-track mask"
+    },
     "records": [
       {
         "camera": 0,
@@ -137,6 +145,6 @@
     "full_video_predictor_trt": "not_attempted",
     "production_default_change": "none",
     "quality_regression": "not_yet_validated_for_trt_masks",
-    "summary": "EdgeTAM vision encoder and prompt/mask decoder compile to TensorRT and run fast on real sloth frames, but this is not yet a complete video propagation runtime because memory components and inference_state bookkeeping remain outside the TRT path."
+    "summary": "EdgeTAM vision encoder and prompt/mask decoder compile to TensorRT and run fast on real sloth frames, but this is not yet a complete video propagation runtime because memory components and inference_state bookkeeping remain outside the TRT path. Per-frame tight-box prompts are component sanity checks, not EdgeTAM video-track masks."
   }
 }

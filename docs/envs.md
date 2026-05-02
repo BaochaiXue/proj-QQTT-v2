@@ -185,6 +185,36 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - EdgeTAM video predictor smoke tests with initial mask and box prompt
   - follow-up still-object case experiments
 
+## `edgetam-hf-stream`
+
+- Purpose: Hugging Face Transformers EdgeTAMVideo streaming proof environment without modifying the patched official `edgetam-max` environment.
+- Created from:
+  - `conda create -n edgetam-hf-stream --clone edgetam-max -y`
+- Current validated Python:
+  - `3.12.13`
+- Current preserved torch stack:
+  - `torch==2.11.0+cu130`
+  - `torchvision==0.26.0+cu130`
+  - CUDA available through `torch.version.cuda == 13.0`
+- Current HF runtime packages:
+  - `transformers==5.7.0`
+  - `accelerate==1.13.0`
+  - `safetensors==0.7.0`
+  - `huggingface_hub==1.13.0`
+- Current caveat:
+  - this env deliberately inherits `edgetam-max`'s conda-local CUDA 13 stack because it is a cloned proof environment, not a fresh CUDA rebuild
+  - HF streaming uses `transformers` `EdgeTamVideoModel` / `Sam2VideoProcessor` / session APIs, not the patched official `/home/zhangxinjie/EdgeTAM` predictor code path
+  - the currently usable HF model repo is `yonigozlan/EdgeTAM-hf`; `yonigozlan/edgetam-video-1` returned 404 during validation
+  - `Sam2VideoProcessor.init_video_session()` currently returns a `Sam2VideoInferenceSession`; direct `EdgeTamVideoInferenceSession` construction was also validated for the EdgeTAM model path
+- Validation commands:
+  - `conda run --no-capture-output -n edgetam-hf-stream python -m pip check`
+  - `conda run --no-capture-output -n edgetam-hf-stream python scripts/harness/verify_hf_edgetam_streaming.py --json-output docs/generated/hf_edgetam_streaming_results.json --markdown-output docs/generated/hf_edgetam_streaming_validation.md`
+  - `conda run --no-capture-output -n edgetam-hf-stream python scripts/harness/verify_hf_edgetam_streaming.py --frames 3 --session-init processor --json-output docs/generated/hf_edgetam_streaming_processor_session_results.json --markdown-output docs/generated/hf_edgetam_streaming_processor_session_validation.md`
+- Expected use:
+  - frame-by-frame HF EdgeTAMVideo streaming API proof-of-life
+  - compare live-session behavior against offline EdgeTAM/SAM-family masks
+  - prototype session-style state handling before any migration back to the patched official EdgeTAM backend
+
 ## `qqtt-ffs-compat`
 
 - Purpose: run QQTT-side proof-of-life scripts that need both RealSense access and FFS-compatible Python packages

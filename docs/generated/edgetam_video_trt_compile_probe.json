@@ -1,0 +1,649 @@
+{
+  "edgetam_repo": "/home/zhangxinjie/EdgeTAM",
+  "edgetam_commit": "7711e012a30a2402c4eaab637bdb00a521302c91",
+  "config": "configs/edgetam.yaml",
+  "checkpoint": "/home/zhangxinjie/EdgeTAM/checkpoints/edgetam.pt",
+  "checkpoint_sha256": "ed2d4850b8792c239689b043c47046ec239b6e808a3d9b6ae676c803fd8780df",
+  "output_dir": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502",
+  "torch": "2.11.0+cu130",
+  "torch_cuda": "13.0",
+  "cuda_available": true,
+  "gpu": "NVIDIA GeForce RTX 5090 Laptop GPU",
+  "tensorrt": "10.16.1.11",
+  "opset": 17,
+  "attempts": [
+    {
+      "key": "video_sam_heads_no_prompt",
+      "onnx_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_no_prompt/video_sam_heads_no_prompt.onnx",
+      "engine_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_no_prompt/video_sam_heads_no_prompt.engine",
+      "opset": 17,
+      "eager": {
+        "status": "ok",
+        "outputs": [
+          {
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              256
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          }
+        ]
+      },
+      "onnx_export": {
+        "status": "ok",
+        "device": "cpu",
+        "duration_s": 0.35800442899926566,
+        "size_bytes": 17872489
+      },
+      "onnx_export_fallback_errors": [
+        {
+          "device": "cuda",
+          "error_type": "RuntimeError",
+          "error": "Expected all tensors to be on the same device, but got index is on cpu, different from other tensors on cuda:0 (when checking argument in method wrapper_CUDA__index_select)",
+          "traceback": "Traceback (most recent call last):\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 515, in _attempt_export\n    torch.onnx.export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/__init__.py\", line 334, in export\n    export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 552, in export\n    _export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1515, in _export\n    graph, params_dict, torch_out = _model_to_graph(\n                                    ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1113, in _model_to_graph\n    graph, params, torch_out, module = _create_jit_graph(model, args)\n                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 997, in _create_jit_graph\n    graph, torch_out = _trace_and_get_graph_from_model(model, args)\n                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 903, in _trace_and_get_graph_from_model\n    trace_graph, torch_out, inputs_states = torch.jit._get_trace_graph(\n                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/jit/_trace.py\", line 1439, in _get_trace_graph\n    outs = ONNXTracedModule(\n           ^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/jit/_trace.py\", line 140, in forward\n    graph, _out = torch._C._create_graph_by_tracing(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/jit/_trace.py\", line 131, in wrapper\n    outs.append(self.inner(*trace_inputs))\n                ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1769, in _slow_forward\n    result = self.forward(*input, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 38, in forward\n    return self.model._forward_sam_heads(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/EdgeTAM/sam2/modeling/sam2_base.py\", line 355, in _forward_sam_heads\n    ) = self.sam_mask_decoder(\n        ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1769, in _slow_forward\n    result = self.forward(*input, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/EdgeTAM/sam2/modeling/sam/mask_decoder.py\", line 136, in forward\n    masks, iou_pred, mask_tokens_out, object_score_logits = self.predict_masks(\n                                                            ^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/EdgeTAM/sam2/modeling/sam/mask_decoder.py\", line 209, in predict_masks\n    pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: Expected all tensors to be on the same device, but got index is on cpu, different from other tensors on cuda:0 (when checking argument in method wrapper_CUDA__index_select)\n"
+        }
+      ],
+      "onnx_check": {
+        "status": "ok",
+        "node_count": 1253,
+        "inputs": [
+          "backbone_features",
+          "high_res_feat0",
+          "high_res_feat1"
+        ],
+        "outputs": [
+          "low_res_multimasks",
+          "high_res_multimasks",
+          "ious",
+          "low_res_masks",
+          "high_res_masks",
+          "obj_ptr",
+          "object_score_logits"
+        ],
+        "op_histogram": {
+          "Add": 60,
+          "Cast": 57,
+          "Concat": 42,
+          "Constant": 387,
+          "ConstantOfShape": 8,
+          "ConvTranspose": 2,
+          "Cos": 2,
+          "Div": 31,
+          "Equal": 8,
+          "Erf": 2,
+          "Expand": 15,
+          "Gather": 104,
+          "GatherND": 5,
+          "Gemm": 21,
+          "Greater": 1,
+          "Identity": 2,
+          "LayerNormalization": 9,
+          "MatMul": 49,
+          "Mul": 39,
+          "NonZero": 10,
+          "OneHot": 1,
+          "Pow": 1,
+          "ReduceMean": 2,
+          "Relu": 16,
+          "Reshape": 44,
+          "Resize": 1,
+          "ScatterND": 7,
+          "Shape": 115,
+          "Sigmoid": 1,
+          "Sin": 2,
+          "Slice": 23,
+          "Softmax": 7,
+          "Sqrt": 22,
+          "Sub": 3,
+          "Tile": 1,
+          "Transpose": 42,
+          "Unsqueeze": 101,
+          "Where": 10
+        }
+      },
+      "trt_build": {
+        "status": "failed",
+        "returncode": 1,
+        "duration_s": 0.7596286210027756,
+        "engine_path": null,
+        "engine_size_bytes": null,
+        "log_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_no_prompt/video_sam_heads_no_prompt_trtexec.log",
+        "tail": "[05/01/2026-23:03:55] [I] Memory Bus Width: 256 bits (ECC disabled)\n[05/01/2026-23:03:55] [I] Application Compute Clock Rate: 1.597 GHz\n[05/01/2026-23:03:55] [I] Application Memory Clock Rate: 14.001 GHz\n[05/01/2026-23:03:55] [I] \n[05/01/2026-23:03:55] [I] Note: The application clock rates do not reflect the actual clock rates that the GPU is currently running at.\n[05/01/2026-23:03:55] [I] \n[05/01/2026-23:03:55] [I] TensorRT version: 10.16.1\n[05/01/2026-23:03:55] [I] Loading standard plugins\n[05/01/2026-23:03:56] [I] [TRT] [MemUsageChange] Init CUDA: CPU +1, GPU +0, now: CPU 47, GPU 1343 (MiB)\n[05/01/2026-23:03:56] [I] Start parsing network model.\n[05/01/2026-23:03:56] [I] [TRT] ----------------------------------------------------------------\n[05/01/2026-23:03:56] [I] [TRT] Input filename:   /home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_no_prompt/video_sam_heads_no_prompt.onnx\n[05/01/2026-23:03:56] [I] [TRT] ONNX IR version:  0.0.8\n[05/01/2026-23:03:56] [I] [TRT] Opset version:    17\n[05/01/2026-23:03:56] [I] [TRT] Producer name:    pytorch\n[05/01/2026-23:03:56] [I] [TRT] Producer version: 2.11.0\n[05/01/2026-23:03:56] [I] [TRT] Domain:           \n[05/01/2026-23:03:56] [I] [TRT] Model version:    0\n[05/01/2026-23:03:56] [I] [TRT] Doc string:       \n[05/01/2026-23:03:56] [I] [TRT] ----------------------------------------------------------------\n[05/01/2026-23:03:56] [E] Error[4]: ITensor::getDimensions: Error Code 4: Shape Error (broadcast dimensions must be conformable In op at /_src/optimizer/common/shape/shapeContext.cpp:2700)\n[05/01/2026-23:03:56] [E] [TRT] ModelImporter.cpp:138: While parsing node number 103 [Where -> \"/sam_prompt_encoder/Where_6_output_0\"]:\n[05/01/2026-23:03:56] [E] [TRT] ModelImporter.cpp:140: --- Begin node ---\ninput: \"/sam_prompt_encoder/Constant_32_output_0\"\ninput: \"/sam_prompt_encoder/Constant_33_output_0\"\ninput: \"/sam_prompt_encoder/Concat_3_output_0\"\noutput: \"/sam_prompt_encoder/Where_6_output_0\"\nname: \"/sam_prompt_encoder/Where_6\"\nop_type: \"Where\"\n\n[05/01/2026-23:03:56] [E] [TRT] ModelImporter.cpp:141: --- End node ---\n[05/01/2026-23:03:56] [E] [TRT] ModelImporter.cpp:149: ERROR: ModelImporter.cpp:506 In function parseNode:\n[6] Invalid Node - /sam_prompt_encoder/Where_6\nITensor::getDimensions: Error Code 4: Shape Error (broadcast dimensions must be conformable In op at /_src/optimizer/common/shape/shapeContext.cpp:2700)\n[05/01/2026-23:03:56] [E] Failed to parse onnx file\n[05/01/2026-23:03:56] [I] Finished parsing network model. Parse time: 0.0391171\n[05/01/2026-23:03:56] [E] Parsing model failed\n[05/01/2026-23:03:56] [E] Failed to create engine from model or file.\n[05/01/2026-23:03:56] [E] Engine set up failed\n&&&& FAILED TensorRT.trtexec [TensorRT v101601] [b11] # /opt/TensorRT-10.16.1.11/bin/trtexec --onnx=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_no_prompt/video_sam_heads_no_prompt.onnx --saveEngine=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_no_prompt/video_sam_heads_no_prompt.engine --builderOptimizationLevel=5 --skipInference --profilingVerbosity=detailed --fp16",
+        "error_lines": [
+          "[05/01/2026-23:03:56] [E] Error[4]: ITensor::getDimensions: Error Code 4: Shape Error (broadcast dimensions must be conformable In op at /_src/optimizer/common/shape/shapeContext.cpp:2700)",
+          "[05/01/2026-23:03:56] [E] [TRT] ModelImporter.cpp:138: While parsing node number 103 [Where -> \"/sam_prompt_encoder/Where_6_output_0\"]:",
+          "[05/01/2026-23:03:56] [E] [TRT] ModelImporter.cpp:140: --- Begin node ---",
+          "[05/01/2026-23:03:56] [E] [TRT] ModelImporter.cpp:141: --- End node ---",
+          "[05/01/2026-23:03:56] [E] [TRT] ModelImporter.cpp:149: ERROR: ModelImporter.cpp:506 In function parseNode:",
+          "[05/01/2026-23:03:56] [E] Failed to parse onnx file",
+          "[05/01/2026-23:03:56] [E] Parsing model failed",
+          "[05/01/2026-23:03:56] [E] Failed to create engine from model or file.",
+          "[05/01/2026-23:03:56] [E] Engine set up failed",
+          "&&&& FAILED TensorRT.trtexec [TensorRT v101601] [b11] # /opt/TensorRT-10.16.1.11/bin/trtexec --onnx=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_no_prompt/video_sam_heads_no_prompt.onnx --saveEngine=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_no_prompt/video_sam_heads_no_prompt.engine --builderOptimizationLevel=5 --skipInference --profilingVerbosity=detailed --fp16"
+        ]
+      }
+    },
+    {
+      "key": "video_sam_heads_mask_input",
+      "onnx_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_mask_input/video_sam_heads_mask_input.onnx",
+      "engine_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_mask_input/video_sam_heads_mask_input.engine",
+      "opset": 17,
+      "eager": {
+        "status": "ok",
+        "outputs": [
+          {
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              256
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          }
+        ]
+      },
+      "onnx_export": {
+        "status": "failed",
+        "error_type": "UnsupportedOperatorError",
+        "error": "Exporting the operator 'aten::_upsample_bilinear2d_aa' to ONNX opset version 17 is not supported",
+        "traceback": "Traceback (most recent call last):\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 515, in _attempt_export\n    torch.onnx.export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/__init__.py\", line 334, in export\n    export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 552, in export\n    _export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1515, in _export\n    graph, params_dict, torch_out = _model_to_graph(\n                                    ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1117, in _model_to_graph\n    graph = _optimize_graph(\n            ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 689, in _optimize_graph\n    graph = _C._jit_pass_onnx(graph, operator_export_type)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1797, in _run_symbolic_function\n    raise errors.UnsupportedOperatorError(\ntorch.onnx.errors.UnsupportedOperatorError: Exporting the operator 'aten::_upsample_bilinear2d_aa' to ONNX opset version 17 is not supported\n"
+      },
+      "onnx_export_errors": [
+        {
+          "device": "cuda",
+          "error_type": "RuntimeError",
+          "error": "Expected all tensors to be on the same device, but got index is on cpu, different from other tensors on cuda:0 (when checking argument in method wrapper_CUDA__index_select)",
+          "traceback": "Traceback (most recent call last):\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 515, in _attempt_export\n    torch.onnx.export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/__init__.py\", line 334, in export\n    export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 552, in export\n    _export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1515, in _export\n    graph, params_dict, torch_out = _model_to_graph(\n                                    ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1113, in _model_to_graph\n    graph, params, torch_out, module = _create_jit_graph(model, args)\n                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 997, in _create_jit_graph\n    graph, torch_out = _trace_and_get_graph_from_model(model, args)\n                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 903, in _trace_and_get_graph_from_model\n    trace_graph, torch_out, inputs_states = torch.jit._get_trace_graph(\n                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/jit/_trace.py\", line 1439, in _get_trace_graph\n    outs = ONNXTracedModule(\n           ^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/jit/_trace.py\", line 140, in forward\n    graph, _out = torch._C._create_graph_by_tracing(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/jit/_trace.py\", line 131, in wrapper\n    outs.append(self.inner(*trace_inputs))\n                ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1769, in _slow_forward\n    result = self.forward(*input, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 59, in forward\n    return self.model._use_mask_as_output(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/EdgeTAM/sam2/modeling/sam2_base.py\", line 445, in _use_mask_as_output\n    _, _, _, _, _, obj_ptr, _ = self._forward_sam_heads(\n                                ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/EdgeTAM/sam2/modeling/sam2_base.py\", line 355, in _forward_sam_heads\n    ) = self.sam_mask_decoder(\n        ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1769, in _slow_forward\n    result = self.forward(*input, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/EdgeTAM/sam2/modeling/sam/mask_decoder.py\", line 136, in forward\n    masks, iou_pred, mask_tokens_out, object_score_logits = self.predict_masks(\n                                                            ^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/EdgeTAM/sam2/modeling/sam/mask_decoder.py\", line 209, in predict_masks\n    pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: Expected all tensors to be on the same device, but got index is on cpu, different from other tensors on cuda:0 (when checking argument in method wrapper_CUDA__index_select)\n"
+        },
+        {
+          "device": "cpu",
+          "error_type": "UnsupportedOperatorError",
+          "error": "Exporting the operator 'aten::_upsample_bilinear2d_aa' to ONNX opset version 17 is not supported",
+          "traceback": "Traceback (most recent call last):\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 515, in _attempt_export\n    torch.onnx.export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/__init__.py\", line 334, in export\n    export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 552, in export\n    _export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1515, in _export\n    graph, params_dict, torch_out = _model_to_graph(\n                                    ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1117, in _model_to_graph\n    graph = _optimize_graph(\n            ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 689, in _optimize_graph\n    graph = _C._jit_pass_onnx(graph, operator_export_type)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1797, in _run_symbolic_function\n    raise errors.UnsupportedOperatorError(\ntorch.onnx.errors.UnsupportedOperatorError: Exporting the operator 'aten::_upsample_bilinear2d_aa' to ONNX opset version 17 is not supported\n"
+        }
+      ]
+    },
+    {
+      "key": "video_sam_heads_mask_input_no_antialias_patch",
+      "onnx_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_mask_input_no_antialias_patch/video_sam_heads_mask_input_no_antialias_patch.onnx",
+      "engine_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_mask_input_no_antialias_patch/video_sam_heads_mask_input_no_antialias_patch.engine",
+      "opset": 17,
+      "eager": {
+        "status": "ok",
+        "outputs": [
+          {
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              256
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              1
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          }
+        ]
+      },
+      "onnx_export": {
+        "status": "ok",
+        "device": "cpu",
+        "duration_s": 0.2962223479989916,
+        "size_bytes": 14816741
+      },
+      "onnx_export_fallback_errors": [
+        {
+          "device": "cuda",
+          "error_type": "RuntimeError",
+          "error": "Expected all tensors to be on the same device, but got index is on cpu, different from other tensors on cuda:0 (when checking argument in method wrapper_CUDA__index_select)",
+          "traceback": "Traceback (most recent call last):\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 515, in _attempt_export\n    torch.onnx.export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/__init__.py\", line 334, in export\n    export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 552, in export\n    _export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1515, in _export\n    graph, params_dict, torch_out = _model_to_graph(\n                                    ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1113, in _model_to_graph\n    graph, params, torch_out, module = _create_jit_graph(model, args)\n                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 997, in _create_jit_graph\n    graph, torch_out = _trace_and_get_graph_from_model(model, args)\n                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 903, in _trace_and_get_graph_from_model\n    trace_graph, torch_out, inputs_states = torch.jit._get_trace_graph(\n                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/jit/_trace.py\", line 1439, in _get_trace_graph\n    outs = ONNXTracedModule(\n           ^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/jit/_trace.py\", line 140, in forward\n    graph, _out = torch._C._create_graph_by_tracing(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/jit/_trace.py\", line 131, in wrapper\n    outs.append(self.inner(*trace_inputs))\n                ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1769, in _slow_forward\n    result = self.forward(*input, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 91, in forward\n    _, _, _, _, _, obj_ptr, _ = self.model._forward_sam_heads(\n                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/EdgeTAM/sam2/modeling/sam2_base.py\", line 355, in _forward_sam_heads\n    ) = self.sam_mask_decoder(\n        ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1769, in _slow_forward\n    result = self.forward(*input, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/EdgeTAM/sam2/modeling/sam/mask_decoder.py\", line 136, in forward\n    masks, iou_pred, mask_tokens_out, object_score_logits = self.predict_masks(\n                                                            ^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/EdgeTAM/sam2/modeling/sam/mask_decoder.py\", line 209, in predict_masks\n    pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: Expected all tensors to be on the same device, but got index is on cpu, different from other tensors on cuda:0 (when checking argument in method wrapper_CUDA__index_select)\n"
+        }
+      ],
+      "onnx_check": {
+        "status": "ok",
+        "node_count": 1216,
+        "inputs": [
+          "backbone_features",
+          "mask_inputs"
+        ],
+        "outputs": [
+          "low_res_multimasks",
+          "high_res_multimasks",
+          "ious",
+          "low_res_masks",
+          "high_res_masks",
+          "obj_ptr",
+          "object_score_logits"
+        ],
+        "op_histogram": {
+          "Add": 63,
+          "Cast": 60,
+          "Concat": 41,
+          "Constant": 376,
+          "ConstantOfShape": 7,
+          "Conv": 4,
+          "Cos": 2,
+          "Div": 32,
+          "Equal": 7,
+          "Erf": 2,
+          "Expand": 14,
+          "Flatten": 1,
+          "Gather": 99,
+          "GatherND": 5,
+          "Gemm": 6,
+          "Greater": 3,
+          "Identity": 2,
+          "LayerNormalization": 9,
+          "MatMul": 48,
+          "Mul": 43,
+          "NonZero": 10,
+          "OneHot": 1,
+          "Pow": 2,
+          "ReduceMean": 4,
+          "ReduceSum": 1,
+          "Relu": 6,
+          "Reshape": 41,
+          "Resize": 1,
+          "ScatterND": 7,
+          "Shape": 115,
+          "Sin": 2,
+          "Slice": 21,
+          "Softmax": 7,
+          "Sqrt": 23,
+          "Sub": 5,
+          "Tile": 1,
+          "Transpose": 41,
+          "Unsqueeze": 96,
+          "Where": 8
+        }
+      },
+      "trt_build": {
+        "status": "failed",
+        "returncode": 1,
+        "duration_s": 0.5418446580006275,
+        "engine_path": null,
+        "engine_size_bytes": null,
+        "log_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_mask_input_no_antialias_patch/video_sam_heads_mask_input_no_antialias_patch_trtexec.log",
+        "tail": "[05/01/2026-23:03:57] [I] Memory Bus Width: 256 bits (ECC disabled)\n[05/01/2026-23:03:57] [I] Application Compute Clock Rate: 1.597 GHz\n[05/01/2026-23:03:57] [I] Application Memory Clock Rate: 14.001 GHz\n[05/01/2026-23:03:57] [I] \n[05/01/2026-23:03:57] [I] Note: The application clock rates do not reflect the actual clock rates that the GPU is currently running at.\n[05/01/2026-23:03:57] [I] \n[05/01/2026-23:03:57] [I] TensorRT version: 10.16.1\n[05/01/2026-23:03:57] [I] Loading standard plugins\n[05/01/2026-23:03:57] [I] [TRT] [MemUsageChange] Init CUDA: CPU +1, GPU +0, now: CPU 47, GPU 1343 (MiB)\n[05/01/2026-23:03:57] [I] Start parsing network model.\n[05/01/2026-23:03:57] [I] [TRT] ----------------------------------------------------------------\n[05/01/2026-23:03:57] [I] [TRT] Input filename:   /home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_mask_input_no_antialias_patch/video_sam_heads_mask_input_no_antialias_patch.onnx\n[05/01/2026-23:03:57] [I] [TRT] ONNX IR version:  0.0.8\n[05/01/2026-23:03:57] [I] [TRT] Opset version:    17\n[05/01/2026-23:03:57] [I] [TRT] Producer name:    pytorch\n[05/01/2026-23:03:57] [I] [TRT] Producer version: 2.11.0\n[05/01/2026-23:03:57] [I] [TRT] Domain:           \n[05/01/2026-23:03:57] [I] [TRT] Model version:    0\n[05/01/2026-23:03:57] [I] [TRT] Doc string:       \n[05/01/2026-23:03:57] [I] [TRT] ----------------------------------------------------------------\n[05/01/2026-23:03:57] [E] Error[4]: ITensor::getDimensions: Error Code 4: Shape Error (broadcast dimensions must be conformable In op at /_src/optimizer/common/shape/shapeContext.cpp:2700)\n[05/01/2026-23:03:57] [E] [TRT] ModelImporter.cpp:138: While parsing node number 118 [Where -> \"/sam_prompt_encoder/Where_6_output_0\"]:\n[05/01/2026-23:03:57] [E] [TRT] ModelImporter.cpp:140: --- Begin node ---\ninput: \"/sam_prompt_encoder/Constant_32_output_0\"\ninput: \"/sam_prompt_encoder/Constant_33_output_0\"\ninput: \"/sam_prompt_encoder/Concat_3_output_0\"\noutput: \"/sam_prompt_encoder/Where_6_output_0\"\nname: \"/sam_prompt_encoder/Where_6\"\nop_type: \"Where\"\n\n[05/01/2026-23:03:57] [E] [TRT] ModelImporter.cpp:141: --- End node ---\n[05/01/2026-23:03:57] [E] [TRT] ModelImporter.cpp:149: ERROR: ModelImporter.cpp:506 In function parseNode:\n[6] Invalid Node - /sam_prompt_encoder/Where_6\nITensor::getDimensions: Error Code 4: Shape Error (broadcast dimensions must be conformable In op at /_src/optimizer/common/shape/shapeContext.cpp:2700)\n[05/01/2026-23:03:57] [E] Failed to parse onnx file\n[05/01/2026-23:03:57] [I] Finished parsing network model. Parse time: 0.0252592\n[05/01/2026-23:03:57] [E] Parsing model failed\n[05/01/2026-23:03:57] [E] Failed to create engine from model or file.\n[05/01/2026-23:03:57] [E] Engine set up failed\n&&&& FAILED TensorRT.trtexec [TensorRT v101601] [b11] # /opt/TensorRT-10.16.1.11/bin/trtexec --onnx=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_mask_input_no_antialias_patch/video_sam_heads_mask_input_no_antialias_patch.onnx --saveEngine=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_mask_input_no_antialias_patch/video_sam_heads_mask_input_no_antialias_patch.engine --builderOptimizationLevel=5 --skipInference --profilingVerbosity=detailed --fp16",
+        "error_lines": [
+          "[05/01/2026-23:03:57] [E] Error[4]: ITensor::getDimensions: Error Code 4: Shape Error (broadcast dimensions must be conformable In op at /_src/optimizer/common/shape/shapeContext.cpp:2700)",
+          "[05/01/2026-23:03:57] [E] [TRT] ModelImporter.cpp:138: While parsing node number 118 [Where -> \"/sam_prompt_encoder/Where_6_output_0\"]:",
+          "[05/01/2026-23:03:57] [E] [TRT] ModelImporter.cpp:140: --- Begin node ---",
+          "[05/01/2026-23:03:57] [E] [TRT] ModelImporter.cpp:141: --- End node ---",
+          "[05/01/2026-23:03:57] [E] [TRT] ModelImporter.cpp:149: ERROR: ModelImporter.cpp:506 In function parseNode:",
+          "[05/01/2026-23:03:57] [E] Failed to parse onnx file",
+          "[05/01/2026-23:03:57] [E] Parsing model failed",
+          "[05/01/2026-23:03:57] [E] Failed to create engine from model or file.",
+          "[05/01/2026-23:03:57] [E] Engine set up failed",
+          "&&&& FAILED TensorRT.trtexec [TensorRT v101601] [b11] # /opt/TensorRT-10.16.1.11/bin/trtexec --onnx=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_mask_input_no_antialias_patch/video_sam_heads_mask_input_no_antialias_patch.onnx --saveEngine=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/video_sam_heads_mask_input_no_antialias_patch/video_sam_heads_mask_input_no_antialias_patch.engine --builderOptimizationLevel=5 --skipInference --profilingVerbosity=detailed --fp16"
+        ]
+      }
+    },
+    {
+      "key": "memory_encoder_spatial_perceiver",
+      "onnx_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_encoder_spatial_perceiver/memory_encoder_spatial_perceiver.onnx",
+      "engine_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_encoder_spatial_perceiver/memory_encoder_spatial_perceiver.engine",
+      "opset": 17,
+      "eager": {
+        "status": "ok",
+        "outputs": [
+          {
+            "shape": [
+              1,
+              512,
+              64
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          },
+          {
+            "shape": [
+              1,
+              512,
+              64
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:0"
+          }
+        ]
+      },
+      "onnx_export": {
+        "status": "ok",
+        "device": "cuda",
+        "duration_s": 0.3543714600018575,
+        "size_bytes": 6711855
+      },
+      "onnx_check": {
+        "status": "ok",
+        "node_count": 937,
+        "inputs": [
+          "pix_feat",
+          "pred_masks_high_res"
+        ],
+        "outputs": [
+          "maskmem_features",
+          "maskmem_pos_enc"
+        ],
+        "op_histogram": {
+          "Add": 66,
+          "Cast": 18,
+          "Concat": 18,
+          "Constant": 312,
+          "ConstantOfShape": 6,
+          "Conv": 9,
+          "Cos": 4,
+          "Div": 44,
+          "Equal": 2,
+          "Erf": 14,
+          "Expand": 6,
+          "Gather": 8,
+          "Identity": 20,
+          "LayerNormalization": 22,
+          "MatMul": 60,
+          "Mul": 75,
+          "Pow": 6,
+          "ReduceMean": 12,
+          "Reshape": 48,
+          "Shape": 26,
+          "Sigmoid": 1,
+          "Sin": 4,
+          "Slice": 51,
+          "Softmax": 8,
+          "Sqrt": 30,
+          "Sub": 6,
+          "Tile": 4,
+          "Transpose": 43,
+          "Unsqueeze": 12,
+          "Where": 2
+        }
+      },
+      "trt_build": {
+        "status": "ok",
+        "returncode": 0,
+        "duration_s": 34.47749533300521,
+        "engine_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_encoder_spatial_perceiver/memory_encoder_spatial_perceiver.engine",
+        "engine_size_bytes": 10859604,
+        "log_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_encoder_spatial_perceiver/memory_encoder_spatial_perceiver_trtexec.log",
+        "tail": "[05/01/2026-23:03:58] [I] Note: The application clock rates do not reflect the actual clock rates that the GPU is currently running at.\n[05/01/2026-23:03:58] [I] \n[05/01/2026-23:03:58] [I] TensorRT version: 10.16.1\n[05/01/2026-23:03:58] [I] Loading standard plugins\n[05/01/2026-23:03:58] [I] [TRT] [MemUsageChange] Init CUDA: CPU +1, GPU +0, now: CPU 47, GPU 1343 (MiB)\n[05/01/2026-23:03:58] [I] Start parsing network model.\n[05/01/2026-23:03:58] [I] [TRT] ----------------------------------------------------------------\n[05/01/2026-23:03:58] [I] [TRT] Input filename:   /home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_encoder_spatial_perceiver/memory_encoder_spatial_perceiver.onnx\n[05/01/2026-23:03:58] [I] [TRT] ONNX IR version:  0.0.8\n[05/01/2026-23:03:58] [I] [TRT] Opset version:    17\n[05/01/2026-23:03:58] [I] [TRT] Producer name:    pytorch\n[05/01/2026-23:03:58] [I] [TRT] Producer version: 2.11.0\n[05/01/2026-23:03:58] [I] [TRT] Domain:           \n[05/01/2026-23:03:58] [I] [TRT] Model version:    0\n[05/01/2026-23:03:58] [I] [TRT] Doc string:       \n[05/01/2026-23:03:58] [I] [TRT] ----------------------------------------------------------------\n[05/01/2026-23:03:58] [I] Finished parsing network model. Parse time: 0.0285398\n[05/01/2026-23:03:59] [I] [TRT] [MemUsageChange] Init builder kernel library: CPU +285, GPU +4, now: CPU 612, GPU 1347 (MiB)\n[05/01/2026-23:03:59] [W] [TRT] Detected layernorm nodes in FP16.\n[05/01/2026-23:03:59] [W] [TRT] Running layernorm after self-attention with FP16 Reduce or Pow may cause overflow. Forcing Reduce or Pow Layers in FP32 precision, or exporting the model to use INormalizationLayer (available with ONNX opset >= 17) can help preserving accuracy.\n[05/01/2026-23:03:59] [I] [TRT] Local timing cache in use. Profiling results in this builder pass will not be stored.\n[05/01/2026-23:03:59] [I] [TRT] Compiler backend is used during engine build.\n[05/01/2026-23:04:31] [I] [TRT] Detected 2 inputs and 2 output network tensors.\n[05/01/2026-23:04:31] [I] [TRT] Total Host Persistent Memory: 80 bytes\n[05/01/2026-23:04:31] [I] [TRT] Total Device Persistent Memory: 0 bytes\n[05/01/2026-23:04:31] [I] [TRT] Max Scratch Memory: 14682112 bytes\n[05/01/2026-23:04:31] [I] [TRT] [BlockAssignment] Started assigning block shifts. This will take 1 steps to complete.\n[05/01/2026-23:04:31] [I] [TRT] [BlockAssignment] Algorithm ShiftNTopDown took 0.003509ms to assign 1 blocks to 1 nodes requiring 14682112 bytes.\n[05/01/2026-23:04:31] [I] [TRT] Total Activation Memory: 14682112 bytes\n[05/01/2026-23:04:31] [I] [TRT] Total Weights Memory: 6328832 bytes\n[05/01/2026-23:04:31] [I] [TRT] Compiler backend is used during engine execution.\n[05/01/2026-23:04:31] [I] [TRT] Engine generation completed in 32.6375 seconds.\n[05/01/2026-23:04:31] [I] [TRT] The following layers are used for L2 cache management and do not correspond to any layers in the INetworkDefinition: __mye181662_myl0_0, __mye181664_myl0_133\n[05/01/2026-23:04:31] [I] [TRT] [MemUsageStats] Peak memory usage of TRT CPU/GPU memory allocators: CPU 0 MiB, GPU 20 MiB\n[05/01/2026-23:04:31] [I] Created engine with size: 10.3565 MiB\n[05/01/2026-23:04:31] [I] Engine built in 33.3495 sec.\n[05/01/2026-23:04:31] [I] [TRT] Loaded engine size: 10 MiB\n[05/01/2026-23:04:31] [I] Engine deserialized in 0.0102621 sec.\n[05/01/2026-23:04:31] [I] Skipped inference phase since --skipInference is added.\n&&&& PASSED TensorRT.trtexec [TensorRT v101601] [b11] # /opt/TensorRT-10.16.1.11/bin/trtexec --onnx=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_encoder_spatial_perceiver/memory_encoder_spatial_perceiver.onnx --saveEngine=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_encoder_spatial_perceiver/memory_encoder_spatial_perceiver.engine --builderOptimizationLevel=5 --skipInference --profilingVerbosity=detailed --fp16",
+        "error_lines": []
+      }
+    },
+    {
+      "key": "memory_attention_one_previous",
+      "onnx_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_attention_one_previous/memory_attention_one_previous.onnx",
+      "engine_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_attention_one_previous/memory_attention_one_previous.engine",
+      "opset": 17,
+      "eager": {
+        "status": "ok",
+        "outputs": {
+          "shape": [
+            4096,
+            1,
+            256
+          ],
+          "dtype": "torch.float32",
+          "device": "cuda:0"
+        }
+      },
+      "onnx_export": {
+        "status": "failed",
+        "error_type": "RuntimeError",
+        "error": "ScalarType ComplexFloat is an unexpected tensor scalar type",
+        "traceback": "Traceback (most recent call last):\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 515, in _attempt_export\n    torch.onnx.export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/__init__.py\", line 334, in export\n    export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 552, in export\n    _export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1515, in _export\n    graph, params_dict, torch_out = _model_to_graph(\n                                    ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1117, in _model_to_graph\n    graph = _optimize_graph(\n            ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 689, in _optimize_graph\n    graph = _C._jit_pass_onnx(graph, operator_export_type)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1785, in _run_symbolic_function\n    return symbolic_fn(graph_context, *inputs, **attrs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/symbolic_opset9.py\", line 6571, in prim_constant\n    return g.op(\"Constant\", value_t=symbolic_helper._node_get(node, \"value\"))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/jit_utils.py\", line 89, in op\n    return _add_op(self, opname, *raw_args, outputs=outputs, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/jit_utils.py\", line 242, in _add_op\n    node = _create_node(\n           ^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/jit_utils.py\", line 308, in _create_node\n    _C._jit_pass_onnx_node_shape_type_inference(node, params_dict, opset_version)\nRuntimeError: ScalarType ComplexFloat is an unexpected tensor scalar type\n"
+      },
+      "onnx_export_errors": [
+        {
+          "device": "cuda",
+          "error_type": "RuntimeError",
+          "error": "ScalarType ComplexFloat is an unexpected tensor scalar type",
+          "traceback": "Traceback (most recent call last):\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 515, in _attempt_export\n    torch.onnx.export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/__init__.py\", line 334, in export\n    export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 552, in export\n    _export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1515, in _export\n    graph, params_dict, torch_out = _model_to_graph(\n                                    ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1117, in _model_to_graph\n    graph = _optimize_graph(\n            ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 689, in _optimize_graph\n    graph = _C._jit_pass_onnx(graph, operator_export_type)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1785, in _run_symbolic_function\n    return symbolic_fn(graph_context, *inputs, **attrs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/symbolic_opset9.py\", line 6571, in prim_constant\n    return g.op(\"Constant\", value_t=symbolic_helper._node_get(node, \"value\"))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/jit_utils.py\", line 89, in op\n    return _add_op(self, opname, *raw_args, outputs=outputs, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/jit_utils.py\", line 242, in _add_op\n    node = _create_node(\n           ^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/jit_utils.py\", line 308, in _create_node\n    _C._jit_pass_onnx_node_shape_type_inference(node, params_dict, opset_version)\nRuntimeError: ScalarType ComplexFloat is an unexpected tensor scalar type\n"
+        },
+        {
+          "device": "cpu",
+          "error_type": "RuntimeError",
+          "error": "ScalarType ComplexFloat is an unexpected tensor scalar type",
+          "traceback": "Traceback (most recent call last):\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/probe_edgetam_video_trt_compile.py\", line 515, in _attempt_export\n    torch.onnx.export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/__init__.py\", line 334, in export\n    export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 552, in export\n    _export(\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1515, in _export\n    graph, params_dict, torch_out = _model_to_graph(\n                                    ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1117, in _model_to_graph\n    graph = _optimize_graph(\n            ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 689, in _optimize_graph\n    graph = _C._jit_pass_onnx(graph, operator_export_type)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/utils.py\", line 1785, in _run_symbolic_function\n    return symbolic_fn(graph_context, *inputs, **attrs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/symbolic_opset9.py\", line 6571, in prim_constant\n    return g.op(\"Constant\", value_t=symbolic_helper._node_get(node, \"value\"))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/jit_utils.py\", line 89, in op\n    return _add_op(self, opname, *raw_args, outputs=outputs, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/jit_utils.py\", line 242, in _add_op\n    node = _create_node(\n           ^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/torch/onnx/_internal/torchscript_exporter/jit_utils.py\", line 308, in _create_node\n    _C._jit_pass_onnx_node_shape_type_inference(node, params_dict, opset_version)\nRuntimeError: ScalarType ComplexFloat is an unexpected tensor scalar type\n"
+        }
+      ]
+    },
+    {
+      "key": "memory_attention_one_previous_real_rope_patch",
+      "onnx_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_attention_one_previous_real_rope_patch/memory_attention_one_previous_real_rope_patch.onnx",
+      "engine_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_attention_one_previous_real_rope_patch/memory_attention_one_previous_real_rope_patch.engine",
+      "opset": 17,
+      "eager": {
+        "status": "ok",
+        "outputs": {
+          "shape": [
+            4096,
+            1,
+            256
+          ],
+          "dtype": "torch.float32",
+          "device": "cuda:0"
+        }
+      },
+      "onnx_export": {
+        "status": "ok",
+        "device": "cuda",
+        "duration_s": 0.6423344349968829,
+        "size_bytes": 63335766
+      },
+      "onnx_check": {
+        "status": "ok",
+        "node_count": 513,
+        "inputs": [
+          "curr",
+          "curr_pos",
+          "spatial_memory",
+          "spatial_memory_pos",
+          "obj_ptr"
+        ],
+        "outputs": [
+          "memory_conditioned_features"
+        ],
+        "op_histogram": {
+          "Add": 36,
+          "Cast": 16,
+          "Concat": 25,
+          "Constant": 188,
+          "Div": 4,
+          "Gather": 16,
+          "LayerNormalization": 7,
+          "MatMul": 28,
+          "Mul": 41,
+          "Relu": 2,
+          "Reshape": 46,
+          "Shape": 13,
+          "Slice": 26,
+          "Softmax": 4,
+          "Sqrt": 12,
+          "Sub": 8,
+          "Transpose": 25,
+          "Unsqueeze": 16
+        }
+      },
+      "trt_build": {
+        "status": "ok",
+        "returncode": 0,
+        "duration_s": 8.541209736999008,
+        "engine_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_attention_one_previous_real_rope_patch/memory_attention_one_previous_real_rope_patch.engine",
+        "engine_size_bytes": 9008236,
+        "log_path": "/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_attention_one_previous_real_rope_patch/memory_attention_one_previous_real_rope_patch_trtexec.log",
+        "tail": "[05/01/2026-23:04:34] [I] Application Memory Clock Rate: 14.001 GHz\n[05/01/2026-23:04:34] [I] \n[05/01/2026-23:04:34] [I] Note: The application clock rates do not reflect the actual clock rates that the GPU is currently running at.\n[05/01/2026-23:04:34] [I] \n[05/01/2026-23:04:34] [I] TensorRT version: 10.16.1\n[05/01/2026-23:04:34] [I] Loading standard plugins\n[05/01/2026-23:04:34] [I] [TRT] [MemUsageChange] Init CUDA: CPU +1, GPU +0, now: CPU 47, GPU 1343 (MiB)\n[05/01/2026-23:04:34] [I] Start parsing network model.\n[05/01/2026-23:04:34] [I] [TRT] ----------------------------------------------------------------\n[05/01/2026-23:04:34] [I] [TRT] Input filename:   /home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_attention_one_previous_real_rope_patch/memory_attention_one_previous_real_rope_patch.onnx\n[05/01/2026-23:04:34] [I] [TRT] ONNX IR version:  0.0.8\n[05/01/2026-23:04:34] [I] [TRT] Opset version:    17\n[05/01/2026-23:04:34] [I] [TRT] Producer name:    pytorch\n[05/01/2026-23:04:34] [I] [TRT] Producer version: 2.11.0\n[05/01/2026-23:04:34] [I] [TRT] Domain:           \n[05/01/2026-23:04:34] [I] [TRT] Model version:    0\n[05/01/2026-23:04:34] [I] [TRT] Doc string:       \n[05/01/2026-23:04:34] [I] [TRT] ----------------------------------------------------------------\n[05/01/2026-23:04:34] [I] Finished parsing network model. Parse time: 0.133549\n[05/01/2026-23:04:35] [I] [TRT] [MemUsageChange] Init builder kernel library: CPU +286, GPU +4, now: CPU 761, GPU 1347 (MiB)\n[05/01/2026-23:04:35] [I] [TRT] Local timing cache in use. Profiling results in this builder pass will not be stored.\n[05/01/2026-23:04:35] [I] [TRT] Compiler backend is used during engine build.\n[05/01/2026-23:04:42] [I] [TRT] Detected 5 inputs and 1 output network tensors.\n[05/01/2026-23:04:42] [I] [TRT] Total Host Persistent Memory: 80 bytes\n[05/01/2026-23:04:42] [I] [TRT] Total Device Persistent Memory: 0 bytes\n[05/01/2026-23:04:42] [I] [TRT] Max Scratch Memory: 27265024 bytes\n[05/01/2026-23:04:42] [I] [TRT] [BlockAssignment] Started assigning block shifts. This will take 1 steps to complete.\n[05/01/2026-23:04:42] [I] [TRT] [BlockAssignment] Algorithm ShiftNTopDown took 0.00395ms to assign 1 blocks to 1 nodes requiring 27265024 bytes.\n[05/01/2026-23:04:42] [I] [TRT] Total Activation Memory: 27265024 bytes\n[05/01/2026-23:04:42] [I] [TRT] Total Weights Memory: 8151936 bytes\n[05/01/2026-23:04:42] [I] [TRT] Compiler backend is used during engine execution.\n[05/01/2026-23:04:42] [I] [TRT] Engine generation completed in 7.06157 seconds.\n[05/01/2026-23:04:42] [I] [TRT] The following layers are used for L2 cache management and do not correspond to any layers in the INetworkDefinition: __mye91954_myl0_0, __mye91956_myl0_57\n[05/01/2026-23:04:42] [I] [TRT] [MemUsageStats] Peak memory usage of TRT CPU/GPU memory allocators: CPU 0 MiB, GPU 18 MiB\n[05/01/2026-23:04:42] [I] Created engine with size: 8.59092 MiB\n[05/01/2026-23:04:42] [I] Engine built in 7.55068 sec.\n[05/01/2026-23:04:42] [I] [TRT] Loaded engine size: 8 MiB\n[05/01/2026-23:04:42] [I] Engine deserialized in 0.00536329 sec.\n[05/01/2026-23:04:42] [I] Skipped inference phase since --skipInference is added.\n&&&& PASSED TensorRT.trtexec [TensorRT v101601] [b11] # /opt/TensorRT-10.16.1.11/bin/trtexec --onnx=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_attention_one_previous_real_rope_patch/memory_attention_one_previous_real_rope_patch.onnx --saveEngine=/home/zhangxinjie/proj-QQTT-v2/result/edgetam_video_trt_compile_probe_20260502/memory_attention_one_previous_real_rope_patch/memory_attention_one_previous_real_rope_patch.engine --builderOptimizationLevel=5 --skipInference --profilingVerbosity=detailed --fp16",
+        "error_lines": []
+      }
+    }
+  ],
+  "summary": {
+    "eager_ok": 6,
+    "onnx_export_ok": 4,
+    "onnx_check_ok": 4,
+    "trt_build_ok": 2,
+    "attempt_count": 6
+  }
+}

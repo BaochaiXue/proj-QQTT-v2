@@ -42,3 +42,10 @@ encoder + decoder aggregate: 4.490 ms, 222.74 FPS
 This is a component-level result only. It is not a complete EdgeTAM video
 predictor TensorRT runtime because memory/state propagation remains outside the
 TRT path.
+
+Naming guard:
+
+```text
+per-frame tight-box prompt output = component sanity mask
+per-frame tight-box prompt output != EdgeTAM video-track mask
+```

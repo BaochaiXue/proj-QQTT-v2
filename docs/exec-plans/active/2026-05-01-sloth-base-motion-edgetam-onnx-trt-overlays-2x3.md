@@ -7,16 +7,16 @@ Render two 2x3 GIFs for `data/different_types/sloth_base_motion_ffs`:
 - RGB mask XOR overlay vs SAM3.1
 - fused PCD overlay vs SAM3.1
 
-The comparison rows are `SAM2.1 Small` and `EdgeTAM ONNX/TRT`; columns are
-`cam0/cam1/cam2`.
+The comparison rows are `SAM2.1 Small` and `EdgeTAM ONNX/TRT per-frame
+component sanity`; columns are `cam0/cam1/cam2`.
 
 ## Plan
 
 1. Reuse existing SAM3.1 masks, SAM2.1 Small masks, and the ONNX/TRT component
    benchmark artifacts under `result/edgetam_onnx_trt_probe_20260501/`.
-2. If a compatible EdgeTAM ONNX/TRT mask cache is missing, generate it from the
-   TensorRT vision encoder + prompt/mask decoder engines using SAM3.1 per-frame
-   boxes.
+2. If a compatible EdgeTAM ONNX/TRT component sanity mask cache is missing,
+   generate it from the TensorRT vision encoder + prompt/mask decoder engines
+   using SAM3.1 per-frame boxes. Do not label this as video tracking output.
 3. Record ONNX/TRT FPS from the existing encoder+decoder component benchmark,
    and clearly label it as component-level runtime rather than full video
    predictor propagation.

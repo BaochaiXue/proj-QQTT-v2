@@ -118,6 +118,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/verify_hf_edgetam_streaming.py",
+        "hardware_external",
+        "Hugging Face EdgeTAMVideo streaming proof-of-life utility.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/generate_sam31_masks.py",
         "mask_support",
         "Operator-side SAM 3.1 mask generation CLI.",
@@ -239,6 +245,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "scripts/harness/experiments/inspect_edgetam_onnx.py",
         "experiments",
         "Inspect EdgeTAM ONNX component graph shapes and op coverage.",
+        "full",
+    ),
+    HarnessEntry(
+        "scripts/harness/experiments/probe_edgetam_video_trt_compile.py",
+        "experiments",
+        "Probe official EdgeTAM video components for ONNX/TensorRT compile feasibility.",
         "full",
     ),
     HarnessEntry(

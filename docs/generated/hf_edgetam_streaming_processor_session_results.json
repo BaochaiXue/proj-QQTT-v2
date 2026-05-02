@@ -1,0 +1,68 @@
+{
+  "timestamp_utc": "2026-05-02T02:57:54.360333+00:00",
+  "status": "pass",
+  "environment": "edgetam-hf-stream",
+  "model_id": "yonigozlan/EdgeTAM-hf",
+  "frames": 3,
+  "width": 960,
+  "height": 540,
+  "dtype": "bfloat16",
+  "env": {
+    "transformers": "5.7.0",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "cuda_available": true,
+    "device": "cuda",
+    "classes": {
+      "EdgeTamVideoModel": "transformers.models.edgetam_video.modeling_edgetam_video",
+      "Sam2VideoProcessor": "transformers.models.sam2_video.processing_sam2_video",
+      "EdgeTamVideoInferenceSession": "transformers.models.edgetam_video.modeling_edgetam_video"
+    },
+    "gpu": "NVIDIA GeForce RTX 5090 Laptop GPU"
+  },
+  "session": {
+    "init_mode": "processor",
+    "class": "transformers.models.sam2_video.modeling_sam2_video.Sam2VideoInferenceSession"
+  },
+  "latency_ms": {
+    "mean": 252.95031133524995,
+    "median": 36.504507006611675,
+    "min": 18.597223002871033,
+    "max": 703.7492039962672
+  },
+  "per_frame": [
+    {
+      "frame_idx": 0,
+      "latency_ms": 703.7492039962672,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -11.886794090270996
+    },
+    {
+      "frame_idx": 1,
+      "latency_ms": 36.504507006611675,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -19.489017486572266
+    },
+    {
+      "frame_idx": 2,
+      "latency_ms": 18.597223002871033,
+      "mask_shape": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "mask_mean": -18.420883178710938
+    }
+  ]
+}
