@@ -1,0 +1,155 @@
+# EdgeTAM ONNX/TensorRT Component Probe
+
+Date: 2026-05-01
+
+## Scope
+
+This run tested whether EdgeTAM can use ONNX/TensorRT at the component level on
+the RTX 5090 Laptop WSL stack. It did not attempt to compile the full EdgeTAM
+video predictor into one engine.
+
+The tested route is:
+
+```text
+onnx-community/EdgeTAM-ONNX
+  vision_encoder_fp16.onnx
+  prompt_encoder_mask_decoder_fp16.onnx
+        |
+        v
+TensorRT 10.16.1 trtexec, builderOptimizationLevel=5
+        |
+        v
+Python TensorRT runtime benchmark on data/different_types/sloth_base_motion_ffs
+```
+
+Community ONNX source: <https://huggingface.co/onnx-community/EdgeTAM-ONNX/tree/main>
+
+## Environment
+
+- Env: `SAM21-max`
+- GPU: NVIDIA GeForce RTX 5090 Laptop GPU
+- CUDA capability: 12.0
+- torch: `2.11.0+cu130`
+- torch CUDA: `13.0`
+- TensorRT Python: `10.16.1.11`
+- trtexec: TensorRT v101601
+- onnx: `1.21.0`
+- onnxruntime: `1.26.0.dev20260425002`
+
+The system `trtexec` needed the TensorRT wheel libraries in `SAM21-max` on
+`LD_LIBRARY_PATH`; otherwise the SM120 builder resource library was not found.
+The working setting was:
+
+```bash
+TRT_LIB=/home/zhangxinjie/miniconda3/envs/SAM21-max/lib/python3.12/site-packages/tensorrt_libs
+LD_LIBRARY_PATH="$TRT_LIB:${LD_LIBRARY_PATH:-}" /usr/local/bin/trtexec ...
+```
+
+## ONNX Inventory
+
+Inventory JSON:
+`result/edgetam_onnx_trt_probe_20260501/onnx_inventory.json`
+
+The fp16 vision encoder passed ONNX checker. It takes:
+
+```text
+pixel_values FLOAT [batch, 3, 1024, 1024]
+```
+
+and returns the three image embedding tensors:
+
+```text
+image_embeddings.0 FLOAT [batch, 32, 256, 256]
+image_embeddings.1 FLOAT [batch, 64, 128, 128]
+image_embeddings.2 FLOAT [batch, 256, 64, 64]
+```
+
+The fp16 prompt encoder plus mask decoder also passed ONNX checker. It takes
+point, label, box, and image embedding inputs, then returns:
+
+```text
+iou_scores
+pred_masks
+object_score_logits
+```
+
+The decoder graph still contains TRT-risky ops:
+
+```text
+OneHot: 1
+Range: 17
+ScatterND: 8
+Where: 13
+```
+
+For the fixed shape used here, TensorRT accepted the graph.
+
+## TensorRT Build
+
+Both component engines built successfully with `--fp16` and
+`--builderOptimizationLevel=5`.
+
+| Component | Engine | Size | Build |
+| --- | --- | ---: | ---: |
+| vision encoder | `result/edgetam_onnx_trt_probe_20260501/engines/vision_encoder_fp16.engine` | 17M | 34.20 s |
+| prompt/mask decoder | `result/edgetam_onnx_trt_probe_20260501/engines/prompt_mask_decoder_fp16.engine` | 12M | 9.57 s |
+
+The decoder `trtexec` run reported 577.36 qps, mean latency 1.65 ms, and mean
+GPU compute time 1.02 ms. The Python runtime benchmark below is the main
+runtime number because it reuses CUDA buffers and runs on real case frames.
+
+## Runtime Benchmark
+
+Case:
+`data/different_types/sloth_base_motion_ffs`
+
+Benchmark JSON:
+`result/edgetam_onnx_trt_probe_20260501/trt_component_benchmark_sloth_base_motion_ffs.json`
+
+Method:
+
+- TensorRT Python runtime
+- fixed input/output CUDA tensors
+- no per-iteration engine/context creation
+- non-default CUDA stream
+- CUDA event timing
+- 10 warmups and 100 timed iterations per camera
+- real case RGB frames resized to 1024x1024
+- prompt boxes derived from existing SAM3.1 mask sidecars
+
+| Camera | Encoder ms | Decoder ms | Encoder + decoder ms | Component FPS | Existing EdgeTAM compiled ms | Component speedup |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| cam0 | 3.298 | 1.134 | 4.432 | 225.62 | 14.092 | 3.18x |
+| cam1 | 3.388 | 1.160 | 4.548 | 219.89 | 14.026 | 3.08x |
+| cam2 | 3.346 | 1.143 | 4.489 | 222.78 | 14.347 | 3.20x |
+
+Aggregate component runtime:
+
+```text
+encoder + decoder: 4.490 ms
+component FPS: 222.74
+```
+
+## Conclusion
+
+EdgeTAM component-level ONNX to TensorRT works on this RTX 5090 Laptop stack.
+The vision encoder and prompt/mask decoder both compile and run quickly on real
+`sloth_base_motion_ffs` frames.
+
+This is not yet a full EdgeTAM video predictor TensorRT replacement. The
+benchmark excludes memory encoder, memory attention, video inference state,
+object id bookkeeping, and Python propagation scheduler behavior. It also does
+not yet pass a TRT mask quality regression against local PyTorch EdgeTAM.
+
+Production defaults should remain unchanged:
+
+```text
+default: SAM2.1 Small
+fast: SAM2.1 Tiny
+experimental: EdgeTAM compiled no-position-cache
+experimental acceleration probe: EdgeTAM ONNX/TRT component runtime
+```
+
+Next engineering step: compare TRT masks against PyTorch EdgeTAM masks on the
+same prompts, then decide whether to export memory components for a true hybrid
+or full component video runtime.

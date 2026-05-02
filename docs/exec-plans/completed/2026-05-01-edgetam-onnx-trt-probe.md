@@ -24,3 +24,21 @@ the RTX 5090 Laptop without changing production defaults.
 - `docs/generated/edgetam_onnx_trt_probe.json`
 - `git diff --check`
 - `conda run -n FFS-SAM-RS python scripts/harness/check_all.py`
+
+## Outcome
+
+- Downloaded and inspected the community fp16 ONNX component assets.
+- Built TensorRT engines for the vision encoder and prompt/mask decoder.
+- Benchmarked the component runtime on
+  `data/different_types/sloth_base_motion_ffs`.
+- Recorded artifacts under `result/edgetam_onnx_trt_probe_20260501/`.
+
+Key runtime result:
+
+```text
+encoder + decoder aggregate: 4.490 ms, 222.74 FPS
+```
+
+This is a component-level result only. It is not a complete EdgeTAM video
+predictor TensorRT runtime because memory/state propagation remains outside the
+TRT path.

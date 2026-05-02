@@ -230,6 +230,18 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/benchmark_edgetam_trt_components.py",
+        "experiments",
+        "Benchmark EdgeTAM ONNX/TensorRT component engines on recorded frames.",
+        "full",
+    ),
+    HarnessEntry(
+        "scripts/harness/experiments/inspect_edgetam_onnx.py",
+        "experiments",
+        "Inspect EdgeTAM ONNX component graph shapes and op coverage.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py",
         "experiments",
         "FFS confidence filtering sweep runner.",

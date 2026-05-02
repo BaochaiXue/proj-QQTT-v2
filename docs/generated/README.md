@@ -42,6 +42,7 @@ These record what the current machine and D455 topology actually supported durin
 - `sam21_edgetam_mask_overlay_3x3_benchmark.md`
 - `sloth_base_motion_ffs_mask_overlay_3x3_benchmark.md`
 - `sloth_base_motion_ffs_fused_pcd_overlay_2x3_benchmark.md`
+- `edgetam_onnx_trt_probe.md`
 
 These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 
@@ -82,6 +83,7 @@ These record repo-structure, scope, and metadata-contract hardening passes.
 - `sam21_edgetam_mask_overlay_3x3_results.json`
 - `sloth_base_motion_ffs_mask_overlay_3x3_results.json`
 - `sloth_base_motion_ffs_fused_pcd_overlay_2x3_results.json`
+- `edgetam_onnx_trt_probe.json`
 
 These are not general datasets. They are small helper assets used by specific validation and visualization workflows.
 

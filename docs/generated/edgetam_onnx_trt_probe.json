@@ -1,0 +1,142 @@
+{
+  "name": "edgetam_onnx_trt_probe",
+  "date": "2026-05-01",
+  "case_dir": "data/different_types/sloth_base_motion_ffs",
+  "artifact_root": "result/edgetam_onnx_trt_probe_20260501",
+  "source": {
+    "community_onnx": "https://huggingface.co/onnx-community/EdgeTAM-ONNX/tree/main",
+    "assets": [
+      {
+        "path": "result/edgetam_onnx_trt_probe_20260501/onnx_assets/onnx/vision_encoder_fp16.onnx",
+        "sha256": "d8f560849085892866a5c652a600cafbbd301e11c15ff0d89c81e15fe91264ac"
+      },
+      {
+        "path": "result/edgetam_onnx_trt_probe_20260501/onnx_assets/onnx/vision_encoder_fp16.onnx_data",
+        "sha256": "6a6741eb00b3049939675569818b207953cb13113a80ca9580c9c714d8646b38"
+      },
+      {
+        "path": "result/edgetam_onnx_trt_probe_20260501/onnx_assets/onnx/prompt_encoder_mask_decoder_fp16.onnx",
+        "sha256": "f6c0e539017b05ff12cd5be869f2a125d946dee10f6e79b64a7466dfceafafb9"
+      },
+      {
+        "path": "result/edgetam_onnx_trt_probe_20260501/onnx_assets/onnx/prompt_encoder_mask_decoder_fp16.onnx_data",
+        "sha256": "bda4d98aef24b7589313f9771c8d2d6380716a256bf5c926326eaf5054097d5b"
+      }
+    ]
+  },
+  "environment": {
+    "conda_env": "SAM21-max",
+    "gpu": "NVIDIA GeForce RTX 5090 Laptop GPU",
+    "cuda_capability": "12.0",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "tensorrt_python": "10.16.1.11",
+    "trtexec": "TensorRT v101601",
+    "onnx": "1.21.0",
+    "onnxruntime": "1.26.0.dev20260425002"
+  },
+  "onnx_inventory": {
+    "json": "result/edgetam_onnx_trt_probe_20260501/onnx_inventory.json",
+    "vision_encoder_fp16": {
+      "checker": "ok",
+      "input": "pixel_values FLOAT [batch,3,1024,1024]",
+      "outputs": [
+        "image_embeddings.0 FLOAT [batch,32,256,256]",
+        "image_embeddings.1 FLOAT [batch,64,128,128]",
+        "image_embeddings.2 FLOAT [batch,256,64,64]"
+      ],
+      "suspicious_ops": {}
+    },
+    "prompt_encoder_mask_decoder_fp16": {
+      "checker": "ok",
+      "inputs": [
+        "input_points FLOAT [batch,1,num_points,2]",
+        "input_labels INT64 [batch,1,num_points]",
+        "input_boxes FLOAT [batch,num_boxes,4]",
+        "image_embeddings.0 FLOAT [batch,32,256,256]",
+        "image_embeddings.1 FLOAT [batch,64,128,128]",
+        "image_embeddings.2 FLOAT [batch,256,64,64]"
+      ],
+      "outputs": [
+        "iou_scores FLOAT [batch,num_prompts,3]",
+        "pred_masks FLOAT [batch,num_prompts,3,256,256]",
+        "object_score_logits FLOAT [batch,num_prompts,1]"
+      ],
+      "suspicious_ops": {
+        "OneHot": 1,
+        "Range": 17,
+        "ScatterND": 8,
+        "Where": 13
+      }
+    }
+  },
+  "trt_build": {
+    "common_requirement": "Set LD_LIBRARY_PATH to the SAM21-max tensorrt_libs directory so TensorRT can load the sm120 builder resource library.",
+    "builder_optimization_level": 5,
+    "engines": [
+      {
+        "component": "vision_encoder",
+        "engine": "result/edgetam_onnx_trt_probe_20260501/engines/vision_encoder_fp16.engine",
+        "sha256": "1bd7a8d5f4cc7bb4593eab0b262499bc1ae4fe2b01d565d4a094290abb2a41a0",
+        "size": "17M",
+        "build_status": "passed",
+        "build_seconds": 34.1977
+      },
+      {
+        "component": "prompt_mask_decoder",
+        "engine": "result/edgetam_onnx_trt_probe_20260501/engines/prompt_mask_decoder_fp16.engine",
+        "sha256": "f5295f3e2ad6fe2a160fb1c4a4706611eab90f35379c9dc8e961714ec8400a58",
+        "size": "12M",
+        "build_status": "passed",
+        "build_seconds": 9.56567
+      }
+    ]
+  },
+  "benchmark": {
+    "json": "result/edgetam_onnx_trt_probe_20260501/trt_component_benchmark_sloth_base_motion_ffs.json",
+    "method": "TensorRT Python runtime, fixed CUDA buffers, non-default CUDA stream, CUDA event timing, 10 warmups and 100 timed iterations per camera.",
+    "records": [
+      {
+        "camera": 0,
+        "frames_available": 86,
+        "encoder_ms": 3.297842893600464,
+        "decoder_ms": 1.134376637339592,
+        "encoder_plus_decoder_ms": 4.432219529151917,
+        "encoder_plus_decoder_fps": 225.6205933444242,
+        "baseline_edgetam_compiled_ms": 14.0921406976748,
+        "component_speedup_vs_baseline": 3.1794771457024966
+      },
+      {
+        "camera": 1,
+        "frames_available": 86,
+        "encoder_ms": 3.3876800036430357,
+        "decoder_ms": 1.160031042098999,
+        "encoder_plus_decoder_ms": 4.547711029052734,
+        "encoder_plus_decoder_fps": 219.89084038356216,
+        "baseline_edgetam_compiled_ms": 14.025530139533233,
+        "component_speedup_vs_baseline": 3.0840856092069426
+      },
+      {
+        "camera": 2,
+        "frames_available": 86,
+        "encoder_ms": 3.3456502294540407,
+        "decoder_ms": 1.1431724804639816,
+        "encoder_plus_decoder_ms": 4.488822722434998,
+        "encoder_plus_decoder_fps": 222.7755609509885,
+        "baseline_edgetam_compiled_ms": 14.346781011628863,
+        "component_speedup_vs_baseline": 3.19611218770661
+      }
+    ],
+    "aggregate": {
+      "encoder_plus_decoder_ms": 4.489584426879883,
+      "encoder_plus_decoder_fps": 222.73776477235506
+    }
+  },
+  "conclusion": {
+    "component_onnx_to_trt": "passed",
+    "full_video_predictor_trt": "not_attempted",
+    "production_default_change": "none",
+    "quality_regression": "not_yet_validated_for_trt_masks",
+    "summary": "EdgeTAM vision encoder and prompt/mask decoder compile to TensorRT and run fast on real sloth frames, but this is not yet a complete video propagation runtime because memory components and inference_state bookkeeping remain outside the TRT path."
+  }
+}
