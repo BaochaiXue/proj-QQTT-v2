@@ -66,6 +66,9 @@ DEFAULT_EDGETAM_ENV_NAME = "edgetam-max"
 DEFAULT_EDGETAM_REPO = Path.home() / "EdgeTAM"
 DEFAULT_EDGETAM_CHECKPOINT = DEFAULT_EDGETAM_REPO / "checkpoints" / "edgetam.pt"
 DEFAULT_EDGETAM_MODEL_CFG = "configs/edgetam.yaml"
+EDGETAM_COMPILE_EAGER = "eager"
+EDGETAM_COMPILE_IMAGE_ENCODER = "compile_image_encoder"
+EDGETAM_COMPILE_NO_POS_CACHE = "compile_image_encoder_no_pos_cache_patch"
 DEFAULT_EDGETAM_ROUND1_3X6_OUTPUT_NAME = "ffs_dynamics_round1_3x6_time_edgetam"
 DEFAULT_EDGETAM_ROUND1_3X6_DOC_MD = Path("docs/generated/edgetam_dynamics_round1_3x6_panel_benchmark.md")
 DEFAULT_EDGETAM_ROUND1_3X6_DOC_JSON = Path("docs/generated/edgetam_dynamics_round1_3x6_panel_results.json")
@@ -482,6 +485,7 @@ def run_sam21_worker(
     output_mask_root: str | Path,
     result_json: str | Path,
     frames: int | None,
+    sam31_mask_root: str | Path | None = None,
     sam21_init_mode: str = SAM21_INIT_BOX,
     bbox_padding_px: int = 0,
     overwrite: bool = False,
@@ -495,10 +499,11 @@ def run_sam21_worker(
     checkpoint_path = Path(checkpoint_path).expanduser().resolve()
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Missing SAM2.1 checkpoint: {checkpoint_path}")
+    resolved_sam31_mask_root = Path(sam31_mask_root).resolve() if sam31_mask_root is not None else case_dir / "sam31_masks"
 
     frame_tokens = sorted_case_frame_tokens(case_dir, camera_idx=int(camera_idx), frames=frames)
     sam31_mask = load_union_mask(
-        mask_root=case_dir / "sam31_masks",
+        mask_root=resolved_sam31_mask_root,
         case_dir=case_dir,
         camera_idx=int(camera_idx),
         frame_token=frame_tokens[0],
@@ -506,7 +511,7 @@ def run_sam21_worker(
     )
     sam21_object_label = (
         matched_mask_labels(
-            mask_root=case_dir / "sam31_masks",
+            mask_root=resolved_sam31_mask_root,
             camera_idx=int(camera_idx),
             text_prompt=text_prompt,
         )
@@ -628,6 +633,7 @@ def run_sam21_worker(
             "checkpoint_path": str(checkpoint_path),
             "config": str(config),
             "sam21_init_mode": init_mode,
+            "sam31_mask_root": str(resolved_sam31_mask_root),
             "prompt_source": "sam31_frame0_union_mask" if init_mode == SAM21_INIT_MASK else "sam31_frame0_union_mask_bbox",
             "bbox_source": "sam31_frame0_union_mask",
             "bbox_xyxy": [float(item) for item in box_xyxy],
@@ -672,10 +678,12 @@ def build_stable_job_manifest(
     output_dir: str | Path,
     frames: int | None,
     camera_ids: Sequence[int] = DEFAULT_CAMERA_IDS,
+    sam31_mask_root: str | Path | None = None,
     sam21_init_mode: str = SAM21_INIT_BOX,
     bbox_padding_px: int = 0,
 ) -> dict[str, Any]:
     init_mode = normalize_sam21_init_mode(sam21_init_mode)
+    resolved_sam31_mask_root = None if sam31_mask_root is None else str(Path(sam31_mask_root).resolve())
     return {
         "checkpoint_key": checkpoint_spec.key,
         "checkpoint_label": checkpoint_spec.label,
@@ -683,6 +691,7 @@ def build_stable_job_manifest(
         "config": checkpoint_spec.config,
         "frames": None if frames is None else int(frames),
         "sam21_init_mode": init_mode,
+        "sam31_mask_root": resolved_sam31_mask_root,
         "bbox_padding_px": int(bbox_padding_px),
         "camera_ids": [int(item) for item in camera_ids],
         "jobs": [
@@ -692,6 +701,7 @@ def build_stable_job_manifest(
                 "case_dir": str(case_spec.case_dir),
                 "text_prompt": case_spec.text_prompt,
                 "camera_idx": int(camera_idx),
+                "sam31_mask_root": resolved_sam31_mask_root,
                 "output_mask_root": str(Path(output_dir).resolve() / "masks" / case_spec.key / checkpoint_spec.key),
             }
             for case_spec in case_specs
@@ -712,9 +722,14 @@ def _prepare_stable_job(
     camera_idx = int(job["camera_idx"])
     text_prompt = str(job["text_prompt"])
     init_mode = normalize_sam21_init_mode(sam21_init_mode)
+    resolved_sam31_mask_root = (
+        Path(job["sam31_mask_root"]).resolve()
+        if job.get("sam31_mask_root")
+        else case_dir / "sam31_masks"
+    )
     frame_tokens = sorted_case_frame_tokens(case_dir, camera_idx=camera_idx, frames=frames)
     sam31_mask = load_union_mask(
-        mask_root=case_dir / "sam31_masks",
+        mask_root=resolved_sam31_mask_root,
         case_dir=case_dir,
         camera_idx=camera_idx,
         frame_token=frame_tokens[0],
@@ -722,7 +737,7 @@ def _prepare_stable_job(
     )
     object_label = (
         matched_mask_labels(
-            mask_root=case_dir / "sam31_masks",
+            mask_root=resolved_sam31_mask_root,
             camera_idx=camera_idx,
             text_prompt=text_prompt,
         )
@@ -743,6 +758,7 @@ def _prepare_stable_job(
         "camera_idx": camera_idx,
         "frame_tokens": [str(item) for item in frame_tokens],
         "sam21_object_label": str(object_label),
+        "sam31_mask_root": str(resolved_sam31_mask_root),
         "sam21_init_mode": init_mode,
         "prompt_source": "sam31_frame0_union_mask" if init_mode == SAM21_INIT_MASK else "sam31_frame0_union_mask_bbox",
         "bbox_source": "sam31_frame0_union_mask",
@@ -1223,6 +1239,7 @@ def run_edgetam_workers_sequentially(
     edgetam_repo: str | Path = DEFAULT_EDGETAM_REPO,
     checkpoint: str | Path = DEFAULT_EDGETAM_CHECKPOINT,
     model_cfg: str = DEFAULT_EDGETAM_MODEL_CFG,
+    compile_mode: str = EDGETAM_COMPILE_EAGER,
     warmup_runs: int = DEFAULT_STABLE_WARMUP_RUNS,
     overwrite: bool = False,
 ) -> list[dict[str, Any]]:
@@ -1263,6 +1280,8 @@ def run_edgetam_workers_sequentially(
                 str(checkpoint),
                 "--model-cfg",
                 str(model_cfg),
+                "--compile-mode",
+                str(compile_mode),
                 "--warmup-runs",
                 str(int(warmup_runs)),
             ]
@@ -2913,6 +2932,7 @@ def write_edgetam_round1_3x6_report(
         f"- frames: `{payload.get('gif_summary', {}).get('frames', payload.get('frames'))}`",
         "- panel columns: `SAM3.1`, `SAM2.1 large/base_plus/small/tiny`, `EdgeTAM`",
         "- EdgeTAM init: `SAM3.1 frame0 union mask` via `add_new_mask(...)`",
+        f"- EdgeTAM compile mode: `{payload.get('edgetam', {}).get('compile_mode', 'unknown')}`",
         "- EdgeTAM timing: no-output propagation after warmup; model load, JPEG prep, init_state, prompt, warmup, and mask collection are excluded.",
         f"- depth override root: `{payload.get('depth_override_root')}`",
         "",
@@ -2985,6 +3005,7 @@ def run_edgetam_dynamics_round1_3x6_workflow(
     edgetam_repo: str | Path = DEFAULT_EDGETAM_REPO,
     edgetam_checkpoint: str | Path = DEFAULT_EDGETAM_CHECKPOINT,
     edgetam_model_cfg: str = DEFAULT_EDGETAM_MODEL_CFG,
+    edgetam_compile_mode: str = EDGETAM_COMPILE_NO_POS_CACHE,
     edgetam_warmup_runs: int = DEFAULT_STABLE_WARMUP_RUNS,
     overwrite_edgetam: bool = False,
     save_first_frame_ply: bool = True,
@@ -3056,6 +3077,7 @@ def run_edgetam_dynamics_round1_3x6_workflow(
             edgetam_repo=edgetam_repo,
             checkpoint=edgetam_checkpoint,
             model_cfg=edgetam_model_cfg,
+            compile_mode=str(edgetam_compile_mode),
             warmup_runs=int(edgetam_warmup_runs),
             overwrite=bool(overwrite_edgetam),
         )
@@ -3079,7 +3101,7 @@ def run_edgetam_dynamics_round1_3x6_workflow(
         timing_records=all_timing_records,
         variant_keys=variant_keys,
         extra_variant_roots=extra_roots,
-        variant_display_labels={EDGE_TAM_VARIANT_KEY: "EdgeTAM"},
+        variant_display_labels={EDGE_TAM_VARIANT_KEY: "EdgeTAM compiled"},
         output_name=DEFAULT_EDGETAM_ROUND1_3X6_OUTPUT_NAME,
         depth_override_root=depth_override_root,
         sam31_mask_label="generated mask",
@@ -3119,6 +3141,7 @@ def run_edgetam_dynamics_round1_3x6_workflow(
             "repo": str(Path(edgetam_repo).expanduser().resolve()),
             "checkpoint": str(edgetam_checkpoint),
             "model_cfg": str(edgetam_model_cfg),
+            "compile_mode": str(edgetam_compile_mode),
             "warmup_runs": int(edgetam_warmup_runs),
         },
         "sam21_timing_records": sam21_timing_records,

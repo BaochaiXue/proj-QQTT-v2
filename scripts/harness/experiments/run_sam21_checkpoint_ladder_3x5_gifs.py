@@ -15,6 +15,9 @@ from data_process.visualization.experiments.sam21_checkpoint_ladder_panel import
     CASE_SET_STILL_OBJECT_ROPE,
     DEFAULT_DYNAMICS_OUTPUT_DIR,
     DEFAULT_EDGETAM_CHECKPOINT,
+    EDGETAM_COMPILE_EAGER,
+    EDGETAM_COMPILE_IMAGE_ENCODER,
+    EDGETAM_COMPILE_NO_POS_CACHE,
     DEFAULT_EDGETAM_ENV_NAME,
     DEFAULT_EDGETAM_MODEL_CFG,
     DEFAULT_EDGETAM_REPO,
@@ -111,6 +114,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--edgetam-repo", type=Path, default=DEFAULT_EDGETAM_REPO)
     parser.add_argument("--edgetam-checkpoint", default=str(DEFAULT_EDGETAM_CHECKPOINT))
     parser.add_argument("--edgetam-model-cfg", default=DEFAULT_EDGETAM_MODEL_CFG)
+    parser.add_argument(
+        "--edgetam-compile-mode",
+        choices=(EDGETAM_COMPILE_EAGER, EDGETAM_COMPILE_IMAGE_ENCODER, EDGETAM_COMPILE_NO_POS_CACHE),
+        default=EDGETAM_COMPILE_NO_POS_CACHE,
+    )
     parser.add_argument("--edgetam-warmup-runs", type=int, default=5)
     parser.add_argument("--phystwin-radius-m", type=float, default=0.01)
     parser.add_argument("--phystwin-nb-points", type=int, default=40)
@@ -128,6 +136,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     worker.add_argument("--checkpoint", type=Path, help=argparse.SUPPRESS)
     worker.add_argument("--config", help=argparse.SUPPRESS)
     worker.add_argument("--output-mask-root", type=Path, help=argparse.SUPPRESS)
+    worker.add_argument("--sam31-mask-root", type=Path, help=argparse.SUPPRESS)
     worker.add_argument("--result-json", type=Path, help=argparse.SUPPRESS)
     worker.add_argument("--stable-worker", action="store_true", help=argparse.SUPPRESS)
     worker.add_argument("--job-manifest", type=Path, help=argparse.SUPPRESS)
@@ -243,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
             output_mask_root=Path(args.output_mask_root),
             result_json=Path(args.result_json),
             frames=selected_frames,
+            sam31_mask_root=Path(args.sam31_mask_root) if args.sam31_mask_root is not None else None,
             sam21_init_mode=selected_init_mode,
             bbox_padding_px=int(args.bbox_padding_px),
             overwrite=bool(args.overwrite),
@@ -280,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
             edgetam_repo=Path(args.edgetam_repo),
             edgetam_checkpoint=str(args.edgetam_checkpoint),
             edgetam_model_cfg=str(args.edgetam_model_cfg),
+            edgetam_compile_mode=str(args.edgetam_compile_mode),
             edgetam_warmup_runs=int(args.edgetam_warmup_runs),
             overwrite_edgetam=bool(args.overwrite),
             save_first_frame_ply=not bool(args.no_first_frame_ply),

@@ -17,6 +17,9 @@ import torch
 
 SAM_OBJECT_ID = 1
 OUTPUT_OBJECT_ID = 0
+EDGETAM_COMPILE_EAGER = "eager"
+EDGETAM_COMPILE_IMAGE_ENCODER = "compile_image_encoder"
+EDGETAM_COMPILE_NO_POS_CACHE = "compile_image_encoder_no_pos_cache_patch"
 
 
 def _parse_text_prompts(value: str) -> list[str]:
@@ -56,11 +59,12 @@ def _mask_shape_from_color(case_dir: Path, *, camera_idx: int, frame_token: str)
 def _load_union_mask(
     *,
     case_dir: Path,
+    mask_root: Path | None = None,
     camera_idx: int,
     frame_token: str,
     text_prompt: str,
 ) -> np.ndarray:
-    mask_root = case_dir / "sam31_masks"
+    mask_root = Path(mask_root).resolve() if mask_root is not None else case_dir / "sam31_masks"
     prompts = {_normalize_label(item) for item in _parse_text_prompts(text_prompt)}
     mask_info = _load_mask_info(mask_root, camera_idx=int(camera_idx))
     matched_ids = [obj_id for obj_id, label in mask_info.items() if _normalize_label(label) in prompts]
@@ -158,9 +162,81 @@ def _configure_torch() -> None:
         torch.backends.cudnn.allow_tf32 = True
 
 
-def run_worker(args: argparse.Namespace) -> dict[str, Any]:
+def _position_encoding_forward_no_cache():
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y_embed = (
+            torch.arange(1, x.shape[-2] + 1, dtype=torch.float32, device=x.device)
+            .view(1, -1, 1)
+            .repeat(x.shape[0], 1, x.shape[-1])
+        )
+        x_embed = (
+            torch.arange(1, x.shape[-1] + 1, dtype=torch.float32, device=x.device)
+            .view(1, 1, -1)
+            .repeat(x.shape[0], x.shape[-2], 1)
+        )
+
+        if self.normalize:
+            eps = 1e-6
+            y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale
+            x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale
+
+        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=x.device)
+        dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
+
+        pos_x = x_embed[:, :, :, None] / dim_t
+        pos_y = y_embed[:, :, :, None] / dim_t
+        pos_x = torch.stack(
+            (pos_x[:, :, :, 0::2].sin(), pos_x[:, :, :, 1::2].cos()), dim=4
+        ).flatten(3)
+        pos_y = torch.stack(
+            (pos_y[:, :, :, 0::2].sin(), pos_y[:, :, :, 1::2].cos()), dim=4
+        ).flatten(3)
+        return torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)
+
+    return forward
+
+
+def _patch_position_encoding_no_cache() -> bool:
+    from sam2.modeling.position_encoding import PositionEmbeddingSine
+
+    if getattr(PositionEmbeddingSine.forward, "_qqtt_no_cache_patch", False):
+        return False
+    forward = _position_encoding_forward_no_cache()
+    forward._qqtt_no_cache_patch = True  # type: ignore[attr-defined]
+    PositionEmbeddingSine.forward = forward
+    return True
+
+
+def _build_predictor(*, model_cfg: str, checkpoint: str, compile_mode: str):
     from sam2.build_sam import build_sam2_video_predictor
 
+    compile_mode = str(compile_mode)
+    overrides: list[str] = []
+    metadata: dict[str, Any] = {
+        "compile_mode": compile_mode,
+        "hydra_overrides_extra": overrides,
+        "position_encoding_no_cache_patch": False,
+    }
+    if compile_mode == EDGETAM_COMPILE_NO_POS_CACHE:
+        metadata["position_encoding_no_cache_patch"] = True
+        metadata["position_encoding_no_cache_patch_applied"] = _patch_position_encoding_no_cache()
+        overrides.append("model.compile_image_encoder=true")
+    elif compile_mode == EDGETAM_COMPILE_IMAGE_ENCODER:
+        overrides.append("model.compile_image_encoder=true")
+    elif compile_mode != EDGETAM_COMPILE_EAGER:
+        raise ValueError(f"Unsupported EdgeTAM compile mode: {compile_mode}")
+
+    predictor = build_sam2_video_predictor(
+        str(model_cfg),
+        str(checkpoint),
+        device="cuda",
+        hydra_overrides_extra=overrides,
+    )
+    metadata["hydra_overrides_extra"] = list(overrides)
+    return predictor, metadata
+
+
+def run_worker(args: argparse.Namespace) -> dict[str, Any]:
     _configure_torch()
     case_dir = Path(args.case_dir).resolve()
     output_mask_root = Path(args.output_mask_root).resolve()
@@ -168,8 +244,10 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
     result_json.parent.mkdir(parents=True, exist_ok=True)
 
     frame_tokens = _sorted_frame_tokens(case_dir, camera_idx=int(args.camera_idx), frames=args.frames)
+    sam31_mask_root = Path(args.sam31_mask_root).resolve() if args.sam31_mask_root is not None else case_dir / "sam31_masks"
     init_mask = _load_union_mask(
         case_dir=case_dir,
+        mask_root=sam31_mask_root,
         camera_idx=int(args.camera_idx),
         frame_token=frame_tokens[0],
         text_prompt=str(args.text_prompt),
@@ -188,7 +266,11 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
     predictor = None
     try:
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-            predictor = build_sam2_video_predictor(str(args.model_cfg), str(args.checkpoint), device="cuda")
+            predictor, compile_metadata = _build_predictor(
+                model_cfg=str(args.model_cfg),
+                checkpoint=str(args.checkpoint),
+                compile_mode=str(args.compile_mode),
+            )
 
             def init_state() -> Any:
                 return predictor.init_state(str(video_dir))
@@ -266,7 +348,10 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
             "checkpoint_label": "EdgeTAM",
             "checkpoint_path": str(Path(args.checkpoint).resolve()),
             "config": str(args.model_cfg),
+            "compile_mode": str(args.compile_mode),
+            "compile_metadata": compile_metadata,
             "init_mode": "mask",
+            "sam31_mask_root": str(sam31_mask_root),
             "prompt_source": "sam31_frame0_union_mask",
             "frames_requested": int(len(frame_tokens)),
             "frame_tokens": [str(item) for item in frame_tokens],
@@ -298,6 +383,7 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
                 "torch_cuda": torch.version.cuda,
                 "bfloat16_autocast": True,
                 "speed_pass_collects_masks": False,
+                "compile_mode": str(args.compile_mode),
             },
         }
         result_json.write_text(json.dumps(result, indent=2), encoding="utf-8")
@@ -313,11 +399,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--text-prompt", required=True)
     parser.add_argument("--camera-idx", type=int, required=True)
     parser.add_argument("--output-mask-root", type=Path, required=True)
+    parser.add_argument("--sam31-mask-root", type=Path)
     parser.add_argument("--result-json", type=Path, required=True)
     parser.add_argument("--frames", type=int)
     parser.add_argument("--all-frames", action="store_true")
     parser.add_argument("--checkpoint", default="checkpoints/edgetam.pt")
     parser.add_argument("--model-cfg", default="configs/edgetam.yaml")
+    parser.add_argument(
+        "--compile-mode",
+        choices=(EDGETAM_COMPILE_EAGER, EDGETAM_COMPILE_IMAGE_ENCODER, EDGETAM_COMPILE_NO_POS_CACHE),
+        default=EDGETAM_COMPILE_EAGER,
+    )
     parser.add_argument("--warmup-runs", type=int, default=5)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)

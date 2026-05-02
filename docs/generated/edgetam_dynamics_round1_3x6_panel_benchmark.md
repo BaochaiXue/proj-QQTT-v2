@@ -6,6 +6,7 @@
 - frames: `71`
 - panel columns: `SAM3.1`, `SAM2.1 large/base_plus/small/tiny`, `EdgeTAM`
 - EdgeTAM init: `SAM3.1 frame0 union mask` via `add_new_mask(...)`
+- EdgeTAM compile mode: `compile_image_encoder_no_pos_cache_patch`
 - EdgeTAM timing: no-output propagation after warmup; model load, JPEG prep, init_state, prompt, warmup, and mask collection are excluded.
 - depth override root: `/home/zhangxinjie/proj-QQTT-v2/result/sam21_dynamics_checkpoint_ladder_3x5_time_gifs_ffs203048_iter4_trt_level5_maskinit_stable_throughput/ffs_depth_cache/ffs_dynamics_round1`
 
@@ -18,10 +19,10 @@
 
 | cam | ms/frame | FPS | frames |
 | ---: | ---: | ---: | ---: |
-| 0 | 21.13 | 47.33 | 71 |
-| 1 | 20.36 | 49.11 | 71 |
-| 2 | 21.58 | 46.35 | 71 |
-| **mean** | **21.02** | **47.57** |  |
+| 0 | 14.67 | 68.19 | 71 |
+| 1 | 16.21 | 61.67 | 71 |
+| 2 | 15.74 | 63.53 | 71 |
+| **mean** | **15.54** | **64.35** |  |
 
 ## Mask Stability
 
@@ -42,6 +43,6 @@
 | tiny | 0 | 0.0698 | 0.0492 |
 | tiny | 1 | 0.1643 | 0.0520 |
 | tiny | 2 | 0.2990 | 0.2730 |
-| edgetam | 0 | 0.0807 | 0.0000 |
-| edgetam | 1 | 0.1554 | 0.0539 |
-| edgetam | 2 | 0.2983 | 0.2737 |
+| edgetam | 0 | 0.0849 | 0.0000 |
+| edgetam | 1 | 0.1515 | 0.0537 |
+| edgetam | 2 | 0.2982 | 0.2737 |

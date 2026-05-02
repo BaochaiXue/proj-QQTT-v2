@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from data_process.visualization.experiments import sam21_checkpoint_ladder_panel as ladder
+from data_process.visualization.experiments import sam21_mask_overlay_panel as mask_overlay
 from tests.visualization_test_utils import make_sam31_masks, make_visualization_case
 
 
@@ -135,6 +136,28 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
         self.assertIsNone(manifest["frames"])
         self.assertEqual(manifest["sam21_init_mode"], ladder.SAM21_INIT_MASK)
 
+    def test_stable_manifest_records_external_sam31_mask_root(self) -> None:
+        case = ladder.LadderCaseSpec(
+            key="dyn",
+            label="Dyn",
+            output_name="dyn",
+            case_dir=Path("/case"),
+            text_prompt="sloth",
+        )
+        checkpoint = ladder.default_ladder_checkpoint_specs()[0]
+        manifest = ladder.build_stable_job_manifest(
+            case_specs=[case],
+            checkpoint_spec=checkpoint,
+            checkpoint_cache=Path("/ckpt"),
+            output_dir=Path("/out"),
+            frames=None,
+            sam31_mask_root=Path("/external/sam31_masks"),
+            sam21_init_mode=ladder.SAM21_INIT_MASK,
+            camera_ids=[0],
+        )
+        self.assertEqual(manifest["sam31_mask_root"], "/external/sam31_masks")
+        self.assertEqual(manifest["jobs"][0]["sam31_mask_root"], "/external/sam31_masks")
+
     def test_stable_report_describes_no_output_timing_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             report_path = Path(tmp_dir) / "report.md"
@@ -199,6 +222,51 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             row_label_width=20,
         )
         self.assertEqual(board.shape, (84 + 38 + 3 * 12, 20 + 6 * 16, 3))
+
+    def test_edgetam_round1_cli_defaults_to_compiled_mode(self) -> None:
+        from scripts.harness.experiments.run_sam21_checkpoint_ladder_3x5_gifs import parse_args
+
+        args = parse_args(["--edgetam-round1-3x6"])
+        self.assertEqual(args.edgetam_compile_mode, ladder.EDGETAM_COMPILE_NO_POS_CACHE)
+
+    def test_mask_overlay_stats_and_render_shape(self) -> None:
+        reference = np.zeros((8, 10), dtype=bool)
+        candidate = np.zeros((8, 10), dtype=bool)
+        reference[2:6, 2:6] = True
+        candidate[3:7, 3:7] = True
+        stats = mask_overlay.compare_masks(reference, candidate)
+        self.assertEqual(stats["intersection_pixel_count"], 9)
+        self.assertEqual(stats["union_pixel_count"], 23)
+        self.assertAlmostEqual(stats["iou"], 9.0 / 23.0)
+
+        color = np.full((8, 10, 3), 80, dtype=np.uint8)
+        tile, tile_stats = mask_overlay.build_overlay_tile(
+            color_bgr=color,
+            reference_mask=reference,
+            candidate_mask=candidate,
+            variant_label="tiny",
+            tile_width=64,
+            tile_height=48,
+        )
+        self.assertEqual(tile.shape, (48, 64, 3))
+        self.assertEqual(tile_stats["candidate_only_pixel_count"], 7)
+
+    def test_mask_overlay_black_union_rgb_background(self) -> None:
+        reference = np.zeros((8, 10), dtype=bool)
+        candidate = np.zeros((8, 10), dtype=bool)
+        reference[2:6, 2:6] = True
+        candidate[3:7, 3:7] = True
+        color = np.full((8, 10, 3), 90, dtype=np.uint8)
+        overlay = mask_overlay.render_mask_difference_overlay(
+            color,
+            reference,
+            candidate,
+            background_mode="black_union_rgb",
+            color_overlap=False,
+        )
+        self.assertTrue(np.array_equal(overlay[0, 0], np.zeros(3, dtype=np.uint8)))
+        self.assertTrue(np.any(overlay[2, 2] > 0))
+        self.assertTrue(np.any(overlay[3, 3] > 0))
 
     def test_pinhole_renderer_uses_original_camera_z_buffer(self) -> None:
         points = np.asarray(

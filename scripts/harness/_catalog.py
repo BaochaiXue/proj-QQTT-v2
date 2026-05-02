@@ -242,6 +242,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/run_sloth_base_motion_mask_overlay_3x3_gif.py",
+        "experiments",
+        "Regenerate sloth_base_motion masks and render Small/Tiny/compiled EdgeTAM XOR overlay GIF.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/experiments/run_still_object_round1_projection_panel.py",
         "experiments",
         "Still-object round1 native/FFS projected-PCD removal board.",
@@ -286,6 +292,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "scripts/harness/experiments/visual_compare_native_ffs_fused_pcd.py",
         "experiments",
         "Native, original FFS, and fused native/FFS point-cloud board.",
+        "full",
+    ),
+    HarnessEntry(
+        "scripts/harness/experiments/visualize_sam21_edgetam_mask_overlay_3x3_gif.py",
+        "experiments",
+        "SAM2.1 Small/Tiny and compiled EdgeTAM mask overlay GIF against SAM3.1.",
         "full",
     ),
     HarnessEntry(
