@@ -46,6 +46,7 @@ These record what the current machine and D455 topology actually supported durin
 - `edgetam_video_trt_compile_probe.md`
 - `hf_edgetam_streaming_validation.md`
 - `hf_edgetam_streaming_processor_session_validation.md`
+- `hf_edgetam_streaming_realcase_benchmark.md`
 
 These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 
@@ -90,6 +91,8 @@ These record repo-structure, scope, and metadata-contract hardening passes.
 - `edgetam_video_trt_compile_probe.json`
 - `hf_edgetam_streaming_results.json`
 - `hf_edgetam_streaming_processor_session_results.json`
+- `hf_edgetam_streaming_realcase_results.json`
+- `hf_edgetam_streaming_quality.json`
 
 These are not general datasets. They are small helper assets used by specific validation and visualization workflows.
 

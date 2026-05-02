@@ -210,8 +210,10 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - `conda run --no-capture-output -n edgetam-hf-stream python -m pip check`
   - `conda run --no-capture-output -n edgetam-hf-stream python scripts/harness/verify_hf_edgetam_streaming.py --json-output docs/generated/hf_edgetam_streaming_results.json --markdown-output docs/generated/hf_edgetam_streaming_validation.md`
   - `conda run --no-capture-output -n edgetam-hf-stream python scripts/harness/verify_hf_edgetam_streaming.py --frames 3 --session-init processor --json-output docs/generated/hf_edgetam_streaming_processor_session_results.json --markdown-output docs/generated/hf_edgetam_streaming_processor_session_validation.md`
+  - `conda run --no-capture-output -n edgetam-hf-stream python scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py --frames 30 --prompt-modes point,box,mask --output-dir result/hf_edgetam_streaming_realcase --json-output docs/generated/hf_edgetam_streaming_realcase_results.json --markdown-output docs/generated/hf_edgetam_streaming_realcase_benchmark.md --quality-output docs/generated/hf_edgetam_streaming_quality.json --overwrite`
 - Expected use:
   - frame-by-frame HF EdgeTAMVideo streaming API proof-of-life
+  - local-data real-case streaming FPS and quality benchmarks
   - compare live-session behavior against offline EdgeTAM/SAM-family masks
   - prototype session-style state handling before any migration back to the patched official EdgeTAM backend
 

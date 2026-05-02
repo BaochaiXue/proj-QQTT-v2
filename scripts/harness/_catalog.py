@@ -254,6 +254,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py",
+        "experiments",
+        "Hugging Face EdgeTAMVideo streaming benchmark on real aligned QQTT cases.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py",
         "experiments",
         "FFS confidence filtering sweep runner.",
