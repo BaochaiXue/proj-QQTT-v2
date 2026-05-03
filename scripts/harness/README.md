@@ -69,6 +69,12 @@ export TORCH_CUDA_ARCH_LIST=12.0
 - Do not label saved-pair, static replay, or TensorRT proxy numbers as "live PyTorch 3-camera realtime".
 - `benchmark_ffs_configs.py` is for saved-pair PyTorch screening; `run_ffs_static_replay_matrix.py` is for offline static replay / TensorRT proxy measurement; `cameras_viewer_FFS.py --ffs_backend pytorch` is the authoritative live PyTorch path.
 
+## Hand / Controller PCD Warning
+
+- PhysTwin-style controller visualizations intentionally merge all `hand` instances into one `controller` mask/PCD. Do not interpret local per-camera hand mask ids as cross-view global hand ids unless a separate 3D association step has been run and recorded.
+- Enhanced PhysTwin-like PCD cleanup is useful for object display rows, but it can be risky for hands/controller rows: the component filter may remove sparse fingertips, contact patches, or fast-moving partial hand points that matter for manipulation. Prefer the simpler PhysTwin-like radius `pt-filter` for controller rows, and treat any controller enhanced-PT output as qualitative unless the removed-points trace has been reviewed.
+- If a workflow needs per-hand identity, create and store an explicit `local camera mask id -> global hand id` mapping from frame-0 world-coordinate PCDs before fusing camera clouds. Do not use image-left/image-right as a cross-camera identity rule.
+
 ## Primary Entrypoints
 
 - Checks: `check_all.py`, `check_harness_catalog.py`, `check_scope.py`, `check_experiment_boundaries.py`, `check_visual_architecture.py`.

@@ -1,0 +1,4474 @@
+{
+  "timestamp_utc": "2026-05-03T20:00:09.295677+00:00",
+  "model_id": "yonigozlan/EdgeTAM-hf",
+  "environment": "edgetam-hf-stream",
+  "compile_mode": "vision-reduce-overhead",
+  "compile_metadata": {
+    "compile_mode": "vision-reduce-overhead",
+    "enabled": true,
+    "torch_compile_available": true,
+    "torch_compile_mode": "reduce-overhead",
+    "fullgraph": false,
+    "dynamic": false,
+    "requested_targets": [
+      "vision_encoder"
+    ],
+    "applied_targets": [
+      "vision_encoder"
+    ],
+    "missing_targets": [],
+    "whole_model_compiled": false,
+    "wrap_ms": 406.43219801131636
+  },
+  "case": {
+    "key": "sloth_set_2_motion_ffs",
+    "label": "Sloth Set 2 Motion FFS",
+    "case_dir": "/home/zhangxinjie/proj-QQTT-v2/data/different_types/sloth_set_2_motion_ffs",
+    "sam31_mask_root": "/home/zhangxinjie/proj-QQTT-v2/result/sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd/sam31_masks",
+    "mask_output_root": "/home/zhangxinjie/proj-QQTT-v2/result/sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd/hf_edgetam_streaming_multi_object/masks/sloth_set_2_motion_ffs"
+  },
+  "objects": [
+    {
+      "object_id": 1,
+      "label": "stuffed animal",
+      "row_label": "stuffed animal"
+    },
+    {
+      "object_id": 2,
+      "label": "controller",
+      "row_label": "controller"
+    }
+  ],
+  "camera_ids": [
+    0,
+    1,
+    2
+  ],
+  "frames": null,
+  "streaming_contract": {
+    "frame_by_frame_streaming": true,
+    "offline_video_input_used": false,
+    "frame_source": "png_loop",
+    "video_path_argument_used": false,
+    "frame0_prompt": "sam31_mask_multi_object"
+  },
+  "warmup": {
+    "enabled": true,
+    "frames": 3,
+    "compile_warmup_frames": 3,
+    "record": {
+      "status": "pass",
+      "case_key": "sloth_set_2_motion_ffs",
+      "case_label": "Sloth Set 2 Motion FFS",
+      "case_dir": "/home/zhangxinjie/proj-QQTT-v2/data/different_types/sloth_set_2_motion_ffs",
+      "camera_idx": 0,
+      "frame_count": 3,
+      "frame_tokens": [
+        "0",
+        "1",
+        "2"
+      ],
+      "object_ids": [
+        1,
+        2
+      ],
+      "object_labels": {
+        "1": "stuffed animal",
+        "2": "hand"
+      },
+      "first_frame_latency_ms": 4056.789269001456,
+      "first_frame_model_ms": 3960.8691679895855,
+      "subsequent_frame_latency_ms": {
+        "mean": 40.76089498994406,
+        "median": 40.76089498994406,
+        "p90": 54.49808458506595,
+        "p95": 56.21523328445619,
+        "min": 23.5894079960417,
+        "max": 57.932381983846426
+      },
+      "subsequent_model_ms": {
+        "mean": 38.58130649314262,
+        "median": 38.58130649314262,
+        "p90": 51.970098895253614,
+        "p95": 53.64369794551749,
+        "min": 21.845315990503877,
+        "max": 55.31729699578136
+      },
+      "preprocess_ms": {
+        "mean": 25.30819166956159,
+        "median": 2.548649994423613,
+        "p90": 57.86491000908427,
+        "p95": 64.77944251091685,
+        "min": 1.6819500015117228,
+        "max": 71.69397501274943
+      },
+      "model_ms": {
+        "mean": 1346.0105936586235,
+        "median": 55.31729699578136,
+        "p90": 3179.7587937908247,
+        "p95": 3570.3139808902047,
+        "min": 21.845315990503877,
+        "max": 3960.8691679895855
+      },
+      "postprocess_ms": {
+        "mean": 0.06553733449739714,
+        "median": 0.066434993641451,
+        "p90": 0.06771500338800251,
+        "p95": 0.06787500460632145,
+        "min": 0.06214200402610004,
+        "max": 0.0680350058246404
+      },
+      "prompt_ms": {
+        "mean": 24.158090993296355,
+        "median": 24.158090993296355,
+        "p90": 24.158090993296355,
+        "p95": 24.158090993296355,
+        "min": 24.158090993296355,
+        "max": 24.158090993296355
+      },
+      "streaming_total_ms": 4138.311058981344,
+      "wall_ms": 4169.022306014085,
+      "end_to_end_streaming_fps": 0.7249334226553906,
+      "model_only_streaming_fps": 0.742936203259646,
+      "mask_output": null,
+      "quality_by_object": {
+        "1": {
+          "label": "stuffed animal",
+          "frame_count": 3,
+          "area_mean": 22167.666666666668,
+          "area_std": 146.1445251188775,
+          "area_min": 21961,
+          "area_max": 22273,
+          "failure_frames": []
+        },
+        "2": {
+          "label": "hand",
+          "frame_count": 3,
+          "area_mean": 6408.333333333333,
+          "area_std": 319.93367368183607,
+          "area_min": 6096,
+          "area_max": 6848,
+          "failure_frames": []
+        }
+      },
+      "frames": [
+        {
+          "frame_idx": 0,
+          "frame_token": "0",
+          "preprocess_ms": 71.69397501274943,
+          "prompt_ms": 24.158090993296355,
+          "model_ms": 3960.8691679895855,
+          "postprocess_ms": 0.0680350058246404,
+          "frame_total_ms": 4056.789269001456,
+          "object_areas": {
+            "1": 21961,
+            "2": 6848
+          }
+        },
+        {
+          "frame_idx": 1,
+          "frame_token": "1",
+          "preprocess_ms": 2.548649994423613,
+          "prompt_ms": 0.0,
+          "model_ms": 55.31729699578136,
+          "postprocess_ms": 0.066434993641451,
+          "frame_total_ms": 57.932381983846426,
+          "object_areas": {
+            "1": 22273,
+            "2": 6281
+          }
+        },
+        {
+          "frame_idx": 2,
+          "frame_token": "2",
+          "preprocess_ms": 1.6819500015117228,
+          "prompt_ms": 0.0,
+          "model_ms": 21.845315990503877,
+          "postprocess_ms": 0.06214200402610004,
+          "frame_total_ms": 23.5894079960417,
+          "object_areas": {
+            "1": 22269,
+            "2": 6096
+          }
+        }
+      ],
+      "compile_mode": "vision-reduce-overhead"
+    }
+  },
+  "env": {
+    "python": "/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/bin/python",
+    "transformers": "5.7.0",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "cuda_available": true,
+    "device": "cuda",
+    "gpu": "NVIDIA GeForce RTX 5090 Laptop GPU"
+  },
+  "jobs": [
+    {
+      "status": "pass",
+      "case_key": "sloth_set_2_motion_ffs",
+      "case_label": "Sloth Set 2 Motion FFS",
+      "case_dir": "/home/zhangxinjie/proj-QQTT-v2/data/different_types/sloth_set_2_motion_ffs",
+      "camera_idx": 0,
+      "frame_count": 93,
+      "frame_tokens": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "35",
+        "36",
+        "37",
+        "38",
+        "39",
+        "40",
+        "41",
+        "42",
+        "43",
+        "44",
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51",
+        "52",
+        "53",
+        "54",
+        "55",
+        "56",
+        "57",
+        "58",
+        "59",
+        "60",
+        "61",
+        "62",
+        "63",
+        "64",
+        "65",
+        "66",
+        "67",
+        "68",
+        "69",
+        "70",
+        "71",
+        "72",
+        "73",
+        "74",
+        "75",
+        "76",
+        "77",
+        "78",
+        "79",
+        "80",
+        "81",
+        "82",
+        "83",
+        "84",
+        "85",
+        "86",
+        "87",
+        "88",
+        "89",
+        "90",
+        "91",
+        "92"
+      ],
+      "object_ids": [
+        1,
+        2
+      ],
+      "object_labels": {
+        "1": "stuffed animal",
+        "2": "controller"
+      },
+      "first_frame_latency_ms": 23.00960902357474,
+      "first_frame_model_ms": 15.274820005288348,
+      "subsequent_frame_latency_ms": {
+        "mean": 20.41568430570845,
+        "median": 19.969058499555103,
+        "p90": 22.516201686812565,
+        "p95": 23.696927887795027,
+        "min": 18.264753016410396,
+        "max": 25.001347006764263
+      },
+      "subsequent_model_ms": {
+        "mean": 19.045610751440424,
+        "median": 18.607424019137397,
+        "p90": 21.185497284750454,
+        "p95": 22.311202350829262,
+        "min": 17.06896399264224,
+        "max": 23.238996975123882
+      },
+      "preprocess_ms": {
+        "mean": 1.300478430767794,
+        "median": 1.2825479789171368,
+        "p90": 1.456851401599124,
+        "p95": 1.5274894074536858,
+        "min": 0.9860320133157074,
+        "max": 1.8279259966220707
+      },
+      "model_ms": {
+        "mean": 19.005064614385027,
+        "median": 18.57708502211608,
+        "p90": 21.155407588230446,
+        "p95": 22.310388198820874,
+        "min": 15.274820005288348,
+        "max": 23.238996975123882
+      },
+      "postprocess_ms": {
+        "mean": 0.0736473650190859,
+        "median": 0.06937497528269887,
+        "p90": 0.08570821373723447,
+        "p95": 0.09131858241744334,
+        "min": 0.05814598989672959,
+        "max": 0.2042840060312301
+      },
+      "prompt_ms": {
+        "mean": 5.98785700276494,
+        "median": 5.98785700276494,
+        "p90": 5.98785700276494,
+        "p95": 5.98785700276494,
+        "min": 5.98785700276494,
+        "max": 5.98785700276494
+      },
+      "streaming_total_ms": 1901.2525651487522,
+      "wall_ms": 2636.243422020925,
+      "end_to_end_streaming_fps": 48.915121380900686,
+      "model_only_streaming_fps": 52.61755328330192,
+      "mask_output": {
+        "mask_root": "/home/zhangxinjie/proj-QQTT-v2/result/sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd/hf_edgetam_streaming_multi_object/masks/sloth_set_2_motion_ffs",
+        "camera_idx": 0,
+        "object_labels": {
+          "1": "stuffed animal",
+          "2": "controller"
+        },
+        "saved_frame_counts": {
+          "1": 93,
+          "2": 93
+        }
+      },
+      "quality_by_object": {
+        "1": {
+          "label": "stuffed animal",
+          "frame_count": 93,
+          "area_mean": 24595.236559139787,
+          "area_std": 1532.014159497225,
+          "area_min": 21961,
+          "area_max": 27494,
+          "failure_frames": []
+        },
+        "2": {
+          "label": "controller",
+          "frame_count": 93,
+          "area_mean": 6544.688172043011,
+          "area_std": 511.1237877649985,
+          "area_min": 5622,
+          "area_max": 7455,
+          "failure_frames": []
+        }
+      },
+      "frames": [
+        {
+          "frame_idx": 0,
+          "frame_token": "0",
+          "preprocess_ms": 1.6848460072651505,
+          "prompt_ms": 5.98785700276494,
+          "model_ms": 15.274820005288348,
+          "postprocess_ms": 0.062086008256301284,
+          "frame_total_ms": 23.00960902357474,
+          "object_areas": {
+            "1": 21961,
+            "2": 6848
+          }
+        },
+        {
+          "frame_idx": 1,
+          "frame_token": "1",
+          "preprocess_ms": 1.0749890061561018,
+          "prompt_ms": 0.0,
+          "model_ms": 17.12095001130365,
+          "postprocess_ms": 0.06881399895064533,
+          "frame_total_ms": 18.264753016410396,
+          "object_areas": {
+            "1": 22273,
+            "2": 6281
+          }
+        },
+        {
+          "frame_idx": 2,
+          "frame_token": "2",
+          "preprocess_ms": 1.0292060032952577,
+          "prompt_ms": 0.0,
+          "model_ms": 17.192856001202017,
+          "postprocess_ms": 0.07182100671343505,
+          "frame_total_ms": 18.29388301121071,
+          "object_areas": {
+            "1": 22269,
+            "2": 6096
+          }
+        },
+        {
+          "frame_idx": 3,
+          "frame_token": "3",
+          "preprocess_ms": 1.2300530215725303,
+          "prompt_ms": 0.0,
+          "model_ms": 18.909158010501415,
+          "postprocess_ms": 0.07725600153207779,
+          "frame_total_ms": 20.216467033606023,
+          "object_areas": {
+            "1": 22401,
+            "2": 6071
+          }
+        },
+        {
+          "frame_idx": 4,
+          "frame_token": "4",
+          "preprocess_ms": 1.1146900069434196,
+          "prompt_ms": 0.0,
+          "model_ms": 17.907521018059924,
+          "postprocess_ms": 0.07512999582104385,
+          "frame_total_ms": 19.097341020824388,
+          "object_areas": {
+            "1": 22499,
+            "2": 5873
+          }
+        },
+        {
+          "frame_idx": 5,
+          "frame_token": "5",
+          "preprocess_ms": 1.2692540185526013,
+          "prompt_ms": 0.0,
+          "model_ms": 17.864341993117705,
+          "postprocess_ms": 0.0782890128903091,
+          "frame_total_ms": 19.211885024560615,
+          "object_areas": {
+            "1": 22727,
+            "2": 5815
+          }
+        },
+        {
+          "frame_idx": 6,
+          "frame_token": "6",
+          "preprocess_ms": 1.1851830058731139,
+          "prompt_ms": 0.0,
+          "model_ms": 17.44108201819472,
+          "postprocess_ms": 0.08458501542918384,
+          "frame_total_ms": 18.710850039497018,
+          "object_areas": {
+            "1": 22878,
+            "2": 5695
+          }
+        },
+        {
+          "frame_idx": 7,
+          "frame_token": "7",
+          "preprocess_ms": 1.3914199953433126,
+          "prompt_ms": 0.0,
+          "model_ms": 18.914823012892157,
+          "postprocess_ms": 0.07884498336352408,
+          "frame_total_ms": 20.385087991598994,
+          "object_areas": {
+            "1": 22893,
+            "2": 5746
+          }
+        },
+        {
+          "frame_idx": 8,
+          "frame_token": "8",
+          "preprocess_ms": 1.2632219877559692,
+          "prompt_ms": 0.0,
+          "model_ms": 22.320158022921532,
+          "postprocess_ms": 0.08215499110519886,
+          "frame_total_ms": 23.6655350017827,
+          "object_areas": {
+            "1": 22860,
+            "2": 5783
+          }
+        },
+        {
+          "frame_idx": 9,
+          "frame_token": "9",
+          "preprocess_ms": 1.3914390001446009,
+          "prompt_ms": 0.0,
+          "model_ms": 17.310238996287808,
+          "postprocess_ms": 0.06635300815105438,
+          "frame_total_ms": 18.768031004583463,
+          "object_areas": {
+            "1": 22814,
+            "2": 5722
+          }
+        },
+        {
+          "frame_idx": 10,
+          "frame_token": "10",
+          "preprocess_ms": 1.2382889981381595,
+          "prompt_ms": 0.0,
+          "model_ms": 20.657267014030367,
+          "postprocess_ms": 0.06546301301568747,
+          "frame_total_ms": 21.961019025184214,
+          "object_areas": {
+            "1": 22788,
+            "2": 5738
+          }
+        },
+        {
+          "frame_idx": 11,
+          "frame_token": "11",
+          "preprocess_ms": 1.2419749982655048,
+          "prompt_ms": 0.0,
+          "model_ms": 19.74742498714477,
+          "postprocess_ms": 0.06300598033703864,
+          "frame_total_ms": 21.05240596574731,
+          "object_areas": {
+            "1": 22724,
+            "2": 5622
+          }
+        },
+        {
+          "frame_idx": 12,
+          "frame_token": "12",
+          "preprocess_ms": 1.342831994406879,
+          "prompt_ms": 0.0,
+          "model_ms": 19.92281200364232,
+          "postprocess_ms": 0.10551497689448297,
+          "frame_total_ms": 21.371158974943683,
+          "object_areas": {
+            "1": 22656,
+            "2": 5657
+          }
+        },
+        {
+          "frame_idx": 13,
+          "frame_token": "13",
+          "preprocess_ms": 1.2502340250648558,
+          "prompt_ms": 0.0,
+          "model_ms": 20.883954013697803,
+          "postprocess_ms": 0.06692300667054951,
+          "frame_total_ms": 22.20111104543321,
+          "object_areas": {
+            "1": 22607,
+            "2": 5681
+          }
+        },
+        {
+          "frame_idx": 14,
+          "frame_token": "14",
+          "preprocess_ms": 1.3937890180386603,
+          "prompt_ms": 0.0,
+          "model_ms": 18.4983020008076,
+          "postprocess_ms": 0.07461599307134748,
+          "frame_total_ms": 19.966707011917606,
+          "object_areas": {
+            "1": 22693,
+            "2": 5724
+          }
+        },
+        {
+          "frame_idx": 15,
+          "frame_token": "15",
+          "preprocess_ms": 1.3633790076710284,
+          "prompt_ms": 0.0,
+          "model_ms": 20.658549008658156,
+          "postprocess_ms": 0.06670999573543668,
+          "frame_total_ms": 22.08863801206462,
+          "object_areas": {
+            "1": 22749,
+            "2": 5903
+          }
+        },
+        {
+          "frame_idx": 16,
+          "frame_token": "16",
+          "preprocess_ms": 1.3557490019593388,
+          "prompt_ms": 0.0,
+          "model_ms": 19.27925701602362,
+          "postprocess_ms": 0.06944499909877777,
+          "frame_total_ms": 20.704451017081738,
+          "object_areas": {
+            "1": 22956,
+            "2": 5985
+          }
+        },
+        {
+          "frame_idx": 17,
+          "frame_token": "17",
+          "preprocess_ms": 1.2116589932702482,
+          "prompt_ms": 0.0,
+          "model_ms": 18.440745014231652,
+          "postprocess_ms": 0.13084302190691233,
+          "frame_total_ms": 19.783247029408813,
+          "object_areas": {
+            "1": 23119,
+            "2": 6096
+          }
+        },
+        {
+          "frame_idx": 18,
+          "frame_token": "18",
+          "preprocess_ms": 1.2572550040204078,
+          "prompt_ms": 0.0,
+          "model_ms": 20.149991003563628,
+          "postprocess_ms": 0.08598901331424713,
+          "frame_total_ms": 21.493235020898283,
+          "object_areas": {
+            "1": 23445,
+            "2": 6180
+          }
+        },
+        {
+          "frame_idx": 19,
+          "frame_token": "19",
+          "preprocess_ms": 1.168000977486372,
+          "prompt_ms": 0.0,
+          "model_ms": 18.57708502211608,
+          "postprocess_ms": 0.06760499672964215,
+          "frame_total_ms": 19.812690996332094,
+          "object_areas": {
+            "1": 23863,
+            "2": 6285
+          }
+        },
+        {
+          "frame_idx": 20,
+          "frame_token": "20",
+          "preprocess_ms": 1.295687019592151,
+          "prompt_ms": 0.0,
+          "model_ms": 18.778990022838116,
+          "postprocess_ms": 0.07608500891365111,
+          "frame_total_ms": 20.150762051343918,
+          "object_areas": {
+            "1": 24133,
+            "2": 6269
+          }
+        },
+        {
+          "frame_idx": 21,
+          "frame_token": "21",
+          "preprocess_ms": 1.3468740216922015,
+          "prompt_ms": 0.0,
+          "model_ms": 20.33264300553128,
+          "postprocess_ms": 0.06327300798147917,
+          "frame_total_ms": 21.742790035204962,
+          "object_areas": {
+            "1": 24609,
+            "2": 6457
+          }
+        },
+        {
+          "frame_idx": 22,
+          "frame_token": "22",
+          "preprocess_ms": 1.3254680088721216,
+          "prompt_ms": 0.0,
+          "model_ms": 17.48521000263281,
+          "postprocess_ms": 0.06937497528269887,
+          "frame_total_ms": 18.880052986787632,
+          "object_areas": {
+            "1": 24882,
+            "2": 6570
+          }
+        },
+        {
+          "frame_idx": 23,
+          "frame_token": "23",
+          "preprocess_ms": 1.2825479789171368,
+          "prompt_ms": 0.0,
+          "model_ms": 19.93928902084008,
+          "postprocess_ms": 0.06479700095951557,
+          "frame_total_ms": 21.28663400071673,
+          "object_areas": {
+            "1": 25424,
+            "2": 6830
+          }
+        },
+        {
+          "frame_idx": 24,
+          "frame_token": "24",
+          "preprocess_ms": 1.2666580150835216,
+          "prompt_ms": 0.0,
+          "model_ms": 18.004116020165384,
+          "postprocess_ms": 0.06210501305758953,
+          "frame_total_ms": 19.332879048306495,
+          "object_areas": {
+            "1": 25728,
+            "2": 6825
+          }
+        },
+        {
+          "frame_idx": 25,
+          "frame_token": "25",
+          "preprocess_ms": 1.3162200048100203,
+          "prompt_ms": 0.0,
+          "model_ms": 17.822357011027634,
+          "postprocess_ms": 0.05974501254968345,
+          "frame_total_ms": 19.198322028387338,
+          "object_areas": {
+            "1": 26036,
+            "2": 6836
+          }
+        },
+        {
+          "frame_idx": 26,
+          "frame_token": "26",
+          "preprocess_ms": 1.4236290007829666,
+          "prompt_ms": 0.0,
+          "model_ms": 21.65733400033787,
+          "postprocess_ms": 0.08821097435429692,
+          "frame_total_ms": 23.169173975475132,
+          "object_areas": {
+            "1": 26123,
+            "2": 6738
+          }
+        },
+        {
+          "frame_idx": 27,
+          "frame_token": "27",
+          "preprocess_ms": 1.3552759774029255,
+          "prompt_ms": 0.0,
+          "model_ms": 19.569615978980437,
+          "postprocess_ms": 0.06225801189430058,
+          "frame_total_ms": 20.987149968277663,
+          "object_areas": {
+            "1": 26088,
+            "2": 6656
+          }
+        },
+        {
+          "frame_idx": 28,
+          "frame_token": "28",
+          "preprocess_ms": 1.4210929803084582,
+          "prompt_ms": 0.0,
+          "model_ms": 17.625456006499007,
+          "postprocess_ms": 0.0726990110706538,
+          "frame_total_ms": 19.11924799787812,
+          "object_areas": {
+            "1": 26078,
+            "2": 6589
+          }
+        },
+        {
+          "frame_idx": 29,
+          "frame_token": "29",
+          "preprocess_ms": 1.4065380091778934,
+          "prompt_ms": 0.0,
+          "model_ms": 19.35715100262314,
+          "postprocess_ms": 0.06239299545995891,
+          "frame_total_ms": 20.826082007260993,
+          "object_areas": {
+            "1": 26033,
+            "2": 6573
+          }
+        },
+        {
+          "frame_idx": 30,
+          "frame_token": "30",
+          "preprocess_ms": 1.2211849971208721,
+          "prompt_ms": 0.0,
+          "model_ms": 23.238996975123882,
+          "postprocess_ms": 0.09473497630096972,
+          "frame_total_ms": 24.554916948545724,
+          "object_areas": {
+            "1": 25998,
+            "2": 6536
+          }
+        },
+        {
+          "frame_idx": 31,
+          "frame_token": "31",
+          "preprocess_ms": 1.516551012173295,
+          "prompt_ms": 0.0,
+          "model_ms": 20.91469001607038,
+          "postprocess_ms": 0.07002698839642107,
+          "frame_total_ms": 22.501268016640097,
+          "object_areas": {
+            "1": 25746,
+            "2": 6430
+          }
+        },
+        {
+          "frame_idx": 32,
+          "frame_token": "32",
+          "preprocess_ms": 1.8279259966220707,
+          "prompt_ms": 0.0,
+          "model_ms": 23.10627300175838,
+          "postprocess_ms": 0.06714800838381052,
+          "frame_total_ms": 25.001347006764263,
+          "object_areas": {
+            "1": 25695,
+            "2": 6513
+          }
+        },
+        {
+          "frame_idx": 33,
+          "frame_token": "33",
+          "preprocess_ms": 1.1845580011140555,
+          "prompt_ms": 0.0,
+          "model_ms": 17.86921202437952,
+          "postprocess_ms": 0.07431700942106545,
+          "frame_total_ms": 19.128087034914643,
+          "object_areas": {
+            "1": 25508,
+            "2": 6399
+          }
+        },
+        {
+          "frame_idx": 34,
+          "frame_token": "34",
+          "preprocess_ms": 1.3566119887400419,
+          "prompt_ms": 0.0,
+          "model_ms": 17.483356001321226,
+          "postprocess_ms": 0.06218897760845721,
+          "frame_total_ms": 18.902156967669725,
+          "object_areas": {
+            "1": 25415,
+            "2": 6415
+          }
+        },
+        {
+          "frame_idx": 35,
+          "frame_token": "35",
+          "preprocess_ms": 1.2438039993867278,
+          "prompt_ms": 0.0,
+          "model_ms": 20.51600400591269,
+          "postprocess_ms": 0.06166397361084819,
+          "frame_total_ms": 21.821471978910267,
+          "object_areas": {
+            "1": 25440,
+            "2": 6581
+          }
+        },
+        {
+          "frame_idx": 36,
+          "frame_token": "36",
+          "preprocess_ms": 1.1185340117663145,
+          "prompt_ms": 0.0,
+          "model_ms": 19.50690700323321,
+          "postprocess_ms": 0.062336010159924626,
+          "frame_total_ms": 20.68777702515945,
+          "object_areas": {
+            "1": 25447,
+            "2": 6573
+          }
+        },
+        {
+          "frame_idx": 37,
+          "frame_token": "37",
+          "preprocess_ms": 1.2287819990888238,
+          "prompt_ms": 0.0,
+          "model_ms": 18.237698008306324,
+          "postprocess_ms": 0.0816349929664284,
+          "frame_total_ms": 19.548115000361577,
+          "object_areas": {
+            "1": 25479,
+            "2": 6440
+          }
+        },
+        {
+          "frame_idx": 38,
+          "frame_token": "38",
+          "preprocess_ms": 1.4457929937634617,
+          "prompt_ms": 0.0,
+          "model_ms": 17.524575989227742,
+          "postprocess_ms": 0.06302099791355431,
+          "frame_total_ms": 19.033389980904758,
+          "object_areas": {
+            "1": 25568,
+            "2": 6555
+          }
+        },
+        {
+          "frame_idx": 39,
+          "frame_token": "39",
+          "preprocess_ms": 1.183025015052408,
+          "prompt_ms": 0.0,
+          "model_ms": 18.55688900104724,
+          "postprocess_ms": 0.06946400390006602,
+          "frame_total_ms": 19.809378019999713,
+          "object_areas": {
+            "1": 25551,
+            "2": 6543
+          }
+        },
+        {
+          "frame_idx": 40,
+          "frame_token": "40",
+          "preprocess_ms": 1.2746739957947284,
+          "prompt_ms": 0.0,
+          "model_ms": 17.270910990191624,
+          "postprocess_ms": 0.07058901246637106,
+          "frame_total_ms": 18.616173998452723,
+          "object_areas": {
+            "1": 25539,
+            "2": 6552
+          }
+        },
+        {
+          "frame_idx": 41,
+          "frame_token": "41",
+          "preprocess_ms": 1.3361300225369632,
+          "prompt_ms": 0.0,
+          "model_ms": 18.27591800247319,
+          "postprocess_ms": 0.0598980113863945,
+          "frame_total_ms": 19.671946036396548,
+          "object_areas": {
+            "1": 25521,
+            "2": 6573
+          }
+        },
+        {
+          "frame_idx": 42,
+          "frame_token": "42",
+          "preprocess_ms": 1.2218999909237027,
+          "prompt_ms": 0.0,
+          "model_ms": 17.67897099489346,
+          "postprocess_ms": 0.0754870125092566,
+          "frame_total_ms": 18.97635799832642,
+          "object_areas": {
+            "1": 25516,
+            "2": 6632
+          }
+        },
+        {
+          "frame_idx": 43,
+          "frame_token": "43",
+          "preprocess_ms": 1.1414579930715263,
+          "prompt_ms": 0.0,
+          "model_ms": 18.423573026666418,
+          "postprocess_ms": 0.07172900950536132,
+          "frame_total_ms": 19.636760029243305,
+          "object_areas": {
+            "1": 25203,
+            "2": 6857
+          }
+        },
+        {
+          "frame_idx": 44,
+          "frame_token": "44",
+          "preprocess_ms": 1.3641509867738932,
+          "prompt_ms": 0.0,
+          "model_ms": 17.68789000925608,
+          "postprocess_ms": 0.05814598989672959,
+          "frame_total_ms": 19.110186985926703,
+          "object_areas": {
+            "1": 24776,
+            "2": 7036
+          }
+        },
+        {
+          "frame_idx": 45,
+          "frame_token": "45",
+          "preprocess_ms": 1.1414960026741028,
+          "prompt_ms": 0.0,
+          "model_ms": 18.03747398662381,
+          "postprocess_ms": 0.06302099791355431,
+          "frame_total_ms": 19.241990987211466,
+          "object_areas": {
+            "1": 24386,
+            "2": 6695
+          }
+        },
+        {
+          "frame_idx": 46,
+          "frame_token": "46",
+          "preprocess_ms": 1.5438970003742725,
+          "prompt_ms": 0.0,
+          "model_ms": 17.730677995132282,
+          "postprocess_ms": 0.06401899736374617,
+          "frame_total_ms": 19.3385939928703,
+          "object_areas": {
+            "1": 24337,
+            "2": 6882
+          }
+        },
+        {
+          "frame_idx": 47,
+          "frame_token": "47",
+          "preprocess_ms": 1.2774330098181963,
+          "prompt_ms": 0.0,
+          "model_ms": 18.30915699247271,
+          "postprocess_ms": 0.06325001595541835,
+          "frame_total_ms": 19.649840018246323,
+          "object_areas": {
+            "1": 24486,
+            "2": 6799
+          }
+        },
+        {
+          "frame_idx": 48,
+          "frame_token": "48",
+          "preprocess_ms": 1.1162160080857575,
+          "prompt_ms": 0.0,
+          "model_ms": 17.207191995112225,
+          "postprocess_ms": 0.06382298306562006,
+          "frame_total_ms": 18.387230986263603,
+          "object_areas": {
+            "1": 24250,
+            "2": 6602
+          }
+        },
+        {
+          "frame_idx": 49,
+          "frame_token": "49",
+          "preprocess_ms": 1.277454022783786,
+          "prompt_ms": 0.0,
+          "model_ms": 18.030894018011168,
+          "postprocess_ms": 0.0750150065869093,
+          "frame_total_ms": 19.383363047381863,
+          "object_areas": {
+            "1": 24216,
+            "2": 6427
+          }
+        },
+        {
+          "frame_idx": 50,
+          "frame_token": "50",
+          "preprocess_ms": 1.416231010807678,
+          "prompt_ms": 0.0,
+          "model_ms": 18.433655000990257,
+          "postprocess_ms": 0.06846798351034522,
+          "frame_total_ms": 19.91835399530828,
+          "object_areas": {
+            "1": 24201,
+            "2": 6373
+          }
+        },
+        {
+          "frame_idx": 51,
+          "frame_token": "51",
+          "preprocess_ms": 1.2395179946906865,
+          "prompt_ms": 0.0,
+          "model_ms": 20.195942983264104,
+          "postprocess_ms": 0.06931400275789201,
+          "frame_total_ms": 21.504774980712682,
+          "object_areas": {
+            "1": 24122,
+            "2": 6502
+          }
+        },
+        {
+          "frame_idx": 52,
+          "frame_token": "52",
+          "preprocess_ms": 1.1680129973683506,
+          "prompt_ms": 0.0,
+          "model_ms": 18.333969986997545,
+          "postprocess_ms": 0.0810739875305444,
+          "frame_total_ms": 19.58305697189644,
+          "object_areas": {
+            "1": 24245,
+            "2": 6575
+          }
+        },
+        {
+          "frame_idx": 53,
+          "frame_token": "53",
+          "preprocess_ms": 1.2555309804156423,
+          "prompt_ms": 0.0,
+          "model_ms": 22.649320017080754,
+          "postprocess_ms": 0.07657500100322068,
+          "frame_total_ms": 23.981425998499617,
+          "object_areas": {
+            "1": 24617,
+            "2": 6934
+          }
+        },
+        {
+          "frame_idx": 54,
+          "frame_token": "54",
+          "preprocess_ms": 1.6248110041487962,
+          "prompt_ms": 0.0,
+          "model_ms": 18.36527799605392,
+          "postprocess_ms": 0.0716729846317321,
+          "frame_total_ms": 20.061761984834448,
+          "object_areas": {
+            "1": 24815,
+            "2": 7104
+          }
+        },
+        {
+          "frame_idx": 55,
+          "frame_token": "55",
+          "preprocess_ms": 1.2683660024777055,
+          "prompt_ms": 0.0,
+          "model_ms": 18.274961999850348,
+          "postprocess_ms": 0.06296398350968957,
+          "frame_total_ms": 19.606291985837743,
+          "object_areas": {
+            "1": 25174,
+            "2": 7297
+          }
+        },
+        {
+          "frame_idx": 56,
+          "frame_token": "56",
+          "preprocess_ms": 1.2999850150663406,
+          "prompt_ms": 0.0,
+          "model_ms": 18.015529989497736,
+          "postprocess_ms": 0.06516400026157498,
+          "frame_total_ms": 19.38067900482565,
+          "object_areas": {
+            "1": 25924,
+            "2": 7113
+          }
+        },
+        {
+          "frame_idx": 57,
+          "frame_token": "57",
+          "preprocess_ms": 1.0964169923681766,
+          "prompt_ms": 0.0,
+          "model_ms": 17.534228012664244,
+          "postprocess_ms": 0.07635299698449671,
+          "frame_total_ms": 18.706998002016917,
+          "object_areas": {
+            "1": 26156,
+            "2": 7104
+          }
+        },
+        {
+          "frame_idx": 58,
+          "frame_token": "58",
+          "preprocess_ms": 1.260371005628258,
+          "prompt_ms": 0.0,
+          "model_ms": 19.215356005588546,
+          "postprocess_ms": 0.07134300540201366,
+          "frame_total_ms": 20.547070016618818,
+          "object_areas": {
+            "1": 26764,
+            "2": 7306
+          }
+        },
+        {
+          "frame_idx": 59,
+          "frame_token": "59",
+          "preprocess_ms": 1.3323730090633035,
+          "prompt_ms": 0.0,
+          "model_ms": 19.636102981166914,
+          "postprocess_ms": 0.060964986914768815,
+          "frame_total_ms": 21.029440977144986,
+          "object_areas": {
+            "1": 26967,
+            "2": 7242
+          }
+        },
+        {
+          "frame_idx": 60,
+          "frame_token": "60",
+          "preprocess_ms": 1.2025799951516092,
+          "prompt_ms": 0.0,
+          "model_ms": 17.894941003760323,
+          "postprocess_ms": 0.06493300315923989,
+          "frame_total_ms": 19.162454002071172,
+          "object_areas": {
+            "1": 27065,
+            "2": 7304
+          }
+        },
+        {
+          "frame_idx": 61,
+          "frame_token": "61",
+          "preprocess_ms": 1.2186059902887791,
+          "prompt_ms": 0.0,
+          "model_ms": 17.477998975664377,
+          "postprocess_ms": 0.06412999937310815,
+          "frame_total_ms": 18.760734965326265,
+          "object_areas": {
+            "1": 26971,
+            "2": 7385
+          }
+        },
+        {
+          "frame_idx": 62,
+          "frame_token": "62",
+          "preprocess_ms": 1.2482620077207685,
+          "prompt_ms": 0.0,
+          "model_ms": 19.1848749818746,
+          "postprocess_ms": 0.06745898281224072,
+          "frame_total_ms": 20.50059597240761,
+          "object_areas": {
+            "1": 27242,
+            "2": 7421
+          }
+        },
+        {
+          "frame_idx": 63,
+          "frame_token": "63",
+          "preprocess_ms": 1.2529229861684144,
+          "prompt_ms": 0.0,
+          "model_ms": 22.550407011294737,
+          "postprocess_ms": 0.06438401760533452,
+          "frame_total_ms": 23.867714015068486,
+          "object_areas": {
+            "1": 27294,
+            "2": 7325
+          }
+        },
+        {
+          "frame_idx": 64,
+          "frame_token": "64",
+          "preprocess_ms": 1.1660509917419404,
+          "prompt_ms": 0.0,
+          "model_ms": 19.33022798039019,
+          "postprocess_ms": 0.07514000753872097,
+          "frame_total_ms": 20.571418979670852,
+          "object_areas": {
+            "1": 27474,
+            "2": 7331
+          }
+        },
+        {
+          "frame_idx": 65,
+          "frame_token": "65",
+          "preprocess_ms": 1.331779989413917,
+          "prompt_ms": 0.0,
+          "model_ms": 21.215586981270462,
+          "postprocess_ms": 0.06499802111648023,
+          "frame_total_ms": 22.61236499180086,
+          "object_areas": {
+            "1": 27494,
+            "2": 7455
+          }
+        },
+        {
+          "frame_idx": 66,
+          "frame_token": "66",
+          "preprocess_ms": 1.3157999783288687,
+          "prompt_ms": 0.0,
+          "model_ms": 19.22332201502286,
+          "postprocess_ms": 0.07345501217059791,
+          "frame_total_ms": 20.612577005522326,
+          "object_areas": {
+            "1": 27286,
+            "2": 7421
+          }
+        },
+        {
+          "frame_idx": 67,
+          "frame_token": "67",
+          "preprocess_ms": 1.4892089820932597,
+          "prompt_ms": 0.0,
+          "model_ms": 20.293230016250163,
+          "postprocess_ms": 0.1654330117162317,
+          "frame_total_ms": 21.947872010059655,
+          "object_areas": {
+            "1": 27196,
+            "2": 7331
+          }
+        },
+        {
+          "frame_idx": 68,
+          "frame_token": "68",
+          "preprocess_ms": 1.2935129925608635,
+          "prompt_ms": 0.0,
+          "model_ms": 21.54733400675468,
+          "postprocess_ms": 0.08716800948604941,
+          "frame_total_ms": 22.928015008801594,
+          "object_areas": {
+            "1": 27027,
+            "2": 7248
+          }
+        },
+        {
+          "frame_idx": 69,
+          "frame_token": "69",
+          "preprocess_ms": 1.4932659978512675,
+          "prompt_ms": 0.0,
+          "model_ms": 20.429736003279686,
+          "postprocess_ms": 0.06645798566751182,
+          "frame_total_ms": 21.989459986798465,
+          "object_areas": {
+            "1": 26708,
+            "2": 7100
+          }
+        },
+        {
+          "frame_idx": 70,
+          "frame_token": "70",
+          "preprocess_ms": 1.3338929857127368,
+          "prompt_ms": 0.0,
+          "model_ms": 18.728208990069106,
+          "postprocess_ms": 0.06940701860003173,
+          "frame_total_ms": 20.131508994381875,
+          "object_areas": {
+            "1": 26296,
+            "2": 7225
+          }
+        },
+        {
+          "frame_idx": 71,
+          "frame_token": "71",
+          "preprocess_ms": 1.8111259851139039,
+          "prompt_ms": 0.0,
+          "model_ms": 19.408827007282525,
+          "postprocess_ms": 0.07001101039350033,
+          "frame_total_ms": 21.28996400278993,
+          "object_areas": {
+            "1": 26033,
+            "2": 7174
+          }
+        },
+        {
+          "frame_idx": 72,
+          "frame_token": "72",
+          "preprocess_ms": 1.425594004103914,
+          "prompt_ms": 0.0,
+          "model_ms": 19.28394299466163,
+          "postprocess_ms": 0.0702030083630234,
+          "frame_total_ms": 20.779740007128567,
+          "object_areas": {
+            "1": 25665,
+            "2": 7092
+          }
+        },
+        {
+          "frame_idx": 73,
+          "frame_token": "73",
+          "preprocess_ms": 1.3579519873019308,
+          "prompt_ms": 0.0,
+          "model_ms": 18.254410999361426,
+          "postprocess_ms": 0.06566397496499121,
+          "frame_total_ms": 19.678026961628348,
+          "object_areas": {
+            "1": 25255,
+            "2": 7122
+          }
+        },
+        {
+          "frame_idx": 74,
+          "frame_token": "74",
+          "preprocess_ms": 1.369367993902415,
+          "prompt_ms": 0.0,
+          "model_ms": 22.30387498275377,
+          "postprocess_ms": 0.06205399404279888,
+          "frame_total_ms": 23.735296970698982,
+          "object_areas": {
+            "1": 24742,
+            "2": 7068
+          }
+        },
+        {
+          "frame_idx": 75,
+          "frame_token": "75",
+          "preprocess_ms": 1.3299740094225854,
+          "prompt_ms": 0.0,
+          "model_ms": 19.284109002910554,
+          "postprocess_ms": 0.08293800055980682,
+          "frame_total_ms": 20.697021012892947,
+          "object_areas": {
+            "1": 24611,
+            "2": 6894
+          }
+        },
+        {
+          "frame_idx": 76,
+          "frame_token": "76",
+          "preprocess_ms": 1.3584210246335715,
+          "prompt_ms": 0.0,
+          "model_ms": 20.15751099679619,
+          "postprocess_ms": 0.06968199159018695,
+          "frame_total_ms": 21.58561401301995,
+          "object_areas": {
+            "1": 24298,
+            "2": 6925
+          }
+        },
+        {
+          "frame_idx": 77,
+          "frame_token": "77",
+          "preprocess_ms": 1.3749490026384592,
+          "prompt_ms": 0.0,
+          "model_ms": 18.177606019889936,
+          "postprocess_ms": 0.06296500214375556,
+          "frame_total_ms": 19.61552002467215,
+          "object_areas": {
+            "1": 23977,
+            "2": 6812
+          }
+        },
+        {
+          "frame_idx": 78,
+          "frame_token": "78",
+          "preprocess_ms": 1.287794002564624,
+          "prompt_ms": 0.0,
+          "model_ms": 17.66334497369826,
+          "postprocess_ms": 0.06413098890334368,
+          "frame_total_ms": 19.015269965166226,
+          "object_areas": {
+            "1": 23568,
+            "2": 6771
+          }
+        },
+        {
+          "frame_idx": 79,
+          "frame_token": "79",
+          "preprocess_ms": 1.3554079923778772,
+          "prompt_ms": 0.0,
+          "model_ms": 18.74216800206341,
+          "postprocess_ms": 0.06119097815826535,
+          "frame_total_ms": 20.15876697259955,
+          "object_areas": {
+            "1": 23152,
+            "2": 6479
+          }
+        },
+        {
+          "frame_idx": 80,
+          "frame_token": "80",
+          "preprocess_ms": 1.2224149832036346,
+          "prompt_ms": 0.0,
+          "model_ms": 17.06896399264224,
+          "postprocess_ms": 0.06942902109585702,
+          "frame_total_ms": 18.36080799694173,
+          "object_areas": {
+            "1": 23110,
+            "2": 6464
+          }
+        },
+        {
+          "frame_idx": 81,
+          "frame_token": "81",
+          "preprocess_ms": 1.2847059988416731,
+          "prompt_ms": 0.0,
+          "model_ms": 17.792133992770687,
+          "postprocess_ms": 0.06328299059532583,
+          "frame_total_ms": 19.140122982207686,
+          "object_areas": {
+            "1": 23076,
+            "2": 6275
+          }
+        },
+        {
+          "frame_idx": 82,
+          "frame_token": "82",
+          "preprocess_ms": 1.3630749890580773,
+          "prompt_ms": 0.0,
+          "model_ms": 17.39072398049757,
+          "postprocess_ms": 0.07405999349430203,
+          "frame_total_ms": 18.827858963049948,
+          "object_areas": {
+            "1": 23047,
+            "2": 6130
+          }
+        },
+        {
+          "frame_idx": 83,
+          "frame_token": "83",
+          "preprocess_ms": 1.2170439877081662,
+          "prompt_ms": 0.0,
+          "model_ms": 21.230949991149828,
+          "postprocess_ms": 0.06986700464040041,
+          "frame_total_ms": 22.517860983498394,
+          "object_areas": {
+            "1": 23066,
+            "2": 6012
+          }
+        },
+        {
+          "frame_idx": 84,
+          "frame_token": "84",
+          "preprocess_ms": 1.4596160035580397,
+          "prompt_ms": 0.0,
+          "model_ms": 17.635250987950712,
+          "postprocess_ms": 0.2042840060312301,
+          "frame_total_ms": 19.299150997539982,
+          "object_areas": {
+            "1": 23023,
+            "2": 6034
+          }
+        },
+        {
+          "frame_idx": 85,
+          "frame_token": "85",
+          "preprocess_ms": 0.9860320133157074,
+          "prompt_ms": 0.0,
+          "model_ms": 20.59974300209433,
+          "postprocess_ms": 0.07570500019937754,
+          "frame_total_ms": 21.661480015609413,
+          "object_areas": {
+            "1": 22990,
+            "2": 6006
+          }
+        },
+        {
+          "frame_idx": 86,
+          "frame_token": "86",
+          "preprocess_ms": 0.9941729949787259,
+          "prompt_ms": 0.0,
+          "model_ms": 18.356302985921502,
+          "postprocess_ms": 0.08904098649509251,
+          "frame_total_ms": 19.43951696739532,
+          "object_areas": {
+            "1": 22978,
+            "2": 6022
+          }
+        },
+        {
+          "frame_idx": 87,
+          "frame_token": "87",
+          "preprocess_ms": 1.02624500868842,
+          "prompt_ms": 0.0,
+          "model_ms": 18.637763016158715,
+          "postprocess_ms": 0.06863800808787346,
+          "frame_total_ms": 19.73264603293501,
+          "object_areas": {
+            "1": 23113,
+            "2": 6033
+          }
+        },
+        {
+          "frame_idx": 88,
+          "frame_token": "88",
+          "preprocess_ms": 1.215986005263403,
+          "prompt_ms": 0.0,
+          "model_ms": 18.692154000746086,
+          "postprocess_ms": 0.06326998118311167,
+          "frame_total_ms": 19.9714099871926,
+          "object_areas": {
+            "1": 23186,
+            "2": 5970
+          }
+        },
+        {
+          "frame_idx": 89,
+          "frame_token": "89",
+          "preprocess_ms": 1.3010890106670558,
+          "prompt_ms": 0.0,
+          "model_ms": 19.653781986562535,
+          "postprocess_ms": 0.06712801405228674,
+          "frame_total_ms": 21.021999011281878,
+          "object_areas": {
+            "1": 23309,
+            "2": 6031
+          }
+        },
+        {
+          "frame_idx": 90,
+          "frame_token": "90",
+          "preprocess_ms": 1.193300005979836,
+          "prompt_ms": 0.0,
+          "model_ms": 18.1925049982965,
+          "postprocess_ms": 0.0864629982970655,
+          "frame_total_ms": 19.4722680025734,
+          "object_areas": {
+            "1": 23283,
+            "2": 5995
+          }
+        },
+        {
+          "frame_idx": 91,
+          "frame_token": "91",
+          "preprocess_ms": 1.272335008252412,
+          "prompt_ms": 0.0,
+          "model_ms": 18.460641003912315,
+          "postprocess_ms": 0.06768698222003877,
+          "frame_total_ms": 19.800662994384766,
+          "object_areas": {
+            "1": 23312,
+            "2": 6023
+          }
+        },
+        {
+          "frame_idx": 92,
+          "frame_token": "92",
+          "preprocess_ms": 1.5113590052351356,
+          "prompt_ms": 0.0,
+          "model_ms": 18.70332899852656,
+          "postprocess_ms": 0.08075000368990004,
+          "frame_total_ms": 20.295438007451594,
+          "object_areas": {
+            "1": 23139,
+            "2": 6044
+          }
+        }
+      ],
+      "compile_mode": "vision-reduce-overhead"
+    },
+    {
+      "status": "pass",
+      "case_key": "sloth_set_2_motion_ffs",
+      "case_label": "Sloth Set 2 Motion FFS",
+      "case_dir": "/home/zhangxinjie/proj-QQTT-v2/data/different_types/sloth_set_2_motion_ffs",
+      "camera_idx": 1,
+      "frame_count": 93,
+      "frame_tokens": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "35",
+        "36",
+        "37",
+        "38",
+        "39",
+        "40",
+        "41",
+        "42",
+        "43",
+        "44",
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51",
+        "52",
+        "53",
+        "54",
+        "55",
+        "56",
+        "57",
+        "58",
+        "59",
+        "60",
+        "61",
+        "62",
+        "63",
+        "64",
+        "65",
+        "66",
+        "67",
+        "68",
+        "69",
+        "70",
+        "71",
+        "72",
+        "73",
+        "74",
+        "75",
+        "76",
+        "77",
+        "78",
+        "79",
+        "80",
+        "81",
+        "82",
+        "83",
+        "84",
+        "85",
+        "86",
+        "87",
+        "88",
+        "89",
+        "90",
+        "91",
+        "92"
+      ],
+      "object_ids": [
+        1,
+        2
+      ],
+      "object_labels": {
+        "1": "stuffed animal",
+        "2": "controller"
+      },
+      "first_frame_latency_ms": 27.44161698501557,
+      "first_frame_model_ms": 17.717564973281696,
+      "subsequent_frame_latency_ms": {
+        "mean": 19.217631903935082,
+        "median": 18.83700148027856,
+        "p90": 20.364047287148423,
+        "p95": 20.937671755382326,
+        "min": 17.802476999349892,
+        "max": 29.554003034718335
+      },
+      "subsequent_model_ms": {
+        "mean": 18.118009588088963,
+        "median": 17.791813996154815,
+        "p90": 19.096625692327507,
+        "p95": 19.846698000037577,
+        "min": 16.754500014940277,
+        "max": 28.271634015254676
+      },
+      "preprocess_ms": {
+        "mean": 1.0278606665275631,
+        "median": 1.0069749841932207,
+        "p90": 1.1514682206325233,
+        "p95": 1.193658006377518,
+        "min": 0.8785289828665555,
+        "max": 1.3855339784640819
+      },
+      "model_ms": {
+        "mean": 18.113703732015765,
+        "median": 17.776616994524375,
+        "p90": 19.08217539312318,
+        "p95": 19.81711899861693,
+        "min": 16.754500014940277,
+        "max": 28.271634015254676
+      },
+      "postprocess_ms": {
+        "mean": 0.07349556006531241,
+        "median": 0.06776000373065472,
+        "p90": 0.08297039312310517,
+        "p95": 0.0968396081589162,
+        "min": 0.05967001197859645,
+        "max": 0.28001400642096996
+      },
+      "prompt_ms": {
+        "mean": 8.463175996439531,
+        "median": 8.463175996439531,
+        "p90": 8.463175996439531,
+        "p95": 8.463175996439531,
+        "min": 8.463175996439531,
+        "max": 8.463175996439531
+      },
+      "streaming_total_ms": 1795.4637521470431,
+      "wall_ms": 2498.7944109889213,
+      "end_to_end_streaming_fps": 51.79720274986848,
+      "model_only_streaming_fps": 55.20682102316333,
+      "mask_output": {
+        "mask_root": "/home/zhangxinjie/proj-QQTT-v2/result/sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd/hf_edgetam_streaming_multi_object/masks/sloth_set_2_motion_ffs",
+        "camera_idx": 1,
+        "object_labels": {
+          "1": "stuffed animal",
+          "2": "controller"
+        },
+        "saved_frame_counts": {
+          "1": 93,
+          "2": 93
+        }
+      },
+      "quality_by_object": {
+        "1": {
+          "label": "stuffed animal",
+          "frame_count": 93,
+          "area_mean": 38811.0,
+          "area_std": 2389.898846107018,
+          "area_min": 35085,
+          "area_max": 43966,
+          "failure_frames": []
+        },
+        "2": {
+          "label": "controller",
+          "frame_count": 93,
+          "area_mean": 28686.387096774193,
+          "area_std": 10388.680628693655,
+          "area_min": 14470,
+          "area_max": 44559,
+          "failure_frames": []
+        }
+      },
+      "frames": [
+        {
+          "frame_idx": 0,
+          "frame_token": "0",
+          "preprocess_ms": 1.1856220080517232,
+          "prompt_ms": 8.463175996439531,
+          "model_ms": 17.717564973281696,
+          "postprocess_ms": 0.07525400724261999,
+          "frame_total_ms": 27.44161698501557,
+          "object_areas": {
+            "1": 39655,
+            "2": 15645
+          }
+        },
+        {
+          "frame_idx": 1,
+          "frame_token": "1",
+          "preprocess_ms": 0.9731720201671124,
+          "prompt_ms": 0.0,
+          "model_ms": 17.41632100311108,
+          "postprocess_ms": 0.07334898691624403,
+          "frame_total_ms": 18.462842010194436,
+          "object_areas": {
+            "1": 40105,
+            "2": 14470
+          }
+        },
+        {
+          "frame_idx": 2,
+          "frame_token": "2",
+          "preprocess_ms": 1.1203890026081353,
+          "prompt_ms": 0.0,
+          "model_ms": 18.1628720019944,
+          "postprocess_ms": 0.06653301534242928,
+          "frame_total_ms": 19.349794019944966,
+          "object_areas": {
+            "1": 39752,
+            "2": 15387
+          }
+        },
+        {
+          "frame_idx": 3,
+          "frame_token": "3",
+          "preprocess_ms": 1.1139590060338378,
+          "prompt_ms": 0.0,
+          "model_ms": 17.25281699327752,
+          "postprocess_ms": 0.061947008362039924,
+          "frame_total_ms": 18.428723007673398,
+          "object_areas": {
+            "1": 39962,
+            "2": 15417
+          }
+        },
+        {
+          "frame_idx": 4,
+          "frame_token": "4",
+          "preprocess_ms": 1.0591600148472935,
+          "prompt_ms": 0.0,
+          "model_ms": 17.418397997971624,
+          "postprocess_ms": 0.06729501183144748,
+          "frame_total_ms": 18.544853024650365,
+          "object_areas": {
+            "1": 39999,
+            "2": 15309
+          }
+        },
+        {
+          "frame_idx": 5,
+          "frame_token": "5",
+          "preprocess_ms": 1.1516180238686502,
+          "prompt_ms": 0.0,
+          "model_ms": 17.8806199983228,
+          "postprocess_ms": 0.06368599133566022,
+          "frame_total_ms": 19.09592401352711,
+          "object_areas": {
+            "1": 40211,
+            "2": 15389
+          }
+        },
+        {
+          "frame_idx": 6,
+          "frame_token": "6",
+          "preprocess_ms": 0.9654220193624496,
+          "prompt_ms": 0.0,
+          "model_ms": 19.559198000933975,
+          "postprocess_ms": 0.06714000483043492,
+          "frame_total_ms": 20.59176002512686,
+          "object_areas": {
+            "1": 40366,
+            "2": 15435
+          }
+        },
+        {
+          "frame_idx": 7,
+          "frame_token": "7",
+          "preprocess_ms": 1.3855339784640819,
+          "prompt_ms": 0.0,
+          "model_ms": 22.311190026812255,
+          "postprocess_ms": 0.09940401650965214,
+          "frame_total_ms": 23.79612802178599,
+          "object_areas": {
+            "1": 40389,
+            "2": 15371
+          }
+        },
+        {
+          "frame_idx": 8,
+          "frame_token": "8",
+          "preprocess_ms": 1.0280209826305509,
+          "prompt_ms": 0.0,
+          "model_ms": 17.843242007074878,
+          "postprocess_ms": 0.06776000373065472,
+          "frame_total_ms": 18.939022993436083,
+          "object_areas": {
+            "1": 40169,
+            "2": 15469
+          }
+        },
+        {
+          "frame_idx": 9,
+          "frame_token": "9",
+          "preprocess_ms": 1.0485670063644648,
+          "prompt_ms": 0.0,
+          "model_ms": 17.564245004905388,
+          "postprocess_ms": 0.06315700011327863,
+          "frame_total_ms": 18.67596901138313,
+          "object_areas": {
+            "1": 40249,
+            "2": 15533
+          }
+        },
+        {
+          "frame_idx": 10,
+          "frame_token": "10",
+          "preprocess_ms": 0.9979809983633459,
+          "prompt_ms": 0.0,
+          "model_ms": 17.51926599536091,
+          "postprocess_ms": 0.06523102638311684,
+          "frame_total_ms": 18.582478020107374,
+          "object_areas": {
+            "1": 40457,
+            "2": 15976
+          }
+        },
+        {
+          "frame_idx": 11,
+          "frame_token": "11",
+          "preprocess_ms": 1.1232849792577326,
+          "prompt_ms": 0.0,
+          "model_ms": 17.524733004393056,
+          "postprocess_ms": 0.0758310197852552,
+          "frame_total_ms": 18.723849003436044,
+          "object_areas": {
+            "1": 40393,
+            "2": 16101
+          }
+        },
+        {
+          "frame_idx": 12,
+          "frame_token": "12",
+          "preprocess_ms": 1.032059983117506,
+          "prompt_ms": 0.0,
+          "model_ms": 18.08001202880405,
+          "postprocess_ms": 0.1315179979428649,
+          "frame_total_ms": 19.24359000986442,
+          "object_areas": {
+            "1": 40245,
+            "2": 16570
+          }
+        },
+        {
+          "frame_idx": 13,
+          "frame_token": "13",
+          "preprocess_ms": 1.2375869846437126,
+          "prompt_ms": 0.0,
+          "model_ms": 18.85350199881941,
+          "postprocess_ms": 0.08126100874505937,
+          "frame_total_ms": 20.172349992208183,
+          "object_areas": {
+            "1": 40407,
+            "2": 16769
+          }
+        },
+        {
+          "frame_idx": 14,
+          "frame_token": "14",
+          "preprocess_ms": 1.1503549758344889,
+          "prompt_ms": 0.0,
+          "model_ms": 17.972367990296334,
+          "postprocess_ms": 0.07055699825286865,
+          "frame_total_ms": 19.19327996438369,
+          "object_areas": {
+            "1": 40323,
+            "2": 16701
+          }
+        },
+        {
+          "frame_idx": 15,
+          "frame_token": "15",
+          "preprocess_ms": 1.1212069948669523,
+          "prompt_ms": 0.0,
+          "model_ms": 16.98137799394317,
+          "postprocess_ms": 0.06664497777819633,
+          "frame_total_ms": 18.16922996658832,
+          "object_areas": {
+            "1": 40348,
+            "2": 17209
+          }
+        },
+        {
+          "frame_idx": 16,
+          "frame_token": "16",
+          "preprocess_ms": 1.1617079726420343,
+          "prompt_ms": 0.0,
+          "model_ms": 19.249559991294518,
+          "postprocess_ms": 0.09513000259175897,
+          "frame_total_ms": 20.50639796652831,
+          "object_areas": {
+            "1": 40343,
+            "2": 17854
+          }
+        },
+        {
+          "frame_idx": 17,
+          "frame_token": "17",
+          "preprocess_ms": 1.1392250016797334,
+          "prompt_ms": 0.0,
+          "model_ms": 18.226073996629566,
+          "postprocess_ms": 0.06778401439078152,
+          "frame_total_ms": 19.43308301270008,
+          "object_areas": {
+            "1": 40492,
+            "2": 18794
+          }
+        },
+        {
+          "frame_idx": 18,
+          "frame_token": "18",
+          "preprocess_ms": 1.0338069987483323,
+          "prompt_ms": 0.0,
+          "model_ms": 18.451387993991375,
+          "postprocess_ms": 0.06677501369267702,
+          "frame_total_ms": 19.551970006432384,
+          "object_areas": {
+            "1": 39952,
+            "2": 18873
+          }
+        },
+        {
+          "frame_idx": 19,
+          "frame_token": "19",
+          "preprocess_ms": 1.1538640246726573,
+          "prompt_ms": 0.0,
+          "model_ms": 17.153366992715746,
+          "postprocess_ms": 0.07768700015731156,
+          "frame_total_ms": 18.384918017545715,
+          "object_areas": {
+            "1": 40161,
+            "2": 19214
+          }
+        },
+        {
+          "frame_idx": 20,
+          "frame_token": "20",
+          "preprocess_ms": 1.1034469935111701,
+          "prompt_ms": 0.0,
+          "model_ms": 17.524569004308432,
+          "postprocess_ms": 0.07905199890956283,
+          "frame_total_ms": 18.707067996729165,
+          "object_areas": {
+            "1": 40129,
+            "2": 20371
+          }
+        },
+        {
+          "frame_idx": 21,
+          "frame_token": "21",
+          "preprocess_ms": 0.9408750047441572,
+          "prompt_ms": 0.0,
+          "model_ms": 17.896942008519545,
+          "postprocess_ms": 0.1035550085362047,
+          "frame_total_ms": 18.941372021799907,
+          "object_areas": {
+            "1": 39970,
+            "2": 22118
+          }
+        },
+        {
+          "frame_idx": 22,
+          "frame_token": "22",
+          "preprocess_ms": 1.060061011230573,
+          "prompt_ms": 0.0,
+          "model_ms": 18.817228003172204,
+          "postprocess_ms": 0.07493700832128525,
+          "frame_total_ms": 19.952226022724062,
+          "object_areas": {
+            "1": 39986,
+            "2": 22932
+          }
+        },
+        {
+          "frame_idx": 23,
+          "frame_token": "23",
+          "preprocess_ms": 0.9704890253487974,
+          "prompt_ms": 0.0,
+          "model_ms": 18.274848989676684,
+          "postprocess_ms": 0.06441198638640344,
+          "frame_total_ms": 19.309750001411885,
+          "object_areas": {
+            "1": 39129,
+            "2": 26277
+          }
+        },
+        {
+          "frame_idx": 24,
+          "frame_token": "24",
+          "preprocess_ms": 0.8959150000009686,
+          "prompt_ms": 0.0,
+          "model_ms": 18.071257014526054,
+          "postprocess_ms": 0.06919601582922041,
+          "frame_total_ms": 19.036368030356243,
+          "object_areas": {
+            "1": 38898,
+            "2": 26880
+          }
+        },
+        {
+          "frame_idx": 25,
+          "frame_token": "25",
+          "preprocess_ms": 1.140691980253905,
+          "prompt_ms": 0.0,
+          "model_ms": 17.807010997785255,
+          "postprocess_ms": 0.06298802327364683,
+          "frame_total_ms": 19.010691001312807,
+          "object_areas": {
+            "1": 38978,
+            "2": 27727
+          }
+        },
+        {
+          "frame_idx": 26,
+          "frame_token": "26",
+          "preprocess_ms": 1.0057989857159555,
+          "prompt_ms": 0.0,
+          "model_ms": 17.388895008480176,
+          "postprocess_ms": 0.07250800263136625,
+          "frame_total_ms": 18.467201996827498,
+          "object_areas": {
+            "1": 38113,
+            "2": 27950
+          }
+        },
+        {
+          "frame_idx": 27,
+          "frame_token": "27",
+          "preprocess_ms": 0.9842390136327595,
+          "prompt_ms": 0.0,
+          "model_ms": 18.966572999488562,
+          "postprocess_ms": 0.06674000178463757,
+          "frame_total_ms": 20.01755201490596,
+          "object_areas": {
+            "1": 37830,
+            "2": 28363
+          }
+        },
+        {
+          "frame_idx": 28,
+          "frame_token": "28",
+          "preprocess_ms": 0.9980460163205862,
+          "prompt_ms": 0.0,
+          "model_ms": 17.7459150145296,
+          "postprocess_ms": 0.06423800368793309,
+          "frame_total_ms": 18.80819903453812,
+          "object_areas": {
+            "1": 38290,
+            "2": 28737
+          }
+        },
+        {
+          "frame_idx": 29,
+          "frame_token": "29",
+          "preprocess_ms": 0.9817300015129149,
+          "prompt_ms": 0.0,
+          "model_ms": 18.180041981395334,
+          "postprocess_ms": 0.06513798143714666,
+          "frame_total_ms": 19.226909964345396,
+          "object_areas": {
+            "1": 38268,
+            "2": 29631
+          }
+        },
+        {
+          "frame_idx": 30,
+          "frame_token": "30",
+          "preprocess_ms": 0.9454679966438562,
+          "prompt_ms": 0.0,
+          "model_ms": 17.388754000421613,
+          "postprocess_ms": 0.06205600220710039,
+          "frame_total_ms": 18.39627799927257,
+          "object_areas": {
+            "1": 38129,
+            "2": 29969
+          }
+        },
+        {
+          "frame_idx": 31,
+          "frame_token": "31",
+          "preprocess_ms": 1.0316369880456477,
+          "prompt_ms": 0.0,
+          "model_ms": 17.08812199649401,
+          "postprocess_ms": 0.28001400642096996,
+          "frame_total_ms": 18.399772990960628,
+          "object_areas": {
+            "1": 37441,
+            "2": 30589
+          }
+        },
+        {
+          "frame_idx": 32,
+          "frame_token": "32",
+          "preprocess_ms": 1.0028140095528215,
+          "prompt_ms": 0.0,
+          "model_ms": 17.453609994845465,
+          "postprocess_ms": 0.07896698662079871,
+          "frame_total_ms": 18.535390991019085,
+          "object_areas": {
+            "1": 37959,
+            "2": 30567
+          }
+        },
+        {
+          "frame_idx": 33,
+          "frame_token": "33",
+          "preprocess_ms": 1.0089420247823,
+          "prompt_ms": 0.0,
+          "model_ms": 17.597630998352543,
+          "postprocess_ms": 0.062426988733932376,
+          "frame_total_ms": 18.669000011868775,
+          "object_areas": {
+            "1": 37631,
+            "2": 33142
+          }
+        },
+        {
+          "frame_idx": 34,
+          "frame_token": "34",
+          "preprocess_ms": 0.913730007596314,
+          "prompt_ms": 0.0,
+          "model_ms": 17.776616994524375,
+          "postprocess_ms": 0.07235101656988263,
+          "frame_total_ms": 18.76269801869057,
+          "object_areas": {
+            "1": 37047,
+            "2": 33824
+          }
+        },
+        {
+          "frame_idx": 35,
+          "frame_token": "35",
+          "preprocess_ms": 0.9865069878287613,
+          "prompt_ms": 0.0,
+          "model_ms": 16.754500014940277,
+          "postprocess_ms": 0.06146999658085406,
+          "frame_total_ms": 17.802476999349892,
+          "object_areas": {
+            "1": 36864,
+            "2": 35609
+          }
+        },
+        {
+          "frame_idx": 36,
+          "frame_token": "36",
+          "preprocess_ms": 1.1508690076880157,
+          "prompt_ms": 0.0,
+          "model_ms": 18.13626999501139,
+          "postprocess_ms": 0.06706899148412049,
+          "frame_total_ms": 19.354207994183525,
+          "object_areas": {
+            "1": 37344,
+            "2": 36561
+          }
+        },
+        {
+          "frame_idx": 37,
+          "frame_token": "37",
+          "preprocess_ms": 1.0319070133846253,
+          "prompt_ms": 0.0,
+          "model_ms": 18.60511500854045,
+          "postprocess_ms": 0.06151499110274017,
+          "frame_total_ms": 19.698537013027817,
+          "object_areas": {
+            "1": 37325,
+            "2": 37874
+          }
+        },
+        {
+          "frame_idx": 38,
+          "frame_token": "38",
+          "preprocess_ms": 0.8785289828665555,
+          "prompt_ms": 0.0,
+          "model_ms": 18.951709003886208,
+          "postprocess_ms": 0.07324901525862515,
+          "frame_total_ms": 19.90348700201139,
+          "object_areas": {
+            "1": 36549,
+            "2": 39594
+          }
+        },
+        {
+          "frame_idx": 39,
+          "frame_token": "39",
+          "preprocess_ms": 0.9834000084083527,
+          "prompt_ms": 0.0,
+          "model_ms": 17.61563098989427,
+          "postprocess_ms": 0.06771599873900414,
+          "frame_total_ms": 18.666746997041628,
+          "object_areas": {
+            "1": 36473,
+            "2": 40276
+          }
+        },
+        {
+          "frame_idx": 40,
+          "frame_token": "40",
+          "preprocess_ms": 0.992682995274663,
+          "prompt_ms": 0.0,
+          "model_ms": 17.827330011641607,
+          "postprocess_ms": 0.08169599459506571,
+          "frame_total_ms": 18.901709001511335,
+          "object_areas": {
+            "1": 36764,
+            "2": 41286
+          }
+        },
+        {
+          "frame_idx": 41,
+          "frame_token": "41",
+          "preprocess_ms": 0.8929789764806628,
+          "prompt_ms": 0.0,
+          "model_ms": 17.669585009571165,
+          "postprocess_ms": 0.07204699795693159,
+          "frame_total_ms": 18.63461098400876,
+          "object_areas": {
+            "1": 35971,
+            "2": 42711
+          }
+        },
+        {
+          "frame_idx": 42,
+          "frame_token": "42",
+          "preprocess_ms": 0.9676139743532985,
+          "prompt_ms": 0.0,
+          "model_ms": 17.65635597985238,
+          "postprocess_ms": 0.06445701001212001,
+          "frame_total_ms": 18.688426964217797,
+          "object_areas": {
+            "1": 36026,
+            "2": 42737
+          }
+        },
+        {
+          "frame_idx": 43,
+          "frame_token": "43",
+          "preprocess_ms": 1.0138319921679795,
+          "prompt_ms": 0.0,
+          "model_ms": 17.16686101281084,
+          "postprocess_ms": 0.06267600110732019,
+          "frame_total_ms": 18.24336900608614,
+          "object_areas": {
+            "1": 35373,
+            "2": 43285
+          }
+        },
+        {
+          "frame_idx": 44,
+          "frame_token": "44",
+          "preprocess_ms": 0.9440819849260151,
+          "prompt_ms": 0.0,
+          "model_ms": 17.53391101374291,
+          "postprocess_ms": 0.05967001197859645,
+          "frame_total_ms": 18.53766301064752,
+          "object_areas": {
+            "1": 35780,
+            "2": 43263
+          }
+        },
+        {
+          "frame_idx": 45,
+          "frame_token": "45",
+          "preprocess_ms": 0.9036030096467584,
+          "prompt_ms": 0.0,
+          "model_ms": 17.418684001313522,
+          "postprocess_ms": 0.061592989368364215,
+          "frame_total_ms": 18.383880000328645,
+          "object_areas": {
+            "1": 35617,
+            "2": 42691
+          }
+        },
+        {
+          "frame_idx": 46,
+          "frame_token": "46",
+          "preprocess_ms": 0.9866129839792848,
+          "prompt_ms": 0.0,
+          "model_ms": 18.303061980986968,
+          "postprocess_ms": 0.0717189977876842,
+          "frame_total_ms": 19.361393962753937,
+          "object_areas": {
+            "1": 35085,
+            "2": 41561
+          }
+        },
+        {
+          "frame_idx": 47,
+          "frame_token": "47",
+          "preprocess_ms": 1.0575659980531782,
+          "prompt_ms": 0.0,
+          "model_ms": 18.151203985325992,
+          "postprocess_ms": 0.07383499178104103,
+          "frame_total_ms": 19.28260497516021,
+          "object_areas": {
+            "1": 35652,
+            "2": 41580
+          }
+        },
+        {
+          "frame_idx": 48,
+          "frame_token": "48",
+          "preprocess_ms": 1.2057120038662106,
+          "prompt_ms": 0.0,
+          "model_ms": 28.271634015254676,
+          "postprocess_ms": 0.07665701559744775,
+          "frame_total_ms": 29.554003034718335,
+          "object_areas": {
+            "1": 35603,
+            "2": 41331
+          }
+        },
+        {
+          "frame_idx": 49,
+          "frame_token": "49",
+          "preprocess_ms": 1.070472993887961,
+          "prompt_ms": 0.0,
+          "model_ms": 20.31153198913671,
+          "postprocess_ms": 0.0759399845264852,
+          "frame_total_ms": 21.457944967551157,
+          "object_areas": {
+            "1": 35424,
+            "2": 42653
+          }
+        },
+        {
+          "frame_idx": 50,
+          "frame_token": "50",
+          "preprocess_ms": 1.0964469984173775,
+          "prompt_ms": 0.0,
+          "model_ms": 17.573446995811537,
+          "postprocess_ms": 0.060271006077528,
+          "frame_total_ms": 18.730165000306442,
+          "object_areas": {
+            "1": 35327,
+            "2": 44260
+          }
+        },
+        {
+          "frame_idx": 51,
+          "frame_token": "51",
+          "preprocess_ms": 1.0343639878556132,
+          "prompt_ms": 0.0,
+          "model_ms": 18.50808601011522,
+          "postprocess_ms": 0.06625900277867913,
+          "frame_total_ms": 19.608709000749514,
+          "object_areas": {
+            "1": 35603,
+            "2": 44223
+          }
+        },
+        {
+          "frame_idx": 52,
+          "frame_token": "52",
+          "preprocess_ms": 0.9357680100947618,
+          "prompt_ms": 0.0,
+          "model_ms": 17.876983009045944,
+          "postprocess_ms": 0.07678900146856904,
+          "frame_total_ms": 18.889540020609275,
+          "object_areas": {
+            "1": 36063,
+            "2": 44145
+          }
+        },
+        {
+          "frame_idx": 53,
+          "frame_token": "53",
+          "preprocess_ms": 1.0069749841932207,
+          "prompt_ms": 0.0,
+          "model_ms": 17.06102499156259,
+          "postprocess_ms": 0.07656900561414659,
+          "frame_total_ms": 18.144568981369957,
+          "object_areas": {
+            "1": 35853,
+            "2": 44559
+          }
+        },
+        {
+          "frame_idx": 54,
+          "frame_token": "54",
+          "preprocess_ms": 1.0641779808793217,
+          "prompt_ms": 0.0,
+          "model_ms": 17.94052400509827,
+          "postprocess_ms": 0.06545201176777482,
+          "frame_total_ms": 19.070153997745365,
+          "object_areas": {
+            "1": 35872,
+            "2": 44330
+          }
+        },
+        {
+          "frame_idx": 55,
+          "frame_token": "55",
+          "preprocess_ms": 0.881414016475901,
+          "prompt_ms": 0.0,
+          "model_ms": 17.091490008169785,
+          "postprocess_ms": 0.06472400855273008,
+          "frame_total_ms": 18.037628033198416,
+          "object_areas": {
+            "1": 35636,
+            "2": 43986
+          }
+        },
+        {
+          "frame_idx": 56,
+          "frame_token": "56",
+          "preprocess_ms": 1.0681659914553165,
+          "prompt_ms": 0.0,
+          "model_ms": 17.578713013790548,
+          "postprocess_ms": 0.07107100100256503,
+          "frame_total_ms": 18.71795000624843,
+          "object_areas": {
+            "1": 35948,
+            "2": 43906
+          }
+        },
+        {
+          "frame_idx": 57,
+          "frame_token": "57",
+          "preprocess_ms": 0.9347430022899061,
+          "prompt_ms": 0.0,
+          "model_ms": 17.482900992035866,
+          "postprocess_ms": 0.06451300578191876,
+          "frame_total_ms": 18.48215700010769,
+          "object_areas": {
+            "1": 35515,
+            "2": 44015
+          }
+        },
+        {
+          "frame_idx": 58,
+          "frame_token": "58",
+          "preprocess_ms": 0.9426029864698648,
+          "prompt_ms": 0.0,
+          "model_ms": 17.706379003357142,
+          "postprocess_ms": 0.06311098695732653,
+          "frame_total_ms": 18.712092976784334,
+          "object_areas": {
+            "1": 35586,
+            "2": 41425
+          }
+        },
+        {
+          "frame_idx": 59,
+          "frame_token": "59",
+          "preprocess_ms": 1.020446012262255,
+          "prompt_ms": 0.0,
+          "model_ms": 18.510474998038262,
+          "postprocess_ms": 0.0620420032646507,
+          "frame_total_ms": 19.592963013565168,
+          "object_areas": {
+            "1": 36070,
+            "2": 41774
+          }
+        },
+        {
+          "frame_idx": 60,
+          "frame_token": "60",
+          "preprocess_ms": 0.988387007964775,
+          "prompt_ms": 0.0,
+          "model_ms": 17.31862800079398,
+          "postprocess_ms": 0.06832098006270826,
+          "frame_total_ms": 18.375335988821462,
+          "object_areas": {
+            "1": 36035,
+            "2": 41959
+          }
+        },
+        {
+          "frame_idx": 61,
+          "frame_token": "61",
+          "preprocess_ms": 1.0865390067920089,
+          "prompt_ms": 0.0,
+          "model_ms": 18.48883501952514,
+          "postprocess_ms": 0.10438100434839725,
+          "frame_total_ms": 19.679755030665547,
+          "object_areas": {
+            "1": 35752,
+            "2": 42308
+          }
+        },
+        {
+          "frame_idx": 62,
+          "frame_token": "62",
+          "preprocess_ms": 1.0991290037054569,
+          "prompt_ms": 0.0,
+          "model_ms": 18.574701010948047,
+          "postprocess_ms": 0.06628900882788002,
+          "frame_total_ms": 19.740119023481384,
+          "object_areas": {
+            "1": 35930,
+            "2": 41610
+          }
+        },
+        {
+          "frame_idx": 63,
+          "frame_token": "63",
+          "preprocess_ms": 1.0420030157547444,
+          "prompt_ms": 0.0,
+          "model_ms": 19.58048698725179,
+          "postprocess_ms": 0.06811600178480148,
+          "frame_total_ms": 20.690606004791334,
+          "object_areas": {
+            "1": 36348,
+            "2": 41741
+          }
+        },
+        {
+          "frame_idx": 64,
+          "frame_token": "64",
+          "preprocess_ms": 1.1483620037324727,
+          "prompt_ms": 0.0,
+          "model_ms": 18.07151600951329,
+          "postprocess_ms": 0.07460798951797187,
+          "frame_total_ms": 19.294486002763733,
+          "object_areas": {
+            "1": 36715,
+            "2": 38616
+          }
+        },
+        {
+          "frame_idx": 65,
+          "frame_token": "65",
+          "preprocess_ms": 1.1816170008387417,
+          "prompt_ms": 0.0,
+          "model_ms": 17.56375201512128,
+          "postprocess_ms": 0.06693098112009466,
+          "frame_total_ms": 18.812299997080117,
+          "object_areas": {
+            "1": 37001,
+            "2": 37745
+          }
+        },
+        {
+          "frame_idx": 66,
+          "frame_token": "66",
+          "preprocess_ms": 0.9509660012554377,
+          "prompt_ms": 0.0,
+          "model_ms": 17.27377501083538,
+          "postprocess_ms": 0.0773439824115485,
+          "frame_total_ms": 18.302084994502366,
+          "object_areas": {
+            "1": 37497,
+            "2": 35350
+          }
+        },
+        {
+          "frame_idx": 67,
+          "frame_token": "67",
+          "preprocess_ms": 1.0299190180376172,
+          "prompt_ms": 0.0,
+          "model_ms": 17.948669992620125,
+          "postprocess_ms": 0.06414201925508678,
+          "frame_total_ms": 19.04273102991283,
+          "object_areas": {
+            "1": 38036,
+            "2": 32813
+          }
+        },
+        {
+          "frame_idx": 68,
+          "frame_token": "68",
+          "preprocess_ms": 1.0006089869420975,
+          "prompt_ms": 0.0,
+          "model_ms": 18.37784200324677,
+          "postprocess_ms": 0.08396798511967063,
+          "frame_total_ms": 19.462418975308537,
+          "object_areas": {
+            "1": 38666,
+            "2": 30821
+          }
+        },
+        {
+          "frame_idx": 69,
+          "frame_token": "69",
+          "preprocess_ms": 0.9041769953910261,
+          "prompt_ms": 0.0,
+          "model_ms": 17.437429982237518,
+          "postprocess_ms": 0.08328899275511503,
+          "frame_total_ms": 18.42489597038366,
+          "object_areas": {
+            "1": 38921,
+            "2": 29207
+          }
+        },
+        {
+          "frame_idx": 70,
+          "frame_token": "70",
+          "preprocess_ms": 1.0129850124940276,
+          "prompt_ms": 0.0,
+          "model_ms": 18.07915500830859,
+          "postprocess_ms": 0.0608400150667876,
+          "frame_total_ms": 19.152980035869405,
+          "object_areas": {
+            "1": 39177,
+            "2": 28028
+          }
+        },
+        {
+          "frame_idx": 71,
+          "frame_token": "71",
+          "preprocess_ms": 0.9481860033702105,
+          "prompt_ms": 0.0,
+          "model_ms": 17.50061201164499,
+          "postprocess_ms": 0.06029900396242738,
+          "frame_total_ms": 18.509097018977627,
+          "object_areas": {
+            "1": 38912,
+            "2": 26520
+          }
+        },
+        {
+          "frame_idx": 72,
+          "frame_token": "72",
+          "preprocess_ms": 0.9195830207318068,
+          "prompt_ms": 0.0,
+          "model_ms": 17.416599002899602,
+          "postprocess_ms": 0.06742801633663476,
+          "frame_total_ms": 18.403610039968044,
+          "object_areas": {
+            "1": 39676,
+            "2": 25572
+          }
+        },
+        {
+          "frame_idx": 73,
+          "frame_token": "73",
+          "preprocess_ms": 1.102839014492929,
+          "prompt_ms": 0.0,
+          "model_ms": 18.50601498153992,
+          "postprocess_ms": 0.06113297422416508,
+          "frame_total_ms": 19.669986970257014,
+          "object_areas": {
+            "1": 40467,
+            "2": 24046
+          }
+        },
+        {
+          "frame_idx": 74,
+          "frame_token": "74",
+          "preprocess_ms": 0.9439490095246583,
+          "prompt_ms": 0.0,
+          "model_ms": 17.02257600845769,
+          "postprocess_ms": 0.0684690021444112,
+          "frame_total_ms": 18.03499402012676,
+          "object_areas": {
+            "1": 41193,
+            "2": 22782
+          }
+        },
+        {
+          "frame_idx": 75,
+          "frame_token": "75",
+          "preprocess_ms": 0.9547030203975737,
+          "prompt_ms": 0.0,
+          "model_ms": 19.570859003579244,
+          "postprocess_ms": 0.0629519927315414,
+          "frame_total_ms": 20.58851401670836,
+          "object_areas": {
+            "1": 41935,
+            "2": 21538
+          }
+        },
+        {
+          "frame_idx": 76,
+          "frame_token": "76",
+          "preprocess_ms": 1.3345509942155331,
+          "prompt_ms": 0.0,
+          "model_ms": 18.361403985181823,
+          "postprocess_ms": 0.06259800284169614,
+          "frame_total_ms": 19.758552982239053,
+          "object_areas": {
+            "1": 43132,
+            "2": 20749
+          }
+        },
+        {
+          "frame_idx": 77,
+          "frame_token": "77",
+          "preprocess_ms": 1.0001839837059379,
+          "prompt_ms": 0.0,
+          "model_ms": 17.25121500203386,
+          "postprocess_ms": 0.07520098006352782,
+          "frame_total_ms": 18.326599965803325,
+          "object_areas": {
+            "1": 43818,
+            "2": 20126
+          }
+        },
+        {
+          "frame_idx": 78,
+          "frame_token": "78",
+          "preprocess_ms": 0.9736880019772798,
+          "prompt_ms": 0.0,
+          "model_ms": 17.572086973814294,
+          "postprocess_ms": 0.06286302232183516,
+          "frame_total_ms": 18.60863799811341,
+          "object_areas": {
+            "1": 43966,
+            "2": 19969
+          }
+        },
+        {
+          "frame_idx": 79,
+          "frame_token": "79",
+          "preprocess_ms": 0.9768620075192302,
+          "prompt_ms": 0.0,
+          "model_ms": 20.469743001740426,
+          "postprocess_ms": 0.08427599095739424,
+          "frame_total_ms": 21.53088100021705,
+          "object_areas": {
+            "1": 43593,
+            "2": 19392
+          }
+        },
+        {
+          "frame_idx": 80,
+          "frame_token": "80",
+          "preprocess_ms": 0.892509997356683,
+          "prompt_ms": 0.0,
+          "model_ms": 17.468803998781368,
+          "postprocess_ms": 0.07537999772466719,
+          "frame_total_ms": 18.43669399386272,
+          "object_areas": {
+            "1": 43485,
+            "2": 19077
+          }
+        },
+        {
+          "frame_idx": 81,
+          "frame_token": "81",
+          "preprocess_ms": 0.886043009813875,
+          "prompt_ms": 0.0,
+          "model_ms": 17.009047995088622,
+          "postprocess_ms": 0.07532499148510396,
+          "frame_total_ms": 17.9704159963876,
+          "object_areas": {
+            "1": 43264,
+            "2": 19326
+          }
+        },
+        {
+          "frame_idx": 82,
+          "frame_token": "82",
+          "preprocess_ms": 0.9739640227053314,
+          "prompt_ms": 0.0,
+          "model_ms": 17.809049983043224,
+          "postprocess_ms": 0.07474899757653475,
+          "frame_total_ms": 18.85776300332509,
+          "object_areas": {
+            "1": 42139,
+            "2": 19610
+          }
+        },
+        {
+          "frame_idx": 83,
+          "frame_token": "83",
+          "preprocess_ms": 1.0232600034214556,
+          "prompt_ms": 0.0,
+          "model_ms": 18.79681699210778,
+          "postprocess_ms": 0.06966400542296469,
+          "frame_total_ms": 19.8897410009522,
+          "object_areas": {
+            "1": 41520,
+            "2": 19769
+          }
+        },
+        {
+          "frame_idx": 84,
+          "frame_token": "84",
+          "preprocess_ms": 0.9761829860508442,
+          "prompt_ms": 0.0,
+          "model_ms": 17.209495999850333,
+          "postprocess_ms": 0.06347097223624587,
+          "frame_total_ms": 18.249149958137423,
+          "object_areas": {
+            "1": 41356,
+            "2": 19798
+          }
+        },
+        {
+          "frame_idx": 85,
+          "frame_token": "85",
+          "preprocess_ms": 0.8976739773061126,
+          "prompt_ms": 0.0,
+          "model_ms": 17.63143701828085,
+          "postprocess_ms": 0.0779959955252707,
+          "frame_total_ms": 18.607106991112232,
+          "object_areas": {
+            "1": 41449,
+            "2": 20239
+          }
+        },
+        {
+          "frame_idx": 86,
+          "frame_token": "86",
+          "preprocess_ms": 0.9470869845245034,
+          "prompt_ms": 0.0,
+          "model_ms": 17.936315009137616,
+          "postprocess_ms": 0.07036901661194861,
+          "frame_total_ms": 18.953771010274068,
+          "object_areas": {
+            "1": 41241,
+            "2": 20679
+          }
+        },
+        {
+          "frame_idx": 87,
+          "frame_token": "87",
+          "preprocess_ms": 1.0516109759919345,
+          "prompt_ms": 0.0,
+          "model_ms": 17.69920499646105,
+          "postprocess_ms": 0.06542398477904499,
+          "frame_total_ms": 18.81623995723203,
+          "object_areas": {
+            "1": 41418,
+            "2": 21258
+          }
+        },
+        {
+          "frame_idx": 88,
+          "frame_token": "88",
+          "preprocess_ms": 0.9815999947022647,
+          "prompt_ms": 0.0,
+          "model_ms": 17.567995993886143,
+          "postprocess_ms": 0.06350400508381426,
+          "frame_total_ms": 18.613099993672222,
+          "object_areas": {
+            "1": 41606,
+            "2": 20205
+          }
+        },
+        {
+          "frame_idx": 89,
+          "frame_token": "89",
+          "preprocess_ms": 0.9056710114236921,
+          "prompt_ms": 0.0,
+          "model_ms": 17.68074301071465,
+          "postprocess_ms": 0.0913530238904059,
+          "frame_total_ms": 18.677767046028748,
+          "object_areas": {
+            "1": 41316,
+            "2": 21877
+          }
+        },
+        {
+          "frame_idx": 90,
+          "frame_token": "90",
+          "preprocess_ms": 1.0281080030836165,
+          "prompt_ms": 0.0,
+          "model_ms": 17.27695402223617,
+          "postprocess_ms": 0.06811899947933853,
+          "frame_total_ms": 18.373181024799123,
+          "object_areas": {
+            "1": 41105,
+            "2": 22886
+          }
+        },
+        {
+          "frame_idx": 91,
+          "frame_token": "91",
+          "preprocess_ms": 1.0027360112871975,
+          "prompt_ms": 0.0,
+          "model_ms": 20.172067015664652,
+          "postprocess_ms": 0.06483797915279865,
+          "frame_total_ms": 21.239641006104648,
+          "object_areas": {
+            "1": 40933,
+            "2": 23309
+          }
+        },
+        {
+          "frame_idx": 92,
+          "frame_token": "92",
+          "preprocess_ms": 1.207456982228905,
+          "prompt_ms": 0.0,
+          "model_ms": 19.111075991531834,
+          "postprocess_ms": 0.06681401282548904,
+          "frame_total_ms": 20.385346986586228,
+          "object_areas": {
+            "1": 40722,
+            "2": 22711
+          }
+        }
+      ],
+      "compile_mode": "vision-reduce-overhead"
+    },
+    {
+      "status": "pass",
+      "case_key": "sloth_set_2_motion_ffs",
+      "case_label": "Sloth Set 2 Motion FFS",
+      "case_dir": "/home/zhangxinjie/proj-QQTT-v2/data/different_types/sloth_set_2_motion_ffs",
+      "camera_idx": 2,
+      "frame_count": 93,
+      "frame_tokens": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "35",
+        "36",
+        "37",
+        "38",
+        "39",
+        "40",
+        "41",
+        "42",
+        "43",
+        "44",
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51",
+        "52",
+        "53",
+        "54",
+        "55",
+        "56",
+        "57",
+        "58",
+        "59",
+        "60",
+        "61",
+        "62",
+        "63",
+        "64",
+        "65",
+        "66",
+        "67",
+        "68",
+        "69",
+        "70",
+        "71",
+        "72",
+        "73",
+        "74",
+        "75",
+        "76",
+        "77",
+        "78",
+        "79",
+        "80",
+        "81",
+        "82",
+        "83",
+        "84",
+        "85",
+        "86",
+        "87",
+        "88",
+        "89",
+        "90",
+        "91",
+        "92"
+      ],
+      "object_ids": [
+        1,
+        2
+      ],
+      "object_labels": {
+        "1": "stuffed animal",
+        "2": "controller"
+      },
+      "first_frame_latency_ms": 27.520442992681637,
+      "first_frame_model_ms": 17.315236997092143,
+      "subsequent_frame_latency_ms": {
+        "mean": 19.207851327930417,
+        "median": 18.970568984514102,
+        "p90": 20.47810817603022,
+        "p95": 21.03465474792756,
+        "min": 17.81042097718455,
+        "max": 24.25770999980159
+      },
+      "subsequent_model_ms": {
+        "mean": 18.107909489354707,
+        "median": 17.82914050272666,
+        "p90": 19.299756406689994,
+        "p95": 19.926367596781347,
+        "min": 16.78935598465614,
+        "max": 22.982772992691025
+      },
+      "preprocess_ms": {
+        "mean": 1.0235670866990483,
+        "median": 1.0087559930980206,
+        "p90": 1.130015408853069,
+        "p95": 1.2193754082545634,
+        "min": 0.8471850014757365,
+        "max": 1.2888360070064664
+      },
+      "model_ms": {
+        "mean": 18.09938612922285,
+        "median": 17.819837987190112,
+        "p90": 19.29700780310668,
+        "p95": 19.918535195756704,
+        "min": 16.78935598465614,
+        "max": 22.982772992691025
+      },
+      "postprocess_ms": {
+        "mean": 0.07889346314734348,
+        "median": 0.07108101272024214,
+        "p90": 0.09981139446608722,
+        "p95": 0.11740140034817156,
+        "min": 0.059614976635202765,
+        "max": 0.21660400670953095
+      },
+      "prompt_ms": {
+        "mean": 8.871024008840322,
+        "median": 8.871024008840322,
+        "p90": 8.871024008840322,
+        "p95": 8.871024008840322,
+        "min": 8.871024008840322,
+        "max": 8.871024008840322
+      },
+      "streaming_total_ms": 1794.6427651622798,
+      "wall_ms": 2519.727220002096,
+      "end_to_end_streaming_fps": 51.82089817835725,
+      "model_only_streaming_fps": 55.25049263330667,
+      "mask_output": {
+        "mask_root": "/home/zhangxinjie/proj-QQTT-v2/result/sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd/hf_edgetam_streaming_multi_object/masks/sloth_set_2_motion_ffs",
+        "camera_idx": 2,
+        "object_labels": {
+          "1": "stuffed animal",
+          "2": "controller"
+        },
+        "saved_frame_counts": {
+          "1": 93,
+          "2": 93
+        }
+      },
+      "quality_by_object": {
+        "1": {
+          "label": "stuffed animal",
+          "frame_count": 93,
+          "area_mean": 27692.139784946237,
+          "area_std": 1535.4080371924663,
+          "area_min": 24724,
+          "area_max": 31232,
+          "failure_frames": []
+        },
+        "2": {
+          "label": "controller",
+          "frame_count": 93,
+          "area_mean": 23994.612903225807,
+          "area_std": 5196.736235953299,
+          "area_min": 12364,
+          "area_max": 34666,
+          "failure_frames": []
+        }
+      },
+      "frames": [
+        {
+          "frame_idx": 0,
+          "frame_token": "0",
+          "preprocess_ms": 1.2670729774981737,
+          "prompt_ms": 8.871024008840322,
+          "model_ms": 17.315236997092143,
+          "postprocess_ms": 0.0671090092509985,
+          "frame_total_ms": 27.520442992681637,
+          "object_areas": {
+            "1": 29116,
+            "2": 23948
+          }
+        },
+        {
+          "frame_idx": 1,
+          "frame_token": "1",
+          "preprocess_ms": 1.0403600172139704,
+          "prompt_ms": 0.0,
+          "model_ms": 19.058777019381523,
+          "postprocess_ms": 0.10409002425149083,
+          "frame_total_ms": 20.203227060846984,
+          "object_areas": {
+            "1": 29348,
+            "2": 24781
+          }
+        },
+        {
+          "frame_idx": 2,
+          "frame_token": "2",
+          "preprocess_ms": 1.1302090133540332,
+          "prompt_ms": 0.0,
+          "model_ms": 17.730739986291155,
+          "postprocess_ms": 0.07025597733445466,
+          "frame_total_ms": 18.931204976979643,
+          "object_areas": {
+            "1": 29273,
+            "2": 24871
+          }
+        },
+        {
+          "frame_idx": 3,
+          "frame_token": "3",
+          "preprocess_ms": 1.0809270024765283,
+          "prompt_ms": 0.0,
+          "model_ms": 17.167793004773557,
+          "postprocess_ms": 0.0694839982315898,
+          "frame_total_ms": 18.318204005481675,
+          "object_areas": {
+            "1": 29568,
+            "2": 24848
+          }
+        },
+        {
+          "frame_idx": 4,
+          "frame_token": "4",
+          "preprocess_ms": 1.1373769957572222,
+          "prompt_ms": 0.0,
+          "model_ms": 18.880499992519617,
+          "postprocess_ms": 0.08539599366486073,
+          "frame_total_ms": 20.1032729819417,
+          "object_areas": {
+            "1": 29203,
+            "2": 24790
+          }
+        },
+        {
+          "frame_idx": 5,
+          "frame_token": "5",
+          "preprocess_ms": 0.9587690001353621,
+          "prompt_ms": 0.0,
+          "model_ms": 19.37414301210083,
+          "postprocess_ms": 0.09231400326825678,
+          "frame_total_ms": 20.42522601550445,
+          "object_areas": {
+            "1": 28517,
+            "2": 25153
+          }
+        },
+        {
+          "frame_idx": 6,
+          "frame_token": "6",
+          "preprocess_ms": 0.9815919911488891,
+          "prompt_ms": 0.0,
+          "model_ms": 20.012524008052424,
+          "postprocess_ms": 0.08168700151145458,
+          "frame_total_ms": 21.075803000712767,
+          "object_areas": {
+            "1": 28716,
+            "2": 24846
+          }
+        },
+        {
+          "frame_idx": 7,
+          "frame_token": "7",
+          "preprocess_ms": 1.2800770055036992,
+          "prompt_ms": 0.0,
+          "model_ms": 17.45361101347953,
+          "postprocess_ms": 0.0677119824104011,
+          "frame_total_ms": 18.80140000139363,
+          "object_areas": {
+            "1": 28732,
+            "2": 24809
+          }
+        },
+        {
+          "frame_idx": 8,
+          "frame_token": "8",
+          "preprocess_ms": 1.0087559930980206,
+          "prompt_ms": 0.0,
+          "model_ms": 17.667459993390366,
+          "postprocess_ms": 0.08855501073412597,
+          "frame_total_ms": 18.764770997222513,
+          "object_areas": {
+            "1": 27693,
+            "2": 25099
+          }
+        },
+        {
+          "frame_idx": 9,
+          "frame_token": "9",
+          "preprocess_ms": 1.0028030083049089,
+          "prompt_ms": 0.0,
+          "model_ms": 18.15870899008587,
+          "postprocess_ms": 0.09982098708860576,
+          "frame_total_ms": 19.261332985479385,
+          "object_areas": {
+            "1": 27675,
+            "2": 24889
+          }
+        },
+        {
+          "frame_idx": 10,
+          "frame_token": "10",
+          "preprocess_ms": 0.8862809918355197,
+          "prompt_ms": 0.0,
+          "model_ms": 18.186970992246643,
+          "postprocess_ms": 0.08096802048385143,
+          "frame_total_ms": 19.154220004566014,
+          "object_areas": {
+            "1": 27961,
+            "2": 24367
+          }
+        },
+        {
+          "frame_idx": 11,
+          "frame_token": "11",
+          "preprocess_ms": 0.9212229924742132,
+          "prompt_ms": 0.0,
+          "model_ms": 17.34223001403734,
+          "postprocess_ms": 0.06920102168805897,
+          "frame_total_ms": 18.332654028199613,
+          "object_areas": {
+            "1": 28080,
+            "2": 24205
+          }
+        },
+        {
+          "frame_idx": 12,
+          "frame_token": "12",
+          "preprocess_ms": 1.248607994057238,
+          "prompt_ms": 0.0,
+          "model_ms": 17.567465984029695,
+          "postprocess_ms": 0.0615860044490546,
+          "frame_total_ms": 18.877659982535988,
+          "object_areas": {
+            "1": 28137,
+            "2": 23884
+          }
+        },
+        {
+          "frame_idx": 13,
+          "frame_token": "13",
+          "preprocess_ms": 1.0233010107185692,
+          "prompt_ms": 0.0,
+          "model_ms": 17.304836015682667,
+          "postprocess_ms": 0.09977302397601306,
+          "frame_total_ms": 18.42791005037725,
+          "object_areas": {
+            "1": 27944,
+            "2": 23895
+          }
+        },
+        {
+          "frame_idx": 14,
+          "frame_token": "14",
+          "preprocess_ms": 1.0314570099581033,
+          "prompt_ms": 0.0,
+          "model_ms": 17.324351996649057,
+          "postprocess_ms": 0.08578499546274543,
+          "frame_total_ms": 18.441594002069905,
+          "object_areas": {
+            "1": 27659,
+            "2": 24139
+          }
+        },
+        {
+          "frame_idx": 15,
+          "frame_token": "15",
+          "preprocess_ms": 1.255287992535159,
+          "prompt_ms": 0.0,
+          "model_ms": 17.648770997766405,
+          "postprocess_ms": 0.07146599818952382,
+          "frame_total_ms": 18.975524988491088,
+          "object_areas": {
+            "1": 27414,
+            "2": 24232
+          }
+        },
+        {
+          "frame_idx": 16,
+          "frame_token": "16",
+          "preprocess_ms": 0.9139879839494824,
+          "prompt_ms": 0.0,
+          "model_ms": 19.275018974440172,
+          "postprocess_ms": 0.15392998466268182,
+          "frame_total_ms": 20.342936943052337,
+          "object_areas": {
+            "1": 27031,
+            "2": 25168
+          }
+        },
+        {
+          "frame_idx": 17,
+          "frame_token": "17",
+          "preprocess_ms": 1.1061380209866911,
+          "prompt_ms": 0.0,
+          "model_ms": 20.052809006301686,
+          "postprocess_ms": 0.08966500172391534,
+          "frame_total_ms": 21.248612029012293,
+          "object_areas": {
+            "1": 26708,
+            "2": 25723
+          }
+        },
+        {
+          "frame_idx": 18,
+          "frame_token": "18",
+          "preprocess_ms": 1.1062980047427118,
+          "prompt_ms": 0.0,
+          "model_ms": 18.352740997215733,
+          "postprocess_ms": 0.06540599861182272,
+          "frame_total_ms": 19.524445000570267,
+          "object_areas": {
+            "1": 26819,
+            "2": 26395
+          }
+        },
+        {
+          "frame_idx": 19,
+          "frame_token": "19",
+          "preprocess_ms": 1.0641780099831522,
+          "prompt_ms": 0.0,
+          "model_ms": 19.775479013333097,
+          "postprocess_ms": 0.07018801989033818,
+          "frame_total_ms": 20.909845043206587,
+          "object_areas": {
+            "1": 26732,
+            "2": 27478
+          }
+        },
+        {
+          "frame_idx": 20,
+          "frame_token": "20",
+          "preprocess_ms": 1.034380024066195,
+          "prompt_ms": 0.0,
+          "model_ms": 19.394103001104668,
+          "postprocess_ms": 0.06438398850150406,
+          "frame_total_ms": 20.492867013672367,
+          "object_areas": {
+            "1": 26408,
+            "2": 28916
+          }
+        },
+        {
+          "frame_idx": 21,
+          "frame_token": "21",
+          "preprocess_ms": 1.0243959841318429,
+          "prompt_ms": 0.0,
+          "model_ms": 18.172676995163783,
+          "postprocess_ms": 0.06944898632355034,
+          "frame_total_ms": 19.266521965619177,
+          "object_areas": {
+            "1": 26062,
+            "2": 30241
+          }
+        },
+        {
+          "frame_idx": 22,
+          "frame_token": "22",
+          "preprocess_ms": 1.0032719874288887,
+          "prompt_ms": 0.0,
+          "model_ms": 17.12242601206526,
+          "postprocess_ms": 0.061448023188859224,
+          "frame_total_ms": 18.18714602268301,
+          "object_areas": {
+            "1": 25947,
+            "2": 30141
+          }
+        },
+        {
+          "frame_idx": 23,
+          "frame_token": "23",
+          "preprocess_ms": 1.0203270066995174,
+          "prompt_ms": 0.0,
+          "model_ms": 18.470028997398913,
+          "postprocess_ms": 0.07100100629031658,
+          "frame_total_ms": 19.561357010388747,
+          "object_areas": {
+            "1": 25083,
+            "2": 31767
+          }
+        },
+        {
+          "frame_idx": 24,
+          "frame_token": "24",
+          "preprocess_ms": 0.9961409959942102,
+          "prompt_ms": 0.0,
+          "model_ms": 17.569766991073266,
+          "postprocess_ms": 0.06211598520167172,
+          "frame_total_ms": 18.628023972269148,
+          "object_areas": {
+            "1": 24724,
+            "2": 33081
+          }
+        },
+        {
+          "frame_idx": 25,
+          "frame_token": "25",
+          "preprocess_ms": 0.8471850014757365,
+          "prompt_ms": 0.0,
+          "model_ms": 17.19828898785636,
+          "postprocess_ms": 0.0622220104560256,
+          "frame_total_ms": 18.10769599978812,
+          "object_areas": {
+            "1": 25073,
+            "2": 30513
+          }
+        },
+        {
+          "frame_idx": 26,
+          "frame_token": "26",
+          "preprocess_ms": 0.9549309907015413,
+          "prompt_ms": 0.0,
+          "model_ms": 18.182022991823032,
+          "postprocess_ms": 0.06384999142028391,
+          "frame_total_ms": 19.200803973944858,
+          "object_areas": {
+            "1": 25537,
+            "2": 30654
+          }
+        },
+        {
+          "frame_idx": 27,
+          "frame_token": "27",
+          "preprocess_ms": 0.9803470165934414,
+          "prompt_ms": 0.0,
+          "model_ms": 17.653600982157513,
+          "postprocess_ms": 0.08341198554262519,
+          "frame_total_ms": 18.71735998429358,
+          "object_areas": {
+            "1": 25938,
+            "2": 30597
+          }
+        },
+        {
+          "frame_idx": 28,
+          "frame_token": "28",
+          "preprocess_ms": 0.8715870208106935,
+          "prompt_ms": 0.0,
+          "model_ms": 17.306338995695114,
+          "postprocess_ms": 0.07063397788442671,
+          "frame_total_ms": 18.248559994390234,
+          "object_areas": {
+            "1": 26255,
+            "2": 30512
+          }
+        },
+        {
+          "frame_idx": 29,
+          "frame_token": "29",
+          "preprocess_ms": 1.000390009721741,
+          "prompt_ms": 0.0,
+          "model_ms": 17.689875996438786,
+          "postprocess_ms": 0.07165700662881136,
+          "frame_total_ms": 18.76192301278934,
+          "object_areas": {
+            "1": 26333,
+            "2": 30119
+          }
+        },
+        {
+          "frame_idx": 30,
+          "frame_token": "30",
+          "preprocess_ms": 1.1998870177194476,
+          "prompt_ms": 0.0,
+          "model_ms": 18.195212993305176,
+          "postprocess_ms": 0.08743500802665949,
+          "frame_total_ms": 19.482535019051284,
+          "object_areas": {
+            "1": 26635,
+            "2": 29728
+          }
+        },
+        {
+          "frame_idx": 31,
+          "frame_token": "31",
+          "preprocess_ms": 1.068879006197676,
+          "prompt_ms": 0.0,
+          "model_ms": 19.855875987559557,
+          "postprocess_ms": 0.0762330018915236,
+          "frame_total_ms": 21.000987995648757,
+          "object_areas": {
+            "1": 26906,
+            "2": 29060
+          }
+        },
+        {
+          "frame_idx": 32,
+          "frame_token": "32",
+          "preprocess_ms": 1.0879969922825694,
+          "prompt_ms": 0.0,
+          "model_ms": 20.05272000678815,
+          "postprocess_ms": 0.09310900350101292,
+          "frame_total_ms": 21.233826002571732,
+          "object_areas": {
+            "1": 27258,
+            "2": 28501
+          }
+        },
+        {
+          "frame_idx": 33,
+          "frame_token": "33",
+          "preprocess_ms": 1.0916400060523301,
+          "prompt_ms": 0.0,
+          "model_ms": 18.32066901260987,
+          "postprocess_ms": 0.09009600034914911,
+          "frame_total_ms": 19.50240501901135,
+          "object_areas": {
+            "1": 27512,
+            "2": 27802
+          }
+        },
+        {
+          "frame_idx": 34,
+          "frame_token": "34",
+          "preprocess_ms": 1.0454319999553263,
+          "prompt_ms": 0.0,
+          "model_ms": 17.559955012984574,
+          "postprocess_ms": 0.06993400165811181,
+          "frame_total_ms": 18.675321014598012,
+          "object_areas": {
+            "1": 27685,
+            "2": 26648
+          }
+        },
+        {
+          "frame_idx": 35,
+          "frame_token": "35",
+          "preprocess_ms": 1.152949989773333,
+          "prompt_ms": 0.0,
+          "model_ms": 19.302505010273308,
+          "postprocess_ms": 0.06948001100681722,
+          "frame_total_ms": 20.524935011053458,
+          "object_areas": {
+            "1": 27687,
+            "2": 25726
+          }
+        },
+        {
+          "frame_idx": 36,
+          "frame_token": "36",
+          "preprocess_ms": 1.0999910009559244,
+          "prompt_ms": 0.0,
+          "model_ms": 17.99497098545544,
+          "postprocess_ms": 0.06389099871739745,
+          "frame_total_ms": 19.15885298512876,
+          "object_areas": {
+            "1": 27797,
+            "2": 24568
+          }
+        },
+        {
+          "frame_idx": 37,
+          "frame_token": "37",
+          "preprocess_ms": 0.9433040104340762,
+          "prompt_ms": 0.0,
+          "model_ms": 17.53514801384881,
+          "postprocess_ms": 0.07179100066423416,
+          "frame_total_ms": 18.55024302494712,
+          "object_areas": {
+            "1": 27928,
+            "2": 23495
+          }
+        },
+        {
+          "frame_idx": 38,
+          "frame_token": "38",
+          "preprocess_ms": 1.0443579812999815,
+          "prompt_ms": 0.0,
+          "model_ms": 17.84572401084006,
+          "postprocess_ms": 0.07553098839707673,
+          "frame_total_ms": 18.965612980537117,
+          "object_areas": {
+            "1": 28063,
+            "2": 22525
+          }
+        },
+        {
+          "frame_idx": 39,
+          "frame_token": "39",
+          "preprocess_ms": 1.0276779939886183,
+          "prompt_ms": 0.0,
+          "model_ms": 18.238108983496204,
+          "postprocess_ms": 0.06102598854340613,
+          "frame_total_ms": 19.32681296602823,
+          "object_areas": {
+            "1": 28006,
+            "2": 21807
+          }
+        },
+        {
+          "frame_idx": 40,
+          "frame_token": "40",
+          "preprocess_ms": 1.058299996657297,
+          "prompt_ms": 0.0,
+          "model_ms": 18.0480639974121,
+          "postprocess_ms": 0.11638700379990041,
+          "frame_total_ms": 19.222750997869298,
+          "object_areas": {
+            "1": 28091,
+            "2": 20775
+          }
+        },
+        {
+          "frame_idx": 41,
+          "frame_token": "41",
+          "preprocess_ms": 0.955843977862969,
+          "prompt_ms": 0.0,
+          "model_ms": 17.580230021849275,
+          "postprocess_ms": 0.12922499445267022,
+          "frame_total_ms": 18.665298994164914,
+          "object_areas": {
+            "1": 28235,
+            "2": 20078
+          }
+        },
+        {
+          "frame_idx": 42,
+          "frame_token": "42",
+          "preprocess_ms": 0.9925339836627245,
+          "prompt_ms": 0.0,
+          "model_ms": 17.50199100933969,
+          "postprocess_ms": 0.06799399852752686,
+          "frame_total_ms": 18.56251899152994,
+          "object_areas": {
+            "1": 28063,
+            "2": 20077
+          }
+        },
+        {
+          "frame_idx": 43,
+          "frame_token": "43",
+          "preprocess_ms": 1.074706990038976,
+          "prompt_ms": 0.0,
+          "model_ms": 17.326635017525405,
+          "postprocess_ms": 0.07139999070204794,
+          "frame_total_ms": 18.47274199826643,
+          "object_areas": {
+            "1": 28555,
+            "2": 17986
+          }
+        },
+        {
+          "frame_idx": 44,
+          "frame_token": "44",
+          "preprocess_ms": 1.0637129889801145,
+          "prompt_ms": 0.0,
+          "model_ms": 17.274331010412425,
+          "postprocess_ms": 0.07564100087620318,
+          "frame_total_ms": 18.413685000268742,
+          "object_areas": {
+            "1": 28820,
+            "2": 15219
+          }
+        },
+        {
+          "frame_idx": 45,
+          "frame_token": "45",
+          "preprocess_ms": 0.8693390118423849,
+          "prompt_ms": 0.0,
+          "model_ms": 17.674811999313533,
+          "postprocess_ms": 0.07142298272810876,
+          "frame_total_ms": 18.615573993884027,
+          "object_areas": {
+            "1": 29771,
+            "2": 15310
+          }
+        },
+        {
+          "frame_idx": 46,
+          "frame_token": "46",
+          "preprocess_ms": 1.033495005685836,
+          "prompt_ms": 0.0,
+          "model_ms": 18.817627016687766,
+          "postprocess_ms": 0.06320999818854034,
+          "frame_total_ms": 19.914332020562142,
+          "object_areas": {
+            "1": 30436,
+            "2": 13455
+          }
+        },
+        {
+          "frame_idx": 47,
+          "frame_token": "47",
+          "preprocess_ms": 1.2888360070064664,
+          "prompt_ms": 0.0,
+          "model_ms": 17.68181298393756,
+          "postprocess_ms": 0.06241298979148269,
+          "frame_total_ms": 19.03306198073551,
+          "object_areas": {
+            "1": 30507,
+            "2": 13471
+          }
+        },
+        {
+          "frame_idx": 48,
+          "frame_token": "48",
+          "preprocess_ms": 0.9021419973578304,
+          "prompt_ms": 0.0,
+          "model_ms": 16.78935598465614,
+          "postprocess_ms": 0.11892299517057836,
+          "frame_total_ms": 17.81042097718455,
+          "object_areas": {
+            "1": 31232,
+            "2": 12364
+          }
+        },
+        {
+          "frame_idx": 49,
+          "frame_token": "49",
+          "preprocess_ms": 1.0063179943244904,
+          "prompt_ms": 0.0,
+          "model_ms": 18.22046301094815,
+          "postprocess_ms": 0.10003498755395412,
+          "frame_total_ms": 19.326815992826596,
+          "object_areas": {
+            "1": 31196,
+            "2": 12698
+          }
+        },
+        {
+          "frame_idx": 50,
+          "frame_token": "50",
+          "preprocess_ms": 1.0595600178930908,
+          "prompt_ms": 0.0,
+          "model_ms": 17.819837987190112,
+          "postprocess_ms": 0.0656380143482238,
+          "frame_total_ms": 18.945036019431427,
+          "object_areas": {
+            "1": 31094,
+            "2": 12839
+          }
+        },
+        {
+          "frame_idx": 51,
+          "frame_token": "51",
+          "preprocess_ms": 0.9643709927331656,
+          "prompt_ms": 0.0,
+          "model_ms": 18.35528001538478,
+          "postprocess_ms": 0.059614976635202765,
+          "frame_total_ms": 19.379265984753147,
+          "object_areas": {
+            "1": 30517,
+            "2": 13207
+          }
+        },
+        {
+          "frame_idx": 52,
+          "frame_token": "52",
+          "preprocess_ms": 0.9774390200618654,
+          "prompt_ms": 0.0,
+          "model_ms": 17.36236599390395,
+          "postprocess_ms": 0.06539301830343902,
+          "frame_total_ms": 18.405198032269254,
+          "object_areas": {
+            "1": 29899,
+            "2": 13782
+          }
+        },
+        {
+          "frame_idx": 53,
+          "frame_token": "53",
+          "preprocess_ms": 0.9867540211416781,
+          "prompt_ms": 0.0,
+          "model_ms": 17.638407996855676,
+          "postprocess_ms": 0.06800901610404253,
+          "frame_total_ms": 18.693171034101397,
+          "object_areas": {
+            "1": 29291,
+            "2": 14616
+          }
+        },
+        {
+          "frame_idx": 54,
+          "frame_token": "54",
+          "preprocess_ms": 0.8542620053049177,
+          "prompt_ms": 0.0,
+          "model_ms": 18.710179021582007,
+          "postprocess_ms": 0.0663889804854989,
+          "frame_total_ms": 19.630830007372424,
+          "object_areas": {
+            "1": 28785,
+            "2": 15652
+          }
+        },
+        {
+          "frame_idx": 55,
+          "frame_token": "55",
+          "preprocess_ms": 0.9659760107751936,
+          "prompt_ms": 0.0,
+          "model_ms": 18.697138992138207,
+          "postprocess_ms": 0.06692897295579314,
+          "frame_total_ms": 19.730043975869194,
+          "object_areas": {
+            "1": 28560,
+            "2": 16078
+          }
+        },
+        {
+          "frame_idx": 56,
+          "frame_token": "56",
+          "preprocess_ms": 1.1224639893043786,
+          "prompt_ms": 0.0,
+          "model_ms": 17.332490999251604,
+          "postprocess_ms": 0.06436201510950923,
+          "frame_total_ms": 18.519317003665492,
+          "object_areas": {
+            "1": 28192,
+            "2": 16704
+          }
+        },
+        {
+          "frame_idx": 57,
+          "frame_token": "57",
+          "preprocess_ms": 0.9700509835965931,
+          "prompt_ms": 0.0,
+          "model_ms": 17.810496006859466,
+          "postprocess_ms": 0.07804401684552431,
+          "frame_total_ms": 18.858591007301584,
+          "object_areas": {
+            "1": 28003,
+            "2": 16952
+          }
+        },
+        {
+          "frame_idx": 58,
+          "frame_token": "58",
+          "preprocess_ms": 1.085046009393409,
+          "prompt_ms": 0.0,
+          "model_ms": 17.99294599913992,
+          "postprocess_ms": 0.06742400000803173,
+          "frame_total_ms": 19.14541600854136,
+          "object_areas": {
+            "1": 27668,
+            "2": 17619
+          }
+        },
+        {
+          "frame_idx": 59,
+          "frame_token": "59",
+          "preprocess_ms": 1.009271974908188,
+          "prompt_ms": 0.0,
+          "model_ms": 17.505532974610105,
+          "postprocess_ms": 0.0669339788146317,
+          "frame_total_ms": 18.581738928332925,
+          "object_areas": {
+            "1": 27274,
+            "2": 18866
+          }
+        },
+        {
+          "frame_idx": 60,
+          "frame_token": "60",
+          "preprocess_ms": 1.092038000933826,
+          "prompt_ms": 0.0,
+          "model_ms": 18.4490280225873,
+          "postprocess_ms": 0.08816001354716718,
+          "frame_total_ms": 19.629226037068292,
+          "object_areas": {
+            "1": 26553,
+            "2": 20470
+          }
+        },
+        {
+          "frame_idx": 61,
+          "frame_token": "61",
+          "preprocess_ms": 1.0677739919628948,
+          "prompt_ms": 0.0,
+          "model_ms": 17.433081986382604,
+          "postprocess_ms": 0.06404501618817449,
+          "frame_total_ms": 18.564900994533673,
+          "object_areas": {
+            "1": 25980,
+            "2": 22304
+          }
+        },
+        {
+          "frame_idx": 62,
+          "frame_token": "62",
+          "preprocess_ms": 0.8855490013957024,
+          "prompt_ms": 0.0,
+          "model_ms": 17.648954992182553,
+          "postprocess_ms": 0.07108101272024214,
+          "frame_total_ms": 18.605585006298497,
+          "object_areas": {
+            "1": 25533,
+            "2": 23918
+          }
+        },
+        {
+          "frame_idx": 63,
+          "frame_token": "63",
+          "preprocess_ms": 0.9440910071134567,
+          "prompt_ms": 0.0,
+          "model_ms": 17.677948984783143,
+          "postprocess_ms": 0.08200699812732637,
+          "frame_total_ms": 18.704046990023926,
+          "object_areas": {
+            "1": 25557,
+            "2": 23977
+          }
+        },
+        {
+          "frame_idx": 64,
+          "frame_token": "64",
+          "preprocess_ms": 1.1213220132049173,
+          "prompt_ms": 0.0,
+          "model_ms": 17.897904996061698,
+          "postprocess_ms": 0.07868098327890038,
+          "frame_total_ms": 19.097907992545515,
+          "object_areas": {
+            "1": 25388,
+            "2": 26661
+          }
+        },
+        {
+          "frame_idx": 65,
+          "frame_token": "65",
+          "preprocess_ms": 0.9806589805521071,
+          "prompt_ms": 0.0,
+          "model_ms": 17.322130006505176,
+          "postprocess_ms": 0.07053901208564639,
+          "frame_total_ms": 18.37332799914293,
+          "object_areas": {
+            "1": 25342,
+            "2": 30224
+          }
+        },
+        {
+          "frame_idx": 66,
+          "frame_token": "66",
+          "preprocess_ms": 0.9032759990077466,
+          "prompt_ms": 0.0,
+          "model_ms": 17.523226008052006,
+          "postprocess_ms": 0.0779289985075593,
+          "frame_total_ms": 18.504431005567312,
+          "object_areas": {
+            "1": 25599,
+            "2": 32502
+          }
+        },
+        {
+          "frame_idx": 67,
+          "frame_token": "67",
+          "preprocess_ms": 0.8952060015872121,
+          "prompt_ms": 0.0,
+          "model_ms": 18.26101800543256,
+          "postprocess_ms": 0.09455299004912376,
+          "frame_total_ms": 19.250776997068897,
+          "object_areas": {
+            "1": 25735,
+            "2": 34081
+          }
+        },
+        {
+          "frame_idx": 68,
+          "frame_token": "68",
+          "preprocess_ms": 0.9731659956742078,
+          "prompt_ms": 0.0,
+          "model_ms": 17.22906599752605,
+          "postprocess_ms": 0.07755099795758724,
+          "frame_total_ms": 18.279782991157845,
+          "object_areas": {
+            "1": 26073,
+            "2": 34666
+          }
+        },
+        {
+          "frame_idx": 69,
+          "frame_token": "69",
+          "preprocess_ms": 0.8831499726511538,
+          "prompt_ms": 0.0,
+          "model_ms": 17.61322599486448,
+          "postprocess_ms": 0.06998100434429944,
+          "frame_total_ms": 18.566356971859932,
+          "object_areas": {
+            "1": 26509,
+            "2": 30630
+          }
+        },
+        {
+          "frame_idx": 70,
+          "frame_token": "70",
+          "preprocess_ms": 0.955766998231411,
+          "prompt_ms": 0.0,
+          "model_ms": 18.014566012425348,
+          "postprocess_ms": 0.07008298416621983,
+          "frame_total_ms": 19.04041599482298,
+          "object_areas": {
+            "1": 26668,
+            "2": 30225
+          }
+        },
+        {
+          "frame_idx": 71,
+          "frame_token": "71",
+          "preprocess_ms": 1.0507330007385463,
+          "prompt_ms": 0.0,
+          "model_ms": 17.586126021342352,
+          "postprocess_ms": 0.061179016483947635,
+          "frame_total_ms": 18.698038038564846,
+          "object_areas": {
+            "1": 26469,
+            "2": 27346
+          }
+        },
+        {
+          "frame_idx": 72,
+          "frame_token": "72",
+          "preprocess_ms": 0.9986429940909147,
+          "prompt_ms": 0.0,
+          "model_ms": 18.14850899972953,
+          "postprocess_ms": 0.08353000157512724,
+          "frame_total_ms": 19.23068199539557,
+          "object_areas": {
+            "1": 25767,
+            "2": 26696
+          }
+        },
+        {
+          "frame_idx": 73,
+          "frame_token": "73",
+          "preprocess_ms": 0.9360389958601445,
+          "prompt_ms": 0.0,
+          "model_ms": 17.762873001629487,
+          "postprocess_ms": 0.0873380049597472,
+          "frame_total_ms": 18.78625000244938,
+          "object_areas": {
+            "1": 25615,
+            "2": 26121
+          }
+        },
+        {
+          "frame_idx": 74,
+          "frame_token": "74",
+          "preprocess_ms": 1.0082380031235516,
+          "prompt_ms": 0.0,
+          "model_ms": 17.98305701231584,
+          "postprocess_ms": 0.0638430065009743,
+          "frame_total_ms": 19.055138021940365,
+          "object_areas": {
+            "1": 25820,
+            "2": 25649
+          }
+        },
+        {
+          "frame_idx": 75,
+          "frame_token": "75",
+          "preprocess_ms": 1.0412780102342367,
+          "prompt_ms": 0.0,
+          "model_ms": 17.838443018263206,
+          "postprocess_ms": 0.07216600351966918,
+          "frame_total_ms": 18.951887032017112,
+          "object_areas": {
+            "1": 26091,
+            "2": 25452
+          }
+        },
+        {
+          "frame_idx": 76,
+          "frame_token": "76",
+          "preprocess_ms": 1.0346299968659878,
+          "prompt_ms": 0.0,
+          "model_ms": 17.47358398279175,
+          "postprocess_ms": 0.06656700861640275,
+          "frame_total_ms": 18.574780988274142,
+          "object_areas": {
+            "1": 26251,
+            "2": 25263
+          }
+        },
+        {
+          "frame_idx": 77,
+          "frame_token": "77",
+          "preprocess_ms": 1.1260450119152665,
+          "prompt_ms": 0.0,
+          "model_ms": 22.982772992691025,
+          "postprocess_ms": 0.1488919951952994,
+          "frame_total_ms": 24.25770999980159,
+          "object_areas": {
+            "1": 26954,
+            "2": 24974
+          }
+        },
+        {
+          "frame_idx": 78,
+          "frame_token": "78",
+          "preprocess_ms": 1.1597879929468036,
+          "prompt_ms": 0.0,
+          "model_ms": 19.256952975410968,
+          "postprocess_ms": 0.0672430032864213,
+          "frame_total_ms": 20.483983971644193,
+          "object_areas": {
+            "1": 27768,
+            "2": 24792
+          }
+        },
+        {
+          "frame_idx": 79,
+          "frame_token": "79",
+          "preprocess_ms": 0.9528280061203986,
+          "prompt_ms": 0.0,
+          "model_ms": 18.164348002756014,
+          "postprocess_ms": 0.10575601481832564,
+          "frame_total_ms": 19.22293202369474,
+          "object_areas": {
+            "1": 28170,
+            "2": 24753
+          }
+        },
+        {
+          "frame_idx": 80,
+          "frame_token": "80",
+          "preprocess_ms": 1.1292409908492118,
+          "prompt_ms": 0.0,
+          "model_ms": 18.393884995020926,
+          "postprocess_ms": 0.07856101728975773,
+          "frame_total_ms": 19.601687003159896,
+          "object_areas": {
+            "1": 28505,
+            "2": 24722
+          }
+        },
+        {
+          "frame_idx": 81,
+          "frame_token": "81",
+          "preprocess_ms": 1.007673010462895,
+          "prompt_ms": 0.0,
+          "model_ms": 17.458676011301577,
+          "postprocess_ms": 0.07088700658641756,
+          "frame_total_ms": 18.53723602835089,
+          "object_areas": {
+            "1": 28914,
+            "2": 24487
+          }
+        },
+        {
+          "frame_idx": 82,
+          "frame_token": "82",
+          "preprocess_ms": 0.9807380265556276,
+          "prompt_ms": 0.0,
+          "model_ms": 18.237984011648223,
+          "postprocess_ms": 0.0758600072003901,
+          "frame_total_ms": 19.29458204540424,
+          "object_areas": {
+            "1": 29149,
+            "2": 24084
+          }
+        },
+        {
+          "frame_idx": 83,
+          "frame_token": "83",
+          "preprocess_ms": 1.0625210124999285,
+          "prompt_ms": 0.0,
+          "model_ms": 17.511740006739274,
+          "postprocess_ms": 0.06480302545242012,
+          "frame_total_ms": 18.639064044691622,
+          "object_areas": {
+            "1": 29478,
+            "2": 23816
+          }
+        },
+        {
+          "frame_idx": 84,
+          "frame_token": "84",
+          "preprocess_ms": 1.0137399949599057,
+          "prompt_ms": 0.0,
+          "model_ms": 17.657522985246032,
+          "postprocess_ms": 0.21660400670953095,
+          "frame_total_ms": 18.88786698691547,
+          "object_areas": {
+            "1": 29583,
+            "2": 23728
+          }
+        },
+        {
+          "frame_idx": 85,
+          "frame_token": "85",
+          "preprocess_ms": 0.8894010097719729,
+          "prompt_ms": 0.0,
+          "model_ms": 18.099763023201376,
+          "postprocess_ms": 0.06969500100240111,
+          "frame_total_ms": 19.05885903397575,
+          "object_areas": {
+            "1": 29450,
+            "2": 23595
+          }
+        },
+        {
+          "frame_idx": 86,
+          "frame_token": "86",
+          "preprocess_ms": 1.0855540167540312,
+          "prompt_ms": 0.0,
+          "model_ms": 18.481903010979295,
+          "postprocess_ms": 0.06579997716471553,
+          "frame_total_ms": 19.63325700489804,
+          "object_areas": {
+            "1": 29287,
+            "2": 23430
+          }
+        },
+        {
+          "frame_idx": 87,
+          "frame_token": "87",
+          "preprocess_ms": 1.0080290085170418,
+          "prompt_ms": 0.0,
+          "model_ms": 17.533852980704978,
+          "postprocess_ms": 0.06793701322749257,
+          "frame_total_ms": 18.609819002449512,
+          "object_areas": {
+            "1": 29228,
+            "2": 23228
+          }
+        },
+        {
+          "frame_idx": 88,
+          "frame_token": "88",
+          "preprocess_ms": 0.9521720057819039,
+          "prompt_ms": 0.0,
+          "model_ms": 17.51008100109175,
+          "postprocess_ms": 0.061555998399853706,
+          "frame_total_ms": 18.523809005273506,
+          "object_areas": {
+            "1": 29124,
+            "2": 23090
+          }
+        },
+        {
+          "frame_idx": 89,
+          "frame_token": "89",
+          "preprocess_ms": 0.9972650150302798,
+          "prompt_ms": 0.0,
+          "model_ms": 17.043084983015433,
+          "postprocess_ms": 0.07241498678922653,
+          "frame_total_ms": 18.11276498483494,
+          "object_areas": {
+            "1": 28442,
+            "2": 23500
+          }
+        },
+        {
+          "frame_idx": 90,
+          "frame_token": "90",
+          "preprocess_ms": 0.934134004637599,
+          "prompt_ms": 0.0,
+          "model_ms": 19.090596004389226,
+          "postprocess_ms": 0.08359699859283864,
+          "frame_total_ms": 20.108327007619664,
+          "object_areas": {
+            "1": 27429,
+            "2": 23888
+          }
+        },
+        {
+          "frame_idx": 91,
+          "frame_token": "91",
+          "preprocess_ms": 0.9969509846996516,
+          "prompt_ms": 0.0,
+          "model_ms": 17.911117000039667,
+          "postprocess_ms": 0.07778001599945128,
+          "frame_total_ms": 18.98584800073877,
+          "object_areas": {
+            "1": 26880,
+            "2": 23894
+          }
+        },
+        {
+          "frame_idx": 92,
+          "frame_token": "92",
+          "preprocess_ms": 0.9439019777346402,
+          "prompt_ms": 0.0,
+          "model_ms": 20.595700974809006,
+          "postprocess_ms": 0.07199399988166988,
+          "frame_total_ms": 21.611596952425316,
+          "object_areas": {
+            "1": 26706,
+            "2": 23664
+          }
+        }
+      ],
+      "compile_mode": "vision-reduce-overhead"
+    }
+  ],
+  "aggregate": {
+    "job_count": 3,
+    "passed": 3,
+    "failed": 0,
+    "first_frame_latency_ms": {
+      "mean": 25.990556333757315,
+      "median": 27.44161698501557,
+      "p90": 27.504677791148424,
+      "p95": 27.51256039191503,
+      "min": 23.00960902357474,
+      "max": 27.520442992681637
+    },
+    "subsequent_frame_latency_median_ms": {
+      "mean": 19.258876321449254,
+      "median": 18.970568984514102,
+      "p90": 19.769360596546903,
+      "p95": 19.869209548051003,
+      "min": 18.83700148027856,
+      "max": 19.969058499555103
+    },
+    "end_to_end_streaming_fps": {
+      "mean": 50.84440743637547,
+      "median": 51.79720274986848,
+      "p90": 51.8161590926595,
+      "p95": 51.81852863550837,
+      "min": 48.915121380900686,
+      "max": 51.82089817835725
+    },
+    "model_only_streaming_fps": {
+      "mean": 54.35828897992397,
+      "median": 55.20682102316333,
+      "p90": 55.241758311278005,
+      "p95": 55.246125472292334,
+      "min": 52.61755328330192,
+      "max": 55.25049263330667
+    }
+  },
+  "streaming_results_path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_controller_streaming_results.json"
+}

@@ -53,8 +53,9 @@ HAND_ID = 2
 LEFT_HAND_ID = 2
 RIGHT_HAND_ID = 3
 PCD_POSTPROCESS_NONE = "none"
+PCD_POSTPROCESS_PT_FILTER = "pt-filter"
 PCD_POSTPROCESS_ENHANCED_PT = "enhanced-pt"
-PCD_POSTPROCESS_MODES = (PCD_POSTPROCESS_NONE, PCD_POSTPROCESS_ENHANCED_PT)
+PCD_POSTPROCESS_MODES = (PCD_POSTPROCESS_NONE, PCD_POSTPROCESS_PT_FILTER, PCD_POSTPROCESS_ENHANCED_PT)
 DEFAULT_PHYSTWIN_RADIUS_M = 0.01
 DEFAULT_PHYSTWIN_NB_POINTS = 40
 DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.01
@@ -834,6 +835,20 @@ def _apply_pcd_postprocess(
             "input_point_count": int(len(point_array)),
             "output_point_count": int(len(point_array)),
         }
+    if str(mode) == PCD_POSTPROCESS_PT_FILTER:
+        from data_process.visualization.experiments.ffs_confidence_filter_pcd_compare import (
+            _apply_phystwin_like_radius_postprocess,
+        )
+
+        filtered_points, filtered_colors, stats = _apply_phystwin_like_radius_postprocess(
+            points=point_array,
+            colors=color_array,
+            enabled=True,
+            radius_m=float(phystwin_radius_m),
+            nb_points=int(phystwin_nb_points),
+        )
+        stats["output_point_count"] = int(len(filtered_points))
+        return filtered_points, filtered_colors, stats
     if str(mode) != PCD_POSTPROCESS_ENHANCED_PT:
         raise ValueError(f"Unsupported PCD postprocess mode: {mode}")
 
@@ -853,6 +868,25 @@ def _apply_pcd_postprocess(
         keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
     )
     return filtered_points, filtered_colors, stats
+
+
+def _postprocess_mode_for_object(
+    obj: TrackedObject,
+    *,
+    default_mode: str,
+    controller_mode: str | None,
+) -> str:
+    if controller_mode is not None and _normalize_label(obj.label) == "controller":
+        return str(controller_mode)
+    return str(default_mode)
+
+
+def _postprocess_label_suffix(mode: str) -> str:
+    if str(mode) == PCD_POSTPROCESS_ENHANCED_PT:
+        return " | ePT"
+    if str(mode) == PCD_POSTPROCESS_PT_FILTER:
+        return " | PT"
+    return ""
 
 
 def _deterministic_point_cap(points: np.ndarray, colors: np.ndarray, *, max_points: int | None) -> tuple[np.ndarray, np.ndarray]:
@@ -1111,6 +1145,7 @@ def render_hand_object_pcd_panel(
     depth_scale_override_m_per_unit: float,
     point_radius_px: int,
     pcd_postprocess_mode: str = PCD_POSTPROCESS_NONE,
+    controller_pcd_postprocess_mode: str | None = None,
     phystwin_radius_m: float = DEFAULT_PHYSTWIN_RADIUS_M,
     phystwin_nb_points: int = DEFAULT_PHYSTWIN_NB_POINTS,
     enhanced_component_voxel_size_m: float = DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
@@ -1140,6 +1175,14 @@ def render_hand_object_pcd_panel(
     aggregate_points: dict[str, list[int]] = {str(obj.obj_id): [] for obj in objects}
     aggregate_raw_points: dict[str, list[int]] = {str(obj.obj_id): [] for obj in objects}
     object_row_text = ", ".join(str(obj.row_label) for obj in objects)
+    postprocess_mode_by_object = {
+        str(int(obj.obj_id)): _postprocess_mode_for_object(
+            obj,
+            default_mode=str(pcd_postprocess_mode),
+            controller_mode=controller_pcd_postprocess_mode,
+        )
+        for obj in objects
+    }
 
     for frame_idx, frame_token in enumerate(frame_tokens):
         camera_clouds, camera_stats = load_case_frame_camera_clouds(
@@ -1172,10 +1215,11 @@ def render_hand_object_pcd_panel(
             }
             points, colors, per_camera = _fuse_masked_cloud(camera_clouds=camera_clouds, masks_by_camera=masks_by_camera)
             raw_point_count = int(len(points))
+            object_postprocess_mode = postprocess_mode_by_object[str(int(obj.obj_id))]
             points, colors, postprocess_stats = _apply_pcd_postprocess(
                 points=points,
                 colors=colors,
-                mode=str(pcd_postprocess_mode),
+                mode=object_postprocess_mode,
                 phystwin_radius_m=float(phystwin_radius_m),
                 phystwin_nb_points=int(phystwin_nb_points),
                 enhanced_component_voxel_size_m=float(enhanced_component_voxel_size_m),
@@ -1191,7 +1235,7 @@ def render_hand_object_pcd_panel(
                 colors,
                 max_points=max_points_per_render,
             )
-            label_suffix = " | ePT" if str(pcd_postprocess_mode) == PCD_POSTPROCESS_ENHANCED_PT else ""
+            label_suffix = _postprocess_label_suffix(object_postprocess_mode)
             label = f"{obj.label} | {_format_point_count(len(points))} pts{label_suffix}"
             row_tiles = []
             for camera_idx in camera_ids:
@@ -1214,6 +1258,7 @@ def render_hand_object_pcd_panel(
                     "raw_point_count": raw_point_count,
                     "point_count": int(len(points)),
                     "per_camera": per_camera,
+                    "postprocess_mode": object_postprocess_mode,
                     "postprocess_stats": postprocess_stats,
                 }
             )
@@ -1273,6 +1318,7 @@ def render_hand_object_pcd_panel(
             "point_colors": "original RGB camera colors",
             "qualitative_only": True,
             "postprocess_mode": str(pcd_postprocess_mode),
+            "per_object_postprocess_modes": postprocess_mode_by_object,
         },
         "depth": {
             "source": "depth",
@@ -1286,6 +1332,8 @@ def render_hand_object_pcd_panel(
         "postprocess": {
             "mode": str(pcd_postprocess_mode),
             "enabled": str(pcd_postprocess_mode) != PCD_POSTPROCESS_NONE,
+            "controller_mode": None if controller_pcd_postprocess_mode is None else str(controller_pcd_postprocess_mode),
+            "per_object_modes": postprocess_mode_by_object,
             "phystwin_radius_m": float(phystwin_radius_m),
             "phystwin_nb_points": int(phystwin_nb_points),
             "enhanced_component_voxel_size_m": float(enhanced_component_voxel_size_m),
@@ -1354,7 +1402,8 @@ def write_report(markdown_path: Path, *, pcd_summary: Mapping[str, Any], streami
         "",
         "## PCD Postprocess",
         "",
-        f"- Mode: `{pcd_summary.get('postprocess', {}).get('mode')}`",
+        f"- Default mode: `{pcd_summary.get('postprocess', {}).get('mode')}`",
+        f"- Controller override: `{pcd_summary.get('postprocess', {}).get('controller_mode') or 'none'}`",
         f"- Radius: `{pcd_summary.get('postprocess', {}).get('phystwin_radius_m')}`",
         f"- Neighbors: `{pcd_summary.get('postprocess', {}).get('phystwin_nb_points')}`",
         f"- Component voxel size: `{pcd_summary.get('postprocess', {}).get('enhanced_component_voxel_size_m')}`",
@@ -1362,16 +1411,33 @@ def write_report(markdown_path: Path, *, pcd_summary: Mapping[str, Any], streami
         "",
         "## Objects",
         "",
-        "| object id | label | mean raw pts | mean output pts | min | max |",
-        "| ---: | --- | ---: | ---: | ---: | ---: |",
+        "| object id | label | postprocess | mean raw pts | mean output pts | min | max |",
+        "| ---: | --- | --- | ---: | ---: | ---: | ---: |",
     ]
+    per_object_modes = dict(pcd_summary.get("postprocess", {}).get("per_object_modes", {}))
     for obj_id, item in sorted(pcd_summary.get("aggregate", {}).items(), key=lambda pair: int(pair[0])):
         lines.append(
             f"| {obj_id} | {item.get('label')} | "
+            f"{per_object_modes.get(str(obj_id), pcd_summary.get('postprocess', {}).get('mode'))} | "
             f"{item.get('raw_point_count_mean', 0.0):.1f} | "
             f"{item.get('point_count_mean', 0.0):.1f} | "
             f"{item.get('point_count_min', 0)} | "
             f"{item.get('point_count_max', 0)} |"
+        )
+    labels = {
+        _normalize_label(str(item.get("label", "")))
+        for item in pcd_summary.get("objects", [])
+    }
+    if "controller" in labels:
+        lines.extend(
+            [
+                "",
+                "## Controller Warning",
+                "",
+                "- `controller` follows the PhysTwin-style convention: all hand instances are merged into one controller mask/PCD.",
+                "- Prefer the simpler `pt-filter` radius cleanup for controller rows. If `enhanced-pt` is enabled on controller rows, it can remove sparse fingertips, contact patches, or partial hand points that may matter for manipulation.",
+                "- Do not interpret controller output as per-hand identity. Per-hand workflows need an explicit 3D cross-view identity mapping.",
+            ]
         )
     lines.extend(
         [
@@ -1459,6 +1525,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pcd-output-dir", type=Path, default=None)
     parser.add_argument("--output-name", default=None)
     parser.add_argument("--pcd-postprocess-mode", choices=PCD_POSTPROCESS_MODES, default=PCD_POSTPROCESS_NONE)
+    parser.add_argument(
+        "--controller-pcd-postprocess-mode",
+        choices=PCD_POSTPROCESS_MODES,
+        default=None,
+        help="Optional per-row override for rows labeled `controller`.",
+    )
     parser.add_argument("--phystwin-radius-m", type=float, default=DEFAULT_PHYSTWIN_RADIUS_M)
     parser.add_argument("--phystwin-nb-points", type=int, default=DEFAULT_PHYSTWIN_NB_POINTS)
     parser.add_argument("--enhanced-component-voxel-size-m", type=float, default=DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M)
@@ -1573,6 +1645,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
         depth_scale_override_m_per_unit=float(args.depth_scale_override_m_per_unit),
         point_radius_px=int(args.point_radius_px),
         pcd_postprocess_mode=str(args.pcd_postprocess_mode),
+        controller_pcd_postprocess_mode=args.controller_pcd_postprocess_mode,
         phystwin_radius_m=float(args.phystwin_radius_m),
         phystwin_nb_points=int(args.phystwin_nb_points),
         enhanced_component_voxel_size_m=float(args.enhanced_component_voxel_size_m),

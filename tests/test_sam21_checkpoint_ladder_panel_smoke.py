@@ -858,6 +858,63 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
                 summary["aggregate"]["1"]["point_count_mean"],
             )
 
+    def test_hf_edgetam_controller_row_can_use_pt_filter_override(self) -> None:
+        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            make_visualization_case(case_dir, include_depth_ffs_float_m=True, frame_num=1)
+            object_mask = np.zeros((8, 10), dtype=bool)
+            controller_mask = np.zeros((8, 10), dtype=bool)
+            object_mask[1:5, 1:5] = True
+            controller_mask[3:7, 5:9] = True
+            mask_root = root / "hf_masks"
+            objects = (
+                hand_pcd.TrackedObject(1, "stuffed animal", "stuffed animal"),
+                hand_pcd.TrackedObject(2, "controller", "controller"),
+            )
+            for camera_idx in range(3):
+                hand_pcd._write_multi_object_masks(
+                    mask_root=mask_root,
+                    camera_idx=camera_idx,
+                    objects=objects,
+                    masks_by_object_frame={1: {"0": object_mask}, 2: {"0": controller_mask}},
+                    overwrite=False,
+                )
+
+            summary = hand_pcd.render_hand_object_pcd_panel(
+                case_dir=case_dir,
+                mask_root=mask_root,
+                output_dir=root / "pcd_gif_mixed_postprocess",
+                output_name="synthetic_object_controller_mixed",
+                objects=objects,
+                camera_ids=(0, 1, 2),
+                frames=1,
+                tile_width=48,
+                tile_height=32,
+                row_label_width=72,
+                gif_fps=2,
+                max_points_per_camera=None,
+                max_points_per_render=None,
+                depth_min_m=0.20,
+                depth_max_m=1.50,
+                depth_scale_override_m_per_unit=0.001,
+                point_radius_px=0,
+                pcd_postprocess_mode=hand_pcd.PCD_POSTPROCESS_ENHANCED_PT,
+                controller_pcd_postprocess_mode=hand_pcd.PCD_POSTPROCESS_PT_FILTER,
+                phystwin_radius_m=0.50,
+                phystwin_nb_points=1,
+                enhanced_component_voxel_size_m=0.05,
+                enhanced_keep_near_main_gap_m=0.0,
+            )
+
+            self.assertEqual(summary["postprocess"]["per_object_modes"]["1"], hand_pcd.PCD_POSTPROCESS_ENHANCED_PT)
+            self.assertEqual(summary["postprocess"]["per_object_modes"]["2"], hand_pcd.PCD_POSTPROCESS_PT_FILTER)
+            self.assertEqual(summary["frames_detail"][0]["objects"][0]["postprocess_mode"], hand_pcd.PCD_POSTPROCESS_ENHANCED_PT)
+            self.assertEqual(summary["frames_detail"][0]["objects"][1]["postprocess_mode"], hand_pcd.PCD_POSTPROCESS_PT_FILTER)
+            self.assertTrue(Path(summary["gif_path"]).is_file())
+
     def test_pinhole_renderer_uses_original_camera_z_buffer(self) -> None:
         points = np.asarray(
             [
