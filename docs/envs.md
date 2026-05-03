@@ -259,6 +259,7 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - HF streaming uses `transformers` `EdgeTamVideoModel` / `Sam2VideoProcessor` / session APIs, not the patched official `/home/zhangxinjie/EdgeTAM` predictor code path
   - the currently usable HF model repo is `yonigozlan/EdgeTAM-hf`; `yonigozlan/edgetam-video-1` returned 404 during validation
   - `Sam2VideoProcessor.init_video_session()` currently returns a `Sam2VideoInferenceSession`; direct `EdgeTamVideoInferenceSession` construction was also validated for the EdgeTAM model path
+  - `run_hf_edgetam_streaming_realcase.py` defaults to `--compile-mode vision-reduce-overhead`; pass `--compile-mode none` for eager-control benchmarks
 - Validation commands:
   - `conda run --no-capture-output -n edgetam-hf-stream python -m pip check`
   - `conda run --no-capture-output -n edgetam-hf-stream python scripts/harness/verify_hf_edgetam_streaming.py --json-output docs/generated/hf_edgetam_streaming_results.json --markdown-output docs/generated/hf_edgetam_streaming_validation.md`

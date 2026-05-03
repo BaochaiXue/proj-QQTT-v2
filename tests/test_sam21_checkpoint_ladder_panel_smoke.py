@@ -464,7 +464,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             self.assertEqual(cases[0].case_dir, case_dir.resolve())
             self.assertEqual(cases[0].sam31_mask_root, sam31_root.resolve())
             self.assertIsNone(args.frames)
-            self.assertEqual(args.compile_mode, hf_stream.COMPILE_MODE_NONE)
+            self.assertEqual(args.compile_mode, hf_stream.COMPILE_MODE_VISION_REDUCE_OVERHEAD)
             self.assertEqual(hf_stream._primary_text_prompt_label("stuffed animal"), "stuffed animal")
             self.assertEqual(
                 hf_stream._primary_text_prompt_label("white rope, thick rope"),

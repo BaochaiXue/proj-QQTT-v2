@@ -12,6 +12,8 @@
     "frame_source": "png_loop"
   },
   "environment": "edgetam-hf-stream",
+  "default_compile_mode": "vision-reduce-overhead",
+  "eager_control_compile_mode": "none",
   "recommended_compile_mode": "vision-reduce-overhead",
   "same_run_eager": {
     "compile_mode": "none",

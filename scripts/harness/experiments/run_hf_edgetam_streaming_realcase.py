@@ -1223,10 +1223,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--compile-mode",
         choices=ALL_COMPILE_MODES,
-        default=COMPILE_MODE_NONE,
+        default=COMPILE_MODE_VISION_REDUCE_OVERHEAD,
         help=(
-            "Optional torch.compile ablation mode. Default keeps the current eager "
-            "streaming baseline unchanged."
+            "Optional torch.compile ablation mode. Default uses the validated "
+            "vision encoder reduce-overhead compile path; pass `none` for the "
+            "eager streaming control."
         ),
     )
     parser.add_argument("--bbox-padding-px", type=int, default=0)

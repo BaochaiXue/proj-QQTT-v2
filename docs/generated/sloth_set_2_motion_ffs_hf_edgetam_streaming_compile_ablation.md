@@ -20,8 +20,9 @@ The safe compile mode is `vision-reduce-overhead`: compile only
 `model.vision_encoder` with `torch.compile(mode="reduce-overhead",
 fullgraph=False, dynamic=False)`.
 
-It passed the full real-data run and improved same-run eager throughput without
-changing the default path.
+It passed the full real-data run and improved same-run eager throughput. The
+realcase CLI now defaults to this mode; pass `--compile-mode none` when an eager
+control is required.
 
 | mode | status | targets | subsequent median ms | e2e FPS median | model-only FPS median | note |
 | --- | --- | --- | ---: | ---: | ---: | --- |
@@ -59,9 +60,9 @@ min 2D mask IoU vs eager: 0.980968
 mean area delta vs eager: -1.80 px
 ```
 
-This clears the experimental gate for trying this mode in follow-up live
-benchmarks. It should still be reported as an experimental compile backend, not
-as a replacement for the default eager HF streaming baseline.
+This clears the gate for using this mode as the default HF realcase streaming
+benchmark path. It should still be labeled as the HF vision-compiled backend
+when comparing against eager or other model families.
 
 ## Artifacts
 
@@ -80,9 +81,9 @@ as a replacement for the default eager HF streaming baseline.
 
 ## Decision
 
-- Keep `--compile-mode none` as the default.
-- Use `--compile-mode vision-reduce-overhead` only for explicit experimental
-  HF EdgeTAM streaming benchmarks.
+- Default to `--compile-mode vision-reduce-overhead`.
+- Keep `--compile-mode none` available for explicit eager-control and regression
+  checks.
 - Do not use full-model compile for HF streaming; the session/state path is not
   compile-stable in this environment.
 - Do not use `components-reduce-overhead` until the CUDA Graph output overwrite
