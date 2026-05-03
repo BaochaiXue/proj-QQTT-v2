@@ -549,6 +549,315 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
         finally:
             hf_stream.torch = old_torch
 
+    def test_hf_edgetam_hand_object_mapping_is_stable(self) -> None:
+        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+
+        objects = hand_pcd.tracked_objects("stuffed animal", "hand")
+        self.assertEqual({obj.obj_id: obj.label for obj in objects}, {1: "stuffed animal", 2: "hand"})
+        self.assertEqual([obj.row_label for obj in objects], ["stuffed animal", "hand"])
+        two_hand_objects = hand_pcd.tracked_two_hand_objects("stuffed animal", "left hand", "right hand")
+        self.assertEqual(
+            {obj.obj_id: obj.label for obj in two_hand_objects},
+            {1: "stuffed animal", 2: "left hand", 3: "right hand"},
+        )
+        self.assertEqual(
+            [obj.row_label for obj in two_hand_objects],
+            ["stuffed animal", "left hand", "right hand"],
+        )
+
+    def test_hf_edgetam_hand_object_mask_writer_schema(self) -> None:
+        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            make_visualization_case(case_dir, include_depth_ffs_float_m=True, frame_num=1)
+            object_mask = np.zeros((8, 10), dtype=bool)
+            hand_mask = np.zeros((8, 10), dtype=bool)
+            object_mask[1:4, 1:5] = True
+            hand_mask[3:6, 5:8] = True
+            mask_root = root / "hf_masks"
+            objects = hand_pcd.tracked_objects("stuffed animal", "hand")
+
+            summary = hand_pcd._write_multi_object_masks(
+                mask_root=mask_root,
+                camera_idx=0,
+                objects=objects,
+                masks_by_object_frame={1: {"0": object_mask}, 2: {"0": hand_mask}},
+                overwrite=False,
+            )
+
+            self.assertEqual(summary["object_labels"], {"1": "stuffed animal", "2": "hand"})
+            info = json.loads((mask_root / "mask/mask_info_0.json").read_text(encoding="utf-8"))
+            self.assertEqual(info, {"1": "stuffed animal", "2": "hand"})
+            loaded_object = hand_pcd._load_label_mask(
+                mask_root=mask_root,
+                case_dir=case_dir,
+                camera_idx=0,
+                frame_token="0",
+                label="stuffed animal",
+            )
+            loaded_hand = hand_pcd._load_label_mask(
+                mask_root=mask_root,
+                case_dir=case_dir,
+                camera_idx=0,
+                frame_token="0",
+                label="hand",
+            )
+            self.assertEqual(int(loaded_object.sum()), int(object_mask.sum()))
+            self.assertEqual(int(loaded_hand.sum()), int(hand_mask.sum()))
+
+    def test_hf_edgetam_hand_object_extracts_masks_by_output_object_ids(self) -> None:
+        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+
+        class FakeOutput:
+            object_ids = [2, 1]
+
+        post_masks = np.zeros((2, 1, 8, 10), dtype=np.float32)
+        post_masks[0, 0, 1:3, 1:3] = 1.0
+        post_masks[1, 0, 4:7, 5:9] = 1.0
+
+        masks = hand_pcd._extract_object_masks_from_hf_output(FakeOutput(), post_masks)
+        self.assertEqual(sorted(masks), [1, 2])
+        self.assertEqual(int(masks[2].sum()), 4)
+        self.assertEqual(int(masks[1].sum()), 12)
+
+    def test_hf_edgetam_builds_object_two_hands_init_root(self) -> None:
+        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            make_visualization_case(case_dir, include_depth_ffs_float_m=True, frame_num=1)
+            object_root = root / "object_masks"
+            hand_root = root / "hand_instances"
+            output_root = root / "three_object_init"
+            object_mask = np.zeros((8, 10), dtype=bool)
+            left_mask = np.zeros((8, 10), dtype=bool)
+            right_mask = np.zeros((8, 10), dtype=bool)
+            object_mask[1:5, 1:5] = True
+            left_mask[3:7, 1:3] = True
+            right_mask[3:7, 7:9] = True
+            hand_pcd._write_multi_object_masks(
+                mask_root=object_root,
+                camera_idx=0,
+                objects=(hand_pcd.TrackedObject(1, "stuffed animal", "stuffed animal"),),
+                masks_by_object_frame={1: {"0": object_mask}},
+                overwrite=False,
+            )
+            (hand_root / "mask").mkdir(parents=True, exist_ok=True)
+            (hand_root / "mask/mask_info_0.json").write_text(
+                json.dumps({"7": "hand", "8": "hand"}, indent=2),
+                encoding="utf-8",
+            )
+            hand_pcd._write_mask_png(hand_root / "mask/0/7/0.png", right_mask)
+            hand_pcd._write_mask_png(hand_root / "mask/0/8/0.png", left_mask)
+
+            summary = hand_pcd.build_object_two_hands_init_mask_root(
+                case_dir=case_dir,
+                output_root=output_root,
+                object_mask_root=object_root,
+                hand_instance_mask_root=hand_root,
+                camera_ids=(0,),
+                frame_token="0",
+                object_label="stuffed animal",
+                left_hand_label="left hand",
+                right_hand_label="right hand",
+                overwrite=False,
+            )
+
+            self.assertEqual(summary["object_id_map"], {"1": "stuffed animal", "2": "left hand", "3": "right hand"})
+            self.assertEqual(summary["assignment_by_camera"]["0"]["left_hand"]["source_obj_id"], 8)
+            self.assertEqual(summary["assignment_by_camera"]["0"]["right_hand"]["source_obj_id"], 7)
+            info = json.loads((output_root / "mask/mask_info_0.json").read_text(encoding="utf-8"))
+            self.assertEqual(info, {"1": "stuffed animal", "2": "left hand", "3": "right hand"})
+            loaded_left = hand_pcd._load_label_mask(
+                mask_root=output_root,
+                case_dir=case_dir,
+                camera_idx=0,
+                frame_token="0",
+                label="left hand",
+            )
+            loaded_right = hand_pcd._load_label_mask(
+                mask_root=output_root,
+                case_dir=case_dir,
+                camera_idx=0,
+                frame_token="0",
+                label="right hand",
+            )
+            self.assertEqual(int(loaded_left.sum()), int(left_mask.sum()))
+            self.assertEqual(int(loaded_right.sum()), int(right_mask.sum()))
+
+    def test_hf_edgetam_hand_object_pcd_panel_smoke_writes_2x3_outputs(self) -> None:
+        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            make_visualization_case(case_dir, include_depth_ffs_float_m=True, frame_num=1)
+            object_mask = np.zeros((8, 10), dtype=bool)
+            hand_mask = np.zeros((8, 10), dtype=bool)
+            object_mask[1:5, 1:5] = True
+            hand_mask[3:7, 5:9] = True
+            mask_root = root / "hf_masks"
+            objects = hand_pcd.tracked_objects("stuffed animal", "hand")
+            for camera_idx in range(3):
+                hand_pcd._write_multi_object_masks(
+                    mask_root=mask_root,
+                    camera_idx=camera_idx,
+                    objects=objects,
+                    masks_by_object_frame={1: {"0": object_mask}, 2: {"0": hand_mask}},
+                    overwrite=False,
+                )
+
+            summary = hand_pcd.render_hand_object_pcd_panel(
+                case_dir=case_dir,
+                mask_root=mask_root,
+                output_dir=root / "pcd_gif",
+                output_name="synthetic_hand_object",
+                objects=objects,
+                camera_ids=(0, 1, 2),
+                frames=1,
+                tile_width=48,
+                tile_height=32,
+                row_label_width=46,
+                gif_fps=2,
+                max_points_per_camera=None,
+                max_points_per_render=None,
+                depth_min_m=0.20,
+                depth_max_m=1.50,
+                depth_scale_override_m_per_unit=0.001,
+                point_radius_px=0,
+            )
+
+            self.assertEqual(summary["frames"], 1)
+            self.assertEqual([item["label"] for item in summary["objects"]], ["stuffed animal", "hand"])
+            self.assertTrue(Path(summary["gif_path"]).is_file())
+            self.assertTrue(Path(summary["first_frame_path"]).is_file())
+            self.assertTrue(
+                (
+                    Path(summary["first_frame_ply_dir"])
+                    / "synthetic_hand_object_1_stuffed_animal_frame0000.ply"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    Path(summary["first_frame_ply_dir"])
+                    / "synthetic_hand_object_2_hand_frame0000.ply"
+                ).is_file()
+            )
+
+    def test_hf_edgetam_object_two_hands_pcd_panel_smoke_writes_3x3_outputs(self) -> None:
+        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            make_visualization_case(case_dir, include_depth_ffs_float_m=True, frame_num=1)
+            object_mask = np.zeros((8, 10), dtype=bool)
+            left_mask = np.zeros((8, 10), dtype=bool)
+            right_mask = np.zeros((8, 10), dtype=bool)
+            object_mask[1:5, 1:5] = True
+            left_mask[2:7, 1:3] = True
+            right_mask[2:7, 7:9] = True
+            mask_root = root / "hf_masks"
+            objects = hand_pcd.tracked_two_hand_objects("stuffed animal", "left hand", "right hand")
+            for camera_idx in range(3):
+                hand_pcd._write_multi_object_masks(
+                    mask_root=mask_root,
+                    camera_idx=camera_idx,
+                    objects=objects,
+                    masks_by_object_frame={1: {"0": object_mask}, 2: {"0": left_mask}, 3: {"0": right_mask}},
+                    overwrite=False,
+                )
+
+            summary = hand_pcd.render_hand_object_pcd_panel(
+                case_dir=case_dir,
+                mask_root=mask_root,
+                output_dir=root / "pcd_gif",
+                output_name="synthetic_object_two_hands",
+                objects=objects,
+                camera_ids=(0, 1, 2),
+                frames=1,
+                tile_width=48,
+                tile_height=32,
+                row_label_width=58,
+                gif_fps=2,
+                max_points_per_camera=None,
+                max_points_per_render=None,
+                depth_min_m=0.20,
+                depth_max_m=1.50,
+                depth_scale_override_m_per_unit=0.001,
+                point_radius_px=0,
+            )
+
+            self.assertEqual(summary["frames"], 1)
+            self.assertEqual([item["label"] for item in summary["objects"]], ["stuffed animal", "left hand", "right hand"])
+            self.assertEqual(summary["render_contract"]["rows"], "stuffed animal, left hand, right hand")
+            self.assertTrue(Path(summary["gif_path"]).is_file())
+            self.assertTrue(Path(summary["first_frame_path"]).is_file())
+            self.assertTrue(
+                (
+                    Path(summary["first_frame_ply_dir"])
+                    / "synthetic_object_two_hands_3_right_hand_frame0000.ply"
+                ).is_file()
+            )
+
+    def test_hf_edgetam_hand_object_enhanced_pcd_panel_smoke(self) -> None:
+        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            make_visualization_case(case_dir, include_depth_ffs_float_m=True, frame_num=1)
+            object_mask = np.zeros((8, 10), dtype=bool)
+            hand_mask = np.zeros((8, 10), dtype=bool)
+            object_mask[1:5, 1:5] = True
+            hand_mask[3:7, 5:9] = True
+            mask_root = root / "hf_masks"
+            objects = hand_pcd.tracked_objects("stuffed animal", "hand")
+            for camera_idx in range(3):
+                hand_pcd._write_multi_object_masks(
+                    mask_root=mask_root,
+                    camera_idx=camera_idx,
+                    objects=objects,
+                    masks_by_object_frame={1: {"0": object_mask}, 2: {"0": hand_mask}},
+                    overwrite=False,
+                )
+
+            summary = hand_pcd.render_hand_object_pcd_panel(
+                case_dir=case_dir,
+                mask_root=mask_root,
+                output_dir=root / "pcd_gif_enhanced_pt",
+                output_name="synthetic_hand_object_enhanced_pt",
+                objects=objects,
+                camera_ids=(0, 1, 2),
+                frames=1,
+                tile_width=48,
+                tile_height=32,
+                row_label_width=46,
+                gif_fps=2,
+                max_points_per_camera=None,
+                max_points_per_render=None,
+                depth_min_m=0.20,
+                depth_max_m=1.50,
+                depth_scale_override_m_per_unit=0.001,
+                point_radius_px=0,
+                pcd_postprocess_mode=hand_pcd.PCD_POSTPROCESS_ENHANCED_PT,
+                phystwin_radius_m=0.50,
+                phystwin_nb_points=1,
+                enhanced_component_voxel_size_m=0.05,
+                enhanced_keep_near_main_gap_m=0.0,
+            )
+
+            self.assertEqual(summary["postprocess"]["mode"], hand_pcd.PCD_POSTPROCESS_ENHANCED_PT)
+            self.assertTrue(summary["postprocess"]["enabled"])
+            self.assertTrue(Path(summary["gif_path"]).is_file())
+            self.assertGreaterEqual(
+                summary["aggregate"]["1"]["raw_point_count_mean"],
+                summary["aggregate"]["1"]["point_count_mean"],
+            )
+
     def test_pinhole_renderer_uses_original_camera_z_buffer(self) -> None:
         points = np.asarray(
             [

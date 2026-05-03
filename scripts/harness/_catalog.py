@@ -260,6 +260,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/run_sloth_set2_hf_edgetam_hand_object_pcd_gif.py",
+        "experiments",
+        "Render Sloth Set 2 HF EdgeTAM streaming hand/object fused-PCD GIF.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py",
         "experiments",
         "FFS confidence filtering sweep runner.",
