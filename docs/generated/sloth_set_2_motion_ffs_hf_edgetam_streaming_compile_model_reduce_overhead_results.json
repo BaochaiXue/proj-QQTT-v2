@@ -1,0 +1,98 @@
+{
+  "timestamp_utc": "2026-05-03T19:15:37.847896+00:00",
+  "model_id": "yonigozlan/EdgeTAM-hf",
+  "environment": "edgetam-hf-stream",
+  "compile_mode": "model-reduce-overhead",
+  "compile_metadata": {
+    "compile_mode": "model-reduce-overhead",
+    "enabled": true,
+    "torch_compile_available": true,
+    "torch_compile_mode": "reduce-overhead",
+    "fullgraph": false,
+    "dynamic": false,
+    "requested_targets": [
+      "<model>"
+    ],
+    "applied_targets": [
+      "<model>"
+    ],
+    "missing_targets": [],
+    "whole_model_compiled": true,
+    "wrap_ms": 380.60109902289696
+  },
+  "prompt_modes": [
+    "mask"
+  ],
+  "camera_ids": [
+    0,
+    1,
+    2
+  ],
+  "frames": null,
+  "streaming_contract": {
+    "frame_by_frame_streaming": true,
+    "offline_video_input_used": false,
+    "frame_source": "png_loop",
+    "video_path_argument_used": false
+  },
+  "warmup": {
+    "enabled": true,
+    "frames": 5,
+    "compile_warmup_frames": 5,
+    "record": {
+      "status": "failed",
+      "phase": "warmup",
+      "case_key": "sloth_set_2_motion_ffs",
+      "case_label": "Sloth Set 2 Motion FFS",
+      "case_dir": "/home/zhangxinjie/proj-QQTT-v2/data/different_types/sloth_set_2_motion_ffs",
+      "camera_idx": 0,
+      "prompt_mode": "mask",
+      "compile_mode": "model-reduce-overhead",
+      "text_prompt": "stuffed animal",
+      "error_type": "BackendCompilerFailed",
+      "error": "backend='inductor' raised:\nRuntimeError: <weakref at 0x76757c692520; to 'torch.storage.UntypedStorage' at 0x76757ca46210>\n\nWhile executing %image_batch : [num_users=1] = call_method[target=unsqueeze](args = (%to_1, 0), kwargs = {})\nOriginal traceback:\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/utils/_contextlib.py\", line 124, in decorate_context\n    return func(*args, **kwargs)\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2192, in forward\n    current_out = self._run_single_frame_inference(\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2950, in _run_single_frame_inference\n    current_vision_feats, current_vision_pos_embeds = self._prepare_vision_features(\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2279, in _prepare_vision_features\n    image_batch = inference_session.get_frame(frame_idx).unsqueeze(0)  # Add batch dimension\n\nUse tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS=\"+dynamo\"\n",
+      "traceback": "Traceback (most recent call last):\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py\", line 1078, in run\n    warmup_record = _run_one_stream(\n                    ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py\", line 830, in _run_one_stream\n    output, model_ms = _time_ms(\n                       ^^^^^^^^^\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py\", line 185, in _time_ms\n    value = fn()\n            ^^^^\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py\", line 832, in <lambda>\n    lambda pixel_values=pixel_values: model(\n                                      ^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py\", line 472, in __call__\n    return super().__call__(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py\", line 1038, in compile_wrapper\n    raise e.remove_dynamo_frames() from None  # see TORCHDYNAMO_VERBOSE=1\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/output_graph.py\", line 2689, in _call_user_compiler\n    raise BackendCompilerFailed(\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/output_graph.py\", line 2664, in _call_user_compiler\n    compiled_fn = compiler_fn(gm, example_inputs)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/repro/after_dynamo.py\", line 156, in __call__\n    compiled_gm = compiler_fn(gm, example_inputs)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/__init__.py\", line 2461, in __call__\n    return compile_fx(model_, inputs_, config_patches=self.config)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_inductor/compile_fx.py\", line 2527, in compile_fx\n    return compile_fx(\n           ^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_inductor/compile_fx.py\", line 2578, in compile_fx\n    return _maybe_wrap_and_compile_fx_main(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_inductor/compile_fx.py\", line 2655, in _maybe_wrap_and_compile_fx_main\n    return _compile_fx_main(\n           ^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_inductor/compile_fx.py\", line 2850, in _compile_fx_main\n    return aot_autograd(\n           ^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/backends/common.py\", line 124, in __call__\n    cg = aot_module_simplified(gm, example_inputs, **self.kwargs)\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_functorch/aot_autograd.py\", line 1151, in aot_module_simplified\n    aot_state = create_aot_state(\n                ^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_functorch/aot_autograd.py\", line 583, in create_aot_state\n    fw_metadata = run_functionalized_fw_and_collect_metadata(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_functorch/_aot_autograd/collect_metadata_analysis.py\", line 222, in inner\n    flat_f_outs = f(*flat_f_args)\n                  ^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_functorch/_aot_autograd/graph_capture_wrappers.py\", line 1500, in functional_call\n    out = PropagateUnbackedSymInts(mod).run(*args)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/fx/interpreter.py\", line 227, in run\n    raise RuntimeError(*e.args) from e\ntorch._dynamo.exc.BackendCompilerFailed: backend='inductor' raised:\nRuntimeError: <weakref at 0x76757c692520; to 'torch.storage.UntypedStorage' at 0x76757ca46210>\n\nWhile executing %image_batch : [num_users=1] = call_method[target=unsqueeze](args = (%to_1, 0), kwargs = {})\nOriginal traceback:\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/utils/_contextlib.py\", line 124, in decorate_context\n    return func(*args, **kwargs)\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2192, in forward\n    current_out = self._run_single_frame_inference(\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2950, in _run_single_frame_inference\n    current_vision_feats, current_vision_pos_embeds = self._prepare_vision_features(\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2279, in _prepare_vision_features\n    image_batch = inference_session.get_frame(frame_idx).unsqueeze(0)  # Add batch dimension\n\nUse tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS=\"+dynamo\"\n\n"
+    }
+  },
+  "env": {
+    "python": "/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/bin/python",
+    "transformers": "5.7.0",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "cuda_available": true,
+    "device": "cuda",
+    "gpu": "NVIDIA GeForce RTX 5090 Laptop GPU"
+  },
+  "cases": [
+    {
+      "key": "sloth_set_2_motion_ffs",
+      "label": "Sloth Set 2 Motion FFS",
+      "case_dir": "/home/zhangxinjie/proj-QQTT-v2/data/different_types/sloth_set_2_motion_ffs",
+      "text_prompt": "stuffed animal",
+      "sam21_mask_root": "/home/zhangxinjie/proj-QQTT-v2/result/sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor/sam31_masks",
+      "sam31_mask_root": "/home/zhangxinjie/proj-QQTT-v2/result/sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor/sam31_masks"
+    }
+  ],
+  "jobs": [
+    {
+      "status": "failed",
+      "phase": "warmup",
+      "case_key": "sloth_set_2_motion_ffs",
+      "case_label": "Sloth Set 2 Motion FFS",
+      "case_dir": "/home/zhangxinjie/proj-QQTT-v2/data/different_types/sloth_set_2_motion_ffs",
+      "camera_idx": 0,
+      "prompt_mode": "mask",
+      "compile_mode": "model-reduce-overhead",
+      "text_prompt": "stuffed animal",
+      "error_type": "BackendCompilerFailed",
+      "error": "backend='inductor' raised:\nRuntimeError: <weakref at 0x76757c692520; to 'torch.storage.UntypedStorage' at 0x76757ca46210>\n\nWhile executing %image_batch : [num_users=1] = call_method[target=unsqueeze](args = (%to_1, 0), kwargs = {})\nOriginal traceback:\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/utils/_contextlib.py\", line 124, in decorate_context\n    return func(*args, **kwargs)\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2192, in forward\n    current_out = self._run_single_frame_inference(\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2950, in _run_single_frame_inference\n    current_vision_feats, current_vision_pos_embeds = self._prepare_vision_features(\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2279, in _prepare_vision_features\n    image_batch = inference_session.get_frame(frame_idx).unsqueeze(0)  # Add batch dimension\n\nUse tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS=\"+dynamo\"\n",
+      "traceback": "Traceback (most recent call last):\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py\", line 1078, in run\n    warmup_record = _run_one_stream(\n                    ^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py\", line 830, in _run_one_stream\n    output, model_ms = _time_ms(\n                       ^^^^^^^^^\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py\", line 185, in _time_ms\n    value = fn()\n            ^^^^\n  File \"/home/zhangxinjie/proj-QQTT-v2/scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py\", line 832, in <lambda>\n    lambda pixel_values=pixel_values: model(\n                                      ^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py\", line 472, in __call__\n    return super().__call__(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1779, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1790, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/eval_frame.py\", line 1038, in compile_wrapper\n    raise e.remove_dynamo_frames() from None  # see TORCHDYNAMO_VERBOSE=1\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/output_graph.py\", line 2689, in _call_user_compiler\n    raise BackendCompilerFailed(\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/output_graph.py\", line 2664, in _call_user_compiler\n    compiled_fn = compiler_fn(gm, example_inputs)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/repro/after_dynamo.py\", line 156, in __call__\n    compiled_gm = compiler_fn(gm, example_inputs)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/__init__.py\", line 2461, in __call__\n    return compile_fx(model_, inputs_, config_patches=self.config)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_inductor/compile_fx.py\", line 2527, in compile_fx\n    return compile_fx(\n           ^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_inductor/compile_fx.py\", line 2578, in compile_fx\n    return _maybe_wrap_and_compile_fx_main(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_inductor/compile_fx.py\", line 2655, in _maybe_wrap_and_compile_fx_main\n    return _compile_fx_main(\n           ^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_inductor/compile_fx.py\", line 2850, in _compile_fx_main\n    return aot_autograd(\n           ^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_dynamo/backends/common.py\", line 124, in __call__\n    cg = aot_module_simplified(gm, example_inputs, **self.kwargs)\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_functorch/aot_autograd.py\", line 1151, in aot_module_simplified\n    aot_state = create_aot_state(\n                ^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_functorch/aot_autograd.py\", line 583, in create_aot_state\n    fw_metadata = run_functionalized_fw_and_collect_metadata(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_functorch/_aot_autograd/collect_metadata_analysis.py\", line 222, in inner\n    flat_f_outs = f(*flat_f_args)\n                  ^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/_functorch/_aot_autograd/graph_capture_wrappers.py\", line 1500, in functional_call\n    out = PropagateUnbackedSymInts(mod).run(*args)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/fx/interpreter.py\", line 227, in run\n    raise RuntimeError(*e.args) from e\ntorch._dynamo.exc.BackendCompilerFailed: backend='inductor' raised:\nRuntimeError: <weakref at 0x76757c692520; to 'torch.storage.UntypedStorage' at 0x76757ca46210>\n\nWhile executing %image_batch : [num_users=1] = call_method[target=unsqueeze](args = (%to_1, 0), kwargs = {})\nOriginal traceback:\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/torch/utils/_contextlib.py\", line 124, in decorate_context\n    return func(*args, **kwargs)\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2192, in forward\n    current_out = self._run_single_frame_inference(\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2950, in _run_single_frame_inference\n    current_vision_feats, current_vision_pos_embeds = self._prepare_vision_features(\n  File \"/home/zhangxinjie/miniconda3/envs/edgetam-hf-stream/lib/python3.12/site-packages/transformers/models/edgetam_video/modeling_edgetam_video.py\", line 2279, in _prepare_vision_features\n    image_batch = inference_session.get_frame(frame_idx).unsqueeze(0)  # Add batch dimension\n\nUse tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS=\"+dynamo\"\n\n"
+    }
+  ],
+  "aggregate": {
+    "job_count": 1,
+    "passed": 0,
+    "failed": 1,
+    "mode_summary": {}
+  }
+}

@@ -32,6 +32,19 @@ DEFAULT_PROMPT_MODES = ("point", "box", "mask")
 ALL_PROMPT_MODES = ("point", "box", "mask", "previous_mask")
 DEFAULT_CAMERA_IDS = (0, 1, 2)
 OBJECT_ID = 1
+COMPILE_MODE_NONE = "none"
+COMPILE_MODE_MODEL_DEFAULT = "model-default"
+COMPILE_MODE_MODEL_REDUCE_OVERHEAD = "model-reduce-overhead"
+COMPILE_MODE_VISION_REDUCE_OVERHEAD = "vision-reduce-overhead"
+COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD = "components-reduce-overhead"
+ALL_COMPILE_MODES = (
+    COMPILE_MODE_NONE,
+    COMPILE_MODE_MODEL_DEFAULT,
+    COMPILE_MODE_MODEL_REDUCE_OVERHEAD,
+    COMPILE_MODE_VISION_REDUCE_OVERHEAD,
+    COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD,
+)
+COMPONENT_COMPILE_TARGETS = ("vision_encoder", "memory_attention", "memory_encoder", "mask_decoder")
 
 cv2: Any = None
 np: Any = None
@@ -383,6 +396,94 @@ def _latency_summary(values: Sequence[float]) -> dict[str, float]:
         "min": float(min(values)),
         "max": float(max(values)),
     }
+
+
+def _compile_mode_to_torch_mode(compile_mode: str) -> str | None:
+    if compile_mode in {COMPILE_MODE_MODEL_DEFAULT}:
+        return "default"
+    if compile_mode in {
+        COMPILE_MODE_MODEL_REDUCE_OVERHEAD,
+        COMPILE_MODE_VISION_REDUCE_OVERHEAD,
+        COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD,
+    }:
+        return "reduce-overhead"
+    if compile_mode == COMPILE_MODE_NONE:
+        return None
+    raise ValueError(f"Unsupported compile mode: {compile_mode}")
+
+
+def _compile_targets_for_mode(model: Any, compile_mode: str) -> tuple[str, ...]:
+    if compile_mode == COMPILE_MODE_NONE:
+        return ()
+    if compile_mode in {COMPILE_MODE_MODEL_DEFAULT, COMPILE_MODE_MODEL_REDUCE_OVERHEAD}:
+        return ("<model>",)
+    if compile_mode == COMPILE_MODE_VISION_REDUCE_OVERHEAD:
+        return tuple(name for name in ("vision_encoder",) if hasattr(model, name))
+    if compile_mode == COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD:
+        return tuple(name for name in COMPONENT_COMPILE_TARGETS if hasattr(model, name))
+    raise ValueError(f"Unsupported compile mode: {compile_mode}")
+
+
+def _apply_compile_mode(model: Any, compile_mode: str) -> tuple[Any, dict[str, Any]]:
+    compile_mode = str(compile_mode)
+    requested_targets = (
+        ()
+        if compile_mode == COMPILE_MODE_NONE
+        else ("<model>",)
+        if compile_mode in {COMPILE_MODE_MODEL_DEFAULT, COMPILE_MODE_MODEL_REDUCE_OVERHEAD}
+        else ("vision_encoder",)
+        if compile_mode == COMPILE_MODE_VISION_REDUCE_OVERHEAD
+        else COMPONENT_COMPILE_TARGETS
+    )
+    targets = _compile_targets_for_mode(model, compile_mode)
+    missing_targets = [name for name in requested_targets if name not in targets]
+    torch_mode = _compile_mode_to_torch_mode(compile_mode)
+    metadata: dict[str, Any] = {
+        "compile_mode": compile_mode,
+        "enabled": compile_mode != COMPILE_MODE_NONE,
+        "torch_compile_available": bool(hasattr(torch, "compile")) if torch is not None else False,
+        "torch_compile_mode": torch_mode,
+        "fullgraph": False,
+        "dynamic": False,
+        "requested_targets": list(requested_targets),
+        "applied_targets": list(targets),
+        "missing_targets": missing_targets,
+        "whole_model_compiled": False,
+        "wrap_ms": 0.0,
+    }
+    if compile_mode == COMPILE_MODE_NONE:
+        return model, metadata
+    if torch is None or not hasattr(torch, "compile"):
+        raise RuntimeError("Requested --compile-mode but torch.compile is not available.")
+    if not targets:
+        raise RuntimeError(f"Requested --compile-mode {compile_mode!r}, but no compile targets were found.")
+
+    started = time.perf_counter()
+    if targets == ("<model>",):
+        model = torch.compile(
+            model,
+            mode=torch_mode,
+            fullgraph=False,
+            dynamic=False,
+        )
+        metadata["whole_model_compiled"] = True
+        metadata["wrap_ms"] = float((time.perf_counter() - started) * 1000.0)
+        return model, metadata
+
+    for target in targets:
+        module = getattr(model, target)
+        setattr(
+            model,
+            target,
+            torch.compile(
+                module,
+                mode=torch_mode,
+                fullgraph=False,
+                dynamic=False,
+            ),
+        )
+    metadata["wrap_ms"] = float((time.perf_counter() - started) * 1000.0)
+    return model, metadata
 
 
 def _depth_path(case_dir: Path, *, camera_idx: int, frame_token: str) -> Path | None:
@@ -858,6 +959,7 @@ def _write_markdown(path: Path, payload: dict[str, Any]) -> None:
         f"- Status: `{'pass' if aggregate['failed'] == 0 else 'partial'}`",
         f"- Model: `{payload['model_id']}`",
         f"- Environment: `edgetam-hf-stream`",
+        f"- Compile mode: `{payload.get('compile_mode', COMPILE_MODE_NONE)}`",
         f"- Device: `{payload['env'].get('device')}`",
         f"- GPU: `{payload['env'].get('gpu', 'n/a')}`",
         f"- Torch: `{payload['env'].get('torch')}`",
@@ -872,6 +974,15 @@ def _write_markdown(path: Path, payload: dict[str, Any]) -> None:
         "- Does not modify `edgetam-max`; intended environment is `edgetam-hf-stream`.",
         "- Measures frame-by-frame streaming with persistent inference sessions.",
         "- This remains an experimental benchmark, not a production backend.",
+        "",
+        "## Compile",
+        "",
+        f"- Mode: `{payload.get('compile_mode', COMPILE_MODE_NONE)}`",
+        f"- Enabled: `{payload.get('compile_metadata', {}).get('enabled', False)}`",
+        f"- Applied targets: `{', '.join(payload.get('compile_metadata', {}).get('applied_targets', [])) or 'none'}`",
+        f"- `torch.compile` mode: `{payload.get('compile_metadata', {}).get('torch_compile_mode')}`",
+        f"- `fullgraph`: `{payload.get('compile_metadata', {}).get('fullgraph')}`",
+        f"- `dynamic`: `{payload.get('compile_metadata', {}).get('dynamic')}`",
         "",
         "## Mode Summary",
         "",
@@ -936,11 +1047,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     print(f"[hf-edgetam-realcase] loading model: {args.model_id}", flush=True)
     model = EdgeTamVideoModel.from_pretrained(str(args.model_id)).to(str(args.device), dtype=dtype).eval()
+    model, compile_metadata = _apply_compile_mode(model, str(args.compile_mode))
+    if compile_metadata["enabled"]:
+        print(
+            "[hf-edgetam-realcase] compile mode="
+            f"{compile_metadata['compile_mode']} targets={compile_metadata['applied_targets']}",
+            flush=True,
+        )
     processor = Sam2VideoProcessor.from_pretrained(str(args.model_id))
     autocast_ctx = torch.autocast("cuda", dtype=dtype) if str(args.device).startswith("cuda") else nullcontext()
 
     jobs: list[dict[str, Any]] = []
     warmup_record: dict[str, Any] | None = None
+    warmup_failed = False
     with torch.inference_mode(), autocast_ctx:
         if not bool(args.no_warmup):
             warm_case = cases[0]
@@ -955,68 +1074,97 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 f"mode={prompt_modes[0]} frames={len(warm_frames)}",
                 flush=True,
             )
-            warmup_record = _run_one_stream(
-                model=model,
-                processor=processor,
-                case=warm_case,
-                camera_idx=warm_camera,
-                prompt_mode=str(prompt_modes[0]),
-                frame_tokens=warm_frames,
-                device=str(args.device),
-                dtype=dtype,
-                bbox_padding_px=int(args.bbox_padding_px),
-                output_mask_root=Path(args.output_dir) / "_warmup_masks",
-                write_masks=False,
-                overwrite=True,
-            )
-        for case in cases:
-            for camera_idx in camera_ids:
-                frame_tokens = _sorted_frame_tokens(case.case_dir, camera_idx=int(camera_idx), frames=args.frames)
-                for prompt_mode in prompt_modes:
-                    print(
-                        f"[hf-edgetam-realcase] case={case.key} cam={camera_idx} "
-                        f"mode={prompt_mode} frames={len(frame_tokens)}",
-                        flush=True,
-                    )
-                    try:
-                        job = _run_one_stream(
-                            model=model,
-                            processor=processor,
-                            case=case,
-                            camera_idx=int(camera_idx),
-                            prompt_mode=str(prompt_mode),
-                            frame_tokens=frame_tokens,
-                            device=str(args.device),
-                            dtype=dtype,
-                            bbox_padding_px=int(args.bbox_padding_px),
-                            output_mask_root=Path(args.output_dir) / "masks",
-                            write_masks=not bool(args.no_write_masks),
-                            overwrite=bool(args.overwrite),
-                        )
-                    except Exception as exc:
-                        job = {
-                            "status": "failed",
-                            "case_key": case.key,
-                            "case_label": case.label,
-                            "case_dir": str(case.case_dir),
-                            "camera_idx": int(camera_idx),
-                            "prompt_mode": str(prompt_mode),
-                            "text_prompt": case.text_prompt,
-                            "error_type": type(exc).__name__,
-                            "error": str(exc),
-                            "traceback": traceback.format_exc(),
-                        }
+            try:
+                warmup_record = _run_one_stream(
+                    model=model,
+                    processor=processor,
+                    case=warm_case,
+                    camera_idx=warm_camera,
+                    prompt_mode=str(prompt_modes[0]),
+                    frame_tokens=warm_frames,
+                    device=str(args.device),
+                    dtype=dtype,
+                    bbox_padding_px=int(args.bbox_padding_px),
+                    output_mask_root=Path(args.output_dir) / "_warmup_masks",
+                    write_masks=False,
+                    overwrite=True,
+                )
+                warmup_record["compile_mode"] = str(args.compile_mode)
+            except Exception as exc:
+                warmup_failed = True
+                warmup_record = {
+                    "status": "failed",
+                    "phase": "warmup",
+                    "case_key": warm_case.key,
+                    "case_label": warm_case.label,
+                    "case_dir": str(warm_case.case_dir),
+                    "camera_idx": int(warm_camera),
+                    "prompt_mode": str(prompt_modes[0]),
+                    "compile_mode": str(args.compile_mode),
+                    "text_prompt": warm_case.text_prompt,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+                jobs.append(warmup_record)
+                print(
+                    f"[hf-edgetam-realcase] WARMUP FAILED case={warm_case.key} cam={warm_camera} "
+                    f"mode={prompt_modes[0]} compile={args.compile_mode}: {type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+        if not warmup_failed:
+            for case in cases:
+                for camera_idx in camera_ids:
+                    frame_tokens = _sorted_frame_tokens(case.case_dir, camera_idx=int(camera_idx), frames=args.frames)
+                    for prompt_mode in prompt_modes:
                         print(
-                            f"[hf-edgetam-realcase] FAILED case={case.key} cam={camera_idx} "
-                            f"mode={prompt_mode}: {type(exc).__name__}: {exc}",
+                            f"[hf-edgetam-realcase] case={case.key} cam={camera_idx} "
+                            f"mode={prompt_mode} frames={len(frame_tokens)}",
                             flush=True,
                         )
-                    jobs.append(job)
+                        try:
+                            job = _run_one_stream(
+                                model=model,
+                                processor=processor,
+                                case=case,
+                                camera_idx=int(camera_idx),
+                                prompt_mode=str(prompt_mode),
+                                frame_tokens=frame_tokens,
+                                device=str(args.device),
+                                dtype=dtype,
+                                bbox_padding_px=int(args.bbox_padding_px),
+                                output_mask_root=Path(args.output_dir) / "masks",
+                                write_masks=not bool(args.no_write_masks),
+                                overwrite=bool(args.overwrite),
+                            )
+                            job["compile_mode"] = str(args.compile_mode)
+                        except Exception as exc:
+                            job = {
+                                "status": "failed",
+                                "case_key": case.key,
+                                "case_label": case.label,
+                                "case_dir": str(case.case_dir),
+                                "camera_idx": int(camera_idx),
+                                "prompt_mode": str(prompt_mode),
+                                "compile_mode": str(args.compile_mode),
+                                "text_prompt": case.text_prompt,
+                                "error_type": type(exc).__name__,
+                                "error": str(exc),
+                                "traceback": traceback.format_exc(),
+                            }
+                            print(
+                                f"[hf-edgetam-realcase] FAILED case={case.key} cam={camera_idx} "
+                                f"mode={prompt_mode}: {type(exc).__name__}: {exc}",
+                                flush=True,
+                            )
+                        jobs.append(job)
 
     payload = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "model_id": str(args.model_id),
         "environment": "edgetam-hf-stream",
+        "compile_mode": str(args.compile_mode),
+        "compile_metadata": compile_metadata,
         "prompt_modes": list(prompt_modes),
         "camera_ids": [int(item) for item in camera_ids],
         "frames": None if args.frames is None else int(args.frames),
@@ -1029,6 +1177,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "warmup": {
             "enabled": not bool(args.no_warmup),
             "frames": int(args.warmup_frames),
+            "compile_warmup_frames": int(args.warmup_frames) if compile_metadata["enabled"] and not bool(args.no_warmup) else 0,
             "record": warmup_record,
         },
         "env": _env_report(str(args.device)),
@@ -1071,6 +1220,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--all-frames", action="store_true")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", choices=("float32", "float16", "bfloat16"), default="bfloat16")
+    parser.add_argument(
+        "--compile-mode",
+        choices=ALL_COMPILE_MODES,
+        default=COMPILE_MODE_NONE,
+        help=(
+            "Optional torch.compile ablation mode. Default keeps the current eager "
+            "streaming baseline unchanged."
+        ),
+    )
     parser.add_argument("--bbox-padding-px", type=int, default=0)
     parser.add_argument("--warmup-frames", type=int, default=3)
     parser.add_argument("--no-warmup", action="store_true")
@@ -1100,6 +1258,8 @@ def main(argv: list[str] | None = None) -> int:
         "timestamp_utc": payload["timestamp_utc"],
         "model_id": payload["model_id"],
         "environment": payload["environment"],
+        "compile_mode": payload["compile_mode"],
+        "compile_metadata": payload["compile_metadata"],
         "aggregate": payload["aggregate"],
         "quality": [
             {

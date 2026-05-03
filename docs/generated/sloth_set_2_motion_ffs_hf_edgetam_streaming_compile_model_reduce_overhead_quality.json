@@ -1,0 +1,38 @@
+{
+  "timestamp_utc": "2026-05-03T19:15:37.847896+00:00",
+  "model_id": "yonigozlan/EdgeTAM-hf",
+  "environment": "edgetam-hf-stream",
+  "compile_mode": "model-reduce-overhead",
+  "compile_metadata": {
+    "compile_mode": "model-reduce-overhead",
+    "enabled": true,
+    "torch_compile_available": true,
+    "torch_compile_mode": "reduce-overhead",
+    "fullgraph": false,
+    "dynamic": false,
+    "requested_targets": [
+      "<model>"
+    ],
+    "applied_targets": [
+      "<model>"
+    ],
+    "missing_targets": [],
+    "whole_model_compiled": true,
+    "wrap_ms": 380.60109902289696
+  },
+  "aggregate": {
+    "job_count": 1,
+    "passed": 0,
+    "failed": 1,
+    "mode_summary": {}
+  },
+  "quality": [
+    {
+      "case_key": "sloth_set_2_motion_ffs",
+      "camera_idx": 0,
+      "prompt_mode": "mask",
+      "status": "failed",
+      "quality": null
+    }
+  ]
+}

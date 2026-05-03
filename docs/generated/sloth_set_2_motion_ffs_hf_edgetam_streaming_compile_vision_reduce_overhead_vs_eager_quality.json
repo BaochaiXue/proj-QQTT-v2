@@ -1,0 +1,12 @@
+{
+  "baseline_mask_root": "result/sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor/hf_edgetam_streaming/masks/sloth_set_2_motion_ffs/mask",
+  "compiled_mask_root": "result/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation/vision_reduce_overhead/masks/sloth_set_2_motion_ffs/mask",
+  "frame_count": 279,
+  "missing_count": 0,
+  "mask_iou_mean_vs_eager": 0.9961019964885174,
+  "mask_iou_min_vs_eager": 0.9809680365296803,
+  "mask_iou_median_vs_eager": 0.9978979231480702,
+  "area_delta_mean_vs_eager": -1.7956989247311828,
+  "area_delta_min_vs_eager": -723,
+  "area_delta_max_vs_eager": 639
+}

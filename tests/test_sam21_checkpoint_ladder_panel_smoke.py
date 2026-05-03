@@ -464,6 +464,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             self.assertEqual(cases[0].case_dir, case_dir.resolve())
             self.assertEqual(cases[0].sam31_mask_root, sam31_root.resolve())
             self.assertIsNone(args.frames)
+            self.assertEqual(args.compile_mode, hf_stream.COMPILE_MODE_NONE)
             self.assertEqual(hf_stream._primary_text_prompt_label("stuffed animal"), "stuffed animal")
             self.assertEqual(
                 hf_stream._primary_text_prompt_label("white rope, thick rope"),
@@ -501,6 +502,52 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
                 text_prompt="stuffed animal",
             )
             self.assertEqual(int(loaded.sum()), 20)
+
+    def test_hf_edgetam_compile_target_selection_is_explicit(self) -> None:
+        from scripts.harness.experiments import run_hf_edgetam_streaming_realcase as hf_stream
+
+        class DummyModule:
+            pass
+
+        class DummyTorch:
+            @staticmethod
+            def compile(module, **kwargs):
+                module.compile_kwargs = kwargs
+                return module
+
+        class DummyModel:
+            vision_encoder = DummyModule()
+            memory_attention = DummyModule()
+            memory_encoder = DummyModule()
+            mask_decoder = DummyModule()
+
+        old_torch = hf_stream.torch
+        try:
+            hf_stream.torch = DummyTorch()
+            model = DummyModel()
+            compiled, metadata = hf_stream._apply_compile_mode(
+                model,
+                hf_stream.COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD,
+            )
+            self.assertIs(compiled, model)
+            self.assertEqual(
+                metadata["applied_targets"],
+                ["vision_encoder", "memory_attention", "memory_encoder", "mask_decoder"],
+            )
+            self.assertFalse(metadata["whole_model_compiled"])
+            self.assertEqual(model.vision_encoder.compile_kwargs["mode"], "reduce-overhead")
+            self.assertFalse(model.vision_encoder.compile_kwargs["fullgraph"])
+            self.assertFalse(model.vision_encoder.compile_kwargs["dynamic"])
+
+            model_default, default_metadata = hf_stream._apply_compile_mode(
+                DummyModel(),
+                hf_stream.COMPILE_MODE_NONE,
+            )
+            self.assertEqual(default_metadata["applied_targets"], [])
+            self.assertFalse(default_metadata["enabled"])
+            self.assertIsInstance(model_default, DummyModel)
+        finally:
+            hf_stream.torch = old_torch
 
     def test_pinhole_renderer_uses_original_camera_z_buffer(self) -> None:
         points = np.asarray(

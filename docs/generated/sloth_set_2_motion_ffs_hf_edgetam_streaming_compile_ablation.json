@@ -1,0 +1,64 @@
+{
+  "date": "2026-05-03",
+  "case_key": "sloth_set_2_motion_ffs",
+  "case_dir": "data/different_types/sloth_set_2_motion_ffs",
+  "camera_ids": [0, 1, 2],
+  "frames_per_camera": 93,
+  "prompt_mode": "mask",
+  "text_prompt": "stuffed animal",
+  "streaming_contract": {
+    "frame_by_frame_streaming": true,
+    "offline_video_input_used": false,
+    "frame_source": "png_loop"
+  },
+  "environment": "edgetam-hf-stream",
+  "recommended_compile_mode": "vision-reduce-overhead",
+  "same_run_eager": {
+    "compile_mode": "none",
+    "status": "pass",
+    "subsequent_median_ms": 16.240340482909232,
+    "e2e_fps_median": 60.82611227669803,
+    "model_only_fps_median": 65.22339199215335
+  },
+  "vision_reduce_overhead": {
+    "compile_mode": "vision-reduce-overhead",
+    "status": "pass",
+    "applied_targets": ["vision_encoder"],
+    "subsequent_median_ms": 11.467705524410121,
+    "e2e_fps_median": 86.19311923973774,
+    "model_only_fps_median": 96.1917859259529,
+    "latency_reduction_vs_same_run_eager": 0.2938753016614193,
+    "e2e_fps_increase_vs_same_run_eager": 0.417041399056464,
+    "model_only_fps_increase_vs_same_run_eager": 0.4748050199156336
+  },
+  "quality_vs_same_run_eager": {
+    "frame_count": 279,
+    "missing_count": 0,
+    "mask_iou_mean": 0.9961019964885174,
+    "mask_iou_median": 0.9978979231480702,
+    "mask_iou_min": 0.9809680365296803,
+    "area_delta_mean_px": -1.7956989247311828,
+    "area_delta_min_px": -723,
+    "area_delta_max_px": 639
+  },
+  "failed_modes": [
+    {
+      "compile_mode": "model-default",
+      "status": "failed",
+      "error_type": "BackendCompilerFailed",
+      "summary": "Inductor failed while compiling the full HF streaming model around inference_session.get_frame(...).unsqueeze(0)."
+    },
+    {
+      "compile_mode": "model-reduce-overhead",
+      "status": "failed",
+      "error_type": "BackendCompilerFailed",
+      "summary": "Same full-model session/state compile failure as model-default."
+    },
+    {
+      "compile_mode": "components-reduce-overhead",
+      "status": "failed",
+      "error_type": "RuntimeError",
+      "summary": "CUDA Graph output overwrite during warmup when compiling vision, memory, encoder, and decoder components together."
+    }
+  ]
+}

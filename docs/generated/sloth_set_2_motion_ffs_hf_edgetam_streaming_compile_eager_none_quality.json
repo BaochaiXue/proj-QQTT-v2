@@ -1,0 +1,5752 @@
+{
+  "timestamp_utc": "2026-05-03T19:16:29.768578+00:00",
+  "model_id": "yonigozlan/EdgeTAM-hf",
+  "environment": "edgetam-hf-stream",
+  "compile_mode": "none",
+  "compile_metadata": {
+    "compile_mode": "none",
+    "enabled": false,
+    "torch_compile_available": true,
+    "torch_compile_mode": null,
+    "fullgraph": false,
+    "dynamic": false,
+    "requested_targets": [],
+    "applied_targets": [],
+    "missing_targets": [],
+    "whole_model_compiled": false,
+    "wrap_ms": 0.0
+  },
+  "aggregate": {
+    "job_count": 3,
+    "passed": 3,
+    "failed": 0,
+    "mode_summary": {
+      "mask": {
+        "job_count": 3,
+        "first_frame_latency_ms": {
+          "mean": 22.307702999872465,
+          "median": 23.269897006684914,
+          "p90": 23.35899382014759,
+          "p95": 23.370130921830423,
+          "min": 20.271943969419226,
+          "max": 23.381268023513258
+        },
+        "subsequent_frame_latency_median_ms": {
+          "mean": 16.8828546544925,
+          "median": 16.240340482909232,
+          "p90": 17.955817270558327,
+          "p95": 18.170251869014464,
+          "min": 16.023537013097666,
+          "max": 18.3846864674706
+        },
+        "end_to_end_streaming_fps": {
+          "mean": 59.23246935645246,
+          "median": 60.82611227669803,
+          "p90": 61.52826956599311,
+          "p95": 61.61603922715499,
+          "min": 55.16748690434246,
+          "max": 61.70380888831688
+        },
+        "model_only_streaming_fps": {
+          "mean": 63.539726044347326,
+          "median": 65.22339199215335,
+          "p90": 66.03474209981545,
+          "p95": 66.1361608632732,
+          "min": 59.158206514157655,
+          "max": 66.23757962673096
+        },
+        "area_std_over_mean": {
+          "mean": 0.0599415907384224,
+          "median": 0.061966902304050296,
+          "p90": 0.06236190282393917,
+          "p95": 0.06241127788892528,
+          "min": 0.05539721695730552,
+          "max": 0.06246065295391139
+        },
+        "iou_to_frame0_min": {
+          "mean": 0.3309902098843677,
+          "median": 0.3250610112398171,
+          "p90": 0.36278935711832083,
+          "p95": 0.3675054003531338,
+          "min": 0.2956881748253393,
+          "max": 0.37222144358794673
+        }
+      }
+    }
+  },
+  "quality": [
+    {
+      "case_key": "sloth_set_2_motion_ffs",
+      "camera_idx": 0,
+      "prompt_mode": "mask",
+      "status": "pass",
+      "quality": {
+        "frame_count": 93,
+        "area_mean": 24588.752688172044,
+        "area_std": 1535.8295482254698,
+        "area_std_over_mean": 0.06246065295391139,
+        "area_min": 21961,
+        "area_max": 27496,
+        "centroid_drift_px_max": 46.34326358564309,
+        "centroid_drift_px_mean": 23.979927080326977,
+        "bbox_linf_drift_px_max": 101.0,
+        "bbox_linf_drift_px_mean": 50.24731182795699,
+        "iou_to_frame0_mean": 0.54380401059642,
+        "iou_to_frame0_min": 0.37222144358794673,
+        "sam21_iou": {},
+        "ffs_point_counts": {
+          "output_mean": 22604.182795698925,
+          "sam31_mean": 22420.58064516129,
+          "delta_mean": 183.6021505376344,
+          "delta_min": -13,
+          "delta_max": 439
+        },
+        "failure_frames": [],
+        "per_frame": [
+          {
+            "frame_token": "0",
+            "area": 21961,
+            "centroid": [
+              451.17125813942897,
+              237.10923910568735
+            ],
+            "bbox_xyxy": [
+              305.0,
+              154.0,
+              596.0,
+              341.0
+            ],
+            "centroid_drift_px": 0.0,
+            "bbox_linf_drift_px": 0.0,
+            "iou_to_frame0": 1.0,
+            "ffs_output_point_count": 20314,
+            "ffs_sam31_point_count": 20301,
+            "ffs_point_count_delta": 13
+          },
+          {
+            "frame_token": "1",
+            "area": 22276,
+            "centroid": [
+              450.5451158197163,
+              236.80970551265938
+            ],
+            "bbox_xyxy": [
+              303.0,
+              153.0,
+              597.0,
+              341.0
+            ],
+            "centroid_drift_px": 0.6940998327960086,
+            "bbox_linf_drift_px": 2.0,
+            "iou_to_frame0": 0.9697657850209279,
+            "ffs_output_point_count": 20585,
+            "ffs_sam31_point_count": 20312,
+            "ffs_point_count_delta": 273
+          },
+          {
+            "frame_token": "2",
+            "area": 22277,
+            "centroid": [
+              450.80612290703414,
+              236.5514656372043
+            ],
+            "bbox_xyxy": [
+              304.0,
+              153.0,
+              598.0,
+              341.0
+            ],
+            "centroid_drift_px": 0.6666595683552742,
+            "bbox_linf_drift_px": 2.0,
+            "iou_to_frame0": 0.970775604757874,
+            "ffs_output_point_count": 20516,
+            "ffs_sam31_point_count": 20324,
+            "ffs_point_count_delta": 192
+          },
+          {
+            "frame_token": "3",
+            "area": 22432,
+            "centroid": [
+              451.2373395149786,
+              235.7263730385164
+            ],
+            "bbox_xyxy": [
+              303.0,
+              152.0,
+              598.0,
+              341.0
+            ],
+            "centroid_drift_px": 1.3844440429021847,
+            "bbox_linf_drift_px": 2.0,
+            "iou_to_frame0": 0.949541082956392,
+            "ffs_output_point_count": 20676,
+            "ffs_sam31_point_count": 20473,
+            "ffs_point_count_delta": 203
+          },
+          {
+            "frame_token": "4",
+            "area": 22536,
+            "centroid": [
+              450.21059637912674,
+              235.25412673056442
+            ],
+            "bbox_xyxy": [
+              301.0,
+              151.0,
+              598.0,
+              341.0
+            ],
+            "centroid_drift_px": 2.0890938088178834,
+            "bbox_linf_drift_px": 4.0,
+            "iou_to_frame0": 0.9212037476792885,
+            "ffs_output_point_count": 20782,
+            "ffs_sam31_point_count": 20587,
+            "ffs_point_count_delta": 195
+          },
+          {
+            "frame_token": "5",
+            "area": 22747,
+            "centroid": [
+              449.32536158614323,
+              234.75447311733416
+            ],
+            "bbox_xyxy": [
+              299.0,
+              152.0,
+              598.0,
+              341.0
+            ],
+            "centroid_drift_px": 2.9920322433652298,
+            "bbox_linf_drift_px": 6.0,
+            "iou_to_frame0": 0.8945673362149335,
+            "ffs_output_point_count": 21064,
+            "ffs_sam31_point_count": 20790,
+            "ffs_point_count_delta": 274
+          },
+          {
+            "frame_token": "6",
+            "area": 22889,
+            "centroid": [
+              449.1271353051684,
+              233.74874393813622
+            ],
+            "bbox_xyxy": [
+              297.0,
+              150.0,
+              599.0,
+              341.0
+            ],
+            "centroid_drift_px": 3.933365725772272,
+            "bbox_linf_drift_px": 8.0,
+            "iou_to_frame0": 0.8782193559194271,
+            "ffs_output_point_count": 21133,
+            "ffs_sam31_point_count": 20846,
+            "ffs_point_count_delta": 287
+          },
+          {
+            "frame_token": "7",
+            "area": 22910,
+            "centroid": [
+              448.871017023134,
+              233.67896115233523
+            ],
+            "bbox_xyxy": [
+              297.0,
+              149.0,
+              599.0,
+              341.0
+            ],
+            "centroid_drift_px": 4.130123004263608,
+            "bbox_linf_drift_px": 8.0,
+            "iou_to_frame0": 0.877919142881058,
+            "ffs_output_point_count": 21124,
+            "ffs_sam31_point_count": 20843,
+            "ffs_point_count_delta": 281
+          },
+          {
+            "frame_token": "8",
+            "area": 22862,
+            "centroid": [
+              448.6849357011635,
+              234.43968156766687
+            ],
+            "bbox_xyxy": [
+              298.0,
+              152.0,
+              601.0,
+              341.0
+            ],
+            "centroid_drift_px": 3.648059308156091,
+            "bbox_linf_drift_px": 7.0,
+            "iou_to_frame0": 0.8649053463698773,
+            "ffs_output_point_count": 21172,
+            "ffs_sam31_point_count": 20860,
+            "ffs_point_count_delta": 312
+          },
+          {
+            "frame_token": "9",
+            "area": 22829,
+            "centroid": [
+              448.3218713040431,
+              234.0318454597223
+            ],
+            "bbox_xyxy": [
+              298.0,
+              152.0,
+              601.0,
+              341.0
+            ],
+            "centroid_drift_px": 4.193966736860992,
+            "bbox_linf_drift_px": 7.0,
+            "iou_to_frame0": 0.8464773055200561,
+            "ffs_output_point_count": 21165,
+            "ffs_sam31_point_count": 20857,
+            "ffs_point_count_delta": 308
+          },
+          {
+            "frame_token": "10",
+            "area": 22784,
+            "centroid": [
+              448.12715063202245,
+              233.4828827247191
+            ],
+            "bbox_xyxy": [
+              299.0,
+              152.0,
+              601.0,
+              341.0
+            ],
+            "centroid_drift_px": 4.734664836969759,
+            "bbox_linf_drift_px": 6.0,
+            "iou_to_frame0": 0.8273707424650821,
+            "ffs_output_point_count": 21097,
+            "ffs_sam31_point_count": 20813,
+            "ffs_point_count_delta": 284
+          },
+          {
+            "frame_token": "11",
+            "area": 22718,
+            "centroid": [
+              448.29716524341933,
+              233.9516682806585
+            ],
+            "bbox_xyxy": [
+              301.0,
+              153.0,
+              601.0,
+              341.0
+            ],
+            "centroid_drift_px": 4.2697381055477415,
+            "bbox_linf_drift_px": 5.0,
+            "iou_to_frame0": 0.8227398825065274,
+            "ffs_output_point_count": 21071,
+            "ffs_sam31_point_count": 20735,
+            "ffs_point_count_delta": 336
+          },
+          {
+            "frame_token": "12",
+            "area": 22660,
+            "centroid": [
+              448.19894086496026,
+              233.53676081200354
+            ],
+            "bbox_xyxy": [
+              302.0,
+              154.0,
+              601.0,
+              341.0
+            ],
+            "centroid_drift_px": 4.647286427470025,
+            "bbox_linf_drift_px": 5.0,
+            "iou_to_frame0": 0.8033787333791376,
+            "ffs_output_point_count": 21018,
+            "ffs_sam31_point_count": 20774,
+            "ffs_point_count_delta": 244
+          },
+          {
+            "frame_token": "13",
+            "area": 22617,
+            "centroid": [
+              447.775169120573,
+              233.00787018614318
+            ],
+            "bbox_xyxy": [
+              302.0,
+              153.0,
+              601.0,
+              341.0
+            ],
+            "centroid_drift_px": 5.3249082281478675,
+            "bbox_linf_drift_px": 5.0,
+            "iou_to_frame0": 0.7834053448551769,
+            "ffs_output_point_count": 20982,
+            "ffs_sam31_point_count": 20753,
+            "ffs_point_count_delta": 229
+          },
+          {
+            "frame_token": "14",
+            "area": 22694,
+            "centroid": [
+              447.73957874328016,
+              232.1976733938486
+            ],
+            "bbox_xyxy": [
+              302.0,
+              153.0,
+              602.0,
+              341.0
+            ],
+            "centroid_drift_px": 5.991652628420848,
+            "bbox_linf_drift_px": 6.0,
+            "iou_to_frame0": 0.7465873978174992,
+            "ffs_output_point_count": 20969,
+            "ffs_sam31_point_count": 20721,
+            "ffs_point_count_delta": 248
+          },
+          {
+            "frame_token": "15",
+            "area": 22713,
+            "centroid": [
+              447.8989125170607,
+              231.4896755162242
+            ],
+            "bbox_xyxy": [
+              304.0,
+              154.0,
+              604.0,
+              341.0
+            ],
+            "centroid_drift_px": 6.502902491061422,
+            "bbox_linf_drift_px": 8.0,
+            "iou_to_frame0": 0.7171080447399777,
+            "ffs_output_point_count": 20983,
+            "ffs_sam31_point_count": 20749,
+            "ffs_point_count_delta": 234
+          },
+          {
+            "frame_token": "16",
+            "area": 22940,
+            "centroid": [
+              450.2944202266783,
+              229.23596338273757
+            ],
+            "bbox_xyxy": [
+              306.0,
+              153.0,
+              609.0,
+              341.0
+            ],
+            "centroid_drift_px": 7.921951485260901,
+            "bbox_linf_drift_px": 13.0,
+            "iou_to_frame0": 0.6772880089652596,
+            "ffs_output_point_count": 21173,
+            "ffs_sam31_point_count": 21006,
+            "ffs_point_count_delta": 167
+          },
+          {
+            "frame_token": "17",
+            "area": 23119,
+            "centroid": [
+              452.6030970197673,
+              227.27406029672565
+            ],
+            "bbox_xyxy": [
+              309.0,
+              152.0,
+              613.0,
+              342.0
+            ],
+            "centroid_drift_px": 9.938858323947363,
+            "bbox_linf_drift_px": 17.0,
+            "iou_to_frame0": 0.6426775498305579,
+            "ffs_output_point_count": 21268,
+            "ffs_sam31_point_count": 21237,
+            "ffs_point_count_delta": 31
+          },
+          {
+            "frame_token": "18",
+            "area": 23425,
+            "centroid": [
+              454.41797225186764,
+              225.27193169690503
+            ],
+            "bbox_xyxy": [
+              312.0,
+              146.0,
+              615.0,
+              342.0
+            ],
+            "centroid_drift_px": 12.274485700750205,
+            "bbox_linf_drift_px": 19.0,
+            "iou_to_frame0": 0.5974236238209207,
+            "ffs_output_point_count": 21548,
+            "ffs_sam31_point_count": 21525,
+            "ffs_point_count_delta": 23
+          },
+          {
+            "frame_token": "19",
+            "area": 23861,
+            "centroid": [
+              455.8117430116089,
+              222.60508780017602
+            ],
+            "bbox_xyxy": [
+              316.0,
+              137.0,
+              617.0,
+              342.0
+            ],
+            "centroid_drift_px": 15.228411110227375,
+            "bbox_linf_drift_px": 21.0,
+            "iou_to_frame0": 0.5498731608320649,
+            "ffs_output_point_count": 21874,
+            "ffs_sam31_point_count": 21794,
+            "ffs_point_count_delta": 80
+          },
+          {
+            "frame_token": "20",
+            "area": 24136,
+            "centroid": [
+              456.88713954259197,
+              221.20653795160754
+            ],
+            "bbox_xyxy": [
+              317.0,
+              132.0,
+              618.0,
+              342.0
+            ],
+            "centroid_drift_px": 16.898733804962898,
+            "bbox_linf_drift_px": 22.0,
+            "iou_to_frame0": 0.5314617940199335,
+            "ffs_output_point_count": 22108,
+            "ffs_sam31_point_count": 21958,
+            "ffs_point_count_delta": 150
+          },
+          {
+            "frame_token": "21",
+            "area": 24599,
+            "centroid": [
+              459.0321557786902,
+              217.8251961461848
+            ],
+            "bbox_xyxy": [
+              322.0,
+              119.0,
+              621.0,
+              343.0
+            ],
+            "centroid_drift_px": 20.824697466203027,
+            "bbox_linf_drift_px": 35.0,
+            "iou_to_frame0": 0.485973255034628,
+            "ffs_output_point_count": 22611,
+            "ffs_sam31_point_count": 22565,
+            "ffs_point_count_delta": 46
+          },
+          {
+            "frame_token": "22",
+            "area": 24865,
+            "centroid": [
+              460.0944701387493,
+              216.71486024532476
+            ],
+            "bbox_xyxy": [
+              324.0,
+              115.0,
+              622.0,
+              343.0
+            ],
+            "centroid_drift_px": 22.261051221467923,
+            "bbox_linf_drift_px": 39.0,
+            "iou_to_frame0": 0.4732106339468303,
+            "ffs_output_point_count": 22808,
+            "ffs_sam31_point_count": 22663,
+            "ffs_point_count_delta": 145
+          },
+          {
+            "frame_token": "23",
+            "area": 25400,
+            "centroid": [
+              462.2390157480315,
+              214.87062992125985
+            ],
+            "bbox_xyxy": [
+              330.0,
+              105.0,
+              621.0,
+              346.0
+            ],
+            "centroid_drift_px": 24.840511205296924,
+            "bbox_linf_drift_px": 49.0,
+            "iou_to_frame0": 0.44551947259186914,
+            "ffs_output_point_count": 23416,
+            "ffs_sam31_point_count": 23383,
+            "ffs_point_count_delta": 33
+          },
+          {
+            "frame_token": "24",
+            "area": 25745,
+            "centroid": [
+              463.3863662847155,
+              214.1562245096135
+            ],
+            "bbox_xyxy": [
+              334.0,
+              99.0,
+              621.0,
+              348.0
+            ],
+            "centroid_drift_px": 26.000956637182107,
+            "bbox_linf_drift_px": 55.0,
+            "iou_to_frame0": 0.430336101699997,
+            "ffs_output_point_count": 23704,
+            "ffs_sam31_point_count": 23537,
+            "ffs_point_count_delta": 167
+          },
+          {
+            "frame_token": "25",
+            "area": 26030,
+            "centroid": [
+              465.35658855167117,
+              213.7165194006915
+            ],
+            "bbox_xyxy": [
+              339.0,
+              94.0,
+              626.0,
+              349.0
+            ],
+            "centroid_drift_px": 27.357685101283405,
+            "bbox_linf_drift_px": 60.0,
+            "iou_to_frame0": 0.4168757934516253,
+            "ffs_output_point_count": 24000,
+            "ffs_sam31_point_count": 23821,
+            "ffs_point_count_delta": 179
+          },
+          {
+            "frame_token": "26",
+            "area": 26139,
+            "centroid": [
+              466.9315582080416,
+              213.7179310608669
+            ],
+            "bbox_xyxy": [
+              345.0,
+              89.0,
+              625.0,
+              352.0
+            ],
+            "centroid_drift_px": 28.205324857203713,
+            "bbox_linf_drift_px": 65.0,
+            "iou_to_frame0": 0.4096477345993787,
+            "ffs_output_point_count": 23989,
+            "ffs_sam31_point_count": 23743,
+            "ffs_point_count_delta": 246
+          },
+          {
+            "frame_token": "27",
+            "area": 26096,
+            "centroid": [
+              468.76092121397915,
+              213.82560545677498
+            ],
+            "bbox_xyxy": [
+              351.0,
+              86.0,
+              626.0,
+              353.0
+            ],
+            "centroid_drift_px": 29.18088146326218,
+            "bbox_linf_drift_px": 68.0,
+            "iou_to_frame0": 0.40649145399203934,
+            "ffs_output_point_count": 23893,
+            "ffs_sam31_point_count": 23768,
+            "ffs_point_count_delta": 125
+          },
+          {
+            "frame_token": "28",
+            "area": 26053,
+            "centroid": [
+              470.1187579165547,
+              213.2109545925613
+            ],
+            "bbox_xyxy": [
+              357.0,
+              83.0,
+              627.0,
+              354.0
+            ],
+            "centroid_drift_px": 30.498126999448683,
+            "bbox_linf_drift_px": 71.0,
+            "iou_to_frame0": 0.4020732953715871,
+            "ffs_output_point_count": 23862,
+            "ffs_sam31_point_count": 23619,
+            "ffs_point_count_delta": 243
+          },
+          {
+            "frame_token": "29",
+            "area": 26014,
+            "centroid": [
+              471.37087721995846,
+              212.71004074728992
+            ],
+            "bbox_xyxy": [
+              360.0,
+              81.0,
+              628.0,
+              354.0
+            ],
+            "centroid_drift_px": 31.67562929968266,
+            "bbox_linf_drift_px": 73.0,
+            "iou_to_frame0": 0.39746577337605593,
+            "ffs_output_point_count": 23794,
+            "ffs_sam31_point_count": 23494,
+            "ffs_point_count_delta": 300
+          },
+          {
+            "frame_token": "30",
+            "area": 25989,
+            "centroid": [
+              472.2326753626534,
+              212.24037092616106
+            ],
+            "bbox_xyxy": [
+              364.0,
+              80.0,
+              627.0,
+              354.0
+            ],
+            "centroid_drift_px": 32.58901502011668,
+            "bbox_linf_drift_px": 74.0,
+            "iou_to_frame0": 0.3965341488277268,
+            "ffs_output_point_count": 23728,
+            "ffs_sam31_point_count": 23394,
+            "ffs_point_count_delta": 334
+          },
+          {
+            "frame_token": "31",
+            "area": 25715,
+            "centroid": [
+              473.7751506902586,
+              211.4650981917169
+            ],
+            "bbox_xyxy": [
+              371.0,
+              76.0,
+              625.0,
+              354.0
+            ],
+            "centroid_drift_px": 34.18417648072022,
+            "bbox_linf_drift_px": 78.0,
+            "iou_to_frame0": 0.3961579009019562,
+            "ffs_output_point_count": 23472,
+            "ffs_sam31_point_count": 23114,
+            "ffs_point_count_delta": 358
+          },
+          {
+            "frame_token": "32",
+            "area": 25684,
+            "centroid": [
+              474.2892462233297,
+              211.05816850957794
+            ],
+            "bbox_xyxy": [
+              373.0,
+              75.0,
+              625.0,
+              354.0
+            ],
+            "centroid_drift_px": 34.82958013314047,
+            "bbox_linf_drift_px": 79.0,
+            "iou_to_frame0": 0.39529094796028935,
+            "ffs_output_point_count": 23403,
+            "ffs_sam31_point_count": 23099,
+            "ffs_point_count_delta": 304
+          },
+          {
+            "frame_token": "33",
+            "area": 25500,
+            "centroid": [
+              475.27564705882355,
+              210.41419607843136
+            ],
+            "bbox_xyxy": [
+              380.0,
+              72.0,
+              626.0,
+              354.0
+            ],
+            "centroid_drift_px": 35.96730303212184,
+            "bbox_linf_drift_px": 82.0,
+            "iou_to_frame0": 0.39677447835427765,
+            "ffs_output_point_count": 23166,
+            "ffs_sam31_point_count": 22841,
+            "ffs_point_count_delta": 325
+          },
+          {
+            "frame_token": "34",
+            "area": 25393,
+            "centroid": [
+              475.0814397668649,
+              209.9259244673729
+            ],
+            "bbox_xyxy": [
+              383.0,
+              68.0,
+              625.0,
+              354.0
+            ],
+            "centroid_drift_px": 36.20261565388024,
+            "bbox_linf_drift_px": 86.0,
+            "iou_to_frame0": 0.4005915409642118,
+            "ffs_output_point_count": 23022,
+            "ffs_sam31_point_count": 22826,
+            "ffs_point_count_delta": 196
+          },
+          {
+            "frame_token": "35",
+            "area": 25431,
+            "centroid": [
+              474.8768825449255,
+              209.0876096103181
+            ],
+            "bbox_xyxy": [
+              386.0,
+              65.0,
+              622.0,
+              354.0
+            ],
+            "centroid_drift_px": 36.70379201159219,
+            "bbox_linf_drift_px": 89.0,
+            "iou_to_frame0": 0.4006383733301809,
+            "ffs_output_point_count": 23125,
+            "ffs_sam31_point_count": 22899,
+            "ffs_point_count_delta": 226
+          },
+          {
+            "frame_token": "36",
+            "area": 25433,
+            "centroid": [
+              474.7340856367711,
+              208.3206464042779
+            ],
+            "bbox_xyxy": [
+              387.0,
+              65.0,
+              621.0,
+              354.0
+            ],
+            "centroid_drift_px": 37.20201485668684,
+            "bbox_linf_drift_px": 89.0,
+            "iou_to_frame0": 0.4002836376528984,
+            "ffs_output_point_count": 23224,
+            "ffs_sam31_point_count": 23016,
+            "ffs_point_count_delta": 208
+          },
+          {
+            "frame_token": "37",
+            "area": 25473,
+            "centroid": [
+              474.2324421936953,
+              207.1411690809877
+            ],
+            "bbox_xyxy": [
+              390.0,
+              62.0,
+              619.0,
+              354.0
+            ],
+            "centroid_drift_px": 37.81406393116256,
+            "bbox_linf_drift_px": 92.0,
+            "iou_to_frame0": 0.3990266922282849,
+            "ffs_output_point_count": 23196,
+            "ffs_sam31_point_count": 22956,
+            "ffs_point_count_delta": 240
+          },
+          {
+            "frame_token": "38",
+            "area": 25543,
+            "centroid": [
+              473.9267509689543,
+              206.419606154328
+            ],
+            "bbox_xyxy": [
+              390.0,
+              59.0,
+              618.0,
+              354.0
+            ],
+            "centroid_drift_px": 38.205575831333064,
+            "bbox_linf_drift_px": 95.0,
+            "iou_to_frame0": 0.3995639620529138,
+            "ffs_output_point_count": 23239,
+            "ffs_sam31_point_count": 23023,
+            "ffs_point_count_delta": 216
+          },
+          {
+            "frame_token": "39",
+            "area": 25556,
+            "centroid": [
+              474.0821724839568,
+              206.47206135545468
+            ],
+            "bbox_xyxy": [
+              390.0,
+              58.0,
+              617.0,
+              354.0
+            ],
+            "centroid_drift_px": 38.25632832096728,
+            "bbox_linf_drift_px": 96.0,
+            "iou_to_frame0": 0.4001532250935557,
+            "ffs_output_point_count": 23296,
+            "ffs_sam31_point_count": 23078,
+            "ffs_point_count_delta": 218
+          },
+          {
+            "frame_token": "40",
+            "area": 25534,
+            "centroid": [
+              474.85078718571316,
+              206.38250959504973
+            ],
+            "bbox_xyxy": [
+              390.0,
+              57.0,
+              616.0,
+              354.0
+            ],
+            "centroid_drift_px": 38.79242196967992,
+            "bbox_linf_drift_px": 97.0,
+            "iou_to_frame0": 0.4009911212058641,
+            "ffs_output_point_count": 23241,
+            "ffs_sam31_point_count": 23042,
+            "ffs_point_count_delta": 199
+          },
+          {
+            "frame_token": "41",
+            "area": 25521,
+            "centroid": [
+              476.1058735942949,
+              206.46416676462522
+            ],
+            "bbox_xyxy": [
+              390.0,
+              57.0,
+              616.0,
+              354.0
+            ],
+            "centroid_drift_px": 39.507663897919485,
+            "bbox_linf_drift_px": 97.0,
+            "iou_to_frame0": 0.4021793698136609,
+            "ffs_output_point_count": 23235,
+            "ffs_sam31_point_count": 23072,
+            "ffs_point_count_delta": 163
+          },
+          {
+            "frame_token": "42",
+            "area": 25510,
+            "centroid": [
+              476.6464915719326,
+              206.59313994511956
+            ],
+            "bbox_xyxy": [
+              390.0,
+              57.0,
+              616.0,
+              354.0
+            ],
+            "centroid_drift_px": 39.75197889939765,
+            "bbox_linf_drift_px": 97.0,
+            "iou_to_frame0": 0.40160618855000146,
+            "ffs_output_point_count": 23201,
+            "ffs_sam31_point_count": 22976,
+            "ffs_point_count_delta": 225
+          },
+          {
+            "frame_token": "43",
+            "area": 25017,
+            "centroid": [
+              477.7203901347084,
+              205.87208698085303
+            ],
+            "bbox_xyxy": [
+              390.0,
+              56.0,
+              614.0,
+              354.0
+            ],
+            "centroid_drift_px": 40.995317812804075,
+            "bbox_linf_drift_px": 98.0,
+            "iou_to_frame0": 0.3985293679854723,
+            "ffs_output_point_count": 22956,
+            "ffs_sam31_point_count": 22756,
+            "ffs_point_count_delta": 200
+          },
+          {
+            "frame_token": "44",
+            "area": 24754,
+            "centroid": [
+              478.8513775551426,
+              205.7936091136786
+            ],
+            "bbox_xyxy": [
+              389.0,
+              58.0,
+              612.0,
+              354.0
+            ],
+            "centroid_drift_px": 41.79542669556761,
+            "bbox_linf_drift_px": 96.0,
+            "iou_to_frame0": 0.3968961186531906,
+            "ffs_output_point_count": 22610,
+            "ffs_sam31_point_count": 22457,
+            "ffs_point_count_delta": 153
+          },
+          {
+            "frame_token": "45",
+            "area": 24597,
+            "centroid": [
+              481.1627434239948,
+              205.4766841484734
+            ],
+            "bbox_xyxy": [
+              390.0,
+              60.0,
+              612.0,
+              353.0
+            ],
+            "centroid_drift_px": 43.590225081954905,
+            "bbox_linf_drift_px": 94.0,
+            "iou_to_frame0": 0.3924512501495394,
+            "ffs_output_point_count": 22254,
+            "ffs_sam31_point_count": 22066,
+            "ffs_point_count_delta": 188
+          },
+          {
+            "frame_token": "46",
+            "area": 24313,
+            "centroid": [
+              482.5922757372599,
+              204.27421544029943
+            ],
+            "bbox_xyxy": [
+              391.0,
+              60.0,
+              612.0,
+              352.0
+            ],
+            "centroid_drift_px": 45.44688246722526,
+            "bbox_linf_drift_px": 94.0,
+            "iou_to_frame0": 0.3842472105058482,
+            "ffs_output_point_count": 22079,
+            "ffs_sam31_point_count": 21900,
+            "ffs_point_count_delta": 179
+          },
+          {
+            "frame_token": "47",
+            "area": 24506,
+            "centroid": [
+              483.6762017465111,
+              204.1546560026116
+            ],
+            "bbox_xyxy": [
+              392.0,
+              60.0,
+              612.0,
+              352.0
+            ],
+            "centroid_drift_px": 46.28796718799729,
+            "bbox_linf_drift_px": 94.0,
+            "iou_to_frame0": 0.37978442260296347,
+            "ffs_output_point_count": 22102,
+            "ffs_sam31_point_count": 21883,
+            "ffs_point_count_delta": 219
+          },
+          {
+            "frame_token": "48",
+            "area": 24224,
+            "centroid": [
+              483.1834131439894,
+              203.59924042272127
+            ],
+            "bbox_xyxy": [
+              391.0,
+              60.0,
+              610.0,
+              352.0
+            ],
+            "centroid_drift_px": 46.34326358564309,
+            "bbox_linf_drift_px": 94.0,
+            "iou_to_frame0": 0.37697146775588086,
+            "ffs_output_point_count": 22021,
+            "ffs_sam31_point_count": 21721,
+            "ffs_point_count_delta": 300
+          },
+          {
+            "frame_token": "49",
+            "area": 24080,
+            "centroid": [
+              482.42624584717606,
+              203.89634551495016
+            ],
+            "bbox_xyxy": [
+              390.0,
+              60.0,
+              608.0,
+              353.0
+            ],
+            "centroid_drift_px": 45.60669421566371,
+            "bbox_linf_drift_px": 94.0,
+            "iou_to_frame0": 0.3783492500673592,
+            "ffs_output_point_count": 21869,
+            "ffs_sam31_point_count": 21623,
+            "ffs_point_count_delta": 246
+          },
+          {
+            "frame_token": "50",
+            "area": 23987,
+            "centroid": [
+              481.31200233459793,
+              204.42218701796807
+            ],
+            "bbox_xyxy": [
+              390.0,
+              60.0,
+              606.0,
+              353.0
+            ],
+            "centroid_drift_px": 44.46243172414083,
+            "bbox_linf_drift_px": 94.0,
+            "iou_to_frame0": 0.38293453724604964,
+            "ffs_output_point_count": 21818,
+            "ffs_sam31_point_count": 21533,
+            "ffs_point_count_delta": 285
+          },
+          {
+            "frame_token": "51",
+            "area": 24137,
+            "centroid": [
+              479.67058872270786,
+              203.9854165803538
+            ],
+            "bbox_xyxy": [
+              389.0,
+              59.0,
+              606.0,
+              353.0
+            ],
+            "centroid_drift_px": 43.69667564454771,
+            "bbox_linf_drift_px": 95.0,
+            "iou_to_frame0": 0.39492238327230916,
+            "ffs_output_point_count": 22073,
+            "ffs_sam31_point_count": 21796,
+            "ffs_point_count_delta": 277
+          },
+          {
+            "frame_token": "52",
+            "area": 24135,
+            "centroid": [
+              479.1229749326704,
+              203.50926041019267
+            ],
+            "bbox_xyxy": [
+              390.0,
+              58.0,
+              606.0,
+              353.0
+            ],
+            "centroid_drift_px": 43.706487390629675,
+            "bbox_linf_drift_px": 96.0,
+            "iou_to_frame0": 0.3988832240835154,
+            "ffs_output_point_count": 22048,
+            "ffs_sam31_point_count": 21913,
+            "ffs_point_count_delta": 135
+          },
+          {
+            "frame_token": "53",
+            "area": 24611,
+            "centroid": [
+              476.87058632318883,
+              203.0473771890618
+            ],
+            "bbox_xyxy": [
+              390.0,
+              56.0,
+              610.0,
+              353.0
+            ],
+            "centroid_drift_px": 42.66926184414093,
+            "bbox_linf_drift_px": 98.0,
+            "iou_to_frame0": 0.40781717602249024,
+            "ffs_output_point_count": 22500,
+            "ffs_sam31_point_count": 22483,
+            "ffs_point_count_delta": 17
+          },
+          {
+            "frame_token": "54",
+            "area": 24842,
+            "centroid": [
+              476.663191369455,
+              202.87416472103695
+            ],
+            "bbox_xyxy": [
+              390.0,
+              55.0,
+              611.0,
+              353.0
+            ],
+            "centroid_drift_px": 42.68347429540677,
+            "bbox_linf_drift_px": 99.0,
+            "iou_to_frame0": 0.4049470176807853,
+            "ffs_output_point_count": 22789,
+            "ffs_sam31_point_count": 22756,
+            "ffs_point_count_delta": 33
+          },
+          {
+            "frame_token": "55",
+            "area": 25311,
+            "centroid": [
+              476.9888585990281,
+              203.8981865592035
+            ],
+            "bbox_xyxy": [
+              390.0,
+              54.0,
+              612.0,
+              354.0
+            ],
+            "centroid_drift_px": 42.06569272859778,
+            "bbox_linf_drift_px": 100.0,
+            "iou_to_frame0": 0.39866264275992663,
+            "ffs_output_point_count": 23135,
+            "ffs_sam31_point_count": 23082,
+            "ffs_point_count_delta": 53
+          },
+          {
+            "frame_token": "56",
+            "area": 25918,
+            "centroid": [
+              476.5657843969442,
+              204.01605062118992
+            ],
+            "bbox_xyxy": [
+              391.0,
+              54.0,
+              614.0,
+              355.0
+            ],
+            "centroid_drift_px": 41.713799729994676,
+            "bbox_linf_drift_px": 100.0,
+            "iou_to_frame0": 0.3866315271221292,
+            "ffs_output_point_count": 23652,
+            "ffs_sam31_point_count": 23602,
+            "ffs_point_count_delta": 50
+          },
+          {
+            "frame_token": "57",
+            "area": 26170,
+            "centroid": [
+              476.0526939243409,
+              204.14959877722583
+            ],
+            "bbox_xyxy": [
+              391.0,
+              53.0,
+              615.0,
+              355.0
+            ],
+            "centroid_drift_px": 41.296776354822676,
+            "bbox_linf_drift_px": 101.0,
+            "iou_to_frame0": 0.3831939535017387,
+            "ffs_output_point_count": 23900,
+            "ffs_sam31_point_count": 23841,
+            "ffs_point_count_delta": 59
+          },
+          {
+            "frame_token": "58",
+            "area": 26746,
+            "centroid": [
+              474.463508562028,
+              205.53424811186719
+            ],
+            "bbox_xyxy": [
+              387.0,
+              58.0,
+              617.0,
+              354.0
+            ],
+            "centroid_drift_px": 39.23657714440556,
+            "bbox_linf_drift_px": 96.0,
+            "iou_to_frame0": 0.3752823582561554,
+            "ffs_output_point_count": 24347,
+            "ffs_sam31_point_count": 24251,
+            "ffs_point_count_delta": 96
+          },
+          {
+            "frame_token": "59",
+            "area": 26993,
+            "centroid": [
+              473.1311080650539,
+              206.72537324491535
+            ],
+            "bbox_xyxy": [
+              381.0,
+              57.0,
+              618.0,
+              354.0
+            ],
+            "centroid_drift_px": 37.48885585612552,
+            "bbox_linf_drift_px": 97.0,
+            "iou_to_frame0": 0.37222144358794673,
+            "ffs_output_point_count": 24724,
+            "ffs_sam31_point_count": 24626,
+            "ffs_point_count_delta": 98
+          },
+          {
+            "frame_token": "60",
+            "area": 27096,
+            "centroid": [
+              472.6300930026572,
+              207.41448922350162
+            ],
+            "bbox_xyxy": [
+              378.0,
+              60.0,
+              618.0,
+              355.0
+            ],
+            "centroid_drift_px": 36.63686346090326,
+            "bbox_linf_drift_px": 94.0,
+            "iou_to_frame0": 0.3725693181500238,
+            "ffs_output_point_count": 24821,
+            "ffs_sam31_point_count": 24615,
+            "ffs_point_count_delta": 206
+          },
+          {
+            "frame_token": "61",
+            "area": 27258,
+            "centroid": [
+              471.10635409787955,
+              208.14142637023994
+            ],
+            "bbox_xyxy": [
+              372.0,
+              62.0,
+              619.0,
+              355.0
+            ],
+            "centroid_drift_px": 35.16450235036153,
+            "bbox_linf_drift_px": 92.0,
+            "iou_to_frame0": 0.37633175806045693,
+            "ffs_output_point_count": 24896,
+            "ffs_sam31_point_count": 24663,
+            "ffs_point_count_delta": 233
+          },
+          {
+            "frame_token": "62",
+            "area": 27229,
+            "centroid": [
+              469.2651584707481,
+              208.91553123508024
+            ],
+            "bbox_xyxy": [
+              364.0,
+              66.0,
+              620.0,
+              355.0
+            ],
+            "centroid_drift_px": 33.500364068064144,
+            "bbox_linf_drift_px": 88.0,
+            "iou_to_frame0": 0.3784503292700014,
+            "ffs_output_point_count": 24891,
+            "ffs_sam31_point_count": 24740,
+            "ffs_point_count_delta": 151
+          },
+          {
+            "frame_token": "63",
+            "area": 27279,
+            "centroid": [
+              468.5662231020199,
+              208.97789508413064
+            ],
+            "bbox_xyxy": [
+              360.0,
+              67.0,
+              621.0,
+              355.0
+            ],
+            "centroid_drift_px": 33.07502566150085,
+            "bbox_linf_drift_px": 87.0,
+            "iou_to_frame0": 0.37896269743474853,
+            "ffs_output_point_count": 24951,
+            "ffs_sam31_point_count": 24866,
+            "ffs_point_count_delta": 85
+          },
+          {
+            "frame_token": "64",
+            "area": 27469,
+            "centroid": [
+              467.339801230478,
+              209.2215588481561
+            ],
+            "bbox_xyxy": [
+              348.0,
+              74.0,
+              623.0,
+              354.0
+            ],
+            "centroid_drift_px": 32.23576423529318,
+            "bbox_linf_drift_px": 80.0,
+            "iou_to_frame0": 0.3819228941261987,
+            "ffs_output_point_count": 25063,
+            "ffs_sam31_point_count": 24911,
+            "ffs_point_count_delta": 152
+          },
+          {
+            "frame_token": "65",
+            "area": 27496,
+            "centroid": [
+              466.02898603433226,
+              209.79778876927554
+            ],
+            "bbox_xyxy": [
+              341.0,
+              78.0,
+              623.0,
+              354.0
+            ],
+            "centroid_drift_px": 31.09127526617839,
+            "bbox_linf_drift_px": 76.0,
+            "iou_to_frame0": 0.3838771056018804,
+            "ffs_output_point_count": 25147,
+            "ffs_sam31_point_count": 24943,
+            "ffs_point_count_delta": 204
+          },
+          {
+            "frame_token": "66",
+            "area": 27306,
+            "centroid": [
+              464.07104665641253,
+              210.80238775360726
+            ],
+            "bbox_xyxy": [
+              334.0,
+              84.0,
+              625.0,
+              354.0
+            ],
+            "centroid_drift_px": 29.299402243788847,
+            "bbox_linf_drift_px": 70.0,
+            "iou_to_frame0": 0.38878083157152926,
+            "ffs_output_point_count": 25032,
+            "ffs_sam31_point_count": 24942,
+            "ffs_point_count_delta": 90
+          },
+          {
+            "frame_token": "67",
+            "area": 27166,
+            "centroid": [
+              462.6687035264669,
+              211.8374806743724
+            ],
+            "bbox_xyxy": [
+              328.0,
+              90.0,
+              623.0,
+              354.0
+            ],
+            "centroid_drift_px": 27.764240033515396,
+            "bbox_linf_drift_px": 64.0,
+            "iou_to_frame0": 0.3947024755848285,
+            "ffs_output_point_count": 24903,
+            "ffs_sam31_point_count": 24779,
+            "ffs_point_count_delta": 124
+          },
+          {
+            "frame_token": "68",
+            "area": 27026,
+            "centroid": [
+              460.6477836157774,
+              212.56945163916228
+            ],
+            "bbox_xyxy": [
+              322.0,
+              95.0,
+              621.0,
+              352.0
+            ],
+            "centroid_drift_px": 26.306001292596758,
+            "bbox_linf_drift_px": 59.0,
+            "iou_to_frame0": 0.4057738112319568,
+            "ffs_output_point_count": 24853,
+            "ffs_sam31_point_count": 24691,
+            "ffs_point_count_delta": 162
+          },
+          {
+            "frame_token": "69",
+            "area": 26676,
+            "centroid": [
+              459.31616434248014,
+              213.92423901634427
+            ],
+            "bbox_xyxy": [
+              318.0,
+              102.0,
+              620.0,
+              351.0
+            ],
+            "centroid_drift_px": 24.57404578410604,
+            "bbox_linf_drift_px": 52.0,
+            "iou_to_frame0": 0.4225088473574917,
+            "ffs_output_point_count": 24652,
+            "ffs_sam31_point_count": 24535,
+            "ffs_point_count_delta": 117
+          },
+          {
+            "frame_token": "70",
+            "area": 26265,
+            "centroid": [
+              457.9109080525414,
+              215.4169807728917
+            ],
+            "bbox_xyxy": [
+              314.0,
+              108.0,
+              619.0,
+              348.0
+            ],
+            "centroid_drift_px": 22.71512607334723,
+            "bbox_linf_drift_px": 46.0,
+            "iou_to_frame0": 0.44631717850287905,
+            "ffs_output_point_count": 24301,
+            "ffs_sam31_point_count": 24314,
+            "ffs_point_count_delta": -13
+          },
+          {
+            "frame_token": "71",
+            "area": 26001,
+            "centroid": [
+              455.97430868043534,
+              216.588285065959
+            ],
+            "bbox_xyxy": [
+              310.0,
+              114.0,
+              617.0,
+              347.0
+            ],
+            "centroid_drift_px": 21.075550982123918,
+            "bbox_linf_drift_px": 40.0,
+            "iou_to_frame0": 0.47258213079521033,
+            "ffs_output_point_count": 23971,
+            "ffs_sam31_point_count": 23934,
+            "ffs_point_count_delta": 37
+          },
+          {
+            "frame_token": "72",
+            "area": 25635,
+            "centroid": [
+              453.8974448995514,
+              218.41806124439242
+            ],
+            "bbox_xyxy": [
+              307.0,
+              120.0,
+              615.0,
+              345.0
+            ],
+            "centroid_drift_px": 18.888944493899825,
+            "bbox_linf_drift_px": 34.0,
+            "iou_to_frame0": 0.494990105851682,
+            "ffs_output_point_count": 23664,
+            "ffs_sam31_point_count": 23550,
+            "ffs_point_count_delta": 114
+          },
+          {
+            "frame_token": "73",
+            "area": 25238,
+            "centroid": [
+              453.0150962833822,
+              218.55036056739837
+            ],
+            "bbox_xyxy": [
+              305.0,
+              126.0,
+              613.0,
+              341.0
+            ],
+            "centroid_drift_px": 18.65024696083299,
+            "bbox_linf_drift_px": 28.0,
+            "iou_to_frame0": 0.5109965745750232,
+            "ffs_output_point_count": 23353,
+            "ffs_sam31_point_count": 23270,
+            "ffs_point_count_delta": 83
+          },
+          {
+            "frame_token": "74",
+            "area": 24688,
+            "centroid": [
+              452.0211033700583,
+              218.2970268956578
+            ],
+            "bbox_xyxy": [
+              302.0,
+              134.0,
+              611.0,
+              336.0
+            ],
+            "centroid_drift_px": 18.83139838544148,
+            "bbox_linf_drift_px": 20.0,
+            "iou_to_frame0": 0.515611293414341,
+            "ffs_output_point_count": 22902,
+            "ffs_sam31_point_count": 22832,
+            "ffs_point_count_delta": 70
+          },
+          {
+            "frame_token": "75",
+            "area": 24537,
+            "centroid": [
+              452.01687247829807,
+              217.57085218241838
+            ],
+            "bbox_xyxy": [
+              301.0,
+              136.0,
+              609.0,
+              334.0
+            ],
+            "centroid_drift_px": 19.556677304017395,
+            "bbox_linf_drift_px": 18.0,
+            "iou_to_frame0": 0.5131634612255525,
+            "ffs_output_point_count": 22778,
+            "ffs_sam31_point_count": 22711,
+            "ffs_point_count_delta": 67
+          },
+          {
+            "frame_token": "76",
+            "area": 24269,
+            "centroid": [
+              452.14063208208,
+              216.1720713667642
+            ],
+            "bbox_xyxy": [
+              300.0,
+              133.0,
+              608.0,
+              330.0
+            ],
+            "centroid_drift_px": 20.95959634078137,
+            "bbox_linf_drift_px": 21.0,
+            "iou_to_frame0": 0.5096989092809091,
+            "ffs_output_point_count": 22547,
+            "ffs_sam31_point_count": 22498,
+            "ffs_point_count_delta": 49
+          },
+          {
+            "frame_token": "77",
+            "area": 23919,
+            "centroid": [
+              452.68506208453533,
+              215.55294953802417
+            ],
+            "bbox_xyxy": [
+              301.0,
+              132.0,
+              606.0,
+              327.0
+            ],
+            "centroid_drift_px": 21.60937811019013,
+            "bbox_linf_drift_px": 22.0,
+            "iou_to_frame0": 0.5133423491770294,
+            "ffs_output_point_count": 22194,
+            "ffs_sam31_point_count": 21987,
+            "ffs_point_count_delta": 207
+          },
+          {
+            "frame_token": "78",
+            "area": 23539,
+            "centroid": [
+              452.89710692892646,
+              215.73337864820087
+            ],
+            "bbox_xyxy": [
+              301.0,
+              132.0,
+              604.0,
+              327.0
+            ],
+            "centroid_drift_px": 21.44541825990214,
+            "bbox_linf_drift_px": 22.0,
+            "iou_to_frame0": 0.5300289192279238,
+            "ffs_output_point_count": 21883,
+            "ffs_sam31_point_count": 21844,
+            "ffs_point_count_delta": 39
+          },
+          {
+            "frame_token": "79",
+            "area": 23106,
+            "centroid": [
+              451.93720245823596,
+              218.8359300614559
+            ],
+            "bbox_xyxy": [
+              302.0,
+              136.0,
+              602.0,
+              330.0
+            ],
+            "centroid_drift_px": 18.28935466673177,
+            "bbox_linf_drift_px": 18.0,
+            "iou_to_frame0": 0.5807990459153249,
+            "ffs_output_point_count": 21492,
+            "ffs_sam31_point_count": 21413,
+            "ffs_point_count_delta": 79
+          },
+          {
+            "frame_token": "80",
+            "area": 23087,
+            "centroid": [
+              452.13336509724087,
+              219.71815307315805
+            ],
+            "bbox_xyxy": [
+              302.0,
+              137.0,
+              602.0,
+              331.0
+            ],
+            "centroid_drift_px": 17.41767846726727,
+            "bbox_linf_drift_px": 17.0,
+            "iou_to_frame0": 0.5978434363139786,
+            "ffs_output_point_count": 21464,
+            "ffs_sam31_point_count": 21370,
+            "ffs_point_count_delta": 94
+          },
+          {
+            "frame_token": "81",
+            "area": 23052,
+            "centroid": [
+              452.132049279889,
+              221.27459656428942
+            ],
+            "bbox_xyxy": [
+              302.0,
+              138.0,
+              601.0,
+              332.0
+            ],
+            "centroid_drift_px": 15.86376449741471,
+            "bbox_linf_drift_px": 16.0,
+            "iou_to_frame0": 0.6287812997539441,
+            "ffs_output_point_count": 21471,
+            "ffs_sam31_point_count": 21395,
+            "ffs_point_count_delta": 76
+          },
+          {
+            "frame_token": "82",
+            "area": 23020,
+            "centroid": [
+              451.79635099913116,
+              225.4201563857515
+            ],
+            "bbox_xyxy": [
+              303.0,
+              141.0,
+              599.0,
+              337.0
+            ],
+            "centroid_drift_px": 11.705784720246367,
+            "bbox_linf_drift_px": 13.0,
+            "iou_to_frame0": 0.6919055141803957,
+            "ffs_output_point_count": 21433,
+            "ffs_sam31_point_count": 21321,
+            "ffs_point_count_delta": 112
+          },
+          {
+            "frame_token": "83",
+            "area": 23067,
+            "centroid": [
+              451.3648502189275,
+              227.12875536480686
+            ],
+            "bbox_xyxy": [
+              303.0,
+              143.0,
+              598.0,
+              339.0
+            ],
+            "centroid_drift_px": 9.982361123262589,
+            "bbox_linf_drift_px": 11.0,
+            "iou_to_frame0": 0.7193478177860934,
+            "ffs_output_point_count": 21492,
+            "ffs_sam31_point_count": 21287,
+            "ffs_point_count_delta": 205
+          },
+          {
+            "frame_token": "84",
+            "area": 23005,
+            "centroid": [
+              451.47902629863074,
+              227.26933275374918
+            ],
+            "bbox_xyxy": [
+              304.0,
+              142.0,
+              598.0,
+              338.0
+            ],
+            "centroid_drift_px": 9.844718292299255,
+            "bbox_linf_drift_px": 12.0,
+            "iou_to_frame0": 0.7256120960933302,
+            "ffs_output_point_count": 21430,
+            "ffs_sam31_point_count": 21268,
+            "ffs_point_count_delta": 162
+          },
+          {
+            "frame_token": "85",
+            "area": 22996,
+            "centroid": [
+              451.20907983997216,
+              227.35062619586014
+            ],
+            "bbox_xyxy": [
+              303.0,
+              143.0,
+              598.0,
+              338.0
+            ],
+            "centroid_drift_px": 9.758686202808153,
+            "bbox_linf_drift_px": 11.0,
+            "iou_to_frame0": 0.7285170517897651,
+            "ffs_output_point_count": 21418,
+            "ffs_sam31_point_count": 21119,
+            "ffs_point_count_delta": 299
+          },
+          {
+            "frame_token": "86",
+            "area": 22977,
+            "centroid": [
+              450.7829568699134,
+              227.38708273490883
+            ],
+            "bbox_xyxy": [
+              303.0,
+              143.0,
+              597.0,
+              338.0
+            ],
+            "centroid_drift_px": 9.729907624113231,
+            "bbox_linf_drift_px": 11.0,
+            "iou_to_frame0": 0.7259947764633584,
+            "ffs_output_point_count": 21379,
+            "ffs_sam31_point_count": 21230,
+            "ffs_point_count_delta": 149
+          },
+          {
+            "frame_token": "87",
+            "area": 23127,
+            "centroid": [
+              449.5778959657543,
+              226.3773511480088
+            ],
+            "bbox_xyxy": [
+              301.0,
+              142.0,
+              596.0,
+              338.0
+            ],
+            "centroid_drift_px": 10.849526356143981,
+            "bbox_linf_drift_px": 12.0,
+            "iou_to_frame0": 0.704263683096462,
+            "ffs_output_point_count": 21564,
+            "ffs_sam31_point_count": 21226,
+            "ffs_point_count_delta": 338
+          },
+          {
+            "frame_token": "88",
+            "area": 23172,
+            "centroid": [
+              448.52895736233387,
+              225.7064560676679
+            ],
+            "bbox_xyxy": [
+              299.0,
+              141.0,
+              595.0,
+              338.0
+            ],
+            "centroid_drift_px": 11.704922657103795,
+            "bbox_linf_drift_px": 13.0,
+            "iou_to_frame0": 0.6915148789446068,
+            "ffs_output_point_count": 21580,
+            "ffs_sam31_point_count": 21363,
+            "ffs_point_count_delta": 217
+          },
+          {
+            "frame_token": "89",
+            "area": 23330,
+            "centroid": [
+              447.5055722246035,
+              226.33073296185168
+            ],
+            "bbox_xyxy": [
+              297.0,
+              142.0,
+              594.0,
+              338.0
+            ],
+            "centroid_drift_px": 11.38479020091513,
+            "bbox_linf_drift_px": 12.0,
+            "iou_to_frame0": 0.7013899323816679,
+            "ffs_output_point_count": 21690,
+            "ffs_sam31_point_count": 21251,
+            "ffs_point_count_delta": 439
+          },
+          {
+            "frame_token": "90",
+            "area": 23305,
+            "centroid": [
+              445.83119502252737,
+              227.81218622613173
+            ],
+            "bbox_xyxy": [
+              295.0,
+              144.0,
+              593.0,
+              339.0
+            ],
+            "centroid_drift_px": 10.721542162289264,
+            "bbox_linf_drift_px": 10.0,
+            "iou_to_frame0": 0.7165067687990596,
+            "ffs_output_point_count": 21668,
+            "ffs_sam31_point_count": 21294,
+            "ffs_point_count_delta": 374
+          },
+          {
+            "frame_token": "91",
+            "area": 23319,
+            "centroid": [
+              444.06110896693684,
+              228.8831853853081
+            ],
+            "bbox_xyxy": [
+              293.0,
+              146.0,
+              592.0,
+              339.0
+            ],
+            "centroid_drift_px": 10.87300239426331,
+            "bbox_linf_drift_px": 12.0,
+            "iou_to_frame0": 0.7161916312916919,
+            "ffs_output_point_count": 21630,
+            "ffs_sam31_point_count": 21344,
+            "ffs_point_count_delta": 286
+          },
+          {
+            "frame_token": "92",
+            "area": 23149,
+            "centroid": [
+              442.77929932178495,
+              229.6547583048944
+            ],
+            "bbox_xyxy": [
+              292.0,
+              147.0,
+              591.0,
+              339.0
+            ],
+            "centroid_drift_px": 11.224716335232005,
+            "bbox_linf_drift_px": 13.0,
+            "iou_to_frame0": 0.7116946194126129,
+            "ffs_output_point_count": 21552,
+            "ffs_sam31_point_count": 21132,
+            "ffs_point_count_delta": 420
+          }
+        ]
+      }
+    },
+    {
+      "case_key": "sloth_set_2_motion_ffs",
+      "camera_idx": 1,
+      "prompt_mode": "mask",
+      "status": "pass",
+      "quality": {
+        "frame_count": 93,
+        "area_mean": 38823.54838709677,
+        "area_std": 2405.775029999795,
+        "area_std_over_mean": 0.061966902304050296,
+        "area_min": 34844,
+        "area_max": 43870,
+        "centroid_drift_px_max": 52.265379857493535,
+        "centroid_drift_px_mean": 28.446288734341604,
+        "bbox_linf_drift_px_max": 124.0,
+        "bbox_linf_drift_px_mean": 57.526881720430104,
+        "iou_to_frame0_mean": 0.5394309686000236,
+        "iou_to_frame0_min": 0.3250610112398171,
+        "sam21_iou": {},
+        "ffs_point_counts": {
+          "output_mean": 36012.76344086022,
+          "sam31_mean": 35641.58064516129,
+          "delta_mean": 371.18279569892474,
+          "delta_min": -137,
+          "delta_max": 823
+        },
+        "failure_frames": [],
+        "per_frame": [
+          {
+            "frame_token": "0",
+            "area": 39655,
+            "centroid": [
+              378.09121170092044,
+              288.2457445467154
+            ],
+            "bbox_xyxy": [
+              165.0,
+              173.0,
+              596.0,
+              441.0
+            ],
+            "centroid_drift_px": 0.0,
+            "bbox_linf_drift_px": 0.0,
+            "iou_to_frame0": 1.0,
+            "ffs_output_point_count": 37550,
+            "ffs_sam31_point_count": 37562,
+            "ffs_point_count_delta": -12
+          },
+          {
+            "frame_token": "1",
+            "area": 40098,
+            "centroid": [
+              378.2306349443863,
+              288.218689211432
+            ],
+            "bbox_xyxy": [
+              164.0,
+              173.0,
+              598.0,
+              441.0
+            ],
+            "centroid_drift_px": 0.14202405425079864,
+            "bbox_linf_drift_px": 2.0,
+            "iou_to_frame0": 0.9759916751319343,
+            "ffs_output_point_count": 37977,
+            "ffs_sam31_point_count": 37534,
+            "ffs_point_count_delta": 443
+          },
+          {
+            "frame_token": "2",
+            "area": 39764,
+            "centroid": [
+              378.89236495322405,
+              287.89085605069914
+            ],
+            "bbox_xyxy": [
+              164.0,
+              173.0,
+              597.0,
+              441.0
+            ],
+            "centroid_drift_px": 0.8762376266066917,
+            "bbox_linf_drift_px": 1.0,
+            "iou_to_frame0": 0.972946787896855,
+            "ffs_output_point_count": 37627,
+            "ffs_sam31_point_count": 37608,
+            "ffs_point_count_delta": 19
+          },
+          {
+            "frame_token": "3",
+            "area": 39931,
+            "centroid": [
+              379.45663770003256,
+              287.27086724599934
+            ],
+            "bbox_xyxy": [
+              164.0,
+              172.0,
+              599.0,
+              441.0
+            ],
+            "centroid_drift_px": 1.6777287952773414,
+            "bbox_linf_drift_px": 3.0,
+            "iou_to_frame0": 0.9692680754194091,
+            "ffs_output_point_count": 37795,
+            "ffs_sam31_point_count": 37763,
+            "ffs_point_count_delta": 32
+          },
+          {
+            "frame_token": "4",
+            "area": 40017,
+            "centroid": [
+              380.9903291101282,
+              287.84166729140117
+            ],
+            "bbox_xyxy": [
+              167.0,
+              173.0,
+              602.0,
+              442.0
+            ],
+            "centroid_drift_px": 2.9271419816322073,
+            "bbox_linf_drift_px": 6.0,
+            "iou_to_frame0": 0.9474945001222195,
+            "ffs_output_point_count": 37863,
+            "ffs_sam31_point_count": 37637,
+            "ffs_point_count_delta": 226
+          },
+          {
+            "frame_token": "5",
+            "area": 40209,
+            "centroid": [
+              382.02255713894897,
+              287.99960207913654
+            ],
+            "bbox_xyxy": [
+              169.0,
+              174.0,
+              603.0,
+              442.0
+            ],
+            "centroid_drift_px": 3.939043420356463,
+            "bbox_linf_drift_px": 7.0,
+            "iou_to_frame0": 0.9253152045514814,
+            "ffs_output_point_count": 38068,
+            "ffs_sam31_point_count": 37777,
+            "ffs_point_count_delta": 291
+          },
+          {
+            "frame_token": "6",
+            "area": 40383,
+            "centroid": [
+              383.6204095782879,
+              286.8966892009014
+            ],
+            "bbox_xyxy": [
+              173.0,
+              171.0,
+              603.0,
+              441.0
+            ],
+            "centroid_drift_px": 5.69139521498498,
+            "bbox_linf_drift_px": 8.0,
+            "iou_to_frame0": 0.8938078224451648,
+            "ffs_output_point_count": 38225,
+            "ffs_sam31_point_count": 37912,
+            "ffs_point_count_delta": 313
+          },
+          {
+            "frame_token": "7",
+            "area": 40395,
+            "centroid": [
+              383.6142839460329,
+              286.9083302388909
+            ],
+            "bbox_xyxy": [
+              173.0,
+              171.0,
+              603.0,
+              441.0
+            ],
+            "centroid_drift_px": 5.682693380387979,
+            "bbox_linf_drift_px": 8.0,
+            "iou_to_frame0": 0.8936884935654807,
+            "ffs_output_point_count": 38240,
+            "ffs_sam31_point_count": 37876,
+            "ffs_point_count_delta": 364
+          },
+          {
+            "frame_token": "8",
+            "area": 40144,
+            "centroid": [
+              384.91084595456357,
+              288.90317357512953
+            ],
+            "bbox_xyxy": [
+              175.0,
+              175.0,
+              605.0,
+              443.0
+            ],
+            "centroid_drift_px": 6.8512498334876275,
+            "bbox_linf_drift_px": 10.0,
+            "iou_to_frame0": 0.8507978476667595,
+            "ffs_output_point_count": 37915,
+            "ffs_sam31_point_count": 37660,
+            "ffs_point_count_delta": 255
+          },
+          {
+            "frame_token": "9",
+            "area": 40275,
+            "centroid": [
+              385.1551582867784,
+              289.0056859093731
+            ],
+            "bbox_xyxy": [
+              175.0,
+              175.0,
+              605.0,
+              443.0
+            ],
+            "centroid_drift_px": 7.104706344567099,
+            "bbox_linf_drift_px": 10.0,
+            "iou_to_frame0": 0.8468114602587801,
+            "ffs_output_point_count": 38070,
+            "ffs_sam31_point_count": 37813,
+            "ffs_point_count_delta": 257
+          },
+          {
+            "frame_token": "10",
+            "area": 40453,
+            "centroid": [
+              384.93021531159616,
+              288.94393493684026
+            ],
+            "bbox_xyxy": [
+              175.0,
+              176.0,
+              608.0,
+              443.0
+            ],
+            "centroid_drift_px": 6.874550182208158,
+            "bbox_linf_drift_px": 12.0,
+            "iou_to_frame0": 0.8477649121188356,
+            "ffs_output_point_count": 38183,
+            "ffs_sam31_point_count": 37918,
+            "ffs_point_count_delta": 265
+          },
+          {
+            "frame_token": "11",
+            "area": 40416,
+            "centroid": [
+              384.47985946159935,
+              289.4974267616785
+            ],
+            "bbox_xyxy": [
+              174.0,
+              177.0,
+              606.0,
+              444.0
+            ],
+            "centroid_drift_px": 6.510109720832869,
+            "bbox_linf_drift_px": 10.0,
+            "iou_to_frame0": 0.8461024139441589,
+            "ffs_output_point_count": 38109,
+            "ffs_sam31_point_count": 37791,
+            "ffs_point_count_delta": 318
+          },
+          {
+            "frame_token": "12",
+            "area": 40275,
+            "centroid": [
+              384.04176288019863,
+              289.43707014276845
+            ],
+            "bbox_xyxy": [
+              173.0,
+              177.0,
+              606.0,
+              444.0
+            ],
+            "centroid_drift_px": 6.068633784717961,
+            "bbox_linf_drift_px": 10.0,
+            "iou_to_frame0": 0.842384289138853,
+            "ffs_output_point_count": 38103,
+            "ffs_sam31_point_count": 37853,
+            "ffs_point_count_delta": 250
+          },
+          {
+            "frame_token": "13",
+            "area": 40407,
+            "centroid": [
+              384.24181453708513,
+              289.09436483777563
+            ],
+            "bbox_xyxy": [
+              172.0,
+              178.0,
+              608.0,
+              444.0
+            ],
+            "centroid_drift_px": 6.2088704002126125,
+            "bbox_linf_drift_px": 12.0,
+            "iou_to_frame0": 0.8195495556919161,
+            "ffs_output_point_count": 38284,
+            "ffs_sam31_point_count": 37987,
+            "ffs_point_count_delta": 297
+          },
+          {
+            "frame_token": "14",
+            "area": 40335,
+            "centroid": [
+              385.30095450601215,
+              289.2124705590678
+            ],
+            "bbox_xyxy": [
+              176.0,
+              178.0,
+              608.0,
+              444.0
+            ],
+            "centroid_drift_px": 7.274266320291719,
+            "bbox_linf_drift_px": 12.0,
+            "iou_to_frame0": 0.7969627532910994,
+            "ffs_output_point_count": 38131,
+            "ffs_sam31_point_count": 37989,
+            "ffs_point_count_delta": 142
+          },
+          {
+            "frame_token": "15",
+            "area": 40315,
+            "centroid": [
+              386.5245442143123,
+              288.0900657323577
+            ],
+            "bbox_xyxy": [
+              179.0,
+              178.0,
+              610.0,
+              444.0
+            ],
+            "centroid_drift_px": 8.434769301805005,
+            "bbox_linf_drift_px": 14.0,
+            "iou_to_frame0": 0.7351588265926055,
+            "ffs_output_point_count": 37884,
+            "ffs_sam31_point_count": 37759,
+            "ffs_point_count_delta": 125
+          },
+          {
+            "frame_token": "16",
+            "area": 40484,
+            "centroid": [
+              385.48127655370024,
+              284.997282877186
+            ],
+            "bbox_xyxy": [
+              177.0,
+              177.0,
+              611.0,
+              444.0
+            ],
+            "centroid_drift_px": 8.072518922039944,
+            "bbox_linf_drift_px": 15.0,
+            "iou_to_frame0": 0.6922313491141753,
+            "ffs_output_point_count": 37843,
+            "ffs_sam31_point_count": 37598,
+            "ffs_point_count_delta": 245
+          },
+          {
+            "frame_token": "17",
+            "area": 40469,
+            "centroid": [
+              386.34839012577527,
+              281.77857125206947
+            ],
+            "bbox_xyxy": [
+              180.0,
+              175.0,
+              620.0,
+              443.0
+            ],
+            "centroid_drift_px": 10.488342383945595,
+            "bbox_linf_drift_px": 24.0,
+            "iou_to_frame0": 0.6442775349381272,
+            "ffs_output_point_count": 37775,
+            "ffs_sam31_point_count": 37478,
+            "ffs_point_count_delta": 297
+          },
+          {
+            "frame_token": "18",
+            "area": 39973,
+            "centroid": [
+              388.98989317789506,
+              277.20023515873214
+            ],
+            "bbox_xyxy": [
+              189.0,
+              167.0,
+              618.0,
+              442.0
+            ],
+            "centroid_drift_px": 15.517233502676175,
+            "bbox_linf_drift_px": 24.0,
+            "iou_to_frame0": 0.5554774183466167,
+            "ffs_output_point_count": 36863,
+            "ffs_sam31_point_count": 36774,
+            "ffs_point_count_delta": 89
+          },
+          {
+            "frame_token": "19",
+            "area": 40176,
+            "centroid": [
+              389.39426523297493,
+              274.61519315013936
+            ],
+            "bbox_xyxy": [
+              187.0,
+              162.0,
+              616.0,
+              441.0
+            ],
+            "centroid_drift_px": 17.707369949351328,
+            "bbox_linf_drift_px": 22.0,
+            "iou_to_frame0": 0.52561774991878,
+            "ffs_output_point_count": 36974,
+            "ffs_sam31_point_count": 36630,
+            "ffs_point_count_delta": 344
+          },
+          {
+            "frame_token": "20",
+            "area": 40160,
+            "centroid": [
+              391.78535856573706,
+              270.1535358565737
+            ],
+            "bbox_xyxy": [
+              193.0,
+              152.0,
+              619.0,
+              438.0
+            ],
+            "centroid_drift_px": 22.690475394817234,
+            "bbox_linf_drift_px": 28.0,
+            "iou_to_frame0": 0.4723569886919146,
+            "ffs_output_point_count": 36922,
+            "ffs_sam31_point_count": 36541,
+            "ffs_point_count_delta": 381
+          },
+          {
+            "frame_token": "21",
+            "area": 39997,
+            "centroid": [
+              393.96112208415633,
+              265.4940620546541
+            ],
+            "bbox_xyxy": [
+              195.0,
+              145.0,
+              621.0,
+              436.0
+            ],
+            "centroid_drift_px": 27.739738855863585,
+            "bbox_linf_drift_px": 30.0,
+            "iou_to_frame0": 0.4324095887208445,
+            "ffs_output_point_count": 36580,
+            "ffs_sam31_point_count": 36189,
+            "ffs_point_count_delta": 391
+          },
+          {
+            "frame_token": "22",
+            "area": 39347,
+            "centroid": [
+              394.0913157292805,
+              265.5778585406766
+            ],
+            "bbox_xyxy": [
+              197.0,
+              146.0,
+              620.0,
+              436.0
+            ],
+            "centroid_drift_px": 27.745925554955175,
+            "bbox_linf_drift_px": 32.0,
+            "iou_to_frame0": 0.43034055727554177,
+            "ffs_output_point_count": 36061,
+            "ffs_sam31_point_count": 36179,
+            "ffs_point_count_delta": -118
+          },
+          {
+            "frame_token": "23",
+            "area": 39059,
+            "centroid": [
+              400.9023016462275,
+              253.79912440154638
+            ],
+            "bbox_xyxy": [
+              209.0,
+              129.0,
+              624.0,
+              429.0
+            ],
+            "centroid_drift_px": 41.3148334611003,
+            "bbox_linf_drift_px": 44.0,
+            "iou_to_frame0": 0.3634379546871752,
+            "ffs_output_point_count": 35825,
+            "ffs_sam31_point_count": 35962,
+            "ffs_point_count_delta": -137
+          },
+          {
+            "frame_token": "24",
+            "area": 39621,
+            "centroid": [
+              401.9276898614371,
+              251.94737639130764
+            ],
+            "bbox_xyxy": [
+              209.0,
+              125.0,
+              621.0,
+              427.0
+            ],
+            "centroid_drift_px": 43.42521412546296,
+            "bbox_linf_drift_px": 48.0,
+            "iou_to_frame0": 0.35748899809928253,
+            "ffs_output_point_count": 36261,
+            "ffs_sam31_point_count": 35567,
+            "ffs_point_count_delta": 694
+          },
+          {
+            "frame_token": "25",
+            "area": 38941,
+            "centroid": [
+              402.46580724686066,
+              247.46865771295037
+            ],
+            "bbox_xyxy": [
+              215.0,
+              120.0,
+              619.0,
+              420.0
+            ],
+            "centroid_drift_px": 47.50675445319941,
+            "bbox_linf_drift_px": 53.0,
+            "iou_to_frame0": 0.3428097931010917,
+            "ffs_output_point_count": 35495,
+            "ffs_sam31_point_count": 34861,
+            "ffs_point_count_delta": 634
+          },
+          {
+            "frame_token": "26",
+            "area": 38126,
+            "centroid": [
+              401.45391596286,
+              246.28870062424593
+            ],
+            "bbox_xyxy": [
+              218.0,
+              118.0,
+              609.0,
+              416.0
+            ],
+            "centroid_drift_px": 48.023009955050505,
+            "bbox_linf_drift_px": 55.0,
+            "iou_to_frame0": 0.33685675982262553,
+            "ffs_output_point_count": 34759,
+            "ffs_sam31_point_count": 34555,
+            "ffs_point_count_delta": 204
+          },
+          {
+            "frame_token": "27",
+            "area": 37860,
+            "centroid": [
+              400.0837295298468,
+              245.8230322239831
+            ],
+            "bbox_xyxy": [
+              219.0,
+              117.0,
+              603.0,
+              416.0
+            ],
+            "centroid_drift_px": 47.78448870996682,
+            "bbox_linf_drift_px": 56.0,
+            "iou_to_frame0": 0.3363503146280493,
+            "ffs_output_point_count": 34931,
+            "ffs_sam31_point_count": 34799,
+            "ffs_point_count_delta": 132
+          },
+          {
+            "frame_token": "28",
+            "area": 38307,
+            "centroid": [
+              399.02694024590807,
+              245.8644895188869
+            ],
+            "bbox_xyxy": [
+              219.0,
+              116.0,
+              608.0,
+              417.0
+            ],
+            "centroid_drift_px": 47.270239130379366,
+            "bbox_linf_drift_px": 57.0,
+            "iou_to_frame0": 0.3423440486234267,
+            "ffs_output_point_count": 35209,
+            "ffs_sam31_point_count": 34735,
+            "ffs_point_count_delta": 474
+          },
+          {
+            "frame_token": "29",
+            "area": 38264,
+            "centroid": [
+              397.4831695588543,
+              246.37426824168932
+            ],
+            "bbox_xyxy": [
+              221.0,
+              115.0,
+              601.0,
+              418.0
+            ],
+            "centroid_drift_px": 46.143998066121696,
+            "bbox_linf_drift_px": 58.0,
+            "iou_to_frame0": 0.350767097165641,
+            "ffs_output_point_count": 35047,
+            "ffs_sam31_point_count": 34330,
+            "ffs_point_count_delta": 717
+          },
+          {
+            "frame_token": "30",
+            "area": 37580,
+            "centroid": [
+              396.14688664183075,
+              247.56335816923897
+            ],
+            "bbox_xyxy": [
+              224.0,
+              115.0,
+              590.0,
+              418.0
+            ],
+            "centroid_drift_px": 44.509144666440136,
+            "bbox_linf_drift_px": 59.0,
+            "iou_to_frame0": 0.35986689203465033,
+            "ffs_output_point_count": 34351,
+            "ffs_sam31_point_count": 34033,
+            "ffs_point_count_delta": 318
+          },
+          {
+            "frame_token": "31",
+            "area": 37979,
+            "centroid": [
+              395.0488427815372,
+              248.58197951499514
+            ],
+            "bbox_xyxy": [
+              226.0,
+              115.0,
+              585.0,
+              420.0
+            ],
+            "centroid_drift_px": 43.136707203468994,
+            "bbox_linf_drift_px": 61.0,
+            "iou_to_frame0": 0.3711651565728819,
+            "ffs_output_point_count": 34637,
+            "ffs_sam31_point_count": 33916,
+            "ffs_point_count_delta": 721
+          },
+          {
+            "frame_token": "32",
+            "area": 38017,
+            "centroid": [
+              395.0274087908041,
+              248.52494936475787
+            ],
+            "bbox_xyxy": [
+              226.0,
+              114.0,
+              585.0,
+              420.0
+            ],
+            "centroid_drift_px": 43.18074040303621,
+            "bbox_linf_drift_px": 61.0,
+            "iou_to_frame0": 0.3710856134157105,
+            "ffs_output_point_count": 34672,
+            "ffs_sam31_point_count": 34011,
+            "ffs_point_count_delta": 661
+          },
+          {
+            "frame_token": "33",
+            "area": 37102,
+            "centroid": [
+              394.27540294323757,
+              250.64131313675813
+            ],
+            "bbox_xyxy": [
+              241.0,
+              115.0,
+              576.0,
+              423.0
+            ],
+            "centroid_drift_px": 40.93923921904357,
+            "bbox_linf_drift_px": 76.0,
+            "iou_to_frame0": 0.3847805300474481,
+            "ffs_output_point_count": 34042,
+            "ffs_sam31_point_count": 33931,
+            "ffs_point_count_delta": 111
+          },
+          {
+            "frame_token": "34",
+            "area": 37073,
+            "centroid": [
+              394.4688047905484,
+              251.01575270412428
+            ],
+            "bbox_xyxy": [
+              243.0,
+              116.0,
+              574.0,
+              423.0
+            ],
+            "centroid_drift_px": 40.67306047015433,
+            "bbox_linf_drift_px": 78.0,
+            "iou_to_frame0": 0.3848569623680173,
+            "ffs_output_point_count": 33908,
+            "ffs_sam31_point_count": 33555,
+            "ffs_point_count_delta": 353
+          },
+          {
+            "frame_token": "35",
+            "area": 36857,
+            "centroid": [
+              396.0518219062865,
+              251.4532653227338
+            ],
+            "bbox_xyxy": [
+              250.0,
+              114.0,
+              571.0,
+              423.0
+            ],
+            "centroid_drift_px": 40.942277005513695,
+            "bbox_linf_drift_px": 85.0,
+            "iou_to_frame0": 0.38165664445527925,
+            "ffs_output_point_count": 33666,
+            "ffs_sam31_point_count": 33394,
+            "ffs_point_count_delta": 272
+          },
+          {
+            "frame_token": "36",
+            "area": 37340,
+            "centroid": [
+              396.61815747188,
+              251.06256025709695
+            ],
+            "bbox_xyxy": [
+              255.0,
+              113.0,
+              571.0,
+              424.0
+            ],
+            "centroid_drift_px": 41.543193347596734,
+            "bbox_linf_drift_px": 90.0,
+            "iou_to_frame0": 0.3817206230708492,
+            "ffs_output_point_count": 34134,
+            "ffs_sam31_point_count": 33464,
+            "ffs_point_count_delta": 670
+          },
+          {
+            "frame_token": "37",
+            "area": 36756,
+            "centroid": [
+              397.5712264664273,
+              251.42648819240395
+            ],
+            "bbox_xyxy": [
+              259.0,
+              113.0,
+              569.0,
+              425.0
+            ],
+            "centroid_drift_px": 41.65487502980736,
+            "bbox_linf_drift_px": 94.0,
+            "iou_to_frame0": 0.37749454670007754,
+            "ffs_output_point_count": 33659,
+            "ffs_sam31_point_count": 33454,
+            "ffs_point_count_delta": 205
+          },
+          {
+            "frame_token": "38",
+            "area": 37049,
+            "centroid": [
+              398.56697886582634,
+              251.67194796080867
+            ],
+            "bbox_xyxy": [
+              264.0,
+              111.0,
+              563.0,
+              426.0
+            ],
+            "centroid_drift_px": 41.91538664617949,
+            "bbox_linf_drift_px": 99.0,
+            "iou_to_frame0": 0.37403267411865865,
+            "ffs_output_point_count": 33968,
+            "ffs_sam31_point_count": 33403,
+            "ffs_point_count_delta": 565
+          },
+          {
+            "frame_token": "39",
+            "area": 36954,
+            "centroid": [
+              398.69581100828054,
+              252.01334091032095
+            ],
+            "bbox_xyxy": [
+              266.0,
+              112.0,
+              562.0,
+              426.0
+            ],
+            "centroid_drift_px": 41.68136976980812,
+            "bbox_linf_drift_px": 101.0,
+            "iou_to_frame0": 0.37427571979549734,
+            "ffs_output_point_count": 33843,
+            "ffs_sam31_point_count": 33105,
+            "ffs_point_count_delta": 738
+          },
+          {
+            "frame_token": "40",
+            "area": 36786,
+            "centroid": [
+              398.10523025063884,
+              252.45348773990105
+            ],
+            "bbox_xyxy": [
+              265.0,
+              114.0,
+              559.0,
+              426.0
+            ],
+            "centroid_drift_px": 41.00788443498909,
+            "bbox_linf_drift_px": 100.0,
+            "iou_to_frame0": 0.37612515302081084,
+            "ffs_output_point_count": 33686,
+            "ffs_sam31_point_count": 32937,
+            "ffs_point_count_delta": 749
+          },
+          {
+            "frame_token": "41",
+            "area": 35948,
+            "centroid": [
+              397.10351062646043,
+              252.94016356960054
+            ],
+            "bbox_xyxy": [
+              267.0,
+              116.0,
+              554.0,
+              426.0
+            ],
+            "centroid_drift_px": 40.099271297190725,
+            "bbox_linf_drift_px": 102.0,
+            "iou_to_frame0": 0.37840942240373393,
+            "ffs_output_point_count": 32657,
+            "ffs_sam31_point_count": 32411,
+            "ffs_point_count_delta": 246
+          },
+          {
+            "frame_token": "42",
+            "area": 35985,
+            "centroid": [
+              397.0985410587745,
+              252.94897874114216
+            ],
+            "bbox_xyxy": [
+              267.0,
+              116.0,
+              554.0,
+              426.0
+            ],
+            "centroid_drift_px": 40.089153715829745,
+            "bbox_linf_drift_px": 102.0,
+            "iou_to_frame0": 0.3785813224465991,
+            "ffs_output_point_count": 32684,
+            "ffs_sam31_point_count": 32411,
+            "ffs_point_count_delta": 273
+          },
+          {
+            "frame_token": "43",
+            "area": 35874,
+            "centroid": [
+              392.85011428890004,
+              254.27961755031498
+            ],
+            "bbox_xyxy": [
+              274.0,
+              113.0,
+              534.0,
+              427.0
+            ],
+            "centroid_drift_px": 37.03407874832412,
+            "bbox_linf_drift_px": 109.0,
+            "iou_to_frame0": 0.39930709945160814,
+            "ffs_output_point_count": 32841,
+            "ffs_sam31_point_count": 32062,
+            "ffs_point_count_delta": 779
+          },
+          {
+            "frame_token": "44",
+            "area": 35283,
+            "centroid": [
+              391.9461497038234,
+              255.06481875123998
+            ],
+            "bbox_xyxy": [
+              276.0,
+              112.0,
+              527.0,
+              426.0
+            ],
+            "centroid_drift_px": 35.95737954452646,
+            "bbox_linf_drift_px": 111.0,
+            "iou_to_frame0": 0.40612451683116296,
+            "ffs_output_point_count": 32322,
+            "ffs_sam31_point_count": 31913,
+            "ffs_point_count_delta": 409
+          },
+          {
+            "frame_token": "45",
+            "area": 35066,
+            "centroid": [
+              387.34857126561343,
+              255.7061541093937
+            ],
+            "bbox_xyxy": [
+              281.0,
+              107.0,
+              514.0,
+              425.0
+            ],
+            "centroid_drift_px": 33.83080921199861,
+            "bbox_linf_drift_px": 116.0,
+            "iou_to_frame0": 0.43157390554650826,
+            "ffs_output_point_count": 31972,
+            "ffs_sam31_point_count": 31881,
+            "ffs_point_count_delta": 91
+          },
+          {
+            "frame_token": "46",
+            "area": 35634,
+            "centroid": [
+              383.626452264691,
+              255.30535443677385
+            ],
+            "bbox_xyxy": [
+              279.0,
+              105.0,
+              510.0,
+              425.0
+            ],
+            "centroid_drift_px": 33.402218319955125,
+            "bbox_linf_drift_px": 114.0,
+            "iou_to_frame0": 0.4455025439185946,
+            "ffs_output_point_count": 32361,
+            "ffs_sam31_point_count": 31667,
+            "ffs_point_count_delta": 694
+          },
+          {
+            "frame_token": "47",
+            "area": 35631,
+            "centroid": [
+              383.76158401392047,
+              255.49117341640707
+            ],
+            "bbox_xyxy": [
+              280.0,
+              105.0,
+              510.0,
+              425.0
+            ],
+            "centroid_drift_px": 33.241766681367366,
+            "bbox_linf_drift_px": 115.0,
+            "iou_to_frame0": 0.44605574016095884,
+            "ffs_output_point_count": 32331,
+            "ffs_sam31_point_count": 31661,
+            "ffs_point_count_delta": 670
+          },
+          {
+            "frame_token": "48",
+            "area": 35636,
+            "centroid": [
+              382.15015714446065,
+              256.2055225053317
+            ],
+            "bbox_xyxy": [
+              282.0,
+              105.0,
+              506.0,
+              426.0
+            ],
+            "centroid_drift_px": 32.29629803204703,
+            "bbox_linf_drift_px": 117.0,
+            "iou_to_frame0": 0.45377486001158523,
+            "ffs_output_point_count": 32392,
+            "ffs_sam31_point_count": 31692,
+            "ffs_point_count_delta": 700
+          },
+          {
+            "frame_token": "49",
+            "area": 34844,
+            "centroid": [
+              383.5240787510045,
+              257.7171392492251
+            ],
+            "bbox_xyxy": [
+              285.0,
+              108.0,
+              505.0,
+              426.0
+            ],
+            "centroid_drift_px": 31.00825351086128,
+            "bbox_linf_drift_px": 120.0,
+            "iou_to_frame0": 0.4528452747767074,
+            "ffs_output_point_count": 31785,
+            "ffs_sam31_point_count": 31689,
+            "ffs_point_count_delta": 96
+          },
+          {
+            "frame_token": "50",
+            "area": 35302,
+            "centroid": [
+              384.5611296810379,
+              258.77426208146846
+            ],
+            "bbox_xyxy": [
+              287.0,
+              109.0,
+              505.0,
+              428.0
+            ],
+            "centroid_drift_px": 30.173301399893337,
+            "bbox_linf_drift_px": 122.0,
+            "iou_to_frame0": 0.4546566011372237,
+            "ffs_output_point_count": 32271,
+            "ffs_sam31_point_count": 31675,
+            "ffs_point_count_delta": 596
+          },
+          {
+            "frame_token": "51",
+            "area": 35592,
+            "centroid": [
+              386.8086367723084,
+              258.5284614520117
+            ],
+            "bbox_xyxy": [
+              288.0,
+              109.0,
+              508.0,
+              429.0
+            ],
+            "centroid_drift_px": 30.96950781665775,
+            "bbox_linf_drift_px": 123.0,
+            "iou_to_frame0": 0.45275696965016604,
+            "ffs_output_point_count": 32524,
+            "ffs_sam31_point_count": 31832,
+            "ffs_point_count_delta": 692
+          },
+          {
+            "frame_token": "52",
+            "area": 35482,
+            "centroid": [
+              390.14001465531817,
+              257.0034947297221
+            ],
+            "bbox_xyxy": [
+              289.0,
+              108.0,
+              516.0,
+              429.0
+            ],
+            "centroid_drift_px": 33.48509857027931,
+            "bbox_linf_drift_px": 124.0,
+            "iou_to_frame0": 0.4375609849426981,
+            "ffs_output_point_count": 32187,
+            "ffs_sam31_point_count": 31871,
+            "ffs_point_count_delta": 316
+          },
+          {
+            "frame_token": "53",
+            "area": 36348,
+            "centroid": [
+              393.44954330362054,
+              255.49570815450645
+            ],
+            "bbox_xyxy": [
+              287.0,
+              106.0,
+              525.0,
+              430.0
+            ],
+            "centroid_drift_px": 36.17240983552945,
+            "bbox_linf_drift_px": 122.0,
+            "iou_to_frame0": 0.41714679942570526,
+            "ffs_output_point_count": 33166,
+            "ffs_sam31_point_count": 32427,
+            "ffs_point_count_delta": 739
+          },
+          {
+            "frame_token": "54",
+            "area": 35870,
+            "centroid": [
+              396.6136046835796,
+              254.3343462503485
+            ],
+            "bbox_xyxy": [
+              284.0,
+              107.0,
+              535.0,
+              432.0
+            ],
+            "centroid_drift_px": 38.64016014742818,
+            "bbox_linf_drift_px": 119.0,
+            "iou_to_frame0": 0.3901671329701075,
+            "ffs_output_point_count": 32822,
+            "ffs_sam31_point_count": 32744,
+            "ffs_point_count_delta": 78
+          },
+          {
+            "frame_token": "55",
+            "area": 36164,
+            "centroid": [
+              398.3612985289238,
+              252.82383032850348
+            ],
+            "bbox_xyxy": [
+              281.0,
+              107.0,
+              542.0,
+              431.0
+            ],
+            "centroid_drift_px": 40.811621223582364,
+            "bbox_linf_drift_px": 116.0,
+            "iou_to_frame0": 0.37358237617304973,
+            "ffs_output_point_count": 33065,
+            "ffs_sam31_point_count": 32377,
+            "ffs_point_count_delta": 688
+          },
+          {
+            "frame_token": "56",
+            "area": 35423,
+            "centroid": [
+              400.8929509076024,
+              250.05567004488609
+            ],
+            "bbox_xyxy": [
+              282.0,
+              106.0,
+              550.0,
+              427.0
+            ],
+            "centroid_drift_px": 44.479221006047446,
+            "bbox_linf_drift_px": 117.0,
+            "iou_to_frame0": 0.35617774566473986,
+            "ffs_output_point_count": 32457,
+            "ffs_sam31_point_count": 32141,
+            "ffs_point_count_delta": 316
+          },
+          {
+            "frame_token": "57",
+            "area": 35424,
+            "centroid": [
+              400.90178974706413,
+              250.03878726287263
+            ],
+            "bbox_xyxy": [
+              282.0,
+              106.0,
+              550.0,
+              427.0
+            ],
+            "centroid_drift_px": 44.49824778222844,
+            "bbox_linf_drift_px": 117.0,
+            "iou_to_frame0": 0.3560978253016401,
+            "ffs_output_point_count": 32455,
+            "ffs_sam31_point_count": 32140,
+            "ffs_point_count_delta": 315
+          },
+          {
+            "frame_token": "58",
+            "area": 36128,
+            "centroid": [
+              404.96257750221434,
+              243.91582705934456
+            ],
+            "bbox_xyxy": [
+              271.0,
+              103.0,
+              570.0,
+              418.0
+            ],
+            "centroid_drift_px": 51.83832447585526,
+            "bbox_linf_drift_px": 106.0,
+            "iou_to_frame0": 0.3387566908686205,
+            "ffs_output_point_count": 32951,
+            "ffs_sam31_point_count": 32368,
+            "ffs_point_count_delta": 583
+          },
+          {
+            "frame_token": "59",
+            "area": 36072,
+            "centroid": [
+              405.6074794854735,
+              243.9021124417831
+            ],
+            "bbox_xyxy": [
+              269.0,
+              104.0,
+              576.0,
+              418.0
+            ],
+            "centroid_drift_px": 52.187189051038345,
+            "bbox_linf_drift_px": 104.0,
+            "iou_to_frame0": 0.3365396494819887,
+            "ffs_output_point_count": 32967,
+            "ffs_sam31_point_count": 32168,
+            "ffs_point_count_delta": 799
+          },
+          {
+            "frame_token": "60",
+            "area": 36077,
+            "centroid": [
+              405.6290157163844,
+              243.82346093078692
+            ],
+            "bbox_xyxy": [
+              268.0,
+              104.0,
+              576.0,
+              418.0
+            ],
+            "centroid_drift_px": 52.265379857493535,
+            "bbox_linf_drift_px": 103.0,
+            "iou_to_frame0": 0.33646278191508133,
+            "ffs_output_point_count": 32986,
+            "ffs_sam31_point_count": 32163,
+            "ffs_point_count_delta": 823
+          },
+          {
+            "frame_token": "61",
+            "area": 35789,
+            "centroid": [
+              406.9300064265556,
+              245.3768755762944
+            ],
+            "bbox_xyxy": [
+              263.0,
+              108.0,
+              586.0,
+              417.0
+            ],
+            "centroid_drift_px": 51.666391474830604,
+            "bbox_linf_drift_px": 98.0,
+            "iou_to_frame0": 0.3316388668255229,
+            "ffs_output_point_count": 32861,
+            "ffs_sam31_point_count": 32466,
+            "ffs_point_count_delta": 395
+          },
+          {
+            "frame_token": "62",
+            "area": 35808,
+            "centroid": [
+              407.3605060321716,
+              245.60263069705093
+            ],
+            "bbox_xyxy": [
+              262.0,
+              109.0,
+              588.0,
+              417.0
+            ],
+            "centroid_drift_px": 51.721627482561466,
+            "bbox_linf_drift_px": 97.0,
+            "iou_to_frame0": 0.3295804922740807,
+            "ffs_output_point_count": 33003,
+            "ffs_sam31_point_count": 32668,
+            "ffs_point_count_delta": 335
+          },
+          {
+            "frame_token": "63",
+            "area": 35794,
+            "centroid": [
+              407.39989942448454,
+              245.70075990389452
+            ],
+            "bbox_xyxy": [
+              262.0,
+              109.0,
+              588.0,
+              417.0
+            ],
+            "centroid_drift_px": 51.66309025150607,
+            "bbox_linf_drift_px": 97.0,
+            "iou_to_frame0": 0.32961494404793373,
+            "ffs_output_point_count": 32980,
+            "ffs_sam31_point_count": 32665,
+            "ffs_point_count_delta": 315
+          },
+          {
+            "frame_token": "64",
+            "area": 37370,
+            "centroid": [
+              407.43671394166444,
+              245.36740701097136
+            ],
+            "bbox_xyxy": [
+              246.0,
+              111.0,
+              608.0,
+              414.0
+            ],
+            "centroid_drift_px": 51.95873681673475,
+            "bbox_linf_drift_px": 81.0,
+            "iou_to_frame0": 0.32909426604317293,
+            "ffs_output_point_count": 34295,
+            "ffs_sam31_point_count": 33613,
+            "ffs_point_count_delta": 682
+          },
+          {
+            "frame_token": "65",
+            "area": 36992,
+            "centroid": [
+              407.1274329584775,
+              245.45942365916954
+            ],
+            "bbox_xyxy": [
+              244.0,
+              114.0,
+              611.0,
+              412.0
+            ],
+            "centroid_drift_px": 51.708523475437325,
+            "bbox_linf_drift_px": 79.0,
+            "iou_to_frame0": 0.3263709830930832,
+            "ffs_output_point_count": 34015,
+            "ffs_sam31_point_count": 33891,
+            "ffs_point_count_delta": 124
+          },
+          {
+            "frame_token": "66",
+            "area": 37445,
+            "centroid": [
+              405.8977700627587,
+              245.8744825744425
+            ],
+            "bbox_xyxy": [
+              229.0,
+              121.0,
+              617.0,
+              411.0
+            ],
+            "centroid_drift_px": 50.68065241345356,
+            "bbox_linf_drift_px": 64.0,
+            "iou_to_frame0": 0.3250610112398171,
+            "ffs_output_point_count": 34653,
+            "ffs_sam31_point_count": 34685,
+            "ffs_point_count_delta": -32
+          },
+          {
+            "frame_token": "67",
+            "area": 37922,
+            "centroid": [
+              404.83787774906386,
+              246.97107220083328
+            ],
+            "bbox_xyxy": [
+              215.0,
+              127.0,
+              622.0,
+              411.0
+            ],
+            "centroid_drift_px": 49.18315485967563,
+            "bbox_linf_drift_px": 50.0,
+            "iou_to_frame0": 0.3267602743240239,
+            "ffs_output_point_count": 35035,
+            "ffs_sam31_point_count": 35015,
+            "ffs_point_count_delta": 20
+          },
+          {
+            "frame_token": "68",
+            "area": 38657,
+            "centroid": [
+              404.5882246423675,
+              247.93597537315364
+            ],
+            "bbox_xyxy": [
+              208.0,
+              135.0,
+              625.0,
+              412.0
+            ],
+            "centroid_drift_px": 48.23866898707968,
+            "bbox_linf_drift_px": 43.0,
+            "iou_to_frame0": 0.3285830618892508,
+            "ffs_output_point_count": 35548,
+            "ffs_sam31_point_count": 35150,
+            "ffs_point_count_delta": 398
+          },
+          {
+            "frame_token": "69",
+            "area": 38923,
+            "centroid": [
+              403.5072836112324,
+              250.23464275621097
+            ],
+            "bbox_xyxy": [
+              202.0,
+              141.0,
+              627.0,
+              413.0
+            ],
+            "centroid_drift_px": 45.72549147552423,
+            "bbox_linf_drift_px": 37.0,
+            "iou_to_frame0": 0.3328696950164535,
+            "ffs_output_point_count": 36024,
+            "ffs_sam31_point_count": 35412,
+            "ffs_point_count_delta": 612
+          },
+          {
+            "frame_token": "70",
+            "area": 39153,
+            "centroid": [
+              402.7885474931678,
+              251.6424028810053
+            ],
+            "bbox_xyxy": [
+              198.0,
+              145.0,
+              628.0,
+              414.0
+            ],
+            "centroid_drift_px": 44.15612093845804,
+            "bbox_linf_drift_px": 33.0,
+            "iou_to_frame0": 0.3374516326114996,
+            "ffs_output_point_count": 36259,
+            "ffs_sam31_point_count": 35786,
+            "ffs_point_count_delta": 473
+          },
+          {
+            "frame_token": "71",
+            "area": 39400,
+            "centroid": [
+              402.4560152284264,
+              257.39360406091373
+            ],
+            "bbox_xyxy": [
+              196.0,
+              153.0,
+              632.0,
+              418.0
+            ],
+            "centroid_drift_px": 39.312825178173206,
+            "bbox_linf_drift_px": 36.0,
+            "iou_to_frame0": 0.36449937000535065,
+            "ffs_output_point_count": 36653,
+            "ffs_sam31_point_count": 36058,
+            "ffs_point_count_delta": 595
+          },
+          {
+            "frame_token": "72",
+            "area": 39722,
+            "centroid": [
+              401.28840441065404,
+              261.13043149891746
+            ],
+            "bbox_xyxy": [
+              193.0,
+              156.0,
+              632.0,
+              422.0
+            ],
+            "centroid_drift_px": 35.68402935898073,
+            "bbox_linf_drift_px": 36.0,
+            "iou_to_frame0": 0.39140723601177957,
+            "ffs_output_point_count": 37007,
+            "ffs_sam31_point_count": 36466,
+            "ffs_point_count_delta": 541
+          },
+          {
+            "frame_token": "73",
+            "area": 40435,
+            "centroid": [
+              399.63736861629775,
+              263.9745764807716
+            ],
+            "bbox_xyxy": [
+              191.0,
+              155.0,
+              634.0,
+              427.0
+            ],
+            "centroid_drift_px": 32.45499155919398,
+            "bbox_linf_drift_px": 38.0,
+            "iou_to_frame0": 0.4182249610426406,
+            "ffs_output_point_count": 37640,
+            "ffs_sam31_point_count": 37106,
+            "ffs_point_count_delta": 534
+          },
+          {
+            "frame_token": "74",
+            "area": 41042,
+            "centroid": [
+              397.2504751230447,
+              266.2002339067297
+            ],
+            "bbox_xyxy": [
+              181.0,
+              154.0,
+              635.0,
+              431.0
+            ],
+            "centroid_drift_px": 29.207566044709562,
+            "bbox_linf_drift_px": 39.0,
+            "iou_to_frame0": 0.44416407172769246,
+            "ffs_output_point_count": 38507,
+            "ffs_sam31_point_count": 38248,
+            "ffs_point_count_delta": 259
+          },
+          {
+            "frame_token": "75",
+            "area": 42327,
+            "centroid": [
+              394.9242327592317,
+              266.9154204172278
+            ],
+            "bbox_xyxy": [
+              178.0,
+              151.0,
+              636.0,
+              432.0
+            ],
+            "centroid_drift_px": 27.17228966094967,
+            "bbox_linf_drift_px": 40.0,
+            "iou_to_frame0": 0.4731980808280472,
+            "ffs_output_point_count": 39787,
+            "ffs_sam31_point_count": 39323,
+            "ffs_point_count_delta": 464
+          },
+          {
+            "frame_token": "76",
+            "area": 43022,
+            "centroid": [
+              393.2762772534982,
+              266.8203942169123
+            ],
+            "bbox_xyxy": [
+              173.0,
+              147.0,
+              639.0,
+              433.0
+            ],
+            "centroid_drift_px": 26.26084257199069,
+            "bbox_linf_drift_px": 43.0,
+            "iou_to_frame0": 0.48916587114321225,
+            "ffs_output_point_count": 40327,
+            "ffs_sam31_point_count": 40132,
+            "ffs_point_count_delta": 195
+          },
+          {
+            "frame_token": "77",
+            "area": 43870,
+            "centroid": [
+              389.6512651014361,
+              266.71203555960795
+            ],
+            "bbox_xyxy": [
+              169.0,
+              144.0,
+              637.0,
+              433.0
+            ],
+            "centroid_drift_px": 24.440447159661485,
+            "bbox_linf_drift_px": 41.0,
+            "iou_to_frame0": 0.5193546039946156,
+            "ffs_output_point_count": 41344,
+            "ffs_sam31_point_count": 40920,
+            "ffs_point_count_delta": 424
+          },
+          {
+            "frame_token": "78",
+            "area": 43693,
+            "centroid": [
+              388.8467260201863,
+              267.31860938823155
+            ],
+            "bbox_xyxy": [
+              169.0,
+              144.0,
+              636.0,
+              433.0
+            ],
+            "centroid_drift_px": 23.529259958897633,
+            "bbox_linf_drift_px": 40.0,
+            "iou_to_frame0": 0.5337676198888521,
+            "ffs_output_point_count": 41188,
+            "ffs_sam31_point_count": 41017,
+            "ffs_point_count_delta": 171
+          },
+          {
+            "frame_token": "79",
+            "area": 43587,
+            "centroid": [
+              385.55874457980593,
+              272.55583086700165
+            ],
+            "bbox_xyxy": [
+              166.0,
+              150.0,
+              637.0,
+              439.0
+            ],
+            "centroid_drift_px": 17.376347100990607,
+            "bbox_linf_drift_px": 41.0,
+            "iou_to_frame0": 0.6100655693313476,
+            "ffs_output_point_count": 41091,
+            "ffs_sam31_point_count": 40853,
+            "ffs_point_count_delta": 238
+          },
+          {
+            "frame_token": "80",
+            "area": 43311,
+            "centroid": [
+              383.61446283853985,
+              275.3259218212463
+            ],
+            "bbox_xyxy": [
+              164.0,
+              154.0,
+              635.0,
+              441.0
+            ],
+            "centroid_drift_px": 14.050911799123986,
+            "bbox_linf_drift_px": 39.0,
+            "iou_to_frame0": 0.6600504221857617,
+            "ffs_output_point_count": 40806,
+            "ffs_sam31_point_count": 40494,
+            "ffs_point_count_delta": 312
+          },
+          {
+            "frame_token": "81",
+            "area": 43305,
+            "centroid": [
+              383.0107146980718,
+              275.78027941346267
+            ],
+            "bbox_xyxy": [
+              163.0,
+              155.0,
+              634.0,
+              441.0
+            ],
+            "centroid_drift_px": 13.401094385434382,
+            "bbox_linf_drift_px": 38.0,
+            "iou_to_frame0": 0.675384211482925,
+            "ffs_output_point_count": 40794,
+            "ffs_sam31_point_count": 40295,
+            "ffs_point_count_delta": 499
+          },
+          {
+            "frame_token": "82",
+            "area": 42188,
+            "centroid": [
+              381.8126718498151,
+              278.5150279700389
+            ],
+            "bbox_xyxy": [
+              163.0,
+              160.0,
+              633.0,
+              438.0
+            ],
+            "centroid_drift_px": 10.418066554568473,
+            "bbox_linf_drift_px": 37.0,
+            "iou_to_frame0": 0.7511768230058199,
+            "ffs_output_point_count": 39819,
+            "ffs_sam31_point_count": 39448,
+            "ffs_point_count_delta": 371
+          },
+          {
+            "frame_token": "83",
+            "area": 41563,
+            "centroid": [
+              381.0883718692106,
+              281.06392705050166
+            ],
+            "bbox_xyxy": [
+              163.0,
+              165.0,
+              630.0,
+              439.0
+            ],
+            "centroid_drift_px": 7.782125135418152,
+            "bbox_linf_drift_px": 34.0,
+            "iou_to_frame0": 0.8049647754294731,
+            "ffs_output_point_count": 39083,
+            "ffs_sam31_point_count": 38762,
+            "ffs_point_count_delta": 321
+          },
+          {
+            "frame_token": "84",
+            "area": 41401,
+            "centroid": [
+              380.46223521170987,
+              281.4578633366344
+            ],
+            "bbox_xyxy": [
+              162.0,
+              165.0,
+              630.0,
+              439.0
+            ],
+            "centroid_drift_px": 7.190068414896152,
+            "bbox_linf_drift_px": 34.0,
+            "iou_to_frame0": 0.8162588509455947,
+            "ffs_output_point_count": 38875,
+            "ffs_sam31_point_count": 38585,
+            "ffs_point_count_delta": 290
+          },
+          {
+            "frame_token": "85",
+            "area": 41464,
+            "centroid": [
+              380.22429095118656,
+              281.7856212618175
+            ],
+            "bbox_xyxy": [
+              163.0,
+              164.0,
+              628.0,
+              439.0
+            ],
+            "centroid_drift_px": 6.803177194810976,
+            "bbox_linf_drift_px": 32.0,
+            "iou_to_frame0": 0.8254421891174221,
+            "ffs_output_point_count": 38914,
+            "ffs_sam31_point_count": 38538,
+            "ffs_point_count_delta": 376
+          },
+          {
+            "frame_token": "86",
+            "area": 41339,
+            "centroid": [
+              381.3120781828298,
+              282.95887660562664
+            ],
+            "bbox_xyxy": [
+              164.0,
+              166.0,
+              627.0,
+              440.0
+            ],
+            "centroid_drift_px": 6.190715105769222,
+            "bbox_linf_drift_px": 31.0,
+            "iou_to_frame0": 0.8350590207762195,
+            "ffs_output_point_count": 38869,
+            "ffs_sam31_point_count": 38624,
+            "ffs_point_count_delta": 245
+          },
+          {
+            "frame_token": "87",
+            "area": 41484,
+            "centroid": [
+              382.547801562048,
+              283.0673030566001
+            ],
+            "bbox_xyxy": [
+              167.0,
+              166.0,
+              628.0,
+              441.0
+            ],
+            "centroid_drift_px": 6.8320896844854415,
+            "bbox_linf_drift_px": 32.0,
+            "iou_to_frame0": 0.8281137346791637,
+            "ffs_output_point_count": 39185,
+            "ffs_sam31_point_count": 38864,
+            "ffs_point_count_delta": 321
+          },
+          {
+            "frame_token": "88",
+            "area": 41707,
+            "centroid": [
+              384.183973913252,
+              283.00314095955116
+            ],
+            "bbox_xyxy": [
+              168.0,
+              166.0,
+              630.0,
+              442.0
+            ],
+            "centroid_drift_px": 8.037825809767368,
+            "bbox_linf_drift_px": 34.0,
+            "iou_to_frame0": 0.8106195478013174,
+            "ffs_output_point_count": 39386,
+            "ffs_sam31_point_count": 39017,
+            "ffs_point_count_delta": 369
+          },
+          {
+            "frame_token": "89",
+            "area": 41460,
+            "centroid": [
+              387.4775205016884,
+              283.85123010130246
+            ],
+            "bbox_xyxy": [
+              173.0,
+              166.0,
+              633.0,
+              443.0
+            ],
+            "centroid_drift_px": 10.364099098055597,
+            "bbox_linf_drift_px": 37.0,
+            "iou_to_frame0": 0.7871857580364422,
+            "ffs_output_point_count": 38933,
+            "ffs_sam31_point_count": 38686,
+            "ffs_point_count_delta": 247
+          },
+          {
+            "frame_token": "90",
+            "area": 41264,
+            "centroid": [
+              390.5316498642885,
+              286.1313008918185
+            ],
+            "bbox_xyxy": [
+              178.0,
+              168.0,
+              634.0,
+              444.0
+            ],
+            "centroid_drift_px": 12.618849934376685,
+            "bbox_linf_drift_px": 38.0,
+            "iou_to_frame0": 0.7753181219833261,
+            "ffs_output_point_count": 38794,
+            "ffs_sam31_point_count": 38421,
+            "ffs_point_count_delta": 373
+          },
+          {
+            "frame_token": "91",
+            "area": 41132,
+            "centroid": [
+              391.897257609647,
+              286.8575804726247
+            ],
+            "bbox_xyxy": [
+              180.0,
+              169.0,
+              635.0,
+              445.0
+            ],
+            "centroid_drift_px": 13.875658655734561,
+            "bbox_linf_drift_px": 39.0,
+            "iou_to_frame0": 0.7680388680979581,
+            "ffs_output_point_count": 38663,
+            "ffs_sam31_point_count": 38235,
+            "ffs_point_count_delta": 428
+          },
+          {
+            "frame_token": "92",
+            "area": 40889,
+            "centroid": [
+              392.53312626867864,
+              288.20144782215266
+            ],
+            "bbox_xyxy": [
+              181.0,
+              170.0,
+              634.0,
+              446.0
+            ],
+            "centroid_drift_px": 14.441982501797792,
+            "bbox_linf_drift_px": 38.0,
+            "iou_to_frame0": 0.7626436152751942,
+            "ffs_output_point_count": 38518,
+            "ffs_sam31_point_count": 38091,
+            "ffs_point_count_delta": 427
+          }
+        ]
+      }
+    },
+    {
+      "case_key": "sloth_set_2_motion_ffs",
+      "camera_idx": 2,
+      "prompt_mode": "mask",
+      "status": "pass",
+      "quality": {
+        "frame_count": 93,
+        "area_mean": 27691.462365591397,
+        "area_std": 1534.0299485317273,
+        "area_std_over_mean": 0.05539721695730552,
+        "area_min": 24736,
+        "area_max": 31213,
+        "centroid_drift_px_max": 91.87464854688682,
+        "centroid_drift_px_mean": 50.37559545298684,
+        "bbox_linf_drift_px_max": 144.0,
+        "bbox_linf_drift_px_mean": 75.60215053763442,
+        "iou_to_frame0_mean": 0.5540485650745975,
+        "iou_to_frame0_min": 0.2956881748253393,
+        "sam21_iou": {},
+        "ffs_point_counts": {
+          "output_mean": 25661.989247311827,
+          "sam31_mean": 25587.763440860213,
+          "delta_mean": 74.2258064516129,
+          "delta_min": -268,
+          "delta_max": 324
+        },
+        "failure_frames": [],
+        "per_frame": [
+          {
+            "frame_token": "0",
+            "area": 29116,
+            "centroid": [
+              572.0106127215277,
+              297.61581261162246
+            ],
+            "bbox_xyxy": [
+              473.0,
+              147.0,
+              712.0,
+              439.0
+            ],
+            "centroid_drift_px": 0.0,
+            "bbox_linf_drift_px": 0.0,
+            "iou_to_frame0": 1.0,
+            "ffs_output_point_count": 28122,
+            "ffs_sam31_point_count": 28099,
+            "ffs_point_count_delta": 23
+          },
+          {
+            "frame_token": "1",
+            "area": 29348,
+            "centroid": [
+              571.7471718686112,
+              297.07952841760937
+            ],
+            "bbox_xyxy": [
+              473.0,
+              145.0,
+              713.0,
+              440.0
+            ],
+            "centroid_drift_px": 0.5974962926526187,
+            "bbox_linf_drift_px": 2.0,
+            "iou_to_frame0": 0.9796830556684275,
+            "ffs_output_point_count": 28118,
+            "ffs_sam31_point_count": 27956,
+            "ffs_point_count_delta": 162
+          },
+          {
+            "frame_token": "2",
+            "area": 29249,
+            "centroid": [
+              572.3254128346268,
+              296.8297377688126
+            ],
+            "bbox_xyxy": [
+              473.0,
+              145.0,
+              713.0,
+              440.0
+            ],
+            "centroid_drift_px": 0.8467660655138424,
+            "bbox_linf_drift_px": 2.0,
+            "iou_to_frame0": 0.966144517433047,
+            "ffs_output_point_count": 27870,
+            "ffs_sam31_point_count": 27884,
+            "ffs_point_count_delta": -14
+          },
+          {
+            "frame_token": "3",
+            "area": 29516,
+            "centroid": [
+              572.7601300989294,
+              295.9557189321046
+            ],
+            "bbox_xyxy": [
+              473.0,
+              145.0,
+              714.0,
+              439.0
+            ],
+            "centroid_drift_px": 1.821451982293867,
+            "bbox_linf_drift_px": 2.0,
+            "iou_to_frame0": 0.9433230585661728,
+            "ffs_output_point_count": 28218,
+            "ffs_sam31_point_count": 28205,
+            "ffs_point_count_delta": 13
+          },
+          {
+            "frame_token": "4",
+            "area": 29200,
+            "centroid": [
+              571.6152739726027,
+              294.18270547945207
+            ],
+            "bbox_xyxy": [
+              475.0,
+              144.0,
+              709.0,
+              440.0
+            ],
+            "centroid_drift_px": 3.4557947432335645,
+            "bbox_linf_drift_px": 3.0,
+            "iou_to_frame0": 0.9059384907017027,
+            "ffs_output_point_count": 28033,
+            "ffs_sam31_point_count": 27926,
+            "ffs_point_count_delta": 107
+          },
+          {
+            "frame_token": "5",
+            "area": 28511,
+            "centroid": [
+              569.9135421416296,
+              291.79439514573323
+            ],
+            "bbox_xyxy": [
+              475.0,
+              144.0,
+              704.0,
+              439.0
+            ],
+            "centroid_drift_px": 6.187617177010398,
+            "bbox_linf_drift_px": 8.0,
+            "iou_to_frame0": 0.8577968341983946,
+            "ffs_output_point_count": 26974,
+            "ffs_sam31_point_count": 26876,
+            "ffs_point_count_delta": 98
+          },
+          {
+            "frame_token": "6",
+            "area": 28704,
+            "centroid": [
+              570.1881619286511,
+              290.6125975473802
+            ],
+            "bbox_xyxy": [
+              475.0,
+              142.0,
+              705.0,
+              437.0
+            ],
+            "centroid_drift_px": 7.236459640493165,
+            "bbox_linf_drift_px": 7.0,
+            "iou_to_frame0": 0.8365467077470381,
+            "ffs_output_point_count": 27189,
+            "ffs_sam31_point_count": 27077,
+            "ffs_point_count_delta": 112
+          },
+          {
+            "frame_token": "7",
+            "area": 28699,
+            "centroid": [
+              570.1707376563643,
+              290.58963726959126
+            ],
+            "bbox_xyxy": [
+              475.0,
+              142.0,
+              705.0,
+              437.0
+            ],
+            "centroid_drift_px": 7.263076496387539,
+            "bbox_linf_drift_px": 7.0,
+            "iou_to_frame0": 0.8364462232386761,
+            "ffs_output_point_count": 27184,
+            "ffs_sam31_point_count": 27057,
+            "ffs_point_count_delta": 127
+          },
+          {
+            "frame_token": "8",
+            "area": 27660,
+            "centroid": [
+              568.3541937816341,
+              289.48456254519164
+            ],
+            "bbox_xyxy": [
+              477.0,
+              145.0,
+              698.0,
+              438.0
+            ],
+            "centroid_drift_px": 8.915527303914429,
+            "bbox_linf_drift_px": 14.0,
+            "iou_to_frame0": 0.8040162684290798,
+            "ffs_output_point_count": 26094,
+            "ffs_sam31_point_count": 25961,
+            "ffs_point_count_delta": 133
+          },
+          {
+            "frame_token": "9",
+            "area": 27614,
+            "centroid": [
+              569.2554863475049,
+              288.4491562251032
+            ],
+            "bbox_xyxy": [
+              477.0,
+              144.0,
+              699.0,
+              437.0
+            ],
+            "centroid_drift_px": 9.57174543358474,
+            "bbox_linf_drift_px": 13.0,
+            "iou_to_frame0": 0.7796530413777959,
+            "ffs_output_point_count": 25854,
+            "ffs_sam31_point_count": 25683,
+            "ffs_point_count_delta": 171
+          },
+          {
+            "frame_token": "10",
+            "area": 27932,
+            "centroid": [
+              569.8264356293856,
+              287.23718315910065
+            ],
+            "bbox_xyxy": [
+              476.0,
+              141.0,
+              701.0,
+              437.0
+            ],
+            "centroid_drift_px": 10.605969021385603,
+            "bbox_linf_drift_px": 11.0,
+            "iou_to_frame0": 0.7624270135005715,
+            "ffs_output_point_count": 26434,
+            "ffs_sam31_point_count": 26303,
+            "ffs_point_count_delta": 131
+          },
+          {
+            "frame_token": "11",
+            "area": 28042,
+            "centroid": [
+              569.8651308751159,
+              287.1900363740104
+            ],
+            "bbox_xyxy": [
+              476.0,
+              141.0,
+              702.0,
+              437.0
+            ],
+            "centroid_drift_px": 10.644242693120008,
+            "bbox_linf_drift_px": 10.0,
+            "iou_to_frame0": 0.7633194508715101,
+            "ffs_output_point_count": 26346,
+            "ffs_sam31_point_count": 26211,
+            "ffs_point_count_delta": 135
+          },
+          {
+            "frame_token": "12",
+            "area": 28133,
+            "centroid": [
+              570.1885685849359,
+              286.6018910176661
+            ],
+            "bbox_xyxy": [
+              476.0,
+              139.0,
+              703.0,
+              437.0
+            ],
+            "centroid_drift_px": 11.163615620107429,
+            "bbox_linf_drift_px": 9.0,
+            "iou_to_frame0": 0.7518053855569156,
+            "ffs_output_point_count": 26551,
+            "ffs_sam31_point_count": 26339,
+            "ffs_point_count_delta": 212
+          },
+          {
+            "frame_token": "13",
+            "area": 27993,
+            "centroid": [
+              569.8318508198478,
+              283.91762226270856
+            ],
+            "bbox_xyxy": [
+              475.0,
+              139.0,
+              702.0,
+              437.0
+            ],
+            "centroid_drift_px": 13.870379312019177,
+            "bbox_linf_drift_px": 10.0,
+            "iou_to_frame0": 0.7172023934810716,
+            "ffs_output_point_count": 26373,
+            "ffs_sam31_point_count": 26183,
+            "ffs_point_count_delta": 190
+          },
+          {
+            "frame_token": "14",
+            "area": 27705,
+            "centroid": [
+              568.6841003428984,
+              281.5827467966071
+            ],
+            "bbox_xyxy": [
+              473.0,
+              137.0,
+              698.0,
+              437.0
+            ],
+            "centroid_drift_px": 16.37451935275618,
+            "bbox_linf_drift_px": 14.0,
+            "iou_to_frame0": 0.7127656367746797,
+            "ffs_output_point_count": 26126,
+            "ffs_sam31_point_count": 25925,
+            "ffs_point_count_delta": 201
+          },
+          {
+            "frame_token": "15",
+            "area": 27413,
+            "centroid": [
+              567.6999598730529,
+              280.6603071535403
+            ],
+            "bbox_xyxy": [
+              472.0,
+              136.0,
+              695.0,
+              437.0
+            ],
+            "centroid_drift_px": 17.49488191783863,
+            "bbox_linf_drift_px": 17.0,
+            "iou_to_frame0": 0.717423667021115,
+            "ffs_output_point_count": 26012,
+            "ffs_sam31_point_count": 25835,
+            "ffs_point_count_delta": 177
+          },
+          {
+            "frame_token": "16",
+            "area": 27047,
+            "centroid": [
+              564.0556438791733,
+              276.3530890671794
+            ],
+            "bbox_xyxy": [
+              470.0,
+              133.0,
+              687.0,
+              437.0
+            ],
+            "centroid_drift_px": 22.70209113298249,
+            "bbox_linf_drift_px": 25.0,
+            "iou_to_frame0": 0.7150054965188714,
+            "ffs_output_point_count": 25509,
+            "ffs_sam31_point_count": 25285,
+            "ffs_point_count_delta": 224
+          },
+          {
+            "frame_token": "17",
+            "area": 26790,
+            "centroid": [
+              560.28984695782,
+              272.79772303098173
+            ],
+            "bbox_xyxy": [
+              468.0,
+              128.0,
+              677.0,
+              437.0
+            ],
+            "centroid_drift_px": 27.44656482185719,
+            "bbox_linf_drift_px": 35.0,
+            "iou_to_frame0": 0.6928387585162755,
+            "ffs_output_point_count": 25050,
+            "ffs_sam31_point_count": 24906,
+            "ffs_point_count_delta": 144
+          },
+          {
+            "frame_token": "18",
+            "area": 26621,
+            "centroid": [
+              556.1265542241088,
+              269.6550092032606
+            ],
+            "bbox_xyxy": [
+              466.0,
+              124.0,
+              667.0,
+              437.0
+            ],
+            "centroid_drift_px": 32.157578291757076,
+            "bbox_linf_drift_px": 45.0,
+            "iou_to_frame0": 0.6625503355704698,
+            "ffs_output_point_count": 24601,
+            "ffs_sam31_point_count": 24596,
+            "ffs_point_count_delta": 5
+          },
+          {
+            "frame_token": "19",
+            "area": 26752,
+            "centroid": [
+              551.7145260167464,
+              265.71583433014354
+            ],
+            "bbox_xyxy": [
+              463.0,
+              118.0,
+              657.0,
+              437.0
+            ],
+            "centroid_drift_px": 37.80925481792554,
+            "bbox_linf_drift_px": 55.0,
+            "iou_to_frame0": 0.6227489252933659,
+            "ffs_output_point_count": 25367,
+            "ffs_sam31_point_count": 25238,
+            "ffs_point_count_delta": 129
+          },
+          {
+            "frame_token": "20",
+            "area": 26434,
+            "centroid": [
+              544.7813800408564,
+              258.19505182719223
+            ],
+            "bbox_xyxy": [
+              461.0,
+              104.0,
+              642.0,
+              434.0
+            ],
+            "centroid_drift_px": 47.91061983737431,
+            "bbox_linf_drift_px": 70.0,
+            "iou_to_frame0": 0.5597798618520806,
+            "ffs_output_point_count": 25064,
+            "ffs_sam31_point_count": 25038,
+            "ffs_point_count_delta": 26
+          },
+          {
+            "frame_token": "21",
+            "area": 26112,
+            "centroid": [
+              539.9184283088235,
+              252.1505438112745
+            ],
+            "bbox_xyxy": [
+              456.0,
+              103.0,
+              633.0,
+              430.0
+            ],
+            "centroid_drift_px": 55.650687034994476,
+            "bbox_linf_drift_px": 79.0,
+            "iou_to_frame0": 0.5155456765730907,
+            "ffs_output_point_count": 24337,
+            "ffs_sam31_point_count": 24128,
+            "ffs_point_count_delta": 209
+          },
+          {
+            "frame_token": "22",
+            "area": 25954,
+            "centroid": [
+              540.242274793866,
+              252.74077213531632
+            ],
+            "bbox_xyxy": [
+              458.0,
+              103.0,
+              632.0,
+              430.0
+            ],
+            "centroid_drift_px": 54.98178382370126,
+            "bbox_linf_drift_px": 80.0,
+            "iou_to_frame0": 0.5205986304395848,
+            "ffs_output_point_count": 24126,
+            "ffs_sam31_point_count": 24123,
+            "ffs_point_count_delta": 3
+          },
+          {
+            "frame_token": "23",
+            "area": 24862,
+            "centroid": [
+              533.7179631566246,
+              245.5487490950044
+            ],
+            "bbox_xyxy": [
+              458.0,
+              96.0,
+              619.0,
+              423.0
+            ],
+            "centroid_drift_px": 64.63208269848658,
+            "bbox_linf_drift_px": 93.0,
+            "iou_to_frame0": 0.45465815075322713,
+            "ffs_output_point_count": 22924,
+            "ffs_sam31_point_count": 22993,
+            "ffs_point_count_delta": -69
+          },
+          {
+            "frame_token": "24",
+            "area": 24736,
+            "centroid": [
+              528.8084168822768,
+              240.95730918499353
+            ],
+            "bbox_xyxy": [
+              454.0,
+              91.0,
+              609.0,
+              421.0
+            ],
+            "centroid_drift_px": 71.25037358413152,
+            "bbox_linf_drift_px": 103.0,
+            "iou_to_frame0": 0.40782181323852346,
+            "ffs_output_point_count": 23024,
+            "ffs_sam31_point_count": 23132,
+            "ffs_point_count_delta": -108
+          },
+          {
+            "frame_token": "25",
+            "area": 25122,
+            "centroid": [
+              526.9972534033915,
+              240.0925085582358
+            ],
+            "bbox_xyxy": [
+              453.0,
+              88.0,
+              603.0,
+              421.0
+            ],
+            "centroid_drift_px": 73.04199495031612,
+            "bbox_linf_drift_px": 109.0,
+            "iou_to_frame0": 0.39057532560763,
+            "ffs_output_point_count": 23059,
+            "ffs_sam31_point_count": 23069,
+            "ffs_point_count_delta": -10
+          },
+          {
+            "frame_token": "26",
+            "area": 25578,
+            "centroid": [
+              526.2887637813747,
+              240.02275392915786
+            ],
+            "bbox_xyxy": [
+              452.0,
+              85.0,
+              599.0,
+              422.0
+            ],
+            "centroid_drift_px": 73.53535121904281,
+            "bbox_linf_drift_px": 113.0,
+            "iou_to_frame0": 0.3850439362860543,
+            "ffs_output_point_count": 23357,
+            "ffs_sam31_point_count": 23311,
+            "ffs_point_count_delta": 46
+          },
+          {
+            "frame_token": "27",
+            "area": 25955,
+            "centroid": [
+              526.182623771913,
+              240.25871701020998
+            ],
+            "bbox_xyxy": [
+              452.0,
+              83.0,
+              597.0,
+              423.0
+            ],
+            "centroid_drift_px": 73.41689851114371,
+            "bbox_linf_drift_px": 115.0,
+            "iou_to_frame0": 0.38456316781898175,
+            "ffs_output_point_count": 23662,
+            "ffs_sam31_point_count": 23647,
+            "ffs_point_count_delta": 15
+          },
+          {
+            "frame_token": "28",
+            "area": 26281,
+            "centroid": [
+              526.6685818652259,
+              240.40702408584147
+            ],
+            "bbox_xyxy": [
+              452.0,
+              73.0,
+              595.0,
+              425.0
+            ],
+            "centroid_drift_px": 72.99825509394971,
+            "bbox_linf_drift_px": 117.0,
+            "iou_to_frame0": 0.3884307877390411,
+            "ffs_output_point_count": 23949,
+            "ffs_sam31_point_count": 23911,
+            "ffs_point_count_delta": 38
+          },
+          {
+            "frame_token": "29",
+            "area": 26371,
+            "centroid": [
+              527.957491183497,
+              241.50362140229797
+            ],
+            "bbox_xyxy": [
+              454.0,
+              82.0,
+              594.0,
+              427.0
+            ],
+            "centroid_drift_px": 71.33901821273047,
+            "bbox_linf_drift_px": 118.0,
+            "iou_to_frame0": 0.3983971370246226,
+            "ffs_output_point_count": 24010,
+            "ffs_sam31_point_count": 24094,
+            "ffs_point_count_delta": -84
+          },
+          {
+            "frame_token": "30",
+            "area": 26662,
+            "centroid": [
+              528.792476183332,
+              242.0938414222489
+            ],
+            "bbox_xyxy": [
+              454.0,
+              82.0,
+              591.0,
+              429.0
+            ],
+            "centroid_drift_px": 70.35976556660594,
+            "bbox_linf_drift_px": 121.0,
+            "iou_to_frame0": 0.4077532683862501,
+            "ffs_output_point_count": 24396,
+            "ffs_sam31_point_count": 24386,
+            "ffs_point_count_delta": 10
+          },
+          {
+            "frame_token": "31",
+            "area": 26904,
+            "centroid": [
+              529.7472123104371,
+              242.95361284567352
+            ],
+            "bbox_xyxy": [
+              455.0,
+              79.0,
+              588.0,
+              432.0
+            ],
+            "centroid_drift_px": 69.09523208992553,
+            "bbox_linf_drift_px": 124.0,
+            "iou_to_frame0": 0.418191944507734,
+            "ffs_output_point_count": 24506,
+            "ffs_sam31_point_count": 24483,
+            "ffs_point_count_delta": 23
+          },
+          {
+            "frame_token": "32",
+            "area": 27231,
+            "centroid": [
+              530.2787264514708,
+              243.2258088208292
+            ],
+            "bbox_xyxy": [
+              455.0,
+              78.0,
+              584.0,
+              434.0
+            ],
+            "centroid_drift_px": 68.55525394905533,
+            "bbox_linf_drift_px": 128.0,
+            "iou_to_frame0": 0.4249551121563867,
+            "ffs_output_point_count": 24913,
+            "ffs_sam31_point_count": 24890,
+            "ffs_point_count_delta": 23
+          },
+          {
+            "frame_token": "33",
+            "area": 27492,
+            "centroid": [
+              530.720536883457,
+              243.47206460061108
+            ],
+            "bbox_xyxy": [
+              456.0,
+              77.0,
+              585.0,
+              436.0
+            ],
+            "centroid_drift_px": 68.09123153089186,
+            "bbox_linf_drift_px": 127.0,
+            "iou_to_frame0": 0.43065103113627173,
+            "ffs_output_point_count": 25059,
+            "ffs_sam31_point_count": 25062,
+            "ffs_point_count_delta": -3
+          },
+          {
+            "frame_token": "34",
+            "area": 27645,
+            "centroid": [
+              530.7646590703563,
+              242.84919515283053
+            ],
+            "bbox_xyxy": [
+              457.0,
+              75.0,
+              585.0,
+              436.0
+            ],
+            "centroid_drift_px": 68.56100262155032,
+            "bbox_linf_drift_px": 127.0,
+            "iou_to_frame0": 0.43068508342995415,
+            "ffs_output_point_count": 25180,
+            "ffs_sam31_point_count": 25217,
+            "ffs_point_count_delta": -37
+          },
+          {
+            "frame_token": "35",
+            "area": 27695,
+            "centroid": [
+              530.1931034482759,
+              240.69489077450802
+            ],
+            "bbox_xyxy": [
+              458.0,
+              71.0,
+              585.0,
+              436.0
+            ],
+            "centroid_drift_px": 70.63069746650805,
+            "bbox_linf_drift_px": 127.0,
+            "iou_to_frame0": 0.42183902292521774,
+            "ffs_output_point_count": 25255,
+            "ffs_sam31_point_count": 25191,
+            "ffs_point_count_delta": 64
+          },
+          {
+            "frame_token": "36",
+            "area": 27842,
+            "centroid": [
+              530.1063860354859,
+              239.84807125924863
+            ],
+            "bbox_xyxy": [
+              458.0,
+              69.0,
+              585.0,
+              436.0
+            ],
+            "centroid_drift_px": 71.36579121056484,
+            "bbox_linf_drift_px": 127.0,
+            "iou_to_frame0": 0.4222788223836991,
+            "ffs_output_point_count": 25447,
+            "ffs_sam31_point_count": 25474,
+            "ffs_point_count_delta": -27
+          },
+          {
+            "frame_token": "37",
+            "area": 28121,
+            "centroid": [
+              529.7716297428967,
+              237.65033249173214
+            ],
+            "bbox_xyxy": [
+              459.0,
+              68.0,
+              585.0,
+              434.0
+            ],
+            "centroid_drift_px": 73.34841844973914,
+            "bbox_linf_drift_px": 127.0,
+            "iou_to_frame0": 0.4165119904966961,
+            "ffs_output_point_count": 25613,
+            "ffs_sam31_point_count": 25517,
+            "ffs_point_count_delta": 96
+          },
+          {
+            "frame_token": "38",
+            "area": 28196,
+            "centroid": [
+              528.9636118598382,
+              235.29752447155624
+            ],
+            "bbox_xyxy": [
+              459.0,
+              67.0,
+              584.0,
+              433.0
+            ],
+            "centroid_drift_px": 75.74043385071548,
+            "bbox_linf_drift_px": 128.0,
+            "iou_to_frame0": 0.4078805148865088,
+            "ffs_output_point_count": 25765,
+            "ffs_sam31_point_count": 25579,
+            "ffs_point_count_delta": 186
+          },
+          {
+            "frame_token": "39",
+            "area": 27990,
+            "centroid": [
+              528.5967131118257,
+              234.24883887102536
+            ],
+            "bbox_xyxy": [
+              460.0,
+              65.0,
+              583.0,
+              432.0
+            ],
+            "centroid_drift_px": 76.81236905839322,
+            "bbox_linf_drift_px": 129.0,
+            "iou_to_frame0": 0.4035786265545888,
+            "ffs_output_point_count": 25630,
+            "ffs_sam31_point_count": 25579,
+            "ffs_point_count_delta": 51
+          },
+          {
+            "frame_token": "40",
+            "area": 28137,
+            "centroid": [
+              528.9752994277997,
+              234.1934463517788
+            ],
+            "bbox_xyxy": [
+              462.0,
+              64.0,
+              583.0,
+              432.0
+            ],
+            "centroid_drift_px": 76.64486109509937,
+            "bbox_linf_drift_px": 129.0,
+            "iou_to_frame0": 0.40308785688028426,
+            "ffs_output_point_count": 25622,
+            "ffs_sam31_point_count": 25578,
+            "ffs_point_count_delta": 44
+          },
+          {
+            "frame_token": "41",
+            "area": 28310,
+            "centroid": [
+              529.0438361003179,
+              233.72783468738962
+            ],
+            "bbox_xyxy": [
+              462.0,
+              62.0,
+              584.0,
+              433.0
+            ],
+            "centroid_drift_px": 76.99232180200958,
+            "bbox_linf_drift_px": 128.0,
+            "iou_to_frame0": 0.40213888075007326,
+            "ffs_output_point_count": 25762,
+            "ffs_sam31_point_count": 25745,
+            "ffs_point_count_delta": 17
+          },
+          {
+            "frame_token": "42",
+            "area": 28299,
+            "centroid": [
+              529.0371037845861,
+              233.76582211385562
+            ],
+            "bbox_xyxy": [
+              462.0,
+              62.0,
+              584.0,
+              433.0
+            ],
+            "centroid_drift_px": 76.96456169509649,
+            "bbox_linf_drift_px": 128.0,
+            "iou_to_frame0": 0.4020414641889087,
+            "ffs_output_point_count": 25755,
+            "ffs_sam31_point_count": 25750,
+            "ffs_point_count_delta": 5
+          },
+          {
+            "frame_token": "43",
+            "area": 28579,
+            "centroid": [
+              529.0480772595263,
+              231.8706042898632
+            ],
+            "bbox_xyxy": [
+              463.0,
+              54.0,
+              584.0,
+              433.0
+            ],
+            "centroid_drift_px": 78.53796451777477,
+            "bbox_linf_drift_px": 128.0,
+            "iou_to_frame0": 0.4046598821638993,
+            "ffs_output_point_count": 26012,
+            "ffs_sam31_point_count": 26101,
+            "ffs_point_count_delta": -89
+          },
+          {
+            "frame_token": "44",
+            "area": 28728,
+            "centroid": [
+              530.8274157616263,
+              232.30847953216374
+            ],
+            "bbox_xyxy": [
+              463.0,
+              44.0,
+              588.0,
+              432.0
+            ],
+            "centroid_drift_px": 77.20818263493443,
+            "bbox_linf_drift_px": 124.0,
+            "iou_to_frame0": 0.4316758656535406,
+            "ffs_output_point_count": 25855,
+            "ffs_sam31_point_count": 26123,
+            "ffs_point_count_delta": -268
+          },
+          {
+            "frame_token": "45",
+            "area": 29737,
+            "centroid": [
+              532.5344856575982,
+              229.5503581396913
+            ],
+            "bbox_xyxy": [
+              464.0,
+              35.0,
+              592.0,
+              432.0
+            ],
+            "centroid_drift_px": 78.6846281076427,
+            "bbox_linf_drift_px": 120.0,
+            "iou_to_frame0": 0.4523357105841127,
+            "ffs_output_point_count": 26723,
+            "ffs_sam31_point_count": 26673,
+            "ffs_point_count_delta": 50
+          },
+          {
+            "frame_token": "46",
+            "area": 30411,
+            "centroid": [
+              534.3561540232153,
+              228.74407286837
+            ],
+            "bbox_xyxy": [
+              465.0,
+              28.0,
+              596.0,
+              433.0
+            ],
+            "centroid_drift_px": 78.49315126254783,
+            "bbox_linf_drift_px": 119.0,
+            "iou_to_frame0": 0.4677367655398575,
+            "ffs_output_point_count": 27201,
+            "ffs_sam31_point_count": 27116,
+            "ffs_point_count_delta": 85
+          },
+          {
+            "frame_token": "47",
+            "area": 30467,
+            "centroid": [
+              534.2806315029376,
+              228.5282108510848
+            ],
+            "bbox_xyxy": [
+              465.0,
+              28.0,
+              596.0,
+              433.0
+            ],
+            "centroid_drift_px": 78.71879191005034,
+            "bbox_linf_drift_px": 119.0,
+            "iou_to_frame0": 0.46738086442556337,
+            "ffs_output_point_count": 27255,
+            "ffs_sam31_point_count": 27128,
+            "ffs_point_count_delta": 127
+          },
+          {
+            "frame_token": "48",
+            "area": 31213,
+            "centroid": [
+              535.1241790279691,
+              230.89200012815172
+            ],
+            "bbox_xyxy": [
+              466.0,
+              24.0,
+              598.0,
+              440.0
+            ],
+            "centroid_drift_px": 76.24090859216365,
+            "bbox_linf_drift_px": 123.0,
+            "iou_to_frame0": 0.4770952182748574,
+            "ffs_output_point_count": 28062,
+            "ffs_sam31_point_count": 27790,
+            "ffs_point_count_delta": 272
+          },
+          {
+            "frame_token": "49",
+            "area": 31207,
+            "centroid": [
+              534.7639952574743,
+              232.75457429422886
+            ],
+            "bbox_xyxy": [
+              466.0,
+              27.0,
+              597.0,
+              443.0
+            ],
+            "centroid_drift_px": 74.79499146720487,
+            "bbox_linf_drift_px": 120.0,
+            "iou_to_frame0": 0.4759725960362124,
+            "ffs_output_point_count": 28188,
+            "ffs_sam31_point_count": 27932,
+            "ffs_point_count_delta": 256
+          },
+          {
+            "frame_token": "50",
+            "area": 31128,
+            "centroid": [
+              534.7679902338731,
+              233.7410370084811
+            ],
+            "bbox_xyxy": [
+              467.0,
+              28.0,
+              598.0,
+              443.0
+            ],
+            "centroid_drift_px": 73.9391634258166,
+            "bbox_linf_drift_px": 119.0,
+            "iou_to_frame0": 0.4758813297728999,
+            "ffs_output_point_count": 28166,
+            "ffs_sam31_point_count": 27895,
+            "ffs_point_count_delta": 271
+          },
+          {
+            "frame_token": "51",
+            "area": 30555,
+            "centroid": [
+              534.4728849615448,
+              232.80091638029782
+            ],
+            "bbox_xyxy": [
+              466.0,
+              32.0,
+              596.0,
+              440.0
+            ],
+            "centroid_drift_px": 74.90027889707736,
+            "bbox_linf_drift_px": 116.0,
+            "iou_to_frame0": 0.4772609115440794,
+            "ffs_output_point_count": 27549,
+            "ffs_sam31_point_count": 27225,
+            "ffs_point_count_delta": 324
+          },
+          {
+            "frame_token": "52",
+            "area": 29885,
+            "centroid": [
+              533.7708884055546,
+              230.96637108917517
+            ],
+            "bbox_xyxy": [
+              465.0,
+              32.0,
+              595.0,
+              435.0
+            ],
+            "centroid_drift_px": 76.84025358505619,
+            "bbox_linf_drift_px": 117.0,
+            "iou_to_frame0": 0.4738459232613909,
+            "ffs_output_point_count": 26782,
+            "ffs_sam31_point_count": 26543,
+            "ffs_point_count_delta": 239
+          },
+          {
+            "frame_token": "53",
+            "area": 29225,
+            "centroid": [
+              531.6226860564585,
+              228.8139606501283
+            ],
+            "bbox_xyxy": [
+              463.0,
+              31.0,
+              594.0,
+              430.0
+            ],
+            "centroid_drift_px": 79.78019462018351,
+            "bbox_linf_drift_px": 118.0,
+            "iou_to_frame0": 0.45583171133403205,
+            "ffs_output_point_count": 25906,
+            "ffs_sam31_point_count": 25724,
+            "ffs_point_count_delta": 182
+          },
+          {
+            "frame_token": "54",
+            "area": 28742,
+            "centroid": [
+              528.0822141813375,
+              225.8965973140352
+            ],
+            "bbox_xyxy": [
+              462.0,
+              31.0,
+              592.0,
+              426.0
+            ],
+            "centroid_drift_px": 84.10321064743876,
+            "bbox_linf_drift_px": 120.0,
+            "iou_to_frame0": 0.417150415166434,
+            "ffs_output_point_count": 25861,
+            "ffs_sam31_point_count": 25682,
+            "ffs_point_count_delta": 179
+          },
+          {
+            "frame_token": "55",
+            "area": 28553,
+            "centroid": [
+              526.1314047560677,
+              225.04139670087207
+            ],
+            "bbox_xyxy": [
+              461.0,
+              30.0,
+              590.0,
+              425.0
+            ],
+            "centroid_drift_px": 85.86004640299528,
+            "bbox_linf_drift_px": 122.0,
+            "iou_to_frame0": 0.39576929593145677,
+            "ffs_output_point_count": 25700,
+            "ffs_sam31_point_count": 25551,
+            "ffs_point_count_delta": 149
+          },
+          {
+            "frame_token": "56",
+            "area": 28181,
+            "centroid": [
+              521.8574216670806,
+              223.60931123806822
+            ],
+            "bbox_xyxy": [
+              460.0,
+              31.0,
+              581.0,
+              424.0
+            ],
+            "centroid_drift_px": 89.39969137809005,
+            "bbox_linf_drift_px": 131.0,
+            "iou_to_frame0": 0.3435492191530273,
+            "ffs_output_point_count": 25250,
+            "ffs_sam31_point_count": 25247,
+            "ffs_point_count_delta": 3
+          },
+          {
+            "frame_token": "57",
+            "area": 28030,
+            "centroid": [
+              520.6143061006065,
+              222.52333214413127
+            ],
+            "bbox_xyxy": [
+              458.0,
+              33.0,
+              574.0,
+              425.0
+            ],
+            "centroid_drift_px": 90.99703817725215,
+            "bbox_linf_drift_px": 138.0,
+            "iou_to_frame0": 0.3227322176700692,
+            "ffs_output_point_count": 25361,
+            "ffs_sam31_point_count": 25319,
+            "ffs_point_count_delta": 42
+          },
+          {
+            "frame_token": "58",
+            "area": 27662,
+            "centroid": [
+              520.2945195575157,
+              221.67901814763937
+            ],
+            "bbox_xyxy": [
+              458.0,
+              34.0,
+              570.0,
+              425.0
+            ],
+            "centroid_drift_px": 91.87464854688682,
+            "bbox_linf_drift_px": 142.0,
+            "iou_to_frame0": 0.3079173481375688,
+            "ffs_output_point_count": 24987,
+            "ffs_sam31_point_count": 24899,
+            "ffs_point_count_delta": 88
+          },
+          {
+            "frame_token": "59",
+            "area": 27276,
+            "centroid": [
+              520.2917949846019,
+              221.76180525003667
+            ],
+            "bbox_xyxy": [
+              459.0,
+              38.0,
+              569.0,
+              426.0
+            ],
+            "centroid_drift_px": 91.80776950191556,
+            "bbox_linf_drift_px": 143.0,
+            "iou_to_frame0": 0.2986366985998526,
+            "ffs_output_point_count": 24365,
+            "ffs_sam31_point_count": 24339,
+            "ffs_point_count_delta": 26
+          },
+          {
+            "frame_token": "60",
+            "area": 26460,
+            "centroid": [
+              520.4048374905518,
+              224.71810279667423
+            ],
+            "bbox_xyxy": [
+              460.0,
+              40.0,
+              568.0,
+              425.0
+            ],
+            "centroid_drift_px": 89.31535217113796,
+            "bbox_linf_drift_px": 144.0,
+            "iou_to_frame0": 0.2961727732817128,
+            "ffs_output_point_count": 24155,
+            "ffs_sam31_point_count": 24122,
+            "ffs_point_count_delta": 33
+          },
+          {
+            "frame_token": "61",
+            "area": 25965,
+            "centroid": [
+              520.2471018678991,
+              227.6474870017331
+            ],
+            "bbox_xyxy": [
+              460.0,
+              47.0,
+              568.0,
+              425.0
+            ],
+            "centroid_drift_px": 87.03463474126387,
+            "bbox_linf_drift_px": 144.0,
+            "iou_to_frame0": 0.2956881748253393,
+            "ffs_output_point_count": 23688,
+            "ffs_sam31_point_count": 23650,
+            "ffs_point_count_delta": 38
+          },
+          {
+            "frame_token": "62",
+            "area": 25532,
+            "centroid": [
+              520.6380228732571,
+              230.69344352185493
+            ],
+            "bbox_xyxy": [
+              460.0,
+              68.0,
+              570.0,
+              424.0
+            ],
+            "centroid_drift_px": 84.36673794989173,
+            "bbox_linf_drift_px": 142.0,
+            "iou_to_frame0": 0.3016387195121951,
+            "ffs_output_point_count": 23358,
+            "ffs_sam31_point_count": 23396,
+            "ffs_point_count_delta": -38
+          },
+          {
+            "frame_token": "63",
+            "area": 25567,
+            "centroid": [
+              520.5894316892869,
+              230.6314780772089
+            ],
+            "bbox_xyxy": [
+              460.0,
+              68.0,
+              570.0,
+              424.0
+            ],
+            "centroid_drift_px": 84.44547904872529,
+            "bbox_linf_drift_px": 142.0,
+            "iou_to_frame0": 0.3015733225430224,
+            "ffs_output_point_count": 23382,
+            "ffs_sam31_point_count": 23391,
+            "ffs_point_count_delta": -9
+          },
+          {
+            "frame_token": "64",
+            "area": 25402,
+            "centroid": [
+              522.3094638217464,
+              232.82769073301316
+            ],
+            "bbox_xyxy": [
+              460.0,
+              78.0,
+              576.0,
+              422.0
+            ],
+            "centroid_drift_px": 81.65601593584985,
+            "bbox_linf_drift_px": 136.0,
+            "iou_to_frame0": 0.31944141920182,
+            "ffs_output_point_count": 23482,
+            "ffs_sam31_point_count": 23435,
+            "ffs_point_count_delta": 47
+          },
+          {
+            "frame_token": "65",
+            "area": 25320,
+            "centroid": [
+              525.1656003159558,
+              235.79261453396524
+            ],
+            "bbox_xyxy": [
+              461.0,
+              87.0,
+              587.0,
+              421.0
+            ],
+            "centroid_drift_px": 77.5665069977205,
+            "bbox_linf_drift_px": 125.0,
+            "iou_to_frame0": 0.3454608368966114,
+            "ffs_output_point_count": 23273,
+            "ffs_sam31_point_count": 23261,
+            "ffs_point_count_delta": 12
+          },
+          {
+            "frame_token": "66",
+            "area": 25590,
+            "centroid": [
+              527.843610785463,
+              237.49550605705355
+            ],
+            "bbox_xyxy": [
+              463.0,
+              90.0,
+              596.0,
+              420.0
+            ],
+            "centroid_drift_px": 74.60010268247407,
+            "bbox_linf_drift_px": 116.0,
+            "iou_to_frame0": 0.3607780707427491,
+            "ffs_output_point_count": 23737,
+            "ffs_sam31_point_count": 23619,
+            "ffs_point_count_delta": 118
+          },
+          {
+            "frame_token": "67",
+            "area": 25753,
+            "centroid": [
+              530.6989088649866,
+              239.52339533258262
+            ],
+            "bbox_xyxy": [
+              464.0,
+              93.0,
+              605.0,
+              419.0
+            ],
+            "centroid_drift_px": 71.28383982960398,
+            "bbox_linf_drift_px": 107.0,
+            "iou_to_frame0": 0.37678468371264395,
+            "ffs_output_point_count": 24247,
+            "ffs_sam31_point_count": 24196,
+            "ffs_point_count_delta": 51
+          },
+          {
+            "frame_token": "68",
+            "area": 26069,
+            "centroid": [
+              533.5791936783153,
+              240.9780198703441
+            ],
+            "bbox_xyxy": [
+              465.0,
+              96.0,
+              612.0,
+              418.0
+            ],
+            "centroid_drift_px": 68.44569771927955,
+            "bbox_linf_drift_px": 100.0,
+            "iou_to_frame0": 0.3899453441805405,
+            "ffs_output_point_count": 24812,
+            "ffs_sam31_point_count": 24728,
+            "ffs_point_count_delta": 84
+          },
+          {
+            "frame_token": "69",
+            "area": 26513,
+            "centroid": [
+              535.7445026967903,
+              241.77709048391355
+            ],
+            "bbox_xyxy": [
+              465.0,
+              98.0,
+              620.0,
+              417.0
+            ],
+            "centroid_drift_px": 66.58223205316749,
+            "bbox_linf_drift_px": 92.0,
+            "iou_to_frame0": 0.39638034037853304,
+            "ffs_output_point_count": 25084,
+            "ffs_sam31_point_count": 24986,
+            "ffs_point_count_delta": 98
+          },
+          {
+            "frame_token": "70",
+            "area": 26688,
+            "centroid": [
+              540.2369604316547,
+              245.69870353717027
+            ],
+            "bbox_xyxy": [
+              468.0,
+              104.0,
+              630.0,
+              416.0
+            ],
+            "centroid_drift_px": 60.86831026475366,
+            "bbox_linf_drift_px": 82.0,
+            "iou_to_frame0": 0.43252470799640613,
+            "ffs_output_point_count": 24550,
+            "ffs_sam31_point_count": 24313,
+            "ffs_point_count_delta": 237
+          },
+          {
+            "frame_token": "71",
+            "area": 26441,
+            "centroid": [
+              541.7006542869029,
+              247.1502968874097
+            ],
+            "bbox_xyxy": [
+              470.0,
+              105.0,
+              633.0,
+              415.0
+            ],
+            "centroid_drift_px": 58.86817355430219,
+            "bbox_linf_drift_px": 79.0,
+            "iou_to_frame0": 0.4435638933638206,
+            "ffs_output_point_count": 24318,
+            "ffs_sam31_point_count": 24230,
+            "ffs_point_count_delta": 88
+          },
+          {
+            "frame_token": "72",
+            "area": 25772,
+            "centroid": [
+              545.7681980443892,
+              251.52910135030265
+            ],
+            "bbox_xyxy": [
+              471.0,
+              112.0,
+              641.0,
+              415.0
+            ],
+            "centroid_drift_px": 53.034416023664775,
+            "bbox_linf_drift_px": 71.0,
+            "iou_to_frame0": 0.485708098744045,
+            "ffs_output_point_count": 24115,
+            "ffs_sam31_point_count": 23999,
+            "ffs_point_count_delta": 116
+          },
+          {
+            "frame_token": "73",
+            "area": 25620,
+            "centroid": [
+              548.6302107728337,
+              253.6896174863388
+            ],
+            "bbox_xyxy": [
+              472.0,
+              115.0,
+              649.0,
+              414.0
+            ],
+            "centroid_drift_px": 49.76096676579933,
+            "bbox_linf_drift_px": 63.0,
+            "iou_to_frame0": 0.5247646108418297,
+            "ffs_output_point_count": 24222,
+            "ffs_sam31_point_count": 24176,
+            "ffs_point_count_delta": 46
+          },
+          {
+            "frame_token": "74",
+            "area": 25827,
+            "centroid": [
+              552.1601037673752,
+              256.0590854532079
+            ],
+            "bbox_xyxy": [
+              472.0,
+              119.0,
+              659.0,
+              414.0
+            ],
+            "centroid_drift_px": 46.054362202269154,
+            "bbox_linf_drift_px": 53.0,
+            "iou_to_frame0": 0.5680079908675799,
+            "ffs_output_point_count": 24401,
+            "ffs_sam31_point_count": 24314,
+            "ffs_point_count_delta": 87
+          },
+          {
+            "frame_token": "75",
+            "area": 26112,
+            "centroid": [
+              555.5088465073529,
+              256.9426317401961
+            ],
+            "bbox_xyxy": [
+              473.0,
+              118.0,
+              667.0,
+              413.0
+            ],
+            "centroid_drift_px": 43.89323330978299,
+            "bbox_linf_drift_px": 45.0,
+            "iou_to_frame0": 0.600626014375145,
+            "ffs_output_point_count": 24357,
+            "ffs_sam31_point_count": 24234,
+            "ffs_point_count_delta": 123
+          },
+          {
+            "frame_token": "76",
+            "area": 26237,
+            "centroid": [
+              557.2858558524222,
+              257.27285893966535
+            ],
+            "bbox_xyxy": [
+              474.0,
+              119.0,
+              673.0,
+              411.0
+            ],
+            "centroid_drift_px": 42.94615670618206,
+            "bbox_linf_drift_px": 39.0,
+            "iou_to_frame0": 0.609332751853467,
+            "ffs_output_point_count": 24617,
+            "ffs_sam31_point_count": 24493,
+            "ffs_point_count_delta": 124
+          },
+          {
+            "frame_token": "77",
+            "area": 26944,
+            "centroid": [
+              562.5958654988124,
+              260.630010391924
+            ],
+            "bbox_xyxy": [
+              475.0,
+              117.0,
+              687.0,
+              411.0
+            ],
+            "centroid_drift_px": 38.165259479037715,
+            "bbox_linf_drift_px": 30.0,
+            "iou_to_frame0": 0.6102254775240558,
+            "ffs_output_point_count": 25164,
+            "ffs_sam31_point_count": 25072,
+            "ffs_point_count_delta": 92
+          },
+          {
+            "frame_token": "78",
+            "area": 27763,
+            "centroid": [
+              565.9793970392249,
+              264.30915246911354
+            ],
+            "bbox_xyxy": [
+              475.0,
+              118.0,
+              695.0,
+              413.0
+            ],
+            "centroid_drift_px": 33.848325991916454,
+            "bbox_linf_drift_px": 29.0,
+            "iou_to_frame0": 0.6084780272609015,
+            "ffs_output_point_count": 26138,
+            "ffs_sam31_point_count": 25846,
+            "ffs_point_count_delta": 292
+          },
+          {
+            "frame_token": "79",
+            "area": 28161,
+            "centroid": [
+              568.2397642129185,
+              269.2114626611271
+            ],
+            "bbox_xyxy": [
+              476.0,
+              123.0,
+              700.0,
+              418.0
+            ],
+            "centroid_drift_px": 28.653558148772483,
+            "bbox_linf_drift_px": 24.0,
+            "iou_to_frame0": 0.622072442015236,
+            "ffs_output_point_count": 26711,
+            "ffs_sam31_point_count": 26545,
+            "ffs_point_count_delta": 166
+          },
+          {
+            "frame_token": "80",
+            "area": 28530,
+            "centroid": [
+              569.7624605678234,
+              273.12635821941814
+            ],
+            "bbox_xyxy": [
+              477.0,
+              125.0,
+              705.0,
+              421.0
+            ],
+            "centroid_drift_px": 24.592429008417625,
+            "bbox_linf_drift_px": 22.0,
+            "iou_to_frame0": 0.6524580765371937,
+            "ffs_output_point_count": 26499,
+            "ffs_sam31_point_count": 26400,
+            "ffs_point_count_delta": 99
+          },
+          {
+            "frame_token": "81",
+            "area": 28885,
+            "centroid": [
+              570.6048814263459,
+              276.26467024407134
+            ],
+            "bbox_xyxy": [
+              478.0,
+              126.0,
+              707.0,
+              423.0
+            ],
+            "centroid_drift_px": 21.397368082866873,
+            "bbox_linf_drift_px": 21.0,
+            "iou_to_frame0": 0.6859285527424934,
+            "ffs_output_point_count": 27049,
+            "ffs_sam31_point_count": 27009,
+            "ffs_point_count_delta": 40
+          },
+          {
+            "frame_token": "82",
+            "area": 29158,
+            "centroid": [
+              571.9232457644557,
+              280.52620207147265
+            ],
+            "bbox_xyxy": [
+              479.0,
+              131.0,
+              710.0,
+              426.0
+            ],
+            "centroid_drift_px": 17.08983386107622,
+            "bbox_linf_drift_px": 16.0,
+            "iou_to_frame0": 0.7250525443296527,
+            "ffs_output_point_count": 27468,
+            "ffs_sam31_point_count": 27440,
+            "ffs_point_count_delta": 28
+          },
+          {
+            "frame_token": "83",
+            "area": 29491,
+            "centroid": [
+              572.6540978603642,
+              283.30541521142044
+            ],
+            "bbox_xyxy": [
+              479.0,
+              134.0,
+              712.0,
+              427.0
+            ],
+            "centroid_drift_px": 14.32485765638222,
+            "bbox_linf_drift_px": 13.0,
+            "iou_to_frame0": 0.7533881824981301,
+            "ffs_output_point_count": 27984,
+            "ffs_sam31_point_count": 27911,
+            "ffs_point_count_delta": 73
+          },
+          {
+            "frame_token": "84",
+            "area": 29600,
+            "centroid": [
+              573.1194594594594,
+              284.3782432432432
+            ],
+            "bbox_xyxy": [
+              480.0,
+              134.0,
+              713.0,
+              427.0
+            ],
+            "centroid_drift_px": 13.283929534248303,
+            "bbox_linf_drift_px": 13.0,
+            "iou_to_frame0": 0.7686074881773547,
+            "ffs_output_point_count": 28074,
+            "ffs_sam31_point_count": 28005,
+            "ffs_point_count_delta": 69
+          },
+          {
+            "frame_token": "85",
+            "area": 29450,
+            "centroid": [
+              573.24,
+              284.98920203735145
+            ],
+            "bbox_xyxy": [
+              480.0,
+              134.0,
+              713.0,
+              428.0
+            ],
+            "centroid_drift_px": 12.686318917430786,
+            "bbox_linf_drift_px": 13.0,
+            "iou_to_frame0": 0.7763960083715005,
+            "ffs_output_point_count": 27953,
+            "ffs_sam31_point_count": 27909,
+            "ffs_point_count_delta": 44
+          },
+          {
+            "frame_token": "86",
+            "area": 29268,
+            "centroid": [
+              573.1459272926063,
+              284.7220855541889
+            ],
+            "bbox_xyxy": [
+              480.0,
+              135.0,
+              712.0,
+              428.0
+            ],
+            "centroid_drift_px": 12.943613738322783,
+            "bbox_linf_drift_px": 12.0,
+            "iou_to_frame0": 0.7704997573993208,
+            "ffs_output_point_count": 27739,
+            "ffs_sam31_point_count": 27785,
+            "ffs_point_count_delta": -46
+          },
+          {
+            "frame_token": "87",
+            "area": 29066,
+            "centroid": [
+              572.7439276130186,
+              283.5526044175325
+            ],
+            "bbox_xyxy": [
+              480.0,
+              134.0,
+              710.0,
+              428.0
+            ],
+            "centroid_drift_px": 14.082314278569457,
+            "bbox_linf_drift_px": 13.0,
+            "iou_to_frame0": 0.7543722108310216,
+            "ffs_output_point_count": 27357,
+            "ffs_sam31_point_count": 27442,
+            "ffs_point_count_delta": -85
+          },
+          {
+            "frame_token": "88",
+            "area": 29099,
+            "centroid": [
+              571.7767964534863,
+              281.88817485136946
+            ],
+            "bbox_xyxy": [
+              480.0,
+              133.0,
+              707.0,
+              428.0
+            ],
+            "centroid_drift_px": 15.729375688975608,
+            "bbox_linf_drift_px": 14.0,
+            "iou_to_frame0": 0.7398386132695756,
+            "ffs_output_point_count": 27469,
+            "ffs_sam31_point_count": 27472,
+            "ffs_point_count_delta": -3
+          },
+          {
+            "frame_token": "89",
+            "area": 28429,
+            "centroid": [
+              569.6561609623975,
+              281.7268634141194
+            ],
+            "bbox_xyxy": [
+              479.0,
+              133.0,
+              702.0,
+              427.0
+            ],
+            "centroid_drift_px": 16.06244532090005,
+            "bbox_linf_drift_px": 14.0,
+            "iou_to_frame0": 0.7500988412761169,
+            "ffs_output_point_count": 26902,
+            "ffs_sam31_point_count": 26886,
+            "ffs_point_count_delta": 16
+          },
+          {
+            "frame_token": "90",
+            "area": 27454,
+            "centroid": [
+              566.8334304655059,
+              281.9343629343629
+            ],
+            "bbox_xyxy": [
+              479.0,
+              133.0,
+              695.0,
+              426.0
+            ],
+            "centroid_drift_px": 16.51396621325385,
+            "bbox_linf_drift_px": 17.0,
+            "iou_to_frame0": 0.7623052959501557,
+            "ffs_output_point_count": 25821,
+            "ffs_sam31_point_count": 25869,
+            "ffs_point_count_delta": -48
+          },
+          {
+            "frame_token": "91",
+            "area": 26885,
+            "centroid": [
+              564.9888041658918,
+              281.71448763250885
+            ],
+            "bbox_xyxy": [
+              478.0,
+              134.0,
+              690.0,
+              426.0
+            ],
+            "centroid_drift_px": 17.382690570892166,
+            "bbox_linf_drift_px": 22.0,
+            "iou_to_frame0": 0.760760886653042,
+            "ffs_output_point_count": 25555,
+            "ffs_sam31_point_count": 25563,
+            "ffs_point_count_delta": -8
+          },
+          {
+            "frame_token": "92",
+            "area": 26702,
+            "centroid": [
+              564.544715751629,
+              282.13515841509997
+            ],
+            "bbox_xyxy": [
+              478.0,
+              135.0,
+              689.0,
+              426.0
+            ],
+            "centroid_drift_px": 17.18692153695509,
+            "bbox_linf_drift_px": 23.0,
+            "iou_to_frame0": 0.7675670540549099,
+            "ffs_output_point_count": 25221,
+            "ffs_sam31_point_count": 25236,
+            "ffs_point_count_delta": -15
+          }
+        ]
+      }
+    }
+  ]
+}

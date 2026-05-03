@@ -50,6 +50,7 @@ These record what the current machine and D455 topology actually supported durin
 - `hf_edgetam_streaming_realcase_benchmark.md`
 - `sloth_set_2_motion_ffs_hf_edgetam_streaming_benchmark.md`
 - `sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_benchmark.md`
+- `sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.md`
 
 These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 
@@ -100,6 +101,9 @@ These record repo-structure, scope, and metadata-contract hardening passes.
 - `sloth_set_2_motion_ffs_hf_edgetam_streaming_results.json`
 - `sloth_set_2_motion_ffs_hf_edgetam_streaming_quality.json`
 - `sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_results.json`
+- `sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.json`
+- `sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_results.json`
+- `sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_vs_same_run_eager_quality.json`
 
 These are not general datasets. They are small helper assets used by specific validation and visualization workflows.
 
