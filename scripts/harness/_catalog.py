@@ -118,12 +118,6 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
-        "scripts/harness/verify_hf_edgetam_streaming.py",
-        "hardware_external",
-        "Hugging Face EdgeTAMVideo streaming proof-of-life utility.",
-        "full",
-    ),
-    HarnessEntry(
         "scripts/harness/generate_sam31_masks.py",
         "mask_support",
         "Operator-side SAM 3.1 mask generation CLI.",
@@ -257,6 +251,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py",
         "experiments",
         "Hugging Face EdgeTAMVideo streaming benchmark on real aligned QQTT cases.",
+        "full",
+    ),
+    HarnessEntry(
+        "scripts/harness/experiments/run_sloth_set2_hf_edgetam_streaming_pcd_xor_gif.py",
+        "experiments",
+        "Render Sloth Set 2 HF EdgeTAM streaming fused-PCD XOR GIF against SAM3.1.",
         "full",
     ),
     HarnessEntry(

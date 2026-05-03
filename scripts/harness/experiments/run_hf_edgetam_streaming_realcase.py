@@ -50,58 +50,73 @@ class CaseSpec:
     case_dir: Path
     text_prompt: str
     sam21_mask_root: Path
+    sam31_mask_root: Path
 
 
 def _default_case_specs() -> list[CaseSpec]:
+    still_round1 = ROOT / "data/still_object/ffs203048_iter4_trt_level5/both_30_still_object_round1_20260428"
+    still_round2 = ROOT / "data/still_object/ffs203048_iter4_trt_level5/both_30_still_object_round2_20260428"
+    still_round3 = ROOT / "data/still_object/ffs203048_iter4_trt_level5/both_30_still_object_round3_20260428"
+    still_round4 = ROOT / "data/still_object/ffs203048_iter4_trt_level5/both_30_still_object_round4_20260428"
+    rope_round1 = ROOT / "data/still_rope/ffs203048_iter4_trt_level5/both_30_still_rope_round1_20260428"
+    rope_round2 = ROOT / "data/still_rope/ffs203048_iter4_trt_level5/both_30_still_rope_round2_20260428"
+    dynamics_round1 = ROOT / "data/dynamics/ffs_dynamics_round1_20260414"
     return [
         CaseSpec(
             key="still_object_round1",
             label="Still Object R1",
-            case_dir=ROOT / "data/still_object/ffs203048_iter4_trt_level5/both_30_still_object_round1_20260428",
+            case_dir=still_round1,
             text_prompt="stuffed animal",
             sam21_mask_root=DEFAULT_STILL_SAM21_MASK_ROOT,
+            sam31_mask_root=still_round1 / "sam31_masks",
         ),
         CaseSpec(
             key="still_object_round2",
             label="Still Object R2",
-            case_dir=ROOT / "data/still_object/ffs203048_iter4_trt_level5/both_30_still_object_round2_20260428",
+            case_dir=still_round2,
             text_prompt="stuffed animal",
             sam21_mask_root=DEFAULT_STILL_SAM21_MASK_ROOT,
+            sam31_mask_root=still_round2 / "sam31_masks",
         ),
         CaseSpec(
             key="still_object_round3",
             label="Still Object R3",
-            case_dir=ROOT / "data/still_object/ffs203048_iter4_trt_level5/both_30_still_object_round3_20260428",
+            case_dir=still_round3,
             text_prompt="stuffed animal",
             sam21_mask_root=DEFAULT_STILL_SAM21_MASK_ROOT,
+            sam31_mask_root=still_round3 / "sam31_masks",
         ),
         CaseSpec(
             key="still_object_round4",
             label="Still Object R4",
-            case_dir=ROOT / "data/still_object/ffs203048_iter4_trt_level5/both_30_still_object_round4_20260428",
+            case_dir=still_round4,
             text_prompt="stuffed animal",
             sam21_mask_root=DEFAULT_STILL_SAM21_MASK_ROOT,
+            sam31_mask_root=still_round4 / "sam31_masks",
         ),
         CaseSpec(
             key="still_rope_round1",
             label="Still Rope R1",
-            case_dir=ROOT / "data/still_rope/ffs203048_iter4_trt_level5/both_30_still_rope_round1_20260428",
+            case_dir=rope_round1,
             text_prompt="white twisted rope on the blue box, white thick twisted rope on top of the blue box",
             sam21_mask_root=DEFAULT_STILL_SAM21_MASK_ROOT,
+            sam31_mask_root=rope_round1 / "sam31_masks",
         ),
         CaseSpec(
             key="still_rope_round2",
             label="Still Rope R2",
-            case_dir=ROOT / "data/still_rope/ffs203048_iter4_trt_level5/both_30_still_rope_round2_20260428",
+            case_dir=rope_round2,
             text_prompt="white twisted rope lying on the wooden table",
             sam21_mask_root=DEFAULT_STILL_SAM21_MASK_ROOT,
+            sam31_mask_root=rope_round2 / "sam31_masks",
         ),
         CaseSpec(
             key="ffs_dynamics_round1",
             label="FFS Dynamics R1",
-            case_dir=ROOT / "data/dynamics/ffs_dynamics_round1_20260414",
+            case_dir=dynamics_round1,
             text_prompt="sloth",
             sam21_mask_root=DEFAULT_DYNAMICS_SAM21_MASK_ROOT,
+            sam31_mask_root=dynamics_round1 / "sam31_masks",
         ),
     ]
 
@@ -183,9 +198,44 @@ def _parse_modes(value: str | None) -> tuple[str, ...]:
     return modes
 
 
-def _select_cases(case_keys: str | None) -> list[CaseSpec]:
+def _resolve_cli_path(value: str | Path) -> Path:
+    path = Path(value).expanduser()
+    return path.resolve() if path.is_absolute() else (ROOT / path).resolve()
+
+
+def _custom_case_from_args(args: argparse.Namespace) -> CaseSpec | None:
+    if args.case_dir is None:
+        return None
+    if args.case_keys:
+        raise ValueError("--case-keys cannot be combined with --case-dir")
+    missing = [
+        name
+        for name, value in (
+            ("--text-prompt", args.text_prompt),
+            ("--sam31-mask-root", args.sam31_mask_root),
+        )
+        if value is None or not str(value).strip()
+    ]
+    if missing:
+        raise ValueError(f"Custom case requires {', '.join(missing)}")
+    case_dir = _resolve_cli_path(args.case_dir)
+    case_key = str(args.case_key or case_dir.name)
+    return CaseSpec(
+        key=case_key,
+        label=str(args.case_label or case_key),
+        case_dir=case_dir,
+        text_prompt=str(args.text_prompt),
+        sam21_mask_root=_resolve_cli_path(args.sam31_mask_root),
+        sam31_mask_root=_resolve_cli_path(args.sam31_mask_root),
+    )
+
+
+def _select_cases(args: argparse.Namespace) -> list[CaseSpec]:
+    custom_case = _custom_case_from_args(args)
+    if custom_case is not None:
+        return [custom_case]
     cases = _default_case_specs()
-    selected = _comma_list(case_keys)
+    selected = _comma_list(args.case_keys)
     if selected is None:
         return cases
     by_key = {case.key: case for case in cases}
@@ -211,6 +261,14 @@ def _normalize_label(value: str) -> str:
 
 def _text_prompt_labels(text_prompt: str) -> set[str]:
     return {_normalize_label(item) for item in str(text_prompt).split(",") if item.strip()}
+
+
+def _primary_text_prompt_label(text_prompt: str) -> str:
+    for item in str(text_prompt).split(","):
+        label = " ".join(item.strip().split())
+        if label:
+            return label
+    return str(text_prompt)
 
 
 def _read_mask_info(mask_root: Path, *, camera_idx: int) -> dict[int, str]:
@@ -332,6 +390,7 @@ def _depth_path(case_dir: Path, *, camera_idx: int, frame_token: str) -> Path | 
         case_dir / "depth_ffs_float_m" / str(int(camera_idx)) / f"{frame_token}.npy",
         case_dir / "depth_ffs_native_like_postprocess_float_m" / str(int(camera_idx)) / f"{frame_token}.npy",
         case_dir / "depth_ffs" / str(int(camera_idx)) / f"{frame_token}.npy",
+        case_dir / "depth" / str(int(camera_idx)) / f"{frame_token}.npy",
         case_dir / "depth" / str(int(camera_idx)) / f"{frame_token}.png",
     ]
     for path in candidates:
@@ -370,6 +429,7 @@ def _write_single_object_masks(
     mask_root: Path,
     case_key: str,
     prompt_mode: str,
+    object_label: str,
     camera_idx: int,
     masks_by_frame: dict[str, Any],
     overwrite: bool,
@@ -390,13 +450,14 @@ def _write_single_object_masks(
     object_dir = camera_dir / str(OBJECT_ID)
     object_dir.mkdir(parents=True, exist_ok=True)
     mask_dir.mkdir(parents=True, exist_ok=True)
-    info_path.write_text(json.dumps({str(OBJECT_ID): str(prompt_mode)}, indent=2), encoding="utf-8")
+    info_path.write_text(json.dumps({str(OBJECT_ID): str(object_label)}, indent=2), encoding="utf-8")
     for frame_token, mask in sorted(masks_by_frame.items(), key=lambda item: int(item[0])):
         cv2.imwrite(str(object_dir / f"{frame_token}.png"), np.asarray(mask, dtype=np.uint8) * 255)
     return {
         "mask_root": str(root),
         "camera_idx": int(camera_idx),
         "object_id": int(OBJECT_ID),
+        "object_label": str(object_label),
         "saved_frame_count": int(len(masks_by_frame)),
     }
 
@@ -533,7 +594,7 @@ def _quality_summary(
             output_count = int(np.count_nonzero(np.asarray(mask, dtype=bool) & depth_valid))
             try:
                 ref_mask = _load_union_mask(
-                    mask_root=case.case_dir / "sam31_masks",
+                    mask_root=case.sam31_mask_root,
                     case_dir=case.case_dir,
                     camera_idx=int(camera_idx),
                     frame_token=str(token),
@@ -618,7 +679,7 @@ def _run_one_stream(
     height, width = _image_shape(case.case_dir, camera_idx=int(camera_idx), frame_token=str(frame_tokens[0]))
     session = _init_session(device=device, dtype=dtype, height=height, width=width)
     init_mask = _load_union_mask(
-        mask_root=case.case_dir / "sam31_masks",
+        mask_root=case.sam31_mask_root,
         case_dir=case.case_dir,
         camera_idx=int(camera_idx),
         frame_token=str(frame_tokens[0]),
@@ -705,6 +766,7 @@ def _run_one_stream(
             mask_root=output_mask_root,
             case_key=case.key,
             prompt_mode=prompt_mode,
+            object_label=_primary_text_prompt_label(case.text_prompt),
             camera_idx=int(camera_idx),
             masks_by_frame=masks_by_frame,
             overwrite=bool(overwrite),
@@ -805,6 +867,8 @@ def _write_markdown(path: Path, payload: dict[str, Any]) -> None:
         "## Contract",
         "",
         "- Uses real aligned QQTT color frames, not synthetic frames.",
+        "- Reads one PNG frame at a time and calls the HF streaming model with a persistent inference session.",
+        "- Does not pass a full video path, MP4, or offline video-folder input to EdgeTAM.",
         "- Does not modify `edgetam-max`; intended environment is `edgetam-hf-stream`.",
         "- Measures frame-by-frame streaming with persistent inference sessions.",
         "- This remains an experimental benchmark, not a production backend.",
@@ -864,7 +928,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if str(args.device).startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available")
     dtype = _dtype_from_name(args.dtype)
-    cases = _select_cases(args.case_keys)
+    cases = _select_cases(args)
     camera_ids = _parse_ints(args.camera_ids, default=DEFAULT_CAMERA_IDS)
     prompt_modes = _parse_modes(args.prompt_modes)
     if bool(args.include_previous_mask) and "previous_mask" not in prompt_modes:
@@ -956,6 +1020,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "prompt_modes": list(prompt_modes),
         "camera_ids": [int(item) for item in camera_ids],
         "frames": None if args.frames is None else int(args.frames),
+        "streaming_contract": {
+            "frame_by_frame_streaming": True,
+            "offline_video_input_used": False,
+            "frame_source": "png_loop",
+            "video_path_argument_used": False,
+        },
         "warmup": {
             "enabled": not bool(args.no_warmup),
             "frames": int(args.warmup_frames),
@@ -969,6 +1039,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "case_dir": str(case.case_dir),
                 "text_prompt": case.text_prompt,
                 "sam21_mask_root": str(case.sam21_mask_root),
+                "sam31_mask_root": str(case.sam31_mask_root),
             }
             for case in cases
         ],
@@ -988,6 +1059,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--markdown-output", type=Path, default=DEFAULT_DOC_MD)
     parser.add_argument("--quality-output", type=Path, default=DEFAULT_QUALITY_JSON)
     parser.add_argument("--case-keys", help="Comma-separated subset of default case keys.")
+    parser.add_argument("--case-dir", type=Path, help="Custom QQTT case directory with color/{cam}/{frame}.png.")
+    parser.add_argument("--case-key", help="Custom case key. Defaults to --case-dir name.")
+    parser.add_argument("--case-label", help="Custom case label. Defaults to --case-key.")
+    parser.add_argument("--text-prompt", help="Custom case text prompt used to load the SAM3.1 prompt mask.")
+    parser.add_argument("--sam31-mask-root", type=Path, help="Custom SAM3.1 mask root with mask/ sidecars.")
     parser.add_argument("--camera-ids", help="Comma-separated camera ids. Defaults to 0,1,2.")
     parser.add_argument("--prompt-modes", help="Comma-separated modes: point,box,mask,previous_mask.")
     parser.add_argument("--include-previous-mask", action="store_true")

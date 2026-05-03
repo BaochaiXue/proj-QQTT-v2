@@ -271,8 +271,11 @@ def ensure_sam21_checkpoints(
 
 def _resolve_mask_root(mask_root: str | Path) -> Path:
     root = Path(mask_root).resolve()
-    if root.name == "mask":
-        root = root.parent
+    if not (root / "mask").is_dir():
+        if root.name == "mask" and any(root.glob("mask_info_*.json")):
+            root = root.parent
+        else:
+            raise FileNotFoundError(f"Mask root does not contain mask/: {root}")
     if not (root / "mask").is_dir():
         raise FileNotFoundError(f"Mask root does not contain mask/: {root}")
     return root

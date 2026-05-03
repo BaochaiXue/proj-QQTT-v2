@@ -47,6 +47,8 @@ These record what the current machine and D455 topology actually supported durin
 - `hf_edgetam_streaming_validation.md`
 - `hf_edgetam_streaming_processor_session_validation.md`
 - `hf_edgetam_streaming_realcase_benchmark.md`
+- `sloth_set_2_motion_ffs_hf_edgetam_streaming_benchmark.md`
+- `sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_benchmark.md`
 
 These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 
@@ -68,6 +70,7 @@ These are the main source of truth for current visualization workflows, ownershi
 - `contract_hardening_validation.md`
 - `results_retention_cleanup_20260501.md`
 - `result_root_unification_20260501.md`
+- `local_ephemeral_artifact_cleanup_20260503.md`
 
 These record repo-structure, scope, and metadata-contract hardening passes.
 
@@ -93,6 +96,9 @@ These record repo-structure, scope, and metadata-contract hardening passes.
 - `hf_edgetam_streaming_processor_session_results.json`
 - `hf_edgetam_streaming_realcase_results.json`
 - `hf_edgetam_streaming_quality.json`
+- `sloth_set_2_motion_ffs_hf_edgetam_streaming_results.json`
+- `sloth_set_2_motion_ffs_hf_edgetam_streaming_quality.json`
+- `sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_results.json`
 
 These are not general datasets. They are small helper assets used by specific validation and visualization workflows.
 

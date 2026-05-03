@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -380,6 +381,126 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             self.assertTrue(Path(summary["gif_path"]).is_file())
             self.assertTrue(Path(summary["first_frame_path"]).is_file())
             self.assertTrue((Path(summary["first_frame_ply_dir"]) / "sloth_base_motion_ffs_small_frame0000_fused_pcd_overlay.ply").is_file())
+
+    def test_pcd_overlay_single_variant_writes_1x3_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            make_visualization_case(case_dir, include_depth_ffs_float_m=True, frame_num=1)
+            sam31_root = make_sam31_masks(
+                case_dir,
+                prompt_labels_by_object={0: "stuffed animal"},
+                frame_tokens=["0"],
+            )
+            candidate_mask = np.zeros((8, 10), dtype=bool)
+            candidate_mask[1:4, 1:4] = True
+            edgetam_root = root / "edgetam_masks"
+            for camera_idx in range(3):
+                ladder.write_single_object_masks(
+                    mask_root=edgetam_root,
+                    camera_idx=camera_idx,
+                    object_label="stuffed animal",
+                    masks_by_frame_token={"0": candidate_mask},
+                    overwrite=False,
+                )
+
+            summary = pcd_overlay.render_fused_pcd_overlay_2x3_gif(
+                root=root,
+                case_dir=case_dir,
+                output_dir=root / "out",
+                case_key="sloth_set_2_motion_ffs",
+                case_label="Sloth Set 2 Motion FFS",
+                text_prompt="stuffed animal",
+                sam31_mask_root=sam31_root,
+                variant_roots={"hf_edgetam_streaming_mask": edgetam_root},
+                variants=(("hf_edgetam_streaming_mask", "HF EdgeTAM streaming"),),
+                frames=1,
+                tile_width=48,
+                tile_height=32,
+                row_label_width=54,
+                phystwin_nb_points=1,
+                max_points_per_render=None,
+                output_name="custom_pcd_xor",
+            )
+
+            self.assertEqual(summary["frames"], 1)
+            self.assertEqual([item["key"] for item in summary["variants"]], ["hf_edgetam_streaming_mask"])
+            self.assertTrue(Path(summary["gif_path"]).is_file())
+            self.assertTrue(Path(summary["first_frame_path"]).is_file())
+            self.assertTrue(
+                (
+                    Path(summary["first_frame_ply_dir"])
+                    / "sloth_set_2_motion_ffs_hf_edgetam_streaming_mask_frame0000_fused_pcd_overlay.ply"
+                ).is_file()
+            )
+
+    def test_hf_edgetam_custom_case_args_and_mask_label(self) -> None:
+        from scripts.harness.experiments import run_hf_edgetam_streaming_realcase as hf_stream
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            sam31_root = root / "sam31_masks"
+            args = hf_stream.parse_args(
+                [
+                    "--case-dir",
+                    str(case_dir),
+                    "--case-key",
+                    "sloth_set_2_motion_ffs",
+                    "--case-label",
+                    "Sloth Set 2 Motion FFS",
+                    "--text-prompt",
+                    "stuffed animal",
+                    "--sam31-mask-root",
+                    str(sam31_root),
+                    "--prompt-modes",
+                    "mask",
+                    "--all-frames",
+                ]
+            )
+            cases = hf_stream._select_cases(args)
+            self.assertEqual(len(cases), 1)
+            self.assertEqual(cases[0].key, "sloth_set_2_motion_ffs")
+            self.assertEqual(cases[0].case_dir, case_dir.resolve())
+            self.assertEqual(cases[0].sam31_mask_root, sam31_root.resolve())
+            self.assertIsNone(args.frames)
+            self.assertEqual(hf_stream._primary_text_prompt_label("stuffed animal"), "stuffed animal")
+            self.assertEqual(
+                hf_stream._primary_text_prompt_label("white rope, thick rope"),
+                "white rope",
+            )
+
+            import cv2
+
+            hf_stream.cv2 = cv2
+            hf_stream.np = np
+            label_mask = np.zeros((8, 10), dtype=bool)
+            label_mask[:4, :5] = True
+            output = hf_stream._write_single_object_masks(
+                mask_root=root / "out_masks",
+                case_key="sloth_set_2_motion_ffs",
+                prompt_mode="mask",
+                object_label="stuffed animal",
+                camera_idx=0,
+                masks_by_frame={"0": label_mask},
+                overwrite=False,
+            )
+            self.assertEqual(output["object_label"], "stuffed animal")
+            info = json.loads(
+                (root / "out_masks/sloth_set_2_motion_ffs/mask/mask/mask_info_0.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(info, {"1": "stuffed animal"})
+            make_visualization_case(case_dir, include_depth_ffs_float_m=True, frame_num=1)
+            loaded = ladder.load_union_mask(
+                mask_root=root / "out_masks/sloth_set_2_motion_ffs/mask",
+                case_dir=case_dir,
+                camera_idx=0,
+                frame_token="0",
+                text_prompt="stuffed animal",
+            )
+            self.assertEqual(int(loaded.sum()), 20)
 
     def test_pinhole_renderer_uses_original_camera_z_buffer(self) -> None:
         points = np.asarray(

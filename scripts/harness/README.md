@@ -19,11 +19,11 @@ Current catalog summary:
 | Category | Count | Meaning |
 | --- | ---: | --- |
 | `checks` | 5 | Deterministic repo, scope, architecture, experiment-boundary, and catalog guards. |
-| `hardware_external` | 14 | RealSense probes, SAM/FFS/TensorRT proof tools, WSLg/Open3D helper, and static replay benchmarks. |
+| `hardware_external` | 13 | RealSense probes, SAM/FFS/TensorRT proof tools, WSLg/Open3D helper, and static replay benchmarks. |
 | `mask_support` | 4 | SAM 3.1 mask generation, mask helper, object-case registry, and single-pair reprojection. |
 | `formal_cleanup` | 1 | Downstream-facing cleanup for `data/different_types/`. |
 | `current_compare` | 12 | In-scope aligned native-vs-FFS comparison visualizations. |
-| `experiments` | 24 | Experiment-only visualization workflows under `scripts/harness/experiments/`. |
+| `experiments` | 25 | Experiment-only visualization workflows under `scripts/harness/experiments/`. |
 | `focused_diagnostics` | 3 | Narrow audits and quality diagnostics. |
 
 ```bash
@@ -72,7 +72,7 @@ export TORCH_CUDA_ARCH_LIST=12.0
 ## Primary Entrypoints
 
 - Checks: `check_all.py`, `check_harness_catalog.py`, `check_scope.py`, `check_experiment_boundaries.py`, `check_visual_architecture.py`.
-- Hardware and external proofs: `probe_d455_*`, `verify_ffs_*`, `verify_hf_edgetam_streaming.py`, `benchmark_ffs_configs.py`, `benchmark_sam31_still_object_views.py`, `run_ffs_static_replay_matrix.py`, `realtime_single_camera_pointcloud.py`, `run_wslg_open3d.sh`.
+- Hardware and external proofs: `probe_d455_*`, `verify_ffs_*`, `benchmark_ffs_configs.py`, `benchmark_sam31_still_object_views.py`, `run_ffs_static_replay_matrix.py`, `realtime_single_camera_pointcloud.py`, `run_wslg_open3d.sh`.
 - Mask support: `generate_sam31_masks.py`, `sam31_mask_helper.py`, `object_case_registry.py`, `reproject_ffs_to_color.py`.
 - Formal cleanup: `cleanup_different_types_cases.py`.
 - Current compare CLIs: `visual_compare_depth_panels.py`, `visual_compare_reprojection.py`, `visual_compare_depth_video.py`, `visual_compare_depth_triplet_*`, `visual_compare_masked_*`, `visual_compare_turntable.py`, `visual_compare_rerun.py`, `visual_make_*`, `visual_compare_stereo_order_pcd.py`.

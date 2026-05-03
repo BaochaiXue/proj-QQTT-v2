@@ -549,7 +549,7 @@ def render_fused_pcd_overlay_2x3_gif(
         "first_frame_path": str(first_frame_path),
         "first_frame_ply_dir": str(ply_dir),
         "sam31_mask_root": str(sam31_root),
-        "variant_roots": {key: str(value) for key, value in roots.items()},
+        "variant_roots": {key: str(roots[key]) for key, _label in selected_variants},
         "variants": [{"key": key, "label": label} for key, label in selected_variants],
         "camera_ids": [int(item) for item in camera_ids],
         "view_mode": "fused_pcd_original_camera_pinhole",
