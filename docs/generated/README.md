@@ -33,6 +33,7 @@ These record what the current machine and D455 topology actually supported durin
 - `ffs_comparison_workflow_validation.md`
 - `ffs_left_right_codepath_audit.md`
 - `ffs_max_sam31_realsense_env_validation.md`
+- `demo_2_max_env_validation.md`
 - `sam21_max_env_validation.md`
 - `sam21_max_round2_benchmark.md`
 - `sam21_dynamics_checkpoint_ladder_benchmark.md`

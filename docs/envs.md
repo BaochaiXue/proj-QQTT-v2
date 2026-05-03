@@ -105,6 +105,59 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - visualization harnesses that need both SAM 3.1 masks and FFS depth
   - current operator-side experiments unless a task explicitly calls for legacy `qqtt-ffs-compat`, `ffs-official-trt`, or `FFS-max`
 
+## `demo_2_max`
+
+- Purpose: combined local demo environment for workflows that need EdgeTAM,
+  Fast-FoundationStereo, RealSense, and SAM 3.1 in one Python process.
+- Created from:
+  - `conda create -y -n demo_2_max --clone FFS-SAM-RS`
+- Reason for clone source:
+  - `FFS-SAM-RS` already exists locally and contains the validated FFS,
+    RealSense, TensorRT, Open3D, and SAM 3.1 stack
+  - the documented `FFS-max-sam31-rs` target is not currently present in the
+    local conda environment list
+- Current validated Python:
+  - `3.12.13`
+- Current validated torch stack:
+  - `torch==2.11.0+cu130`
+  - `torchvision==0.26.0+cu130`
+  - CUDA available through `torch.version.cuda == 13.0`
+- Current activation-hook policy:
+  - `PYTHONPATH=/home/zhangxinjie/EdgeTAM`
+  - `CUDA_HOME=/usr/local/cuda`
+  - PyTorch `torch/lib` plus shared CUDA 13 libraries are prepended to
+    `LD_LIBRARY_PATH`
+  - `TORCH_CUDA_ARCH_LIST=12.0`
+  - `QQTT_SAM31_CHECKPOINT=/home/zhangxinjie/.cache/huggingface/qqtt_sam31/sam3.1_multiplex.pt`
+- Current validated runtime packages:
+  - `pyrealsense2`
+  - `sam3==0.1.0`
+  - `tensorrt==10.16.1.11`
+  - `triton==3.6.0`
+  - `open3d==0.19.0`
+  - EdgeTAM `sam2._C` from `/home/zhangxinjie/EdgeTAM`
+- Current caveat:
+  - `python -m pip check` reports the inherited `sam3` metadata requirement
+    `numpy<2,>=1.26` while this stack keeps `numpy==2.4.4`
+  - runtime validation still succeeded, including SAM 3.1 video predictor
+    construction from the local checkpoint
+- Validation commands:
+  - `conda run --no-capture-output -n demo_2_max python verify_edgetam_max.py`
+    from `/home/zhangxinjie/EdgeTAM`
+  - `conda run --no-capture-output -n demo_2_max python -m unittest -v tests.test_sam31_mask_helper_smoke`
+  - `conda run --no-capture-output -n demo_2_max python cameras_viewer_FFS.py --help`
+  - `conda run --no-capture-output -n demo_2_max python scripts/harness/verify_ffs_tensorrt_wsl.py --help`
+  - `conda run --no-capture-output -n demo_2_max python scripts/harness/check_all.py`
+- Validation note:
+  - `docs/generated/demo_2_max_env_validation.md`
+- Expected use:
+  - integrated local demos that need RealSense capture, FFS depth, SAM 3.1
+    masks, and EdgeTAM tracking in the same process
+  - quick operator-side experiments where separate specialized env switching
+    is the main friction
+  - not a replacement for isolated benchmark envs when measuring clean FPS for
+    a single backend
+
 ## `FFS-max-sam31-rs`
 
 - Purpose: cloned `FFS-max` environment for FFS max torch/CUDA/TensorRT experiments that also need QQTT RealSense entrypoints and SAM 3.1 masks
