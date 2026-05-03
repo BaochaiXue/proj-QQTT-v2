@@ -55,6 +55,7 @@ These record what the current machine and D455 topology actually supported durin
 - `sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_benchmark.md`
 - `sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_benchmark.md`
 - `sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_benchmark.md`
+- `sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_benchmark.md`
 
 These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 
@@ -114,6 +115,8 @@ These record repo-structure, scope, and metadata-contract hardening passes.
 - `sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_streaming_results.json`
 - `sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_results.json`
 - `sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_results.json`
+- `sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_streaming_results.json`
+- `sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_results.json`
 
 These are not general datasets. They are small helper assets used by specific validation and visualization workflows.
 
