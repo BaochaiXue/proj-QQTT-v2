@@ -122,12 +122,15 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        self.assertIn("--depth-source {ffs,realsense}", result.stdout)
+        self.assertIn("--depth-source {ffs,realsense,none}", result.stdout)
         self.assertIn("--ffs-trt-model-dir FFS_TRT_MODEL_DIR", result.stdout)
         self.assertIn("--init-mode {sam31-first-frame,saved-masks}", result.stdout)
-        self.assertIn("--track-mode {controller-object,object-only}", result.stdout)
+        self.assertIn("--track-mode {controller-object,object-only,none}", result.stdout)
+        self.assertIn("--pcd-mode {masked,none}", result.stdout)
+        self.assertIn("--render-mode {pointcloud,none}", result.stdout)
         self.assertIn("--compile-mode {vision-reduce-overhead}", result.stdout)
         self.assertIn("--pcd-color-mode {rgb,class}", result.stdout)
+        self.assertIn("--profile-cuda-events", result.stdout)
         self.assertIn("--controller-init-mask CONTROLLER_INIT_MASK", result.stdout)
         self.assertIn("--object-init-mask OBJECT_INIT_MASK", result.stdout)
         self.assertIn("renders only the masked", result.stdout)
@@ -140,11 +143,20 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertEqual(args.compile_mode, "vision-reduce-overhead")
         self.assertEqual(args.init_mode, "sam31-first-frame")
         self.assertEqual(args.track_mode, "controller-object")
+        self.assertEqual(args.pcd_mode, "masked")
+        self.assertEqual(args.render_mode, "pointcloud")
+        self.assertFalse(args.profile_sync)
+        self.assertFalse(args.profile_cuda_events)
         self.assertEqual(args.pcd_color_mode, "rgb")
         self.assertEqual(masked_demo.object_id_labels(), {1: "controller", 2: "object"})
         self.assertEqual(masked_demo.object_id_labels("object-only"), {2: "object"})
+        self.assertEqual(masked_demo.object_id_labels("none"), {})
         object_only_args = masked_demo.build_parser().parse_args(["--track-mode", "object-only"])
         self.assertEqual(masked_demo.active_object_ids(object_only_args), [2])
+        capture_only_args = masked_demo.build_parser().parse_args(
+            ["--depth-source", "none", "--track-mode", "none", "--pcd-mode", "none", "--render-mode", "none"]
+        )
+        masked_demo.validate_args(capture_only_args)
         self.assertIn("System warming up", masked_demo.WARMUP_HUD_TEXT)
         self.assertIn("Keep one steady pose", masked_demo.WARMUP_HUD_TEXT)
         with contextlib.redirect_stderr(io.StringIO()):

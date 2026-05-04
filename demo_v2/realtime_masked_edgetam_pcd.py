@@ -74,10 +74,14 @@ DEFAULT_COMPILE_MODE = "vision-reduce-overhead"
 COMPILE_MODES = ("vision-reduce-overhead",)
 INIT_MODES = ("sam31-first-frame", "saved-masks")
 DEFAULT_INIT_MODE = "sam31-first-frame"
-TRACK_MODES = ("controller-object", "object-only")
+TRACK_MODES = ("controller-object", "object-only", "none")
 DEFAULT_TRACK_MODE = "controller-object"
-DEPTH_SOURCES = ("ffs", "realsense")
+DEPTH_SOURCES = ("ffs", "realsense", "none")
 DEFAULT_DEPTH_SOURCE = "ffs"
+PCD_MODES = ("masked", "none")
+DEFAULT_PCD_MODE = "masked"
+RENDER_MODES = ("pointcloud", "none")
+DEFAULT_RENDER_MODE = "pointcloud"
 CONTROLLER_ID = 1
 OBJECT_ID = 2
 OBJECT_LABELS = {CONTROLLER_ID: "controller", OBJECT_ID: "object"}
@@ -100,11 +104,21 @@ class PipelineTiming:
     frame_copy_ms: float = 0.0
     ffs_ms: float = 0.0
     ffs_align_ms: float = 0.0
+    depth_convert_ms: float = 0.0
     preprocess_ms: float = 0.0
     prompt_ms: float = 0.0
     model_ms: float = 0.0
+    wall_model_ms: float = 0.0
+    cuda_event_model_ms: float = 0.0
+    pre_sync_wait_ms: float = 0.0
+    post_sync_wait_ms: float = 0.0
     postprocess_ms: float = 0.0
     mask_ms: float = 0.0
+    pcd_mask_intersection_ms: float = 0.0
+    pcd_select_ms: float = 0.0
+    pcd_point_cap_ms: float = 0.0
+    pcd_backproject_ms: float = 0.0
+    pcd_color_gather_ms: float = 0.0
     pcd_ms: float = 0.0
     open3d_convert_ms: float = 0.0
     open3d_update_ms: float = 0.0
@@ -189,6 +203,15 @@ class MaskedPcdPacket:
     @property
     def point_count(self) -> int:
         return self.controller_point_count + self.object_point_count
+
+
+@dataclass(frozen=True)
+class DepthProfilePacket:
+    seq: int
+    receive_perf_s: float
+    process_done_perf_s: float
+    dropped_capture_frames: int
+    timing: PipelineTiming
 
 
 class StageStats:
@@ -288,7 +311,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--track-mode",
         choices=TRACK_MODES,
         default=DEFAULT_TRACK_MODE,
-        help="Objects tracked by EdgeTAM. Default tracks controller+object; object-only skips controller masks.",
+        help="Objects tracked by EdgeTAM. Use none for capture/depth isolation profiling.",
+    )
+    parser.add_argument(
+        "--pcd-mode",
+        choices=PCD_MODES,
+        default=DEFAULT_PCD_MODE,
+        help="Point-cloud stage mode. Use none for EdgeTAM/depth isolation profiling.",
+    )
+    parser.add_argument(
+        "--render-mode",
+        choices=RENDER_MODES,
+        default=DEFAULT_RENDER_MODE,
+        help="Render stage mode. Use none for headless profiling.",
     )
     parser.add_argument(
         "--controller-init-mask",
@@ -328,6 +363,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Max masked points per object. Use 0 to keep every masked valid depth pixel.",
     )
     parser.add_argument(
+        "--pcd-stride",
+        type=int,
+        default=1,
+        help="Optional masked PCD pixel stride. Use 2 for a faster lower-density profiling path.",
+    )
+    parser.add_argument(
         "--pcd-color-mode",
         choices=("rgb", "class"),
         default="rgb",
@@ -339,6 +380,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration-s", type=float, default=0.0, help="Optional auto-stop duration. Use 0 to run until closed.")
     parser.add_argument("--controller-color", type=_parse_rgb_triplet, default=CONTROLLER_COLOR_RGB, help="Controller RGB color.")
     parser.add_argument("--object-color", type=_parse_rgb_triplet, default=OBJECT_COLOR_RGB, help="Object RGB color.")
+    parser.add_argument(
+        "--profile-sync",
+        action="store_true",
+        help="Enable device-wide CUDA synchronizes around timed stages. Off by default for live hot path.",
+    )
+    parser.add_argument(
+        "--profile-cuda-events",
+        action="store_true",
+        help="Record CUDA-event EdgeTAM model timing. Profiling-only; synchronizes the model end event.",
+    )
     parser.add_argument("--debug", action="store_true", help="Print once-per-second timing/debug stats.")
     return parser
 
@@ -353,12 +404,20 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--depth-max-m must be <=0 or greater than --depth-min-m")
     if args.pcd_max_points < 0:
         raise ValueError("--pcd-max-points must be >= 0")
+    if args.pcd_stride < 1:
+        raise ValueError("--pcd-stride must be >= 1")
     if args.render_every_n < 1:
         raise ValueError("--render-every-n must be >= 1")
     if args.point_size <= 0:
         raise ValueError("--point-size must be positive")
     if args.compile_mode != DEFAULT_COMPILE_MODE:
         raise ValueError("Demo 2.0 requires compiled EdgeTAM: --compile-mode vision-reduce-overhead")
+    if args.track_mode == "none" and args.pcd_mode == "masked":
+        raise ValueError("--track-mode none requires --pcd-mode none")
+    if args.depth_source == "none" and args.pcd_mode == "masked":
+        raise ValueError("--depth-source none requires --pcd-mode none")
+    if args.render_mode == "pointcloud" and args.pcd_mode == "none":
+        raise ValueError("--render-mode pointcloud requires --pcd-mode masked")
     if args.depth_source == "ffs":
         validate_ffs_paths(ffs_repo=Path(args.ffs_repo), model_dir=Path(args.ffs_trt_model_dir))
     if args.track_mode not in TRACK_MODES:
@@ -389,7 +448,7 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
     if args.depth_source == "ffs":
         config.enable_stream(rs.stream.infrared, 1, width, height, rs.format.y8, int(args.fps))
         config.enable_stream(rs.stream.infrared, 2, width, height, rs.format.y8, int(args.fps))
-    else:
+    elif args.depth_source == "realsense":
         config.enable_stream(rs.stream.depth, width, height, rs.format.z16, int(args.fps))
     profile = pipeline.start(config)
     try:
@@ -414,6 +473,15 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
                 k_ir_left=rs_intrinsics_to_matrix(ir_left_profile.get_intrinsics()),
                 t_ir_left_to_color=rs_extrinsics_to_matrix(ir_left_to_color),
                 ir_baseline_m=rs_translation_norm(ir_left_to_right),
+            )
+        if args.depth_source == "none":
+            return RealtimeCameraRuntime(
+                pipeline=pipeline,
+                align=None,
+                serial=serial,
+                intrinsics=intrinsics,
+                depth_scale_m_per_unit=depth_scale,
+                k_color=k_color,
             )
         align = rs.align(rs.stream.color)
     except Exception:
@@ -524,6 +592,75 @@ def backproject_masked_rgbd(
     return points, colors
 
 
+def backproject_masked_rgbd_profiled(
+    *,
+    color_bgr: np.ndarray,
+    depth_m: np.ndarray,
+    mask: np.ndarray,
+    ray_x: np.ndarray,
+    ray_y: np.ndarray,
+    depth_min_m: float,
+    depth_max_m: float,
+    max_points: int,
+    color_mode: str,
+    class_rgb: tuple[int, int, int],
+    rng: np.random.Generator | None = None,
+) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
+    if color_bgr.ndim != 3 or color_bgr.shape[2] != 3:
+        raise ValueError("color_bgr must be an HxWx3 array")
+    if depth_m.shape != color_bgr.shape[:2] or depth_m.shape != mask.shape:
+        raise ValueError("color, depth, and mask shapes must match")
+    if depth_m.shape != ray_x.shape or depth_m.shape != ray_y.shape:
+        raise ValueError("depth and projection grids must have matching shapes")
+    if max_points < 0:
+        raise ValueError("max_points must be >= 0")
+    if color_mode not in {"rgb", "class"}:
+        raise ValueError("color_mode must be 'rgb' or 'class'")
+
+    timing: dict[str, float] = {}
+    started_s = time.perf_counter()
+    valid = np.isfinite(depth_m) & (depth_m > np.float32(depth_min_m))
+    if depth_max_m > 0:
+        valid &= depth_m < np.float32(depth_max_m)
+    selected = valid & np.asarray(mask, dtype=bool)
+    timing["pcd_mask_intersection_ms"] = _elapsed_ms(started_s, time.perf_counter())
+
+    started_s = time.perf_counter()
+    if not np.any(selected):
+        timing["pcd_select_ms"] = _elapsed_ms(started_s, time.perf_counter())
+        timing["pcd_point_cap_ms"] = 0.0
+        timing["pcd_backproject_ms"] = 0.0
+        timing["pcd_color_gather_ms"] = 0.0
+        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8), timing
+    rows, cols = np.nonzero(selected)
+    timing["pcd_select_ms"] = _elapsed_ms(started_s, time.perf_counter())
+
+    started_s = time.perf_counter()
+    if max_points > 0 and rows.shape[0] > max_points:
+        generator = rng if rng is not None else np.random.default_rng()
+        indices = generator.choice(rows.shape[0], int(max_points), replace=False)
+        rows = rows[indices]
+        cols = cols[indices]
+    rows = rows.astype(np.int64, copy=False)
+    cols = cols.astype(np.int64, copy=False)
+    timing["pcd_point_cap_ms"] = _elapsed_ms(started_s, time.perf_counter())
+
+    started_s = time.perf_counter()
+    z = depth_m[rows, cols].astype(np.float32, copy=False)
+    x = ray_x[rows, cols].astype(np.float32, copy=False) * z
+    y = ray_y[rows, cols].astype(np.float32, copy=False) * z
+    points = np.ascontiguousarray(np.stack([x, y, z], axis=1), dtype=np.float32)
+    timing["pcd_backproject_ms"] = _elapsed_ms(started_s, time.perf_counter())
+
+    started_s = time.perf_counter()
+    if color_mode == "rgb":
+        colors = np.ascontiguousarray(color_bgr[rows, cols, ::-1], dtype=np.uint8)
+    else:
+        colors = make_solid_colors(points.shape[0], class_rgb)
+    timing["pcd_color_gather_ms"] = _elapsed_ms(started_s, time.perf_counter())
+    return points, colors, timing
+
+
 def backproject_masked(
     *,
     depth_m: np.ndarray,
@@ -567,6 +704,8 @@ def controller_tracking_enabled(args_or_track_mode: argparse.Namespace | str) ->
 
 
 def object_id_labels(track_mode: str = DEFAULT_TRACK_MODE) -> dict[int, str]:
+    if track_mode == "none":
+        return {}
     if track_mode == "object-only":
         return {OBJECT_ID: OBJECT_LABELS[OBJECT_ID]}
     if track_mode == "controller-object":
@@ -618,12 +757,66 @@ def _sync_if_needed(torch_module: Any, device: str) -> None:
         torch_module.cuda.synchronize()
 
 
-def _time_runtime_ms(torch_module: Any, device: str, fn: Callable[[], Any]) -> tuple[Any, float]:
-    _sync_if_needed(torch_module, device)
+def _time_runtime_ms(
+    torch_module: Any,
+    device: str,
+    fn: Callable[[], Any],
+    *,
+    sync_enabled: bool = False,
+) -> tuple[Any, float, float, float]:
+    pre_sync_ms = 0.0
+    post_sync_ms = 0.0
+    if sync_enabled:
+        sync_start_s = time.perf_counter()
+        _sync_if_needed(torch_module, device)
+        pre_sync_ms = _elapsed_ms(sync_start_s, time.perf_counter())
     started = time.perf_counter()
     value = fn()
-    _sync_if_needed(torch_module, device)
-    return value, _elapsed_ms(started, time.perf_counter())
+    elapsed_ms = _elapsed_ms(started, time.perf_counter())
+    if sync_enabled:
+        sync_start_s = time.perf_counter()
+        _sync_if_needed(torch_module, device)
+        post_sync_ms = _elapsed_ms(sync_start_s, time.perf_counter())
+    return value, elapsed_ms, pre_sync_ms, post_sync_ms
+
+
+def _time_model_forward(
+    *,
+    torch_module: Any,
+    device: str,
+    profile_sync: bool,
+    profile_cuda_events: bool,
+    fn: Callable[[], Any],
+) -> tuple[Any, float, float, float, float]:
+    pre_sync_ms = 0.0
+    post_sync_ms = 0.0
+    if profile_sync:
+        sync_start_s = time.perf_counter()
+        _sync_if_needed(torch_module, device)
+        pre_sync_ms = _elapsed_ms(sync_start_s, time.perf_counter())
+
+    start_event = None
+    end_event = None
+    if profile_cuda_events and str(device).startswith("cuda") and torch_module.cuda.is_available():
+        start_event = torch_module.cuda.Event(enable_timing=True)
+        end_event = torch_module.cuda.Event(enable_timing=True)
+        start_event.record()
+
+    started_s = time.perf_counter()
+    value = fn()
+    wall_ms = _elapsed_ms(started_s, time.perf_counter())
+
+    cuda_event_ms = 0.0
+    if end_event is not None and start_event is not None:
+        end_event.record()
+        end_event.synchronize()
+        cuda_event_ms = float(start_event.elapsed_time(end_event))
+
+    if profile_sync:
+        sync_start_s = time.perf_counter()
+        _sync_if_needed(torch_module, device)
+        post_sync_ms = _elapsed_ms(sync_start_s, time.perf_counter())
+    return value, wall_ms, cuda_event_ms, pre_sync_ms, post_sync_ms
 
 
 def _bgr_to_pil_rgb(color_bgr: np.ndarray) -> Any:
@@ -763,12 +956,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.ray_y: np.ndarray | None = None
         self.capture_slot: LatestSlot[FramePacket] = LatestSlot()
         self.mask_slot: LatestSlot[MaskPacket] = LatestSlot()
+        self.depth_profile_slot: LatestSlot[DepthProfilePacket] = LatestSlot()
         self.render_slot: LatestSlot[MaskedPcdPacket] = LatestSlot()
         self.stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
         self._request_render_update: Callable[[], None] = lambda: None
         self.capture_stats = StageStats()
         self.seg_stats = StageStats()
+        self.depth_stats = StageStats()
         self.pcd_stats = StageStats()
         self.render_stats = RenderStats()
         self._last_debug_log_s = 0.0
@@ -807,7 +1002,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 stride=1,
                 intrinsics=self.runtime.intrinsics,
             )
-            self._run_open3d_viewer()
+            if self.args.render_mode == "none":
+                self._run_headless()
+            else:
+                self._run_open3d_viewer()
         finally:
             self.stop()
         return 0
@@ -868,15 +1066,31 @@ class RealtimeMaskedEdgeTamPcdDemo:
         return self.ir_to_color_aligner
 
     def _start_threads(self) -> None:
-        workers = (
-            ("capture", self._capture_worker),
-            ("seg", self._seg_worker),
-            ("pcd", self._pcd_worker),
-        )
+        workers: list[tuple[str, Callable[[], None]]] = [("capture", self._capture_worker)]
+        if self.args.track_mode != "none":
+            workers.append(("seg", self._seg_worker))
+        if self.args.pcd_mode == "masked":
+            workers.append(("pcd", self._pcd_worker))
+        elif self.args.depth_source == "ffs":
+            workers.append(("depth", self._depth_profile_worker))
+        if self.args.debug and self.args.render_mode == "none":
+            workers.append(("debug", self._headless_debug_worker))
         for name, target in workers:
             thread = threading.Thread(target=target, name=f"masked-edgetam-{name}", daemon=True)
             thread.start()
             self._threads.append(thread)
+
+    def _run_headless(self) -> None:
+        self._start_threads()
+        started_s = time.perf_counter()
+        try:
+            while not self.stop_event.is_set():
+                if self.args.duration_s > 0 and time.perf_counter() - started_s >= float(self.args.duration_s):
+                    self.stop_event.set()
+                    break
+                time.sleep(0.05)
+        except KeyboardInterrupt:
+            self.stop_event.set()
 
     def _capture_worker(self) -> None:
         assert self.runtime is not None
@@ -902,6 +1116,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 if not color_frame or not ir_left_frame or not ir_right_frame:
                     continue
                 depth_frame = None
+            elif self.args.depth_source == "none":
+                align_done_s = receive_perf_s
+                color_frame = frames.get_color_frame()
+                if not color_frame:
+                    continue
+                depth_frame = None
+                ir_left_frame = None
+                ir_right_frame = None
             else:
                 assert align is not None
                 aligned = align.process(frames)
@@ -919,6 +1141,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 depth_u16 = None
                 ir_left_u8 = np.ascontiguousarray(np.asanyarray(ir_left_frame.get_data()).copy())
                 ir_right_u8 = np.ascontiguousarray(np.asanyarray(ir_right_frame.get_data()).copy())
+            elif self.args.depth_source == "none":
+                depth_u16 = None
+                ir_left_u8 = None
+                ir_right_u8 = None
             else:
                 assert depth_frame is not None
                 depth_u16 = np.ascontiguousarray(np.asanyarray(depth_frame.get_data()).copy())
@@ -962,6 +1188,21 @@ class RealtimeMaskedEdgeTamPcdDemo:
         model.eval()
         model, compile_metadata = hf_stream._apply_compile_mode(model, self.args.compile_mode)
         processor = hf_stream.Sam2VideoProcessor.from_pretrained(self.args.model_id)
+        metadata = {
+            "edge_model": self.args.model_id,
+            "compile_mode": self.args.compile_mode,
+            "applied_targets": compile_metadata.get("applied_targets", []),
+            "dtype": self.args.dtype,
+            "inference_device": self.args.device,
+            "inference_state_device": self.args.device,
+            "video_storage_device": self.args.device,
+            "frame_by_frame_streaming": True,
+            "offline_video_input_used": False,
+            "track_mode": self.args.track_mode,
+            "depth_source": self.args.depth_source,
+            "pcd_mode": self.args.pcd_mode,
+            "render_mode": self.args.render_mode,
+        }
         print(
             "[edgetam] "
             f"model={self.args.model_id} device={self.args.device} dtype={self.args.dtype} "
@@ -969,6 +1210,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"applied={compile_metadata.get('applied_targets', [])}",
             flush=True,
         )
+        print(f"[edgetam-metadata] {json.dumps(metadata, sort_keys=True)}", flush=True)
         return hf_stream, torch_module, dtype, model, processor
 
     def _seg_worker(self) -> None:
@@ -1062,10 +1304,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
         add_prompt: bool,
     ) -> MaskPacket:
         image = _bgr_to_pil_rgb(frame.color_bgr)
-        inputs, preprocess_ms = _time_runtime_ms(
+        inputs, preprocess_ms, preprocess_pre_sync_ms, preprocess_post_sync_ms = _time_runtime_ms(
             torch_module,
             self.args.device,
             lambda: processor(images=image, device=self.args.device, return_tensors="pt"),
+            sync_enabled=bool(self.args.profile_sync),
         )
         pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
         prompt_ms = 0.0
@@ -1078,7 +1321,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     prompt_masks.append(np.asarray(initial_controller_mask, dtype=bool))
                 prompt_obj_ids.append(OBJECT_ID)
                 prompt_masks.append(np.asarray(initial_object_mask, dtype=bool))
-                _unused, prompt_ms = _time_runtime_ms(
+                _unused, prompt_ms, prompt_pre_sync_ms, prompt_post_sync_ms = _time_runtime_ms(
                     torch_module,
                     self.args.device,
                     lambda: processor.add_inputs_to_inference_session(
@@ -1087,13 +1330,19 @@ class RealtimeMaskedEdgeTamPcdDemo:
                         obj_ids=prompt_obj_ids,
                         input_masks=prompt_masks,
                     ),
+                    sync_enabled=bool(self.args.profile_sync),
                 )
-            output, model_ms = _time_runtime_ms(
-                torch_module,
-                self.args.device,
-                lambda: model(inference_session=session, frame=pixel_values),
+            else:
+                prompt_pre_sync_ms = 0.0
+                prompt_post_sync_ms = 0.0
+            output, wall_model_ms, cuda_event_model_ms, model_pre_sync_ms, model_post_sync_ms = _time_model_forward(
+                torch_module=torch_module,
+                device=self.args.device,
+                profile_sync=bool(self.args.profile_sync),
+                profile_cuda_events=bool(self.args.profile_cuda_events),
+                fn=lambda: model(inference_session=session, frame=pixel_values),
             )
-            post_masks, postprocess_ms = _time_runtime_ms(
+            post_masks, postprocess_ms, postprocess_pre_sync_ms, postprocess_post_sync_ms = _time_runtime_ms(
                 torch_module,
                 self.args.device,
                 lambda: processor.post_process_masks(
@@ -1101,6 +1350,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     original_sizes=inputs.original_sizes,
                     binarize=False,
                 )[0],
+                sync_enabled=bool(self.args.profile_sync),
             )
         masks_by_id = extract_object_masks_from_hf_output(output, post_masks)
         missing = [obj_id for obj_id in active_object_ids(self.args) if obj_id not in masks_by_id]
@@ -1115,9 +1365,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
             frame.timing,
             preprocess_ms=preprocess_ms,
             prompt_ms=prompt_ms,
-            model_ms=model_ms,
+            model_ms=wall_model_ms,
+            wall_model_ms=wall_model_ms,
+            cuda_event_model_ms=cuda_event_model_ms,
+            pre_sync_wait_ms=float(preprocess_pre_sync_ms + prompt_pre_sync_ms + model_pre_sync_ms + postprocess_pre_sync_ms),
+            post_sync_wait_ms=float(preprocess_post_sync_ms + prompt_post_sync_ms + model_post_sync_ms + postprocess_post_sync_ms),
             postprocess_ms=postprocess_ms,
-            mask_ms=float(preprocess_ms + prompt_ms + model_ms + postprocess_ms),
+            mask_ms=float(preprocess_ms + prompt_ms + wall_model_ms + postprocess_ms),
         )
         return MaskPacket(
             seq=frame.seq,
@@ -1155,6 +1409,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             start_s = time.perf_counter()
             ffs_ms = 0.0
             ffs_align_ms = 0.0
+            depth_convert_ms = 0.0
             if mask_packet.depth_source == "ffs":
                 try:
                     depth_m, ffs_ms, ffs_align_ms = self._compute_ffs_depth_color_m(mask_packet)
@@ -1165,15 +1420,33 @@ class RealtimeMaskedEdgeTamPcdDemo:
             else:
                 if mask_packet.depth_u16 is None:
                     continue
+                depth_convert_start_s = time.perf_counter()
                 depth_m = np.ascontiguousarray(
                     mask_packet.depth_u16.astype(np.float32) * np.float32(mask_packet.depth_scale_m_per_unit)
                 )
-            controller_xyz, controller_colors = backproject_masked_rgbd(
-                color_bgr=mask_packet.color_bgr,
-                depth_m=depth_m,
-                mask=mask_packet.controller_mask,
-                ray_x=ray_x,
-                ray_y=ray_y,
+                depth_convert_ms = _elapsed_ms(depth_convert_start_s, time.perf_counter())
+
+            stride = int(self.args.pcd_stride)
+            if stride > 1:
+                color_bgr = mask_packet.color_bgr[::stride, ::stride]
+                depth_for_pcd = depth_m[::stride, ::stride]
+                controller_mask = mask_packet.controller_mask[::stride, ::stride]
+                object_mask = mask_packet.object_mask[::stride, ::stride]
+                ray_x_for_pcd = ray_x[::stride, ::stride]
+                ray_y_for_pcd = ray_y[::stride, ::stride]
+            else:
+                color_bgr = mask_packet.color_bgr
+                depth_for_pcd = depth_m
+                controller_mask = mask_packet.controller_mask
+                object_mask = mask_packet.object_mask
+                ray_x_for_pcd = ray_x
+                ray_y_for_pcd = ray_y
+            controller_xyz, controller_colors, controller_pcd_timing = backproject_masked_rgbd_profiled(
+                color_bgr=color_bgr,
+                depth_m=depth_for_pcd,
+                mask=controller_mask,
+                ray_x=ray_x_for_pcd,
+                ray_y=ray_y_for_pcd,
                 depth_min_m=float(self.args.depth_min_m),
                 depth_max_m=float(self.args.depth_max_m),
                 max_points=int(self.args.pcd_max_points),
@@ -1181,12 +1454,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 class_rgb=tuple(self.args.controller_color),
                 rng=rng,
             )
-            object_xyz, object_colors = backproject_masked_rgbd(
-                color_bgr=mask_packet.color_bgr,
-                depth_m=depth_m,
-                mask=mask_packet.object_mask,
-                ray_x=ray_x,
-                ray_y=ray_y,
+            object_xyz, object_colors, object_pcd_timing = backproject_masked_rgbd_profiled(
+                color_bgr=color_bgr,
+                depth_m=depth_for_pcd,
+                mask=object_mask,
+                ray_x=ray_x_for_pcd,
+                ray_y=ray_y_for_pcd,
                 depth_min_m=float(self.args.depth_min_m),
                 depth_max_m=float(self.args.depth_max_m),
                 max_points=int(self.args.pcd_max_points),
@@ -1199,6 +1472,21 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 mask_packet.timing,
                 ffs_ms=ffs_ms,
                 ffs_align_ms=ffs_align_ms,
+                depth_convert_ms=depth_convert_ms,
+                pcd_mask_intersection_ms=float(
+                    controller_pcd_timing["pcd_mask_intersection_ms"]
+                    + object_pcd_timing["pcd_mask_intersection_ms"]
+                ),
+                pcd_select_ms=float(controller_pcd_timing["pcd_select_ms"] + object_pcd_timing["pcd_select_ms"]),
+                pcd_point_cap_ms=float(
+                    controller_pcd_timing["pcd_point_cap_ms"] + object_pcd_timing["pcd_point_cap_ms"]
+                ),
+                pcd_backproject_ms=float(
+                    controller_pcd_timing["pcd_backproject_ms"] + object_pcd_timing["pcd_backproject_ms"]
+                ),
+                pcd_color_gather_ms=float(
+                    controller_pcd_timing["pcd_color_gather_ms"] + object_pcd_timing["pcd_color_gather_ms"]
+                ),
                 pcd_ms=_elapsed_ms(start_s, done_s),
             )
             packet = MaskedPcdPacket(
@@ -1219,7 +1507,34 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if packet.seq % int(self.args.render_every_n) == 0:
                 self._request_render_update()
 
-    def _compute_ffs_depth_color_m(self, packet: MaskPacket) -> tuple[np.ndarray, float, float]:
+    def _depth_profile_worker(self) -> None:
+        last_seq = -1
+        while not self.stop_event.is_set():
+            frame = self.capture_slot.get_latest_after(last_seq)
+            if frame is None:
+                time.sleep(0.001)
+                continue
+            last_seq = frame.seq
+            if frame.depth_source != "ffs":
+                continue
+            try:
+                _depth_m, ffs_ms, ffs_align_ms = self._compute_ffs_depth_color_m(frame)
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    print(f"[WARN] FFS depth profile frame {frame.seq} failed: {type(exc).__name__}: {exc}", flush=True)
+                continue
+            done_s = time.perf_counter()
+            packet = DepthProfilePacket(
+                seq=frame.seq,
+                receive_perf_s=frame.receive_perf_s,
+                process_done_perf_s=done_s,
+                dropped_capture_frames=self.capture_slot.dropped_count,
+                timing=replace(frame.timing, ffs_ms=ffs_ms, ffs_align_ms=ffs_align_ms),
+            )
+            self.depth_profile_slot.put(packet)
+            self.depth_stats.record(done_s)
+
+    def _compute_ffs_depth_color_m(self, packet: MaskPacket | FramePacket) -> tuple[np.ndarray, float, float]:
         runner = self.ffs_runner
         if runner is None:
             raise RuntimeError("FFS runner is not initialized")
@@ -1480,33 +1795,131 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
         )
 
-    def _maybe_log_debug(self, *, packet: MaskedPcdPacket, timing: PipelineTiming, now_s: float) -> None:
-        if not self.args.debug or now_s - self._last_debug_log_s < DEBUG_LOG_INTERVAL_S:
-            return
-        self._last_debug_log_s = now_s
+    def _emit_debug_line(
+        self,
+        *,
+        seq: int,
+        timing: PipelineTiming,
+        controller_points: int = 0,
+        object_points: int = 0,
+        dropped_capture_frames: int = 0,
+        dropped_seg_frames: int = 0,
+    ) -> None:
         print(
             "[masked-edgetam-debug] "
-            f"seq={packet.seq} "
+            f"seq={int(seq)} "
             f"capture_fps={self.capture_stats.fps:.1f} "
             f"seg_fps={self.seg_stats.fps:.1f} "
+            f"depth_fps={self.depth_stats.fps:.1f} "
             f"pcd_fps={self.pcd_stats.fps:.1f} "
             f"render_fps={self.render_stats.render_fps:.1f} "
+            f"profile_sync_enabled={int(bool(self.args.profile_sync))} "
+            f"profile_cuda_events={int(bool(self.args.profile_cuda_events))} "
             f"mask_ms={timing.mask_ms:.2f} "
             f"preprocess_ms={timing.preprocess_ms:.2f} "
             f"prompt_ms={timing.prompt_ms:.2f} "
             f"model_ms={timing.model_ms:.2f} "
+            f"wall_model_ms={timing.wall_model_ms:.2f} "
+            f"cuda_event_model_ms={timing.cuda_event_model_ms:.2f} "
+            f"pre_sync_wait_ms={timing.pre_sync_wait_ms:.2f} "
+            f"post_sync_wait_ms={timing.post_sync_wait_ms:.2f} "
             f"postprocess_ms={timing.postprocess_ms:.2f} "
             f"ffs_ms={timing.ffs_ms:.2f} "
             f"ffs_align_ms={timing.ffs_align_ms:.2f} "
+            f"depth_convert_ms={timing.depth_convert_ms:.2f} "
+            f"pcd_mask_intersection_ms={timing.pcd_mask_intersection_ms:.2f} "
+            f"pcd_select_ms={timing.pcd_select_ms:.2f} "
+            f"pcd_point_cap_ms={timing.pcd_point_cap_ms:.2f} "
+            f"pcd_backproject_ms={timing.pcd_backproject_ms:.2f} "
+            f"pcd_color_gather_ms={timing.pcd_color_gather_ms:.2f} "
             f"pcd_ms={timing.pcd_ms:.2f} "
             f"render_ms={timing.open3d_update_ms:.2f} "
             f"e2e_latency_ms={timing.receive_to_render_ms:.2f} "
-            f"controller_points={packet.controller_point_count} "
-            f"object_points={packet.object_point_count} "
-            f"dropped_capture={packet.dropped_capture_frames} "
-            f"dropped_seg={packet.dropped_seg_frames} "
+            f"controller_points={int(controller_points)} "
+            f"object_points={int(object_points)} "
+            f"dropped_capture={int(dropped_capture_frames)} "
+            f"dropped_seg={int(dropped_seg_frames)} "
             f"dropped_pcd={self.render_slot.dropped_count}",
             flush=True,
+        )
+
+    def _headless_debug_worker(self) -> None:
+        last_logged_seq = -1
+        while not self.stop_event.is_set():
+            now_s = time.perf_counter()
+            if now_s - self._last_debug_log_s < DEBUG_LOG_INTERVAL_S:
+                time.sleep(0.05)
+                continue
+            self._last_debug_log_s = now_s
+            pcd_packet = self.render_slot.get_latest_after(last_logged_seq)
+            if pcd_packet is not None:
+                last_logged_seq = pcd_packet.seq
+                timing = replace(
+                    pcd_packet.timing,
+                    receive_to_render_ms=_elapsed_ms(pcd_packet.receive_perf_s, pcd_packet.process_done_perf_s),
+                )
+                self._emit_debug_line(
+                    seq=pcd_packet.seq,
+                    timing=timing,
+                    controller_points=pcd_packet.controller_point_count,
+                    object_points=pcd_packet.object_point_count,
+                    dropped_capture_frames=pcd_packet.dropped_capture_frames,
+                    dropped_seg_frames=pcd_packet.dropped_seg_frames,
+                )
+                continue
+
+            mask_packet = self.mask_slot.get_latest_after(last_logged_seq)
+            if mask_packet is not None:
+                last_logged_seq = mask_packet.seq
+                timing = replace(
+                    mask_packet.timing,
+                    receive_to_render_ms=_elapsed_ms(mask_packet.receive_perf_s, mask_packet.process_done_perf_s),
+                )
+                self._emit_debug_line(
+                    seq=mask_packet.seq,
+                    timing=timing,
+                    controller_points=int(np.count_nonzero(mask_packet.controller_mask)),
+                    object_points=int(np.count_nonzero(mask_packet.object_mask)),
+                    dropped_capture_frames=mask_packet.dropped_capture_frames,
+                    dropped_seg_frames=self.mask_slot.dropped_count,
+                )
+                continue
+
+            depth_packet = self.depth_profile_slot.get_latest_after(last_logged_seq)
+            if depth_packet is not None:
+                last_logged_seq = depth_packet.seq
+                timing = replace(
+                    depth_packet.timing,
+                    receive_to_render_ms=_elapsed_ms(depth_packet.receive_perf_s, depth_packet.process_done_perf_s),
+                )
+                self._emit_debug_line(
+                    seq=depth_packet.seq,
+                    timing=timing,
+                    dropped_capture_frames=depth_packet.dropped_capture_frames,
+                )
+                continue
+
+            frame = self.capture_slot.get_latest_after(last_logged_seq)
+            if frame is not None:
+                last_logged_seq = frame.seq
+                timing = replace(frame.timing, receive_to_render_ms=_elapsed_ms(frame.receive_perf_s, now_s))
+                self._emit_debug_line(
+                    seq=frame.seq,
+                    timing=timing,
+                    dropped_capture_frames=self.capture_slot.dropped_count,
+                )
+
+    def _maybe_log_debug(self, *, packet: MaskedPcdPacket, timing: PipelineTiming, now_s: float) -> None:
+        if not self.args.debug or now_s - self._last_debug_log_s < DEBUG_LOG_INTERVAL_S:
+            return
+        self._last_debug_log_s = now_s
+        self._emit_debug_line(
+            seq=packet.seq,
+            timing=timing,
+            controller_points=packet.controller_point_count,
+            object_points=packet.object_point_count,
+            dropped_capture_frames=packet.dropped_capture_frames,
+            dropped_seg_frames=packet.dropped_seg_frames,
         )
 
 

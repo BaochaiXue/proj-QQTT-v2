@@ -154,6 +154,27 @@ conda run --no-capture-output -n demo_2_max \
   --debug
 ```
 
+Profiling isolation runs should be headless and use `--duration-s`:
+
+```bash
+# Capture only
+python demo_v2/realtime_masked_edgetam_pcd.py --depth-source none --track-mode none --pcd-mode none --render-mode none --duration-s 10 --debug
+
+# EdgeTAM only, no depth/PCD/render
+python demo_v2/realtime_masked_edgetam_pcd.py --depth-source none --track-mode object-only --pcd-mode none --render-mode none --duration-s 30 --debug --profile-cuda-events
+
+# FFS only, no EdgeTAM/PCD/render
+python demo_v2/realtime_masked_edgetam_pcd.py --depth-source ffs --track-mode none --pcd-mode none --render-mode none --duration-s 30 --debug
+
+# Full compute path without Open3D rendering
+python demo_v2/realtime_masked_edgetam_pcd.py --depth-source ffs --track-mode object-only --pcd-mode masked --render-mode none --duration-s 30 --debug --profile-cuda-events
+```
+
+Default live timing avoids device-wide CUDA synchronizes around each timed
+stage. Pass `--profile-sync` only when a synchronized diagnostic run is needed.
+Pass `--profile-cuda-events` to report `cuda_event_model_ms` next to
+`wall_model_ms` for EdgeTAM forward timing.
+
 ## Moving This Folder
 
 Native RealSense mode can run from this folder as long as the Python environment
