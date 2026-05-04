@@ -56,6 +56,7 @@ PCD_POSTPROCESS_NONE = "none"
 PCD_POSTPROCESS_PT_FILTER = "pt-filter"
 PCD_POSTPROCESS_ENHANCED_PT = "enhanced-pt"
 PCD_POSTPROCESS_MODES = (PCD_POSTPROCESS_NONE, PCD_POSTPROCESS_PT_FILTER, PCD_POSTPROCESS_ENHANCED_PT)
+MANIPULATOR_POSTPROCESS_LABELS = frozenset(("controller", "hand", "hands", "left hand", "right hand"))
 DEFAULT_PHYSTWIN_RADIUS_M = 0.01
 DEFAULT_PHYSTWIN_NB_POINTS = 40
 DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.01
@@ -111,6 +112,11 @@ def _sorted_frame_tokens(case_dir: Path, *, camera_idx: int, frames: int | None)
 
 def _normalize_label(value: str) -> str:
     return " ".join(str(value).strip().lower().split())
+
+
+def _is_manipulator_label(value: str) -> bool:
+    normalized = _normalize_label(value)
+    return normalized in MANIPULATOR_POSTPROCESS_LABELS or normalized.endswith(" hand")
 
 
 def _root_with_mask_dir(mask_root: Path) -> Path:
@@ -876,9 +882,12 @@ def _postprocess_mode_for_object(
     default_mode: str,
     controller_mode: str | None,
 ) -> str:
-    if controller_mode is not None and _normalize_label(obj.label) == "controller":
+    if controller_mode is not None and _is_manipulator_label(obj.label):
         return str(controller_mode)
-    return str(default_mode)
+    normalized_default = str(default_mode)
+    if normalized_default == PCD_POSTPROCESS_ENHANCED_PT and _is_manipulator_label(obj.label):
+        return PCD_POSTPROCESS_PT_FILTER
+    return normalized_default
 
 
 def _postprocess_label_suffix(mode: str) -> str:
@@ -1129,6 +1138,7 @@ def render_hand_object_pcd_panel(
     *,
     case_dir: Path,
     mask_root: Path,
+    mask_source_label: str = "HF EdgeTAM",
     output_dir: Path,
     output_name: str,
     objects: Sequence[TrackedObject],
@@ -1265,8 +1275,8 @@ def render_hand_object_pcd_panel(
 
         board = compose_panel(
             title_lines=[
-                f"{CASE_LABEL} | HF EdgeTAM fused PCD | frame {frame_idx + 1}/{len(frame_tokens)}",
-                "rows=tracked objects | columns=original camera pinhole views | FFS depth masked by EdgeTAM",
+                f"{CASE_LABEL} | {mask_source_label} fused PCD | frame {frame_idx + 1}/{len(frame_tokens)}",
+                f"rows=masked objects | columns=original camera pinhole views | FFS depth masked by {mask_source_label}",
             ],
             row_headers=[obj.row_label for obj in objects],
             column_headers=[f"cam{camera_idx}" for camera_idx in camera_ids],
@@ -1310,11 +1320,12 @@ def render_hand_object_pcd_panel(
         "first_frame_path": str(first_frame_path),
         "first_frame_ply_dir": str(ply_dir),
         "mask_root": str(mask_root),
+        "mask_source_label": str(mask_source_label),
         "view_mode": "fused_pcd_original_camera_pinhole",
         "render_contract": {
             "rows": object_row_text,
             "columns": "selected original camera pinhole views",
-            "point_source": "FFS depth filtered by HF EdgeTAM streaming masks",
+            "point_source": f"FFS depth filtered by {mask_source_label} masks",
             "point_colors": "original RGB camera colors",
             "qualitative_only": True,
             "postprocess_mode": str(pcd_postprocess_mode),
@@ -1333,6 +1344,11 @@ def render_hand_object_pcd_panel(
             "mode": str(pcd_postprocess_mode),
             "enabled": str(pcd_postprocess_mode) != PCD_POSTPROCESS_NONE,
             "controller_mode": None if controller_pcd_postprocess_mode is None else str(controller_pcd_postprocess_mode),
+            "manipulator_default_mode": (
+                PCD_POSTPROCESS_PT_FILTER
+                if str(pcd_postprocess_mode) == PCD_POSTPROCESS_ENHANCED_PT
+                else None
+            ),
             "per_object_modes": postprocess_mode_by_object,
             "phystwin_radius_m": float(phystwin_radius_m),
             "phystwin_nb_points": int(phystwin_nb_points),
@@ -1348,6 +1364,8 @@ def write_report(markdown_path: Path, *, pcd_summary: Mapping[str, Any], streami
     aggregate = streaming_payload.get("aggregate", {})
     compile_metadata = streaming_payload.get("compile_metadata", {})
     sam31_summary = pcd_summary.get("sam31_mask_summary", {})
+    postprocess_summary = pcd_summary.get("postprocess", {})
+    per_object_modes = dict(postprocess_summary.get("per_object_modes", {}))
     sam31_root = (
         sam31_summary.get("output_dir")
         or streaming_payload.get("case", {}).get("sam31_mask_root")
@@ -1357,68 +1375,104 @@ def write_report(markdown_path: Path, *, pcd_summary: Mapping[str, Any], streami
     object_id_text = ", ".join(
         f"{item.get('object_id')}={item.get('label')}" for item in object_specs
     )
+    mask_source_label = str(pcd_summary.get("mask_source_label") or "HF EdgeTAM")
+    is_hf_edgetam_source = _normalize_label(mask_source_label) == "hf edgetam"
+    manipulator_object_ids = [
+        str(item.get("object_id"))
+        for item in object_specs
+        if _is_manipulator_label(str(item.get("label", "")))
+    ]
+    manipulator_effective_modes = sorted(
+        {
+            str(per_object_modes.get(obj_id, postprocess_summary.get("mode", PCD_POSTPROCESS_NONE)))
+            for obj_id in manipulator_object_ids
+        }
+    )
+    manipulator_effective_text = ", ".join(manipulator_effective_modes) if manipulator_effective_modes else "none"
     lines = [
-        "# Sloth Set 2 HF EdgeTAM Object/Hands PCD Panel",
+        f"# Sloth Set 2 {mask_source_label} Object/Hands PCD Panel",
         "",
         "## Output",
         "",
         f"- GIF: `{pcd_summary.get('gif_path')}`",
         f"- First frame: `{pcd_summary.get('first_frame_path')}`",
         f"- First-frame PLY dir: `{pcd_summary.get('first_frame_ply_dir')}`",
-        f"- Streaming JSON: `{streaming_payload.get('streaming_results_path', '')}`",
+        (
+            f"- Streaming JSON: `{streaming_payload.get('streaming_results_path', '')}`"
+            if is_hf_edgetam_source
+            else "- Streaming JSON: `not written; render-only mask panel`"
+        ),
         f"- Frames: `{pcd_summary.get('frames')}`",
         f"- Cameras: `{pcd_summary.get('camera_ids')}`",
         "",
-        "## Streaming Contract",
+        "## Streaming Contract" if is_hf_edgetam_source else "## Mask Source Contract",
         "",
-        "- `frame_by_frame_streaming=true`",
-        "- `offline_video_input_used=false`",
+        (
+            "- `frame_by_frame_streaming=true`"
+            if is_hf_edgetam_source
+            else "- `frame_by_frame_streaming=false` for this render-only SAM3.1 mask panel."
+        ),
+        (
+            "- `offline_video_input_used=false`"
+            if is_hf_edgetam_source
+            else "- No HF EdgeTAM tracking or propagation was run for this panel."
+        ),
         "- `frame_source=png_loop`",
-        f"- Frame 0 prompt is SAM3.1 mask prompt for `{len(object_specs)}` objects.",
+        (
+            f"- Frame 0 prompt is SAM3.1 mask prompt for `{len(object_specs)}` objects."
+            if is_hf_edgetam_source
+            else f"- All frames are masked directly by `{mask_source_label}` masks."
+        ),
         "- This is a qualitative PCD panel, not an XOR quality benchmark.",
         f"- PCD postprocess mode: `{pcd_summary.get('postprocess', {}).get('mode', PCD_POSTPROCESS_NONE)}`",
         "",
         "## SAM3.1 Init Root",
         "",
         f"- Root: `{sam31_root}`",
-        f"- EdgeTAM mask root: `{pcd_summary.get('mask_root')}`",
+        f"- Render mask root: `{pcd_summary.get('mask_root')}`",
         f"- Object IDs: `{object_id_text}`",
         f"- Note: {sam31_summary.get('merge_note', 'standard SAM3.1 mask root')}",
-        "",
-        "## Compile",
-        "",
-        f"- Mode: `{streaming_payload.get('compile_mode')}`",
-        f"- Enabled: `{compile_metadata.get('enabled')}`",
-        f"- Applied targets: `{', '.join(compile_metadata.get('applied_targets', [])) or 'none'}`",
-        f"- Torch compile mode: `{compile_metadata.get('torch_compile_mode')}`",
-        "",
-        "## Streaming Summary",
-        "",
-        f"- Jobs passed: `{aggregate.get('passed')}/{aggregate.get('job_count')}`",
-        f"- First-frame median: `{aggregate.get('first_frame_latency_ms', {}).get('median', 0.0):.2f} ms`",
-        f"- Subsequent median: `{aggregate.get('subsequent_frame_latency_median_ms', {}).get('median', 0.0):.2f} ms`",
-        f"- Median E2E FPS: `{aggregate.get('end_to_end_streaming_fps', {}).get('median', 0.0):.2f}`",
-        f"- Median model-only FPS: `{aggregate.get('model_only_streaming_fps', {}).get('median', 0.0):.2f}`",
+        *(
+            [
+                "",
+                "## Compile",
+                "",
+                f"- Mode: `{streaming_payload.get('compile_mode')}`",
+                f"- Enabled: `{compile_metadata.get('enabled')}`",
+                f"- Applied targets: `{', '.join(compile_metadata.get('applied_targets', [])) or 'none'}`",
+                f"- Torch compile mode: `{compile_metadata.get('torch_compile_mode')}`",
+                "",
+                "## Streaming Summary",
+                "",
+                f"- Jobs passed: `{aggregate.get('passed')}/{aggregate.get('job_count')}`",
+                f"- First-frame median: `{aggregate.get('first_frame_latency_ms', {}).get('median', 0.0):.2f} ms`",
+                f"- Subsequent median: `{aggregate.get('subsequent_frame_latency_median_ms', {}).get('median', 0.0):.2f} ms`",
+                f"- Median E2E FPS: `{aggregate.get('end_to_end_streaming_fps', {}).get('median', 0.0):.2f}`",
+                f"- Median model-only FPS: `{aggregate.get('model_only_streaming_fps', {}).get('median', 0.0):.2f}`",
+            ]
+            if is_hf_edgetam_source
+            else []
+        ),
         "",
         "## PCD Postprocess",
         "",
-        f"- Default mode: `{pcd_summary.get('postprocess', {}).get('mode')}`",
-        f"- Controller override: `{pcd_summary.get('postprocess', {}).get('controller_mode') or 'none'}`",
-        f"- Radius: `{pcd_summary.get('postprocess', {}).get('phystwin_radius_m')}`",
-        f"- Neighbors: `{pcd_summary.get('postprocess', {}).get('phystwin_nb_points')}`",
-        f"- Component voxel size: `{pcd_summary.get('postprocess', {}).get('enhanced_component_voxel_size_m')}`",
-        f"- Keep-near-main gap: `{pcd_summary.get('postprocess', {}).get('enhanced_keep_near_main_gap_m')}`",
+        f"- Default mode: `{postprocess_summary.get('mode')}`",
+        f"- Controller/hand override: `{postprocess_summary.get('controller_mode') or 'semantic default'}`",
+        f"- Controller/hand effective mode: `{manipulator_effective_text}`",
+        f"- Radius: `{postprocess_summary.get('phystwin_radius_m')}`",
+        f"- Neighbors: `{postprocess_summary.get('phystwin_nb_points')}`",
+        f"- Component voxel size: `{postprocess_summary.get('enhanced_component_voxel_size_m')}`",
+        f"- Keep-near-main gap: `{postprocess_summary.get('enhanced_keep_near_main_gap_m')}`",
         "",
         "## Objects",
         "",
         "| object id | label | postprocess | mean raw pts | mean output pts | min | max |",
         "| ---: | --- | --- | ---: | ---: | ---: | ---: |",
     ]
-    per_object_modes = dict(pcd_summary.get("postprocess", {}).get("per_object_modes", {}))
     for obj_id, item in sorted(pcd_summary.get("aggregate", {}).items(), key=lambda pair: int(pair[0])):
         lines.append(
             f"| {obj_id} | {item.get('label')} | "
-            f"{per_object_modes.get(str(obj_id), pcd_summary.get('postprocess', {}).get('mode'))} | "
+            f"{per_object_modes.get(str(obj_id), postprocess_summary.get('mode'))} | "
             f"{item.get('raw_point_count_mean', 0.0):.1f} | "
             f"{item.get('point_count_mean', 0.0):.1f} | "
             f"{item.get('point_count_min', 0)} | "
@@ -1428,43 +1482,45 @@ def write_report(markdown_path: Path, *, pcd_summary: Mapping[str, Any], streami
         _normalize_label(str(item.get("label", "")))
         for item in pcd_summary.get("objects", [])
     }
-    if "controller" in labels:
+    if any(_is_manipulator_label(label) for label in labels):
         lines.extend(
             [
                 "",
-                "## Controller Warning",
+                "## Controller/Hand Warning",
                 "",
                 "- `controller` follows the PhysTwin-style convention: all hand instances are merged into one controller mask/PCD.",
-                "- Prefer the simpler `pt-filter` radius cleanup for controller rows. If `enhanced-pt` is enabled on controller rows, it can remove sparse fingertips, contact patches, or partial hand points that may matter for manipulation.",
+                "- Object rows use `enhanced-pt` for cleaner presentation when that global mode is selected; controller/hand rows use the simpler `pt-filter` by default.",
+                "- If `enhanced-pt` is enabled on controller/hand rows with an explicit override, it can remove sparse fingertips, contact patches, or partial hand points that may matter for manipulation.",
                 "- Do not interpret controller output as per-hand identity. Per-hand workflows need an explicit 3D cross-view identity mapping.",
             ]
         )
-    lines.extend(
-        [
-            "",
-            "## Jobs",
-            "",
-            "| cam | frames | first ms | subsequent median ms | p95 ms | e2e FPS | model FPS | failures |",
-            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-        ]
-    )
-    for job in streaming_payload.get("jobs", []):
-        if job.get("status") != "pass":
-            lines.append(f"| {job.get('camera_idx')} | 0 | n/a | n/a | n/a | n/a | n/a | 1 |")
-            continue
-        failures = sum(
-            len(item.get("failure_frames", []))
-            for item in dict(job.get("quality_by_object", {})).values()
+    if is_hf_edgetam_source:
+        lines.extend(
+            [
+                "",
+                "## Jobs",
+                "",
+                "| cam | frames | first ms | subsequent median ms | p95 ms | e2e FPS | model FPS | failures |",
+                "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
         )
-        lines.append(
-            f"| {job.get('camera_idx')} | {job.get('frame_count')} | "
-            f"{float(job.get('first_frame_latency_ms', 0.0)):.2f} | "
-            f"{float(job.get('subsequent_frame_latency_ms', {}).get('median', 0.0)):.2f} | "
-            f"{float(job.get('subsequent_frame_latency_ms', {}).get('p95', 0.0)):.2f} | "
-            f"{float(job.get('end_to_end_streaming_fps', 0.0)):.2f} | "
-            f"{float(job.get('model_only_streaming_fps', 0.0)):.2f} | "
-            f"{failures} |"
-        )
+        for job in streaming_payload.get("jobs", []):
+            if job.get("status") != "pass":
+                lines.append(f"| {job.get('camera_idx')} | 0 | n/a | n/a | n/a | n/a | n/a | 1 |")
+                continue
+            failures = sum(
+                len(item.get("failure_frames", []))
+                for item in dict(job.get("quality_by_object", {})).values()
+            )
+            lines.append(
+                f"| {job.get('camera_idx')} | {job.get('frame_count')} | "
+                f"{float(job.get('first_frame_latency_ms', 0.0)):.2f} | "
+                f"{float(job.get('subsequent_frame_latency_ms', {}).get('median', 0.0)):.2f} | "
+                f"{float(job.get('subsequent_frame_latency_ms', {}).get('p95', 0.0)):.2f} | "
+                f"{float(job.get('end_to_end_streaming_fps', 0.0)):.2f} | "
+                f"{float(job.get('model_only_streaming_fps', 0.0)):.2f} | "
+                f"{failures} |"
+            )
     if aggregate.get("failed"):
         lines.extend(["", "## Failures", ""])
         for job in streaming_payload.get("jobs", []):
@@ -1482,6 +1538,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--case-dir", type=Path, default=DEFAULT_CASE_DIR)
     parser.add_argument("--sam31-mask-root", type=Path, default=DEFAULT_SAM31_MASK_ROOT)
+    parser.add_argument(
+        "--render-mask-root",
+        type=Path,
+        default=None,
+        help=(
+            "Optional mask root for render-only panels. When omitted, renders "
+            "from the HF EdgeTAM multi-object mask root under --output-root."
+        ),
+    )
+    parser.add_argument("--mask-source-label", default="HF EdgeTAM")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--object-label", default="stuffed animal")
     parser.add_argument("--hand-label", default="hand")
@@ -1529,7 +1595,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--controller-pcd-postprocess-mode",
         choices=PCD_POSTPROCESS_MODES,
         default=None,
-        help="Optional per-row override for rows labeled `controller`.",
+        help="Optional per-row override for rows labeled controller/hand. By default, enhanced object runs keep these rows on pt-filter.",
     )
     parser.add_argument("--phystwin-radius-m", type=float, default=DEFAULT_PHYSTWIN_RADIUS_M)
     parser.add_argument("--phystwin-nb-points", type=int, default=DEFAULT_PHYSTWIN_NB_POINTS)
@@ -1562,7 +1628,11 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
     )
     output_root = _resolve_path(args.output_root)
     case_dir = _resolve_path(args.case_dir)
-    mask_root = output_root / "hf_edgetam_streaming_multi_object/masks" / CASE_KEY
+    mask_root = (
+        _resolve_path(args.render_mask_root)
+        if args.render_mask_root is not None
+        else output_root / "hf_edgetam_streaming_multi_object/masks" / CASE_KEY
+    )
     camera_ids = _parse_camera_ids(args.camera_ids)
     built_init_summary = None
 
@@ -1629,6 +1699,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
     pcd_summary = render_hand_object_pcd_panel(
         case_dir=case_dir,
         mask_root=mask_root,
+        mask_source_label=str(args.mask_source_label),
         output_dir=pcd_output_dir,
         output_name=output_name,
         objects=objects,

@@ -16,6 +16,7 @@ import numpy as np
 from data_process.depth_backends import DEFAULT_FFS_REPO, DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
 from data_process.depth_backends import fast_foundation_stereo as ffs_backend
 from data_process.depth_backends.geometry import align_depth_to_color
+from demo_v2 import realtime_masked_edgetam_pcd as masked_demo
 from demo_v1 import realtime_single_camera_pointcloud as demo_v1
 from demo_v2 import realtime_single_camera_pointcloud as demo_v2
 from scripts.harness import realtime_single_camera_pointcloud as demo
@@ -111,6 +112,193 @@ class FakeTensorRtRunner:
 
 
 class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
+    def test_masked_edgetam_help_exposes_realtime_masked_pcd_contract(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "demo_v2/realtime_masked_edgetam_pcd.py", "--help"],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertIn("--depth-source {ffs,realsense}", result.stdout)
+        self.assertIn("--ffs-trt-model-dir FFS_TRT_MODEL_DIR", result.stdout)
+        self.assertIn("--init-mode {sam31-first-frame,saved-masks}", result.stdout)
+        self.assertIn("--track-mode {controller-object,object-only}", result.stdout)
+        self.assertIn("--compile-mode {vision-reduce-overhead}", result.stdout)
+        self.assertIn("--pcd-color-mode {rgb,class}", result.stdout)
+        self.assertIn("--controller-init-mask CONTROLLER_INIT_MASK", result.stdout)
+        self.assertIn("--object-init-mask OBJECT_INIT_MASK", result.stdout)
+        self.assertIn("renders only the masked", result.stdout)
+        self.assertIn("PCD", result.stdout)
+
+    def test_masked_edgetam_defaults_and_object_id_mapping(self) -> None:
+        args = masked_demo.build_parser().parse_args([])
+        self.assertEqual(args.depth_source, "ffs")
+        self.assertIn("model_20-30-48_iters_4_res_480x864", str(args.ffs_trt_model_dir))
+        self.assertEqual(args.compile_mode, "vision-reduce-overhead")
+        self.assertEqual(args.init_mode, "sam31-first-frame")
+        self.assertEqual(args.track_mode, "controller-object")
+        self.assertEqual(args.pcd_color_mode, "rgb")
+        self.assertEqual(masked_demo.object_id_labels(), {1: "controller", 2: "object"})
+        self.assertEqual(masked_demo.object_id_labels("object-only"), {2: "object"})
+        object_only_args = masked_demo.build_parser().parse_args(["--track-mode", "object-only"])
+        self.assertEqual(masked_demo.active_object_ids(object_only_args), [2])
+        self.assertIn("System warming up", masked_demo.WARMUP_HUD_TEXT)
+        self.assertIn("Keep one steady pose", masked_demo.WARMUP_HUD_TEXT)
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                masked_demo.build_parser().parse_args(["--compile-mode", "none"])
+
+    def test_masked_edgetam_saved_masks_validate_shape(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mask_path = root / "mask.png"
+            Image.fromarray(np.array([[0, 255, 0], [255, 0, 0]], dtype=np.uint8)).save(mask_path)
+            mask = masked_demo.load_binary_mask(mask_path, expected_shape=(2, 3))
+            self.assertEqual(mask.dtype, np.bool_)
+            self.assertEqual(int(np.count_nonzero(mask)), 2)
+            with self.assertRaisesRegex(ValueError, "does not match frame shape"):
+                masked_demo.load_binary_mask(mask_path, expected_shape=(3, 2))
+
+            args = masked_demo.build_parser().parse_args(
+                [
+                    "--depth-source",
+                    "realsense",
+                    "--init-mode",
+                    "saved-masks",
+                    "--controller-init-mask",
+                    str(mask_path),
+                    "--object-init-mask",
+                    str(mask_path),
+                ]
+            )
+            masked_demo.validate_args(args)
+
+            object_only_args = masked_demo.build_parser().parse_args(
+                [
+                    "--depth-source",
+                    "realsense",
+                    "--init-mode",
+                    "saved-masks",
+                    "--track-mode",
+                    "object-only",
+                    "--object-init-mask",
+                    str(mask_path),
+                ]
+            )
+            masked_demo.validate_args(object_only_args)
+
+            frame = masked_demo.FramePacket(
+                seq=0,
+                color_bgr=np.zeros((2, 3, 3), dtype=np.uint8),
+                depth_source="realsense",
+                intrinsics=masked_demo.CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0),
+                depth_scale_m_per_unit=0.001,
+                receive_perf_s=0.0,
+                timing=masked_demo.PipelineTiming(),
+            )
+            controller_mask, object_mask = masked_demo.resolve_initial_masks(frame, object_only_args)
+            self.assertFalse(np.any(controller_mask))
+            self.assertEqual(int(np.count_nonzero(object_mask)), 2)
+
+    def test_masked_edgetam_backprojects_masked_pixels_only(self) -> None:
+        depth_m = np.array([[0.1, 0.5, 1.0], [1.4, 2.0, 0.7]], dtype=np.float32)
+        mask = np.array([[True, True, False], [True, True, True]])
+        ray_x = np.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]], dtype=np.float32)
+        ray_y = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+
+        points = masked_demo.backproject_masked(
+            depth_m=depth_m,
+            mask=mask,
+            ray_x=ray_x,
+            ray_y=ray_y,
+            depth_min_m=0.2,
+            depth_max_m=1.5,
+            max_points=0,
+        )
+
+        expected = np.array(
+            [
+                [0.5, 0.0, 0.5],
+                [0.0, 1.4, 1.4],
+                [1.4, 0.7, 0.7],
+            ],
+            dtype=np.float32,
+        )
+        np.testing.assert_allclose(points, expected)
+
+        capped = masked_demo.backproject_masked(
+            depth_m=depth_m,
+            mask=mask,
+            ray_x=ray_x,
+            ray_y=ray_y,
+            depth_min_m=0.2,
+            depth_max_m=1.5,
+            max_points=2,
+            rng=np.random.default_rng(0),
+        )
+        self.assertEqual(capped.shape, (2, 3))
+
+    def test_masked_edgetam_rgbd_backprojection_uses_live_rgb_colors(self) -> None:
+        color_bgr = np.array(
+            [
+                [[10, 20, 30], [40, 50, 60]],
+                [[70, 80, 90], [100, 110, 120]],
+            ],
+            dtype=np.uint8,
+        )
+        depth_m = np.array([[0.5, 0.6], [0.7, 0.8]], dtype=np.float32)
+        mask = np.array([[False, True], [True, False]])
+        ray_x = np.array([[0.0, 1.0], [0.0, 1.0]], dtype=np.float32)
+        ray_y = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
+
+        points, colors = masked_demo.backproject_masked_rgbd(
+            color_bgr=color_bgr,
+            depth_m=depth_m,
+            mask=mask,
+            ray_x=ray_x,
+            ray_y=ray_y,
+            depth_min_m=0.2,
+            depth_max_m=1.5,
+            max_points=0,
+            color_mode="rgb",
+            class_rgb=(1, 2, 3),
+        )
+
+        np.testing.assert_allclose(points, np.array([[0.6, 0.0, 0.6], [0.0, 0.7, 0.7]], dtype=np.float32))
+        np.testing.assert_array_equal(colors, np.array([[60, 50, 40], [90, 80, 70]], dtype=np.uint8))
+
+        _points, class_colors = masked_demo.backproject_masked_rgbd(
+            color_bgr=color_bgr,
+            depth_m=depth_m,
+            mask=mask,
+            ray_x=ray_x,
+            ray_y=ray_y,
+            depth_min_m=0.2,
+            depth_max_m=1.5,
+            max_points=0,
+            color_mode="class",
+            class_rgb=(1, 2, 3),
+        )
+        np.testing.assert_array_equal(class_colors, np.array([[1, 2, 3], [1, 2, 3]], dtype=np.uint8))
+
+    def test_masked_edgetam_extracts_hf_masks_by_output_object_ids(self) -> None:
+        class Output:
+            object_ids = np.array([2, 1])
+
+        post_masks = [
+            np.array([[[[0.0, 1.0], [0.0, 0.0]]]], dtype=np.float32),
+            np.array([[[[1.0, 0.0], [1.0, 0.0]]]], dtype=np.float32),
+        ]
+        masks = masked_demo.extract_object_masks_from_hf_output(Output(), post_masks)
+
+        self.assertEqual(set(masks), {1, 2})
+        np.testing.assert_array_equal(masks[2], np.array([[False, True], [False, False]]))
+        np.testing.assert_array_equal(masks[1], np.array([[True, False], [True, False]]))
+
     def test_help_exposes_supported_capture_rates_and_profiles(self) -> None:
         for script_path in (
             "demo_v1/realtime_single_camera_pointcloud.py",

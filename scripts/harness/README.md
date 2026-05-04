@@ -72,7 +72,7 @@ export TORCH_CUDA_ARCH_LIST=12.0
 ## Hand / Controller PCD Warning
 
 - PhysTwin-style controller visualizations intentionally merge all `hand` instances into one `controller` mask/PCD. Do not interpret local per-camera hand mask ids as cross-view global hand ids unless a separate 3D association step has been run and recorded.
-- Enhanced PhysTwin-like PCD cleanup is useful for object display rows, but it can be risky for hands/controller rows: the component filter may remove sparse fingertips, contact patches, or fast-moving partial hand points that matter for manipulation. Prefer the simpler PhysTwin-like radius `pt-filter` for controller rows, and treat any controller enhanced-PT output as qualitative unless the removed-points trace has been reviewed.
+- Enhanced PhysTwin-like PCD cleanup is useful for object display rows, but it can be risky for hands/controller rows: the component filter may remove sparse fingertips, contact patches, or fast-moving partial hand points that matter for manipulation. Use `enhanced-pt` for object rows and the simpler PhysTwin-like radius `pt-filter` for controller/hand rows. The Sloth Set 2 object/controller/hand GIF renderer applies this semantic default when the global mode is `enhanced-pt`; treat any explicit controller/hand enhanced-PT output as qualitative unless the removed-points trace has been reviewed.
 - If a workflow needs per-hand identity, create and store an explicit `local camera mask id -> global hand id` mapping from frame-0 world-coordinate PCDs before fusing camera clouds. Do not use image-left/image-right as a cross-camera identity rule.
 
 ## Primary Entrypoints

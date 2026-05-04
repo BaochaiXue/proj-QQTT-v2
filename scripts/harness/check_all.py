@@ -33,6 +33,7 @@ FULL_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
 DEMO_HELP_SCRIPTS: tuple[str, ...] = (
     "demo_v1/realtime_single_camera_pointcloud.py",
     "demo_v2/realtime_single_camera_pointcloud.py",
+    "demo_v2/realtime_masked_edgetam_pcd.py",
 )
 
 QUICK_HELP_SCRIPTS: tuple[str, ...] = (*QUICK_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))

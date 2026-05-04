@@ -915,6 +915,31 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             self.assertEqual(summary["frames_detail"][0]["objects"][1]["postprocess_mode"], hand_pcd.PCD_POSTPROCESS_PT_FILTER)
             self.assertTrue(Path(summary["gif_path"]).is_file())
 
+    def test_hf_edgetam_manipulator_rows_default_to_pt_filter_with_enhanced_object_mode(self) -> None:
+        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+
+        objects = (
+            hand_pcd.TrackedObject(1, "stuffed animal", "stuffed animal"),
+            hand_pcd.TrackedObject(2, "controller", "controller"),
+            hand_pcd.TrackedObject(3, "hand", "hand"),
+            hand_pcd.TrackedObject(4, "left hand", "left hand"),
+            hand_pcd.TrackedObject(5, "right hand", "right hand"),
+        )
+        modes = {
+            obj.label: hand_pcd._postprocess_mode_for_object(
+                obj,
+                default_mode=hand_pcd.PCD_POSTPROCESS_ENHANCED_PT,
+                controller_mode=None,
+            )
+            for obj in objects
+        }
+
+        self.assertEqual(modes["stuffed animal"], hand_pcd.PCD_POSTPROCESS_ENHANCED_PT)
+        self.assertEqual(modes["controller"], hand_pcd.PCD_POSTPROCESS_PT_FILTER)
+        self.assertEqual(modes["hand"], hand_pcd.PCD_POSTPROCESS_PT_FILTER)
+        self.assertEqual(modes["left hand"], hand_pcd.PCD_POSTPROCESS_PT_FILTER)
+        self.assertEqual(modes["right hand"], hand_pcd.PCD_POSTPROCESS_PT_FILTER)
+
     def test_pinhole_renderer_uses_original_camera_z_buffer(self) -> None:
         points = np.asarray(
             [
