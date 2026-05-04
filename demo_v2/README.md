@@ -123,7 +123,9 @@ conda run --no-capture-output -n demo_2_max \
 
 The script intentionally does not render the full-scene point cloud by default,
 does not run per-frame SAM3.1, and uses FFS depth by default. SAM3.1 is only
-used once on the live first frame. The default FFS
+used once on the live first frame; after that first-frame initialization, the
+demo closes the SAM3.1 session, exits its CUDA autocast context, and clears the
+CUDA cache before continuing with EdgeTAM streaming. The default FFS
 engine path is the repo's `20-30-48 / valid_iters=4 / 848x480 -> 864x480 /
 builderOptimizationLevel=5` TensorRT artifact; pass `--depth-source realsense`
 only when you need a native-depth fallback. Masked points are colored from the

@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -203,6 +204,54 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             controller_mask, object_mask = masked_demo.resolve_initial_masks(frame, object_only_args)
             self.assertFalse(np.any(controller_mask))
             self.assertEqual(int(np.count_nonzero(object_mask)), 2)
+
+    def test_masked_edgetam_releases_sam31_runtime_resources(self) -> None:
+        class FakeAutocast:
+            def __init__(self) -> None:
+                self.exited = False
+
+            def __exit__(self, exc_type, exc, traceback) -> None:
+                self.exited = True
+
+        class FakeCuda:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def is_available(self) -> bool:
+                return True
+
+            def synchronize(self) -> None:
+                self.calls.append("synchronize")
+
+            def empty_cache(self) -> None:
+                self.calls.append("empty_cache")
+
+            def ipc_collect(self) -> None:
+                self.calls.append("ipc_collect")
+
+        autocast = FakeAutocast()
+        helper = types.SimpleNamespace(_CUDA_AUTOCAST_CONTEXT=autocast)
+        cuda = FakeCuda()
+        fake_torch = types.SimpleNamespace(cuda=cuda)
+        original_helper = sys.modules.get("scripts.harness.sam31_mask_helper")
+        original_torch = sys.modules.get("torch")
+        sys.modules["scripts.harness.sam31_mask_helper"] = helper
+        sys.modules["torch"] = fake_torch
+        try:
+            masked_demo.release_sam31_runtime_resources("cuda")
+        finally:
+            if original_helper is None:
+                sys.modules.pop("scripts.harness.sam31_mask_helper", None)
+            else:
+                sys.modules["scripts.harness.sam31_mask_helper"] = original_helper
+            if original_torch is None:
+                sys.modules.pop("torch", None)
+            else:
+                sys.modules["torch"] = original_torch
+
+        self.assertTrue(autocast.exited)
+        self.assertIsNone(helper._CUDA_AUTOCAST_CONTEXT)
+        self.assertEqual(cuda.calls, ["synchronize", "empty_cache", "ipc_collect"])
 
     def test_masked_edgetam_backprojects_masked_pixels_only(self) -> None:
         depth_m = np.array([[0.1, 0.5, 1.0], [1.4, 2.0, 0.7]], dtype=np.float32)

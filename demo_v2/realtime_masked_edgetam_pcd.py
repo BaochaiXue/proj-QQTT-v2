@@ -5,6 +5,7 @@ import argparse
 from collections import deque
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
+import gc
 import json
 import os
 from pathlib import Path
@@ -674,6 +675,30 @@ def _union_masks(masks: list[np.ndarray], *, label: str) -> np.ndarray:
     return np.ascontiguousarray(output)
 
 
+def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> None:
+    helper = sys.modules.get("scripts.harness.sam31_mask_helper")
+    autocast_context = getattr(helper, "_CUDA_AUTOCAST_CONTEXT", None) if helper is not None else None
+    if autocast_context is not None:
+        try:
+            autocast_context.__exit__(None, None, None)
+        except Exception as exc:
+            print(f"[WARN] SAM3.1 autocast cleanup failed: {type(exc).__name__}: {exc}", flush=True)
+        if helper is not None:
+            setattr(helper, "_CUDA_AUTOCAST_CONTEXT", None)
+
+    gc.collect()
+    try:
+        import torch  # noqa: PLC0415
+
+        if str(device).startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            if hasattr(torch.cuda, "ipc_collect"):
+                torch.cuda.ipc_collect()
+    except Exception as exc:
+        print(f"[WARN] SAM3.1 CUDA cleanup failed: {type(exc).__name__}: {exc}", flush=True)
+
+
 def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
     with tempfile.TemporaryDirectory(prefix="qqtt_sam31_first_frame_") as tmp:
         root = Path(tmp)
@@ -684,21 +709,24 @@ def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace)
         prompt_labels = [str(args.object_prompt)]
         if controller_tracking_enabled(args):
             prompt_labels.append(str(args.controller_prompt))
-        run_case_segmentation(
-            case_root=case_dir,
-            text_prompt=",".join(prompt_labels),
-            camera_ids=(0,),
-            output_dir=output_dir,
-            source_mode="frames",
-            checkpoint_path=None,
-            ann_frame_index=0,
-            keep_session_frames=False,
-            session_root=None,
-            overwrite=True,
-            async_loading_frames=False,
-            compile_model=False,
-            max_num_objects=16,
-        )
+        try:
+            run_case_segmentation(
+                case_root=case_dir,
+                text_prompt=",".join(prompt_labels),
+                camera_ids=(0,),
+                output_dir=output_dir,
+                source_mode="frames",
+                checkpoint_path=None,
+                ann_frame_index=0,
+                keep_session_frames=False,
+                session_root=None,
+                overwrite=True,
+                async_loading_frames=False,
+                compile_model=False,
+                max_num_objects=16,
+            )
+        finally:
+            release_sam31_runtime_resources(str(args.device))
         object_masks = _load_label_masks_from_sam31_root(mask_root=output_dir, label=args.object_prompt)
         object_mask = _union_masks(
             object_masks,
