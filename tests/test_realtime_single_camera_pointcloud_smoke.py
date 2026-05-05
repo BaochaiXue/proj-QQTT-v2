@@ -20,6 +20,7 @@ from data_process.depth_backends.geometry import align_depth_to_color
 from demo_v2 import realtime_masked_edgetam_pcd as masked_demo
 from demo_v1 import realtime_single_camera_pointcloud as demo_v1
 from demo_v2 import realtime_single_camera_pointcloud as demo_v2
+from services.ffs_remote import ffs_depth_client as ffs_remote_client
 from services.ffs_remote.ffs_depth_client import FfsRemoteDepthClient
 from services.ffs_remote.protocol import (
     build_depth_request_parts,
@@ -314,6 +315,61 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertEqual(result.server_ffs_ms, 18.0)
         self.assertEqual(result.server_align_ms, 6.0)
         self.assertEqual(result.server_total_ms, 25.0)
+
+    def test_ffs_remote_client_cli_help_and_echo_benchmark_summary(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "services/ffs_remote/ffs_depth_client.py", "--help"],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertIn("--endpoint ENDPOINT", result.stdout)
+        self.assertIn("--echo-benchmark", result.stdout)
+        self.assertIn("--profile PROFILE", result.stdout)
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.closed = False
+
+            def request_depth_color_m(self, **kwargs):
+                self.calls += 1
+                frame_id = int(kwargs["frame_id"])
+                return ffs_remote_client.FfsRemoteDepthResult(
+                    frame_id=frame_id,
+                    depth_color_m=np.zeros(tuple(kwargs["color_shape"]), dtype=np.float32),
+                    rtt_ms=4.0 + frame_id,
+                    server_ffs_ms=0.0,
+                    server_align_ms=0.0,
+                    server_total_ms=2.0,
+                    request_bytes=100,
+                    response_bytes=50,
+                )
+
+            def close(self) -> None:
+                self.closed = True
+
+        args = ffs_remote_client.build_parser().parse_args(
+            [
+                "--endpoint",
+                "tcp://127.0.0.1:7001",
+                "--echo-benchmark",
+                "--profile",
+                "4x3",
+                "--fps",
+                "20",
+                "--duration-s",
+                "0.12",
+            ]
+        )
+        fake_client = FakeClient()
+        summary = ffs_remote_client.run_echo_benchmark(args, client=fake_client)
+        self.assertGreaterEqual(fake_client.calls, 1)
+        self.assertGreaterEqual(summary["ok"], 1.0)
+        self.assertEqual(summary["failed"], 0.0)
+        self.assertFalse(fake_client.closed)
 
     def test_masked_edgetam_releases_sam31_runtime_resources(self) -> None:
         class FakeAutocast:

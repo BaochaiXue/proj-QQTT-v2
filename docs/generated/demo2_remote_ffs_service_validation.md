@@ -30,6 +30,12 @@ device.
 
 Both client and server environments need `pyzmq`.
 
+Important engine note: the DORM-4090 server should use an FFS TensorRT engine
+built or at least validated on the 4090 machine. Do not assume a serialized
+TensorRT engine produced on the local RTX 5090 Laptop will run on the RTX 4090;
+without explicit TensorRT hardware compatibility settings, engines are not
+generally portable across GPU architectures.
+
 ## Protocol
 
 Transport is ZeroMQ multipart REQ/REP:
@@ -50,12 +56,21 @@ depth with new masks.
 
 ## Server Command
 
+Expected 4090-local engine target:
+
+```text
+model: 20-30-48
+valid_iters: 4
+input: 848x480 padded to 864x480
+builderOptimizationLevel: 5
+```
+
 ```bash
 conda run --no-capture-output -n demo_2_max \
   python services/ffs_remote/ffs_depth_server.py \
   --bind tcp://0.0.0.0:7001 \
   --ffs-repo ../Fast-FoundationStereo \
-  --ffs-trt-model-dir data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864 \
+  --ffs-trt-model-dir data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864 \
   --return depth_u16 \
   --warmup 20 \
   --debug
@@ -64,6 +79,35 @@ conda run --no-capture-output -n demo_2_max \
 `--warmup` is lazy: the server runs warmup iterations with the first real
 request's IR pair and calibration, because the server does not know the camera
 intrinsics before the first request arrives.
+
+## Echo-Only Network Check
+
+Remote server:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python services/ffs_remote/ffs_depth_server.py \
+  --bind tcp://0.0.0.0:7001 \
+  --echo-only \
+  --debug
+```
+
+Local client:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python services/ffs_remote/ffs_depth_client.py \
+  --endpoint tcp://<remote_tailscale_ip>:7001 \
+  --echo-benchmark \
+  --profile 848x480 \
+  --fps 30 \
+  --duration-s 20 \
+  --debug
+```
+
+Passing echo-only means request/reply works, RTT is stable enough for a live
+depth path, and the payload size matches the planned `848x480` IR-pair plus
+`depth_u16` reply path.
 
 ## Client Command
 
@@ -129,3 +173,19 @@ server: services/ffs_remote/ffs_depth_server.py --bind tcp://127.0.0.1:7011 --ec
 client: FfsRemoteDepthClient(endpoint="tcp://127.0.0.1:7011", timeout_ms=1000)
 result: frame_id=7, depth_shape=(2, 3), depth_sum=0.0, rtt_ms=9.41
 ```
+
+Echo benchmark CLI smoke:
+
+```text
+server: services/ffs_remote/ffs_depth_server.py --bind tcp://127.0.0.1:7012 --echo-only --debug
+client: services/ffs_remote/ffs_depth_client.py --endpoint tcp://127.0.0.1:7012 --echo-benchmark --profile 848x480 --fps 30 --duration-s 2 --debug
+result: sent=60, ok=60, failed=0, reply_fps=30.00, rtt_ms_p50=2.67, rtt_ms_p95=3.51, payload_mbps=390.89
+```
+
+Pending two-machine result table:
+
+| mode | seg FPS | pcd FPS | render FPS | EdgeTAM cuda event ms | remote RTT ms | remote server total ms | timeout/drop |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| local FFS quality mode | TBD | TBD | TBD | TBD | n/a | n/a | TBD |
+| remote FFS no-render | TBD | TBD | n/a | TBD | TBD | TBD | TBD |
+| remote FFS pointcloud render | TBD | TBD | TBD | TBD | TBD | TBD | TBD |

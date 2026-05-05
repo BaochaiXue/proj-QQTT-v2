@@ -142,6 +142,32 @@ runs EdgeTAM and UI on the local GPU.
 
 Both client and server environments need `pyzmq` installed.
 
+Build or validate the FFS TensorRT engine on the remote GPU machine before
+starting the real server. Do not assume an engine serialized on the 5090 laptop
+will run on a 4090; TensorRT engines are not generally portable across GPU
+architectures without explicit compatibility settings.
+
+First verify the network path with echo-only mode:
+
+```bash
+# Remote GPU machine
+conda run --no-capture-output -n demo_2_max \
+  python services/ffs_remote/ffs_depth_server.py \
+  --bind tcp://0.0.0.0:7001 \
+  --echo-only \
+  --debug
+
+# Local camera/UI machine
+conda run --no-capture-output -n demo_2_max \
+  python services/ffs_remote/ffs_depth_client.py \
+  --endpoint tcp://<remote_tailscale_ip>:7001 \
+  --echo-benchmark \
+  --profile 848x480 \
+  --fps 30 \
+  --duration-s 20 \
+  --debug
+```
+
 Start the server on the remote GPU machine:
 
 ```bash
@@ -149,7 +175,7 @@ conda run --no-capture-output -n demo_2_max \
   python services/ffs_remote/ffs_depth_server.py \
   --bind tcp://0.0.0.0:7001 \
   --ffs-repo ../Fast-FoundationStereo \
-  --ffs-trt-model-dir data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864 \
+  --ffs-trt-model-dir data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864 \
   --return depth_u16 \
   --warmup 20 \
   --debug
