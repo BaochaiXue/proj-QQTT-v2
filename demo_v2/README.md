@@ -133,6 +133,59 @@ live RGB frame by default; use `--pcd-color-mode class` to switch back to fixed
 controller/object colors. `--init-mode saved-masks` remains available only for
 debugging controlled replay-style startup; it is not the default live demo path.
 
+## Remote FFS Depth
+
+Use `--depth-source ffs_remote` when the RealSense camera stays on the local
+laptop but FFS TensorRT depth should run on a second GPU machine. This is a
+remote service offload, not remote CUDA device sharing: the local process still
+runs EdgeTAM and UI on the local GPU.
+
+Both client and server environments need `pyzmq` installed.
+
+Start the server on the remote GPU machine:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python services/ffs_remote/ffs_depth_server.py \
+  --bind tcp://0.0.0.0:7001 \
+  --ffs-repo ../Fast-FoundationStereo \
+  --ffs-trt-model-dir data/experiments/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864 \
+  --return depth_u16 \
+  --warmup 20 \
+  --debug
+```
+
+Run Demo 2 on the local camera/UI machine:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python demo_v2/realtime_masked_edgetam_pcd.py \
+  --serial 239222300412 \
+  --profile 848x480 \
+  --fps 60 \
+  --depth-source ffs_remote \
+  --ffs-remote-endpoint tcp://<remote_tailscale_ip>:7001 \
+  --ffs-remote-max-inflight 1 \
+  --ffs-remote-return depth_u16 \
+  --init-mode sam31-first-frame \
+  --track-mode object-only \
+  --object-prompt "stuffed animal" \
+  --pcd-mode masked \
+  --render-mode none \
+  --compile-mode vision-reduce-overhead \
+  --dtype bfloat16 \
+  --debug \
+  --profile-cuda-events \
+  --duration-s 60
+```
+
+The first implementation is intentionally conservative: `--ffs-remote-max-inflight`
+must be `1`. Each PCD packet uses depth returned for the same frame `seq`; timed
+out replies are skipped instead of mixing older depth with newer masks.
+`--debug` reports `remote_rtt_ms`, `remote_server_total_ms`,
+`remote_request_kb`, and `remote_response_kb` in addition to `ffs_ms` and
+`ffs_align_ms`.
+
 Object-only startup when no hand is in view:
 
 ```bash

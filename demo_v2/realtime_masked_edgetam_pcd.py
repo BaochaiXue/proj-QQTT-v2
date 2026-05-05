@@ -63,6 +63,7 @@ from demo_v2.realtime_single_camera_pointcloud import (  # noqa: E402
     validate_ffs_paths,
     warm_up_numba_ffs_align,
 )
+from services.ffs_remote import FfsRemoteDepthClient  # noqa: E402
 
 
 DEFAULT_MODEL_ID = "yonigozlan/EdgeTAM-hf"
@@ -76,7 +77,7 @@ INIT_MODES = ("sam31-first-frame", "saved-masks")
 DEFAULT_INIT_MODE = "sam31-first-frame"
 TRACK_MODES = ("controller-object", "object-only", "none")
 DEFAULT_TRACK_MODE = "controller-object"
-DEPTH_SOURCES = ("ffs", "realsense", "none")
+DEPTH_SOURCES = ("ffs", "ffs_remote", "realsense", "none")
 DEFAULT_DEPTH_SOURCE = "ffs"
 PCD_MODES = ("masked", "none")
 DEFAULT_PCD_MODE = "masked"
@@ -104,6 +105,10 @@ class PipelineTiming:
     frame_copy_ms: float = 0.0
     ffs_ms: float = 0.0
     ffs_align_ms: float = 0.0
+    remote_rtt_ms: float = 0.0
+    remote_server_total_ms: float = 0.0
+    remote_request_kb: float = 0.0
+    remote_response_kb: float = 0.0
     depth_convert_ms: float = 0.0
     preprocess_ms: float = 0.0
     prompt_ms: float = 0.0
@@ -272,7 +277,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--depth-source",
         choices=DEPTH_SOURCES,
         default=DEFAULT_DEPTH_SOURCE,
-        help="Depth source. ffs streams color+IR stereo and runs the repo default TensorRT FFS depth path.",
+        help=(
+            "Depth source. ffs streams color+IR stereo and runs local TensorRT FFS; "
+            "ffs_remote streams color+IR stereo and requests color-aligned FFS depth from a remote service."
+        ),
     )
     parser.add_argument(
         "--ffs-repo",
@@ -294,6 +302,29 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional TensorRT Python package/root override forwarded to the FFS runner.",
+    )
+    parser.add_argument(
+        "--ffs-remote-endpoint",
+        default=None,
+        help="ZeroMQ endpoint for --depth-source ffs_remote, for example tcp://100.x.y.z:7001.",
+    )
+    parser.add_argument(
+        "--ffs-remote-max-inflight",
+        type=int,
+        default=1,
+        help="Remote FFS request inflight cap. The first implementation supports only 1.",
+    )
+    parser.add_argument(
+        "--ffs-remote-timeout-ms",
+        type=int,
+        default=80,
+        help="Remote FFS send/receive timeout in milliseconds.",
+    )
+    parser.add_argument(
+        "--ffs-remote-return",
+        choices=("depth_u16", "depth_float_m"),
+        default="depth_u16",
+        help="Remote FFS response payload type. depth_u16 is smaller; depth_float_m avoids quantization.",
     )
     parser.add_argument(
         "--emitter",
@@ -420,6 +451,13 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--render-mode pointcloud requires --pcd-mode masked")
     if args.depth_source == "ffs":
         validate_ffs_paths(ffs_repo=Path(args.ffs_repo), model_dir=Path(args.ffs_trt_model_dir))
+    if args.depth_source == "ffs_remote":
+        if not args.ffs_remote_endpoint:
+            raise ValueError("--depth-source ffs_remote requires --ffs-remote-endpoint")
+        if int(args.ffs_remote_max_inflight) != 1:
+            raise ValueError("first ffs_remote implementation requires --ffs-remote-max-inflight 1")
+        if int(args.ffs_remote_timeout_ms) <= 0:
+            raise ValueError("--ffs-remote-timeout-ms must be positive")
     if args.track_mode not in TRACK_MODES:
         raise ValueError(f"--track-mode must be one of {', '.join(TRACK_MODES)}")
     if args.init_mode == "saved-masks":
@@ -445,7 +483,7 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
     config = rs.config()
     config.enable_device(serial)
     config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, int(args.fps))
-    if args.depth_source == "ffs":
+    if args.depth_source in {"ffs", "ffs_remote"}:
         config.enable_stream(rs.stream.infrared, 1, width, height, rs.format.y8, int(args.fps))
         config.enable_stream(rs.stream.infrared, 2, width, height, rs.format.y8, int(args.fps))
     elif args.depth_source == "realsense":
@@ -458,7 +496,7 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
         color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
         intrinsics = camera_intrinsics_from_rs(color_stream.get_intrinsics())
         k_color = rs_intrinsics_to_matrix(color_stream.get_intrinsics())
-        if args.depth_source == "ffs":
+        if args.depth_source in {"ffs", "ffs_remote"}:
             ir_left_profile = profile.get_stream(rs.stream.infrared, 1).as_video_stream_profile()
             ir_right_profile = profile.get_stream(rs.stream.infrared, 2).as_video_stream_profile()
             ir_left_to_right = ir_left_profile.get_extrinsics_to(ir_right_profile)
@@ -976,6 +1014,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             tuple[float, ...],
             tuple[float, ...],
         ] | None = None
+        self.ffs_remote_client: FfsRemoteDepthClient | None = None
 
     @property
     def intrinsics(self) -> CameraIntrinsics:
@@ -994,6 +1033,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.args.depth_source == "ffs":
             self.ffs_runner = self._create_ffs_runner()
             warm_up_numba_ffs_align()
+        elif self.args.depth_source == "ffs_remote":
+            self.ffs_remote_client = FfsRemoteDepthClient(
+                endpoint=str(self.args.ffs_remote_endpoint),
+                timeout_ms=int(self.args.ffs_remote_timeout_ms),
+                return_type=str(self.args.ffs_remote_return),
+                max_inflight=int(self.args.ffs_remote_max_inflight),
+            )
         self.runtime = _start_realsense_pipeline(self.args)
         try:
             self.ray_x, self.ray_y = build_projection_grid(
@@ -1022,6 +1068,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             except Exception:
                 pass
             self.runtime = None
+        if self.ffs_remote_client is not None:
+            self.ffs_remote_client.close()
+            self.ffs_remote_client = None
 
     def _create_ffs_runner(self) -> object:
         try:
@@ -1071,7 +1120,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             workers.append(("seg", self._seg_worker))
         if self.args.pcd_mode == "masked":
             workers.append(("pcd", self._pcd_worker))
-        elif self.args.depth_source == "ffs":
+        elif self.args.depth_source in {"ffs", "ffs_remote"}:
             workers.append(("depth", self._depth_profile_worker))
         if self.args.debug and self.args.render_mode == "none":
             workers.append(("debug", self._headless_debug_worker))
@@ -1108,7 +1157,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 break
             receive_perf_s = time.perf_counter()
             align_start_s = receive_perf_s
-            if self.args.depth_source == "ffs":
+            if self.args.depth_source in {"ffs", "ffs_remote"}:
                 align_done_s = receive_perf_s
                 color_frame = frames.get_color_frame()
                 ir_left_frame = frames.get_infrared_frame(1)
@@ -1136,7 +1185,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 ir_right_frame = None
             copy_start_s = time.perf_counter()
             color_bgr = np.ascontiguousarray(np.asanyarray(color_frame.get_data()).copy())
-            if self.args.depth_source == "ffs":
+            if self.args.depth_source in {"ffs", "ffs_remote"}:
                 assert ir_left_frame is not None and ir_right_frame is not None
                 depth_u16 = None
                 ir_left_u8 = np.ascontiguousarray(np.asanyarray(ir_left_frame.get_data()).copy())
@@ -1200,6 +1249,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "offline_video_input_used": False,
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
+            "ffs_remote_endpoint": self.args.ffs_remote_endpoint if self.args.depth_source == "ffs_remote" else None,
+            "ffs_remote_return": self.args.ffs_remote_return if self.args.depth_source == "ffs_remote" else None,
             "pcd_mode": self.args.pcd_mode,
             "render_mode": self.args.render_mode,
         }
@@ -1409,10 +1460,22 @@ class RealtimeMaskedEdgeTamPcdDemo:
             start_s = time.perf_counter()
             ffs_ms = 0.0
             ffs_align_ms = 0.0
+            remote_rtt_ms = 0.0
+            remote_server_total_ms = 0.0
+            remote_request_kb = 0.0
+            remote_response_kb = 0.0
             depth_convert_ms = 0.0
-            if mask_packet.depth_source == "ffs":
+            if mask_packet.depth_source in {"ffs", "ffs_remote"}:
                 try:
-                    depth_m, ffs_ms, ffs_align_ms = self._compute_ffs_depth_color_m(mask_packet)
+                    (
+                        depth_m,
+                        ffs_ms,
+                        ffs_align_ms,
+                        remote_rtt_ms,
+                        remote_server_total_ms,
+                        remote_request_kb,
+                        remote_response_kb,
+                    ) = self._compute_external_ffs_depth_color_m(mask_packet)
                 except Exception as exc:
                     if not self.stop_event.is_set():
                         print(f"[WARN] FFS depth frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}", flush=True)
@@ -1472,6 +1535,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 mask_packet.timing,
                 ffs_ms=ffs_ms,
                 ffs_align_ms=ffs_align_ms,
+                remote_rtt_ms=remote_rtt_ms,
+                remote_server_total_ms=remote_server_total_ms,
+                remote_request_kb=remote_request_kb,
+                remote_response_kb=remote_response_kb,
                 depth_convert_ms=depth_convert_ms,
                 pcd_mask_intersection_ms=float(
                     controller_pcd_timing["pcd_mask_intersection_ms"]
@@ -1515,10 +1582,18 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 time.sleep(0.001)
                 continue
             last_seq = frame.seq
-            if frame.depth_source != "ffs":
+            if frame.depth_source not in {"ffs", "ffs_remote"}:
                 continue
             try:
-                _depth_m, ffs_ms, ffs_align_ms = self._compute_ffs_depth_color_m(frame)
+                (
+                    _depth_m,
+                    ffs_ms,
+                    ffs_align_ms,
+                    remote_rtt_ms,
+                    remote_server_total_ms,
+                    remote_request_kb,
+                    remote_response_kb,
+                ) = self._compute_external_ffs_depth_color_m(frame)
             except Exception as exc:
                 if not self.stop_event.is_set():
                     print(f"[WARN] FFS depth profile frame {frame.seq} failed: {type(exc).__name__}: {exc}", flush=True)
@@ -1529,10 +1604,27 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 receive_perf_s=frame.receive_perf_s,
                 process_done_perf_s=done_s,
                 dropped_capture_frames=self.capture_slot.dropped_count,
-                timing=replace(frame.timing, ffs_ms=ffs_ms, ffs_align_ms=ffs_align_ms),
+                timing=replace(
+                    frame.timing,
+                    ffs_ms=ffs_ms,
+                    ffs_align_ms=ffs_align_ms,
+                    remote_rtt_ms=remote_rtt_ms,
+                    remote_server_total_ms=remote_server_total_ms,
+                    remote_request_kb=remote_request_kb,
+                    remote_response_kb=remote_response_kb,
+                ),
             )
             self.depth_profile_slot.put(packet)
             self.depth_stats.record(done_s)
+
+    def _compute_external_ffs_depth_color_m(
+        self,
+        packet: MaskPacket | FramePacket,
+    ) -> tuple[np.ndarray, float, float, float, float, float, float]:
+        if packet.depth_source == "ffs_remote":
+            return self._compute_remote_ffs_depth_color_m(packet)
+        depth_color_m, ffs_ms, ffs_align_ms = self._compute_ffs_depth_color_m(packet)
+        return depth_color_m, ffs_ms, ffs_align_ms, 0.0, 0.0, 0.0, 0.0
 
     def _compute_ffs_depth_color_m(self, packet: MaskPacket | FramePacket) -> tuple[np.ndarray, float, float]:
         runner = self.ffs_runner
@@ -1572,6 +1664,43 @@ class RealtimeMaskedEdgeTamPcdDemo:
             depth_color_m,
             _elapsed_ms(ffs_start_s, ffs_done_s),
             _elapsed_ms(align_start_s, align_done_s),
+        )
+
+    def _compute_remote_ffs_depth_color_m(
+        self,
+        packet: MaskPacket | FramePacket,
+    ) -> tuple[np.ndarray, float, float, float, float, float, float]:
+        client = self.ffs_remote_client
+        if client is None:
+            raise RuntimeError("remote FFS client is not initialized")
+        if (
+            packet.ir_left_u8 is None
+            or packet.ir_right_u8 is None
+            or packet.k_ir_left is None
+            or packet.t_ir_left_to_color is None
+            or packet.k_color is None
+            or packet.ir_baseline_m <= 0
+        ):
+            raise RuntimeError("remote FFS packet is missing IR stereo calibration/data")
+        result = client.request_depth_color_m(
+            frame_id=int(packet.seq),
+            ir_left_u8=packet.ir_left_u8,
+            ir_right_u8=packet.ir_right_u8,
+            color_shape=tuple(packet.color_bgr.shape[:2]),
+            k_ir_left=packet.k_ir_left,
+            k_color=packet.k_color,
+            t_ir_left_to_color=packet.t_ir_left_to_color,
+            baseline_m=float(packet.ir_baseline_m),
+            depth_scale_m_per_unit=float(packet.depth_scale_m_per_unit),
+        )
+        return (
+            result.depth_color_m,
+            result.server_ffs_ms,
+            result.server_align_ms,
+            result.rtt_ms,
+            result.server_total_ms,
+            float(result.request_bytes) / 1024.0,
+            float(result.response_bytes) / 1024.0,
         )
 
     def _run_open3d_viewer(self) -> None:
@@ -1782,6 +1911,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
     def _format_hud(self, *, packet: MaskedPcdPacket, timing: PipelineTiming) -> str:
         status = "late" if timing.receive_to_render_ms > self.args.latency_target_ms else "ok"
         max_points = "uncapped" if self.args.pcd_max_points == 0 else str(self.args.pcd_max_points)
+        depth_line = f"depth: {self.args.depth_source}  color={self.args.pcd_color_mode}"
+        if self.args.depth_source == "ffs_remote":
+            depth_line += f"  remote={self.args.ffs_remote_endpoint}"
         return (
             f"capture/seg/pcd/render FPS: {self.capture_stats.fps:.1f} / {self.seg_stats.fps:.1f} / "
             f"{self.pcd_stats.fps:.1f} / {self.render_stats.render_fps:.1f}\n"
@@ -1790,7 +1922,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"dropped capture/seg/pcd: {packet.dropped_capture_frames} / {packet.dropped_seg_frames} / "
             f"{self.render_slot.dropped_count}\n"
             f"EdgeTAM: {self.args.model_id}  mode={self.args.track_mode}  compile={self.args.compile_mode}  dtype={self.args.dtype}\n"
-            f"depth: {self.args.depth_source}  color={self.args.pcd_color_mode}\n"
+            f"{depth_line}\n"
             f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
             f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
         )
@@ -1826,6 +1958,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"postprocess_ms={timing.postprocess_ms:.2f} "
             f"ffs_ms={timing.ffs_ms:.2f} "
             f"ffs_align_ms={timing.ffs_align_ms:.2f} "
+            f"remote_rtt_ms={timing.remote_rtt_ms:.2f} "
+            f"remote_server_total_ms={timing.remote_server_total_ms:.2f} "
+            f"remote_request_kb={timing.remote_request_kb:.1f} "
+            f"remote_response_kb={timing.remote_response_kb:.1f} "
             f"depth_convert_ms={timing.depth_convert_ms:.2f} "
             f"pcd_mask_intersection_ms={timing.pcd_mask_intersection_ms:.2f} "
             f"pcd_select_ms={timing.pcd_select_ms:.2f} "

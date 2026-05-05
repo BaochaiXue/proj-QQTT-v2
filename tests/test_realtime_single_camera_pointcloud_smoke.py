@@ -20,6 +20,12 @@ from data_process.depth_backends.geometry import align_depth_to_color
 from demo_v2 import realtime_masked_edgetam_pcd as masked_demo
 from demo_v1 import realtime_single_camera_pointcloud as demo_v1
 from demo_v2 import realtime_single_camera_pointcloud as demo_v2
+from services.ffs_remote.ffs_depth_client import FfsRemoteDepthClient
+from services.ffs_remote.protocol import (
+    build_depth_request_parts,
+    build_depth_response_parts,
+    parse_depth_request_parts,
+)
 from scripts.harness import realtime_single_camera_pointcloud as demo
 
 
@@ -122,8 +128,10 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        self.assertIn("--depth-source {ffs,realsense,none}", result.stdout)
+        self.assertIn("--depth-source {ffs,ffs_remote,realsense,none}", result.stdout)
         self.assertIn("--ffs-trt-model-dir FFS_TRT_MODEL_DIR", result.stdout)
+        self.assertIn("--ffs-remote-endpoint FFS_REMOTE_ENDPOINT", result.stdout)
+        self.assertIn("--ffs-remote-return {depth_u16,depth_float_m}", result.stdout)
         self.assertIn("--init-mode {sam31-first-frame,saved-masks}", result.stdout)
         self.assertIn("--track-mode {controller-object,object-only,none}", result.stdout)
         self.assertIn("--pcd-mode {masked,none}", result.stdout)
@@ -148,6 +156,9 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertFalse(args.profile_sync)
         self.assertFalse(args.profile_cuda_events)
         self.assertEqual(args.pcd_color_mode, "rgb")
+        self.assertEqual(args.ffs_remote_max_inflight, 1)
+        self.assertEqual(args.ffs_remote_timeout_ms, 80)
+        self.assertEqual(args.ffs_remote_return, "depth_u16")
         self.assertEqual(masked_demo.object_id_labels(), {1: "controller", 2: "object"})
         self.assertEqual(masked_demo.object_id_labels("object-only"), {2: "object"})
         self.assertEqual(masked_demo.object_id_labels("none"), {})
@@ -157,6 +168,22 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             ["--depth-source", "none", "--track-mode", "none", "--pcd-mode", "none", "--render-mode", "none"]
         )
         masked_demo.validate_args(capture_only_args)
+        remote_args = masked_demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "ffs_remote",
+                "--ffs-remote-endpoint",
+                "tcp://127.0.0.1:7001",
+                "--ffs-repo",
+                "/missing/ffs",
+                "--ffs-trt-model-dir",
+                "/missing/engine",
+            ]
+        )
+        masked_demo.validate_args(remote_args)
+        missing_remote_args = masked_demo.build_parser().parse_args(["--depth-source", "ffs_remote"])
+        with self.assertRaisesRegex(ValueError, "ffs_remote requires --ffs-remote-endpoint"):
+            masked_demo.validate_args(missing_remote_args)
         self.assertIn("System warming up", masked_demo.WARMUP_HUD_TEXT)
         self.assertIn("Keep one steady pose", masked_demo.WARMUP_HUD_TEXT)
         with contextlib.redirect_stderr(io.StringIO()):
@@ -216,6 +243,77 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             controller_mask, object_mask = masked_demo.resolve_initial_masks(frame, object_only_args)
             self.assertFalse(np.any(controller_mask))
             self.assertEqual(int(np.count_nonzero(object_mask)), 2)
+
+    def test_ffs_remote_protocol_roundtrip_and_client_depth_decode(self) -> None:
+        left = np.arange(6, dtype=np.uint8).reshape(2, 3)
+        right = np.arange(10, 16, dtype=np.uint8).reshape(2, 3)
+        k_ir = np.eye(3, dtype=np.float32)
+        k_color = np.eye(3, dtype=np.float32) * 2.0
+        transform = np.eye(4, dtype=np.float32)
+        request_parts = build_depth_request_parts(
+            frame_id=42,
+            ir_left_u8=left,
+            ir_right_u8=right,
+            color_shape=(2, 3),
+            k_ir_left=k_ir,
+            k_color=k_color,
+            t_ir_left_to_color=transform,
+            baseline_m=0.055,
+            depth_scale_m_per_unit=0.001,
+            return_type="depth_u16",
+        )
+        parsed = parse_depth_request_parts(request_parts)
+        self.assertEqual(parsed.metadata["frame_id"], 42)
+        np.testing.assert_array_equal(parsed.ir_left_u8, left)
+        np.testing.assert_array_equal(parsed.ir_right_u8, right)
+
+        class FakeSocket:
+            def __init__(self) -> None:
+                self.sent: list[bytes] | None = None
+
+            def send_multipart(self, parts):
+                self.sent = list(parts)
+
+            def recv_multipart(self):
+                return build_depth_response_parts(
+                    frame_id=42,
+                    depth=np.array([[0, 1000, 1200], [1300, 0, 1400]], dtype=np.uint16),
+                    depth_dtype="uint16",
+                    server_ffs_ms=18.0,
+                    server_align_ms=6.0,
+                    server_total_ms=25.0,
+                    depth_scale_m_per_unit=0.001,
+                )
+
+        fake_socket = FakeSocket()
+        client = FfsRemoteDepthClient(
+            endpoint="tcp://example.invalid:7001",
+            timeout_ms=80,
+            return_type="depth_u16",
+            zmq_socket=fake_socket,
+        )
+        result = client.request_depth_color_m(
+            frame_id=42,
+            ir_left_u8=left,
+            ir_right_u8=right,
+            color_shape=(2, 3),
+            k_ir_left=k_ir,
+            k_color=k_color,
+            t_ir_left_to_color=transform,
+            baseline_m=0.055,
+            depth_scale_m_per_unit=0.001,
+        )
+        self.assertIsNotNone(fake_socket.sent)
+        np.testing.assert_allclose(
+            result.depth_color_m,
+            np.array([[0.0, 1.0, 1.2], [1.3, 0.0, 1.4]], dtype=np.float32),
+            rtol=1e-6,
+            atol=1e-6,
+        )
+        self.assertEqual(result.frame_id, 42)
+        self.assertEqual(result.server_ffs_ms, 18.0)
+        self.assertEqual(result.server_align_ms, 6.0)
+        self.assertEqual(result.server_total_ms, 25.0)
 
     def test_masked_edgetam_releases_sam31_runtime_resources(self) -> None:
         class FakeAutocast:
