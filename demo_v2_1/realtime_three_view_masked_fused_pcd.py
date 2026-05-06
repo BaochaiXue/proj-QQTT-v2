@@ -95,6 +95,7 @@ DEFAULT_FPS = 60
 PRESET_NONE = "none"
 PRESET_PROFESSOR_SAFE = "professor-safe"
 PRESET_VISUAL_5FPS = "visual-5fps"
+PRESET_VISUAL_5FPS_NO_GATE = "visual-5fps-no-gate"
 PRESET_CLIMB_5 = "climb-5"
 PRESET_CLIMB_10 = "climb-10"
 PRESET_DIAGNOSTICS = "diagnostics"
@@ -102,6 +103,7 @@ PRESETS = (
     PRESET_NONE,
     PRESET_PROFESSOR_SAFE,
     PRESET_VISUAL_5FPS,
+    PRESET_VISUAL_5FPS_NO_GATE,
     PRESET_CLIMB_5,
     PRESET_CLIMB_10,
     PRESET_DIAGNOSTICS,
@@ -374,8 +376,12 @@ class GpuInferenceGate:
         if mode not in GPU_GATE_MODES:
             raise ValueError(f"Unsupported GPU gate mode: {mode}")
         self.mode = str(mode)
-        self.max_concurrent = max(1, int(max_concurrent))
-        self._sem = None if self.mode == GPU_GATE_MODE_OFF else threading.Semaphore(self.max_concurrent)
+        if self.mode == GPU_GATE_MODE_OFF:
+            self.max_concurrent = 0
+            self._sem = None
+        else:
+            self.max_concurrent = max(1, int(max_concurrent))
+            self._sem = threading.Semaphore(self.max_concurrent)
 
     @contextmanager
     def acquire(self, *, stage: str, camera_idx: int | None, group_id: int):
@@ -721,6 +727,11 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
         _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_LIMITED)
         _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=2)
+    elif preset == PRESET_VISUAL_5FPS_NO_GATE:
+        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+        _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
+        _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
     elif preset == PRESET_CLIMB_5:
         _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
         _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
@@ -730,6 +741,8 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
     elif preset == PRESET_DIAGNOSTICS:
         _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
         _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
+    if getattr(args, "gpu_gate_mode", None) == GPU_GATE_MODE_OFF:
+        setattr(args, "gpu_gate_max_concurrent", 0)
     return args
 
 
@@ -1222,8 +1235,8 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --sam31-init-retry-interval-s must be >= 0")
         if int(self.args.sam31_init_max_attempts) < 0:
             raise RuntimeError("Demo 2.1 --sam31-init-max-attempts must be >= 0")
-        if int(self.args.gpu_gate_max_concurrent) < 1:
-            raise RuntimeError("Demo 2.1 --gpu-gate-max-concurrent must be >= 1")
+        if self.args.gpu_gate_mode != GPU_GATE_MODE_OFF and int(self.args.gpu_gate_max_concurrent) < 1:
+            raise RuntimeError("Demo 2.1 --gpu-gate-max-concurrent must be >= 1 unless --gpu-gate-mode off")
         if self.args.gpu_gate_mode == GPU_GATE_MODE_SERIALIZED and int(self.args.gpu_gate_max_concurrent) != 1:
             raise RuntimeError("Demo 2.1 serialized GPU gate requires --gpu-gate-max-concurrent 1")
         if int(self.args.capture_buffer_size) < 1:

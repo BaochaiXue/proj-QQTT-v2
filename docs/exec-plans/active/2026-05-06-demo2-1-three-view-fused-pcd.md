@@ -118,6 +118,25 @@ Follow-up:
 - SAM3.1 live initialization is fail-fast by default. If object-only SAM3.1 cannot initialize the object in the live scene, the run is invalid and should fail rather than falling back to saved masks.
 - The next valid 5 FPS ablation should keep live SAM3.1 initialization, pass `--track-mode object-only` while no controller is visible, and compare gate2 vs gate3 and any fair/deadline gate policy only after SAM3.1 succeeds.
 
+## No-GPU-Gate Baseline Slice
+
+Add a `visual-5fps-no-gate` profiling preset that keeps the full quality
+contract but disables only the global `GpuInferenceGate`:
+
+- live SAM3.1 image one-frame initialization
+- explicit object-only mode for the current no-controller scene
+- timestamp-nearest capture grouping with `max_capture_skew_ms=33.4`
+- FFS-derived depth with the official 20-30-48 / iters4 / 480x864 / builderOpt5 contract
+- shared FFS worker remains one runner/context owner and still processes cam0/cam1/cam2 sequentially
+- three per-camera EdgeTAM streaming workers remain unchanged
+- object stays on `enhanced-pt`; controller stays on `pt-filter`
+- object/controller union before filtering remains false
+
+Purpose: determine whether gate=2 is too conservative or whether removing the
+gate causes worse GPU contention. The result is a profiling baseline, not a new
+default professor preset until the live data shows better stable FPS and point
+stability.
+
 ## Live SAM3.1 One-Frame Init Slice
 
 The first formal live profile exposed that the old first-frame path still reused

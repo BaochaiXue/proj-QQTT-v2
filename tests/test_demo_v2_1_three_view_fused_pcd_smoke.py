@@ -279,6 +279,28 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertTrue(contract["temporal_grouping"]["drop_skewed_groups"])
         self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
 
+    def test_visual_5fps_no_gate_contract_keeps_quality_path(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps-no-gate", "--track-mode", "object-only"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run", "--track-mode"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["preset"], "visual-5fps-no-gate")
+        self.assertEqual(contract["profile"], "848x480")
+        self.assertEqual(contract["fps"], 30)
+        self.assertEqual(contract["track_mode"], "object-only")
+        self.assertEqual(contract["render_mode"], "pointcloud")
+        self.assertEqual(contract["fusion_target_fps"], 5.0)
+        self.assertEqual(contract["depth_source"], "ffs")
+        self.assertEqual(contract["gpu_gate"], {"mode": "off", "max_concurrent": 0})
+        self.assertEqual(contract["temporal_grouping"]["policy"], "timestamp-nearest")
+        self.assertEqual(contract["temporal_grouping"]["max_capture_skew_ms"], 33.4)
+        self.assertTrue(contract["temporal_grouping"]["drop_skewed_groups"])
+        self.assertEqual(contract["ffs_contract"]["worker_mode"], "shared")
+        self.assertEqual(contract["ffs_contract"]["schedule"], "strict3-latest")
+        self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
+        self.assertFalse(contract["fusion"]["object_controller_union_before_filter"])
+
     def test_saved_mask_roots_are_recorded_in_contract(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(

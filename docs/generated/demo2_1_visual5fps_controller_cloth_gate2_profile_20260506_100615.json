@@ -1,0 +1,301 @@
+{
+  "controller_filter": "pt-filter",
+  "depth_source": "ffs",
+  "gpu_gate_max_concurrent": 2,
+  "object_controller_union_before_filter": false,
+  "object_filter": "enhanced-pt",
+  "per_group": [],
+  "preset": "visual-5fps",
+  "summary_after_warmup": {
+    "bottleneck_class": "upstream_supply",
+    "capture_group_fps": 0.0,
+    "complete_fusion_groups": 0,
+    "fusion_fps": 0.0,
+    "fusion_timeout_groups": 0,
+    "group_count": 0,
+    "metrics": {
+      "capture_temporal_skew_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "controller_pt_filter_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam0_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam1_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam2_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam0_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam1_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam2_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cycle_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "fusion_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "object_enhanced_pt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "open3d_controller_update_geometry_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "open3d_object_update_geometry_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "render_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      }
+    },
+    "render_fps": 0.0,
+    "rendered_groups": 0,
+    "target_fps_deficit": 5.0,
+    "target_fps_deficit_ratio": 1.0
+  },
+  "summary_full_run": {
+    "bottleneck_class": "upstream_supply",
+    "capture_group_fps": 0.0,
+    "complete_fusion_groups": 0,
+    "fusion_fps": 0.0,
+    "fusion_timeout_groups": 0,
+    "group_count": 0,
+    "metrics": {
+      "capture_temporal_skew_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "controller_pt_filter_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam0_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam1_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam2_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam0_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam1_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam2_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cycle_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "fusion_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "object_enhanced_pt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "open3d_controller_update_geometry_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "open3d_object_update_geometry_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "render_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      }
+    },
+    "render_fps": 0.0,
+    "rendered_groups": 0,
+    "target_fps_deficit": 5.0,
+    "target_fps_deficit_ratio": 1.0
+  },
+  "target_fps": 5.0,
+  "temporal_grouping": {
+    "capture_buffer_size": 4,
+    "drop_skewed_groups": true,
+    "max_capture_skew_ms": 33.4,
+    "max_frame_age_ms": 150.0,
+    "no_temporal_coherent_group_no_ffs": true,
+    "policy": "timestamp-nearest"
+  },
+  "top_slowest_object_filter_groups": [],
+  "track_mode": "controller-object",
+  "warmup_exclude_s": 40.0
+}

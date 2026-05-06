@@ -132,6 +132,31 @@ Current no-hand 5 FPS visual candidate:
   --profile-cuda-events
 ```
 
+No-GPU-gate profiling baseline:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps-no-gate \
+  --track-mode object-only \
+  --init-mode sam31-first-frame \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-gpu-gate \
+  --profile-warmup-exclude-s 40 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_live_sam31_no_gate_profile_object_only_120s.json
+```
+
+This is a profiling baseline, not a default professor preset. It disables only
+the global `GpuInferenceGate`. The shared FFS worker still owns a single FFS
+runner/context and processes cam0/cam1/cam2 sequentially, while the quality
+contract remains unchanged: FFS-derived depth, live SAM3.1 init, timestamp
+grouping, and object `enhanced-pt`.
+
 Profiling the 5 FPS candidate:
 
 ```bash

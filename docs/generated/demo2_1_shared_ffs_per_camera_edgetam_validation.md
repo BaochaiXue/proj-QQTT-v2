@@ -652,3 +652,75 @@ professor-safe and visual-5fps preset temporal defaults
 The next live profile should report `skew_ms_med/latest`, `skew_drop`,
 `no_candidate`, `ffs_skew_drop`, and `fusion_skew_drop` in the debug line and
 write the `temporal_grouping` block to the session summary.
+
+## No-GPU-Gate Baseline
+
+Purpose:
+
+```text
+Test whether the shared GpuInferenceGate is the main bottleneck after adding
+live SAM3.1 one-frame init and temporal-coherent CaptureGroup gating.
+```
+
+Quality contract held constant:
+
+```text
+live SAM3.1 image one-frame initialization
+explicit object-only mode for the current no-controller scene
+FFS-derived depth, 20-30-48 / valid_iters=4 / 480x864 / builderOpt5
+timestamp-nearest grouping with max_capture_skew_ms=33.4
+shared FFS worker remains sequential cam0 -> cam1 -> cam2
+three per-camera EdgeTAM streaming sessions
+object enhanced-PT
+object/controller union before filter = false
+```
+
+Implementation note:
+
+```text
+Added `visual-5fps-no-gate`.
+It disables only the global GpuInferenceGate:
+  gpu_gate.mode=off
+  gpu_gate.max_concurrent=0
+It does not create parallel FFS workers or multiple FFS TensorRT runners.
+```
+
+Warmup-excluded live object-only results:
+
+| Mode | Render FPS | Fusion FPS | Complete | Timeouts | FFS cycle median / p95 | FFS gate wait median / p95 | EdgeTAM model median per cam | Enhanced-PT median / p95 | Render p95 | Recommendation |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| gate=2 latest | 2.42 | 2.42 | 186 | 201 | 193.2 / 324.0 ms | 80.6 / 211.9 ms | 88.7 / 88.3 / 90.6 ms | 37.9 / 46.9 ms | 1.75 ms | stable but too conservative |
+| gate=3 | 1.37 | 1.37 | 111 | 203 | 226.2 / 397.7 ms | 109.9 / 270.2 ms | 150.3 / 150.9 / 147.2 ms | 28.6 / 39.4 ms | 1.55 ms | reject; FFS wait and timeout worse |
+| no gate | 3.74 | 3.74 | 293 | 76 | 136.7 / 169.6 ms | 0.0 / 0.0 ms | 212.7 / 211.6 / 209.6 ms | 31.0 / 39.8 ms | 1.55 ms | useful baseline, not enough for 5 FPS |
+
+Interpretation:
+
+```text
+No-gate removes the FFS gate wait and improves throughput from the latest gate=2
+run, but it shifts the cost into EdgeTAM contention: per-camera EdgeTAM model
+median rises to ~210 ms. It still misses the 5 FPS target by ~1.26 FPS.
+
+gate=3 is worse than both gate=2 and no-gate for this run. It keeps enough gate
+contention to slow FFS while also allowing enough concurrency to slow EdgeTAM,
+so the complete fusion ratio collapses.
+
+Open3D remains non-bottleneck: render p95 is ~1.5 ms in gate=3 and no-gate.
+```
+
+Artifacts:
+
+- `docs/generated/demo2_1_visual5fps_no_gate_profile_20260506_095416.json`
+- `docs/generated/demo2_1_visual5fps_no_gate_profile_20260506_095416.md`
+- `docs/generated/demo2_1_visual5fps_gate3_profile_20260506_095730.json`
+- `docs/generated/demo2_1_visual5fps_gate3_profile_20260506_095730.md`
+
+Next scheduling direction:
+
+```text
+Do not use gate=3.
+Do not make no-gate the professor default yet.
+The data argues for a smarter policy instead:
+  prioritize FFS/depth when it is the missing component for fusion
+  prevent persistent EdgeTAM stragglers
+  keep Open3D and quality filters unchanged
+```
