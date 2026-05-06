@@ -133,6 +133,47 @@ live RGB frame by default; use `--pcd-color-mode class` to switch back to fixed
 controller/object colors. `--init-mode saved-masks` remains available only for
 debugging controlled replay-style startup; it is not the default live demo path.
 
+PCD filtering is deliberately split from the hot path. The demo builds a
+raw/capped masked PCD every frame; when `--enable-pcd-filter` is set, it submits
+the capped object/controller clouds to a latest-wins filter worker every
+`--filter-every-n` frames. Rendering uses the latest filtered output if one is
+available, otherwise it keeps showing the current raw/capped cloud. This keeps
+slow filter frames from blocking capture, FFS, EdgeTAM, or Open3D.
+
+Recommended WSL RTX 5090 live filter policy:
+
+```text
+object:     voxel cap -> enhanced-pt
+controller: voxel cap -> pt-filter
+```
+
+Fast live path:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python demo_v2/realtime_masked_edgetam_pcd.py \
+  --profile 848x480 \
+  --fps 60 \
+  --depth-source realsense \
+  --track-mode controller-object \
+  --pcd-mode masked \
+  --render-mode pointcloud \
+  --pcd-stride 2 \
+  --pcd-max-points 10000 \
+  --pcd-color-mode class \
+  --render-every-n 2 \
+  --enable-pcd-filter \
+  --pcd-filter-mode async \
+  --filter-every-n 3 \
+  --object-filter enhanced-pt \
+  --controller-filter pt-filter \
+  --object-filter-cap 12000 \
+  --controller-filter-cap 12000 \
+  --object-filter-voxel-m 0.005 \
+  --controller-filter-voxel-m 0.003 \
+  --debug
+```
+
 Professor-facing local FFS speed preset:
 
 Use this when the demo must stay fully FFS-derived on the local RTX 5090 Laptop
@@ -158,6 +199,14 @@ conda run --no-capture-output -n demo_2_max \
   --depth-min-m 0.2 \
   --depth-max-m 1.5 \
   --pcd-color-mode rgb \
+  --render-every-n 2 \
+  --enable-pcd-filter \
+  --pcd-filter-mode async \
+  --filter-every-n 3 \
+  --object-filter enhanced-pt \
+  --controller-filter pt-filter \
+  --object-filter-cap 20000 \
+  --controller-filter-cap 20000 \
   --debug
 ```
 

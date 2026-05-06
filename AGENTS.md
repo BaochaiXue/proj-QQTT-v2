@@ -45,6 +45,14 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `scripts/harness/visual_compare_stereo_order_pcd.py`: point-cloud-only current-vs-swapped stereo-order registration board
 - `scripts/harness/compare_face_smoothness.py`: fixed face-patch smoothness/noise comparison
 
+## Default Local Environment
+
+- Use `demo_2_max` as the default conda environment for integrated local demo and harness work that needs EdgeTAM, RealSense, Fast-FoundationStereo, TensorRT, Open3D, and SAM 3.1 in one Python process.
+- Prefer `conda run -n demo_2_max --no-capture-output ...` for non-interactive commands, or `conda activate demo_2_max` for manual shell workflows.
+- Treat `edgetam-max` as an isolated EdgeTAM validation environment, not the default RS/FFS demo environment.
+- Treat `FFS-SAM-RS` and `FFS-max-sam31-rs` as FFS/SAM/RealSense stack environments; do not use them as the default for EdgeTAM + RS + FFS integrated demo work unless a task explicitly asks for that comparison.
+- Keep external EdgeTAM repos, FFS repos, SAM checkpoints, and other weights outside this repo; reference them by documented local path.
+
 ## Required Workflow For Future Changes
 
 1. Start with an exec plan under `docs/exec-plans/active/` for any non-trivial change.

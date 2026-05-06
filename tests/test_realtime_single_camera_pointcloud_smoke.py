@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest import mock
@@ -17,6 +18,7 @@ import numpy as np
 from data_process.depth_backends import DEFAULT_FFS_REPO, DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
 from data_process.depth_backends import fast_foundation_stereo as ffs_backend
 from data_process.depth_backends.geometry import align_depth_to_color
+from demo_v2 import pcd_filter_fast
 from demo_v2 import realtime_masked_edgetam_pcd as masked_demo
 from demo_v1 import realtime_single_camera_pointcloud as demo_v1
 from demo_v2 import realtime_single_camera_pointcloud as demo_v2
@@ -145,6 +147,11 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--demo-preset {none,local-ffs-professor}", result.stdout)
         self.assertIn("--compile-mode {vision-reduce-overhead}", result.stdout)
         self.assertIn("--pcd-color-mode {rgb,class}", result.stdout)
+        self.assertIn("--enable-pcd-filter", result.stdout)
+        self.assertIn("--pcd-filter-mode {async,sync,none}", result.stdout)
+        self.assertIn("--object-filter {none,pt-filter,enhanced-pt,voxel-density}", result.stdout)
+        self.assertIn("--controller-filter {none,pt-filter,enhanced-pt,voxel-density}", result.stdout)
+        self.assertIn("--filter-every-n FILTER_EVERY_N", result.stdout)
         self.assertIn("--profile-cuda-events", result.stdout)
         self.assertIn("--controller-init-mask CONTROLLER_INIT_MASK", result.stdout)
         self.assertIn("--object-init-mask OBJECT_INIT_MASK", result.stdout)
@@ -163,6 +170,14 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertFalse(args.profile_sync)
         self.assertFalse(args.profile_cuda_events)
         self.assertEqual(args.pcd_color_mode, "rgb")
+        self.assertFalse(args.enable_pcd_filter)
+        self.assertEqual(args.pcd_filter_mode, "async")
+        self.assertEqual(args.object_filter, "enhanced-pt")
+        self.assertEqual(args.controller_filter, "pt-filter")
+        self.assertEqual(args.object_filter_cap, 20000)
+        self.assertEqual(args.controller_filter_cap, 20000)
+        self.assertEqual(args.filter_every_n, 3)
+        self.assertEqual(args.filter_budget_ms, 12.0)
         self.assertEqual(args.ffs_remote_max_inflight, 1)
         self.assertEqual(args.ffs_remote_timeout_ms, 80)
         self.assertEqual(args.ffs_remote_return, "depth_u16")
@@ -244,6 +259,120 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 masked_demo.build_parser().parse_args(["--compile-mode", "none"])
+
+    def test_pcd_filter_fast_voxel_cap_and_density_filter(self) -> None:
+        xyz = np.array(
+            [
+                [0.00, 0.00, 0.50],
+                [0.01, 0.00, 0.50],
+                [0.02, 0.00, 0.50],
+                [1.00, 1.00, 1.00],
+            ],
+            dtype=np.float32,
+        )
+        colors = np.arange(12, dtype=np.uint8).reshape(4, 3)
+
+        capped, capped_colors = pcd_filter_fast.voxel_cap_points(
+            xyz,
+            colors,
+            max_points=2,
+            voxel_size_m=0.10,
+            rng=np.random.default_rng(0),
+        )
+        self.assertLessEqual(capped.shape[0], 2)
+        self.assertEqual(capped_colors.shape, (capped.shape[0], 3))
+
+        dense_xyz, dense_colors = pcd_filter_fast.voxel_density_filter(
+            xyz,
+            colors,
+            voxel_size_m=0.10,
+            min_points_per_voxel=2,
+        )
+        np.testing.assert_allclose(dense_xyz, xyz[:3])
+        np.testing.assert_array_equal(dense_colors, colors[:3])
+
+    def test_async_pcd_filter_worker_latest_output(self) -> None:
+        def filter_fn(item: pcd_filter_fast.FilterInput) -> pcd_filter_fast.FilterOutput:
+            return pcd_filter_fast.FilterOutput(
+                seq=item.seq,
+                object_xyz=item.object_xyz,
+                object_rgb=item.object_rgb,
+                controller_xyz=item.controller_xyz,
+                controller_rgb=item.controller_rgb,
+                filter_ms=0.1,
+                created_perf_s=item.created_perf_s,
+            )
+
+        worker = pcd_filter_fast.AsyncPcdFilterWorker(filter_fn)
+        worker.start()
+        try:
+            worker.submit_latest(
+                pcd_filter_fast.FilterInput(
+                    seq=7,
+                    object_xyz=np.zeros((1, 3), dtype=np.float32),
+                    object_rgb=np.zeros((1, 3), dtype=np.uint8),
+                    controller_xyz=np.zeros((0, 3), dtype=np.float32),
+                    controller_rgb=np.zeros((0, 3), dtype=np.uint8),
+                )
+            )
+            deadline = time.perf_counter() + 1.0
+            latest = None
+            while time.perf_counter() < deadline:
+                latest = worker.latest_output()
+                if latest is not None:
+                    break
+                time.sleep(0.01)
+            self.assertIsNotNone(latest)
+            assert latest is not None
+            self.assertEqual(latest.seq, 7)
+            self.assertEqual(latest.object_xyz.shape, (1, 3))
+        finally:
+            worker.stop()
+
+    def test_masked_edgetam_filter_input_caps_before_filter(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+                "--object-filter",
+                "none",
+                "--controller-filter",
+                "none",
+                "--object-filter-cap",
+                "2",
+                "--controller-filter-cap",
+                "1",
+                "--filter-min-cap",
+                "1",
+                "--object-filter-voxel-m",
+                "0.10",
+                "--controller-filter-voxel-m",
+                "0.10",
+            ]
+        )
+        demo_instance = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        xyz = np.array(
+            [
+                [0.00, 0.00, 0.50],
+                [0.01, 0.00, 0.50],
+                [0.20, 0.00, 0.50],
+            ],
+            dtype=np.float32,
+        )
+        colors = np.arange(9, dtype=np.uint8).reshape(3, 3)
+        item = demo_instance._make_filter_input(
+            seq=3,
+            object_xyz=xyz,
+            object_colors=colors,
+            controller_xyz=xyz,
+            controller_colors=colors,
+        )
+        output = demo_instance._filter_pcd_input(item)
+        self.assertLessEqual(output.object_xyz.shape[0], 2)
+        self.assertLessEqual(output.controller_xyz.shape[0], 1)
+        self.assertEqual(output.stats["object"]["raw_points"], 3)
+        self.assertEqual(output.stats["controller"]["raw_points"], 3)
 
     def test_masked_edgetam_local_ffs_professor_preset_keeps_ffs_semantics(self) -> None:
         args = masked_demo.build_parser().parse_args(["--demo-preset", "local-ffs-professor"])

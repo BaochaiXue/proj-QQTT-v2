@@ -22,17 +22,23 @@ Clone the Demo 2 realtime masked PCD surface into a Demo 2.1 namespace for a thr
 
 ## Implementation Slice
 
-1. Add `demo_v2_1/` with a dedicated CLI surface and README.
-2. Add helper functions for semantic layer selection, postprocess policy, and per-label three-camera fusion.
-3. Add a smoke test to lock the object/controller policy and label-preserving fusion contract.
-4. Register the new demo help command in deterministic validation.
+1. Add `demo_v2_1/` with a dedicated CLI surface and README. Done.
+2. Add helper functions for semantic layer selection, postprocess policy, and per-label three-camera fusion. Done.
+3. Add a smoke test to lock the object/controller policy and label-preserving fusion contract. Done.
+4. Register the new demo help command in deterministic validation. Done.
+5. Add live runtime workers:
+   - `CaptureGroup` builder for cam0/cam1/cam2.
+   - one shared FFS worker with one runner owner.
+   - three per-camera EdgeTAM streaming workers.
+   - strict `group_id` fusion.
+   - latest-only Open3D fused render. Done.
 
 ## Follow-Up Slice
 
-Wire the helper contract into a full hardware live loop:
+Run and profile the full hardware live loop:
 
 - 3-camera RealSense capture
 - per-camera HF EdgeTAM session
-- per-camera FFS depth
+- shared-worker FFS depth
 - calibration transform into the shared world frame
 - fused Open3D render of object/controller layers

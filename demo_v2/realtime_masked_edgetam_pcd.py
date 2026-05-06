@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from contextlib import nullcontext
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import gc
 import json
 import os
@@ -63,6 +63,14 @@ from demo_v2.realtime_single_camera_pointcloud import (  # noqa: E402
     validate_ffs_paths,
     warm_up_numba_ffs_align,
 )
+from demo_v2.pcd_filter_fast import (  # noqa: E402
+    AsyncPcdFilterWorker,
+    FilterBudgetController,
+    FilterInput,
+    FilterOutput,
+    voxel_cap_points,
+    voxel_density_filter,
+)
 from services.ffs_remote import FfsRemoteDepthClient  # noqa: E402
 from services.ffs_remote.protocol import (  # noqa: E402
     COMPRESSION_MODES,
@@ -95,11 +103,22 @@ PCD_MODES = ("masked", "none")
 DEFAULT_PCD_MODE = "masked"
 RENDER_MODES = ("pointcloud", "none")
 DEFAULT_RENDER_MODE = "pointcloud"
+PCD_FILTER_MODES = ("async", "sync", "none")
+PCD_FILTER_NONE = "none"
+PCD_FILTER_PT_FILTER = "pt-filter"
+PCD_FILTER_ENHANCED_PT = "enhanced-pt"
+PCD_FILTER_VOXEL_DENSITY = "voxel-density"
+PCD_FILTERS = (PCD_FILTER_NONE, PCD_FILTER_PT_FILTER, PCD_FILTER_ENHANCED_PT, PCD_FILTER_VOXEL_DENSITY)
 DEMO_PRESETS = ("none", "local-ffs-professor")
 DEFAULT_DEMO_PRESET = "none"
 LOCAL_FFS_PROFESSOR_MAX_POINTS = 20000
 LOCAL_FFS_PROFESSOR_POINT_SIZE = 2.5
 LOCAL_FFS_PROFESSOR_LATENCY_TARGET_MS = 120.0
+LOCAL_FFS_PROFESSOR_FILTER_CAP = 20000
+DEFAULT_FILTER_RADIUS_M = 0.01
+DEFAULT_FILTER_NB_POINTS = 40
+DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.01
+DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.0
 CONTROLLER_ID = 1
 OBJECT_ID = 2
 OBJECT_LABELS = {CONTROLLER_ID: "controller", OBJECT_ID: "object"}
@@ -142,6 +161,9 @@ class PipelineTiming:
     pcd_backproject_ms: float = 0.0
     pcd_color_gather_ms: float = 0.0
     pcd_ms: float = 0.0
+    pcd_filter_ms: float = 0.0
+    object_filter_ms: float = 0.0
+    controller_filter_ms: float = 0.0
     open3d_convert_ms: float = 0.0
     open3d_update_ms: float = 0.0
     receive_to_render_ms: float = 0.0
@@ -213,6 +235,7 @@ class MaskedPcdPacket:
     dropped_capture_frames: int
     dropped_seg_frames: int
     timing: PipelineTiming
+    filter_telemetry: PcdFilterTelemetry = field(default_factory=lambda: PcdFilterTelemetry())
 
     @property
     def controller_point_count(self) -> int:
@@ -225,6 +248,31 @@ class MaskedPcdPacket:
     @property
     def point_count(self) -> int:
         return self.controller_point_count + self.object_point_count
+
+
+@dataclass(frozen=True)
+class PcdFilterTelemetry:
+    enabled: bool = False
+    mode: str = PCD_FILTER_NONE
+    render_using_filtered: bool = False
+    filter_seq: int = -1
+    filter_age_frames: int = 0
+    filter_age_ms: float = 0.0
+    filter_ms: float = 0.0
+    object_filter_ms: float = 0.0
+    controller_filter_ms: float = 0.0
+    object_raw_points: int = 0
+    object_cap_points: int = 0
+    object_output_points: int = 0
+    controller_raw_points: int = 0
+    controller_cap_points: int = 0
+    controller_output_points: int = 0
+    object_filter_cap: int = 0
+    controller_filter_cap: int = 0
+    filter_submit_fps: float = 0.0
+    filter_output_fps: float = 0.0
+    filter_queue_drop: int = 0
+    filter_busy: bool = False
 
 
 @dataclass(frozen=True)
@@ -484,6 +532,46 @@ def build_parser() -> argparse.ArgumentParser:
         default="rgb",
         help="Point-cloud colors. rgb uses the live color frame; class uses fixed controller/object colors.",
     )
+    parser.add_argument(
+        "--enable-pcd-filter",
+        action="store_true",
+        help="Enable capped point-cloud filtering. Async mode never blocks capture, EdgeTAM, FFS, or render.",
+    )
+    parser.add_argument(
+        "--pcd-filter-mode",
+        choices=PCD_FILTER_MODES,
+        default="async",
+        help="Point-cloud filter scheduling mode. Requires --enable-pcd-filter unless set to none.",
+    )
+    parser.add_argument("--object-filter", choices=PCD_FILTERS, default=PCD_FILTER_ENHANCED_PT)
+    parser.add_argument("--controller-filter", choices=PCD_FILTERS, default=PCD_FILTER_PT_FILTER)
+    parser.add_argument("--object-filter-cap", type=int, default=20_000)
+    parser.add_argument("--controller-filter-cap", type=int, default=20_000)
+    parser.add_argument("--object-filter-voxel-m", type=float, default=0.004)
+    parser.add_argument("--controller-filter-voxel-m", type=float, default=0.003)
+    parser.add_argument(
+        "--filter-every-n",
+        type=int,
+        default=3,
+        help="Submit capped PCD filtering every N PCD packets. Async mode renders the latest available filtered output.",
+    )
+    parser.add_argument(
+        "--filter-budget-ms",
+        type=float,
+        default=12.0,
+        help="Soft async filter budget. Caps are reduced conservatively when the worker exceeds this budget.",
+    )
+    parser.add_argument("--filter-min-cap", type=int, default=5_000)
+    parser.add_argument(
+        "--voxel-density-min-points",
+        type=int,
+        default=2,
+        help="Minimum points per voxel for the realtime voxel-density approximate filter.",
+    )
+    parser.add_argument("--filter-radius-m", type=float, default=DEFAULT_FILTER_RADIUS_M)
+    parser.add_argument("--filter-nb-points", type=int, default=DEFAULT_FILTER_NB_POINTS)
+    parser.add_argument("--enhanced-component-voxel-size-m", type=float, default=DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M)
+    parser.add_argument("--enhanced-keep-near-main-gap-m", type=float, default=DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M)
     parser.add_argument("--point-size", type=float, default=2.0, help="Open3D point size.")
     parser.add_argument("--render-every-n", type=int, default=1, help="Render every Nth PCD packet.")
     parser.add_argument("--latency-target-ms", type=float, default=80.0, help="HUD latency target.")
@@ -512,7 +600,15 @@ def apply_demo_preset(args: argparse.Namespace) -> argparse.Namespace:
             args.point_size = LOCAL_FFS_PROFESSOR_POINT_SIZE
         if float(args.latency_target_ms) == 80.0:
             args.latency_target_ms = LOCAL_FFS_PROFESSOR_LATENCY_TARGET_MS
+        if int(args.object_filter_cap) == 20_000:
+            args.object_filter_cap = LOCAL_FFS_PROFESSOR_FILTER_CAP
+        if int(args.controller_filter_cap) == 20_000:
+            args.controller_filter_cap = LOCAL_FFS_PROFESSOR_FILTER_CAP
     return args
+
+
+def pcd_filter_enabled(args: argparse.Namespace) -> bool:
+    return bool(args.enable_pcd_filter) and str(args.pcd_filter_mode) != "none"
 
 
 def validate_args(args: argparse.Namespace) -> None:
@@ -533,6 +629,35 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--render-every-n must be >= 1")
     if args.point_size <= 0:
         raise ValueError("--point-size must be positive")
+    if args.pcd_filter_mode not in PCD_FILTER_MODES:
+        raise ValueError(f"--pcd-filter-mode must be one of {', '.join(PCD_FILTER_MODES)}")
+    for flag in ("object_filter_cap", "controller_filter_cap", "filter_min_cap"):
+        if int(getattr(args, flag)) < 0:
+            raise ValueError(f"--{flag.replace('_', '-')} must be >= 0")
+    if int(args.object_filter_cap) > 0 and int(args.filter_min_cap) > int(args.object_filter_cap):
+        raise ValueError("--filter-min-cap must be <= --object-filter-cap when object cap is enabled")
+    if int(args.controller_filter_cap) > 0 and int(args.filter_min_cap) > int(args.controller_filter_cap):
+        raise ValueError("--filter-min-cap must be <= --controller-filter-cap when controller cap is enabled")
+    if float(args.object_filter_voxel_m) <= 0:
+        raise ValueError("--object-filter-voxel-m must be positive")
+    if float(args.controller_filter_voxel_m) <= 0:
+        raise ValueError("--controller-filter-voxel-m must be positive")
+    if int(args.filter_every_n) < 1:
+        raise ValueError("--filter-every-n must be >= 1")
+    if float(args.filter_budget_ms) < 0:
+        raise ValueError("--filter-budget-ms must be >= 0")
+    if int(args.voxel_density_min_points) < 1:
+        raise ValueError("--voxel-density-min-points must be >= 1")
+    if float(args.filter_radius_m) <= 0:
+        raise ValueError("--filter-radius-m must be positive")
+    if int(args.filter_nb_points) < 1:
+        raise ValueError("--filter-nb-points must be >= 1")
+    if float(args.enhanced_component_voxel_size_m) <= 0:
+        raise ValueError("--enhanced-component-voxel-size-m must be positive")
+    if float(args.enhanced_keep_near_main_gap_m) < 0:
+        raise ValueError("--enhanced-keep-near-main-gap-m must be >= 0")
+    if pcd_filter_enabled(args) and args.pcd_mode != "masked":
+        raise ValueError("--enable-pcd-filter requires --pcd-mode masked")
     if args.compile_mode != DEFAULT_COMPILE_MODE:
         raise ValueError("Demo 2.0 requires compiled EdgeTAM: --compile-mode vision-reduce-overhead")
     if args.track_mode == "none" and args.pcd_mode == "masked":
@@ -790,8 +915,11 @@ def backproject_masked_rgbd_profiled(
         timing["pcd_point_cap_ms"] = 0.0
         timing["pcd_backproject_ms"] = 0.0
         timing["pcd_color_gather_ms"] = 0.0
+        timing["pcd_raw_points"] = 0.0
+        timing["pcd_cap_points"] = 0.0
         return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8), timing
     rows, cols = np.nonzero(selected)
+    timing["pcd_raw_points"] = float(rows.shape[0])
     timing["pcd_select_ms"] = _elapsed_ms(started_s, time.perf_counter())
 
     started_s = time.perf_counter()
@@ -802,6 +930,7 @@ def backproject_masked_rgbd_profiled(
         cols = cols[indices]
     rows = rows.astype(np.int64, copy=False)
     cols = cols.astype(np.int64, copy=False)
+    timing["pcd_cap_points"] = float(rows.shape[0])
     timing["pcd_point_cap_ms"] = _elapsed_ms(started_s, time.perf_counter())
 
     started_s = time.perf_counter()
@@ -1126,7 +1255,24 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.depth_stats = StageStats()
         self.remote_quality_stats = StageStats()
         self.pcd_stats = StageStats()
+        self.filter_submit_stats = StageStats()
+        self.filter_output_stats = StageStats()
         self.render_stats = RenderStats()
+        self.filter_worker: AsyncPcdFilterWorker | None = None
+        self._filter_submit_skip_count = 0
+        self._last_filter_output_seq_recorded = -1
+        self.object_filter_budget = FilterBudgetController(
+            target_ms=max(0.0, float(args.filter_budget_ms)) * 0.5,
+            min_cap=int(args.filter_min_cap),
+            max_cap=max(int(args.filter_min_cap), int(args.object_filter_cap) if int(args.object_filter_cap) > 0 else 200_000),
+            init_cap=int(args.object_filter_cap) if int(args.object_filter_cap) > 0 else 200_000,
+        )
+        self.controller_filter_budget = FilterBudgetController(
+            target_ms=max(0.0, float(args.filter_budget_ms)) * 0.5,
+            min_cap=int(args.filter_min_cap),
+            max_cap=max(int(args.filter_min_cap), int(args.controller_filter_cap) if int(args.controller_filter_cap) > 0 else 200_000),
+            init_cap=int(args.controller_filter_cap) if int(args.controller_filter_cap) > 0 else 200_000,
+        )
         self._last_debug_log_s = 0.0
         self.ffs_runner: object | None = None
         self.ir_to_color_aligner: FfsIrToColorAligner | None = None
@@ -1175,6 +1321,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 compression=str(self.args.remote_ffs_quality_compress),
                 max_inflight=1,
             )
+        if pcd_filter_enabled(self.args) and str(self.args.pcd_filter_mode) == "async":
+            self.filter_worker = AsyncPcdFilterWorker(self._filter_pcd_input)
+            self.filter_worker.start()
         self.runtime = _start_realsense_pipeline(self.args)
         try:
             self.ray_x, self.ray_y = build_projection_grid(
@@ -1209,6 +1358,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.remote_quality_client is not None:
             self.remote_quality_client.close()
             self.remote_quality_client = None
+        if self.filter_worker is not None:
+            self.filter_worker.stop()
+            self.filter_worker = None
 
     def _create_ffs_runner(self) -> object:
         try:
@@ -1419,6 +1571,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "pcd_mode": self.args.pcd_mode,
             "pcd_max_points": int(self.args.pcd_max_points),
             "pcd_stride": int(self.args.pcd_stride),
+            "pcd_filter_enabled": pcd_filter_enabled(self.args),
+            "pcd_filter_mode": self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE,
+            "object_filter": self.args.object_filter,
+            "controller_filter": self.args.controller_filter,
+            "object_filter_cap": int(self.args.object_filter_cap),
+            "controller_filter_cap": int(self.args.controller_filter_cap),
+            "filter_every_n": int(self.args.filter_every_n),
+            "filter_budget_ms": float(self.args.filter_budget_ms),
             "render_mode": self.args.render_mode,
             "render_every_n": int(self.args.render_every_n),
         }
@@ -1613,6 +1773,222 @@ class RealtimeMaskedEdgeTamPcdDemo:
             ir_baseline_m=frame.ir_baseline_m,
         )
 
+    def _make_filter_input(
+        self,
+        *,
+        seq: int,
+        object_xyz: np.ndarray,
+        object_colors: np.ndarray,
+        controller_xyz: np.ndarray,
+        controller_colors: np.ndarray,
+    ) -> FilterInput:
+        object_cap = 0 if int(self.args.object_filter_cap) == 0 else int(self.object_filter_budget.cap)
+        controller_cap = 0 if int(self.args.controller_filter_cap) == 0 else int(self.controller_filter_budget.cap)
+        return FilterInput(
+            seq=int(seq),
+            object_xyz=np.asarray(object_xyz, dtype=np.float32),
+            object_rgb=np.asarray(object_colors, dtype=np.uint8),
+            controller_xyz=np.asarray(controller_xyz, dtype=np.float32),
+            controller_rgb=np.asarray(controller_colors, dtype=np.uint8),
+            object_cap=object_cap,
+            controller_cap=controller_cap,
+            object_voxel_size_m=float(self.args.object_filter_voxel_m),
+            controller_voxel_size_m=float(self.args.controller_filter_voxel_m),
+        )
+
+    def _apply_single_pcd_filter(
+        self,
+        *,
+        points: np.ndarray,
+        colors: np.ndarray,
+        mode: str,
+        cap: int,
+        voxel_size_m: float,
+        rng: np.random.Generator,
+    ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+        raw_points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+        raw_colors = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
+        cap_start_s = time.perf_counter()
+        capped_points, capped_colors_or_none = voxel_cap_points(
+            raw_points,
+            raw_colors,
+            max_points=int(cap),
+            voxel_size_m=float(voxel_size_m),
+            rng=rng,
+        )
+        capped_colors = np.asarray(capped_colors_or_none, dtype=np.uint8).reshape(-1, 3)
+        cap_ms = _elapsed_ms(cap_start_s, time.perf_counter())
+
+        filter_start_s = time.perf_counter()
+        if mode == PCD_FILTER_NONE:
+            filtered_points = np.asarray(capped_points, dtype=np.float32).reshape(-1, 3)
+            filtered_colors = capped_colors
+        elif mode == PCD_FILTER_VOXEL_DENSITY:
+            density_points, density_colors_or_none = voxel_density_filter(
+                capped_points,
+                capped_colors,
+                voxel_size_m=float(voxel_size_m),
+                min_points_per_voxel=int(self.args.voxel_density_min_points),
+            )
+            filtered_points = np.asarray(density_points, dtype=np.float32).reshape(-1, 3)
+            filtered_colors = np.asarray(density_colors_or_none, dtype=np.uint8).reshape(-1, 3)
+        elif mode == PCD_FILTER_PT_FILTER:
+            from data_process.visualization.experiments.ffs_confidence_filter_pcd_compare import (
+                _apply_phystwin_like_radius_postprocess,
+            )
+
+            filtered_points, filtered_colors, _unused_stats = _apply_phystwin_like_radius_postprocess(
+                points=capped_points,
+                colors=capped_colors,
+                enabled=True,
+                radius_m=float(self.args.filter_radius_m),
+                nb_points=int(self.args.filter_nb_points),
+            )
+        elif mode == PCD_FILTER_ENHANCED_PT:
+            from data_process.visualization.experiments.ffs_confidence_filter_pcd_compare import (
+                _apply_enhanced_phystwin_like_postprocess,
+            )
+
+            filtered_points, filtered_colors, _unused_stats = _apply_enhanced_phystwin_like_postprocess(
+                points=capped_points,
+                colors=capped_colors,
+                enabled=True,
+                radius_m=float(self.args.filter_radius_m),
+                nb_points=int(self.args.filter_nb_points),
+                component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
+                keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
+            )
+        else:
+            raise ValueError(f"unsupported PCD filter mode: {mode}")
+
+        filter_ms = _elapsed_ms(filter_start_s, time.perf_counter())
+        filtered_points = np.ascontiguousarray(filtered_points, dtype=np.float32).reshape(-1, 3)
+        filtered_colors = np.ascontiguousarray(filtered_colors, dtype=np.uint8).reshape(-1, 3)
+        return filtered_points, filtered_colors, {
+            "mode": str(mode),
+            "raw_points": int(len(raw_points)),
+            "cap_points": int(len(capped_points)),
+            "output_points": int(len(filtered_points)),
+            "cap": int(cap),
+            "voxel_size_m": float(voxel_size_m),
+            "cap_ms": float(cap_ms),
+            "filter_ms": float(filter_ms),
+        }
+
+    def _filter_pcd_input(self, item: FilterInput) -> FilterOutput:
+        started_s = time.perf_counter()
+        object_points, object_colors, object_stats = self._apply_single_pcd_filter(
+            points=item.object_xyz,
+            colors=item.object_rgb,
+            mode=str(self.args.object_filter),
+            cap=int(item.object_cap),
+            voxel_size_m=float(item.object_voxel_size_m),
+            rng=np.random.default_rng(int(item.seq) * 2 + 17),
+        )
+        controller_points, controller_colors, controller_stats = self._apply_single_pcd_filter(
+            points=item.controller_xyz,
+            colors=item.controller_rgb,
+            mode=str(self.args.controller_filter),
+            cap=int(item.controller_cap),
+            voxel_size_m=float(item.controller_voxel_size_m),
+            rng=np.random.default_rng(int(item.seq) * 2 + 19),
+        )
+        done_s = time.perf_counter()
+        filter_ms = _elapsed_ms(started_s, done_s)
+        if float(self.args.filter_budget_ms) > 0:
+            self.object_filter_budget.update(float(object_stats["filter_ms"] + object_stats["cap_ms"]))
+            self.controller_filter_budget.update(float(controller_stats["filter_ms"] + controller_stats["cap_ms"]))
+        return FilterOutput(
+            seq=int(item.seq),
+            object_xyz=object_points,
+            object_rgb=object_colors,
+            controller_xyz=controller_points,
+            controller_rgb=controller_colors,
+            filter_ms=float(filter_ms),
+            created_perf_s=float(item.created_perf_s),
+            output_perf_s=done_s,
+            stats={
+                "object": object_stats,
+                "controller": controller_stats,
+                "object_filter": str(self.args.object_filter),
+                "controller_filter": str(self.args.controller_filter),
+            },
+        )
+
+    def _filter_worker_stats(self) -> dict[str, Any]:
+        worker = self.filter_worker
+        if worker is None:
+            return {
+                "busy": False,
+                "submit_fps": self.filter_submit_stats.fps,
+                "output_fps": self.filter_output_stats.fps,
+                "pending_replace_count": 0,
+            }
+        stats = worker.stats
+        return {
+            "busy": bool(stats.get("busy", False)),
+            "submit_fps": float(stats.get("submit_fps", self.filter_submit_stats.fps)),
+            "output_fps": float(stats.get("output_fps", self.filter_output_stats.fps)),
+            "pending_replace_count": int(stats.get("pending_replace_count", 0)) + int(self._filter_submit_skip_count),
+        }
+
+    def _filter_telemetry_from_output(
+        self,
+        *,
+        packet_seq: int,
+        output: FilterOutput | None,
+        using_filtered: bool,
+        object_raw_points: int,
+        object_cap_points: int,
+        controller_raw_points: int,
+        controller_cap_points: int,
+    ) -> PcdFilterTelemetry:
+        worker_stats = self._filter_worker_stats()
+        if output is None:
+            return PcdFilterTelemetry(
+                enabled=pcd_filter_enabled(self.args),
+                mode=str(self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE),
+                object_raw_points=int(object_raw_points),
+                object_cap_points=int(object_cap_points),
+                object_output_points=int(object_cap_points),
+                controller_raw_points=int(controller_raw_points),
+                controller_cap_points=int(controller_cap_points),
+                controller_output_points=int(controller_cap_points),
+                object_filter_cap=int(self.object_filter_budget.cap),
+                controller_filter_cap=int(self.controller_filter_budget.cap),
+                filter_submit_fps=float(worker_stats["submit_fps"]),
+                filter_output_fps=float(worker_stats["output_fps"]),
+                filter_queue_drop=int(worker_stats["pending_replace_count"]),
+                filter_busy=bool(worker_stats["busy"]),
+            )
+
+        object_stats = dict(output.stats.get("object", {}))
+        controller_stats = dict(output.stats.get("controller", {}))
+        age_ms = max(0.0, _elapsed_ms(output.output_perf_s, time.perf_counter()))
+        return PcdFilterTelemetry(
+            enabled=pcd_filter_enabled(self.args),
+            mode=str(self.args.pcd_filter_mode),
+            render_using_filtered=bool(using_filtered),
+            filter_seq=int(output.seq),
+            filter_age_frames=max(0, int(packet_seq) - int(output.seq)),
+            filter_age_ms=float(age_ms),
+            filter_ms=float(output.filter_ms),
+            object_filter_ms=float(object_stats.get("filter_ms", 0.0)),
+            controller_filter_ms=float(controller_stats.get("filter_ms", 0.0)),
+            object_raw_points=int(object_stats.get("raw_points", object_raw_points)),
+            object_cap_points=int(object_stats.get("cap_points", object_cap_points)),
+            object_output_points=int(object_stats.get("output_points", object_cap_points)),
+            controller_raw_points=int(controller_stats.get("raw_points", controller_raw_points)),
+            controller_cap_points=int(controller_stats.get("cap_points", controller_cap_points)),
+            controller_output_points=int(controller_stats.get("output_points", controller_cap_points)),
+            object_filter_cap=int(object_stats.get("cap", self.object_filter_budget.cap)),
+            controller_filter_cap=int(controller_stats.get("cap", self.controller_filter_budget.cap)),
+            filter_submit_fps=float(worker_stats["submit_fps"]),
+            filter_output_fps=float(worker_stats["output_fps"]),
+            filter_queue_drop=int(worker_stats["pending_replace_count"]),
+            filter_busy=bool(worker_stats["busy"]),
+        )
+
     def _pcd_worker(self) -> None:
         last_seq = -1
         rng = np.random.default_rng()
@@ -1711,6 +2087,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     "pcd_point_cap_ms": 0.0,
                     "pcd_backproject_ms": 0.0,
                     "pcd_color_gather_ms": 0.0,
+                    "pcd_raw_points": 0.0,
+                    "pcd_cap_points": 0.0,
                 }
             object_xyz, object_colors, object_pcd_timing = backproject_masked_rgbd_profiled(
                 color_bgr=color_bgr,
@@ -1724,6 +2102,74 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 color_mode=str(self.args.pcd_color_mode),
                 class_rgb=tuple(self.args.object_color),
                 rng=rng,
+            )
+            controller_raw_points = int(controller_pcd_timing.get("pcd_raw_points", len(controller_xyz)))
+            controller_cap_points = int(controller_pcd_timing.get("pcd_cap_points", len(controller_xyz)))
+            object_raw_points = int(object_pcd_timing.get("pcd_raw_points", len(object_xyz)))
+            object_cap_points = int(object_pcd_timing.get("pcd_cap_points", len(object_xyz)))
+            render_controller_xyz = controller_xyz
+            render_controller_colors = controller_colors
+            render_object_xyz = object_xyz
+            render_object_colors = object_colors
+            filter_output: FilterOutput | None = None
+            using_filtered = False
+
+            if pcd_filter_enabled(self.args):
+                if str(self.args.pcd_filter_mode) == "sync":
+                    filter_input = self._make_filter_input(
+                        seq=mask_packet.seq,
+                        object_xyz=object_xyz,
+                        object_colors=object_colors,
+                        controller_xyz=controller_xyz,
+                        controller_colors=controller_colors,
+                    )
+                    self.filter_submit_stats.record()
+                    filter_output = self._filter_pcd_input(filter_input)
+                    self.filter_output_stats.record(filter_output.output_perf_s)
+                    render_controller_xyz = filter_output.controller_xyz
+                    render_controller_colors = filter_output.controller_rgb
+                    render_object_xyz = filter_output.object_xyz
+                    render_object_colors = filter_output.object_rgb
+                    using_filtered = True
+                elif str(self.args.pcd_filter_mode) == "async":
+                    worker = self.filter_worker
+                    if worker is not None:
+                        latest = worker.latest_output()
+                        if latest is not None:
+                            filter_output = latest
+                            if int(latest.seq) != self._last_filter_output_seq_recorded:
+                                self.filter_output_stats.record(latest.output_perf_s)
+                                self._last_filter_output_seq_recorded = int(latest.seq)
+                            render_controller_xyz = latest.controller_xyz
+                            render_controller_colors = latest.controller_rgb
+                            render_object_xyz = latest.object_xyz
+                            render_object_colors = latest.object_rgb
+                            using_filtered = True
+                        if mask_packet.seq % int(self.args.filter_every_n) == 0:
+                            if not worker.is_busy():
+                                worker.submit_latest(
+                                    self._make_filter_input(
+                                        seq=mask_packet.seq,
+                                        object_xyz=object_xyz,
+                                        object_colors=object_colors,
+                                        controller_xyz=controller_xyz,
+                                        controller_colors=controller_colors,
+                                    )
+                                )
+                                self.filter_submit_stats.record()
+                            else:
+                                self._filter_submit_skip_count += 1
+                elif str(self.args.pcd_filter_mode) != "none":
+                    raise ValueError(f"unsupported --pcd-filter-mode {self.args.pcd_filter_mode!r}")
+
+            filter_telemetry = self._filter_telemetry_from_output(
+                packet_seq=mask_packet.seq,
+                output=filter_output,
+                using_filtered=using_filtered,
+                object_raw_points=object_raw_points,
+                object_cap_points=object_cap_points,
+                controller_raw_points=controller_raw_points,
+                controller_cap_points=controller_cap_points,
             )
             done_s = time.perf_counter()
             timing = replace(
@@ -1749,20 +2195,24 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 pcd_color_gather_ms=float(
                     controller_pcd_timing["pcd_color_gather_ms"] + object_pcd_timing["pcd_color_gather_ms"]
                 ),
+                pcd_filter_ms=float(filter_telemetry.filter_ms),
+                object_filter_ms=float(filter_telemetry.object_filter_ms),
+                controller_filter_ms=float(filter_telemetry.controller_filter_ms),
                 pcd_ms=_elapsed_ms(start_s, done_s),
             )
             packet = MaskedPcdPacket(
                 seq=mask_packet.seq,
-                controller_xyz_m=controller_xyz,
-                controller_colors_rgb_u8=controller_colors,
-                object_xyz_m=object_xyz,
-                object_colors_rgb_u8=object_colors,
+                controller_xyz_m=render_controller_xyz,
+                controller_colors_rgb_u8=render_controller_colors,
+                object_xyz_m=render_object_xyz,
+                object_colors_rgb_u8=render_object_colors,
                 intrinsics=mask_packet.intrinsics,
                 receive_perf_s=mask_packet.receive_perf_s,
                 process_done_perf_s=done_s,
                 dropped_capture_frames=mask_packet.dropped_capture_frames,
                 dropped_seg_frames=self.mask_slot.dropped_count,
                 timing=timing,
+                filter_telemetry=filter_telemetry,
             )
             self.render_slot.put(packet)
             self.pcd_stats.record(done_s)
@@ -2049,6 +2499,61 @@ class RealtimeMaskedEdgeTamPcdDemo:
             ray_y=self.ray_y,
             rng=rng,
         )
+        render_controller_xyz = controller_xyz
+        render_controller_colors = controller_colors
+        render_object_xyz = object_xyz
+        render_object_colors = object_colors
+        filter_output: FilterOutput | None = None
+        using_filtered = False
+        if pcd_filter_enabled(self.args):
+            if str(self.args.pcd_filter_mode) == "sync":
+                filter_input = self._make_filter_input(
+                    seq=mask_packet.seq,
+                    object_xyz=object_xyz,
+                    object_colors=object_colors,
+                    controller_xyz=controller_xyz,
+                    controller_colors=controller_colors,
+                )
+                self.filter_submit_stats.record()
+                filter_output = self._filter_pcd_input(filter_input)
+                self.filter_output_stats.record(filter_output.output_perf_s)
+                render_controller_xyz = filter_output.controller_xyz
+                render_controller_colors = filter_output.controller_rgb
+                render_object_xyz = filter_output.object_xyz
+                render_object_colors = filter_output.object_rgb
+                using_filtered = True
+            elif str(self.args.pcd_filter_mode) == "async" and self.filter_worker is not None:
+                latest = self.filter_worker.latest_output()
+                if latest is not None:
+                    filter_output = latest
+                    render_controller_xyz = latest.controller_xyz
+                    render_controller_colors = latest.controller_rgb
+                    render_object_xyz = latest.object_xyz
+                    render_object_colors = latest.object_rgb
+                    using_filtered = True
+                if mask_packet.seq % int(self.args.filter_every_n) == 0:
+                    if not self.filter_worker.is_busy():
+                        self.filter_worker.submit_latest(
+                            self._make_filter_input(
+                                seq=mask_packet.seq,
+                                object_xyz=object_xyz,
+                                object_colors=object_colors,
+                                controller_xyz=controller_xyz,
+                                controller_colors=controller_colors,
+                            )
+                        )
+                        self.filter_submit_stats.record()
+                    else:
+                        self._filter_submit_skip_count += 1
+        filter_telemetry = self._filter_telemetry_from_output(
+            packet_seq=mask_packet.seq,
+            output=filter_output,
+            using_filtered=using_filtered,
+            object_raw_points=int(len(object_xyz)),
+            object_cap_points=int(len(object_xyz)),
+            controller_raw_points=int(len(controller_xyz)),
+            controller_cap_points=int(len(controller_xyz)),
+        )
         done_s = time.perf_counter()
         timing = replace(
             mask_packet.timing,
@@ -2063,20 +2568,24 @@ class RealtimeMaskedEdgeTamPcdDemo:
             pcd_point_cap_ms=float(sparse_timing["pcd_point_cap_ms"]),
             pcd_backproject_ms=float(sparse_timing["pcd_backproject_ms"]),
             pcd_color_gather_ms=float(sparse_timing["pcd_color_gather_ms"]),
+            pcd_filter_ms=float(filter_telemetry.filter_ms),
+            object_filter_ms=float(filter_telemetry.object_filter_ms),
+            controller_filter_ms=float(filter_telemetry.controller_filter_ms),
             pcd_ms=_elapsed_ms(start_s, done_s),
         )
         return MaskedPcdPacket(
             seq=mask_packet.seq,
-            controller_xyz_m=controller_xyz,
-            controller_colors_rgb_u8=controller_colors,
-            object_xyz_m=object_xyz,
-            object_colors_rgb_u8=object_colors,
+            controller_xyz_m=render_controller_xyz,
+            controller_colors_rgb_u8=render_controller_colors,
+            object_xyz_m=render_object_xyz,
+            object_colors_rgb_u8=render_object_colors,
             intrinsics=mask_packet.intrinsics,
             receive_perf_s=mask_packet.receive_perf_s,
             process_done_perf_s=done_s,
             dropped_capture_frames=mask_packet.dropped_capture_frames,
             dropped_seg_frames=self.mask_slot.dropped_count,
             timing=timing,
+            filter_telemetry=filter_telemetry,
         )
 
     def _remote_quality_mask_u8(self, packet: MaskPacket) -> np.ndarray:
@@ -2205,7 +2714,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 rect.x + 0.5 * em,
                 rect.y + 0.5 * em,
                 max(preferred.width, 660),
-                max(preferred.height, (13.0 if self.args.debug else 9.0) * em),
+                max(preferred.height, (15.0 if self.args.debug else 11.0) * em),
             )
 
         window.set_on_layout(on_layout)
@@ -2389,6 +2898,23 @@ class RealtimeMaskedEdgeTamPcdDemo:
         max_points = "uncapped" if self.args.pcd_max_points == 0 else str(self.args.pcd_max_points)
         depth_line = f"depth: {self.args.depth_source}  color={self.args.pcd_color_mode}"
         preset_text = "" if self.args.demo_preset == "none" else f"  preset={self.args.demo_preset}"
+        filter_info = packet.filter_telemetry
+        if filter_info.enabled:
+            filter_line = (
+                f"filter: {filter_info.mode}  render={'filtered' if filter_info.render_using_filtered else 'raw'}  "
+                f"fps submit/out={filter_info.filter_submit_fps:.1f}/{filter_info.filter_output_fps:.1f}  "
+                f"age={filter_info.filter_age_frames}f/{filter_info.filter_age_ms:.0f}ms  "
+                f"busy={int(filter_info.filter_busy)} drop={filter_info.filter_queue_drop}"
+            )
+            filter_points_line = (
+                "filter pts controller raw/cap/out="
+                f"{filter_info.controller_raw_points}/{filter_info.controller_cap_points}/{filter_info.controller_output_points}  "
+                "object raw/cap/out="
+                f"{filter_info.object_raw_points}/{filter_info.object_cap_points}/{filter_info.object_output_points}"
+            )
+        else:
+            filter_line = "filter: off"
+            filter_points_line = ""
         if self.args.depth_source == "ffs_remote":
             depth_line += f"  remote={self.args.ffs_remote_endpoint}"
         quality_line = ""
@@ -2414,6 +2940,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"{self.pcd_stats.fps:.1f} / {self.render_stats.render_fps:.1f}\n"
             f"latency: {timing.receive_to_render_ms:.1f} ms ({status}, target {self.args.latency_target_ms:.1f} ms)\n"
             f"points controller/object: {packet.controller_point_count} / {packet.object_point_count}  max/object: {max_points}\n"
+            f"{filter_line}\n"
+            f"{filter_points_line}\n"
             f"dropped capture/seg/pcd: {packet.dropped_capture_frames} / {packet.dropped_seg_frames} / "
             f"{self.render_slot.dropped_count}\n"
             f"EdgeTAM: {self.args.model_id}  mode={self.args.track_mode}  compile={self.args.compile_mode}  "
@@ -2432,7 +2960,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
         object_points: int = 0,
         dropped_capture_frames: int = 0,
         dropped_seg_frames: int = 0,
+        filter_telemetry: PcdFilterTelemetry | None = None,
     ) -> None:
+        filter_info = filter_telemetry or PcdFilterTelemetry()
         print(
             "[masked-edgetam-debug] "
             f"seq={int(seq)} "
@@ -2465,9 +2995,27 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"pcd_point_cap_ms={timing.pcd_point_cap_ms:.2f} "
             f"pcd_backproject_ms={timing.pcd_backproject_ms:.2f} "
             f"pcd_color_gather_ms={timing.pcd_color_gather_ms:.2f} "
+            f"pcd_filter_ms={timing.pcd_filter_ms:.2f} "
+            f"object_filter_ms={timing.object_filter_ms:.2f} "
+            f"controller_filter_ms={timing.controller_filter_ms:.2f} "
             f"pcd_ms={timing.pcd_ms:.2f} "
             f"render_ms={timing.open3d_update_ms:.2f} "
             f"e2e_latency_ms={timing.receive_to_render_ms:.2f} "
+            f"filter_enabled={int(filter_info.enabled)} "
+            f"filter_mode={filter_info.mode} "
+            f"render_using_filtered={int(filter_info.render_using_filtered)} "
+            f"filter_submit_fps={filter_info.filter_submit_fps:.1f} "
+            f"filter_output_fps={filter_info.filter_output_fps:.1f} "
+            f"filter_queue_drop={int(filter_info.filter_queue_drop)} "
+            f"filter_busy={int(filter_info.filter_busy)} "
+            f"filter_age_frames={int(filter_info.filter_age_frames)} "
+            f"filter_age_ms={filter_info.filter_age_ms:.1f} "
+            f"object_filter_input_points={int(filter_info.object_raw_points)} "
+            f"object_filter_cap_points={int(filter_info.object_cap_points)} "
+            f"object_filter_output_points={int(filter_info.object_output_points)} "
+            f"controller_filter_input_points={int(filter_info.controller_raw_points)} "
+            f"controller_filter_cap_points={int(filter_info.controller_cap_points)} "
+            f"controller_filter_output_points={int(filter_info.controller_output_points)} "
             f"controller_points={int(controller_points)} "
             f"object_points={int(object_points)} "
             f"dropped_capture={int(dropped_capture_frames)} "
@@ -2498,6 +3046,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     object_points=pcd_packet.object_point_count,
                     dropped_capture_frames=pcd_packet.dropped_capture_frames,
                     dropped_seg_frames=pcd_packet.dropped_seg_frames,
+                    filter_telemetry=pcd_packet.filter_telemetry,
                 )
                 continue
 
@@ -2553,6 +3102,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             object_points=packet.object_point_count,
             dropped_capture_frames=packet.dropped_capture_frames,
             dropped_seg_frames=packet.dropped_seg_frames,
+            filter_telemetry=packet.filter_telemetry,
         )
 
 
