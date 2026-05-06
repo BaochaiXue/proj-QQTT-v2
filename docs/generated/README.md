@@ -68,6 +68,7 @@ These record what the current machine and D455 topology actually supported durin
 - `demo2_1_visual5fps_profile_object_only_120s.md`
 - `demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.md`
 - `demo2_1_visual5fps_live_sam31_profile_object_only_120s.md`
+- `demo2_1_visual5fps_image_sam31_profile_object_only_120s.md`
 - `demo2_1_cam0_live_rgb_20260506_071723_sam31_image_one_frame_overlay.png`
 
 These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.

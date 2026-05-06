@@ -524,3 +524,67 @@ Artifacts:
 The formal failure policy is unchanged: if the live one-frame SAM3.1 image path
 does not return the requested object/controller mask, the run fails without
 saved-mask fallback.
+
+## Visual-5FPS Profile With Image One-Frame SAM3.1
+
+Command:
+
+```bash
+QQTT_WSLG_OPEN3D_FAST_EXIT=1 TRANSFORMERS_VERBOSITY=error HF_HUB_DISABLE_PROGRESS_BARS=1 \
+timeout 300s ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --track-mode object-only \
+  --init-mode sam31-first-frame \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-cuda-events \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-gpu-gate \
+  --profile-warmup-exclude-s 40 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_image_sam31_profile_object_only_120s.json
+```
+
+Live SAM3.1 image one-frame initialization succeeded on all three cameras:
+
+```text
+cam0 group=31 object_px=27636
+cam1 group=31 object_px=22642
+cam2 group=31 object_px=13983
+```
+
+After excluding the first 40 seconds of warmup, this run did not sustain the
+5 FPS target:
+
+```text
+render_fps_after_warmup = 3.06
+fusion_fps_after_warmup = 3.06
+complete_fusion_groups_after_warmup = 233 / 431
+fusion_timeout_groups_after_warmup = 177
+bottleneck_class = upstream_supply
+```
+
+Key warmup-excluded timings:
+
+| metric | median | p95 | max |
+| --- | ---: | ---: | ---: |
+| FFS cycle | `197.49 ms` | `332.98 ms` | `977.97 ms` |
+| FFS gate wait | `100.91 ms` | `226.52 ms` | `803.34 ms` |
+| EdgeTAM cam0 model | `96.99 ms` | `141.07 ms` | `443.92 ms` |
+| EdgeTAM cam1 model | `97.52 ms` | `143.51 ms` | `497.76 ms` |
+| EdgeTAM cam2 model | `91.81 ms` | `136.23 ms` | `348.09 ms` |
+| object enhanced-PT | `37.47 ms` | `49.30 ms` | `247.44 ms` |
+| render callback | `0.43 ms` | `0.75 ms` | `3.23 ms` |
+
+The current visual-5fps limitation is therefore upstream mask/depth supply and
+GPU scheduling, not Open3D rendering. Enhanced-PT still has periodic spikes
+around `220-247 ms`, but the primary measured failure mode is incomplete
+same-group fusion before the timeout.
+
+Artifacts:
+
+- `docs/generated/demo2_1_visual5fps_image_sam31_profile_object_only_120s.json`
+- `docs/generated/demo2_1_visual5fps_image_sam31_profile_object_only_120s.md`
