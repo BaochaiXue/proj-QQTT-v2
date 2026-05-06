@@ -128,6 +128,23 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(by_id[demo.CONTROLLER_ID].default_postprocess, demo.POSTPROCESS_PT_FILTER)
         self.assertEqual(by_id[demo.OBJECT_ID].default_postprocess, demo.POSTPROCESS_ENHANCED_PT)
 
+    def test_controller_prompt_can_be_experimental_without_changing_default(self) -> None:
+        parser = demo.build_arg_parser()
+        default_args = parser.parse_args(["--dry-run"])
+        self.assertEqual(default_args.controller_prompt, "hand")
+
+        cloth_args = parser.parse_args(["--dry-run", "--track-mode", "controller-object", "--controller-prompt", "cloth"])
+        cloth_args = demo.apply_preset_defaults(
+            cloth_args,
+            explicit_options={"--dry-run", "--track-mode", "--controller-prompt"},
+        )
+        contract = demo.build_contract(cloth_args)
+
+        self.assertEqual(contract["semantic_layers"][0]["label"], "cloth")
+        self.assertEqual(contract["semantic_layers"][0]["postprocess"], demo.POSTPROCESS_PT_FILTER)
+        self.assertEqual(contract["semantic_layers"][1]["label"], "stuffed animal")
+        self.assertEqual(contract["semantic_layers"][1]["postprocess"], demo.POSTPROCESS_ENHANCED_PT)
+
     def test_object_only_has_no_controller_layer(self) -> None:
         layers = demo.semantic_layers_for_track_mode(
             demo.TRACK_MODE_OBJECT_ONLY,

@@ -161,6 +161,16 @@ The default mode is controller-object; current no-hand lab runs must explicitly 
 
 If SAM3.1 object-only initialization fails in a no-hand run, Demo 2.1 fails fast. That is intentional: there is no saved-mask or native-depth fallback in the formal path.
 
+The default controller prompt remains `hand`. Non-hand controller prompts are
+allowed only as explicit experimental overrides, for example when using two
+cloth pieces to stress-test the controller slot:
+
+```bash
+--track-mode controller-object --controller-prompt "cloth"
+```
+
+That override does not change the default professor-facing controller label.
+
 Live SAM3.1 5 FPS profiling command:
 
 ```bash

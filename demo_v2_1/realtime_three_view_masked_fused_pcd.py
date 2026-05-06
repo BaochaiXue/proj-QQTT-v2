@@ -89,7 +89,6 @@ PCD_FILTER_SCHEDULE_MODES = ("async", "sync", "none")
 DEFAULT_CAMERA_IDS = (0, 1, 2)
 DEFAULT_OBJECT_LABEL = "object"
 DEFAULT_CONTROLLER_LABEL = "hand"
-CONTROLLER_PROMPT_CHOICES = ("hand",)
 DEFAULT_MODEL_ID = "yonigozlan/EdgeTAM-hf"
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
@@ -2569,7 +2568,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--track-mode", choices=TRACK_MODES, default=TRACK_MODE_CONTROLLER_OBJECT)
     parser.add_argument("--init-mode", choices=INIT_MODES, default="sam31-first-frame")
     parser.add_argument("--object-prompt", default="stuffed animal")
-    parser.add_argument("--controller-prompt", choices=CONTROLLER_PROMPT_CHOICES, default=DEFAULT_CONTROLLER_LABEL)
+    parser.add_argument("--controller-prompt", default=DEFAULT_CONTROLLER_LABEL)
     parser.add_argument("--depth-source", choices=DEPTH_SOURCES, default=DEPTH_SOURCE_FFS)
     parser.add_argument("--render-mode", choices=RENDER_MODES, default="none")
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
