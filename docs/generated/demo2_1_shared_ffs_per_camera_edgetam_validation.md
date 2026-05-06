@@ -724,3 +724,77 @@ The data argues for a smarter policy instead:
   prevent persistent EdgeTAM stragglers
   keep Open3D and quality filters unchanged
 ```
+
+## Cloth-Controller No-GPU-Gate Baseline
+
+Purpose:
+
+```text
+Repeat the gate baseline with the current experimental controller setup:
+  controller = cloth
+  object = stuffed animal
+
+This is not the default controller semantics. The default Demo 2.1 controller
+label remains hand; cloth is only a temporary live experiment label.
+```
+
+Quality contract held constant:
+
+```text
+live SAM3.1 image one-frame initialization
+no saved-mask fallback
+track_mode=controller-object
+controller label=cloth, obj_id=1, postprocess=pt-filter
+object label=stuffed animal, obj_id=2, postprocess=enhanced-PT
+FFS-derived depth, 20-30-48 / valid_iters=4 / 480x864 / builderOpt5
+timestamp-nearest grouping with max_capture_skew_ms=33.4
+shared FFS worker remains sequential cam0 -> cam1 -> cam2
+object/controller union before filter = false
+```
+
+Warmup-excluded live cloth-controller results:
+
+| Mode | Render FPS | Fusion FPS | Complete | Timeouts | Capture group FPS | FFS cycle median / p95 | FFS gate wait median / p95 | EdgeTAM model median per cam | Object enhanced-PT median / p95 | Controller PT median / p95 | Render p95 | Recommendation |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| gate=2 | 0.24 | 0.24 | 16 | 183 | 4.32 | 479.2 / 633.7 ms | 384.9 / 526.8 ms | 163.7 / 162.7 / 160.1 ms | 30.3 / 42.2 ms | 18.7 / 24.2 ms | 7.63 ms | valid but far too slow |
+| no gate | 1.13 | 1.13 | 82 | 266 | 4.98 | 119.0 / 154.9 ms | 0.0 / 0.0 ms | 257.3 / 259.7 / 269.5 ms | 29.4 / 38.7 ms | 17.7 / 21.8 ms | 2.22 ms | faster than gate=2, still below target |
+| gate=3 | invalid | invalid | invalid | invalid | invalid | invalid | invalid | invalid | invalid | invalid | invalid | not measured; camera attach failed |
+
+Interpretation:
+
+```text
+For cloth-controller, no-gate is clearly faster than gate=2, but it still only
+reaches ~1.13 FPS after warmup. Removing the global gate fixes the FFS wait
+problem, but EdgeTAM per-camera model time rises to ~257-270 ms, so the
+bottleneck remains upstream GPU contention / scheduling.
+
+The filters are not the primary blocker in this run:
+  object enhanced-PT p95 ~= 38.7 ms in no-gate
+  controller pt-filter p95 ~= 21.8 ms in no-gate
+
+Open3D is also not the blocker:
+  render p95 ~= 2.22 ms in no-gate
+
+gate=3 could not be profiled after no-gate because the Windows usbipd service
+stopped and WSL saw 0 RealSense devices. That run is excluded from performance
+comparison.
+```
+
+Artifacts:
+
+- `docs/generated/demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_103105.json`
+- `docs/generated/demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_103105.md`
+- `docs/generated/demo2_1_visual5fps_controller_cloth_no_gate_profile_20260506_103346.json`
+- `docs/generated/demo2_1_visual5fps_controller_cloth_no_gate_profile_20260506_103346.md`
+- invalid gate3 startup log: `docs/generated/demo2_1_visual5fps_controller_cloth_gate3_profile_20260506_103631.log`
+
+Next scheduling direction for cloth-controller:
+
+```text
+Do not use gate=2 for the cloth-controller visual path; it starves FFS too much.
+No-gate is the better baseline, but still not near 5 FPS.
+The next useful experiment is a smarter scheduling gate:
+  FFS-priority or deadline-aware gate
+  avoid persistent EdgeTAM stragglers
+  keep FFS, live SAM3.1, semantic filters, and point quality unchanged
+```
