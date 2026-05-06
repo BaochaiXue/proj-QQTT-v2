@@ -6,6 +6,7 @@ Official quality path:
 
 ```text
 3x RealSense color + IR
+temporal-coherent CaptureGroup gating
 FFS 20-30-48, valid_iters=4, 848x480 -> pad 864x480, TensorRT builderOpt5
 HF EdgeTAM streaming, vision-reduce-overhead
 masked PCD per camera
@@ -35,6 +36,24 @@ controller:
 
 Object and controller are kept as separate fused semantic layers. Do not concatenate object and controller into a single cloud before filtering unless explicitly running a diagnostic, because enhanced cleanup can remove controller fingertips or contact patches.
 
+Temporal grouping policy:
+
+```text
+No temporal-coherent CaptureGroup, no FFS.
+
+professor-safe / visual-5fps defaults:
+  capture-group-policy=timestamp-nearest
+  max-capture-skew-ms=33.4
+  max-frame-age-ms=150
+  capture-buffer-size=4
+  drop-skewed-groups=true
+```
+
+The CaptureGroupBuilder keeps a small per-camera frame buffer and emits only
+the cam0/cam1/cam2 triplet with the nearest timestamps. If the selected triplet
+exceeds the skew threshold, it is dropped before FFS. The shared FFS worker and
+fusion worker both re-check the temporal skew contract.
+
 Realtime filter policy:
 
 ```text
@@ -62,6 +81,7 @@ professor-safe:
   controller-object by default; pass --track-mode object-only when no hand/controller is visible
   render-mode=pointcloud by default
   GPU gate serialized with max_concurrent=1
+  temporal grouping uses timestamp-nearest, max skew 33.4 ms
 
 visual-5fps:
   848x480@30
@@ -70,6 +90,7 @@ visual-5fps:
   render-mode=pointcloud by default
   GPU gate limited with max_concurrent=2
   quality path unchanged: FFS depth + object enhanced-pt
+  temporal grouping uses timestamp-nearest, max skew 33.4 ms
 
 climb-5:
   848x480@30
@@ -198,11 +219,13 @@ Runtime architecture:
 
 ```text
 CaptureGroupBuilder:
-  emits one strict group_id for cam0/cam1/cam2 latest frames
+  maintains small per-camera timestamp buffers
+  emits one strict group_id only for a temporal-coherent cam0/cam1/cam2 triplet
+  drops skewed groups before FFS
 
 SharedFfsWorker:
   owns one FFS/TensorRT runner
-  sequentially computes cam0, cam1, cam2 depth for each group_id
+  sequentially computes cam0, cam1, cam2 depth only for temporal-coherent group_id
 
 GpuInferenceGate:
   serializes FFS and EdgeTAM GPU inference in professor-safe mode
@@ -215,6 +238,7 @@ EdgeTamCameraWorker:
 
 FusionWorker:
   joins same group_id depth + masks
+  re-checks temporal skew before fusing
   fuses object separately from controller
   object -> enhanced-pt
   controller -> pt-filter

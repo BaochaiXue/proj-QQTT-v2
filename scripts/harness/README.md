@@ -96,6 +96,13 @@ export TORCH_CUDA_ARCH_LIST=12.0
 
 Keep current user-facing CLIs, deterministic checks, hardware probes, and bounded diagnostics. Remove ignored cache directories, keep reusable implementation out of harness, and record durable external-dependency proof results under `docs/generated/`.
 
+For generated harness engineering results, start from
+`docs/generated/harness_engineering_compact_index.md` instead of scanning every
+individual profile, log, and validation note. The compact index points to the
+current source-of-truth reports and
+`docs/generated/harness_engineering_artifact_inventory.json` contains the full
+machine-readable artifact list.
+
 Result retention policy:
 
 - Delete local smoke, preview, interrupted, and debug-only result roots once the corresponding full result exists.

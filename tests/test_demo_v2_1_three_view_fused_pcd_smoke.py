@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 import unittest
 
 import numpy as np
@@ -7,7 +8,105 @@ import numpy as np
 from demo_v2_1 import realtime_three_view_masked_fused_pcd as demo
 
 
+def _dummy_frame(camera_idx: int, *, seq: int, timestamp_ms: float) -> demo.CameraFramePacket:
+    return demo.CameraFramePacket(
+        group_id=-1,
+        camera_idx=int(camera_idx),
+        frame_seq=int(seq),
+        timestamp_ns=int(float(timestamp_ms) * 1_000_000),
+        realsense_timestamp_ms=None,
+        realsense_frame_number=None,
+        timestamp_domain=None,
+        capture_arrival_perf_ns=int(float(timestamp_ms) * 1_000_000),
+        color_bgr=np.zeros((2, 2, 3), dtype=np.uint8),
+        ir_left_u8=np.zeros((2, 2), dtype=np.uint8),
+        ir_right_u8=np.zeros((2, 2), dtype=np.uint8),
+        k_color=np.eye(3, dtype=np.float32),
+        k_ir_left=np.eye(3, dtype=np.float32),
+        t_ir_left_to_color=np.eye(4, dtype=np.float32),
+        baseline_m=0.055,
+        intrinsics=demo.CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0),
+        c2w=np.eye(4, dtype=np.float32),
+    )
+
+
 class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
+    def test_timestamp_nearest_grouping_selects_min_skew_triplet(self) -> None:
+        buffers = {
+            0: deque([_dummy_frame(0, seq=0, timestamp_ms=0), _dummy_frame(0, seq=1, timestamp_ms=33), _dummy_frame(0, seq=2, timestamp_ms=66)]),
+            1: deque([_dummy_frame(1, seq=0, timestamp_ms=5), _dummy_frame(1, seq=1, timestamp_ms=38), _dummy_frame(1, seq=2, timestamp_ms=71)]),
+            2: deque([_dummy_frame(2, seq=0, timestamp_ms=7), _dummy_frame(2, seq=1, timestamp_ms=40), _dummy_frame(2, seq=2, timestamp_ms=73)]),
+        }
+
+        selection = demo.select_temporal_capture_triplet(
+            buffers,
+            camera_ids=(0, 1, 2),
+            policy=demo.CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST,
+            max_frame_age_ms=150.0,
+            now_perf_ns=int(80 * 1_000_000),
+        )
+
+        self.assertIsNotNone(selection)
+        assert selection is not None
+        self.assertEqual(selection.per_camera_frame_seq, {0: 2, 1: 2, 2: 2})
+        self.assertAlmostEqual(selection.max_temporal_skew_ms, 7.0)
+
+    def test_timestamp_grouping_drops_when_skew_exceeds_threshold(self) -> None:
+        frames = {
+            0: _dummy_frame(0, seq=0, timestamp_ms=0),
+            1: _dummy_frame(1, seq=0, timestamp_ms=40),
+            2: _dummy_frame(2, seq=0, timestamp_ms=80),
+        }
+        selection = demo._temporal_selection_from_frames(frames, now_perf_ns=int(90 * 1_000_000))
+        group = demo.build_temporal_capture_group(group_id=10, created_perf_s=1.0, selection=selection)
+
+        self.assertAlmostEqual(group.max_temporal_skew_ms, 80.0)
+        self.assertFalse(demo.temporal_group_is_coherent(group, max_capture_skew_ms=33.4))
+
+    def test_capture_group_records_per_camera_offsets(self) -> None:
+        frames = {
+            0: _dummy_frame(0, seq=4, timestamp_ms=100),
+            1: _dummy_frame(1, seq=5, timestamp_ms=110),
+            2: _dummy_frame(2, seq=6, timestamp_ms=120),
+        }
+        group = demo.build_temporal_capture_group(
+            group_id=3,
+            created_perf_s=2.0,
+            selection=demo._temporal_selection_from_frames(frames, now_perf_ns=int(130 * 1_000_000)),
+        )
+
+        self.assertEqual(group.per_camera_frame_seq, {0: 4, 1: 5, 2: 6})
+        self.assertEqual(group.timestamp_source, "host_receive_timestamp")
+        self.assertAlmostEqual(group.per_camera_time_offset_ms[0], -10.0)
+        self.assertAlmostEqual(group.per_camera_time_offset_ms[1], 0.0)
+        self.assertAlmostEqual(group.per_camera_time_offset_ms[2], 10.0)
+
+    def test_ffs_and_fusion_skew_guards_use_same_temporal_contract(self) -> None:
+        frames = {
+            0: _dummy_frame(0, seq=0, timestamp_ms=0),
+            1: _dummy_frame(1, seq=0, timestamp_ms=20),
+            2: _dummy_frame(2, seq=0, timestamp_ms=70),
+        }
+        group = demo.build_temporal_capture_group(
+            group_id=2,
+            created_perf_s=1.0,
+            selection=demo._temporal_selection_from_frames(frames, now_perf_ns=int(80 * 1_000_000)),
+        )
+        depth_group = demo.DepthGroup(
+            group_id=group.group_id,
+            depths={},
+            total_ms=0.0,
+            per_camera_ms={},
+            gpu_gate_wait_ms=0.0,
+            max_temporal_skew_ms=group.max_temporal_skew_ms,
+            per_camera_time_offset_ms=group.per_camera_time_offset_ms,
+            per_camera_frame_seq=group.per_camera_frame_seq,
+            timestamp_source=group.timestamp_source,
+        )
+
+        self.assertFalse(demo.temporal_group_is_coherent(group, max_capture_skew_ms=33.4))
+        self.assertFalse(demo.temporal_group_is_coherent(depth_group, max_capture_skew_ms=33.4))
+
     def test_default_semantic_postprocess_policy(self) -> None:
         layers = demo.semantic_layers_for_track_mode(
             demo.TRACK_MODE_CONTROLLER_OBJECT,
@@ -120,6 +219,10 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["edgetam"]["worker_mode"], "per-camera")
         self.assertEqual(contract["gpu_gate"]["mode"], "serialized")
         self.assertEqual(contract["gpu_gate"]["max_concurrent"], 1)
+        self.assertEqual(contract["temporal_grouping"]["policy"], demo.CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST)
+        self.assertEqual(contract["temporal_grouping"]["max_capture_skew_ms"], demo.DEFAULT_MAX_CAPTURE_SKEW_MS)
+        self.assertTrue(contract["temporal_grouping"]["drop_skewed_groups"])
+        self.assertTrue(contract["temporal_grouping"]["no_temporal_coherent_group_no_ffs"])
 
     def test_professor_safe_preset_defaults_to_controller_object_demo(self) -> None:
         parser = demo.build_arg_parser()
@@ -135,6 +238,9 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["fusion_target_fps"], 2.0)
         self.assertEqual(contract["fusion_timeout_ms"], 250.0)
         self.assertEqual(contract["gpu_gate"], {"mode": "serialized", "max_concurrent": 1})
+        self.assertEqual(contract["temporal_grouping"]["policy"], "timestamp-nearest")
+        self.assertEqual(contract["temporal_grouping"]["max_capture_skew_ms"], 33.4)
+        self.assertEqual(contract["temporal_grouping"]["capture_buffer_size"], 4)
         self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["hand", "stuffed animal"])
 
     def test_visual_5fps_preset_keeps_quality_path_with_gate2(self) -> None:
@@ -151,6 +257,9 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["fusion_target_fps"], 5.0)
         self.assertEqual(contract["depth_source"], "ffs")
         self.assertEqual(contract["gpu_gate"], {"mode": "limited", "max_concurrent": 2})
+        self.assertEqual(contract["temporal_grouping"]["policy"], "timestamp-nearest")
+        self.assertEqual(contract["temporal_grouping"]["max_capture_skew_ms"], 33.4)
+        self.assertTrue(contract["temporal_grouping"]["drop_skewed_groups"])
         self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
 
     def test_saved_mask_roots_are_recorded_in_contract(self) -> None:

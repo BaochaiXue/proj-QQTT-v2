@@ -16,6 +16,7 @@ Date: 2026-05-06
 - EdgeTAM backend: HF `EdgeTAMVideo`
 - EdgeTAM compile mode: `vision-reduce-overhead`
 - professor-safe GPU gate: serialized, `max_concurrent=1`
+- temporal grouping: `timestamp-nearest`, max skew `33.4 ms`
 - object filter: `enhanced-pt`
 - controller filter: `pt-filter`
 - object/controller union before filter: `false`
@@ -27,6 +28,7 @@ FFS worker:
 - one shared worker
 - one runner/context owner
 - cam0/cam1/cam2 depth generation is sequential
+- input must already be a temporal-coherent `CaptureGroup`
 
 EdgeTAM:
 
@@ -38,6 +40,7 @@ EdgeTAM:
 Fusion:
 
 - strict `group_id` matching
+- temporal skew re-check before fusion
 - object fused cloud uses `enhanced-pt`
 - controller fused cloud uses `pt-filter`
 - object and controller are never unioned before filtering
@@ -47,6 +50,16 @@ GPU gate:
 - one shared `GpuInferenceGate`
 - `professor-safe` serializes shared FFS and EdgeTAM model forward
 - debug and summary record gate wait for FFS and each EdgeTAM camera worker
+
+Temporal grouping:
+
+- no temporal-coherent `CaptureGroup`, no FFS
+- `CaptureGroupBuilder` keeps a small per-camera timestamp buffer
+- default policy is `timestamp-nearest`
+- default max skew is `33.4 ms`, one frame at `30 FPS`
+- skewed groups are dropped before shared FFS
+- shared FFS and fusion both re-check the same skew contract
+- debug/profile/summary record timestamp source, per-camera offsets, skew, skew drops, and no-candidate drops
 
 ## Presets
 
@@ -588,3 +601,54 @@ Artifacts:
 
 - `docs/generated/demo2_1_visual5fps_image_sam31_profile_object_only_120s.json`
 - `docs/generated/demo2_1_visual5fps_image_sam31_profile_object_only_120s.md`
+
+## Temporal-Coherent CaptureGroup Gate
+
+Implementation update:
+
+```text
+Capture workers / CameraSystem observation
+  -> per-camera ring buffers
+  -> timestamp-nearest CaptureGroupBuilder
+  -> skew gate
+  -> shared FFS / per-camera EdgeTAM / fusion
+```
+
+New CLI/contract fields:
+
+```text
+--capture-group-policy latest|timestamp-nearest|timestamp-strict
+--max-capture-skew-ms 33.4
+--max-frame-age-ms 150
+--capture-buffer-size 4
+--drop-skewed-groups / --no-drop-skewed-groups
+```
+
+`professor-safe` and `visual-5fps` default to:
+
+```text
+capture_group_policy=timestamp-nearest
+max_capture_skew_ms=33.4
+max_frame_age_ms=150
+capture_buffer_size=4
+drop_skewed_groups=true
+```
+
+The shared FFS worker now rejects any group that violates the temporal skew
+contract before running TensorRT. The fusion worker re-checks the same contract
+before joining masks/depth. This protects dynamic object fused PCD quality at
+the cost of dropping incoherent groups instead of producing ghosted geometry.
+
+Deterministic tests cover:
+
+```text
+timestamp-nearest min-skew triplet selection
+skew threshold drop behavior
+per-camera temporal offsets
+FFS/fusion shared skew guard
+professor-safe and visual-5fps preset temporal defaults
+```
+
+The next live profile should report `skew_ms_med/latest`, `skew_drop`,
+`no_candidate`, `ffs_skew_drop`, and `fusion_skew_drop` in the debug line and
+write the `temporal_grouping` block to the session summary.

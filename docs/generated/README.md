@@ -1,152 +1,60 @@
 # Generated Docs Index
 
-This folder keeps generated validation notes, inventories, and small reusable JSON assets.
+This folder keeps generated validation notes, inventories, profile summaries,
+and small reusable helper assets. It is intentionally not a curated product
+manual; use the compressed harness index first.
 
-Current grouping:
+## Start Here
 
-## Hardware / Capture Validation
+- `harness_engineering_compact_index.md`: concise human-facing summary of the
+  current harness engineering state.
+- `harness_engineering_artifact_inventory.json`: machine-readable inventory of
+  generated artifacts by category.
+- `../SCOPE.md`, `../WORKFLOWS.md`, and `../ARCHITECTURE.md`: stable repo
+  contracts outside generated outputs.
 
-- `d455_single_probe_validation.md`
-- `d455_stream_probe_results.json`
-- `d455_stream_probe_results.md`
-- `both_eval_30_frame_validation.md`
-- `wsl_realsense_rsusb_validation.md`
+## Current Source-Of-Truth Reports
 
-These record what the current machine and D455 topology actually supported during probe or capture checks.
+| Area | Primary report |
+| --- | --- |
+| Demo 2.1 three-view fused PCD | `demo2_1_shared_ffs_per_camera_edgetam_validation.md` |
+| Latest Demo 2.1 visual profile | `demo2_1_visual5fps_image_sam31_profile_object_only_120s.md` |
+| Demo 2 single-camera local FFS path | `demo2_local_ffs_professor_speed_polish.md` |
+| Demo 2 depth source comparison | `demo2_depth_source_fps_comparison.md` |
+| Remote FFS service | `demo2_remote_ffs_service_validation.md` |
+| HF EdgeTAM streaming | `hf_edgetam_streaming_processor_session_validation.md` |
+| HF EdgeTAM compile ablation | `sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.md` |
+| FFS backend integration | `ffs_depth_backend_integration_validation.md` |
+| FFS speed/quality tradeoff | `ffs_benchmark_tradeoff_validation.md` |
+| SAM3.1 environment | `sam31_env_validation.md` |
+| Visualization stack | `visual_stack_cleanup_validation.md` |
+| Repo contracts | `contract_hardening_validation.md` |
 
-## FFS / SAM-family Integration Validation
+## Artifact Families
 
-- `ffs_demo_validation.md`
-- `wsl_env_bootstrap_validation.md`
-- `ffs_tensorrt_windows_validation.md`
-- `ffs_tensorrt_wsl_validation.md`
-- `ffs_official_twostage_triton_env_validation.md`
-- `ffs_single_engine_tensorrt_wsl_validation.md`
-- `ffs_batch3_viewer_validation.md`
-- `ffs_benchmark_tradeoff_validation.md`
-- `ffs_static_replay_matrix_validation.md`
-- `ffs_static_replay_matrix_concurrent3view_validation.md`
-- `ffs_live_3cam_benchmark_validation.md`
-- `ffs_live_vs_proxy_boundary.md`
-- `ffs_live_trt_viewer_validation.md`
-- `ffs_depth_backend_integration_validation.md`
-- `ffs_comparison_workflow_validation.md`
-- `ffs_left_right_codepath_audit.md`
-- `ffs_max_sam31_realsense_env_validation.md`
-- `demo_2_max_env_validation.md`
-- `sam21_max_env_validation.md`
-- `sam21_max_round2_benchmark.md`
-- `sam21_dynamics_checkpoint_ladder_benchmark.md`
-- `edgetam_max_env_validation.md`
-- `edgetam_dynamics_round1_3x6_panel_benchmark.md`
-- `edgetam_vs_sam21_speed_ablation.md`
-- `sam21_edgetam_mask_overlay_3x3_benchmark.md`
-- `sloth_base_motion_ffs_mask_overlay_3x3_benchmark.md`
-- `sloth_base_motion_ffs_fused_pcd_overlay_2x3_benchmark.md`
-- `edgetam_onnx_trt_probe.md`
-- `edgetam_video_trt_compile_probe.md`
-- `hf_edgetam_streaming_validation.md`
-- `hf_edgetam_streaming_processor_session_validation.md`
-- `hf_edgetam_streaming_realcase_benchmark.md`
-- `sloth_set_2_motion_ffs_hf_edgetam_streaming_benchmark.md`
-- `sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_benchmark.md`
-- `sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.md`
-- `sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_benchmark.md`
-- `sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_benchmark.md`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_benchmark.md`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_benchmark.md`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_benchmark.md`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_benchmark.md`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_benchmark.md`
-- `sloth_set_2_motion_ffs_sam31_object_controller_pcd_benchmark.md`
-- `demo2_realtime_masked_edgetam_pcd_profile_isolation.md`
-- `demo2_remote_ffs_service_validation.md`
-- `demo2_depth_source_fps_comparison.md`
-- `demo2_local_ffs_professor_speed_polish.md`
-- `demo2_1_shared_ffs_per_camera_edgetam_validation.md`
-- `demo2_1_visual5fps_profile_object_only.md`
-- `demo2_1_visual5fps_profile_object_only_120s.md`
-- `demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.md`
-- `demo2_1_visual5fps_live_sam31_profile_object_only_120s.md`
-- `demo2_1_visual5fps_image_sam31_profile_object_only_120s.md`
-- `demo2_1_cam0_live_rgb_20260506_071723_sam31_image_one_frame_overlay.png`
+- Hardware / WSL / RealSense probes: `d455_*`, `wsl_*`,
+  `both_eval_*`.
+- FFS validation and runtime profiles: `ffs_*`, `demo2_*`.
+- SAM / EdgeTAM benchmarks: `sam21_*`, `sam31_*`, `edgetam_*`,
+  `hf_edgetam_*`, `sloth_*`.
+- Demo 2.1 live runtime profiles: `demo2_1_*`.
+- Repo and retention hardening: `repo_*`, `contract_*`,
+  `*_cleanup_*`, `*_retention_*`.
+- Reusable helper assets: small `.json`, `.png`, `.txt`, and `.log`
+  files linked by the reports above.
 
-These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
+## Retention Guidance
 
-## Visualization Validation
+- Prefer extending an existing validation report over creating a near-duplicate
+  top-level note.
+- Keep raw logs/results only when a Markdown report or compact index explains
+  why they matter.
+- Do not remove historical artifacts without a recorded cleanup pass.
+- Put newly superseding claims into `harness_engineering_compact_index.md`.
 
-- `depth_visualization_validation.md`
-- `sam31_env_validation.md`
-- `visual_stack_cleanup_inventory.md`
-- `visual_stack_cleanup_validation.md`
+## Checks
 
-These are the main source of truth for current visualization workflows, ownership, and validation status.
-
-`rerun_compare_validation.md` was removed after its content was absorbed by the broader visualization validation surface and current harness checks.
-
-## Repo / Contract Hardening
-
-- `repo_hardening_inventory.md`
-- `repo_hardening_validation.md`
-- `contract_hardening_validation.md`
-- `results_retention_cleanup_20260501.md`
-- `result_root_unification_20260501.md`
-- `local_ephemeral_artifact_cleanup_20260503.md`
-
-These record repo-structure, scope, and metadata-contract hardening passes.
-
-## Reusable Assets
-
-- `box_face_patches_static_frame_0000.json`
-- `object_only_manual_image_roi_native_30_static_frame_0000.json`
-- `object_only_manual_image_roi_fullhead_native_30_static_frame_0000.json`
-- `sam21_max_still_object_video_benchmark.py`
-- `sam21_max_still_object_video_benchmark_results.json`
-- `sam21_max_round2_benchmark_results.json`
-- `sam21_max_round2_mask_quality.json`
-- `sam21_dynamics_checkpoint_ladder_results.json`
-- `sam21_dynamics_checkpoint_ladder_mask_quality.json`
-- `edgetam_dynamics_round1_3x6_panel_results.json`
-- `edgetam_vs_sam21_speed_ablation.json`
-- `sam21_edgetam_mask_overlay_3x3_results.json`
-- `sloth_base_motion_ffs_mask_overlay_3x3_results.json`
-- `sloth_base_motion_ffs_fused_pcd_overlay_2x3_results.json`
-- `edgetam_onnx_trt_probe.json`
-- `edgetam_video_trt_compile_probe.json`
-- `hf_edgetam_streaming_results.json`
-- `hf_edgetam_streaming_processor_session_results.json`
-- `hf_edgetam_streaming_realcase_results.json`
-- `hf_edgetam_streaming_quality.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_streaming_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_streaming_quality.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_vs_same_run_eager_quality.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_hand_object_streaming_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_streaming_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_streaming_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_controller_streaming_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_results.json`
-- `sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_results.json`
-- `sloth_set_2_motion_ffs_sam31_object_controller_pcd_results.json`
-- `demo2_local_ffs_professor_preset_no_render_20260505.txt`
-- `demo2_local_ffs_professor_preset_pointcloud_20260505.txt`
-- `demo2_local_ffs_professor_no_render_profile_20260506.txt`
-- `demo2_local_ffs_professor_pointcloud_profile_20260506.txt`
-
-These are not general datasets. They are small helper assets used by specific validation and visualization workflows.
-
-## Naming Guidance
-
-- `*_validation.md`: one concrete validation run or validation family
-- `*_inventory.md`: current ownership / structure snapshot
-- `*_results.*`: machine-readable and human-readable probe outputs
-- `*.json` helper assets: only keep if still referenced by docs or scripts
-
-When adding a new generated doc, prefer extending the existing validation file for that theme instead of creating another near-duplicate top-level note.
+```bash
+python scripts/harness/check_all.py
+python scripts/harness/check_all.py --full
+```

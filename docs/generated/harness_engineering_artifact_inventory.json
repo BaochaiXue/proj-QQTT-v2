@@ -1,0 +1,1213 @@
+{
+  "categories": {
+    "demo2_1_three_view_runtime": {
+      "bytes": 10528337,
+      "files": 25
+    },
+    "demo2_single_camera_runtime": {
+      "bytes": 1909888,
+      "files": 18
+    },
+    "edgetam_integration": {
+      "bytes": 13949837,
+      "files": 16
+    },
+    "ffs_validation": {
+      "bytes": 93557,
+      "files": 19
+    },
+    "hardware_capture_wsl": {
+      "bytes": 434063,
+      "files": 7
+    },
+    "index": {
+      "bytes": 51368,
+      "files": 3
+    },
+    "repo_contract_retention": {
+      "bytes": 18731,
+      "files": 6
+    },
+    "sam_family_benchmarks": {
+      "bytes": 47787380,
+      "files": 17
+    },
+    "sloth_base_visual_experiments": {
+      "bytes": 1819106,
+      "files": 4
+    },
+    "sloth_set_2_edgetam_sam31_experiments": {
+      "bytes": 11505853,
+      "files": 44
+    },
+    "supporting_assets_and_raw_outputs": {
+      "bytes": 608,
+      "files": 3
+    },
+    "visualization_stack": {
+      "bytes": 28201,
+      "files": 3
+    }
+  },
+  "generated_at_utc": "2026-05-06T12:05:10.112387+00:00",
+  "items": [
+    {
+      "bytes": 2349,
+      "category": "hardware_capture_wsl",
+      "name": "2026-04-14-d455-firmware-update.md",
+      "path": "docs/generated/2026-04-14-d455-firmware-update.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2534,
+      "category": "index",
+      "name": "README.md",
+      "path": "docs/generated/README.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4931,
+      "category": "hardware_capture_wsl",
+      "name": "both_eval_30_frame_validation.md",
+      "path": "docs/generated/both_eval_30_frame_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 430,
+      "category": "supporting_assets_and_raw_outputs",
+      "name": "box_face_patches_static_frame_0000.json",
+      "path": "docs/generated/box_face_patches_static_frame_0000.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 2524,
+      "category": "repo_contract_retention",
+      "name": "contract_hardening_validation.md",
+      "path": "docs/generated/contract_hardening_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3586,
+      "category": "hardware_capture_wsl",
+      "name": "d455_single_probe_validation.md",
+      "path": "docs/generated/d455_single_probe_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 396381,
+      "category": "hardware_capture_wsl",
+      "name": "d455_stream_probe_results.json",
+      "path": "docs/generated/d455_stream_probe_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 17040,
+      "category": "hardware_capture_wsl",
+      "name": "d455_stream_probe_results.md",
+      "path": "docs/generated/d455_stream_probe_results.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 315589,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_cam0_live_rgb_20260506_071723.png",
+      "path": "docs/generated/demo2_1_cam0_live_rgb_20260506_071723.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 319304,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_cam0_live_rgb_20260506_071723_annotated.png",
+      "path": "docs/generated/demo2_1_cam0_live_rgb_20260506_071723_annotated.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 2769,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_cam0_live_rgb_20260506_071723_sam31_image_one_frame_mask.png",
+      "path": "docs/generated/demo2_1_cam0_live_rgb_20260506_071723_sam31_image_one_frame_mask.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 307276,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_cam0_live_rgb_20260506_071723_sam31_image_one_frame_overlay.png",
+      "path": "docs/generated/demo2_1_cam0_live_rgb_20260506_071723_sam31_image_one_frame_overlay.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 24751,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_shared_ffs_per_camera_edgetam_validation.md",
+      "path": "docs/generated/demo2_1_shared_ffs_per_camera_edgetam_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 178691,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.json",
+      "path": "docs/generated/demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 916650,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.log",
+      "path": "docs/generated/demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 1831,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.md",
+      "path": "docs/generated/demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1401308,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_image_sam31_profile_object_only_120s.json",
+      "path": "docs/generated/demo2_1_visual5fps_image_sam31_profile_object_only_120s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 495400,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_image_sam31_profile_object_only_120s.log",
+      "path": "docs/generated/demo2_1_visual5fps_image_sam31_profile_object_only_120s.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 1833,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_image_sam31_profile_object_only_120s.md",
+      "path": "docs/generated/demo2_1_visual5fps_image_sam31_profile_object_only_120s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 88048,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_live_sam31_profile_object_only_120s.json",
+      "path": "docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 917297,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_live_sam31_profile_object_only_120s.log",
+      "path": "docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 1815,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_live_sam31_profile_object_only_120s.md",
+      "path": "docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 379371,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_profile_object_only.json",
+      "path": "docs/generated/demo2_1_visual5fps_profile_object_only.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 928374,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_profile_object_only.log",
+      "path": "docs/generated/demo2_1_visual5fps_profile_object_only.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 1710,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_profile_object_only.md",
+      "path": "docs/generated/demo2_1_visual5fps_profile_object_only.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 278085,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_profile_object_only_120s.json",
+      "path": "docs/generated/demo2_1_visual5fps_profile_object_only_120s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 916894,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_profile_object_only_120s.log",
+      "path": "docs/generated/demo2_1_visual5fps_profile_object_only_120s.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 1849,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_profile_object_only_120s.md",
+      "path": "docs/generated/demo2_1_visual5fps_profile_object_only_120s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 554746,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual_climb5_headless_baseline.log",
+      "path": "docs/generated/demo2_1_visual_climb5_headless_baseline.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 564230,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual_climb5_headless_gate2.log",
+      "path": "docs/generated/demo2_1_visual_climb5_headless_gate2.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 2296,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual_climb5_headless_no_object_postprocess.log",
+      "path": "docs/generated/demo2_1_visual_climb5_headless_no_object_postprocess.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 985940,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual_climb5_render_gate2.log",
+      "path": "docs/generated/demo2_1_visual_climb5_render_gate2.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 942280,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual_climb5_render_smoke.log",
+      "path": "docs/generated/demo2_1_visual_climb5_render_smoke.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 218563,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_depth_source_compare_ffs_no_render.txt",
+      "path": "docs/generated/demo2_depth_source_compare_ffs_no_render.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 215940,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_depth_source_compare_realsense_no_render.txt",
+      "path": "docs/generated/demo2_depth_source_compare_realsense_no_render.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 3920,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_depth_source_fps_comparison.md",
+      "path": "docs/generated/demo2_depth_source_fps_comparison.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 218625,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_local_ffs_professor_no_render_profile_20260506.txt",
+      "path": "docs/generated/demo2_local_ffs_professor_no_render_profile_20260506.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 207535,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_local_ffs_professor_pointcloud_profile_20260506.txt",
+      "path": "docs/generated/demo2_local_ffs_professor_pointcloud_profile_20260506.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 207359,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_local_ffs_professor_preset_no_render_20260505.txt",
+      "path": "docs/generated/demo2_local_ffs_professor_preset_no_render_20260505.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 184244,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_local_ffs_professor_preset_pointcloud_20260505.txt",
+      "path": "docs/generated/demo2_local_ffs_professor_preset_pointcloud_20260505.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 6621,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_local_ffs_professor_speed_polish.md",
+      "path": "docs/generated/demo2_local_ffs_professor_speed_polish.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4499,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_profile_A_capture_only.txt",
+      "path": "docs/generated/demo2_profile_A_capture_only.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 199687,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_profile_B_edgetam_only.txt",
+      "path": "docs/generated/demo2_profile_B_edgetam_only.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 11997,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_profile_C_ffs_only.txt",
+      "path": "docs/generated/demo2_profile_C_ffs_only.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 211591,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_profile_F_edgetam_ffs_pcd_headless.txt",
+      "path": "docs/generated/demo2_profile_F_edgetam_ffs_pcd_headless.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 3498,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_realtime_masked_edgetam_pcd_profile_isolation.md",
+      "path": "docs/generated/demo2_realtime_masked_edgetam_pcd_profile_isolation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 192666,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_realtime_masked_edgetam_pcd_profile_latest.txt",
+      "path": "docs/generated/demo2_realtime_masked_edgetam_pcd_profile_latest.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 252,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_remote_ffs_echo_tailscale_direct_20260505.txt",
+      "path": "docs/generated/demo2_remote_ffs_echo_tailscale_direct_20260505.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 263,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_remote_ffs_echo_tailscale_direct_timeout5000_20260505.txt",
+      "path": "docs/generated/demo2_remote_ffs_echo_tailscale_direct_timeout5000_20260505.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 18302,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_remote_ffs_service_validation.md",
+      "path": "docs/generated/demo2_remote_ffs_service_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4326,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo_2_max_env_validation.md",
+      "path": "docs/generated/demo_2_max_env_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 17748,
+      "category": "visualization_stack",
+      "name": "depth_visualization_validation.md",
+      "path": "docs/generated/depth_visualization_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1971,
+      "category": "edgetam_integration",
+      "name": "edgetam_dynamics_round1_3x6_panel_benchmark.md",
+      "path": "docs/generated/edgetam_dynamics_round1_3x6_panel_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 10377767,
+      "category": "edgetam_integration",
+      "name": "edgetam_dynamics_round1_3x6_panel_results.json",
+      "path": "docs/generated/edgetam_dynamics_round1_3x6_panel_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 4925,
+      "category": "edgetam_integration",
+      "name": "edgetam_max_env_validation.md",
+      "path": "docs/generated/edgetam_max_env_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 6072,
+      "category": "edgetam_integration",
+      "name": "edgetam_onnx_trt_probe.json",
+      "path": "docs/generated/edgetam_onnx_trt_probe.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5048,
+      "category": "edgetam_integration",
+      "name": "edgetam_onnx_trt_probe.md",
+      "path": "docs/generated/edgetam_onnx_trt_probe.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 62646,
+      "category": "edgetam_integration",
+      "name": "edgetam_video_trt_compile_probe.json",
+      "path": "docs/generated/edgetam_video_trt_compile_probe.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5906,
+      "category": "edgetam_integration",
+      "name": "edgetam_video_trt_compile_probe.md",
+      "path": "docs/generated/edgetam_video_trt_compile_probe.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 251976,
+      "category": "edgetam_integration",
+      "name": "edgetam_vs_sam21_speed_ablation.json",
+      "path": "docs/generated/edgetam_vs_sam21_speed_ablation.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 11900,
+      "category": "edgetam_integration",
+      "name": "edgetam_vs_sam21_speed_ablation.md",
+      "path": "docs/generated/edgetam_vs_sam21_speed_ablation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2325,
+      "category": "ffs_validation",
+      "name": "ffs-max-sam31-rs-pre-numba-20260429-explicit.txt",
+      "path": "docs/generated/ffs-max-sam31-rs-pre-numba-20260429-explicit.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 3308,
+      "category": "ffs_validation",
+      "name": "ffs-max-sam31-rs-pre-numba-20260429-pip-freeze.txt",
+      "path": "docs/generated/ffs-max-sam31-rs-pre-numba-20260429-pip-freeze.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 4909,
+      "category": "ffs_validation",
+      "name": "ffs_batch3_viewer_validation.md",
+      "path": "docs/generated/ffs_batch3_viewer_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 7825,
+      "category": "ffs_validation",
+      "name": "ffs_benchmark_tradeoff_validation.md",
+      "path": "docs/generated/ffs_benchmark_tradeoff_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3280,
+      "category": "ffs_validation",
+      "name": "ffs_comparison_workflow_validation.md",
+      "path": "docs/generated/ffs_comparison_workflow_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3200,
+      "category": "ffs_validation",
+      "name": "ffs_demo_validation.md",
+      "path": "docs/generated/ffs_demo_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4021,
+      "category": "ffs_validation",
+      "name": "ffs_depth_backend_integration_validation.md",
+      "path": "docs/generated/ffs_depth_backend_integration_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4203,
+      "category": "ffs_validation",
+      "name": "ffs_left_right_codepath_audit.md",
+      "path": "docs/generated/ffs_left_right_codepath_audit.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 5253,
+      "category": "ffs_validation",
+      "name": "ffs_live_3cam_benchmark_validation.md",
+      "path": "docs/generated/ffs_live_3cam_benchmark_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4567,
+      "category": "ffs_validation",
+      "name": "ffs_live_trt_viewer_validation.md",
+      "path": "docs/generated/ffs_live_trt_viewer_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1811,
+      "category": "ffs_validation",
+      "name": "ffs_live_vs_proxy_boundary.md",
+      "path": "docs/generated/ffs_live_vs_proxy_boundary.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 6610,
+      "category": "ffs_validation",
+      "name": "ffs_max_sam31_realsense_env_validation.md",
+      "path": "docs/generated/ffs_max_sam31_realsense_env_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2147,
+      "category": "ffs_validation",
+      "name": "ffs_max_sam31_rs_numba_install_validation.md",
+      "path": "docs/generated/ffs_max_sam31_rs_numba_install_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 5111,
+      "category": "ffs_validation",
+      "name": "ffs_official_twostage_triton_env_validation.md",
+      "path": "docs/generated/ffs_official_twostage_triton_env_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 16534,
+      "category": "ffs_validation",
+      "name": "ffs_single_engine_tensorrt_wsl_validation.md",
+      "path": "docs/generated/ffs_single_engine_tensorrt_wsl_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4974,
+      "category": "ffs_validation",
+      "name": "ffs_static_replay_matrix_concurrent3view_validation.md",
+      "path": "docs/generated/ffs_static_replay_matrix_concurrent3view_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 5219,
+      "category": "ffs_validation",
+      "name": "ffs_static_replay_matrix_validation.md",
+      "path": "docs/generated/ffs_static_replay_matrix_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4547,
+      "category": "ffs_validation",
+      "name": "ffs_tensorrt_windows_validation.md",
+      "path": "docs/generated/ffs_tensorrt_windows_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3713,
+      "category": "ffs_validation",
+      "name": "ffs_tensorrt_wsl_validation.md",
+      "path": "docs/generated/ffs_tensorrt_wsl_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 44001,
+      "category": "index",
+      "name": "harness_engineering_artifact_inventory.json",
+      "path": "docs/generated/harness_engineering_artifact_inventory.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 4833,
+      "category": "index",
+      "name": "harness_engineering_compact_index.md",
+      "path": "docs/generated/harness_engineering_compact_index.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1602,
+      "category": "edgetam_integration",
+      "name": "hf_edgetam_streaming_processor_session_results.json",
+      "path": "docs/generated/hf_edgetam_streaming_processor_session_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1292,
+      "category": "edgetam_integration",
+      "name": "hf_edgetam_streaming_processor_session_validation.md",
+      "path": "docs/generated/hf_edgetam_streaming_processor_session_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1211227,
+      "category": "edgetam_integration",
+      "name": "hf_edgetam_streaming_quality.json",
+      "path": "docs/generated/hf_edgetam_streaming_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 7059,
+      "category": "edgetam_integration",
+      "name": "hf_edgetam_streaming_realcase_benchmark.md",
+      "path": "docs/generated/hf_edgetam_streaming_realcase_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1995858,
+      "category": "edgetam_integration",
+      "name": "hf_edgetam_streaming_realcase_results.json",
+      "path": "docs/generated/hf_edgetam_streaming_realcase_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 2946,
+      "category": "edgetam_integration",
+      "name": "hf_edgetam_streaming_results.json",
+      "path": "docs/generated/hf_edgetam_streaming_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1642,
+      "category": "edgetam_integration",
+      "name": "hf_edgetam_streaming_validation.md",
+      "path": "docs/generated/hf_edgetam_streaming_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1401,
+      "category": "repo_contract_retention",
+      "name": "local_ephemeral_artifact_cleanup_20260503.md",
+      "path": "docs/generated/local_ephemeral_artifact_cleanup_20260503.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 89,
+      "category": "supporting_assets_and_raw_outputs",
+      "name": "object_only_manual_image_roi_fullhead_native_30_static_frame_0000.json",
+      "path": "docs/generated/object_only_manual_image_roi_fullhead_native_30_static_frame_0000.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 89,
+      "category": "supporting_assets_and_raw_outputs",
+      "name": "object_only_manual_image_roi_native_30_static_frame_0000.json",
+      "path": "docs/generated/object_only_manual_image_roi_native_30_static_frame_0000.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 6174,
+      "category": "repo_contract_retention",
+      "name": "repo_hardening_inventory.md",
+      "path": "docs/generated/repo_hardening_inventory.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3386,
+      "category": "repo_contract_retention",
+      "name": "repo_hardening_validation.md",
+      "path": "docs/generated/repo_hardening_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1856,
+      "category": "repo_contract_retention",
+      "name": "result_root_unification_20260501.md",
+      "path": "docs/generated/result_root_unification_20260501.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3390,
+      "category": "repo_contract_retention",
+      "name": "results_retention_cleanup_20260501.md",
+      "path": "docs/generated/results_retention_cleanup_20260501.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3424,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_dynamics_checkpoint_ladder_benchmark.md",
+      "path": "docs/generated/sam21_dynamics_checkpoint_ladder_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1095359,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_dynamics_checkpoint_ladder_mask_quality.json",
+      "path": "docs/generated/sam21_dynamics_checkpoint_ladder_mask_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 24329614,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_dynamics_checkpoint_ladder_results.json",
+      "path": "docs/generated/sam21_dynamics_checkpoint_ladder_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1186,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_edgetam_mask_overlay_3x3_benchmark.md",
+      "path": "docs/generated/sam21_edgetam_mask_overlay_3x3_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 329816,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_edgetam_mask_overlay_3x3_results.json",
+      "path": "docs/generated/sam21_edgetam_mask_overlay_3x3_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 6916,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_env_validation.md",
+      "path": "docs/generated/sam21_max_env_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 7192,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_round2_benchmark.md",
+      "path": "docs/generated/sam21_max_round2_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 20801958,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_round2_benchmark_results.json",
+      "path": "docs/generated/sam21_max_round2_benchmark_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1160952,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_round2_mask_quality.json",
+      "path": "docs/generated/sam21_max_round2_mask_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 9024,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_still_object_video_benchmark.py",
+      "path": "docs/generated/sam21_max_still_object_video_benchmark.py",
+      "suffix": ".py"
+    },
+    {
+      "bytes": 2577,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_still_object_video_benchmark_cold_results.json",
+      "path": "docs/generated/sam21_max_still_object_video_benchmark_cold_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 7083,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_still_object_video_benchmark_hot_run.log",
+      "path": "docs/generated/sam21_max_still_object_video_benchmark_hot_run.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 2763,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_still_object_video_benchmark_no_warmup_results.json",
+      "path": "docs/generated/sam21_max_still_object_video_benchmark_no_warmup_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3356,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_still_object_video_benchmark_results.json",
+      "path": "docs/generated/sam21_max_still_object_video_benchmark_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 6979,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_still_object_video_benchmark_run.log",
+      "path": "docs/generated/sam21_max_still_object_video_benchmark_run.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 8370,
+      "category": "sam_family_benchmarks",
+      "name": "sam21_max_still_object_video_benchmark_warm_run.log",
+      "path": "docs/generated/sam21_max_still_object_video_benchmark_warm_run.log",
+      "suffix": ".log"
+    },
+    {
+      "bytes": 10811,
+      "category": "sam_family_benchmarks",
+      "name": "sam31_env_validation.md",
+      "path": "docs/generated/sam31_env_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1276,
+      "category": "sloth_base_visual_experiments",
+      "name": "sloth_base_motion_ffs_fused_pcd_overlay_2x3_benchmark.md",
+      "path": "docs/generated/sloth_base_motion_ffs_fused_pcd_overlay_2x3_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1370854,
+      "category": "sloth_base_visual_experiments",
+      "name": "sloth_base_motion_ffs_fused_pcd_overlay_2x3_results.json",
+      "path": "docs/generated/sloth_base_motion_ffs_fused_pcd_overlay_2x3_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1565,
+      "category": "sloth_base_visual_experiments",
+      "name": "sloth_base_motion_ffs_mask_overlay_3x3_benchmark.md",
+      "path": "docs/generated/sloth_base_motion_ffs_mask_overlay_3x3_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 445411,
+      "category": "sloth_base_visual_experiments",
+      "name": "sloth_base_motion_ffs_mask_overlay_3x3_results.json",
+      "path": "docs/generated/sloth_base_motion_ffs_mask_overlay_3x3_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 2494,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2573,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1335845,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 266077,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 126450,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_hand_object_streaming_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_hand_object_streaming_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3065,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1336673,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 126521,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_controller_streaming_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_controller_streaming_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3298,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 776981,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 2679,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2000187,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 134268,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_streaming_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_streaming_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 2600,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2672,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2000995,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 401382,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 134357,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_streaming_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_streaming_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1517,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2326,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3780,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2707,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1036,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_quality.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 24727,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1688,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 169111,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_quality.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 278461,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3049,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 843,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_quality.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 18994,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3073,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 868,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_quality.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 19429,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1744,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 169220,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_quality.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 278551,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 604,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_vs_eager_quality.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_vs_eager_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 657,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_vs_same_run_eager_quality.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_vs_same_run_eager_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1395,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 793497,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 168760,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_quality.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_quality.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 276048,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 2770,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_sam31_object_controller_pcd_benchmark.md",
+      "path": "docs/generated/sloth_set_2_motion_ffs_sam31_object_controller_pcd_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 621881,
+      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "name": "sloth_set_2_motion_ffs_sam31_object_controller_pcd_results.json",
+      "path": "docs/generated/sloth_set_2_motion_ffs_sam31_object_controller_pcd_results.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 7448,
+      "category": "visualization_stack",
+      "name": "visual_stack_cleanup_inventory.md",
+      "path": "docs/generated/visual_stack_cleanup_inventory.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3005,
+      "category": "visualization_stack",
+      "name": "visual_stack_cleanup_validation.md",
+      "path": "docs/generated/visual_stack_cleanup_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4010,
+      "category": "hardware_capture_wsl",
+      "name": "wsl_env_bootstrap_validation.md",
+      "path": "docs/generated/wsl_env_bootstrap_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 5766,
+      "category": "hardware_capture_wsl",
+      "name": "wsl_realsense_rsusb_validation.md",
+      "path": "docs/generated/wsl_realsense_rsusb_validation.md",
+      "suffix": ".md"
+    }
+  ],
+  "root": "docs/generated",
+  "total_bytes": 88126929,
+  "total_files": 165
+}

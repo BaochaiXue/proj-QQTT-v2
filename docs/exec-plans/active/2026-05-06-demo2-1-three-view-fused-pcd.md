@@ -140,3 +140,30 @@ Change the live init path to a dedicated one-frame image path:
 Formal Demo 2.1 remains fail-fast and live-only: if the one-frame SAM3.1 path
 does not produce the requested object/controller mask, the run fails with no
 saved-mask fallback.
+
+## Temporal-Coherent CaptureGroup Gate Slice
+
+Dynamic three-view fused PCD must not run FFS on arbitrary latest frames. The
+CaptureGroupBuilder now enforces the temporal contract before downstream GPU
+work:
+
+- keep a small per-camera ring buffer
+- select the cam0/cam1/cam2 triplet with nearest timestamps
+- default `max_capture_skew_ms=33.4` for `848x480@30`
+- drop skewed groups before shared FFS
+- make shared FFS and fusion re-check the skew contract
+- record timestamp source, skew, per-camera offsets, skew drops, and no-candidate drops
+
+Default presets use:
+
+```text
+capture_group_policy=timestamp-nearest
+max_capture_skew_ms=33.4
+max_frame_age_ms=150
+capture_buffer_size=4
+drop_skewed_groups=true
+```
+
+This may reduce FPS when cameras drift, but it prevents wasting FFS on depth
+that cannot be fused and prevents dynamic ghosting from cross-camera temporal
+mismatch.

@@ -4,13 +4,14 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, replace
+from itertools import product
 import json
 import os
 from pathlib import Path
 import sys
 import threading
 import time
-from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
 import numpy as np
@@ -125,6 +126,17 @@ GPU_GATE_MODE_SERIALIZED = "serialized"
 GPU_GATE_MODE_LIMITED = "limited"
 GPU_GATE_MODE_OFF = "off"
 GPU_GATE_MODES = (GPU_GATE_MODE_SERIALIZED, GPU_GATE_MODE_LIMITED, GPU_GATE_MODE_OFF)
+CAPTURE_GROUP_POLICY_LATEST = "latest"
+CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST = "timestamp-nearest"
+CAPTURE_GROUP_POLICY_TIMESTAMP_STRICT = "timestamp-strict"
+CAPTURE_GROUP_POLICIES = (
+    CAPTURE_GROUP_POLICY_LATEST,
+    CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST,
+    CAPTURE_GROUP_POLICY_TIMESTAMP_STRICT,
+)
+DEFAULT_MAX_CAPTURE_SKEW_MS = 33.4
+DEFAULT_MAX_FRAME_AGE_MS = 150.0
+DEFAULT_CAPTURE_BUFFER_SIZE = 4
 
 
 @dataclass(frozen=True)
@@ -161,6 +173,10 @@ class CameraFramePacket:
     camera_idx: int
     frame_seq: int
     timestamp_ns: int
+    realsense_timestamp_ms: float | None
+    realsense_frame_number: int | None
+    timestamp_domain: str | None
+    capture_arrival_perf_ns: int
     color_bgr: np.ndarray
     ir_left_u8: np.ndarray | None
     ir_right_u8: np.ndarray | None
@@ -181,10 +197,26 @@ class CaptureGroup:
     group_id: int
     created_perf_s: float
     frames: dict[int, CameraFramePacket]
+    group_timestamp_ns: int
+    max_temporal_skew_ms: float
+    per_camera_time_offset_ms: dict[int, float]
+    per_camera_frame_seq: dict[int, int]
+    timestamp_source: str
 
     @property
     def seq(self) -> int:
         return int(self.group_id)
+
+
+@dataclass(frozen=True)
+class TemporalGroupSelection:
+    frames: dict[int, CameraFramePacket]
+    timestamp_source: str
+    group_timestamp_ns: int
+    max_temporal_skew_ms: float
+    per_camera_time_offset_ms: dict[int, float]
+    per_camera_frame_seq: dict[int, int]
+    age_ms: float
 
 
 @dataclass(frozen=True)
@@ -203,6 +235,10 @@ class DepthGroup:
     total_ms: float
     per_camera_ms: dict[int, dict[str, float]]
     gpu_gate_wait_ms: float
+    max_temporal_skew_ms: float
+    per_camera_time_offset_ms: dict[int, float]
+    per_camera_frame_seq: dict[int, int]
+    timestamp_source: str
 
     @property
     def seq(self) -> int:
@@ -242,6 +278,9 @@ class FusedPcdPacket:
     edgetam_ms_by_camera: dict[int, float]
     ffs_gpu_gate_wait_ms: float
     edgetam_gpu_gate_wait_ms_by_camera: dict[int, float]
+    capture_temporal_skew_ms: float
+    capture_time_offsets_ms_by_camera: dict[int, float]
+    timestamp_source: str
 
     @property
     def seq(self) -> int:
@@ -313,6 +352,22 @@ class MsWindowStats:
             if not self._values:
                 return 0.0
             return float(self._values[-1])
+
+    @property
+    def p95(self) -> float:
+        with self._lock:
+            values = list(self._values)
+        if not values:
+            return 0.0
+        return float(np.percentile(np.asarray(values, dtype=np.float32), 95))
+
+    @property
+    def max(self) -> float:
+        with self._lock:
+            values = list(self._values)
+        if not values:
+            return 0.0
+        return float(np.max(np.asarray(values, dtype=np.float32)))
 
 
 class GpuInferenceGate:
@@ -610,7 +665,10 @@ def _explicit_cli_options(argv: Sequence[str] | None) -> set[str]:
     for token in tokens:
         if not str(token).startswith("--"):
             continue
-        explicit.add(str(token).split("=", maxsplit=1)[0])
+        flag = str(token).split("=", maxsplit=1)[0]
+        explicit.add(flag)
+        if flag.startswith("--no-"):
+            explicit.add("--" + flag[len("--no-"):])
     return explicit
 
 
@@ -647,6 +705,11 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         ("--gpu-gate-mode", "gpu_gate_mode", GPU_GATE_MODE_SERIALIZED),
         ("--gpu-gate-max-concurrent", "gpu_gate_max_concurrent", 1),
         ("--fusion-timeout-ms", "fusion_timeout_ms", 250.0),
+        ("--capture-group-policy", "capture_group_policy", CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST),
+        ("--max-capture-skew-ms", "max_capture_skew_ms", DEFAULT_MAX_CAPTURE_SKEW_MS),
+        ("--max-frame-age-ms", "max_frame_age_ms", DEFAULT_MAX_FRAME_AGE_MS),
+        ("--capture-buffer-size", "capture_buffer_size", DEFAULT_CAPTURE_BUFFER_SIZE),
+        ("--drop-skewed-groups", "drop_skewed_groups", True),
     )
     for flag, attr, value in common:
         _set_if_not_explicit(args, explicit, flag=flag, attr=attr, value=value)
@@ -683,10 +746,177 @@ def _camera_intrinsics_from_k(k_color: np.ndarray, *, width: int, height: int) -
 
 def _as_timestamp_ns(value: Any) -> int:
     try:
-        # RealSense timestamps are usually milliseconds.
-        return int(float(value) * 1_000_000)
+        scalar = float(value)
     except Exception:
         return int(time.time_ns())
+    if scalar > 1.0e15:
+        return int(scalar)
+    if scalar > 1.0e12:
+        return int(scalar * 1_000_000.0)
+    if scalar > 1.0e9:
+        return int(scalar * 1_000_000_000.0)
+    if scalar > 1.0e6:
+        return int(scalar * 1_000_000.0)
+    return int(scalar * 1_000_000_000.0)
+
+
+def _packet_realsense_timestamp_ns(frame: CameraFramePacket) -> int | None:
+    if frame.realsense_timestamp_ms is None:
+        return None
+    return int(float(frame.realsense_timestamp_ms) * 1_000_000.0)
+
+
+def select_capture_timestamp_source(frames: dict[int, CameraFramePacket]) -> str:
+    domains = [frame.timestamp_domain for frame in frames.values()]
+    has_realsense = all(frame.realsense_timestamp_ms is not None for frame in frames.values())
+    if has_realsense and all(domain is not None for domain in domains) and len(set(domains)) == 1:
+        return "realsense_timestamp"
+    return "host_receive_timestamp"
+
+
+def _packet_timestamp_for_source(frame: CameraFramePacket, timestamp_source: str) -> int:
+    if timestamp_source == "realsense_timestamp":
+        timestamp_ns = _packet_realsense_timestamp_ns(frame)
+        if timestamp_ns is not None:
+            return timestamp_ns
+    return int(frame.timestamp_ns)
+
+
+def _temporal_selection_from_frames(
+    frames: dict[int, CameraFramePacket],
+    *,
+    now_perf_ns: int,
+) -> TemporalGroupSelection:
+    timestamp_source = select_capture_timestamp_source(frames)
+    timestamps = {
+        int(camera_idx): _packet_timestamp_for_source(frame, timestamp_source)
+        for camera_idx, frame in frames.items()
+    }
+    values = list(timestamps.values())
+    group_timestamp_ns = int(np.median(np.asarray(values, dtype=np.float64)))
+    offsets = {
+        int(camera_idx): float((timestamp_ns - group_timestamp_ns) / 1_000_000.0)
+        for camera_idx, timestamp_ns in timestamps.items()
+    }
+    max_temporal_skew_ms = float((max(values) - min(values)) / 1_000_000.0)
+    latest_arrival_ns = max(int(frame.capture_arrival_perf_ns) for frame in frames.values())
+    age_ms = float(max(0, now_perf_ns - latest_arrival_ns) / 1_000_000.0)
+    return TemporalGroupSelection(
+        frames=dict(frames),
+        timestamp_source=timestamp_source,
+        group_timestamp_ns=group_timestamp_ns,
+        max_temporal_skew_ms=max_temporal_skew_ms,
+        per_camera_time_offset_ms=offsets,
+        per_camera_frame_seq={int(camera_idx): int(frame.frame_seq) for camera_idx, frame in frames.items()},
+        age_ms=age_ms,
+    )
+
+
+def select_temporal_capture_triplet(
+    buffers: dict[int, deque[CameraFramePacket]],
+    *,
+    camera_ids: Sequence[int],
+    policy: str,
+    max_frame_age_ms: float,
+    now_perf_ns: int,
+) -> TemporalGroupSelection | None:
+    if policy not in CAPTURE_GROUP_POLICIES:
+        raise ValueError(f"Unsupported capture group policy: {policy}")
+    camera_ids = tuple(int(camera_idx) for camera_idx in camera_ids)
+    if any(not buffers.get(camera_idx) for camera_idx in camera_ids):
+        return None
+    max_frame_age_ms = float(max_frame_age_ms)
+    if policy == CAPTURE_GROUP_POLICY_LATEST:
+        frames = {camera_idx: buffers[camera_idx][-1] for camera_idx in camera_ids}
+        selection = _temporal_selection_from_frames(frames, now_perf_ns=now_perf_ns)
+        return selection if selection.age_ms <= max_frame_age_ms else None
+
+    best: TemporalGroupSelection | None = None
+    best_score = float("inf")
+    for combo in product(*(tuple(buffers[camera_idx]) for camera_idx in camera_ids)):
+        frames = {camera_idx: frame for camera_idx, frame in zip(camera_ids, combo)}
+        selection = _temporal_selection_from_frames(frames, now_perf_ns=now_perf_ns)
+        if selection.age_ms > max_frame_age_ms:
+            continue
+        score = float(selection.max_temporal_skew_ms + 0.1 * selection.age_ms)
+        if score < best_score:
+            best = selection
+            best_score = score
+    return best
+
+
+def build_temporal_capture_group(
+    *,
+    group_id: int,
+    created_perf_s: float,
+    selection: TemporalGroupSelection,
+) -> CaptureGroup:
+    frames = {
+        int(camera_idx): replace(frame, group_id=int(group_id))
+        for camera_idx, frame in selection.frames.items()
+    }
+    return CaptureGroup(
+        group_id=int(group_id),
+        created_perf_s=float(created_perf_s),
+        frames=frames,
+        group_timestamp_ns=int(selection.group_timestamp_ns),
+        max_temporal_skew_ms=float(selection.max_temporal_skew_ms),
+        per_camera_time_offset_ms=dict(selection.per_camera_time_offset_ms),
+        per_camera_frame_seq=dict(selection.per_camera_frame_seq),
+        timestamp_source=str(selection.timestamp_source),
+    )
+
+
+def drop_selected_and_older_frames(
+    buffers: dict[int, deque[CameraFramePacket]],
+    selection: TemporalGroupSelection,
+) -> None:
+    for camera_idx, selected in selection.frames.items():
+        buffer = buffers.get(int(camera_idx))
+        if buffer is None:
+            continue
+        selected_key = (int(selected.frame_seq), int(selected.timestamp_ns), int(selected.capture_arrival_perf_ns))
+        while buffer:
+            candidate = buffer[0]
+            candidate_key = (int(candidate.frame_seq), int(candidate.timestamp_ns), int(candidate.capture_arrival_perf_ns))
+            buffer.popleft()
+            if candidate_key == selected_key:
+                break
+
+
+def drop_oldest_capture_buffer_frame(buffers: dict[int, deque[CameraFramePacket]]) -> bool:
+    oldest_camera: int | None = None
+    oldest_arrival_ns: int | None = None
+    for camera_idx, buffer in buffers.items():
+        if not buffer:
+            continue
+        arrival_ns = int(buffer[0].capture_arrival_perf_ns)
+        if oldest_arrival_ns is None or arrival_ns < oldest_arrival_ns:
+            oldest_arrival_ns = arrival_ns
+            oldest_camera = int(camera_idx)
+    if oldest_camera is None:
+        return False
+    buffers[oldest_camera].popleft()
+    return True
+
+
+def prune_stale_capture_buffers(
+    buffers: dict[int, deque[CameraFramePacket]],
+    *,
+    max_frame_age_ms: float,
+    now_perf_ns: int,
+) -> int:
+    pruned = 0
+    max_age_ns = int(float(max_frame_age_ms) * 1_000_000.0)
+    for buffer in buffers.values():
+        while buffer and now_perf_ns - int(buffer[0].capture_arrival_perf_ns) > max_age_ns:
+            buffer.popleft()
+            pruned += 1
+    return pruned
+
+
+def temporal_group_is_coherent(group: CaptureGroup | DepthGroup, *, max_capture_skew_ms: float) -> bool:
+    return float(group.max_temporal_skew_ms) <= float(max_capture_skew_ms)
 
 
 def _load_saved_mask_from_root(mask_root: str | Path | None, *, camera_idx: int, expected_shape: tuple[int, int]) -> np.ndarray:
@@ -758,6 +988,14 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "render_mode": args.render_mode,
         "fusion_target_fps": float(args.fusion_target_fps),
         "fusion_timeout_ms": float(args.fusion_timeout_ms),
+        "temporal_grouping": {
+            "policy": args.capture_group_policy,
+            "max_capture_skew_ms": float(args.max_capture_skew_ms),
+            "max_frame_age_ms": float(args.max_frame_age_ms),
+            "capture_buffer_size": int(args.capture_buffer_size),
+            "drop_skewed_groups": bool(args.drop_skewed_groups),
+            "no_temporal_coherent_group_no_ffs": True,
+        },
         "init": {
             "mode": args.init_mode,
             "object_init_mask_root": args.object_init_mask_root,
@@ -849,6 +1087,9 @@ class Demo21Runtime:
             self.gpu_gate_wait_stats[f"edgetam_cam{int(camera_idx)}"] = MsWindowStats()
         self.fusion_stats = StageStats()
         self.render_stats = RenderStats()
+        self.temporal_skew_stats = MsWindowStats()
+        self._temporal_skews_lock = threading.Lock()
+        self._temporal_skews_ms: list[float] = []
         self._threads: list[threading.Thread] = []
         self._sam31_lock = threading.Lock()
         self._summary: dict[str, Any] = {"contract": build_contract(args), "events": []}
@@ -878,6 +1119,34 @@ class Demo21Runtime:
             stats = MsWindowStats()
             self.gpu_gate_wait_stats[key] = stats
         stats.record(float(wait_ms))
+
+    def _record_temporal_skew(self, skew_ms: float) -> None:
+        value = float(skew_ms)
+        self.temporal_skew_stats.record(value)
+        with self._temporal_skews_lock:
+            self._temporal_skews_ms.append(value)
+
+    def _temporal_grouping_summary(self) -> dict[str, Any]:
+        with self._temporal_skews_lock:
+            values = list(self._temporal_skews_ms)
+        stats = _profile_stats(values)
+        return {
+            "policy": self.args.capture_group_policy,
+            "max_capture_skew_ms": float(self.args.max_capture_skew_ms),
+            "max_frame_age_ms": float(self.args.max_frame_age_ms),
+            "capture_buffer_size": int(self.args.capture_buffer_size),
+            "drop_skewed_groups": bool(self.args.drop_skewed_groups),
+            "timestamp_source": self._summary.get("capture_timestamp_source", "unknown"),
+            "groups_emitted": int(self._summary.get("capture_groups_emitted", 0)),
+            "groups_dropped_skew": int(self._summary.get("capture_group_skew_drop", 0)),
+            "groups_dropped_no_candidate": int(self._summary.get("capture_group_no_candidate", 0)),
+            "stale_frames_pruned": int(self._summary.get("capture_stale_frames_pruned", 0)),
+            "ffs_groups_dropped_skew": int(self._summary.get("ffs_drop_skewed_capture_group", 0)),
+            "fusion_groups_dropped_skew": int(self._summary.get("fusion_drop_skewed_group", 0)),
+            "skew_ms_median": float(stats["median"]),
+            "skew_ms_p95": float(stats["p95"]),
+            "skew_ms_max": float(stats["max"]),
+        }
 
     def _profile_rel_s(self, perf_s: float | None = None) -> float:
         return float((time.perf_counter() if perf_s is None else perf_s) - self._profile_started_perf_s)
@@ -958,6 +1227,14 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --gpu-gate-max-concurrent must be >= 1")
         if self.args.gpu_gate_mode == GPU_GATE_MODE_SERIALIZED and int(self.args.gpu_gate_max_concurrent) != 1:
             raise RuntimeError("Demo 2.1 serialized GPU gate requires --gpu-gate-max-concurrent 1")
+        if int(self.args.capture_buffer_size) < 1:
+            raise RuntimeError("Demo 2.1 --capture-buffer-size must be >= 1")
+        if float(self.args.max_capture_skew_ms) < 0:
+            raise RuntimeError("Demo 2.1 --max-capture-skew-ms must be >= 0")
+        if float(self.args.max_frame_age_ms) <= 0:
+            raise RuntimeError("Demo 2.1 --max-frame-age-ms must be > 0")
+        if self.args.capture_group_policy not in CAPTURE_GROUP_POLICIES:
+            raise RuntimeError(f"Demo 2.1 unsupported --capture-group-policy {self.args.capture_group_policy}")
         if self.args.depth_source == DEPTH_SOURCE_FFS:
             validate_ffs_paths(ffs_repo=Path(self.args.ffs_repo), model_dir=Path(self.args.ffs_trt_model_dir))
         if self.args.init_mode == "saved-masks":
@@ -1053,6 +1330,7 @@ class Demo21Runtime:
                 key: stats.median for key, stats in sorted(self.gpu_gate_wait_stats.items())
             },
         }
+        self._summary["temporal_grouping"] = self._temporal_grouping_summary()
         summary_path.write_text(json.dumps(self._summary, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
         print(f"[demo2.1] summary={summary_path}", flush=True)
         if self._profile_enabled:
@@ -1078,6 +1356,7 @@ class Demo21Runtime:
         summary["target_fps_deficit"] = float(target_fps - summary["render_fps"])
         summary["target_fps_deficit_ratio"] = float((target_fps - summary["render_fps"]) / target_fps) if target_fps > 0 else 0.0
         metric_paths: dict[str, tuple[str, ...]] = {
+            "capture_temporal_skew_ms": ("capture", "max_temporal_skew_ms"),
             "edgetam_cam0_model_ms": ("edgetam", "cam0", "model_ms"),
             "edgetam_cam1_model_ms": ("edgetam", "cam1", "model_ms"),
             "edgetam_cam2_model_ms": ("edgetam", "cam2", "model_ms"),
@@ -1143,6 +1422,7 @@ class Demo21Runtime:
             "object_filter": self.args.object_postprocess,
             "controller_filter": self.args.controller_postprocess,
             "object_controller_union_before_filter": bool(contract["fusion"]["object_controller_union_before_filter"]),
+            "temporal_grouping": contract["temporal_grouping"],
             "warmup_exclude_s": warmup_s,
             "summary_full_run": self._profile_summary_for_records(records),
             "summary_after_warmup": self._profile_summary_for_records(after_warmup),
@@ -1183,7 +1463,9 @@ class Demo21Runtime:
             "| --- | ---: | ---: | ---: | ---: |",
         ])
         for name in (
+            "capture_temporal_skew_ms",
             "ffs_cycle_ms",
+            "ffs_gate_wait_ms",
             "edgetam_cam0_model_ms",
             "edgetam_cam1_model_ms",
             "edgetam_cam2_model_ms",
@@ -1242,15 +1524,39 @@ class Demo21Runtime:
         except KeyboardInterrupt:
             self.stop_event.set()
 
-    def _metadata_frame_packet(self, *, group_id: int, camera_idx: int, obs: dict[str, Any]) -> CameraFramePacket:
+    def _metadata_frame_packet(
+        self,
+        *,
+        group_id: int,
+        camera_idx: int,
+        obs: dict[str, Any],
+        capture_arrival_perf_ns: int | None = None,
+    ) -> CameraFramePacket:
         metadata = self._stream_metadata[int(camera_idx)]
         k_color = np.asarray(metadata["K_color"], dtype=np.float32).reshape(3, 3)
         intrinsics = _camera_intrinsics_from_k(k_color, width=self.width, height=self.height)
+        host_timestamp_s = float(obs.get("timestamp", time.time()))
+        realsense_timestamp_ms: float | None = None
+        if "camera_capture_timestamp" in obs:
+            try:
+                realsense_timestamp_ms = float(obs["camera_capture_timestamp"]) * 1000.0
+            except Exception:
+                realsense_timestamp_ms = None
+        realsense_frame_number: int | None = None
+        if "realsense_frame_number" in obs:
+            try:
+                realsense_frame_number = int(obs["realsense_frame_number"])
+            except Exception:
+                realsense_frame_number = None
         return CameraFramePacket(
             group_id=int(group_id),
             camera_idx=int(camera_idx),
             frame_seq=int(obs.get("step_idx", group_id)),
-            timestamp_ns=_as_timestamp_ns(obs.get("timestamp", time.time() * 1000.0)),
+            timestamp_ns=_as_timestamp_ns(host_timestamp_s),
+            realsense_timestamp_ms=realsense_timestamp_ms,
+            realsense_frame_number=realsense_frame_number,
+            timestamp_domain=None if obs.get("timestamp_domain") is None else str(obs.get("timestamp_domain")),
+            capture_arrival_perf_ns=int(time.perf_counter_ns() if capture_arrival_perf_ns is None else capture_arrival_perf_ns),
             color_bgr=np.ascontiguousarray(obs["color"].copy()),
             ir_left_u8=np.ascontiguousarray(obs["ir_left"].copy()),
             ir_right_u8=np.ascontiguousarray(obs["ir_right"].copy()),
@@ -1265,8 +1571,13 @@ class Demo21Runtime:
     def _capture_group_worker(self) -> None:
         assert self.camera_system is not None
         group_id = 0
+        raw_capture_id = 0
         interval_s = 1.0 / max(1e-6, float(self.args.fusion_target_fps))
         next_tick_s = time.perf_counter()
+        buffers: dict[int, deque[CameraFramePacket]] = {
+            int(camera_idx): deque(maxlen=int(self.args.capture_buffer_size))
+            for camera_idx in self.args.camera_ids
+        }
         while not self.stop_event.is_set():
             now_s = time.perf_counter()
             if now_s < next_tick_s:
@@ -1276,14 +1587,16 @@ class Demo21Runtime:
             build_start_s = time.perf_counter()
             try:
                 obs = self.camera_system.get_observation()
-                frames = {
-                    int(camera_idx): self._metadata_frame_packet(
-                        group_id=group_id,
+                capture_arrival_perf_ns = time.perf_counter_ns()
+                for camera_idx in self.args.camera_ids:
+                    frame = self._metadata_frame_packet(
+                        group_id=raw_capture_id,
                         camera_idx=int(camera_idx),
                         obs=obs[int(camera_idx)],
+                        capture_arrival_perf_ns=capture_arrival_perf_ns,
                     )
-                    for camera_idx in self.args.camera_ids
-                }
+                    buffers[int(camera_idx)].append(frame)
+                raw_capture_id += 1
             except TimeoutError as exc:
                 if not self.stop_event.is_set() and self.args.debug:
                     print(f"[WARN] Demo 2.1 capture group skipped after timeout: {exc}", flush=True)
@@ -1295,7 +1608,51 @@ class Demo21Runtime:
                 self._mark_fatal_error("capture-group", exc)
                 self.stop_event.set()
                 break
-            packet = CaptureGroup(group_id=group_id, created_perf_s=time.perf_counter(), frames=frames)
+            now_perf_ns = time.perf_counter_ns()
+            pruned = prune_stale_capture_buffers(
+                buffers,
+                max_frame_age_ms=float(self.args.max_frame_age_ms),
+                now_perf_ns=now_perf_ns,
+            )
+            if pruned:
+                self._summary["capture_stale_frames_pruned"] = int(self._summary.get("capture_stale_frames_pruned", 0)) + int(pruned)
+            selection = select_temporal_capture_triplet(
+                buffers,
+                camera_ids=self.args.camera_ids,
+                policy=str(self.args.capture_group_policy),
+                max_frame_age_ms=float(self.args.max_frame_age_ms),
+                now_perf_ns=now_perf_ns,
+            )
+            if selection is None:
+                self._summary["capture_group_no_candidate"] = int(self._summary.get("capture_group_no_candidate", 0)) + 1
+                continue
+            if selection.max_temporal_skew_ms > float(self.args.max_capture_skew_ms):
+                self._summary["capture_group_skew_drop"] = int(self._summary.get("capture_group_skew_drop", 0)) + 1
+                if self.args.drop_skewed_groups or self.args.capture_group_policy == CAPTURE_GROUP_POLICY_TIMESTAMP_STRICT:
+                    drop_oldest_capture_buffer_frame(buffers)
+                    if self._profile_enabled:
+                        self._profile_mark_drop(group_id, "capture_temporal_skew")
+                        self._profile_update(
+                            group_id,
+                            t_group_created=self._profile_rel_s(),
+                            capture={
+                                "group_build_ms": _elapsed_ms(build_start_s, time.perf_counter()),
+                                "timestamp_source": selection.timestamp_source,
+                                "max_temporal_skew_ms": float(selection.max_temporal_skew_ms),
+                                "skew_drop": True,
+                                "age_ms": float(selection.age_ms),
+                            },
+                        )
+                    continue
+            packet = build_temporal_capture_group(
+                group_id=group_id,
+                created_perf_s=time.perf_counter(),
+                selection=selection,
+            )
+            drop_selected_and_older_frames(buffers, selection)
+            self._record_temporal_skew(packet.max_temporal_skew_ms)
+            self._summary["capture_groups_emitted"] = int(self._summary.get("capture_groups_emitted", 0)) + 1
+            self._summary["capture_timestamp_source"] = packet.timestamp_source
             self.capture_group_slot.put(packet)
             self.capture_group_stats.record(packet.created_perf_s)
             self._profile_update(
@@ -1303,8 +1660,16 @@ class Demo21Runtime:
                 t_group_created=self._profile_rel_s(packet.created_perf_s),
                 capture={
                     "group_build_ms": _elapsed_ms(build_start_s, packet.created_perf_s),
+                    "timestamp_source": packet.timestamp_source,
+                    "group_timestamp_ns": int(packet.group_timestamp_ns),
+                    "max_temporal_skew_ms": float(packet.max_temporal_skew_ms),
+                    "age_ms": float(selection.age_ms),
                     **{
-                        f"frame_seq_cam{int(camera_idx)}": int(frames[int(camera_idx)].frame_seq)
+                        f"frame_seq_cam{int(camera_idx)}": int(packet.frames[int(camera_idx)].frame_seq)
+                        for camera_idx in self.args.camera_ids
+                    },
+                    **{
+                        f"offset_cam{int(camera_idx)}_ms": float(packet.per_camera_time_offset_ms.get(int(camera_idx), 0.0))
                         for camera_idx in self.args.camera_ids
                     },
                 },
@@ -1421,6 +1786,12 @@ class Demo21Runtime:
                     time.sleep(0.001)
                     continue
                 last_group_id = group.group_id
+                if not temporal_group_is_coherent(group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+                    self._summary["ffs_drop_skewed_capture_group"] = int(
+                        self._summary.get("ffs_drop_skewed_capture_group", 0)
+                    ) + 1
+                    self._profile_mark_drop(group.group_id, "ffs_drop_skewed_capture_group")
+                    continue
                 cycle_start_s = time.perf_counter()
                 depths: dict[int, DepthPacket] = {}
                 per_camera: dict[int, dict[str, float]] = {}
@@ -1453,6 +1824,10 @@ class Demo21Runtime:
                     total_ms=_elapsed_ms(cycle_start_s, time.perf_counter()),
                     per_camera_ms=per_camera,
                     gpu_gate_wait_ms=gate_wait_ms_total,
+                    max_temporal_skew_ms=float(group.max_temporal_skew_ms),
+                    per_camera_time_offset_ms=dict(group.per_camera_time_offset_ms),
+                    per_camera_frame_seq=dict(group.per_camera_frame_seq),
+                    timestamp_source=str(group.timestamp_source),
                 )
                 self._profile_update(
                     group.group_id,
@@ -1460,6 +1835,7 @@ class Demo21Runtime:
                         "gate_wait_ms": float(gate_wait_ms_total),
                         "cycle_ms": float(packet.total_ms),
                         "publish_s": self._profile_rel_s(),
+                        "capture_temporal_skew_ms": float(group.max_temporal_skew_ms),
                         **{
                             f"cam{int(camera_idx)}_ffs_ms": float(per_camera[int(camera_idx)].get("ffs_ms", 0.0))
                             for camera_idx in self.args.camera_ids
@@ -1624,6 +2000,9 @@ class Demo21Runtime:
                         time.sleep(0.001)
                         continue
                     last_group_id = group.group_id
+                    if not temporal_group_is_coherent(group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+                        self._profile_mark_drop(group.group_id, f"edgetam_drop_skewed_group_cam{int(camera_idx)}")
+                        continue
                     frame = group.frames[int(camera_idx)]
                     if not initialized:
                         init_attempts += 1
@@ -1724,6 +2103,10 @@ class Demo21Runtime:
                 time.sleep(0.001)
                 continue
             last_depth_group = depth_group.group_id
+            if not temporal_group_is_coherent(depth_group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+                self._summary["fusion_drop_skewed_group"] = int(self._summary.get("fusion_drop_skewed_group", 0)) + 1
+                self._profile_mark_drop(depth_group.group_id, "fusion_drop_skewed_group")
+                continue
             fusion_wait_start_s = time.perf_counter()
             deadline_s = time.perf_counter() + float(self.args.fusion_timeout_ms) / 1000.0
             mask_by_camera: dict[int, CameraMaskPacket] = {}
@@ -1903,6 +2286,8 @@ class Demo21Runtime:
         profile_fusion: dict[str, Any] = {
             "build_object_raw_ms": float(build_object_raw_ms),
             "build_controller_raw_ms": float(build_controller_raw_ms),
+            "capture_temporal_skew_ms": float(depth_group.max_temporal_skew_ms),
+            "timestamp_source": depth_group.timestamp_source,
             "object_enhanced_pt_ms": float(object_filter_ms),
             "controller_pt_filter_ms": float(controller_filter_ms),
             "filter_ms": float(filter_ms),
@@ -1939,6 +2324,9 @@ class Demo21Runtime:
             edgetam_ms_by_camera={idx: masks[idx].cuda_event_model_ms or masks[idx].model_ms for idx in masks},
             ffs_gpu_gate_wait_ms=depth_group.gpu_gate_wait_ms,
             edgetam_gpu_gate_wait_ms_by_camera={idx: masks[idx].gpu_gate_wait_ms for idx in masks},
+            capture_temporal_skew_ms=float(depth_group.max_temporal_skew_ms),
+            capture_time_offsets_ms_by_camera=dict(depth_group.per_camera_time_offset_ms),
+            timestamp_source=str(depth_group.timestamp_source),
         )
 
     def _debug_worker(self) -> None:
@@ -1974,6 +2362,11 @@ class Demo21Runtime:
             f"ffs_cycle_ms={(0.0 if depth is None else depth.total_ms):.1f} "
             f"fusion_ms={(0.0 if latest is None else latest.fusion_ms):.1f} "
             f"filter_ms={(0.0 if latest is None else latest.filter_ms):.1f} "
+            f"skew_ms_med/latest={self.temporal_skew_stats.median:.1f}/{self.temporal_skew_stats.latest:.1f} "
+            f"skew_drop={int(self._summary.get('capture_group_skew_drop', 0))} "
+            f"no_candidate={int(self._summary.get('capture_group_no_candidate', 0))} "
+            f"ffs_skew_drop={int(self._summary.get('ffs_drop_skewed_capture_group', 0))} "
+            f"fusion_skew_drop={int(self._summary.get('fusion_drop_skewed_group', 0))} "
             f"object_points={(0 if latest is None else latest.object_point_count)} "
             f"controller_points={(0 if latest is None else latest.controller_point_count)} "
             f"edgetam_ms[{edge_ms}] ffs_ms[{ffs_ms}] gpu_gate_wait[{gate_wait}]",
@@ -2091,6 +2484,7 @@ class Demo21Runtime:
             hud_label.text = (
                 f"Demo 2.1 fused PCD | group={packet.group_id} | "
                 f"object={packet.object_point_count} pts | controller={packet.controller_point_count} pts | "
+                f"skew={packet.capture_temporal_skew_ms:.1f} ms | "
                 f"fusion={packet.fusion_ms:.1f} ms | filter={packet.filter_ms:.1f} ms | "
                 f"render_fps={self.render_stats.render_fps:.1f}"
             )
@@ -2201,6 +2595,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--fusion-target-fps", type=float, default=10.0)
     parser.add_argument("--fusion-timeout-ms", type=float, default=150.0)
+    parser.add_argument("--capture-group-policy", choices=CAPTURE_GROUP_POLICIES, default=CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST)
+    parser.add_argument("--max-capture-skew-ms", type=float, default=DEFAULT_MAX_CAPTURE_SKEW_MS)
+    parser.add_argument("--max-frame-age-ms", type=float, default=DEFAULT_MAX_FRAME_AGE_MS)
+    parser.add_argument("--capture-buffer-size", type=int, default=DEFAULT_CAPTURE_BUFFER_SIZE)
+    parser.add_argument("--drop-skewed-groups", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-inflight-groups", type=int, default=2)
     parser.add_argument("--gpu-gate-mode", choices=GPU_GATE_MODES, default=GPU_GATE_MODE_SERIALIZED)
     parser.add_argument("--gpu-gate-max-concurrent", type=int, default=1)
