@@ -65,6 +65,8 @@ These record what the current machine and D455 topology actually supported durin
 - `demo2_local_ffs_professor_speed_polish.md`
 - `demo2_1_shared_ffs_per_camera_edgetam_validation.md`
 - `demo2_1_visual5fps_profile_object_only.md`
+- `demo2_1_visual5fps_profile_object_only_120s.md`
+- `demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.md`
 
 These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 

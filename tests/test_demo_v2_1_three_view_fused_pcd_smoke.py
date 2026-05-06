@@ -121,7 +121,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["gpu_gate"]["mode"], "serialized")
         self.assertEqual(contract["gpu_gate"]["max_concurrent"], 1)
 
-    def test_professor_safe_preset_sets_low_fps_object_only_demo(self) -> None:
+    def test_professor_safe_preset_defaults_to_controller_object_demo(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", "professor-safe"])
         args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run"})
@@ -130,17 +130,17 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["preset"], "professor-safe")
         self.assertEqual(contract["profile"], "848x480")
         self.assertEqual(contract["fps"], 30)
-        self.assertEqual(contract["track_mode"], "object-only")
+        self.assertEqual(contract["track_mode"], "controller-object")
         self.assertEqual(contract["render_mode"], "pointcloud")
         self.assertEqual(contract["fusion_target_fps"], 2.0)
         self.assertEqual(contract["fusion_timeout_ms"], 250.0)
         self.assertEqual(contract["gpu_gate"], {"mode": "serialized", "max_concurrent": 1})
-        self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["stuffed animal"])
+        self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["hand", "stuffed animal"])
 
     def test_visual_5fps_preset_keeps_quality_path_with_gate2(self) -> None:
         parser = demo.build_arg_parser()
-        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps"])
-        args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run"})
+        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps", "--track-mode", "object-only"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run", "--track-mode"})
         contract = demo.build_contract(args)
 
         self.assertEqual(contract["preset"], "visual-5fps")
@@ -152,6 +152,60 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["depth_source"], "ffs")
         self.assertEqual(contract["gpu_gate"], {"mode": "limited", "max_concurrent": 2})
         self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
+
+    def test_saved_mask_roots_are_recorded_in_contract(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                "visual-5fps",
+                "--init-mode",
+                "saved-masks",
+                "--object-init-mask-root",
+                "result/demo2_1/object_masks",
+                "--controller-init-mask-root",
+                "result/demo2_1/controller_masks",
+            ]
+        )
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["init"]["mode"], "saved-masks")
+        self.assertEqual(contract["init"]["object_init_mask_root"], "result/demo2_1/object_masks")
+        self.assertEqual(contract["init"]["controller_init_mask_root"], "result/demo2_1/controller_masks")
+        self.assertTrue(contract["init"]["formal_demo_requires_live_sam31"])
+        self.assertFalse(contract["init"]["fallback_allowed"])
+
+    def test_live_sam31_defaults_are_fail_fast_for_formal_demo(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps", "--init-mode", "sam31-first-frame"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--init-mode"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["init"]["mode"], "sam31-first-frame")
+        self.assertEqual(contract["init"]["sam31_retry_interval_s"], 0.5)
+        self.assertEqual(contract["init"]["sam31_max_attempts"], 1)
+        self.assertTrue(contract["init"]["formal_demo_requires_live_sam31"])
+        self.assertFalse(contract["init"]["fallback_allowed"])
+
+    def test_saved_masks_are_rejected_for_formal_demo2_1(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--depth-source",
+                "none",
+                "--init-mode",
+                "saved-masks",
+                "--track-mode",
+                "object-only",
+            ]
+        )
+        runtime = demo.Demo21Runtime(args)
+
+        with self.assertRaisesRegex(RuntimeError, "live SAM3.1"):
+            runtime._validate_live_contract()
 
     def test_visual_profile_flags_are_explicit_and_default_off(self) -> None:
         parser = demo.build_arg_parser()

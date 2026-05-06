@@ -52,8 +52,8 @@ GPU gate:
 
 | Preset | Profile | Target | Render default | Intended use |
 | --- | --- | ---: | --- | --- |
-| `professor-safe` | `848x480@30` | 2 FPS | pointcloud | current no-hand object-only low-FPS FFS-quality fused demo |
-| `visual-5fps` | `848x480@30` | 5 FPS | pointcloud | quality-preserving visual candidate, FFS depth + enhanced-PT, GPU gate max_concurrent=2 |
+| `professor-safe` | `848x480@30` | 2 FPS | pointcloud | default controller-object FFS-quality fused demo; pass `--track-mode object-only` only when no controller is visible |
+| `visual-5fps` | `848x480@30` | 5 FPS | pointcloud | default controller-object quality-preserving visual candidate; current no-hand tests explicitly pass `--track-mode object-only` |
 | `climb-5` | `848x480@30` | 5 FPS | none | headless performance climb |
 | `climb-10` | `848x480@30` | 10 FPS | none | diagnostic stress test |
 | `diagnostics` | `848x480@30` | 2 FPS | none | capture/EdgeTAM/FFS isolation |
@@ -341,12 +341,85 @@ Interpretation:
 - The remaining deficit is upstream supply: FFS/EdgeTAM scheduling and missing mask groups during startup/initialization.
 - The last steady debug window reached about `5.0 FPS`, so a longer 120s profile with a larger warmup exclusion is needed before changing quality settings.
 
+## visual-5fps Follow-up: Initialization-Gated Runs
+
+Two follow-up runs were attempted to separate steady-state throughput from startup effects:
+
+```bash
+# 120s gate2, warmup_exclude_s=40
+QQTT_WSLG_OPEN3D_FAST_EXIT=1 TRANSFORMERS_VERBOSITY=error HF_HUB_DISABLE_PROGRESS_BARS=1 \
+  ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --track-mode object-only \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-gpu-gate \
+  --profile-warmup-exclude-s 40 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_profile_object_only_120s.json
+
+# 60s gate2 after narrowing FFS GPU-gate scope
+QQTT_WSLG_OPEN3D_FAST_EXIT=1 TRANSFORMERS_VERBOSITY=error HF_HUB_DISABLE_PROGRESS_BARS=1 \
+  ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --track-mode object-only \
+  --object-prompt "stuffed animal" \
+  --duration-s 60 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-gpu-gate \
+  --profile-warmup-exclude-s 20 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.json
+```
+
+Outputs:
+
+- `docs/generated/demo2_1_visual5fps_profile_object_only_120s.json`
+- `docs/generated/demo2_1_visual5fps_profile_object_only_120s.md`
+- `docs/generated/demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.json`
+- `docs/generated/demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.md`
+
+Both runs are intentionally marked invalid for FPS comparison: SAM3.1 first-frame initialization failed on `cam0` with the live scene, so no complete fused groups were rendered. This is an initialization/scene issue, not evidence that Open3D, FFS, or enhanced-PT regressed.
+
+The second run still provides one useful scheduling signal: after narrowing the GPU gate so it only wraps per-camera FFS TensorRT inference and no longer wraps FFS color alignment, the incomplete run reported `FFS cycle median / p95 = 85.31 / 125.32 ms` with near-zero FFS gate wait. Because masks were incomplete, this is not a final throughput number; it is only evidence that the gate scope was previously too broad.
+
+Formal Demo 2.1 must initialize from SAM3.1 on the live first frame. The runtime fails fast by default if SAM3.1 object-only initialization does not register the requested object in a current no-hand run; no saved-mask or native-depth fallback is allowed. `controller-object` remains the default mode, and current no-controller lab runs must explicitly pass `--track-mode object-only`.
+
+Next valid profiling step:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --track-mode object-only \
+  --init-mode sam31-first-frame \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-gpu-gate \
+  --profile-warmup-exclude-s 40 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.json
+```
+
+`saved-masks` is rejected by the formal Demo 2.1 runtime and is not a professor-facing initialization path.
+
 Recommended current-lab professor-facing command when no hand/controller is visible:
 
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
   --preset professor-safe \
+  --track-mode object-only \
   --object-prompt "stuffed animal" \
   --duration-s 120 \
   --debug
@@ -358,6 +431,7 @@ Recommended current-lab professor-facing command when no hand/controller is visi
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
   --preset visual-5fps \
+  --track-mode object-only \
   --object-prompt "stuffed animal" \
   --duration-s 120 \
   --debug \

@@ -652,21 +652,17 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         _set_if_not_explicit(args, explicit, flag=flag, attr=attr, value=value)
 
     if preset == PRESET_PROFESSOR_SAFE:
-        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_OBJECT_ONLY)
         _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
         _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
     elif preset == PRESET_VISUAL_5FPS:
-        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_OBJECT_ONLY)
         _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
         _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
         _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_LIMITED)
         _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=2)
     elif preset == PRESET_CLIMB_5:
-        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_OBJECT_ONLY)
         _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
         _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
     elif preset == PRESET_CLIMB_10:
-        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_OBJECT_ONLY)
         _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=10.0)
         _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
     elif preset == PRESET_DIAGNOSTICS:
@@ -762,6 +758,15 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "render_mode": args.render_mode,
         "fusion_target_fps": float(args.fusion_target_fps),
         "fusion_timeout_ms": float(args.fusion_timeout_ms),
+        "init": {
+            "mode": args.init_mode,
+            "object_init_mask_root": args.object_init_mask_root,
+            "controller_init_mask_root": args.controller_init_mask_root,
+            "sam31_retry_interval_s": float(args.sam31_init_retry_interval_s),
+            "sam31_max_attempts": int(args.sam31_init_max_attempts),
+            "formal_demo_requires_live_sam31": True,
+            "fallback_allowed": False,
+        },
         "official_quality_depth": args.depth_source in set(OFFICIAL_DEPTH_SOURCES),
         "native_realsense_depth_role": "fallback/debug only",
         "gpu_gate": {
@@ -924,6 +929,8 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 requires --edgetam-worker-mode per-camera")
         if self.args.edgetam_model_topology != "replicated":
             raise RuntimeError("Demo 2.1 first live slice requires --edgetam-model-topology replicated")
+        if self.args.init_mode != "sam31-first-frame":
+            raise RuntimeError("Formal Demo 2.1 requires live SAM3.1 initialization; saved masks are not allowed")
         if int(self.args.object_filter_cap) < 0 or int(self.args.controller_filter_cap) < 0:
             raise RuntimeError("Demo 2.1 filter caps must be >= 0")
         if float(self.args.object_filter_voxel_m) <= 0 or float(self.args.controller_filter_voxel_m) <= 0:
@@ -934,12 +941,32 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --filter-budget-ms must be >= 0")
         if float(self.args.profile_warmup_exclude_s) < 0:
             raise RuntimeError("Demo 2.1 --profile-warmup-exclude-s must be >= 0")
+        if float(self.args.sam31_init_retry_interval_s) < 0:
+            raise RuntimeError("Demo 2.1 --sam31-init-retry-interval-s must be >= 0")
+        if int(self.args.sam31_init_max_attempts) < 0:
+            raise RuntimeError("Demo 2.1 --sam31-init-max-attempts must be >= 0")
         if int(self.args.gpu_gate_max_concurrent) < 1:
             raise RuntimeError("Demo 2.1 --gpu-gate-max-concurrent must be >= 1")
         if self.args.gpu_gate_mode == GPU_GATE_MODE_SERIALIZED and int(self.args.gpu_gate_max_concurrent) != 1:
             raise RuntimeError("Demo 2.1 serialized GPU gate requires --gpu-gate-max-concurrent 1")
         if self.args.depth_source == DEPTH_SOURCE_FFS:
             validate_ffs_paths(ffs_repo=Path(self.args.ffs_repo), model_dir=Path(self.args.ffs_trt_model_dir))
+        if self.args.init_mode == "saved-masks":
+            if not self.args.object_init_mask_root:
+                raise RuntimeError("Demo 2.1 saved-masks mode requires --object-init-mask-root")
+            object_root = Path(self.args.object_init_mask_root)
+            if not object_root.is_dir():
+                raise FileNotFoundError(f"Demo 2.1 object init mask root does not exist: {object_root}")
+            if controller_tracking_enabled(self.args.track_mode):
+                if not self.args.controller_init_mask_root:
+                    raise RuntimeError(
+                        "Demo 2.1 controller-object saved-masks mode requires --controller-init-mask-root"
+                    )
+                controller_root = Path(self.args.controller_init_mask_root)
+                if not controller_root.is_dir():
+                    raise FileNotFoundError(
+                        f"Demo 2.1 controller init mask root does not exist: {controller_root}"
+                    )
         if self._needs_world_fusion() and not Path(self.args.calibrate_path).is_file():
             raise FileNotFoundError(f"Demo 2.1 requires calibrate.pkl for world fusion: {self.args.calibrate_path}")
 
@@ -1128,12 +1155,24 @@ class Demo21Runtime:
             f"- target FPS: `{payload['target_fps']:.2f}`",
             f"- render FPS after warmup: `{warm.get('render_fps', 0.0):.2f}`",
             f"- fusion FPS after warmup: `{warm.get('fusion_fps', 0.0):.2f}`",
+            f"- groups after warmup: `{warm.get('group_count', 0)}`",
+            f"- complete fused groups after warmup: `{warm.get('complete_fusion_groups', 0)}`",
+            f"- rendered groups after warmup: `{warm.get('rendered_groups', 0)}`",
             f"- target deficit: `{warm.get('target_fps_deficit', 0.0):.2f}`",
             f"- bottleneck class: `{warm.get('bottleneck_class', 'unknown')}`",
             "",
+        ]
+        if int(warm.get("complete_fusion_groups", 0)) == 0:
+            lines.extend(
+                [
+                    "Warning: this profile has no complete fused groups after warmup. Treat it as an initialization or missing-packet run, not as a valid visual FPS comparison.",
+                    "",
+                ]
+            )
+        lines.extend([
             "| Metric | median | p90 | p95 | max |",
             "| --- | ---: | ---: | ---: | ---: |",
-        ]
+        ])
         for name in (
             "ffs_cycle_ms",
             "edgetam_cam0_model_ms",
@@ -1296,6 +1335,47 @@ class Demo21Runtime:
         ffs_done_s = time.perf_counter()
         depth_ir_left_m = np.asarray(output["depth_ir_left_m"], dtype=np.float32)
         k_ir_left_used = np.asarray(output.get("K_ir_left_used", frame.k_ir_left), dtype=np.float32)
+        return self._align_ffs_depth_for_frame(
+            frame=frame,
+            aligners=aligners,
+            depth_ir_left_m=depth_ir_left_m,
+            k_ir_left_used=k_ir_left_used,
+            ffs_ms=_elapsed_ms(ffs_start_s, ffs_done_s),
+        )
+
+    def _run_ffs_pair_for_frame(self, *, runner: object, frame: CameraFramePacket) -> tuple[np.ndarray, np.ndarray, float]:
+        if (
+            frame.ir_left_u8 is None
+            or frame.ir_right_u8 is None
+            or frame.k_ir_left is None
+            or frame.baseline_m <= 0
+        ):
+            raise RuntimeError(f"cam{frame.camera_idx} is missing FFS IR stereo data")
+        ffs_start_s = time.perf_counter()
+        output = runner.run_pair(
+            frame.ir_left_u8,
+            frame.ir_right_u8,
+            K_ir_left=frame.k_ir_left,
+            baseline_m=float(frame.baseline_m),
+        )
+        ffs_ms = _elapsed_ms(ffs_start_s, time.perf_counter())
+        return (
+            np.asarray(output["depth_ir_left_m"], dtype=np.float32),
+            np.asarray(output.get("K_ir_left_used", frame.k_ir_left), dtype=np.float32),
+            ffs_ms,
+        )
+
+    def _align_ffs_depth_for_frame(
+        self,
+        *,
+        frame: CameraFramePacket,
+        aligners: dict[int, FfsIrToColorAligner],
+        depth_ir_left_m: np.ndarray,
+        k_ir_left_used: np.ndarray,
+        ffs_ms: float,
+    ) -> DepthPacket:
+        if frame.t_ir_left_to_color is None:
+            raise RuntimeError(f"cam{frame.camera_idx} is missing IR-to-color transform")
         align_start_s = time.perf_counter()
         aligner = aligners.get(int(frame.camera_idx))
         key_shape = tuple(depth_ir_left_m.shape), tuple(frame.color_bgr.shape[:2])
@@ -1315,7 +1395,7 @@ class Demo21Runtime:
             group_id=frame.group_id,
             camera_idx=frame.camera_idx,
             depth_m=depth_color_m,
-            ffs_ms=_elapsed_ms(ffs_start_s, ffs_done_s),
+            ffs_ms=float(ffs_ms),
             align_ms=_elapsed_ms(align_start_s, align_done_s),
         )
 
@@ -1334,24 +1414,40 @@ class Demo21Runtime:
                 cycle_start_s = time.perf_counter()
                 depths: dict[int, DepthPacket] = {}
                 per_camera: dict[int, dict[str, float]] = {}
-                with self.gpu_gate.acquire(stage="ffs", camera_idx=None, group_id=group.group_id) as gate_wait_ms:
-                    self._record_gpu_gate_wait("ffs", gate_wait_ms)
-                    for camera_idx in self.args.camera_ids:
-                        frame = group.frames[int(camera_idx)]
-                        depth = self._compute_ffs_depth_for_frame(runner=runner, frame=frame, aligners=aligners)
-                        depths[int(camera_idx)] = depth
-                        per_camera[int(camera_idx)] = {"ffs_ms": depth.ffs_ms, "align_ms": depth.align_ms}
+                gate_wait_ms_total = 0.0
+                for camera_idx in self.args.camera_ids:
+                    frame = group.frames[int(camera_idx)]
+                    with self.gpu_gate.acquire(stage="ffs", camera_idx=int(camera_idx), group_id=group.group_id) as gate_wait_ms:
+                        self._record_gpu_gate_wait("ffs", gate_wait_ms)
+                        depth_ir_left_m, k_ir_left_used, ffs_ms = self._run_ffs_pair_for_frame(
+                            runner=runner,
+                            frame=frame,
+                        )
+                    gate_wait_ms_total += float(gate_wait_ms)
+                    depth = self._align_ffs_depth_for_frame(
+                        frame=frame,
+                        aligners=aligners,
+                        depth_ir_left_m=depth_ir_left_m,
+                        k_ir_left_used=k_ir_left_used,
+                        ffs_ms=ffs_ms,
+                    )
+                    depths[int(camera_idx)] = depth
+                    per_camera[int(camera_idx)] = {
+                        "ffs_ms": depth.ffs_ms,
+                        "align_ms": depth.align_ms,
+                        "gate_wait_ms": float(gate_wait_ms),
+                    }
                 packet = DepthGroup(
                     group_id=group.group_id,
                     depths=depths,
                     total_ms=_elapsed_ms(cycle_start_s, time.perf_counter()),
                     per_camera_ms=per_camera,
-                    gpu_gate_wait_ms=gate_wait_ms,
+                    gpu_gate_wait_ms=gate_wait_ms_total,
                 )
                 self._profile_update(
                     group.group_id,
                     ffs={
-                        "gate_wait_ms": float(gate_wait_ms),
+                        "gate_wait_ms": float(gate_wait_ms_total),
                         "cycle_ms": float(packet.total_ms),
                         "publish_s": self._profile_rel_s(),
                         **{
@@ -1360,6 +1456,10 @@ class Demo21Runtime:
                         },
                         **{
                             f"cam{int(camera_idx)}_align_ms": float(per_camera[int(camera_idx)].get("align_ms", 0.0))
+                            for camera_idx in self.args.camera_ids
+                        },
+                        **{
+                            f"cam{int(camera_idx)}_gate_wait_ms": float(per_camera[int(camera_idx)].get("gate_wait_ms", 0.0))
                             for camera_idx in self.args.camera_ids
                         },
                     },
@@ -1501,6 +1601,8 @@ class Demo21Runtime:
             hf_stream, torch_module, dtype, model, processor = self._init_hf_model(camera_idx)
             last_group_id = -1
             initialized = False
+            init_attempts = 0
+            last_init_failure_log_s = 0.0
             controller_mask: np.ndarray | None = None
             object_mask: np.ndarray | None = None
             session = None
@@ -1513,11 +1615,46 @@ class Demo21Runtime:
                     last_group_id = group.group_id
                     frame = group.frames[int(camera_idx)]
                     if not initialized:
-                        controller_mask, object_mask = resolve_initial_masks_for_camera(
-                            frame,
-                            self.args,
-                            sam31_lock=self._sam31_lock,
-                        )
+                        init_attempts += 1
+                        try:
+                            controller_mask, object_mask = resolve_initial_masks_for_camera(
+                                frame,
+                                self.args,
+                                sam31_lock=self._sam31_lock,
+                            )
+                        except Exception as exc:
+                            key = f"sam31_init_failures_cam{int(camera_idx)}"
+                            self._summary[key] = int(self._summary.get(key, 0)) + 1
+                            self._profile_mark_drop(group.group_id, f"sam31_init_failed_cam{int(camera_idx)}")
+                            now_s = time.perf_counter()
+                            max_attempts = int(self.args.sam31_init_max_attempts)
+                            will_retry = max_attempts == 0 or init_attempts < max_attempts
+                            if self.args.debug and now_s - last_init_failure_log_s >= 2.0:
+                                action = "retrying on the latest live frame" if will_retry else "failing without fallback"
+                                print(
+                                    "[demo2.1-sam31-init] "
+                                    f"cam={camera_idx} attempt={init_attempts} group={group.group_id} "
+                                    f"failed={type(exc).__name__}: {exc}. "
+                                    f"Keep the target visible and steady; {action}.",
+                                    flush=True,
+                                )
+                                last_init_failure_log_s = now_s
+                            if not will_retry:
+                                raise RuntimeError(
+                                    f"SAM3.1 live initialization failed for cam{camera_idx} "
+                                    f"after {init_attempts} attempt(s); no fallback is allowed"
+                                ) from exc
+                            time.sleep(float(self.args.sam31_init_retry_interval_s))
+                            continue
+                        self._summary[f"sam31_init_attempts_cam{int(camera_idx)}"] = int(init_attempts)
+                        if self.args.debug:
+                            print(
+                                "[demo2.1-sam31-init] "
+                                f"cam={camera_idx} initialized from live frame group={group.group_id} "
+                                f"attempts={init_attempts} object_px={int(np.count_nonzero(object_mask))} "
+                                f"controller_px={int(np.count_nonzero(controller_mask))}",
+                                flush=True,
+                            )
                         session = hf_stream.EdgeTamVideoInferenceSession(
                             video=None,
                             video_height=int(frame.color_bgr.shape[0]),
@@ -2023,7 +2160,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--camera-ids", type=parse_camera_ids, default=DEFAULT_CAMERA_IDS)
     parser.add_argument("--calibrate-path", default=str(ROOT / "calibrate.pkl"))
     parser.add_argument("--calibration-reference-serials", nargs="*", default=None)
-    parser.add_argument("--track-mode", choices=TRACK_MODES, default=TRACK_MODE_OBJECT_ONLY)
+    parser.add_argument("--track-mode", choices=TRACK_MODES, default=TRACK_MODE_CONTROLLER_OBJECT)
     parser.add_argument("--init-mode", choices=INIT_MODES, default="sam31-first-frame")
     parser.add_argument("--object-prompt", default="stuffed animal")
     parser.add_argument("--controller-prompt", choices=CONTROLLER_PROMPT_CHOICES, default=DEFAULT_CONTROLLER_LABEL)
@@ -2043,6 +2180,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile-gpu-gate", action="store_true")
     parser.add_argument("--profile-json-output", default=None)
     parser.add_argument("--profile-warmup-exclude-s", type=float, default=20.0)
+    parser.add_argument("--sam31-init-retry-interval-s", type=float, default=0.5)
+    parser.add_argument(
+        "--sam31-init-max-attempts",
+        type=int,
+        default=1,
+        help="Maximum SAM3.1 live init attempts per camera. Default 1 is fail-fast for the formal demo.",
+    )
     parser.add_argument("--fusion-target-fps", type=float, default=10.0)
     parser.add_argument("--fusion-timeout-ms", type=float, default=150.0)
     parser.add_argument("--max-inflight-groups", type=int, default=2)

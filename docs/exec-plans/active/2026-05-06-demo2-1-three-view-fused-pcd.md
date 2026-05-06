@@ -50,7 +50,7 @@ The first hardware smoke proved the three-camera object-only live skeleton at
 demo entrypoint without changing Demo 2.0:
 
 1. Add staged presets:
-   - `professor-safe`: low-FPS, FFS-quality, object-only default for the current no-hand lab setup
+   - `professor-safe`: low-FPS, FFS-quality default controller-object demo; current no-hand runs explicitly pass `--track-mode object-only`
    - `visual-5fps`: WSLg/Open3D 5 FPS candidate using the unchanged FFS/enhanced-PT quality path and `gpu_gate_max_concurrent=2`
    - `climb-5`: headless profiling at target 5 FPS
    - `climb-10`: headless profiling at target 10 FPS
@@ -109,3 +109,11 @@ Add profiling that is off by default and only records detailed per-group data wh
 - `--profile-warmup-exclude-s`
 
 The profile records one `group_id` timeline across capture, EdgeTAM, FFS, fusion/filter, and render. The summary reports full-run and warmup-excluded FPS, medians, p90/p95/max timings, target deficit, bottleneck class, and top slowest object enhanced-PT groups. This lets us decide whether the remaining gap to stable 5 FPS is filter spike, GPU gate wait, FFS cycle, EdgeTAM per-camera model time, fusion timeout, or Open3D render.
+
+Follow-up:
+
+- A 120s `visual-5fps` profile with `warmup_exclude_s=40` was attempted, but the current live scene failed SAM3.1 first-frame initialization on `cam0`, so it produced zero complete fused groups and is not a valid FPS comparison.
+- The FFS GPU gate scope was narrowed so the gate wraps only per-camera FFS TensorRT inference. FFS color alignment now runs outside the gate, preserving quality while reducing avoidable EdgeTAM/FFS serialization. An invalid 60s smoke after this change still showed lower FFS cycle timing, but it cannot be used as a throughput result until initialization is stable.
+- Formal Demo 2.1 must use `--init-mode sam31-first-frame`; `controller-object` is the default supported mode, and current no-controller runs explicitly pass `--track-mode object-only`.
+- SAM3.1 live initialization is fail-fast by default. If object-only SAM3.1 cannot initialize the object in the live scene, the run is invalid and should fail rather than falling back to saved masks.
+- The next valid 5 FPS ablation should keep live SAM3.1 initialization, pass `--track-mode object-only` while no controller is visible, and compare gate2 vs gate3 and any fair/deadline gate policy only after SAM3.1 succeeds.

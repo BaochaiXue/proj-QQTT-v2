@@ -59,14 +59,14 @@ Presets:
 professor-safe:
   848x480@30
   fusion-target-fps=2
-  object-only by default for the current no-hand lab setup
+  controller-object by default; pass --track-mode object-only when no hand/controller is visible
   render-mode=pointcloud by default
   GPU gate serialized with max_concurrent=1
 
 visual-5fps:
   848x480@30
   fusion-target-fps=5
-  object-only by default for the current no-hand lab setup
+  controller-object by default; pass --track-mode object-only when no hand/controller is visible
   render-mode=pointcloud by default
   GPU gate limited with max_concurrent=2
   quality path unchanged: FFS depth + object enhanced-pt
@@ -92,6 +92,7 @@ Current no-hand professor-safe object-only run:
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
   --preset professor-safe \
+  --track-mode object-only \
   --object-prompt "stuffed animal" \
   --duration-s 120 \
   --debug
@@ -103,6 +104,7 @@ Current no-hand 5 FPS visual candidate:
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
   --preset visual-5fps \
+  --track-mode object-only \
   --object-prompt "stuffed animal" \
   --duration-s 120 \
   --debug \
@@ -115,6 +117,7 @@ Profiling the 5 FPS candidate:
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
   --preset visual-5fps \
+  --track-mode object-only \
   --object-prompt "stuffed animal" \
   --duration-s 120 \
   --debug \
@@ -125,6 +128,37 @@ Profiling the 5 FPS candidate:
   --profile-warmup-exclude-s 20 \
   --profile-json-output docs/generated/demo2_1_visual5fps_profile_object_only.json
 ```
+
+Formal Demo 2.1 initialization requirement:
+
+```text
+The professor-facing demo uses --init-mode sam31-first-frame.
+SAM3.1 must segment the live first frame in the room, then HF EdgeTAM tracks from that mask.
+The default mode is controller-object; current no-hand lab runs must explicitly pass --track-mode object-only.
+```
+
+If SAM3.1 object-only initialization fails in a no-hand run, Demo 2.1 fails fast. That is intentional: there is no saved-mask or native-depth fallback in the formal path.
+
+Live SAM3.1 5 FPS profiling command:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --track-mode object-only \
+  --init-mode sam31-first-frame \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-gpu-gate \
+  --profile-warmup-exclude-s 40 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.json
+```
+
+`saved-masks` is rejected by the formal Demo 2.1 runtime. Use it only in separate diagnostic scripts, not this live demo.
 
 Controller-object run, only when a hand is visible:
 
