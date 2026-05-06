@@ -128,6 +128,10 @@ These record repo-structure, scope, and metadata-contract hardening passes.
 - `sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_results.json`
 - `sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_results.json`
 - `sloth_set_2_motion_ffs_sam31_object_controller_pcd_results.json`
+- `demo2_local_ffs_professor_preset_no_render_20260505.txt`
+- `demo2_local_ffs_professor_preset_pointcloud_20260505.txt`
+- `demo2_local_ffs_professor_no_render_profile_20260506.txt`
+- `demo2_local_ffs_professor_pointcloud_profile_20260506.txt`
 
 These are not general datasets. They are small helper assets used by specific validation and visualization workflows.
 
