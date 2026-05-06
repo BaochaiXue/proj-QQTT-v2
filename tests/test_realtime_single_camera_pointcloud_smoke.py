@@ -21,11 +21,13 @@ from demo_v2 import realtime_masked_edgetam_pcd as masked_demo
 from demo_v1 import realtime_single_camera_pointcloud as demo_v1
 from demo_v2 import realtime_single_camera_pointcloud as demo_v2
 from services.ffs_remote import ffs_depth_client as ffs_remote_client
+from services.ffs_remote import ffs_depth_server as ffs_remote_server
 from services.ffs_remote.ffs_depth_client import FfsRemoteDepthClient
 from services.ffs_remote.protocol import (
     build_depth_request_parts,
     build_depth_response_parts,
     parse_depth_request_parts,
+    parse_depth_response_parts,
 )
 from scripts.harness import realtime_single_camera_pointcloud as demo
 
@@ -132,11 +134,15 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--depth-source {ffs,ffs_remote,realsense,none}", result.stdout)
         self.assertIn("--ffs-trt-model-dir FFS_TRT_MODEL_DIR", result.stdout)
         self.assertIn("--ffs-remote-endpoint FFS_REMOTE_ENDPOINT", result.stdout)
-        self.assertIn("--ffs-remote-return {depth_u16,depth_float_m}", result.stdout)
+        self.assertIn("--ffs-remote-return {depth_u16,depth_float_m,masked_uv_depth,masked_xyz}", result.stdout)
+        self.assertIn("--ffs-remote-compress {none,zstd,lz4,png}", result.stdout)
+        self.assertIn("--enable-remote-ffs-quality", result.stdout)
+        self.assertIn("--remote-ffs-quality-return {depth_u16,depth_float_m,masked_uv_depth,masked_xyz}", result.stdout)
         self.assertIn("--init-mode {sam31-first-frame,saved-masks}", result.stdout)
         self.assertIn("--track-mode {controller-object,object-only,none}", result.stdout)
         self.assertIn("--pcd-mode {masked,none}", result.stdout)
         self.assertIn("--render-mode {pointcloud,none}", result.stdout)
+        self.assertIn("--demo-preset {none,local-ffs-professor}", result.stdout)
         self.assertIn("--compile-mode {vision-reduce-overhead}", result.stdout)
         self.assertIn("--pcd-color-mode {rgb,class}", result.stdout)
         self.assertIn("--profile-cuda-events", result.stdout)
@@ -160,6 +166,9 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertEqual(args.ffs_remote_max_inflight, 1)
         self.assertEqual(args.ffs_remote_timeout_ms, 80)
         self.assertEqual(args.ffs_remote_return, "depth_u16")
+        self.assertEqual(args.ffs_remote_compress, "none")
+        self.assertFalse(args.enable_remote_ffs_quality)
+        self.assertEqual(args.demo_preset, "none")
         self.assertEqual(masked_demo.object_id_labels(), {1: "controller", 2: "object"})
         self.assertEqual(masked_demo.object_id_labels("object-only"), {2: "object"})
         self.assertEqual(masked_demo.object_id_labels("none"), {})
@@ -182,6 +191,51 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             ]
         )
         masked_demo.validate_args(remote_args)
+        sparse_main_args = masked_demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "ffs_remote",
+                "--ffs-remote-endpoint",
+                "tcp://127.0.0.1:7001",
+                "--ffs-remote-return",
+                "masked_uv_depth",
+                "--track-mode",
+                "object-only",
+            ]
+        )
+        masked_demo.validate_args(sparse_main_args)
+        sparse_no_tracking_args = masked_demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "ffs_remote",
+                "--ffs-remote-endpoint",
+                "tcp://127.0.0.1:7001",
+                "--ffs-remote-return",
+                "masked_uv_depth",
+                "--track-mode",
+                "none",
+                "--pcd-mode",
+                "none",
+                "--render-mode",
+                "none",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "sparse --depth-source ffs_remote requires EdgeTAM masks"):
+            masked_demo.validate_args(sparse_no_tracking_args)
+        quality_args = masked_demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--enable-remote-ffs-quality",
+                "--ffs-remote-endpoint",
+                "tcp://127.0.0.1:7001",
+                "--remote-ffs-quality-return",
+                "masked_uv_depth",
+                "--track-mode",
+                "object-only",
+            ]
+        )
+        masked_demo.validate_args(quality_args)
         missing_remote_args = masked_demo.build_parser().parse_args(["--depth-source", "ffs_remote"])
         with self.assertRaisesRegex(ValueError, "ffs_remote requires --ffs-remote-endpoint"):
             masked_demo.validate_args(missing_remote_args)
@@ -190,6 +244,39 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 masked_demo.build_parser().parse_args(["--compile-mode", "none"])
+
+    def test_masked_edgetam_local_ffs_professor_preset_keeps_ffs_semantics(self) -> None:
+        args = masked_demo.build_parser().parse_args(["--demo-preset", "local-ffs-professor"])
+        masked_demo.apply_demo_preset(args)
+        self.assertEqual(args.depth_source, "ffs")
+        self.assertEqual(args.compile_mode, "vision-reduce-overhead")
+        self.assertEqual(args.pcd_max_points, masked_demo.LOCAL_FFS_PROFESSOR_MAX_POINTS)
+        self.assertEqual(args.point_size, masked_demo.LOCAL_FFS_PROFESSOR_POINT_SIZE)
+        self.assertEqual(args.latency_target_ms, masked_demo.LOCAL_FFS_PROFESSOR_LATENCY_TARGET_MS)
+
+        explicit_args = masked_demo.build_parser().parse_args(
+            [
+                "--demo-preset",
+                "local-ffs-professor",
+                "--pcd-max-points",
+                "12000",
+                "--point-size",
+                "3",
+                "--latency-target-ms",
+                "160",
+            ]
+        )
+        masked_demo.apply_demo_preset(explicit_args)
+        self.assertEqual(explicit_args.pcd_max_points, 12000)
+        self.assertEqual(explicit_args.point_size, 3)
+        self.assertEqual(explicit_args.latency_target_ms, 160)
+
+        invalid_args = masked_demo.build_parser().parse_args(
+            ["--demo-preset", "local-ffs-professor", "--depth-source", "realsense"]
+        )
+        masked_demo.apply_demo_preset(invalid_args)
+        with self.assertRaisesRegex(ValueError, "requires --depth-source ffs"):
+            masked_demo.validate_args(invalid_args)
 
     def test_masked_edgetam_saved_masks_validate_shape(self) -> None:
         from PIL import Image
@@ -268,6 +355,36 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         np.testing.assert_array_equal(parsed.ir_left_u8, left)
         np.testing.assert_array_equal(parsed.ir_right_u8, right)
 
+        mask_u8 = np.array([[0, 2, 0], [1, 0, 2]], dtype=np.uint8)
+        sparse_request_parts = build_depth_request_parts(
+            frame_id=43,
+            ir_left_u8=left,
+            ir_right_u8=right,
+            color_shape=(2, 3),
+            k_ir_left=k_ir,
+            k_color=k_color,
+            t_ir_left_to_color=transform,
+            baseline_m=0.055,
+            depth_scale_m_per_unit=0.001,
+            return_type="masked_uv_depth",
+            mask_u8=mask_u8,
+            compression="none",
+        )
+        sparse_request = parse_depth_request_parts(sparse_request_parts)
+        self.assertEqual(sparse_request.metadata["return_type"], "masked_uv_depth")
+        np.testing.assert_array_equal(sparse_request.mask_u8, mask_u8)
+
+        sparse_response_parts = build_depth_response_parts(
+            frame_id=43,
+            depth=np.array([[1.0, 0.0, 1.2, 2.0], [0.0, 1.0, 1.4, 1.0]], dtype=np.float32),
+            depth_dtype="float32",
+            return_type="masked_uv_depth",
+            compression="none",
+        )
+        sparse_response = parse_depth_response_parts(sparse_response_parts)
+        self.assertEqual(sparse_response.metadata["return_type"], "masked_uv_depth")
+        self.assertEqual(tuple(sparse_response.depth.shape), (2, 4))
+
         class FakeSocket:
             def __init__(self) -> None:
                 self.sent: list[bytes] | None = None
@@ -328,6 +445,8 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--endpoint ENDPOINT", result.stdout)
         self.assertIn("--echo-benchmark", result.stdout)
         self.assertIn("--profile PROFILE", result.stdout)
+        self.assertIn("--compress {none,zstd,lz4,png}", result.stdout)
+        self.assertIn("--mask-fraction MASK_FRACTION", result.stdout)
 
         class FakeClient:
             def __init__(self) -> None:
@@ -370,6 +489,27 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertGreaterEqual(summary["ok"], 1.0)
         self.assertEqual(summary["failed"], 0.0)
         self.assertFalse(fake_client.closed)
+
+    def test_ffs_remote_server_strict_engine_contract_validates_path_tokens(self) -> None:
+        args = ffs_remote_server.build_parser().parse_args(
+            [
+                "--strict-engine-contract",
+                "--ffs-trt-model-dir",
+                "data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864",
+            ]
+        )
+        ffs_remote_server._validate_engine_contract(args)
+        metadata = ffs_remote_server._engine_contract_metadata(args)
+        self.assertEqual(metadata["ffs_contract_model"], "20-30-48")
+        self.assertEqual(metadata["ffs_contract_valid_iters"], 4)
+        self.assertEqual(metadata["ffs_contract_engine_width"], 864)
+        self.assertEqual(metadata["ffs_contract_builder_optimization_level"], 5)
+
+        bad_args = ffs_remote_server.build_parser().parse_args(
+            ["--strict-engine-contract", "--ffs-trt-model-dir", "engines/model_wrong_iters_2_res_480x848"]
+        )
+        with self.assertRaisesRegex(ValueError, "strict FFS engine contract failed"):
+            ffs_remote_server._validate_engine_contract(bad_args)
 
     def test_masked_edgetam_releases_sam31_runtime_resources(self) -> None:
         class FakeAutocast:
@@ -499,6 +639,50 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             class_rgb=(1, 2, 3),
         )
         np.testing.assert_array_equal(class_colors, np.array([[1, 2, 3], [1, 2, 3]], dtype=np.uint8))
+
+    def test_masked_edgetam_sparse_remote_pcd_uses_ffs_payload_and_live_rgb(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "ffs_remote",
+                "--ffs-remote-endpoint",
+                "tcp://127.0.0.1:7001",
+                "--ffs-remote-return",
+                "masked_uv_depth",
+                "--track-mode",
+                "object-only",
+            ]
+        )
+        demo_instance = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        color_bgr = np.array(
+            [
+                [[10, 20, 30], [40, 50, 60]],
+                [[70, 80, 90], [100, 110, 120]],
+            ],
+            dtype=np.uint8,
+        )
+        payload = np.array(
+            [
+                [1.0, 0.0, 0.5, masked_demo.OBJECT_ID],
+                [0.0, 1.0, 0.6, masked_demo.CONTROLLER_ID],
+            ],
+            dtype=np.float32,
+        )
+        ray_x = np.array([[0.0, 1.0], [0.0, 1.0]], dtype=np.float32)
+        ray_y = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
+        controller_xyz, controller_colors, object_xyz, object_colors, timing = demo_instance._split_sparse_remote_pcd(
+            payload=payload,
+            return_type="masked_uv_depth",
+            color_bgr=color_bgr,
+            ray_x=ray_x,
+            ray_y=ray_y,
+            rng=np.random.default_rng(0),
+        )
+        np.testing.assert_allclose(controller_xyz, np.array([[0.0, 0.6, 0.6]], dtype=np.float32))
+        np.testing.assert_allclose(object_xyz, np.array([[0.5, 0.0, 0.5]], dtype=np.float32))
+        np.testing.assert_array_equal(controller_colors, np.array([[90, 80, 70]], dtype=np.uint8))
+        np.testing.assert_array_equal(object_colors, np.array([[60, 50, 40]], dtype=np.uint8))
+        self.assertGreaterEqual(timing["pcd_select_ms"], 0.0)
 
     def test_masked_edgetam_extracts_hf_masks_by_output_object_ids(self) -> None:
         class Output:

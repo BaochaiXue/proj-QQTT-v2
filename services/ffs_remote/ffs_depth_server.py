@@ -30,11 +30,20 @@ if str(REPO_ROOT) not in sys.path:
 
 from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_REPO,
+    DEFAULT_FFS_MODEL_NAME,
+    DEFAULT_FFS_MAX_DISP,
+    DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL,
+    DEFAULT_FFS_TRT_ENGINE_SIZE,
+    DEFAULT_FFS_TRT_INPUT_SIZE,
     DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
+    DEFAULT_FFS_VALID_ITERS,
 )
 from data_process.depth_backends.geometry import quantize_depth_with_invalid_zero  # noqa: E402
 from demo_v2.realtime_single_camera_pointcloud import FfsIrToColorAligner, warm_up_numba_ffs_align  # noqa: E402
 from services.ffs_remote.protocol import (  # noqa: E402
+    COMPRESSION_MODES,
+    RETURN_TYPES,
+    SPARSE_RETURN_TYPES,
     build_depth_response_parts,
     matrix_from_metadata,
     parse_depth_request_parts,
@@ -91,7 +100,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Two-stage TensorRT FFS engine directory.",
     )
     parser.add_argument("--ffs-trt-root", type=Path, default=None, help="Optional TensorRT runtime root.")
-    parser.add_argument("--return", dest="return_type", choices=("depth_u16", "depth_float_m"), default="depth_u16")
+    parser.add_argument("--return", dest="return_type", choices=RETURN_TYPES, default="depth_u16")
+    parser.add_argument(
+        "--compress",
+        choices=COMPRESSION_MODES,
+        default="none",
+        help="Compress response payloads. png is useful for uint8/uint16 image-like payloads.",
+    )
     parser.add_argument(
         "--warmup",
         type=int,
@@ -100,7 +115,99 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--echo-only", action="store_true", help="Network/protocol echo mode; returns zero depth without FFS.")
     parser.add_argument("--debug", action="store_true", help="Print per-request timing.")
+    parser.add_argument("--strict-engine-contract", action="store_true", help="Fail startup unless the FFS engine path matches the required Demo 2 contract.")
+    parser.add_argument("--required-model", default=DEFAULT_FFS_MODEL_NAME)
+    parser.add_argument("--required-valid-iters", type=int, default=DEFAULT_FFS_VALID_ITERS)
+    parser.add_argument("--required-height", type=int, default=DEFAULT_FFS_TRT_ENGINE_SIZE[0])
+    parser.add_argument("--required-width", type=int, default=DEFAULT_FFS_TRT_ENGINE_SIZE[1])
+    parser.add_argument("--required-capture-height", type=int, default=DEFAULT_FFS_TRT_INPUT_SIZE[0])
+    parser.add_argument("--required-capture-width", type=int, default=DEFAULT_FFS_TRT_INPUT_SIZE[1])
+    parser.add_argument("--required-builder-optimization-level", type=int, default=DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL)
+    parser.add_argument("--required-max-disp", type=int, default=DEFAULT_FFS_MAX_DISP)
     return parser
+
+
+def _sparse_uv_depth(depth_m: np.ndarray, mask_u8: np.ndarray | None) -> np.ndarray:
+    if mask_u8 is None:
+        return np.empty((0, 4), dtype=np.float32)
+    if depth_m.shape != mask_u8.shape:
+        raise ValueError(f"mask shape {mask_u8.shape} does not match depth shape {depth_m.shape}")
+    mask = np.asarray(mask_u8, dtype=np.uint8)
+    valid = (mask > 0) & np.isfinite(depth_m) & (depth_m > np.float32(0.0))
+    if not np.any(valid):
+        return np.empty((0, 4), dtype=np.float32)
+    rows, cols = np.nonzero(valid)
+    z = depth_m[rows, cols].astype(np.float32, copy=False)
+    labels = mask[rows, cols].astype(np.float32, copy=False)
+    return np.ascontiguousarray(np.stack([cols.astype(np.float32), rows.astype(np.float32), z, labels], axis=1))
+
+
+def _sparse_xyz(depth_m: np.ndarray, mask_u8: np.ndarray | None, k_color: np.ndarray) -> np.ndarray:
+    uv_depth = _sparse_uv_depth(depth_m, mask_u8)
+    if uv_depth.shape[0] == 0:
+        return uv_depth
+    k = np.asarray(k_color, dtype=np.float32).reshape(3, 3)
+    fx = float(k[0, 0])
+    fy = float(k[1, 1])
+    cx = float(k[0, 2])
+    cy = float(k[1, 2])
+    if fx == 0.0 or fy == 0.0:
+        raise ValueError("invalid k_color focal length for masked_xyz")
+    u = uv_depth[:, 0]
+    v = uv_depth[:, 1]
+    z = uv_depth[:, 2]
+    label = uv_depth[:, 3]
+    x = (u - np.float32(cx)) * z / np.float32(fx)
+    y = (v - np.float32(cy)) * z / np.float32(fy)
+    return np.ascontiguousarray(np.stack([x, y, z, label, u, v], axis=1), dtype=np.float32)
+
+
+def _engine_contract_metadata(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "ffs_contract_model": str(args.required_model),
+        "ffs_contract_valid_iters": int(args.required_valid_iters),
+        "ffs_contract_engine_height": int(args.required_height),
+        "ffs_contract_engine_width": int(args.required_width),
+        "ffs_contract_capture_height": int(args.required_capture_height),
+        "ffs_contract_capture_width": int(args.required_capture_width),
+        "ffs_contract_builder_optimization_level": int(args.required_builder_optimization_level),
+        "ffs_contract_max_disp": int(args.required_max_disp),
+        "ffs_contract_padding_policy": (
+            f"{int(args.required_capture_height)}x{int(args.required_capture_width)}"
+            f"->pad_to_{int(args.required_height)}x{int(args.required_width)}"
+        ),
+        "ffs_contract_engine_dir": str(Path(args.ffs_trt_model_dir)),
+        "ffs_contract_strict": bool(args.strict_engine_contract),
+    }
+
+
+def _validate_engine_contract(args: argparse.Namespace) -> None:
+    if int(args.required_height) <= 0 or int(args.required_width) <= 0:
+        raise ValueError("required engine dimensions must be positive")
+    if int(args.required_capture_height) <= 0 or int(args.required_capture_width) <= 0:
+        raise ValueError("required capture dimensions must be positive")
+    if int(args.required_valid_iters) <= 0 or int(args.required_max_disp) <= 0:
+        raise ValueError("required valid_iters and max_disp must be positive")
+    if not bool(args.strict_engine_contract):
+        return
+    path_text = str(Path(args.ffs_trt_model_dir)).lower().replace("-", "_")
+    model_token = str(args.required_model).lower().replace("-", "_")
+    expected_res = f"res_{int(args.required_height)}x{int(args.required_width)}"
+    checks = {
+        f"model {args.required_model}": model_token in path_text,
+        f"valid_iters {int(args.required_valid_iters)}": f"iters_{int(args.required_valid_iters)}" in path_text,
+        f"engine resolution {int(args.required_height)}x{int(args.required_width)}": expected_res in path_text,
+        f"builderOptimizationLevel {int(args.required_builder_optimization_level)}": (
+            f"builderopt{int(args.required_builder_optimization_level)}" in path_text
+            or f"builder_optimization_level_{int(args.required_builder_optimization_level)}" in path_text
+        ),
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    if failed:
+        raise ValueError(
+            "strict FFS engine contract failed for "
+            f"{Path(args.ffs_trt_model_dir)}: missing {', '.join(failed)}"
+        )
 
 
 def _make_runner(args: argparse.Namespace) -> Any | None:
@@ -158,7 +265,10 @@ def _handle_request(*, request_parts: list[bytes], runner: Any | None, aligner: 
             return_type = args.return_type
 
         if args.echo_only:
-            depth_float_m = np.zeros(color_shape, dtype=np.float32)
+            if return_type in SPARSE_RETURN_TYPES:
+                depth_float_m = np.ones(color_shape, dtype=np.float32)
+            else:
+                depth_float_m = np.zeros(color_shape, dtype=np.float32)
             server_ffs_ms = 0.0
             server_align_ms = 0.0
         else:
@@ -196,14 +306,27 @@ def _handle_request(*, request_parts: list[bytes], runner: Any | None, aligner: 
         if return_type == "depth_u16":
             depth_payload = quantize_depth_with_invalid_zero(depth_float_m, depth_scale)
             dtype = "uint16"
-        else:
+        elif return_type == "depth_float_m":
             depth_payload = np.ascontiguousarray(depth_float_m, dtype=np.float32)
             dtype = "float32"
+        elif return_type == "masked_uv_depth":
+            depth_payload = _sparse_uv_depth(depth_float_m, request.mask_u8)
+            dtype = "float32"
+            sparse_format = "uv_depth_label_float32"
+        elif return_type == "masked_xyz":
+            depth_payload = _sparse_xyz(depth_float_m, request.mask_u8, k_color)
+            dtype = "float32"
+            sparse_format = "xyz_label_uv_float32"
+        else:
+            raise ValueError(f"unsupported return_type: {return_type}")
+        if return_type not in SPARSE_RETURN_TYPES:
+            sparse_format = ""
         server_total_ms = _elapsed_ms(request_start_s)
         if args.debug:
             print(
                 "[ffs-remote-server] "
                 f"frame_id={frame_id} status=ok return={return_type} "
+                f"shape={tuple(depth_payload.shape)} "
                 f"ffs_ms={server_ffs_ms:.2f} align_ms={server_align_ms:.2f} total_ms={server_total_ms:.2f}",
                 flush=True,
             )
@@ -216,6 +339,12 @@ def _handle_request(*, request_parts: list[bytes], runner: Any | None, aligner: 
             server_align_ms=server_align_ms,
             server_total_ms=server_total_ms,
             depth_scale_m_per_unit=depth_scale,
+            return_type=return_type,
+            compression=args.compress,
+            extra_metadata={
+                **_engine_contract_metadata(args),
+                "sparse_format": sparse_format,
+            },
         )
     except Exception as exc:
         frame_id = -1
@@ -235,11 +364,21 @@ def _handle_request(*, request_parts: list[bytes], runner: Any | None, aligner: 
             status="error",
             error=f"{type(exc).__name__}: {exc}",
             server_total_ms=_elapsed_ms(request_start_s),
+            return_type=args.return_type,
+            compression="none",
+            extra_metadata=_engine_contract_metadata(args),
         )
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.compress == "png" and args.return_type != "depth_u16":
+        parser.exit(2, "ffs_depth_server.py: error: --compress png currently requires --return depth_u16\n")
+    try:
+        _validate_engine_contract(args)
+    except ValueError as exc:
+        parser.exit(2, f"ffs_depth_server.py: error: {exc}\n")
     import zmq
 
     if not args.echo_only:
@@ -257,9 +396,11 @@ def main(argv: list[str] | None = None) -> int:
                 "bind": args.bind,
                 "echo_only": bool(args.echo_only),
                 "return_type": args.return_type,
+                "compress": args.compress,
                 "ffs_repo": str(args.ffs_repo),
                 "ffs_trt_model_dir": str(args.ffs_trt_model_dir),
                 "warmup": int(args.warmup),
+                "engine_contract": _engine_contract_metadata(args),
             },
             sort_keys=True,
         ),

@@ -61,6 +61,8 @@ These record what the current machine and D455 topology actually supported durin
 - `sloth_set_2_motion_ffs_sam31_object_controller_pcd_benchmark.md`
 - `demo2_realtime_masked_edgetam_pcd_profile_isolation.md`
 - `demo2_remote_ffs_service_validation.md`
+- `demo2_depth_source_fps_comparison.md`
+- `demo2_local_ffs_professor_speed_polish.md`
 
 These document external FFS and SAM-family proof-of-life, repo integration behavior, and targeted audits around the FFS code path.
 

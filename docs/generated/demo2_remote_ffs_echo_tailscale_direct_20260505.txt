@@ -1,0 +1,1 @@
+[ffs-remote-client-summary] duration_s=20.08 sent=248.00 ok=0.00 failed=248.00 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p90=0.00 rtt_ms_p95=0.00 server_total_ms_p50=0.00 request_kb_mean=0.00 response_kb_mean=0.00 mbps_payload=0.00 sparse_points_mean=0.00

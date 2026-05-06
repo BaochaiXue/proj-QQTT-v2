@@ -14,9 +14,21 @@ if __package__ in {None, ""}:
     repo_root = Path(__file__).resolve().parents[2]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
-    from services.ffs_remote.protocol import build_depth_request_parts, parse_depth_response_parts
+    from services.ffs_remote.protocol import (
+        COMPRESSION_MODES,
+        RETURN_TYPES,
+        SPARSE_RETURN_TYPES,
+        build_depth_request_parts,
+        parse_depth_response_parts,
+    )
 else:
-    from .protocol import build_depth_request_parts, parse_depth_response_parts
+    from .protocol import (
+        COMPRESSION_MODES,
+        RETURN_TYPES,
+        SPARSE_RETURN_TYPES,
+        build_depth_request_parts,
+        parse_depth_response_parts,
+    )
 
 
 @dataclass(frozen=True)
@@ -29,6 +41,10 @@ class FfsRemoteDepthResult:
     server_total_ms: float
     request_bytes: int
     response_bytes: int
+    return_type: str = "depth_u16"
+    compression: str = "none"
+    sparse_payload: np.ndarray | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class FfsRemoteDepthClient:
@@ -38,6 +54,7 @@ class FfsRemoteDepthClient:
         endpoint: str,
         timeout_ms: int,
         return_type: str = "depth_u16",
+        compression: str = "none",
         max_inflight: int = 1,
         zmq_context: Any | None = None,
         zmq_socket: Any | None = None,
@@ -48,11 +65,14 @@ class FfsRemoteDepthClient:
             raise ValueError("timeout_ms must be positive")
         if int(max_inflight) != 1:
             raise ValueError("first ffs_remote implementation only supports max_inflight=1")
-        if return_type not in {"depth_u16", "depth_float_m"}:
-            raise ValueError("return_type must be depth_u16 or depth_float_m")
+        if return_type not in RETURN_TYPES:
+            raise ValueError(f"return_type must be one of {', '.join(RETURN_TYPES)}")
+        if compression not in COMPRESSION_MODES:
+            raise ValueError(f"compression must be one of {', '.join(COMPRESSION_MODES)}")
         self.endpoint = str(endpoint)
         self.timeout_ms = int(timeout_ms)
         self.return_type = str(return_type)
+        self.compression = str(compression)
         self.max_inflight = int(max_inflight)
         self._external_socket = zmq_socket is not None
         self._context = zmq_context
@@ -98,6 +118,7 @@ class FfsRemoteDepthClient:
         t_ir_left_to_color: np.ndarray,
         baseline_m: float,
         depth_scale_m_per_unit: float,
+        mask_u8: np.ndarray | None = None,
     ) -> FfsRemoteDepthResult:
         request_parts = build_depth_request_parts(
             frame_id=int(frame_id),
@@ -110,6 +131,8 @@ class FfsRemoteDepthClient:
             baseline_m=float(baseline_m),
             depth_scale_m_per_unit=float(depth_scale_m_per_unit),
             return_type=self.return_type,
+            mask_u8=mask_u8,
+            compression=self.compression,
         )
         request_bytes = sum(len(part) for part in request_parts)
         socket = self._connect()
@@ -130,7 +153,12 @@ class FfsRemoteDepthClient:
         if response_frame_id != int(frame_id):
             raise RuntimeError(f"remote FFS frame_id mismatch: request={frame_id} response={response_frame_id}")
         depth = response.depth
-        if depth.dtype == np.uint16:
+        return_type = str(metadata.get("return_type") or self.return_type)
+        sparse_payload = None
+        if return_type in SPARSE_RETURN_TYPES:
+            depth_m = np.empty((0, 0), dtype=np.float32)
+            sparse_payload = np.ascontiguousarray(depth.astype(np.float32), dtype=np.float32)
+        elif depth.dtype == np.uint16:
             scale = float(metadata.get("depth_scale_m_per_unit", depth_scale_m_per_unit))
             depth_m = np.ascontiguousarray(depth.astype(np.float32) * np.float32(scale), dtype=np.float32)
         else:
@@ -144,6 +172,10 @@ class FfsRemoteDepthClient:
             server_total_ms=float(metadata.get("server_total_ms", 0.0)),
             request_bytes=int(request_bytes),
             response_bytes=int(sum(len(part) for part in response_parts)),
+            return_type=return_type,
+            compression=str(metadata.get("compression", self.compression)),
+            sparse_payload=sparse_payload,
+            metadata=dict(metadata),
         )
 
 
@@ -169,7 +201,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Remote FFS depth client utilities.")
     parser.add_argument("--endpoint", required=True, help="ZeroMQ server endpoint, for example tcp://100.x.y.z:7001.")
     parser.add_argument("--timeout-ms", type=int, default=80, help="Send/receive timeout in milliseconds.")
-    parser.add_argument("--return-type", choices=("depth_u16", "depth_float_m"), default="depth_u16")
+    parser.add_argument("--return-type", choices=RETURN_TYPES, default="depth_u16")
+    parser.add_argument(
+        "--compress",
+        choices=COMPRESSION_MODES,
+        default="none",
+        help="Compress IR request payloads. Server response compression is controlled by the server.",
+    )
+    parser.add_argument(
+        "--mask-fraction",
+        type=float,
+        default=0.0,
+        help="Synthetic mask occupancy for sparse return echo benchmarks. Use 0 to omit the mask payload.",
+    )
     parser.add_argument("--echo-benchmark", action="store_true", help="Send synthetic IR pairs and report RTT/throughput.")
     parser.add_argument("--profile", default="848x480", help="Synthetic IR payload profile for --echo-benchmark.")
     parser.add_argument("--fps", type=float, default=30.0, help="Target request rate for --echo-benchmark.")
@@ -194,12 +238,19 @@ def run_echo_benchmark(args: argparse.Namespace, *, client: FfsRemoteDepthClient
             endpoint=str(args.endpoint),
             timeout_ms=int(args.timeout_ms),
             return_type=str(args.return_type),
+            compression=str(args.compress),
         )
     left = np.zeros((height, width), dtype=np.uint8)
     right = np.zeros((height, width), dtype=np.uint8)
     k_ir = np.array([[600.0, 0.0, width / 2.0], [0.0, 600.0, height / 2.0], [0.0, 0.0, 1.0]], dtype=np.float32)
     k_color = k_ir.copy()
     transform = np.eye(4, dtype=np.float32)
+    mask_u8: np.ndarray | None = None
+    if float(args.mask_fraction) < 0.0 or float(args.mask_fraction) > 1.0:
+        raise ValueError("--mask-fraction must be in [0, 1]")
+    if float(args.mask_fraction) > 0.0:
+        rng = np.random.default_rng(20260505)
+        mask_u8 = np.ascontiguousarray((rng.random((height, width)) < float(args.mask_fraction)).astype(np.uint8))
 
     started_s = time.perf_counter()
     deadline_s = started_s + float(args.duration_s)
@@ -211,6 +262,7 @@ def run_echo_benchmark(args: argparse.Namespace, *, client: FfsRemoteDepthClient
     server_totals: list[float] = []
     request_bytes = 0
     response_bytes = 0
+    sparse_points: list[float] = []
     last_log_s = started_s
     try:
         while time.perf_counter() < deadline_s:
@@ -231,12 +283,15 @@ def run_echo_benchmark(args: argparse.Namespace, *, client: FfsRemoteDepthClient
                     t_ir_left_to_color=transform,
                     baseline_m=float(args.baseline_m),
                     depth_scale_m_per_unit=float(args.depth_scale_m_per_unit),
+                    mask_u8=mask_u8,
                 )
                 successes += 1
                 rtts.append(float(result.rtt_ms))
                 server_totals.append(float(result.server_total_ms))
                 request_bytes += int(result.request_bytes)
                 response_bytes += int(result.response_bytes)
+                if result.sparse_payload is not None:
+                    sparse_points.append(float(result.sparse_payload.shape[0]))
             except Exception as exc:
                 failures += 1
                 if bool(args.debug):
@@ -273,6 +328,7 @@ def run_echo_benchmark(args: argparse.Namespace, *, client: FfsRemoteDepthClient
         "request_kb_mean": float((request_bytes / max(1, successes)) / 1024.0),
         "response_kb_mean": float((response_bytes / max(1, successes)) / 1024.0),
         "mbps_payload": float(((request_bytes + response_bytes) * 8.0) / (elapsed_s * 1_000_000.0)),
+        "sparse_points_mean": float(np.mean(np.asarray(sparse_points, dtype=np.float64))) if sparse_points else 0.0,
     }
     print(
         "[ffs-remote-client-summary] "

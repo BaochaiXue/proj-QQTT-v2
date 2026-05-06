@@ -133,6 +133,38 @@ live RGB frame by default; use `--pcd-color-mode class` to switch back to fixed
 controller/object colors. `--init-mode saved-masks` remains available only for
 debugging controlled replay-style startup; it is not the default live demo path.
 
+Professor-facing local FFS speed preset:
+
+Use this when the demo must stay fully FFS-derived on the local RTX 5090 Laptop
+but needs lower Open3D/render load. The preset does not change the FFS engine,
+checkpoint, valid iteration count, or EdgeTAM compile mode. It only caps the
+rendered masked points and adjusts display latency/point-size defaults:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python demo_v2/realtime_masked_edgetam_pcd.py \
+  --serial 239222300412 \
+  --profile 848x480 \
+  --fps 60 \
+  --depth-source ffs \
+  --demo-preset local-ffs-professor \
+  --init-mode sam31-first-frame \
+  --track-mode object-only \
+  --object-prompt "stuffed animal" \
+  --pcd-mode masked \
+  --render-mode pointcloud \
+  --compile-mode vision-reduce-overhead \
+  --dtype bfloat16 \
+  --depth-min-m 0.2 \
+  --depth-max-m 1.5 \
+  --pcd-color-mode rgb \
+  --debug
+```
+
+With the current local profiling, the formal no-render FFS path is around
+`25 FPS`. If WSLg/Open3D render becomes the visible bottleneck, keep the same
+command and add `--render-every-n 2` for a steadier lower-rate display.
+
 ## Remote FFS Depth
 
 Use `--depth-source ffs_remote` when the RealSense camera stays on the local
@@ -168,7 +200,10 @@ conda run --no-capture-output -n demo_2_max \
   --debug
 ```
 
-Start the server on the remote GPU machine:
+Start the server on the remote GPU machine. The official Demo 2 remote path
+must prove the same FFS engine contract as the local quality baseline:
+`20-30-48`, `valid_iters=4`, `848x480 -> pad 864x480`,
+`builderOptimizationLevel=5`, `max_disp=192`.
 
 ```bash
 conda run --no-capture-output -n demo_2_max \
@@ -176,12 +211,48 @@ conda run --no-capture-output -n demo_2_max \
   --bind tcp://0.0.0.0:7001 \
   --ffs-repo ../Fast-FoundationStereo \
   --ffs-trt-model-dir data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864 \
-  --return depth_u16 \
+  --return masked_uv_depth \
   --warmup 20 \
-  --debug
+  --debug \
+  --strict-engine-contract \
+  --required-model 20-30-48 \
+  --required-valid-iters 4 \
+  --required-height 480 \
+  --required-width 864 \
+  --required-builder-optimization-level 5 \
+  --required-max-disp 192
 ```
 
-Run Demo 2 on the local camera/UI machine:
+Run the formal local FFS quality baseline on the local camera/UI machine when a
+remote direct path is not fast enough. This is the semantically correct
+single-machine baseline even if it is only around the mid-20 FPS range:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python demo_v2/realtime_masked_edgetam_pcd.py \
+  --serial 239222300412 \
+  --profile 848x480 \
+  --fps 60 \
+  --depth-source ffs \
+  --init-mode sam31-first-frame \
+  --track-mode object-only \
+  --object-prompt "stuffed animal" \
+  --pcd-mode masked \
+  --render-mode pointcloud \
+  --compile-mode vision-reduce-overhead \
+  --dtype bfloat16 \
+  --depth-min-m 0.2 \
+  --depth-max-m 1.5 \
+  --pcd-max-points 60000 \
+  --pcd-color-mode rgb \
+  --debug \
+  --profile-cuda-events
+```
+
+Run the formal remote sparse FFS path only when the network can support it. This
+path sends the same-frame EdgeTAM mask plus IR pair to the remote server and
+builds the PCD only from returned FFS-derived sparse depth/points. It does not
+fall back to native RealSense depth:
 
 ```bash
 conda run --no-capture-output -n demo_2_max \
@@ -192,25 +263,60 @@ conda run --no-capture-output -n demo_2_max \
   --depth-source ffs_remote \
   --ffs-remote-endpoint tcp://<remote_tailscale_ip>:7001 \
   --ffs-remote-max-inflight 1 \
-  --ffs-remote-return depth_u16 \
+  --ffs-remote-timeout-ms 5000 \
+  --ffs-remote-return masked_uv_depth \
   --init-mode sam31-first-frame \
   --track-mode object-only \
   --object-prompt "stuffed animal" \
   --pcd-mode masked \
-  --render-mode none \
+  --render-mode pointcloud \
   --compile-mode vision-reduce-overhead \
   --dtype bfloat16 \
+  --depth-min-m 0.2 \
+  --depth-max-m 1.5 \
+  --pcd-max-points 60000 \
+  --pcd-color-mode rgb \
   --debug \
-  --profile-cuda-events \
-  --duration-s 60
+  --profile-cuda-events
 ```
 
-The first implementation is intentionally conservative: `--ffs-remote-max-inflight`
-must be `1`. Each PCD packet uses depth returned for the same frame `seq`; timed
-out replies are skipped instead of mixing older depth with newer masks.
-`--debug` reports `remote_rtt_ms`, `remote_server_total_ms`,
-`remote_request_kb`, and `remote_response_kb` in addition to `ffs_ms` and
-`ffs_align_ms`.
+The first full-frame implementation is intentionally conservative:
+`--ffs-remote-max-inflight` must be `1`. Each PCD packet uses depth returned for
+the same frame `seq`; timed out replies are skipped instead of mixing older
+depth with newer masks. `--debug` reports `remote_rtt_ms`,
+`remote_server_total_ms`, `remote_request_kb`, and `remote_response_kb` in
+addition to `ffs_ms` and `ffs_align_ms`.
+
+Fallback/debug only: if you need a fast UI path while debugging networking, use
+native RealSense depth as the main path and enable remote FFS as a low-FPS
+comparison side channel. This is not the official professor-facing Demo 2
+quality output because the rendered PCD comes from native RealSense depth:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python demo_v2/realtime_masked_edgetam_pcd.py \
+  --serial 239222300412 \
+  --profile 848x480 \
+  --fps 60 \
+  --depth-source realsense \
+  --enable-remote-ffs-quality \
+  --remote-ffs-quality-endpoint tcp://<remote_tailscale_ip>:7001 \
+  --remote-ffs-quality-return masked_uv_depth \
+  --remote-ffs-quality-compress none \
+  --remote-ffs-quality-interval-ms 200 \
+  --init-mode sam31-first-frame \
+  --track-mode object-only \
+  --object-prompt "stuffed animal" \
+  --pcd-mode masked \
+  --compile-mode vision-reduce-overhead \
+  --dtype bfloat16 \
+  --debug
+```
+
+Protocol experiments can use `--return masked_uv_depth` or `--return
+masked_xyz` on the server/client utilities, plus `--compress none|zstd|lz4|png`.
+For formal Demo 2, sparse modes are official only when they are the main
+`--depth-source ffs_remote` path and are computed by the remote FFS opt5 engine.
 
 Object-only startup when no hand is in view:
 
@@ -220,6 +326,7 @@ conda run --no-capture-output -n demo_2_max \
   --profile 848x480 \
   --fps 60 \
   --depth-source ffs \
+  --demo-preset local-ffs-professor \
   --init-mode sam31-first-frame \
   --track-mode object-only \
   --object-prompt "stuffed animal" \
@@ -227,9 +334,7 @@ conda run --no-capture-output -n demo_2_max \
   --dtype bfloat16 \
   --depth-min-m 0.2 \
   --depth-max-m 1.5 \
-  --pcd-max-points 60000 \
   --pcd-color-mode rgb \
-  --render-every-n 1 \
   --debug
 ```
 
