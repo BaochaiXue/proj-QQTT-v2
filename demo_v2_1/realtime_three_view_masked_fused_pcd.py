@@ -94,10 +94,18 @@ DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
 PRESET_NONE = "none"
 PRESET_PROFESSOR_SAFE = "professor-safe"
+PRESET_VISUAL_5FPS = "visual-5fps"
 PRESET_CLIMB_5 = "climb-5"
 PRESET_CLIMB_10 = "climb-10"
 PRESET_DIAGNOSTICS = "diagnostics"
-PRESETS = (PRESET_NONE, PRESET_PROFESSOR_SAFE, PRESET_CLIMB_5, PRESET_CLIMB_10, PRESET_DIAGNOSTICS)
+PRESETS = (
+    PRESET_NONE,
+    PRESET_PROFESSOR_SAFE,
+    PRESET_VISUAL_5FPS,
+    PRESET_CLIMB_5,
+    PRESET_CLIMB_10,
+    PRESET_DIAGNOSTICS,
+)
 DEFAULT_DEVICE = "cuda"
 DEFAULT_DTYPE = "bfloat16"
 DEFAULT_COMPILE_MODE = "vision-reduce-overhead"
@@ -585,15 +593,21 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         _set_if_not_explicit(args, explicit, flag=flag, attr=attr, value=value)
 
     if preset == PRESET_PROFESSOR_SAFE:
-        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_OBJECT_ONLY)
         _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
         _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+    elif preset == PRESET_VISUAL_5FPS:
+        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_OBJECT_ONLY)
+        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+        _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_LIMITED)
+        _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=2)
     elif preset == PRESET_CLIMB_5:
-        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_OBJECT_ONLY)
         _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
         _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
     elif preset == PRESET_CLIMB_10:
-        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_OBJECT_ONLY)
         _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=10.0)
         _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
     elif preset == PRESET_DIAGNOSTICS:
@@ -1612,6 +1626,7 @@ class Demo21Runtime:
             self.stop_event.set()
             if os.environ.get("QQTT_WSLG_OPEN3D_FAST_EXIT") == "1":
                 self.stop()
+                self._write_summary()
                 os._exit(0)
             try:
                 app.quit()

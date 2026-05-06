@@ -52,7 +52,8 @@ GPU gate:
 
 | Preset | Profile | Target | Render default | Intended use |
 | --- | --- | ---: | --- | --- |
-| `professor-safe` | `848x480@30` | 2 FPS | pointcloud | low-FPS FFS-quality fused demo |
+| `professor-safe` | `848x480@30` | 2 FPS | pointcloud | current no-hand object-only low-FPS FFS-quality fused demo |
+| `visual-5fps` | `848x480@30` | 5 FPS | pointcloud | quality-preserving visual candidate, FFS depth + enhanced-PT, GPU gate max_concurrent=2 |
 | `climb-5` | `848x480@30` | 5 FPS | none | headless performance climb |
 | `climb-10` | `848x480@30` | 10 FPS | none | diagnostic stress test |
 | `diagnostics` | `848x480@30` | 2 FPS | none | capture/EdgeTAM/FFS isolation |
@@ -165,16 +166,124 @@ This validates that the serialized gate path can produce strict group-matched fu
 | controller-object professor-safe | TBD | TBD | TBD | TBD | TBD | use only when a hand is visible or saved hand masks are available |
 | controller-object climb-5 | TBD | TBD | TBD | TBD | TBD | profiling only |
 
+## Visualization Smoke
+
+A WSLg/Open3D pointcloud render smoke was run with the current no-hand object-only professor-safe path:
+
+```bash
+QQTT_WSLG_OPEN3D_FAST_EXIT=0 \
+  ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset professor-safe \
+  --object-prompt "stuffed animal" \
+  --duration-s 90 \
+  --debug \
+  --profile-cuda-events
+```
+
+The Open3D pointcloud window started, rendered fused object PCD packets, and exited with code `0`. During steady runtime, debug output reported `render_fps` around `1.9` to `2.1`, matching the professor-safe 2 FPS target. This first visualization check was log-based; the GUI fast-exit path now writes the normal session summary before exiting.
+
+A second climb run tested whether the same visualization path can reach 5 FPS:
+
+```bash
+QQTT_WSLG_OPEN3D_FAST_EXIT=1 \
+  ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset climb-5 \
+  --render-mode pointcloud \
+  --object-prompt "stuffed animal" \
+  --duration-s 75 \
+  --debug \
+  --profile-cuda-events \
+  > docs/generated/demo2_1_visual_climb5_render_smoke.log 2>&1
+```
+
+Parsed steady-state metrics from `docs/generated/demo2_1_visual_climb5_render_smoke.log`:
+
+| Metric | Median | Mean | Notes |
+| --- | ---: | ---: | --- |
+| capture group FPS | `5.00` | `4.95` | capture/group builder reaches target |
+| shared FFS cycle FPS | `5.42` | `5.34` | FFS worker is not the primary 5 FPS blocker |
+| EdgeTAM FPS cam0/cam1/cam2 | `4.99 / 3.36 / 4.99` | `4.76 / 3.40 / 4.69` | cam1 often waits behind the serialized GPU gate |
+| fusion FPS | `2.48` | `2.52` | below 5 FPS target |
+| render FPS | `2.48` | `2.53` | tracks fusion FPS, not an independent Open3D bottleneck |
+| FFS cycle ms | `103.90` | `125.90` | occasional gate/wait spikes |
+| fusion ms | `44.90` | `51.63` | includes semantic PCD postprocess |
+| filter ms | `37.30` | `43.70` | enhanced object filter dominates fusion time; occasional ~230 ms spikes |
+| object points | `9981` | `9981` | after object cap/filter |
+| EdgeTAM model ms cam0/cam1/cam2 | `32.30 / 33.20 / 31.40` | `34.86 / 32.99 / 31.60` | compiled model compute is not the only limiter |
+| GPU gate wait cam0/cam1/cam2 | `66.30 / 345.20 / 228.00` | `116.58 / 260.01 / 204.81` | serialized gate scheduling is the largest climb-5 limiter |
+
+Conclusion:
+
+- Professor-safe visualization succeeds at the intended low-FPS 2 FPS target.
+- The current pointcloud renderer can display fused packets at the rate produced by fusion.
+- For a 5 FPS visual demo, the current median render rate is short by about `2.5 FPS`, requiring roughly a `2x` throughput improvement.
+- The main blockers are serialized GPU gate wait for the three EdgeTAM workers and semantic PCD postprocess cost, not WSLg/Open3D itself.
+
+## 5 FPS Visual Candidate
+
+The quality-preserving hypothesis was tested by keeping the exact same PCD quality path and only allowing two GPU inference workers through the gate at a time:
+
+```bash
+QQTT_WSLG_OPEN3D_FAST_EXIT=1 \
+  ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset climb-5 \
+  --render-mode pointcloud \
+  --object-prompt "stuffed animal" \
+  --gpu-gate-mode limited \
+  --gpu-gate-max-concurrent 2 \
+  --duration-s 90 \
+  --debug \
+  --profile-cuda-events \
+  > docs/generated/demo2_1_visual_climb5_render_gate2.log 2>&1
+```
+
+Parsed steady-state metrics from `docs/generated/demo2_1_visual_climb5_render_gate2.log`:
+
+| Metric | Median | Mean | Notes |
+| --- | ---: | ---: | --- |
+| capture group FPS | `4.99` | `4.90` | group builder stays near target |
+| shared FFS cycle FPS | `4.97` | `4.99` | FFS remains near 5 FPS |
+| EdgeTAM FPS cam0/cam1/cam2 | `5.03 / 5.04 / 5.01` | `4.98 / 4.96 / 4.93` | gate2 removes the cam1 starvation seen with serialized gate |
+| fusion FPS | `4.86` | `4.69` | near the 5 FPS target |
+| render FPS | `4.85` | `4.69` | tracks fusion; p90 render FPS was `5.19` |
+| FFS cycle ms | `134.70` | `139.72` | FFS is slower than the serialized run but still supplies target-rate groups |
+| fusion ms | `42.80` | `48.38` | includes object enhanced-PT |
+| filter ms | `36.20` | `40.94` | unchanged enhanced object filter; occasional spike remains |
+| object points | `9982` | `8298` | intermittent point-count drops still need visual review |
+| EdgeTAM model ms cam0/cam1/cam2 | `62.80 / 63.00 / 60.50` | `63.89 / 66.15 / 61.12` | model kernels slow under gate2 contention, but total throughput improves |
+| GPU gate wait ffs/cam0/cam1/cam2 | `0.00 / 89.30 / 59.50 / 51.70` | `0.06 / 88.95 / 62.98 / 54.12` | much lower than serialized gate waits |
+
+Conclusion:
+
+- The 5 FPS candidate does not change the PCD quality contract: FFS-derived depth, object `enhanced-pt`, controller `pt-filter`, and no native RealSense fallback.
+- `gpu_gate_max_concurrent=2` is the first quality-preserving change that brings WSLg/Open3D visualization close to 5 FPS.
+- Remaining risk is stability, not renderer capacity: filter spikes and intermittent low object point counts still need visual inspection before replacing `professor-safe`.
+- This candidate is now exposed as the `visual-5fps` preset.
+
 Recommended current-lab professor-facing command when no hand/controller is visible:
 
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
   --preset professor-safe \
-  --track-mode object-only \
   --object-prompt "stuffed animal" \
   --duration-s 120 \
   --debug
+```
+
+5 FPS visual candidate command:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-cuda-events
 ```
 
 Controller-object command for when a hand is visible:

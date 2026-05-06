@@ -59,9 +59,17 @@ Presets:
 professor-safe:
   848x480@30
   fusion-target-fps=2
-  controller-object by default when a hand is visible
+  object-only by default for the current no-hand lab setup
   render-mode=pointcloud by default
   GPU gate serialized with max_concurrent=1
+
+visual-5fps:
+  848x480@30
+  fusion-target-fps=5
+  object-only by default for the current no-hand lab setup
+  render-mode=pointcloud by default
+  GPU gate limited with max_concurrent=2
+  quality path unchanged: FFS depth + object enhanced-pt
 
 climb-5:
   848x480@30
@@ -78,7 +86,30 @@ diagnostics:
   combine with --depth-source none, --track-mode none, or --render-mode none
 ```
 
-Professor-safe object/controller run, only when a hand is visible:
+Current no-hand professor-safe object-only run:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset professor-safe \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug
+```
+
+Current no-hand 5 FPS visual candidate:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-cuda-events
+```
+
+Controller-object run, only when a hand is visible:
 
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
@@ -87,17 +118,6 @@ Professor-safe object/controller run, only when a hand is visible:
   --track-mode controller-object \
   --controller-prompt "hand" \
   --object-prompt "stuffed animal" \
-  --duration-s 120 \
-  --debug
-```
-
-If no hand is visible, use the same preset with object-only. This is the current lab state.
-
-```bash
-./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
-  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --preset professor-safe \
-  --track-mode object-only \
   --duration-s 120 \
   --debug
 ```
