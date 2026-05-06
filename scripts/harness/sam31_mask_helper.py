@@ -391,6 +391,127 @@ def _collect_frame_segments(outputs: dict[str, Any], *, allowed_obj_ids: set[int
     return frame_segments
 
 
+def _as_numpy_array(value: Any) -> np.ndarray:
+    import numpy as np  # noqa: PLC0415
+
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "numpy"):
+        value = value.numpy()
+    return np.asarray(value)
+
+
+def _select_image_output_indices(state: dict[str, Any], *, keep_all_instances: bool) -> list[int]:
+    masks = _as_numpy_array(state.get("masks", []))
+    if masks.size == 0:
+        return []
+    if masks.ndim == 2:
+        masks = masks[None, ...]
+    if masks.ndim >= 4 and masks.shape[1] == 1:
+        masks = masks[:, 0]
+    object_count = int(masks.shape[0])
+    if object_count == 0:
+        return []
+    if keep_all_instances or object_count == 1:
+        return list(range(object_count))
+
+    scores = _as_numpy_array(state.get("scores", []))
+    if scores.size == object_count:
+        return [int(scores.reshape(-1).argmax())]
+
+    areas = masks.reshape(object_count, -1).sum(axis=1)
+    return [int(areas.argmax())]
+
+
+def _collect_image_prompt_masks(state: dict[str, Any], *, selected_indices: set[int]) -> list[np.ndarray]:
+    import numpy as np  # noqa: PLC0415
+
+    masks = _as_numpy_array(state.get("masks", []))
+    if masks.size == 0:
+        return []
+    if masks.ndim == 2:
+        masks = masks[None, ...]
+    if masks.ndim >= 4 and masks.shape[1] == 1:
+        masks = masks[:, 0]
+
+    output: list[np.ndarray] = []
+    for idx in sorted(int(item) for item in selected_indices):
+        if idx < 0 or idx >= int(masks.shape[0]):
+            continue
+        output.append(np.ascontiguousarray(masks[idx].astype(bool)))
+    return output
+
+
+def run_image_segmentation(
+    *,
+    image: Any,
+    text_prompt: str,
+    checkpoint_path: str | Path | None = None,
+    compile_model: bool = False,
+    max_num_objects: int = 16,
+    confidence_threshold: float = 0.5,
+    device: str = "cuda",
+) -> dict[str, Any]:
+    """Run SAM 3.1 text segmentation on a single image without video session plumbing."""
+
+    prompts = parse_text_prompts(text_prompt)
+    if not prompts:
+        raise ValueError("text_prompt must contain at least one non-empty prompt.")
+
+    _, _, torch_module, _, _, _ = _load_runtime_deps()
+    if not torch_module.cuda.is_available():
+        raise RuntimeError("The upstream SAM 3.1 image model currently requires CUDA.")
+
+    from sam3.model.sam3_image_processor import Sam3Processor  # noqa: PLC0415
+    from sam3.model_builder import build_sam3_image_model  # noqa: PLC0415
+
+    _configure_torch_inference(torch_module)
+    resolved_checkpoint = resolve_sam31_checkpoint_path(checkpoint_path)
+    resolved_bpe_path = resolve_sam31_bpe_path(resolved_checkpoint)
+    model = build_sam3_image_model(
+        bpe_path=resolved_bpe_path,
+        checkpoint_path=resolved_checkpoint,
+        load_from_HF=False,
+        device=device,
+        eval_mode=True,
+        compile=compile_model,
+    )
+    processor = Sam3Processor(
+        model,
+        device=device,
+        confidence_threshold=float(confidence_threshold),
+    )
+    state = processor.set_image(image)
+
+    masks_by_label: dict[str, list[np.ndarray]] = {prompt: [] for prompt in prompts}
+    per_prompt_counts: dict[str, int] = {}
+    with torch_module.inference_mode():
+        for prompt_idx, prompt in enumerate(prompts):
+            if prompt_idx > 0:
+                processor.reset_all_prompts(state)
+            state = processor.set_text_prompt(prompt, state)
+            keep_all_instances = len(prompts) == 1 or prompt_idx > 0
+            selected_indices = set(
+                _select_image_output_indices(state, keep_all_instances=keep_all_instances)
+            )
+            prompt_masks = _collect_image_prompt_masks(state, selected_indices=selected_indices)
+            masks_by_label[prompt].extend(prompt_masks)
+            per_prompt_counts[prompt] = int(len(prompt_masks))
+
+    return {
+        "checkpoint_path": resolved_checkpoint,
+        "bpe_path": resolved_bpe_path,
+        "text_prompt": text_prompt,
+        "parsed_prompts": prompts,
+        "masks_by_label": masks_by_label,
+        "per_prompt_counts": per_prompt_counts,
+        "inference_mode": "sam31-image-one-frame",
+        "max_num_objects": int(max_num_objects),
+    }
+
+
 def _merge_initial_frame_segments(
     video_segments: dict[int, dict[int, np.ndarray]],
     *,

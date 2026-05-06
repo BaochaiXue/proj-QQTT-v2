@@ -862,6 +862,15 @@ class Demo21Runtime:
         self._latest_fused: FusedPcdPacket | None = None
         self._last_debug_s = 0.0
         self._render_request: Callable[[], None] = lambda: None
+        self._fatal_error: str | None = None
+        self._fatal_error_lock = threading.Lock()
+
+    def _mark_fatal_error(self, stage: str, exc: BaseException) -> None:
+        message = f"{stage}: {type(exc).__name__}: {exc}"
+        with self._fatal_error_lock:
+            if self._fatal_error is None:
+                self._fatal_error = message
+                self._summary["fatal_error"] = message
 
     def _record_gpu_gate_wait(self, key: str, wait_ms: float) -> None:
         stats = self.gpu_gate_wait_stats.get(key)
@@ -916,7 +925,7 @@ class Demo21Runtime:
         finally:
             self.stop()
             self._write_summary()
-        return 0
+        return 1 if self._fatal_error is not None else 0
 
     def _validate_live_contract(self) -> None:
         if tuple(self.args.camera_ids) != DEFAULT_CAMERA_IDS:
@@ -1283,6 +1292,7 @@ class Demo21Runtime:
             except Exception as exc:
                 if not self.stop_event.is_set():
                     print(f"[ERROR] Demo 2.1 capture group failed: {type(exc).__name__}: {exc}", flush=True)
+                self._mark_fatal_error("capture-group", exc)
                 self.stop_event.set()
                 break
             packet = CaptureGroup(group_id=group_id, created_perf_s=time.perf_counter(), frames=frames)
@@ -1470,6 +1480,7 @@ class Demo21Runtime:
         except Exception as exc:
             if not self.stop_event.is_set():
                 print(f"[ERROR] Demo 2.1 shared FFS worker failed: {type(exc).__name__}: {exc}", flush=True)
+            self._mark_fatal_error("shared-ffs", exc)
             self.stop_event.set()
 
     def _autocast_context(self, torch_module: Any) -> Any:
@@ -1685,6 +1696,7 @@ class Demo21Runtime:
         except Exception as exc:
             if not self.stop_event.is_set():
                 print(f"[ERROR] Demo 2.1 EdgeTAM cam{camera_idx} failed: {type(exc).__name__}: {exc}", flush=True)
+            self._mark_fatal_error(f"edgetam-cam{int(camera_idx)}", exc)
             self.stop_event.set()
 
     def _wait_mask_for_group(self, *, camera_idx: int, group_id: int, deadline_s: float) -> CameraMaskPacket | None:

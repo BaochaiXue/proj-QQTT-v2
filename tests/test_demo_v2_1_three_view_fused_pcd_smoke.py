@@ -207,6 +207,16 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "live SAM3.1"):
             runtime._validate_live_contract()
 
+    def test_worker_fatal_error_is_recorded_for_nonzero_runtime_exit(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--depth-source", "none", "--track-mode", "none"])
+        runtime = demo.Demo21Runtime(args)
+
+        runtime._mark_fatal_error("edgetam-cam0", RuntimeError("sam31 failed"))
+
+        self.assertIn("edgetam-cam0", runtime._fatal_error or "")
+        self.assertEqual(runtime._summary["fatal_error"], runtime._fatal_error)
+
     def test_visual_profile_flags_are_explicit_and_default_off(self) -> None:
         parser = demo.build_arg_parser()
         defaults = parser.parse_args(["--dry-run", "--preset", "visual-5fps"])

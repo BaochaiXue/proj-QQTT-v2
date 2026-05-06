@@ -392,6 +392,42 @@ The second run still provides one useful scheduling signal: after narrowing the 
 
 Formal Demo 2.1 must initialize from SAM3.1 on the live first frame. The runtime fails fast by default if SAM3.1 object-only initialization does not register the requested object in a current no-hand run; no saved-mask or native-depth fallback is allowed. `controller-object` remains the default mode, and current no-controller lab runs must explicitly pass `--track-mode object-only`.
 
+A formal pure-object live SAM3.1 profile was run after this contract correction:
+
+```bash
+QQTT_WSLG_OPEN3D_FAST_EXIT=1 TRANSFORMERS_VERBOSITY=error HF_HUB_DISABLE_PROGRESS_BARS=1 \
+  ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --track-mode object-only \
+  --init-mode sam31-first-frame \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-gpu-gate \
+  --profile-warmup-exclude-s 40 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.json
+```
+
+Outputs:
+
+- `docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.json`
+- `docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.md`
+- `docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.log`
+
+Result:
+
+- cam1 initialized from live SAM3.1, `object_px=22879`
+- cam2 initialized from live SAM3.1, `object_px=14398`
+- cam0 failed SAM3.1 object-only initialization: `SAM 3.1 did not register any object for prompt stuffed animal for camera 0`
+- complete fused groups: `0`
+- rendered groups: `0`
+
+This run is not a valid FPS profile. It is a live initialization failure for cam0. The runtime has been fixed so worker fatal errors are recorded and future runs return nonzero instead of silently writing a zero-FPS profile with process exit code `0`.
+
 Next valid profiling step:
 
 ```bash
@@ -450,3 +486,41 @@ Controller-object command for when a hand is visible:
   --duration-s 120 \
   --debug
 ```
+
+## Live SAM3.1 One-Frame Init Correction
+
+The previous live first-frame path reused the generic SAM3.1 video helper even
+though it only wrote one frame. Operationally that meant:
+
+```text
+live RGB frame -> temporary one-frame case -> SAM3.1 video session
+-> add text prompt -> one-frame propagate_in_video -> mask files -> EdgeTAM init
+```
+
+The live initialization path now uses the SAM3.1 image API directly:
+
+```text
+live RGB frame -> build_sam3_image_model + Sam3Processor
+-> set_image(frame) -> set_text_prompt(prompt) -> in-memory masks -> EdgeTAM init
+```
+
+The offline/generated-mask helper still uses the existing `run_case_segmentation`
+video path. The formal live demo does not.
+
+A proof on the saved cam0 RGB frame that previously failed through the video
+helper succeeded with the image one-frame path:
+
+```text
+input: docs/generated/demo2_1_cam0_live_rgb_20260506_071723.png
+prompt: stuffed animal
+object_px: 27274
+```
+
+Artifacts:
+
+- `docs/generated/demo2_1_cam0_live_rgb_20260506_071723_sam31_image_one_frame_mask.png`
+- `docs/generated/demo2_1_cam0_live_rgb_20260506_071723_sam31_image_one_frame_overlay.png`
+
+The formal failure policy is unchanged: if the live one-frame SAM3.1 image path
+does not return the requested object/controller mask, the run fails without
+saved-mask fallback.

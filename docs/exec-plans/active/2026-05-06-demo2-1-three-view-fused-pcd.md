@@ -117,3 +117,26 @@ Follow-up:
 - Formal Demo 2.1 must use `--init-mode sam31-first-frame`; `controller-object` is the default supported mode, and current no-controller runs explicitly pass `--track-mode object-only`.
 - SAM3.1 live initialization is fail-fast by default. If object-only SAM3.1 cannot initialize the object in the live scene, the run is invalid and should fail rather than falling back to saved masks.
 - The next valid 5 FPS ablation should keep live SAM3.1 initialization, pass `--track-mode object-only` while no controller is visible, and compare gate2 vs gate3 and any fair/deadline gate policy only after SAM3.1 succeeds.
+
+## Live SAM3.1 One-Frame Init Slice
+
+The first formal live profile exposed that the old first-frame path still reused
+the generic SAM3.1 video helper: write one temporary frame, start a video
+session, add a text prompt, run one-frame propagation, read mask files back, then
+delete the temporary session. That was semantically one-frame segmentation but
+operationally still video-session plumbing.
+
+Change the live init path to a dedicated one-frame image path:
+
+- use `build_sam3_image_model` and `Sam3Processor`
+- call `set_image(live_rgb_frame)` once
+- call `set_text_prompt(...)` for object/controller prompts
+- return masks directly in memory
+- do not create a temporary video case
+- do not call `propagate_in_video`
+- keep the existing offline `run_case_segmentation` helper unchanged for
+  generated-mask workflows
+
+Formal Demo 2.1 remains fail-fast and live-only: if the one-frame SAM3.1 path
+does not produce the requested object/controller mask, the run fails with no
+saved-mask fallback.

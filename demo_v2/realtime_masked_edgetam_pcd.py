@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import sys
-import tempfile
 import threading
 import time
 from typing import Any, Callable
@@ -1113,38 +1112,6 @@ def _bgr_to_pil_rgb(color_bgr: np.ndarray) -> Any:
     return Image.fromarray(np.ascontiguousarray(color_bgr[:, :, ::-1]))
 
 
-def _write_first_frame_case(color_bgr: np.ndarray, root: Path) -> Path:
-    case_dir = root / "sam31_frame0_case"
-    color_dir = case_dir / "color" / "0"
-    color_dir.mkdir(parents=True, exist_ok=True)
-    image = _bgr_to_pil_rgb(color_bgr)
-    image.save(color_dir / "0.png")
-    return case_dir
-
-
-def _load_label_masks_from_sam31_root(
-    *,
-    mask_root: Path,
-    label: str,
-    frame_token: str = "0",
-    camera_idx: int = 0,
-) -> list[np.ndarray]:
-    info_path = mask_root / "mask" / f"mask_info_{int(camera_idx)}.json"
-    if not info_path.is_file():
-        raise FileNotFoundError(f"SAM3.1 mask info not found: {info_path}")
-    info = json.loads(info_path.read_text(encoding="utf-8"))
-    label_norm = str(label).strip().lower()
-    masks: list[np.ndarray] = []
-    for obj_id, obj_label in info.items():
-        if str(obj_label).strip().lower() != label_norm:
-            continue
-        mask_path = mask_root / "mask" / str(int(camera_idx)) / str(obj_id) / f"{frame_token}.png"
-        if not mask_path.is_file():
-            raise FileNotFoundError(f"SAM3.1 mask image not found: {mask_path}")
-        masks.append(np.ascontiguousarray(_load_gray_image(mask_path) > 0))
-    return masks
-
-
 def _union_masks(masks: list[np.ndarray], *, label: str) -> np.ndarray:
     if not masks:
         raise RuntimeError(f"SAM3.1 did not produce a mask for label {label!r}")
@@ -1181,42 +1148,35 @@ def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> None:
 
 
 def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
-    with tempfile.TemporaryDirectory(prefix="qqtt_sam31_first_frame_") as tmp:
-        root = Path(tmp)
-        case_dir = _write_first_frame_case(color_bgr, root)
-        output_dir = root / "sam31_masks"
-        from scripts.harness.sam31_mask_helper import run_case_segmentation
+    from scripts.harness.sam31_mask_helper import parse_text_prompts, run_image_segmentation
 
-        prompt_labels = [str(args.object_prompt)]
-        if controller_tracking_enabled(args):
-            prompt_labels.append(str(args.controller_prompt))
-        try:
-            run_case_segmentation(
-                case_root=case_dir,
-                text_prompt=",".join(prompt_labels),
-                camera_ids=(0,),
-                output_dir=output_dir,
-                source_mode="frames",
-                checkpoint_path=None,
-                ann_frame_index=0,
-                keep_session_frames=False,
-                session_root=None,
-                overwrite=True,
-                async_loading_frames=False,
-                compile_model=False,
-                max_num_objects=16,
-            )
-        finally:
-            release_sam31_runtime_resources(str(args.device))
-        object_masks = _load_label_masks_from_sam31_root(mask_root=output_dir, label=args.object_prompt)
-        object_mask = _union_masks(
-            object_masks,
-            label=args.object_prompt,
+    prompt_labels = [str(args.object_prompt)]
+    if controller_tracking_enabled(args):
+        prompt_labels.append(str(args.controller_prompt))
+    text_prompt = ",".join(prompt_labels)
+    try:
+        result = run_image_segmentation(
+            image=_bgr_to_pil_rgb(color_bgr),
+            text_prompt=text_prompt,
+            checkpoint_path=None,
+            compile_model=False,
+            max_num_objects=16,
+            device=str(args.device),
         )
-        if not controller_tracking_enabled(args):
-            return np.zeros_like(object_mask, dtype=bool), object_mask
-        controller_masks = _load_label_masks_from_sam31_root(mask_root=output_dir, label=args.controller_prompt)
-        return _union_masks(controller_masks, label=args.controller_prompt), object_mask
+    finally:
+        release_sam31_runtime_resources(str(args.device))
+
+    masks_by_label = result["masks_by_label"]
+    object_label = parse_text_prompts(str(args.object_prompt))[0]
+    object_mask = _union_masks(
+        list(masks_by_label.get(object_label, [])),
+        label=args.object_prompt,
+    )
+    if not controller_tracking_enabled(args):
+        return np.zeros_like(object_mask, dtype=bool), object_mask
+    controller_label = parse_text_prompts(str(args.controller_prompt))[0]
+    controller_masks = list(masks_by_label.get(controller_label, []))
+    return _union_masks(controller_masks, label=args.controller_prompt), object_mask
 
 
 def resolve_initial_masks(frame: FramePacket, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:

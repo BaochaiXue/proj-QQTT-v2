@@ -97,9 +97,10 @@ This demo requires compiled EdgeTAM. The only accepted runtime mode is
 `vision_encoder` and keeps the streaming session / object bookkeeping outside
 `torch.compile`.
 
-By default, the demo captures the first live color frame, runs SAM3.1 once on
-that frame, uses the resulting controller/object masks to initialize EdgeTAM,
-then tracks with EdgeTAM only:
+By default, the demo captures the first live color frame, runs SAM3.1 image
+one-frame segmentation on that frame (`Sam3Processor.set_image` plus text
+prompt), uses the resulting controller/object masks to initialize EdgeTAM, then
+tracks with EdgeTAM only:
 
 ```bash
 conda run --no-capture-output -n demo_2_max \
@@ -123,9 +124,10 @@ conda run --no-capture-output -n demo_2_max \
 
 The script intentionally does not render the full-scene point cloud by default,
 does not run per-frame SAM3.1, and uses FFS depth by default. SAM3.1 is only
-used once on the live first frame; after that first-frame initialization, the
-demo closes the SAM3.1 session, exits its CUDA autocast context, and clears the
-CUDA cache before continuing with EdgeTAM streaming. The default FFS
+used once on the live first frame through the image path, not through
+`propagate_in_video`; after that first-frame initialization, the demo exits its
+CUDA autocast context and clears the CUDA cache before continuing with EdgeTAM
+streaming. The default FFS
 engine path is the repo's `20-30-48 / valid_iters=4 / 848x480 -> 864x480 /
 builderOptimizationLevel=5` TensorRT artifact; pass `--depth-source realsense`
 only when you need a native-depth fallback. Masked points are colored from the

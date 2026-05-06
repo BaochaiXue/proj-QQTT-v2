@@ -13,10 +13,12 @@ import numpy as np
 from scripts.harness.sam31_mask_helper import (
     _build_sam31_builder_kwargs,
     _call_download_ckpt_from_hf,
+    _collect_image_prompt_masks,
     _merge_initial_frame_segments,
     _patch_sam31_init_state_kwarg_compat,
     _prepare_session_frames,
     _resolve_sam3_video_predictor_builder,
+    _select_image_output_indices,
     ColorSource,
     build_mask_output_path,
     default_output_dir,
@@ -176,6 +178,38 @@ class Sam31MaskHelperSmokeTest(unittest.TestCase):
         )
 
         self.assertIs(video_segments[0], initial)
+
+    def test_image_one_frame_selection_keeps_all_for_single_prompt(self) -> None:
+        state = {
+            "masks": np.asarray(
+                [
+                    [[[1, 0], [0, 0]]],
+                    [[[1, 1], [0, 0]]],
+                ],
+                dtype=bool,
+            ),
+            "scores": np.asarray([0.1, 0.9], dtype=np.float32),
+        }
+
+        self.assertEqual(_select_image_output_indices(state, keep_all_instances=True), [0, 1])
+        masks = _collect_image_prompt_masks(state, selected_indices={0, 1})
+        self.assertEqual(len(masks), 2)
+        self.assertEqual(int(masks[0].sum()), 1)
+        self.assertEqual(int(masks[1].sum()), 2)
+
+    def test_image_one_frame_selection_uses_best_score_for_first_multi_prompt(self) -> None:
+        state = {
+            "masks": np.asarray(
+                [
+                    [[[1, 0], [0, 0]]],
+                    [[[1, 1], [1, 0]]],
+                ],
+                dtype=bool,
+            ),
+            "scores": np.asarray([0.8, 0.2], dtype=np.float32),
+        }
+
+        self.assertEqual(_select_image_output_indices(state, keep_all_instances=False), [0])
 
     def test_download_ckpt_compat_supports_versioned_and_versionless_functions(self) -> None:
         calls: list[tuple[str, str | None]] = []

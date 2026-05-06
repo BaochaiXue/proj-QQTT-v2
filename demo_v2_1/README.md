@@ -134,6 +134,7 @@ Formal Demo 2.1 initialization requirement:
 ```text
 The professor-facing demo uses --init-mode sam31-first-frame.
 SAM3.1 must segment the live first frame in the room, then HF EdgeTAM tracks from that mask.
+The live path uses SAM3.1 image one-frame segmentation (`Sam3Processor.set_image` + text prompt), not video propagation.
 The default mode is controller-object; current no-hand lab runs must explicitly pass --track-mode object-only.
 ```
 
