@@ -12,17 +12,28 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         layers = demo.semantic_layers_for_track_mode(
             demo.TRACK_MODE_CONTROLLER_OBJECT,
             object_label="stuffed animal",
-            controller_label="controller",
+            controller_label="hand",
         )
         by_label = {layer.label: layer for layer in layers}
         self.assertEqual(by_label["stuffed animal"].default_postprocess, demo.POSTPROCESS_ENHANCED_PT)
-        self.assertEqual(by_label["controller"].default_postprocess, demo.POSTPROCESS_PT_FILTER)
+        self.assertEqual(by_label["hand"].default_postprocess, demo.POSTPROCESS_PT_FILTER)
+
+    def test_controller_slot_uses_pt_filter_for_hand_prompt(self) -> None:
+        layers = demo.semantic_layers_for_track_mode(
+            demo.TRACK_MODE_CONTROLLER_OBJECT,
+            object_label="stuffed animal",
+            controller_label="hand",
+        )
+        by_id = {layer.obj_id: layer for layer in layers}
+        self.assertEqual(by_id[demo.CONTROLLER_ID].label, "hand")
+        self.assertEqual(by_id[demo.CONTROLLER_ID].default_postprocess, demo.POSTPROCESS_PT_FILTER)
+        self.assertEqual(by_id[demo.OBJECT_ID].default_postprocess, demo.POSTPROCESS_ENHANCED_PT)
 
     def test_object_only_has_no_controller_layer(self) -> None:
         layers = demo.semantic_layers_for_track_mode(
             demo.TRACK_MODE_OBJECT_ONLY,
             object_label="stuffed animal",
-            controller_label="controller",
+            controller_label="hand",
         )
         self.assertEqual([layer.label for layer in layers], ["stuffed animal"])
 
@@ -30,7 +41,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         layers = demo.semantic_layers_for_track_mode(
             demo.TRACK_MODE_CONTROLLER_OBJECT,
             object_label="stuffed animal",
-            controller_label="controller",
+            controller_label="hand",
         )
         clouds = [
             demo.CameraLayerCloud(
@@ -47,7 +58,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
             ),
             demo.CameraLayerCloud(
                 camera_idx=2,
-                label="controller",
+                label="hand",
                 points_m=np.array([[0.0, 1.0, 0.0]], dtype=np.float32),
                 colors_rgb=np.array([[255, 255, 0]], dtype=np.uint8),
             ),
@@ -55,9 +66,9 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         fused = demo.fuse_semantic_camera_clouds(clouds, layers)
 
         self.assertEqual(fused["stuffed animal"].point_count, 3)
-        self.assertEqual(fused["controller"].point_count, 1)
+        self.assertEqual(fused["hand"].point_count, 1)
         self.assertEqual(fused["stuffed animal"].postprocess_mode, demo.POSTPROCESS_ENHANCED_PT)
-        self.assertEqual(fused["controller"].postprocess_mode, demo.POSTPROCESS_PT_FILTER)
+        self.assertEqual(fused["hand"].postprocess_mode, demo.POSTPROCESS_PT_FILTER)
 
     def test_semantic_postprocess_caps_before_cleanup(self) -> None:
         layer = demo.FusedLayerCloud(
@@ -93,6 +104,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
     def test_dry_run_contract_records_official_quality_policy(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--track-mode", "controller-object", "--enable-pcd-filter"])
+        args = demo.apply_preset_defaults(args, explicit_options=set())
         contract = demo.build_contract(args)
         self.assertTrue(contract["frame_by_frame_streaming"])
         self.assertFalse(contract["offline_video_input_used"])
@@ -106,10 +118,43 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertFalse(contract["fusion"]["object_controller_union_before_filter"])
         self.assertEqual(contract["ffs_contract"]["worker_mode"], "shared")
         self.assertEqual(contract["edgetam"]["worker_mode"], "per-camera")
+        self.assertEqual(contract["gpu_gate"]["mode"], "serialized")
+        self.assertEqual(contract["gpu_gate"]["max_concurrent"], 1)
+
+    def test_professor_safe_preset_sets_low_fps_controller_object_demo(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", "professor-safe"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["preset"], "professor-safe")
+        self.assertEqual(contract["profile"], "848x480")
+        self.assertEqual(contract["fps"], 30)
+        self.assertEqual(contract["track_mode"], "controller-object")
+        self.assertEqual(contract["render_mode"], "pointcloud")
+        self.assertEqual(contract["fusion_target_fps"], 2.0)
+        self.assertEqual(contract["fusion_timeout_ms"], 250.0)
+        self.assertEqual(contract["gpu_gate"], {"mode": "serialized", "max_concurrent": 1})
+
+    def test_preset_keeps_explicit_track_and_render_overrides(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            ["--dry-run", "--preset", "professor-safe", "--track-mode", "object-only", "--render-mode", "none"]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--track-mode", "--render-mode"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["track_mode"], "object-only")
+        self.assertEqual(contract["render_mode"], "none")
+        self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["stuffed animal"])
 
     def test_capture_only_isolation_contract_is_not_official_depth(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--depth-source", "none", "--track-mode", "none"])
+        args = demo.apply_preset_defaults(args, explicit_options=set())
         contract = demo.build_contract(args)
         self.assertFalse(contract["official_quality_depth"])
         self.assertEqual(contract["semantic_layers"], [])
@@ -137,6 +182,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
                 self.calls += 1
                 if self.calls == 1:
                     raise TimeoutError("simulated")
+                runtime.stop_event.set()
                 raise RuntimeError("stop")
 
         fake_camera = FakeCameraSystem()

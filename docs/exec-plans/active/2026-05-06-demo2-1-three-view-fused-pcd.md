@@ -42,3 +42,23 @@ Run and profile the full hardware live loop:
 - shared-worker FFS depth
 - calibration transform into the shared world frame
 - fused Open3D render of object/controller layers
+
+## Professor-Safe Runtime Slice
+
+The first hardware smoke proved the three-camera object-only live skeleton at
+`848x480@30` and `fusion-target-fps=2`. The next slice hardens the professor
+demo entrypoint without changing Demo 2.0:
+
+1. Add staged presets:
+   - `professor-safe`: low-FPS, FFS-quality, controller-object default
+   - `climb-5`: headless profiling at target 5 FPS
+   - `climb-10`: headless profiling at target 10 FPS
+   - `diagnostics`: explicit isolation surface
+2. Add one shared GPU inference gate for FFS and EdgeTAM workers.
+3. Keep FFS strict-latest with one shared runner/context owner.
+4. Keep three per-camera EdgeTAM streaming sessions.
+5. Record GPU gate waits and fusion completeness in debug/summary.
+6. Keep object and controller separated:
+   - object fused cloud -> enhanced-pt
+   - controller fused cloud -> pt-filter
+   - never union object/controller before filtering

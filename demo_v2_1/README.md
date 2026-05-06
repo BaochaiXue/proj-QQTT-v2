@@ -50,48 +50,56 @@ filter path:
 Dry-run contract:
 
 ```bash
-python demo_v2_1/realtime_three_view_masked_fused_pcd.py --dry-run
+python demo_v2_1/realtime_three_view_masked_fused_pcd.py --dry-run --preset professor-safe
 ```
 
-Headless live correctness run:
+Presets:
 
-```bash
-conda run --no-capture-output -n demo_2_max \
-  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --track-mode controller-object \
-  --depth-source ffs \
-  --ffs-worker-mode shared \
-  --ffs-schedule strict3-latest \
-  --edgetam-worker-mode per-camera \
-  --edgetam-model-topology replicated \
-  --fusion-target-fps 10 \
-  --render-mode none \
-  --duration-s 30 \
-  --debug \
-  --profile-cuda-events
+```text
+professor-safe:
+  848x480@30
+  fusion-target-fps=2
+  controller-object by default when a hand is visible
+  render-mode=pointcloud by default
+  GPU gate serialized with max_concurrent=1
+
+climb-5:
+  848x480@30
+  fusion-target-fps=5
+  render-mode=none by default
+
+climb-10:
+  848x480@30
+  fusion-target-fps=10
+  render-mode=none by default
+
+diagnostics:
+  starts from the same 848x480@30, serialized GPU gate surface
+  combine with --depth-source none, --track-mode none, or --render-mode none
 ```
 
-Pointcloud live run:
+Professor-safe object/controller run, only when a hand is visible:
 
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset professor-safe \
   --track-mode controller-object \
-  --depth-source ffs \
-  --ffs-worker-mode shared \
-  --ffs-schedule strict3-latest \
-  --edgetam-worker-mode per-camera \
-  --edgetam-model-topology replicated \
-  --fusion-target-fps 10 \
-  --render-mode pointcloud \
-  --enable-pcd-filter \
-  --pcd-filter-mode async \
-  --filter-every-n 3 \
-  --object-filter-cap 20000 \
-  --controller-filter-cap 20000 \
-  --duration-s 30 \
-  --debug \
-  --profile-cuda-events
+  --controller-prompt "hand" \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug
+```
+
+If no hand is visible, use the same preset with object-only. This is the current lab state.
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset professor-safe \
+  --track-mode object-only \
+  --duration-s 120 \
+  --debug
 ```
 
 Isolation runs:
@@ -99,15 +107,19 @@ Isolation runs:
 ```bash
 # Capture grouping only
 python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --depth-source none --track-mode none --render-mode none --duration-s 20 --debug
+  --preset diagnostics --depth-source none --track-mode none --render-mode none --duration-s 20 --debug
 
 # EdgeTAM only, three per-camera workers
 python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --depth-source none --track-mode controller-object --render-mode none --duration-s 30 --debug
+  --preset diagnostics --depth-source none --track-mode controller-object --render-mode none --duration-s 30 --debug
 
 # Shared FFS only
 python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --depth-source ffs --track-mode none --render-mode none --duration-s 30 --debug
+  --preset diagnostics --depth-source ffs --track-mode none --render-mode none --duration-s 30 --debug
+
+# Target climb, headless first
+python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset climb-5 --track-mode object-only --render-mode none --duration-s 60 --debug
 ```
 
 Runtime architecture:
@@ -119,6 +131,10 @@ CaptureGroupBuilder:
 SharedFfsWorker:
   owns one FFS/TensorRT runner
   sequentially computes cam0, cam1, cam2 depth for each group_id
+
+GpuInferenceGate:
+  serializes FFS and EdgeTAM GPU inference in professor-safe mode
+  records per-stage wait time in debug and session summary
 
 EdgeTamCameraWorker:
   one worker per camera

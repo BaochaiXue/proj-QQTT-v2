@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import json
 import os
 from pathlib import Path
@@ -87,10 +87,17 @@ PCD_FILTER_SCHEDULE_MODES = ("async", "sync", "none")
 
 DEFAULT_CAMERA_IDS = (0, 1, 2)
 DEFAULT_OBJECT_LABEL = "object"
-DEFAULT_CONTROLLER_LABEL = "controller"
+DEFAULT_CONTROLLER_LABEL = "hand"
+CONTROLLER_PROMPT_CHOICES = ("hand",)
 DEFAULT_MODEL_ID = "yonigozlan/EdgeTAM-hf"
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
+PRESET_NONE = "none"
+PRESET_PROFESSOR_SAFE = "professor-safe"
+PRESET_CLIMB_5 = "climb-5"
+PRESET_CLIMB_10 = "climb-10"
+PRESET_DIAGNOSTICS = "diagnostics"
+PRESETS = (PRESET_NONE, PRESET_PROFESSOR_SAFE, PRESET_CLIMB_5, PRESET_CLIMB_10, PRESET_DIAGNOSTICS)
 DEFAULT_DEVICE = "cuda"
 DEFAULT_DTYPE = "bfloat16"
 DEFAULT_COMPILE_MODE = "vision-reduce-overhead"
@@ -106,6 +113,10 @@ CONTROLLER_ID = 1
 OBJECT_COLOR_RGB = (64, 180, 255)
 CONTROLLER_COLOR_RGB = (255, 96, 32)
 DEBUG_LOG_INTERVAL_S = 1.0
+GPU_GATE_MODE_SERIALIZED = "serialized"
+GPU_GATE_MODE_LIMITED = "limited"
+GPU_GATE_MODE_OFF = "off"
+GPU_GATE_MODES = (GPU_GATE_MODE_SERIALIZED, GPU_GATE_MODE_LIMITED, GPU_GATE_MODE_OFF)
 
 
 @dataclass(frozen=True)
@@ -183,6 +194,7 @@ class DepthGroup:
     depths: dict[int, DepthPacket]
     total_ms: float
     per_camera_ms: dict[int, dict[str, float]]
+    gpu_gate_wait_ms: float
 
     @property
     def seq(self) -> int:
@@ -199,6 +211,7 @@ class CameraMaskPacket:
     model_ms: float
     cuda_event_model_ms: float
     mask_ms: float
+    gpu_gate_wait_ms: float
 
     @property
     def seq(self) -> int:
@@ -219,6 +232,8 @@ class FusedPcdPacket:
     controller_raw_points: int
     ffs_cycle_ms: float
     edgetam_ms_by_camera: dict[int, float]
+    ffs_gpu_gate_wait_ms: float
+    edgetam_gpu_gate_wait_ms_by_camera: dict[int, float]
 
     @property
     def seq(self) -> int:
@@ -256,6 +271,54 @@ class StageStats:
             if elapsed <= 0:
                 return 0.0
             return float((len(self._times) - 1) / elapsed)
+
+
+class MsWindowStats:
+    def __init__(self, maxlen: int = 128) -> None:
+        self._lock = threading.Lock()
+        self._values: deque[float] = deque(maxlen=int(maxlen))
+
+    def record(self, value_ms: float) -> None:
+        with self._lock:
+            self._values.append(float(value_ms))
+
+    @property
+    def median(self) -> float:
+        with self._lock:
+            values = list(self._values)
+        if not values:
+            return 0.0
+        return float(np.median(np.asarray(values, dtype=np.float32)))
+
+    @property
+    def latest(self) -> float:
+        with self._lock:
+            if not self._values:
+                return 0.0
+            return float(self._values[-1])
+
+
+class GpuInferenceGate:
+    def __init__(self, *, mode: str, max_concurrent: int) -> None:
+        if mode not in GPU_GATE_MODES:
+            raise ValueError(f"Unsupported GPU gate mode: {mode}")
+        self.mode = str(mode)
+        self.max_concurrent = max(1, int(max_concurrent))
+        self._sem = None if self.mode == GPU_GATE_MODE_OFF else threading.Semaphore(self.max_concurrent)
+
+    @contextmanager
+    def acquire(self, *, stage: str, camera_idx: int | None, group_id: int):
+        del stage, camera_idx, group_id
+        if self._sem is None:
+            yield 0.0
+            return
+        wait_start_s = time.perf_counter()
+        self._sem.acquire()
+        wait_ms = _elapsed_ms(wait_start_s, time.perf_counter())
+        try:
+            yield wait_ms
+        finally:
+            self._sem.release()
 
 
 def _normalize_label(label: str) -> str:
@@ -300,11 +363,7 @@ def semantic_layers_for_track_mode(
             SemanticLayerSpec(
                 obj_id=CONTROLLER_ID,
                 label=str(controller_label),
-                default_postprocess=resolve_postprocess_mode(
-                    controller_label,
-                    object_postprocess=object_postprocess,
-                    controller_postprocess=controller_postprocess,
-                ),
+                default_postprocess=controller_postprocess,
             )
         )
     layers.append(
@@ -478,6 +537,71 @@ def parse_profile(value: str) -> tuple[int, int]:
     return width, height
 
 
+def _explicit_cli_options(argv: Sequence[str] | None) -> set[str]:
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    explicit: set[str] = set()
+    for token in tokens:
+        if not str(token).startswith("--"):
+            continue
+        explicit.add(str(token).split("=", maxsplit=1)[0])
+    return explicit
+
+
+def _set_if_not_explicit(
+    args: argparse.Namespace,
+    explicit: set[str],
+    *,
+    flag: str,
+    attr: str,
+    value: Any,
+) -> None:
+    if flag not in explicit:
+        setattr(args, attr, value)
+
+
+def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str] | None = None) -> argparse.Namespace:
+    explicit = set() if explicit_options is None else set(explicit_options)
+    preset = str(getattr(args, "preset", PRESET_NONE))
+    if preset in {"", PRESET_NONE}:
+        return args
+    if preset not in PRESETS:
+        raise ValueError(f"Unsupported Demo 2.1 preset: {preset}")
+
+    common: tuple[tuple[str, str, Any], ...] = (
+        ("--profile", "profile", "848x480"),
+        ("--fps", "fps", 30),
+        ("--depth-source", "depth_source", DEPTH_SOURCE_FFS),
+        ("--ffs-worker-mode", "ffs_worker_mode", "shared"),
+        ("--ffs-schedule", "ffs_schedule", "strict3-latest"),
+        ("--edgetam-worker-mode", "edgetam_worker_mode", "per-camera"),
+        ("--edgetam-model-topology", "edgetam_model_topology", "replicated"),
+        ("--compile-mode", "compile_mode", DEFAULT_COMPILE_MODE),
+        ("--dtype", "dtype", DEFAULT_DTYPE),
+        ("--gpu-gate-mode", "gpu_gate_mode", GPU_GATE_MODE_SERIALIZED),
+        ("--gpu-gate-max-concurrent", "gpu_gate_max_concurrent", 1),
+        ("--fusion-timeout-ms", "fusion_timeout_ms", 250.0),
+    )
+    for flag, attr, value in common:
+        _set_if_not_explicit(args, explicit, flag=flag, attr=attr, value=value)
+
+    if preset == PRESET_PROFESSOR_SAFE:
+        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
+        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+    elif preset == PRESET_CLIMB_5:
+        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
+    elif preset == PRESET_CLIMB_10:
+        _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=10.0)
+        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
+    elif preset == PRESET_DIAGNOSTICS:
+        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
+        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
+    return args
+
+
 def _camera_intrinsics_from_k(k_color: np.ndarray, *, width: int, height: int) -> CameraIntrinsics:
     k = np.asarray(k_color, dtype=np.float32).reshape(3, 3)
     return CameraIntrinsics(
@@ -551,7 +675,10 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     )
     return {
         "demo": "demo_2_1_three_view_fused_masked_pcd",
+        "preset": getattr(args, "preset", PRESET_NONE),
         "camera_ids": list(args.camera_ids),
+        "profile": args.profile,
+        "fps": int(args.fps),
         "track_mode": args.track_mode,
         "frame_by_frame_streaming": True,
         "offline_video_input_used": False,
@@ -561,8 +688,13 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "depth_source": args.depth_source,
         "render_mode": args.render_mode,
         "fusion_target_fps": float(args.fusion_target_fps),
+        "fusion_timeout_ms": float(args.fusion_timeout_ms),
         "official_quality_depth": args.depth_source in set(OFFICIAL_DEPTH_SOURCES),
         "native_realsense_depth_role": "fallback/debug only",
+        "gpu_gate": {
+            "mode": args.gpu_gate_mode,
+            "max_concurrent": int(args.gpu_gate_max_concurrent),
+        },
         "ffs_contract": {
             "checkpoint": DEFAULT_FFS_MODEL_NAME,
             "valid_iters": DEFAULT_FFS_VALID_ITERS,
@@ -627,9 +759,16 @@ class Demo21Runtime:
             int(camera_idx): LatestSlot() for camera_idx in args.camera_ids
         }
         self.render_slot: LatestSlot[FusedPcdPacket] = LatestSlot()
+        self.gpu_gate = GpuInferenceGate(
+            mode=str(args.gpu_gate_mode),
+            max_concurrent=int(args.gpu_gate_max_concurrent),
+        )
         self.capture_group_stats = StageStats()
         self.ffs_stats = StageStats()
         self.edge_stats = {int(camera_idx): StageStats() for camera_idx in args.camera_ids}
+        self.gpu_gate_wait_stats: dict[str, MsWindowStats] = {"ffs": MsWindowStats()}
+        for camera_idx in args.camera_ids:
+            self.gpu_gate_wait_stats[f"edgetam_cam{int(camera_idx)}"] = MsWindowStats()
         self.fusion_stats = StageStats()
         self.render_stats = RenderStats()
         self._threads: list[threading.Thread] = []
@@ -639,6 +778,13 @@ class Demo21Runtime:
         self._latest_fused: FusedPcdPacket | None = None
         self._last_debug_s = 0.0
         self._render_request: Callable[[], None] = lambda: None
+
+    def _record_gpu_gate_wait(self, key: str, wait_ms: float) -> None:
+        stats = self.gpu_gate_wait_stats.get(key)
+        if stats is None:
+            stats = MsWindowStats()
+            self.gpu_gate_wait_stats[key] = stats
+        stats.record(float(wait_ms))
 
     def run(self) -> int:
         if self.args.depth_source not in {DEPTH_SOURCE_FFS, DEPTH_SOURCE_NONE}:
@@ -678,6 +824,10 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --filter-every-n must be >= 1")
         if float(self.args.filter_budget_ms) < 0:
             raise RuntimeError("Demo 2.1 --filter-budget-ms must be >= 0")
+        if int(self.args.gpu_gate_max_concurrent) < 1:
+            raise RuntimeError("Demo 2.1 --gpu-gate-max-concurrent must be >= 1")
+        if self.args.gpu_gate_mode == GPU_GATE_MODE_SERIALIZED and int(self.args.gpu_gate_max_concurrent) != 1:
+            raise RuntimeError("Demo 2.1 serialized GPU gate requires --gpu-gate-max-concurrent 1")
         if self.args.depth_source == DEPTH_SOURCE_FFS:
             validate_ffs_paths(ffs_repo=Path(self.args.ffs_repo), model_dir=Path(self.args.ffs_trt_model_dir))
         if self._needs_world_fusion() and not Path(self.args.calibrate_path).is_file():
@@ -752,6 +902,9 @@ class Demo21Runtime:
             "latest_group_id": None if latest is None else latest.group_id,
             "object_points": None if latest is None else latest.object_point_count,
             "controller_points": None if latest is None else latest.controller_point_count,
+            "gpu_gate_wait_ms_median": {
+                key: stats.median for key, stats in sorted(self.gpu_gate_wait_stats.items())
+            },
         }
         summary_path.write_text(json.dumps(self._summary, indent=2, sort_keys=True), encoding="utf-8")
         print(f"[demo2.1] summary={summary_path}", flush=True)
@@ -914,16 +1067,19 @@ class Demo21Runtime:
                 cycle_start_s = time.perf_counter()
                 depths: dict[int, DepthPacket] = {}
                 per_camera: dict[int, dict[str, float]] = {}
-                for camera_idx in self.args.camera_ids:
-                    frame = group.frames[int(camera_idx)]
-                    depth = self._compute_ffs_depth_for_frame(runner=runner, frame=frame, aligners=aligners)
-                    depths[int(camera_idx)] = depth
-                    per_camera[int(camera_idx)] = {"ffs_ms": depth.ffs_ms, "align_ms": depth.align_ms}
+                with self.gpu_gate.acquire(stage="ffs", camera_idx=None, group_id=group.group_id) as gate_wait_ms:
+                    self._record_gpu_gate_wait("ffs", gate_wait_ms)
+                    for camera_idx in self.args.camera_ids:
+                        frame = group.frames[int(camera_idx)]
+                        depth = self._compute_ffs_depth_for_frame(runner=runner, frame=frame, aligners=aligners)
+                        depths[int(camera_idx)] = depth
+                        per_camera[int(camera_idx)] = {"ffs_ms": depth.ffs_ms, "align_ms": depth.align_ms}
                 packet = DepthGroup(
                     group_id=group.group_id,
                     depths=depths,
                     total_ms=_elapsed_ms(cycle_start_s, time.perf_counter()),
                     per_camera_ms=per_camera,
+                    gpu_gate_wait_ms=gate_wait_ms,
                 )
                 self.depth_group_slot.put(packet)
                 self._latest_depth_group = packet
@@ -999,13 +1155,16 @@ class Demo21Runtime:
                     ),
                     sync_enabled=False,
                 )
-            output, wall_model_ms, cuda_event_model_ms, _, _ = _time_model_forward(
-                torch_module=torch_module,
-                device=self.args.device,
-                profile_sync=False,
-                profile_cuda_events=bool(self.args.profile_cuda_events),
-                fn=lambda: model(inference_session=session, frame=pixel_values),
-            )
+            gate_key = f"edgetam_cam{int(frame.camera_idx)}"
+            with self.gpu_gate.acquire(stage="edgetam", camera_idx=frame.camera_idx, group_id=frame.group_id) as gate_wait_ms:
+                self._record_gpu_gate_wait(gate_key, gate_wait_ms)
+                output, wall_model_ms, cuda_event_model_ms, _, _ = _time_model_forward(
+                    torch_module=torch_module,
+                    device=self.args.device,
+                    profile_sync=False,
+                    profile_cuda_events=bool(self.args.profile_cuda_events),
+                    fn=lambda: model(inference_session=session, frame=pixel_values),
+                )
             post_masks, postprocess_ms, _, _ = _time_runtime_ms(
                 torch_module,
                 self.args.device,
@@ -1033,6 +1192,7 @@ class Demo21Runtime:
             model_ms=wall_model_ms,
             cuda_event_model_ms=cuda_event_model_ms,
             mask_ms=float(preprocess_ms + prompt_ms + wall_model_ms + postprocess_ms),
+            gpu_gate_wait_ms=gate_wait_ms,
         )
 
     def _edgetam_camera_worker(self, camera_idx: int) -> None:
@@ -1120,6 +1280,9 @@ class Demo21Runtime:
                 mask = self._wait_mask_for_group(camera_idx=int(camera_idx), group_id=depth_group.group_id, deadline_s=deadline_s)
                 if mask is None:
                     incomplete += 1
+                    self._summary["fusion_timeout_groups"] = int(self._summary.get("fusion_timeout_groups", 0)) + 1
+                    key = f"missing_mask_cam{int(camera_idx)}"
+                    self._summary[key] = int(self._summary.get(key, 0)) + 1
                     break
                 mask_by_camera[int(camera_idx)] = mask
             if len(mask_by_camera) != len(self.args.camera_ids):
@@ -1138,6 +1301,7 @@ class Demo21Runtime:
             self.render_slot.put(packet)
             self._latest_fused = packet
             self.fusion_stats.record()
+            self._summary["fusion_complete_groups"] = int(self._summary.get("fusion_complete_groups", 0)) + 1
             if packet.group_id % int(self.args.render_every_n) == 0:
                 self._render_request()
             if incomplete:
@@ -1274,6 +1438,8 @@ class Demo21Runtime:
             controller_raw_points=controller_raw_count,
             ffs_cycle_ms=depth_group.total_ms,
             edgetam_ms_by_camera={idx: masks[idx].cuda_event_model_ms or masks[idx].model_ms for idx in masks},
+            ffs_gpu_gate_wait_ms=depth_group.gpu_gate_wait_ms,
+            edgetam_gpu_gate_wait_ms_by_camera={idx: masks[idx].gpu_gate_wait_ms for idx in masks},
         )
 
     def _debug_worker(self) -> None:
@@ -1293,6 +1459,13 @@ class Demo21Runtime:
             if depth is not None else f"cam{idx}=0.0+0.0ms"
             for idx in self.args.camera_ids
         )
+        gate_wait = " ".join(
+            [f"ffs={self.gpu_gate_wait_stats['ffs'].latest:.1f}ms"]
+            + [
+                f"edge{idx}={self.gpu_gate_wait_stats[f'edgetam_cam{idx}'].latest:.1f}ms"
+                for idx in self.args.camera_ids
+            ]
+        )
         print(
             "[demo2.1-debug] "
             f"capture_group_fps={self.capture_group_stats.fps:.2f} "
@@ -1304,7 +1477,7 @@ class Demo21Runtime:
             f"filter_ms={(0.0 if latest is None else latest.filter_ms):.1f} "
             f"object_points={(0 if latest is None else latest.object_point_count)} "
             f"controller_points={(0 if latest is None else latest.controller_point_count)} "
-            f"edgetam_ms[{edge_ms}] ffs_ms[{ffs_ms}]",
+            f"edgetam_ms[{edge_ms}] ffs_ms[{ffs_ms}] gpu_gate_wait[{gate_wait}]",
             flush=True,
         )
 
@@ -1466,6 +1639,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "slice locks semantic fusion and postprocess policy before wiring the live hardware loop."
         )
     )
+    parser.add_argument("--preset", choices=PRESETS, default=PRESET_NONE)
     parser.add_argument("--profile", default=DEFAULT_PROFILE)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--serials", nargs="*", default=None)
@@ -1475,7 +1649,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--track-mode", choices=TRACK_MODES, default=TRACK_MODE_OBJECT_ONLY)
     parser.add_argument("--init-mode", choices=INIT_MODES, default="sam31-first-frame")
     parser.add_argument("--object-prompt", default="stuffed animal")
-    parser.add_argument("--controller-prompt", default=DEFAULT_CONTROLLER_LABEL)
+    parser.add_argument("--controller-prompt", choices=CONTROLLER_PROMPT_CHOICES, default=DEFAULT_CONTROLLER_LABEL)
     parser.add_argument("--depth-source", choices=DEPTH_SOURCES, default=DEPTH_SOURCE_FFS)
     parser.add_argument("--render-mode", choices=RENDER_MODES, default="none")
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
@@ -1488,6 +1662,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fusion-target-fps", type=float, default=10.0)
     parser.add_argument("--fusion-timeout-ms", type=float, default=150.0)
     parser.add_argument("--max-inflight-groups", type=int, default=2)
+    parser.add_argument("--gpu-gate-mode", choices=GPU_GATE_MODES, default=GPU_GATE_MODE_SERIALIZED)
+    parser.add_argument("--gpu-gate-max-concurrent", type=int, default=1)
     parser.add_argument("--ffs-worker-mode", choices=FFS_WORKER_MODES, default="shared")
     parser.add_argument("--ffs-schedule", choices=FFS_SCHEDULES, default="strict3-latest")
     parser.add_argument("--edgetam-worker-mode", choices=EDGETAM_WORKER_MODES, default="per-camera")
@@ -1531,6 +1707,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    args = apply_preset_defaults(args, explicit_options=_explicit_cli_options(argv))
     contract = build_contract(args)
     if args.dry_run:
         print(json.dumps(contract, indent=2, sort_keys=True))
