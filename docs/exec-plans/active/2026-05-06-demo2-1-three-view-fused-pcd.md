@@ -95,3 +95,17 @@ Result:
 - `climb-5 render none` with `gpu_gate_max_concurrent=2` reached median `fusion_fps=5.00`.
 - `climb-5 pointcloud` with `gpu_gate_max_concurrent=2` reached median `render_fps=4.85` and p90 `render_fps=5.19` while keeping FFS depth and `enhanced-pt`.
 - Therefore the quality-preserving candidate is promoted to the `visual-5fps` preset. Remaining work is reducing occasional filter spikes and mask/point-count drops, not changing the main quality contract.
+
+## visual-5fps Profiling Slice
+
+Add profiling that is off by default and only records detailed per-group data when explicitly requested:
+
+- `--profile-pipeline`
+- `--profile-filter`
+- `--profile-filter-detail`
+- `--profile-visualization`
+- `--profile-gpu-gate`
+- `--profile-json-output`
+- `--profile-warmup-exclude-s`
+
+The profile records one `group_id` timeline across capture, EdgeTAM, FFS, fusion/filter, and render. The summary reports full-run and warmup-excluded FPS, medians, p90/p95/max timings, target deficit, bottleneck class, and top slowest object enhanced-PT groups. This lets us decide whether the remaining gap to stable 5 FPS is filter spike, GPU gate wait, FFS cycle, EdgeTAM per-camera model time, fusion timeout, or Open3D render.

@@ -109,6 +109,23 @@ Current no-hand 5 FPS visual candidate:
   --profile-cuda-events
 ```
 
+Profiling the 5 FPS candidate:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-gpu-gate \
+  --profile-warmup-exclude-s 20 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_profile_object_only.json
+```
+
 Controller-object run, only when a hand is visible:
 
 ```bash

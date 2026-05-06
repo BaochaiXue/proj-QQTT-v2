@@ -153,6 +153,69 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["gpu_gate"], {"mode": "limited", "max_concurrent": 2})
         self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
 
+    def test_visual_profile_flags_are_explicit_and_default_off(self) -> None:
+        parser = demo.build_arg_parser()
+        defaults = parser.parse_args(["--dry-run", "--preset", "visual-5fps"])
+        self.assertFalse(defaults.profile_pipeline)
+        self.assertFalse(defaults.profile_filter)
+        self.assertFalse(defaults.profile_visualization)
+        self.assertFalse(defaults.profile_gpu_gate)
+        self.assertIsNone(defaults.profile_json_output)
+
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                "visual-5fps",
+                "--profile-pipeline",
+                "--profile-filter",
+                "--profile-visualization",
+                "--profile-gpu-gate",
+                "--profile-warmup-exclude-s",
+                "20",
+                "--profile-json-output",
+                "docs/generated/demo2_1_visual5fps_profile_object_only.json",
+            ]
+        )
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
+
+        self.assertTrue(args.profile_pipeline)
+        self.assertTrue(args.profile_filter)
+        self.assertTrue(args.profile_visualization)
+        self.assertTrue(args.profile_gpu_gate)
+        self.assertEqual(args.profile_warmup_exclude_s, 20)
+        self.assertEqual(args.profile_json_output, "docs/generated/demo2_1_visual5fps_profile_object_only.json")
+
+    def test_profile_summary_distinguishes_upstream_from_visualization(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps", "--profile-pipeline"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--profile-pipeline"})
+        runtime = demo.Demo21Runtime(args)
+
+        upstream = [
+            {"group_id": 0, "t_group_created": 0.0, "complete": True, "fusion": {"publish_s": 0.0}},
+            {"group_id": 1, "t_group_created": 0.5, "complete": True, "fusion": {"publish_s": 0.5}},
+        ]
+        self.assertEqual(runtime._profile_summary_for_records(upstream)["bottleneck_class"], "upstream_supply")
+
+        visual = [
+            {
+                "group_id": 0,
+                "t_group_created": 0.0,
+                "complete": True,
+                "fusion": {"publish_s": 0.0},
+                "render": {"render_s": 0.0},
+            },
+            {
+                "group_id": 1,
+                "t_group_created": 0.1,
+                "complete": True,
+                "fusion": {"publish_s": 0.1},
+                "render": {"render_s": 0.5},
+            },
+        ]
+        self.assertEqual(runtime._profile_summary_for_records(visual)["bottleneck_class"], "visualization")
+
     def test_preset_keeps_explicit_track_and_render_overrides(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(

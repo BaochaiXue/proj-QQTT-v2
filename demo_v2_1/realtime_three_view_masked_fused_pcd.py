@@ -256,6 +256,15 @@ class FusedPcdPacket:
         return int(self.controller_points_m.shape[0])
 
 
+PROFILE_FLAG_ATTRS = (
+    "profile_pipeline",
+    "profile_filter",
+    "profile_filter_detail",
+    "profile_visualization",
+    "profile_gpu_gate",
+)
+
+
 class StageStats:
     def __init__(self, window_s: float = 1.0) -> None:
         self.window_s = float(window_s)
@@ -400,6 +409,56 @@ def _as_colors(colors: np.ndarray) -> np.ndarray:
     if arr.size == 0:
         return np.empty((0, 3), dtype=np.uint8)
     return arr.reshape(-1, 3)
+
+
+def _profile_stats(values: Sequence[float]) -> dict[str, float]:
+    arr = np.asarray([float(value) for value in values if np.isfinite(float(value))], dtype=np.float64)
+    if arr.size == 0:
+        return {"median": 0.0, "p90": 0.0, "p95": 0.0, "max": 0.0}
+    return {
+        "median": float(np.median(arr)),
+        "p90": float(np.percentile(arr, 90)),
+        "p95": float(np.percentile(arr, 95)),
+        "max": float(np.max(arr)),
+    }
+
+
+def _nested_get(record: dict[str, Any], path: Sequence[str]) -> Any:
+    value: Any = record
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            return None
+        value = value[key]
+    return value
+
+
+def _series_for_path(records: Sequence[dict[str, Any]], path: Sequence[str]) -> list[float]:
+    values: list[float] = []
+    for record in records:
+        value = _nested_get(record, path)
+        if isinstance(value, (int, float)):
+            values.append(float(value))
+    return values
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _event_fps(records: Sequence[dict[str, Any]], path: Sequence[str]) -> float:
+    times = _series_for_path(records, path)
+    if len(times) < 2:
+        return 0.0
+    elapsed = max(times) - min(times)
+    if elapsed <= 0:
+        return 0.0
+    return float((len(times) - 1) / elapsed)
 
 
 def fuse_semantic_camera_clouds(
@@ -788,6 +847,12 @@ class Demo21Runtime:
         self._threads: list[threading.Thread] = []
         self._sam31_lock = threading.Lock()
         self._summary: dict[str, Any] = {"contract": build_contract(args), "events": []}
+        self._profile_enabled = bool(getattr(args, "profile_json_output", None)) or any(
+            bool(getattr(args, attr, False)) for attr in PROFILE_FLAG_ATTRS
+        )
+        self._profile_lock = threading.Lock()
+        self._profile_started_perf_s = time.perf_counter()
+        self._profile_records: dict[int, dict[str, Any]] = {}
         self._latest_depth_group: DepthGroup | None = None
         self._latest_fused: FusedPcdPacket | None = None
         self._last_debug_s = 0.0
@@ -799,6 +864,35 @@ class Demo21Runtime:
             stats = MsWindowStats()
             self.gpu_gate_wait_stats[key] = stats
         stats.record(float(wait_ms))
+
+    def _profile_rel_s(self, perf_s: float | None = None) -> float:
+        return float((time.perf_counter() if perf_s is None else perf_s) - self._profile_started_perf_s)
+
+    def _profile_group_record(self, group_id: int) -> dict[str, Any]:
+        record = self._profile_records.get(int(group_id))
+        if record is None:
+            record = {"group_id": int(group_id), "complete": False, "drop_reason": None}
+            self._profile_records[int(group_id)] = record
+        return record
+
+    def _profile_update(self, group_id: int, **sections: Any) -> None:
+        if not self._profile_enabled:
+            return
+        with self._profile_lock:
+            record = self._profile_group_record(int(group_id))
+            for key, value in sections.items():
+                if isinstance(value, dict) and isinstance(record.get(key), dict):
+                    record[key].update(value)
+                else:
+                    record[key] = value
+
+    def _profile_mark_drop(self, group_id: int, reason: str) -> None:
+        if not self._profile_enabled:
+            return
+        with self._profile_lock:
+            record = self._profile_group_record(int(group_id))
+            record["complete"] = False
+            record["drop_reason"] = str(reason)
 
     def run(self) -> int:
         if self.args.depth_source not in {DEPTH_SOURCE_FFS, DEPTH_SOURCE_NONE}:
@@ -838,6 +932,8 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --filter-every-n must be >= 1")
         if float(self.args.filter_budget_ms) < 0:
             raise RuntimeError("Demo 2.1 --filter-budget-ms must be >= 0")
+        if float(self.args.profile_warmup_exclude_s) < 0:
+            raise RuntimeError("Demo 2.1 --profile-warmup-exclude-s must be >= 0")
         if int(self.args.gpu_gate_max_concurrent) < 1:
             raise RuntimeError("Demo 2.1 --gpu-gate-max-concurrent must be >= 1")
         if self.args.gpu_gate_mode == GPU_GATE_MODE_SERIALIZED and int(self.args.gpu_gate_max_concurrent) != 1:
@@ -906,7 +1002,8 @@ class Demo21Runtime:
     def _write_summary(self) -> None:
         output_root = Path(self.args.output_root)
         output_root.mkdir(parents=True, exist_ok=True)
-        summary_path = output_root / f"session_{time.strftime('%Y%m%d_%H%M%S')}_summary.json"
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        summary_path = output_root / f"session_{timestamp}_summary.json"
         latest = self._latest_fused
         self._summary["final"] = {
             "capture_group_fps": self.capture_group_stats.fps,
@@ -920,8 +1017,152 @@ class Demo21Runtime:
                 key: stats.median for key, stats in sorted(self.gpu_gate_wait_stats.items())
             },
         }
-        summary_path.write_text(json.dumps(self._summary, indent=2, sort_keys=True), encoding="utf-8")
+        summary_path.write_text(json.dumps(self._summary, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
         print(f"[demo2.1] summary={summary_path}", flush=True)
+        if self._profile_enabled:
+            if self.args.profile_json_output:
+                profile_path = Path(self.args.profile_json_output)
+            else:
+                profile_path = output_root / f"session_{timestamp}_profile.json"
+            self._write_profile_report(profile_path)
+
+    def _profile_summary_for_records(self, records: Sequence[dict[str, Any]]) -> dict[str, Any]:
+        complete = [record for record in records if record.get("complete")]
+        rendered = [record for record in complete if isinstance(record.get("render"), dict)]
+        summary: dict[str, Any] = {
+            "group_count": int(len(records)),
+            "complete_fusion_groups": int(len(complete)),
+            "fusion_timeout_groups": int(sum(1 for record in records if record.get("drop_reason"))),
+            "rendered_groups": int(len(rendered)),
+            "capture_group_fps": _event_fps(records, ("t_group_created",)),
+            "fusion_fps": _event_fps(complete, ("fusion", "publish_s")),
+            "render_fps": _event_fps(rendered, ("render", "render_s")),
+        }
+        target_fps = float(self.args.fusion_target_fps)
+        summary["target_fps_deficit"] = float(target_fps - summary["render_fps"])
+        summary["target_fps_deficit_ratio"] = float((target_fps - summary["render_fps"]) / target_fps) if target_fps > 0 else 0.0
+        metric_paths: dict[str, tuple[str, ...]] = {
+            "edgetam_cam0_model_ms": ("edgetam", "cam0", "model_ms"),
+            "edgetam_cam1_model_ms": ("edgetam", "cam1", "model_ms"),
+            "edgetam_cam2_model_ms": ("edgetam", "cam2", "model_ms"),
+            "edgetam_cam0_gate_wait_ms": ("edgetam", "cam0", "gate_wait_ms"),
+            "edgetam_cam1_gate_wait_ms": ("edgetam", "cam1", "gate_wait_ms"),
+            "edgetam_cam2_gate_wait_ms": ("edgetam", "cam2", "gate_wait_ms"),
+            "ffs_gate_wait_ms": ("ffs", "gate_wait_ms"),
+            "ffs_cycle_ms": ("ffs", "cycle_ms"),
+            "ffs_cam0_ms": ("ffs", "cam0_ffs_ms"),
+            "ffs_cam1_ms": ("ffs", "cam1_ffs_ms"),
+            "ffs_cam2_ms": ("ffs", "cam2_ffs_ms"),
+            "ffs_align_cam0_ms": ("ffs", "cam0_align_ms"),
+            "ffs_align_cam1_ms": ("ffs", "cam1_align_ms"),
+            "ffs_align_cam2_ms": ("ffs", "cam2_align_ms"),
+            "fusion_total_ms": ("fusion", "total_ms"),
+            "object_enhanced_pt_ms": ("fusion", "object_enhanced_pt_ms"),
+            "controller_pt_filter_ms": ("fusion", "controller_pt_filter_ms"),
+            "render_total_ms": ("render", "total_ms"),
+            "open3d_object_update_geometry_ms": ("render", "object_update_geometry_ms"),
+            "open3d_controller_update_geometry_ms": ("render", "controller_update_geometry_ms"),
+        }
+        summary["metrics"] = {
+            name: _profile_stats(_series_for_path(records, path))
+            for name, path in metric_paths.items()
+        }
+        if summary["fusion_fps"] < target_fps:
+            summary["bottleneck_class"] = "upstream_supply"
+        elif summary["render_fps"] < target_fps:
+            summary["bottleneck_class"] = "visualization"
+        else:
+            summary["bottleneck_class"] = "target_met"
+        return summary
+
+    def _build_profile_payload(self) -> dict[str, Any]:
+        with self._profile_lock:
+            records = [dict(record) for _, record in sorted(self._profile_records.items())]
+        warmup_s = float(self.args.profile_warmup_exclude_s)
+        after_warmup = [
+            record for record in records
+            if float(record.get("t_group_created", 0.0)) >= warmup_s
+        ]
+        contract = build_contract(self.args)
+        slow_filter_groups = sorted(
+            (
+                {
+                    "group_id": int(record.get("group_id", -1)),
+                    "total_enhanced_pt_ms": float(_nested_get(record, ("fusion", "object_enhanced_pt_ms")) or 0.0),
+                    "input_points": int(_nested_get(record, ("points", "object_raw")) or 0),
+                    "kept_points": int(_nested_get(record, ("points", "object_filtered")) or 0),
+                    "detail": _nested_get(record, ("fusion", "object_filter_detail")) or {},
+                }
+                for record in records
+            ),
+            key=lambda item: item["total_enhanced_pt_ms"],
+            reverse=True,
+        )[:10]
+        return {
+            "preset": self.args.preset,
+            "target_fps": float(self.args.fusion_target_fps),
+            "track_mode": self.args.track_mode,
+            "depth_source": self.args.depth_source,
+            "gpu_gate_max_concurrent": int(self.args.gpu_gate_max_concurrent),
+            "object_filter": self.args.object_postprocess,
+            "controller_filter": self.args.controller_postprocess,
+            "object_controller_union_before_filter": bool(contract["fusion"]["object_controller_union_before_filter"]),
+            "warmup_exclude_s": warmup_s,
+            "summary_full_run": self._profile_summary_for_records(records),
+            "summary_after_warmup": self._profile_summary_for_records(after_warmup),
+            "top_slowest_object_filter_groups": slow_filter_groups,
+            "per_group": records,
+        }
+
+    def _write_profile_report(self, profile_path: Path) -> None:
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = self._build_profile_payload()
+        profile_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
+        md_path = profile_path.with_suffix(".md")
+        warm = payload["summary_after_warmup"]
+        metrics = warm.get("metrics", {})
+        lines = [
+            "# Demo 2.1 visual-5fps performance profile",
+            "",
+            f"- preset: `{payload['preset']}`",
+            f"- target FPS: `{payload['target_fps']:.2f}`",
+            f"- render FPS after warmup: `{warm.get('render_fps', 0.0):.2f}`",
+            f"- fusion FPS after warmup: `{warm.get('fusion_fps', 0.0):.2f}`",
+            f"- target deficit: `{warm.get('target_fps_deficit', 0.0):.2f}`",
+            f"- bottleneck class: `{warm.get('bottleneck_class', 'unknown')}`",
+            "",
+            "| Metric | median | p90 | p95 | max |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ]
+        for name in (
+            "ffs_cycle_ms",
+            "edgetam_cam0_model_ms",
+            "edgetam_cam1_model_ms",
+            "edgetam_cam2_model_ms",
+            "edgetam_cam0_gate_wait_ms",
+            "edgetam_cam1_gate_wait_ms",
+            "edgetam_cam2_gate_wait_ms",
+            "fusion_total_ms",
+            "object_enhanced_pt_ms",
+            "controller_pt_filter_ms",
+            "render_total_ms",
+            "open3d_object_update_geometry_ms",
+            "open3d_controller_update_geometry_ms",
+        ):
+            stat = metrics.get(name, {})
+            lines.append(
+                f"| `{name}` | `{stat.get('median', 0.0):.2f}` | `{stat.get('p90', 0.0):.2f}` | "
+                f"`{stat.get('p95', 0.0):.2f}` | `{stat.get('max', 0.0):.2f}` |"
+            )
+        lines.extend(["", "## Top slowest object enhanced-PT groups", "", "| group | ms | input points | kept points |", "| ---: | ---: | ---: | ---: |"])
+        for item in payload.get("top_slowest_object_filter_groups", [])[:10]:
+            lines.append(
+                f"| `{item.get('group_id', -1)}` | `{item.get('total_enhanced_pt_ms', 0.0):.2f}` | "
+                f"`{item.get('input_points', 0)}` | `{item.get('kept_points', 0)}` |"
+            )
+        md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"[demo2.1] profile_json={profile_path}", flush=True)
+        print(f"[demo2.1] profile_md={md_path}", flush=True)
 
     def _start_threads(self) -> None:
         specs: list[tuple[str, Callable[[], None]]] = [
@@ -984,6 +1225,7 @@ class Demo21Runtime:
                 time.sleep(min(0.002, next_tick_s - now_s))
                 continue
             next_tick_s = now_s + interval_s
+            build_start_s = time.perf_counter()
             try:
                 obs = self.camera_system.get_observation()
                 frames = {
@@ -1007,6 +1249,17 @@ class Demo21Runtime:
             packet = CaptureGroup(group_id=group_id, created_perf_s=time.perf_counter(), frames=frames)
             self.capture_group_slot.put(packet)
             self.capture_group_stats.record(packet.created_perf_s)
+            self._profile_update(
+                group_id,
+                t_group_created=self._profile_rel_s(packet.created_perf_s),
+                capture={
+                    "group_build_ms": _elapsed_ms(build_start_s, packet.created_perf_s),
+                    **{
+                        f"frame_seq_cam{int(camera_idx)}": int(frames[int(camera_idx)].frame_seq)
+                        for camera_idx in self.args.camera_ids
+                    },
+                },
+            )
             group_id += 1
 
     def _create_ffs_runner(self) -> object:
@@ -1095,6 +1348,22 @@ class Demo21Runtime:
                     per_camera_ms=per_camera,
                     gpu_gate_wait_ms=gate_wait_ms,
                 )
+                self._profile_update(
+                    group.group_id,
+                    ffs={
+                        "gate_wait_ms": float(gate_wait_ms),
+                        "cycle_ms": float(packet.total_ms),
+                        "publish_s": self._profile_rel_s(),
+                        **{
+                            f"cam{int(camera_idx)}_ffs_ms": float(per_camera[int(camera_idx)].get("ffs_ms", 0.0))
+                            for camera_idx in self.args.camera_ids
+                        },
+                        **{
+                            f"cam{int(camera_idx)}_align_ms": float(per_camera[int(camera_idx)].get("align_ms", 0.0))
+                            for camera_idx in self.args.camera_ids
+                        },
+                    },
+                )
                 self.depth_group_slot.put(packet)
                 self._latest_depth_group = packet
                 self.ffs_stats.record()
@@ -1140,6 +1409,7 @@ class Demo21Runtime:
         initial_object_mask: np.ndarray,
         add_prompt: bool,
     ) -> CameraMaskPacket:
+        frame_started_s = time.perf_counter()
         image = _bgr_to_pil_rgb(frame.color_bgr)
         inputs, preprocess_ms, _, _ = _time_runtime_ms(
             torch_module,
@@ -1197,6 +1467,23 @@ class Demo21Runtime:
         controller_mask = masks_by_id.get(CONTROLLER_ID)
         if controller_mask is None:
             controller_mask = np.zeros_like(object_mask, dtype=bool)
+        total_ms = _elapsed_ms(frame_started_s, time.perf_counter())
+        self._profile_update(
+            frame.group_id,
+            edgetam={
+                f"cam{int(frame.camera_idx)}": {
+                    "gate_wait_ms": float(gate_wait_ms),
+                    "model_ms": float(cuda_event_model_ms or wall_model_ms),
+                    "wall_model_ms": float(wall_model_ms),
+                    "cuda_event_model_ms": float(cuda_event_model_ms),
+                    "preprocess_ms": float(preprocess_ms),
+                    "prompt_ms": float(prompt_ms),
+                    "postprocess_ms": float(postprocess_ms),
+                    "total_ms": float(total_ms),
+                    "publish_s": self._profile_rel_s(),
+                }
+            },
+        )
         return CameraMaskPacket(
             group_id=frame.group_id,
             camera_idx=frame.camera_idx,
@@ -1288,19 +1575,27 @@ class Demo21Runtime:
                 time.sleep(0.001)
                 continue
             last_depth_group = depth_group.group_id
+            fusion_wait_start_s = time.perf_counter()
             deadline_s = time.perf_counter() + float(self.args.fusion_timeout_ms) / 1000.0
             mask_by_camera: dict[int, CameraMaskPacket] = {}
+            mask_waits: dict[str, float] = {"wait_depth_ms": 0.0}
             for camera_idx in self.args.camera_ids:
+                wait_start_s = time.perf_counter()
                 mask = self._wait_mask_for_group(camera_idx=int(camera_idx), group_id=depth_group.group_id, deadline_s=deadline_s)
+                mask_waits[f"wait_mask_cam{int(camera_idx)}_ms"] = _elapsed_ms(wait_start_s, time.perf_counter())
                 if mask is None:
                     incomplete += 1
                     self._summary["fusion_timeout_groups"] = int(self._summary.get("fusion_timeout_groups", 0)) + 1
                     key = f"missing_mask_cam{int(camera_idx)}"
                     self._summary[key] = int(self._summary.get(key, 0)) + 1
+                    self._profile_update(depth_group.group_id, fusion=mask_waits)
+                    self._profile_mark_drop(depth_group.group_id, key)
                     break
                 mask_by_camera[int(camera_idx)] = mask
             if len(mask_by_camera) != len(self.args.camera_ids):
                 continue
+            mask_waits["wait_total_ms"] = _elapsed_ms(fusion_wait_start_s, time.perf_counter())
+            self._profile_update(depth_group.group_id, fusion=mask_waits)
             try:
                 packet = self._build_fused_packet(
                     depth_group=depth_group,
@@ -1332,6 +1627,8 @@ class Demo21Runtime:
         started_s = time.perf_counter()
         object_clouds: list[CameraLayerCloud] = []
         controller_clouds: list[CameraLayerCloud] = []
+        build_object_raw_ms = 0.0
+        build_controller_raw_ms = 0.0
         for camera_idx in self.args.camera_ids:
             depth = depth_group.depths[int(camera_idx)]
             mask = masks[int(camera_idx)]
@@ -1351,6 +1648,7 @@ class Demo21Runtime:
                 )
             ray_x, ray_y = ray_cache[int(camera_idx)]
             depth_m = depth.depth_m
+            object_build_start_s = time.perf_counter()
             object_pts_cam, object_cols, _ = backproject_masked_rgbd_profiled(
                 color_bgr=mask.color_bgr,
                 depth_m=depth_m,
@@ -1364,6 +1662,7 @@ class Demo21Runtime:
                 class_rgb=tuple(self.args.object_color),
                 rng=rng,
             )
+            build_object_raw_ms += _elapsed_ms(object_build_start_s, time.perf_counter())
             object_clouds.append(
                 CameraLayerCloud(
                     camera_idx=int(camera_idx),
@@ -1372,6 +1671,7 @@ class Demo21Runtime:
                     colors_rgb=object_cols,
                 )
             )
+            controller_build_start_s = time.perf_counter()
             if controller_tracking_enabled(self.args.track_mode):
                 controller_pts_cam, controller_cols, _ = backproject_masked_rgbd_profiled(
                     color_bgr=mask.color_bgr,
@@ -1389,6 +1689,7 @@ class Demo21Runtime:
             else:
                 controller_pts_cam = np.empty((0, 3), dtype=np.float32)
                 controller_cols = np.empty((0, 3), dtype=np.uint8)
+            build_controller_raw_ms += _elapsed_ms(controller_build_start_s, time.perf_counter())
             controller_clouds.append(
                 CameraLayerCloud(
                     camera_idx=int(camera_idx),
@@ -1412,7 +1713,12 @@ class Demo21Runtime:
         object_raw_count = 0 if raw_object is None else raw_object.point_count
         controller_raw_count = 0 if raw_controller is None else raw_controller.point_count
         filter_start_s = time.perf_counter()
+        object_filter_ms = 0.0
+        controller_filter_ms = 0.0
+        object_filter_stats: dict[str, Any] = {}
+        controller_filter_stats: dict[str, Any] = {}
         if raw_object is not None:
+            object_filter_start_s = time.perf_counter()
             object_points, object_colors, _ = apply_semantic_postprocess(
                 raw_object,
                 filter_cap=int(self.args.object_filter_cap),
@@ -1422,10 +1728,13 @@ class Demo21Runtime:
                 enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
                 enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
             )
+            object_filter_ms = _elapsed_ms(object_filter_start_s, time.perf_counter())
+            object_filter_stats = _ if isinstance(_, dict) else {}
         else:
             object_points = np.empty((0, 3), dtype=np.float32)
             object_colors = np.empty((0, 3), dtype=np.uint8)
         if raw_controller is not None:
+            controller_filter_start_s = time.perf_counter()
             controller_points, controller_colors, _ = apply_semantic_postprocess(
                 raw_controller,
                 filter_cap=int(self.args.controller_filter_cap),
@@ -1435,10 +1744,37 @@ class Demo21Runtime:
                 enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
                 enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
             )
+            controller_filter_ms = _elapsed_ms(controller_filter_start_s, time.perf_counter())
+            controller_filter_stats = _ if isinstance(_, dict) else {}
         else:
             controller_points = np.empty((0, 3), dtype=np.float32)
             controller_colors = np.empty((0, 3), dtype=np.uint8)
         filter_ms = _elapsed_ms(filter_start_s, time.perf_counter())
+        fusion_total_ms = _elapsed_ms(started_s, time.perf_counter())
+        profile_fusion: dict[str, Any] = {
+            "build_object_raw_ms": float(build_object_raw_ms),
+            "build_controller_raw_ms": float(build_controller_raw_ms),
+            "object_enhanced_pt_ms": float(object_filter_ms),
+            "controller_pt_filter_ms": float(controller_filter_ms),
+            "filter_ms": float(filter_ms),
+            "total_ms": float(fusion_total_ms),
+            "publish_s": self._profile_rel_s(),
+        }
+        if self.args.profile_filter_detail:
+            profile_fusion["object_filter_detail"] = object_filter_stats
+            profile_fusion["controller_filter_detail"] = controller_filter_stats
+        self._profile_update(
+            depth_group.group_id,
+            fusion=profile_fusion,
+            points={
+                "object_raw": int(object_raw_count),
+                "object_filtered": int(len(object_points)),
+                "controller_raw": int(controller_raw_count),
+                "controller_filtered": int(len(controller_points)),
+            },
+            complete=True,
+            drop_reason=None,
+        )
         return FusedPcdPacket(
             group_id=depth_group.group_id,
             created_perf_s=time.perf_counter(),
@@ -1446,7 +1782,7 @@ class Demo21Runtime:
             object_colors_rgb=object_colors,
             controller_points_m=controller_points,
             controller_colors_rgb=controller_colors,
-            fusion_ms=_elapsed_ms(started_s, time.perf_counter()),
+            fusion_ms=fusion_total_ms,
             filter_ms=filter_ms,
             object_raw_points=object_raw_count,
             controller_raw_points=controller_raw_count,
@@ -1587,14 +1923,19 @@ class Demo21Runtime:
             scene_widget.setup_camera(60.0, bbox, center)
 
         def render_latest() -> None:
+            render_started_s = time.perf_counter()
             packet = self.render_slot.get_latest_after(last_render_group["value"])
             if packet is None:
                 return
             last_render_group["value"] = packet.group_id
-            object_state.update(packet.object_points_m, packet.object_colors_rgb)
-            controller_state.update(packet.controller_points_m, packet.controller_colors_rgb)
+            wait_packet_ms = _elapsed_ms(packet.created_perf_s, render_started_s)
+            object_convert_ms, object_update_ms = object_state.update(packet.object_points_m, packet.object_colors_rgb)
+            controller_convert_ms, controller_update_ms = controller_state.update(packet.controller_points_m, packet.controller_colors_rgb)
+            reset_camera_ms = 0.0
             if not camera_ready["value"] and (packet.object_point_count + packet.controller_point_count) > 0:
+                reset_start_s = time.perf_counter()
                 reset_camera(packet)
+                reset_camera_ms = _elapsed_ms(reset_start_s, time.perf_counter())
                 camera_ready["value"] = True
             now = time.perf_counter()
             self.render_stats.record_render(render_time_s=now, latency_ms=_elapsed_ms(packet.created_perf_s, now))
@@ -1606,11 +1947,32 @@ class Demo21Runtime:
             )
             if self.args.debug:
                 self._print_debug()
+            post_redraw_ms = 0.0
             if hasattr(window, "post_redraw"):
                 try:
+                    post_redraw_start_s = time.perf_counter()
                     window.post_redraw()
+                    post_redraw_ms = _elapsed_ms(post_redraw_start_s, time.perf_counter())
                 except Exception:
                     pass
+            self._profile_update(
+                packet.group_id,
+                render={
+                    "wait_packet_ms": float(wait_packet_ms),
+                    "set_object_points_ms": float(object_convert_ms),
+                    "set_object_colors_ms": 0.0,
+                    "set_controller_points_ms": float(controller_convert_ms),
+                    "set_controller_colors_ms": 0.0,
+                    "object_update_geometry_ms": float(object_update_ms),
+                    "controller_update_geometry_ms": float(controller_update_ms),
+                    "update_geometry_ms": float(object_update_ms + controller_update_ms),
+                    "poll_events_ms": 0.0,
+                    "update_renderer_ms": float(post_redraw_ms),
+                    "reset_camera_ms": float(reset_camera_ms),
+                    "total_ms": float(_elapsed_ms(render_started_s, time.perf_counter())),
+                    "render_s": self._profile_rel_s(),
+                },
+            )
 
         def request_render() -> None:
             if self.stop_event.is_set():
@@ -1674,6 +2036,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration-s", type=float, default=0.0)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--profile-cuda-events", action="store_true")
+    parser.add_argument("--profile-pipeline", action="store_true")
+    parser.add_argument("--profile-filter", action="store_true")
+    parser.add_argument("--profile-filter-detail", action="store_true")
+    parser.add_argument("--profile-visualization", action="store_true")
+    parser.add_argument("--profile-gpu-gate", action="store_true")
+    parser.add_argument("--profile-json-output", default=None)
+    parser.add_argument("--profile-warmup-exclude-s", type=float, default=20.0)
     parser.add_argument("--fusion-target-fps", type=float, default=10.0)
     parser.add_argument("--fusion-timeout-ms", type=float, default=150.0)
     parser.add_argument("--max-inflight-groups", type=int, default=2)

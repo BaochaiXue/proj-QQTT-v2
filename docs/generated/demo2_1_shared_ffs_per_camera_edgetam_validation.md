@@ -263,6 +263,84 @@ Conclusion:
 - Remaining risk is stability, not renderer capacity: filter spikes and intermittent low object point counts still need visual inspection before replacing `professor-safe`.
 - This candidate is now exposed as the `visual-5fps` preset.
 
+## visual-5fps Profiling Schema
+
+`realtime_three_view_masked_fused_pcd.py` now supports explicit profiling flags that are disabled by default:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --track-mode object-only \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-gpu-gate \
+  --profile-warmup-exclude-s 20 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_profile_object_only.json
+```
+
+The JSON profile records one row per `group_id` with:
+
+- capture frame sequence and group build timing
+- per-camera EdgeTAM gate wait, model, postprocess, and total timing
+- shared FFS gate wait, cycle timing, per-camera FFS and align timing
+- fusion wait, raw PCD build timing, object enhanced-PT timing, controller PT-filter timing, point counts
+- Open3D geometry update and render callback timing
+
+The companion Markdown report summarizes full-run and warmup-excluded medians, p90, p95, max values, target FPS deficit, bottleneck class, and top slowest object enhanced-PT groups.
+
+A 60s object-only smoke profile was run after adding this schema:
+
+```bash
+QQTT_WSLG_OPEN3D_FAST_EXIT=1 \
+  ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps \
+  --track-mode object-only \
+  --object-prompt "stuffed animal" \
+  --duration-s 60 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-gpu-gate \
+  --profile-warmup-exclude-s 20 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_profile_object_only.json \
+  > docs/generated/demo2_1_visual5fps_profile_object_only.log 2>&1
+```
+
+Outputs:
+
+- `docs/generated/demo2_1_visual5fps_profile_object_only.json`
+- `docs/generated/demo2_1_visual5fps_profile_object_only.md`
+- `docs/generated/demo2_1_visual5fps_profile_object_only.log`
+
+Warmup-excluded summary from this smoke:
+
+| Metric | Value |
+| --- | ---: |
+| render FPS | `4.56` |
+| fusion FPS | `4.56` |
+| target deficit | `0.44 FPS` |
+| bottleneck class | `upstream_supply` |
+| FFS cycle median / p95 | `123.31 / 195.44 ms` |
+| EdgeTAM model median cam0/cam1/cam2 | `61.96 / 58.67 / 58.67 ms` |
+| EdgeTAM gate wait median cam0/cam1/cam2 | `50.80 / 58.92 / 0.00 ms` |
+| object enhanced-PT median / p95 / max | `33.78 / 41.36 / 44.80 ms` |
+| Open3D render callback median / p95 | `0.51 / 3.27 ms` |
+| Open3D object geometry update median / p95 | `0.03 / 2.24 ms` |
+
+Interpretation:
+
+- Open3D/WSLg is not the current limiter in this profile; the render callback is sub-4ms at p95.
+- This run did not reproduce the earlier ~230ms enhanced-PT spike; object enhanced-PT p95 stayed near `41 ms`.
+- The remaining deficit is upstream supply: FFS/EdgeTAM scheduling and missing mask groups during startup/initialization.
+- The last steady debug window reached about `5.0 FPS`, so a longer 120s profile with a larger warmup exclusion is needed before changing quality settings.
+
 Recommended current-lab professor-facing command when no hand/controller is visible:
 
 ```bash
