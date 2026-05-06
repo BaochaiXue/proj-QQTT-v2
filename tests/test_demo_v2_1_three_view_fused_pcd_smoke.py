@@ -114,6 +114,39 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertFalse(contract["official_quality_depth"])
         self.assertEqual(contract["semantic_layers"], [])
 
+    def test_capture_group_timeout_is_skipped(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--depth-source",
+                "none",
+                "--track-mode",
+                "none",
+                "--fusion-target-fps",
+                "1000",
+            ]
+        )
+        runtime = demo.Demo21Runtime(args)
+
+        class FakeCameraSystem:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def get_observation(self) -> dict[int, object]:
+                self.calls += 1
+                if self.calls == 1:
+                    raise TimeoutError("simulated")
+                raise RuntimeError("stop")
+
+        fake_camera = FakeCameraSystem()
+        runtime.camera_system = fake_camera
+        runtime._capture_group_worker()
+
+        self.assertEqual(runtime._summary["capture_timeout_count"], 1)
+        self.assertEqual(fake_camera.calls, 2)
+        self.assertTrue(runtime.stop_event.is_set())
+
 
 if __name__ == "__main__":
     unittest.main()
