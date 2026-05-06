@@ -51,6 +51,7 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_ffs_remove_invisible_mask_smoke",
                 "tests.test_sam31_still_object_benchmark_smoke",
                 "tests.test_sam21_checkpoint_ladder_panel_smoke",
+                "tests.test_demo_v2_1_three_view_fused_pcd_smoke",
                 "tests.test_check_all_smoke",
             ],
             commands,
@@ -69,6 +70,7 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertIn(["python", "demo_v1/realtime_single_camera_pointcloud.py", "--help"], commands)
         self.assertIn(["python", "demo_v2/realtime_single_camera_pointcloud.py", "--help"], commands)
         self.assertIn(["python", "demo_v2/realtime_masked_edgetam_pcd.py", "--help"], commands)
+        self.assertIn(["python", "demo_v2_1/realtime_three_view_masked_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/realtime_single_camera_pointcloud.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/verify_ffs_demo.py", "--help"], commands)

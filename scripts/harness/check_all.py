@@ -34,6 +34,7 @@ DEMO_HELP_SCRIPTS: tuple[str, ...] = (
     "demo_v1/realtime_single_camera_pointcloud.py",
     "demo_v2/realtime_single_camera_pointcloud.py",
     "demo_v2/realtime_masked_edgetam_pcd.py",
+    "demo_v2_1/realtime_three_view_masked_fused_pcd.py",
 )
 
 QUICK_HELP_SCRIPTS: tuple[str, ...] = (*QUICK_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))
@@ -59,6 +60,7 @@ QUICK_UNITTEST_BATCHES: tuple[tuple[str, ...], ...] = (
         "tests.test_ffs_remove_invisible_mask_smoke",
         "tests.test_sam31_still_object_benchmark_smoke",
         "tests.test_sam21_checkpoint_ladder_panel_smoke",
+        "tests.test_demo_v2_1_three_view_fused_pcd_smoke",
         "tests.test_check_all_smoke",
     ),
 )
@@ -188,6 +190,7 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_visual_make_professor_triptych_smoke",
     "tests.test_visual_make_match_board_smoke",
     "tests.test_cleanup_different_types_cases_smoke",
+    "tests.test_demo_v2_1_three_view_fused_pcd_smoke",
     "tests.test_check_all_smoke",
 )
 
