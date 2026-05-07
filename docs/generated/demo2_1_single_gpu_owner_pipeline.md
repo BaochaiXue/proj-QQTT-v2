@@ -37,11 +37,13 @@ controller pt-filter
 object/controller separated fusion
 ```
 
-New CLI:
+GPU pipeline CLI:
 
 ```text
---gpu-pipeline-mode separate-workers|single-owner
+--gpu-pipeline-mode separate-workers|single-owner|staged
 --single-owner-order ffs-then-edgetam|edgetam-then-ffs
+--staged-order ffs-then-parallel-edgetam
+--edgetam-stream-mode default|per-camera
 --static-device-buffers
 --preallocate-pcd-buffers
 ```
@@ -58,15 +60,26 @@ gpu_pipeline_mode=separate-workers
 New preset:
 
 ```text
-visual-5fps-single-owner:
+perf-5fps-single-owner:
   profile=848x480
-  fps=30
+  fps=15
   fusion_target_fps=5
   render_mode=pointcloud
   depth_source=ffs
   init_mode=sam31-first-frame
   gpu_pipeline_mode=single-owner
   single_owner_order=ffs-then-edgetam
+
+perf-5fps-staged:
+  profile=848x480
+  fps=15
+  fusion_target_fps=5
+  render_mode=pointcloud
+  depth_source=ffs
+  init_mode=sam31-first-frame
+  gpu_pipeline_mode=staged
+  staged_order=ffs-then-parallel-edgetam
+  edgetam_stream_mode=per-camera
 ```
 
 Recommended first live run:
@@ -74,7 +87,7 @@ Recommended first live run:
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --preset visual-5fps-single-owner \
+  --preset perf-5fps-single-owner \
   --track-mode object-only \
   --init-mode sam31-first-frame \
   --object-prompt "stuffed animal" \
@@ -85,7 +98,29 @@ Recommended first live run:
   --profile-visualization \
   --profile-h2d \
   --profile-warmup-exclude-s 40 \
-  --profile-json-output docs/generated/demo2_1_visual5fps_single_owner_no_pin_object_only_120s.json
+  --profile-json-output docs/generated/demo2_1_perf5fps_single_owner_no_pin_object_only_120s.json
+```
+
+Recommended staged live run:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset perf-5fps-staged \
+  --track-mode object-only \
+  --init-mode sam31-first-frame \
+  --object-prompt "stuffed animal" \
+  --staged-order ffs-then-parallel-edgetam \
+  --edgetam-stream-mode per-camera \
+  --ffs-input-staging pageable \
+  --duration-s 120 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-h2d \
+  --profile-warmup-exclude-s 40 \
+  --profile-json-output docs/generated/demo2_1_perf5fps_staged_object_only_no_pin_120s.json
 ```
 
 Compare against:
@@ -94,6 +129,8 @@ Compare against:
 separate-workers gate=2
 separate-workers no-gate
 single-owner no-pin
+staged no-pin
+staged pin-ffs
 single-owner pin-all
 single-owner pin-all + static-device-buffers flags
 ```

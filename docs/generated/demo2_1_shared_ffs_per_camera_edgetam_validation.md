@@ -70,6 +70,7 @@ Temporal grouping:
 | `official-lowfps` | `848x480@15` | 2 FPS | pointcloud | default controller-object FFS-quality fused demo; pass `--track-mode object-only` only when no controller is visible |
 | `perf-5fps` | `848x480@15` | 5 FPS | pointcloud | controller-object quality-preserving performance target; current no-hand tests explicitly pass `--track-mode object-only` |
 | `perf-5fps-single-owner` | `848x480@15` | 5 FPS | pointcloud | single GPU-owner performance target; publishes complete depth+masks together |
+| `perf-5fps-staged` | `848x480@15` | 5 FPS | pointcloud | staged FFS sequential stage followed by parallel EdgeTAM stage |
 | `climb-5` | `848x480@15` | 5 FPS | none | headless performance climb |
 | `climb-10` | `848x480@15` | 10 FPS | none | diagnostic stress test |
 | `diagnostics` | `848x480@15` | 2 FPS | none | capture/EdgeTAM/FFS isolation |
@@ -81,6 +82,7 @@ professor-safe              -> official-lowfps
 visual-5fps                 -> perf-5fps
 visual-5fps-no-gate         -> perf-5fps
 visual-5fps-single-owner    -> perf-5fps-single-owner
+visual-5fps-staged          -> perf-5fps-staged
 ```
 
 The official-lowfps preset prioritizes semantic correctness and startup stability over frame rate.
@@ -95,6 +97,7 @@ should use canonical preset names:
 official-lowfps          formal low-FPS professor-facing quality path
 perf-5fps                5 FPS separate-workers performance target
 perf-5fps-single-owner   5 FPS single GPU-owner performance target
+perf-5fps-staged         5 FPS staged FFS -> parallel EdgeTAM target
 diagnostics              capture / EdgeTAM / FFS isolation base
 climb-5, climb-10        headless target-rate stress tests
 ```
@@ -975,6 +978,51 @@ See:
 - `docs/generated/demo2_1_single_gpu_owner_pipeline.json`
 - `docs/generated/demo2_1_controller_prompt_probe.md`
 - `docs/generated/demo2_1_controller_towel_single_owner_benchmark.md`
+
+## Staged FFS -> Parallel EdgeTAM Experiment
+
+Added an experimental staged pipeline mode:
+
+```text
+--gpu-pipeline-mode staged
+--staged-order ffs-then-parallel-edgetam
+--edgetam-stream-mode per-camera
+```
+
+Pipeline:
+
+```text
+CaptureGroup
+  -> FFS stage: cam0 -> cam1 -> cam2, one shared TensorRT runner/context owner
+  -> EdgeTAM stage: parallel(cam0, cam1, cam2), replicated HF EdgeTAM sessions
+  -> CompleteInferenceGroup(depths + masks)
+  -> fusion/filter/render
+```
+
+This mode does not start the old `shared-ffs` worker or the three old
+`edgetam-camN` workers. FFS and EdgeTAM stages are separated by a stage
+barrier, so FFS does not overlap EdgeTAM, while EdgeTAM cam0/cam1/cam2 can
+run in parallel inside the EdgeTAM stage.
+
+Profile fields:
+
+```text
+edgetam_stage_wall_ms
+edgetam_stage_sum_model_ms
+edgetam_parallel_efficiency = sum_model_ms / wall_ms
+stage_barrier_ms
+```
+
+Quality remains unchanged:
+
+```text
+FFS-derived depth
+live SAM3.1 first-frame init
+timestamp-nearest temporal grouping
+object enhanced-PT
+controller pt-filter
+object/controller union before filter = false
+```
 
 ## Towel-Controller A/B Result
 

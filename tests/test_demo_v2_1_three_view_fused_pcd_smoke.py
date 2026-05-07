@@ -328,6 +328,46 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
         self.assertFalse(contract["fusion"]["object_controller_union_before_filter"])
 
+    def test_perf_5fps_staged_contract_uses_parallel_edgetam_stage(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", "perf-5fps-staged", "--track-mode", "object-only"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run", "--track-mode"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["preset"], "perf-5fps-staged")
+        self.assertEqual(contract["preset_canonical"], "perf-5fps-staged")
+        self.assertEqual(contract["profile"], "848x480")
+        self.assertEqual(contract["fps"], demo.DEFAULT_PRESET_CAPTURE_FPS)
+        self.assertEqual(contract["track_mode"], "object-only")
+        self.assertEqual(contract["render_mode"], "pointcloud")
+        self.assertEqual(contract["fusion_target_fps"], 5.0)
+        self.assertEqual(contract["depth_source"], "ffs")
+        self.assertEqual(contract["gpu_pipeline"]["mode"], "staged")
+        self.assertEqual(contract["gpu_pipeline"]["internal_order"], "ffs-then-parallel-edgetam")
+        self.assertEqual(contract["gpu_pipeline"]["staged_order"], "ffs-then-parallel-edgetam")
+        self.assertEqual(contract["gpu_pipeline"]["ffs_stage"], "sequential_cam0_cam1_cam2")
+        self.assertEqual(contract["gpu_pipeline"]["edgetam_stage"], "parallel_cam0_cam1_cam2")
+        self.assertTrue(contract["gpu_pipeline"]["depth_and_masks_published_together"])
+        self.assertFalse(contract["gpu_pipeline"]["separate_ffs_and_edgetam_workers"])
+        self.assertEqual(contract["edgetam"]["model_topology"], "replicated")
+        self.assertEqual(contract["edgetam"]["stream_mode"], "per-camera")
+        self.assertEqual(contract["gpu_gate"], {"mode": "off", "max_concurrent": 0})
+        self.assertEqual(contract["ffs_contract"]["worker_mode"], "shared")
+        self.assertEqual(contract["ffs_contract"]["input_staging"], "pinned")
+        self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
+        self.assertFalse(contract["fusion"]["object_controller_union_before_filter"])
+
+    def test_legacy_visual_5fps_staged_alias_maps_to_perf_staged(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps-staged", "--track-mode", "object-only"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run", "--track-mode"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["preset"], "visual-5fps-staged")
+        self.assertEqual(contract["preset_canonical"], "perf-5fps-staged")
+        self.assertEqual(contract["gpu_pipeline"]["mode"], "staged")
+        self.assertEqual(contract["gpu_pipeline"]["edgetam_stage"], "parallel_cam0_cam1_cam2")
+
     def test_single_owner_thread_specs_disable_separate_gpu_workers(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(
@@ -351,6 +391,33 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertIn("capture-group", thread_names)
         self.assertIn("gpu-owner", thread_names)
         self.assertIn("fusion", thread_names)
+        self.assertNotIn("shared-ffs", thread_names)
+        self.assertFalse(any(name.startswith("edgetam-cam") for name in thread_names))
+
+    def test_staged_thread_specs_disable_old_gpu_workers(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                "perf-5fps-staged",
+                "--track-mode",
+                "object-only",
+                "--depth-source",
+                "ffs",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--track-mode", "--depth-source"},
+        )
+        runtime = demo.Demo21Runtime(args)
+        thread_names = [name for name, _target in runtime._thread_specs()]
+
+        self.assertIn("capture-group", thread_names)
+        self.assertIn("staged-gpu", thread_names)
+        self.assertIn("fusion", thread_names)
+        self.assertNotIn("gpu-owner", thread_names)
         self.assertNotIn("shared-ffs", thread_names)
         self.assertFalse(any(name.startswith("edgetam-cam") for name in thread_names))
 

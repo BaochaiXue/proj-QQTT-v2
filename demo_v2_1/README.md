@@ -102,6 +102,17 @@ perf-5fps-single-owner:
   publishes depth and masks together as one CompleteInferenceGroup
   quality path unchanged: FFS depth + object enhanced-pt
 
+perf-5fps-staged:
+  848x480@15
+  fusion-target-fps=5
+  render-mode=pointcloud by default
+  gpu-pipeline-mode=staged
+  staged-order=ffs-then-parallel-edgetam
+  FFS stage is sequential cam0 -> cam1 -> cam2 with one runner/context owner
+  EdgeTAM stage runs cam0/cam1/cam2 in parallel with per-camera CUDA streams
+  publishes depth and masks together as one CompleteInferenceGroup
+  quality path unchanged: FFS depth + object enhanced-pt
+
 climb-5:
   848x480@15
   fusion-target-fps=5
@@ -124,6 +135,7 @@ professor-safe              -> official-lowfps
 visual-5fps                 -> perf-5fps
 visual-5fps-no-gate         -> perf-5fps
 visual-5fps-single-owner    -> perf-5fps-single-owner
+visual-5fps-staged          -> perf-5fps-staged
 ```
 
 Use the canonical names in new scripts. The old names are kept only so older
@@ -204,6 +216,33 @@ The worker processes one temporal-coherent `CaptureGroup` into a
 This is designed to reduce partial same-group joins and GPU worker contention.
 The `--static-device-buffers` and `--preallocate-pcd-buffers` flags are recorded
 as memory-for-speed ablation hooks; they do not change the quality contract.
+
+Staged FFS -> parallel EdgeTAM profiling candidate:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset perf-5fps-staged \
+  --track-mode object-only \
+  --init-mode sam31-first-frame \
+  --object-prompt "stuffed animal" \
+  --staged-order ffs-then-parallel-edgetam \
+  --edgetam-stream-mode per-camera \
+  --ffs-input-staging pageable \
+  --duration-s 120 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-h2d \
+  --profile-warmup-exclude-s 40 \
+  --profile-json-output docs/generated/demo2_1_perf5fps_staged_object_only_no_pin_120s.json
+```
+
+In this mode FFS and EdgeTAM are phase-separated: FFS never overlaps EdgeTAM,
+but the three EdgeTAM camera sessions run in parallel inside the EdgeTAM stage.
+The profile records `edgetam_stage_wall_ms`, `edgetam_stage_sum_model_ms`, and
+`edgetam_parallel_efficiency`.
 
 Profiling the 5 FPS candidate:
 
