@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import queue
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -299,6 +301,129 @@ def _save_depth_artifacts(depth_m: np.ndarray, *, output_dir: Path, prefix: str)
     return npy_path, preview_path
 
 
+@dataclass(frozen=True)
+class _RealIrDepthRequest:
+    frame_id: int
+    ir_left_u8: np.ndarray
+    ir_right_u8: np.ndarray
+    color_shape: tuple[int, int]
+    k_ir_left: np.ndarray
+    k_color: np.ndarray
+    t_ir_left_to_color: np.ndarray
+    baseline_m: float
+    depth_scale_m_per_unit: float
+    submitted_s: float
+
+
+@dataclass(frozen=True)
+class _RealIrDepthReply:
+    worker_idx: int
+    frame_id: int
+    submitted_s: float
+    completed_s: float
+    result: FfsRemoteDepthResult | None = None
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.result is not None
+
+
+def _is_timeout_error_text(error: str) -> bool:
+    lowered = error.lower()
+    return "timeout" in lowered or "timed out" in lowered or "again" in lowered
+
+
+class _RealIrDepthWorker(threading.Thread):
+    def __init__(
+        self,
+        *,
+        worker_idx: int,
+        endpoint: str,
+        timeout_ms: int,
+        return_type: str,
+        compression: str,
+        result_queue: "queue.Queue[_RealIrDepthReply]",
+    ) -> None:
+        super().__init__(name=f"ffs-remote-real-ir-worker-{worker_idx}", daemon=True)
+        self.worker_idx = int(worker_idx)
+        self._endpoint = str(endpoint)
+        self._timeout_ms = int(timeout_ms)
+        self._return_type = str(return_type)
+        self._compression = str(compression)
+        self._result_queue = result_queue
+        self._tasks: "queue.Queue[_RealIrDepthRequest | None]" = queue.Queue(maxsize=1)
+
+    def try_submit(self, request: _RealIrDepthRequest) -> bool:
+        try:
+            self._tasks.put_nowait(request)
+            return True
+        except queue.Full:
+            return False
+
+    def stop(self) -> None:
+        try:
+            self._tasks.put_nowait(None)
+        except queue.Full:
+            pass
+
+    def run(self) -> None:
+        client = FfsRemoteDepthClient(
+            endpoint=self._endpoint,
+            timeout_ms=self._timeout_ms,
+            return_type=self._return_type,
+            compression=self._compression,
+        )
+        try:
+            while True:
+                request = self._tasks.get()
+                if request is None:
+                    return
+                try:
+                    result = client.request_depth_color_m(
+                        frame_id=request.frame_id,
+                        ir_left_u8=request.ir_left_u8,
+                        ir_right_u8=request.ir_right_u8,
+                        color_shape=request.color_shape,
+                        k_ir_left=request.k_ir_left,
+                        k_color=request.k_color,
+                        t_ir_left_to_color=request.t_ir_left_to_color,
+                        baseline_m=request.baseline_m,
+                        depth_scale_m_per_unit=request.depth_scale_m_per_unit,
+                    )
+                    reply = _RealIrDepthReply(
+                        worker_idx=self.worker_idx,
+                        frame_id=request.frame_id,
+                        submitted_s=request.submitted_s,
+                        completed_s=time.perf_counter(),
+                        result=result,
+                    )
+                except Exception as exc:
+                    reply = _RealIrDepthReply(
+                        worker_idx=self.worker_idx,
+                        frame_id=request.frame_id,
+                        submitted_s=request.submitted_s,
+                        completed_s=time.perf_counter(),
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                self._result_queue.put(reply)
+        finally:
+            client.close()
+
+
+def _submit_to_real_ir_worker(
+    workers: list[_RealIrDepthWorker],
+    request: _RealIrDepthRequest,
+    *,
+    start_idx: int,
+) -> int | None:
+    for offset in range(len(workers)):
+        idx = (start_idx + offset) % len(workers)
+        if workers[idx].try_submit(request):
+            return idx
+    return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Remote FFS depth client utilities.")
     parser.add_argument("--endpoint", required=True, help="ZeroMQ server endpoint, for example tcp://100.x.y.z:7001.")
@@ -333,6 +458,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--save-first-depth-preview",
         action="store_true",
         help="Save the first successful returned depth as .npy plus a PNG preview.",
+    )
+    parser.add_argument(
+        "--inflight",
+        type=int,
+        default=1,
+        help="Benchmark-only number of independent REQ sockets for real-IR depth requests.",
+    )
+    parser.add_argument(
+        "--drop-stale-replies",
+        action="store_true",
+        help="For multi-inflight real-IR benchmarks, count out-of-order older replies as stale latest-wins drops.",
     )
     parser.add_argument(
         "--output-dir",
@@ -472,6 +608,8 @@ def _validate_real_ir_depth_args(args: argparse.Namespace) -> None:
         raise ValueError("--timeout-ms must be positive")
     if int(args.warmup_frames) < 0:
         raise ValueError("--warmup-frames must be non-negative")
+    if int(args.inflight) <= 0:
+        raise ValueError("--inflight must be positive")
 
 
 def run_real_ir_depth_benchmark(
@@ -484,7 +622,9 @@ def run_real_ir_depth_benchmark(
     rs = _load_realsense_module()
     serial = _resolve_serial(rs, None if args.serial is None else str(args.serial))
     owned_client = client is None
-    if client is None:
+    if client is not None and int(args.inflight) != 1:
+        raise ValueError("injected real-IR benchmark client only supports --inflight 1")
+    if client is None and int(args.inflight) == 1:
         client = FfsRemoteDepthClient(
             endpoint=str(args.endpoint),
             timeout_ms=int(args.timeout_ms),
@@ -522,9 +662,15 @@ def run_real_ir_depth_benchmark(
         deadline_s = started_s + float(args.duration_s)
         next_send_s = started_s
         frame_id = 0
+        submitted = 0
         successes = 0
+        accepted_replies = 0
         failures = 0
         capture_misses = 0
+        submit_skips = 0
+        stale_replies = 0
+        timeout_count = 0
+        latest_accepted_frame_id = -1
         rtts: list[float] = []
         server_ffs: list[float] = []
         server_align: list[float] = []
@@ -535,90 +681,227 @@ def run_real_ir_depth_benchmark(
         depth_shapes: set[tuple[int, int]] = set()
         response_compressions: set[str] = set()
         last_log_s = started_s
-        while time.perf_counter() < deadline_s:
-            now_s = time.perf_counter()
-            if now_s < next_send_s:
-                time.sleep(min(0.002, next_send_s - now_s))
-                continue
-            try:
-                frames = pipeline.wait_for_frames(int(args.timeout_ms))
-                left_frame = frames.get_infrared_frame(1)
-                right_frame = frames.get_infrared_frame(2)
-                color_frame = frames.get_color_frame()
-                if not left_frame or not right_frame or not color_frame:
-                    capture_misses += 1
+
+        inflight = int(args.inflight)
+        result_queue: "queue.Queue[_RealIrDepthReply]" = queue.Queue()
+        workers: list[_RealIrDepthWorker] = []
+        pending_frame_ids: set[int] = set()
+        next_worker_idx = 0
+        max_pending_observed = 0
+        if client is None:
+            workers = [
+                _RealIrDepthWorker(
+                    worker_idx=idx,
+                    endpoint=str(args.endpoint),
+                    timeout_ms=int(args.timeout_ms),
+                    return_type=str(args.return_type),
+                    compression=str(args.compress),
+                    result_queue=result_queue,
+                )
+                for idx in range(inflight)
+            ]
+            for worker in workers:
+                worker.start()
+
+        def process_reply(reply: _RealIrDepthReply) -> None:
+            nonlocal successes
+            nonlocal accepted_replies
+            nonlocal failures
+            nonlocal stale_replies
+            nonlocal timeout_count
+            nonlocal request_bytes
+            nonlocal response_bytes
+            nonlocal first_depth_npy
+            nonlocal first_depth_preview
+            nonlocal latest_accepted_frame_id
+            pending_frame_ids.discard(int(reply.frame_id))
+            if not reply.ok:
+                failures += 1
+                if _is_timeout_error_text(reply.error):
+                    timeout_count += 1
+                if bool(args.debug):
+                    print(
+                        "[ffs-remote-real-ir] "
+                        f"frame_id={reply.frame_id} worker={reply.worker_idx} status=error error={reply.error}",
+                        flush=True,
+                    )
+                return
+            result = reply.result
+            assert result is not None
+            successes += 1
+            rtts.append(float(result.rtt_ms))
+            server_ffs.append(float(result.server_ffs_ms))
+            server_align.append(float(result.server_align_ms))
+            server_totals.append(float(result.server_total_ms))
+            request_bytes += int(result.request_bytes)
+            response_bytes += int(result.response_bytes)
+            depth = result.depth_color_m
+            depth_shapes.add(tuple(int(item) for item in depth.shape))
+            response_compressions.add(str(result.compression))
+            depth_nonzero_counts.append(float(np.count_nonzero(np.isfinite(depth) & (depth > 0.0))))
+            if bool(args.drop_stale_replies) and int(result.frame_id) < latest_accepted_frame_id:
+                stale_replies += 1
+                return
+            accepted_replies += 1
+            latest_accepted_frame_id = max(latest_accepted_frame_id, int(result.frame_id))
+            if bool(args.save_first_depth_preview) and not first_depth_npy:
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                prefix = f"demo2_real_ir_remote_depth_{timestamp}_frame{int(result.frame_id):06d}"
+                npy_path, preview_path = _save_depth_artifacts(
+                    depth,
+                    output_dir=Path(args.output_dir),
+                    prefix=prefix,
+                )
+                first_depth_npy = str(npy_path)
+                first_depth_preview = str(preview_path)
+
+        def drain_replies(*, block: bool = False) -> None:
+            while True:
+                try:
+                    reply = result_queue.get(timeout=0.05 if block else 0.0)
+                except queue.Empty:
+                    return
+                process_reply(reply)
+
+        try:
+            while time.perf_counter() < deadline_s:
+                if workers:
+                    drain_replies()
+                now_s = time.perf_counter()
+                if now_s < next_send_s:
+                    time.sleep(min(0.002, next_send_s - now_s))
+                    continue
+                if len(pending_frame_ids) >= inflight:
+                    submit_skips += 1
                     next_send_s += 1.0 / float(args.fps)
                     continue
-                left = np.ascontiguousarray(np.asanyarray(left_frame.get_data()), dtype=np.uint8)
-                right = np.ascontiguousarray(np.asanyarray(right_frame.get_data()), dtype=np.uint8)
-                color = np.asanyarray(color_frame.get_data())
-                color_shape = (int(color.shape[0]), int(color.shape[1]))
-                result = client.request_depth_color_m(
-                    frame_id=frame_id,
-                    ir_left_u8=left,
-                    ir_right_u8=right,
-                    color_shape=color_shape,
-                    k_ir_left=k_ir_left,
-                    k_color=k_color,
-                    t_ir_left_to_color=t_ir_left_to_color,
-                    baseline_m=baseline_m,
-                    depth_scale_m_per_unit=depth_scale,
-                )
-                successes += 1
-                rtts.append(float(result.rtt_ms))
-                server_ffs.append(float(result.server_ffs_ms))
-                server_align.append(float(result.server_align_ms))
-                server_totals.append(float(result.server_total_ms))
-                request_bytes += int(result.request_bytes)
-                response_bytes += int(result.response_bytes)
-                depth = result.depth_color_m
-                depth_shapes.add(tuple(int(item) for item in depth.shape))
-                response_compressions.add(str(result.compression))
-                depth_nonzero_counts.append(float(np.count_nonzero(np.isfinite(depth) & (depth > 0.0))))
-                if bool(args.save_first_depth_preview) and not first_depth_npy:
-                    timestamp = time.strftime("%Y%m%d_%H%M%S")
-                    prefix = f"demo2_real_ir_remote_depth_{timestamp}_frame{frame_id:06d}"
-                    npy_path, preview_path = _save_depth_artifacts(
-                        depth,
-                        output_dir=Path(args.output_dir),
-                        prefix=prefix,
+                try:
+                    frames = pipeline.wait_for_frames(int(args.timeout_ms))
+                    left_frame = frames.get_infrared_frame(1)
+                    right_frame = frames.get_infrared_frame(2)
+                    color_frame = frames.get_color_frame()
+                    if not left_frame or not right_frame or not color_frame:
+                        capture_misses += 1
+                        next_send_s += 1.0 / float(args.fps)
+                        continue
+                    left = np.array(np.asanyarray(left_frame.get_data()), dtype=np.uint8, copy=True)
+                    right = np.array(np.asanyarray(right_frame.get_data()), dtype=np.uint8, copy=True)
+                    color = np.asanyarray(color_frame.get_data())
+                    color_shape = (int(color.shape[0]), int(color.shape[1]))
+                    request = _RealIrDepthRequest(
+                        frame_id=frame_id,
+                        ir_left_u8=left,
+                        ir_right_u8=right,
+                        color_shape=color_shape,
+                        k_ir_left=k_ir_left,
+                        k_color=k_color,
+                        t_ir_left_to_color=t_ir_left_to_color,
+                        baseline_m=baseline_m,
+                        depth_scale_m_per_unit=depth_scale,
+                        submitted_s=time.perf_counter(),
                     )
-                    first_depth_npy = str(npy_path)
-                    first_depth_preview = str(preview_path)
-            except Exception as exc:
-                failures += 1
-                if bool(args.debug):
-                    print(f"[ffs-remote-real-ir] frame_id={frame_id} status=error error={type(exc).__name__}: {exc}", flush=True)
-            frame_id += 1
-            next_send_s += 1.0 / float(args.fps)
-            now_s = time.perf_counter()
-            if bool(args.debug) and now_s - last_log_s >= 1.0:
-                elapsed_s = max(1e-9, now_s - started_s)
-                print(
-                    "[ffs-remote-real-ir] "
-                    f"sent={frame_id} ok={successes} failed={failures} capture_miss={capture_misses} "
-                    f"reply_fps={successes / elapsed_s:.2f} "
-                    f"rtt_ms_p50={_percentile(rtts, 50):.2f} "
-                    f"server_total_ms_p50={_percentile(server_totals, 50):.2f} "
-                    f"depth_nonzero_mean={_mean(depth_nonzero_counts):.0f}",
-                    flush=True,
-                )
-                last_log_s = now_s
+                    if workers:
+                        submitted_worker_idx = _submit_to_real_ir_worker(
+                            workers,
+                            request,
+                            start_idx=next_worker_idx,
+                        )
+                        if submitted_worker_idx is None:
+                            submit_skips += 1
+                            next_send_s += 1.0 / float(args.fps)
+                            continue
+                        next_worker_idx = (submitted_worker_idx + 1) % len(workers)
+                        pending_frame_ids.add(frame_id)
+                        max_pending_observed = max(max_pending_observed, len(pending_frame_ids))
+                    else:
+                        assert client is not None
+                        try:
+                            result = client.request_depth_color_m(
+                                frame_id=request.frame_id,
+                                ir_left_u8=request.ir_left_u8,
+                                ir_right_u8=request.ir_right_u8,
+                                color_shape=request.color_shape,
+                                k_ir_left=request.k_ir_left,
+                                k_color=request.k_color,
+                                t_ir_left_to_color=request.t_ir_left_to_color,
+                                baseline_m=request.baseline_m,
+                                depth_scale_m_per_unit=request.depth_scale_m_per_unit,
+                            )
+                            process_reply(
+                                _RealIrDepthReply(
+                                    worker_idx=0,
+                                    frame_id=request.frame_id,
+                                    submitted_s=request.submitted_s,
+                                    completed_s=time.perf_counter(),
+                                    result=result,
+                                )
+                            )
+                        except Exception as exc:
+                            process_reply(
+                                _RealIrDepthReply(
+                                    worker_idx=0,
+                                    frame_id=request.frame_id,
+                                    submitted_s=request.submitted_s,
+                                    completed_s=time.perf_counter(),
+                                    error=f"{type(exc).__name__}: {exc}",
+                                )
+                            )
+                    submitted += 1
+                    frame_id += 1
+                except Exception as exc:
+                    failures += 1
+                    if bool(args.debug):
+                        print(f"[ffs-remote-real-ir] frame_id={frame_id} status=error error={type(exc).__name__}: {exc}", flush=True)
+                next_send_s += 1.0 / float(args.fps)
+                now_s = time.perf_counter()
+                if bool(args.debug) and now_s - last_log_s >= 1.0:
+                    elapsed_s = max(1e-9, now_s - started_s)
+                    print(
+                        "[ffs-remote-real-ir] "
+                        f"submitted={submitted} ok={successes} accepted={accepted_replies} "
+                        f"failed={failures} stale={stale_replies} capture_miss={capture_misses} "
+                        f"submitted_fps={submitted / elapsed_s:.2f} "
+                        f"completed_fps={successes / elapsed_s:.2f} "
+                        f"reply_fps={accepted_replies / elapsed_s:.2f} "
+                        f"inflight={len(pending_frame_ids)} "
+                        f"rtt_ms_p50={_percentile(rtts, 50):.2f} "
+                        f"server_total_ms_p50={_percentile(server_totals, 50):.2f} "
+                        f"depth_nonzero_mean={_mean(depth_nonzero_counts):.0f}",
+                        flush=True,
+                    )
+                    last_log_s = now_s
+
+            while pending_frame_ids:
+                drain_replies(block=True)
+        finally:
+            for worker in workers:
+                worker.stop()
+            for worker in workers:
+                worker.join(timeout=1.0)
     finally:
         try:
             pipeline.stop()
         finally:
-            if owned_client:
+            if owned_client and client is not None:
                 client.close()
 
     elapsed_s = max(1e-9, time.perf_counter() - started_s)
     summary: dict[str, float | str] = {
         "duration_s": float(elapsed_s),
-        "sent": float(frame_id),
+        "sent": float(submitted),
+        "submitted": float(submitted),
         "ok": float(successes),
+        "accepted": float(accepted_replies),
         "failed": float(failures),
         "capture_miss": float(capture_misses),
-        "reply_fps": float(successes / elapsed_s),
+        "submit_skip": float(submit_skips),
+        "stale_replies": float(stale_replies),
+        "timeout_count": float(timeout_count),
+        "inflight": float(inflight),
+        "max_pending_observed": float(max_pending_observed),
+        "submitted_fps": float(submitted / elapsed_s),
+        "completed_fps": float(successes / elapsed_s),
+        "reply_fps": float(accepted_replies / elapsed_s),
         "rtt_ms_p50": _percentile(rtts, 50),
         "rtt_ms_p90": _percentile(rtts, 90),
         "rtt_ms_p95": _percentile(rtts, 95),

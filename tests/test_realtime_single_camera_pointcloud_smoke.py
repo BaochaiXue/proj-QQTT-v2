@@ -622,6 +622,8 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--echo-benchmark", result.stdout)
         self.assertIn("--real-ir-depth-benchmark", result.stdout)
         self.assertIn("--serial SERIAL", result.stdout)
+        self.assertIn("--inflight INFLIGHT", result.stdout)
+        self.assertIn("--drop-stale-replies", result.stdout)
         self.assertIn("--profile PROFILE", result.stdout)
         self.assertIn("--compress {none,zstd,lz4,png}", result.stdout)
         self.assertIn("--mask-fraction MASK_FRACTION", result.stdout)
@@ -691,6 +693,23 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         ffs_remote_client._validate_real_ir_depth_args(real_args)
         self.assertTrue(real_args.real_ir_depth_benchmark)
         self.assertFalse(real_args.echo_benchmark)
+        self.assertEqual(real_args.inflight, 1)
+
+        inflight_args = ffs_remote_client.build_parser().parse_args(
+            [
+                "--endpoint",
+                "tcp://127.0.0.1:7001",
+                "--real-ir-depth-benchmark",
+                "--return-type",
+                "depth_u16",
+                "--inflight",
+                "4",
+                "--drop-stale-replies",
+            ]
+        )
+        ffs_remote_client._validate_real_ir_depth_args(inflight_args)
+        self.assertEqual(inflight_args.inflight, 4)
+        self.assertTrue(inflight_args.drop_stale_replies)
 
         sparse_real_args = ffs_remote_client.build_parser().parse_args(
             [
@@ -703,6 +722,20 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "requires a full-frame return type"):
             ffs_remote_client._validate_real_ir_depth_args(sparse_real_args)
+
+        bad_inflight_args = ffs_remote_client.build_parser().parse_args(
+            [
+                "--endpoint",
+                "tcp://127.0.0.1:7001",
+                "--real-ir-depth-benchmark",
+                "--return-type",
+                "depth_u16",
+                "--inflight",
+                "0",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "inflight must be positive"):
+            ffs_remote_client._validate_real_ir_depth_args(bad_inflight_args)
 
     def test_ffs_remote_server_strict_engine_contract_validates_path_tokens(self) -> None:
         args = ffs_remote_server.build_parser().parse_args(

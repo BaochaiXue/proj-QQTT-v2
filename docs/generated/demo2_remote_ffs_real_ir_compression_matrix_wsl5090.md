@@ -15,6 +15,13 @@ WSL-5090 RealSense D455 real IR left/right Y8
 
 Synthetic echo is not used as handoff evidence.
 
+Target:
+
+```text
+single camera realtime: 45 FPS
+three camera realtime: 15 FPS per camera, aggregate 45 camera-FPS
+```
+
 Current server state during these runs:
 
 ```text
@@ -53,6 +60,8 @@ Transport remains the bottleneck:
   best RTT p50 is about 69 ms and best reply FPS is about 11.8.
 ```
 
+This is a semantic pass and realtime fail for full `depth_u16`.
+
 `zstd` reduced request size from about `620 KB` to `505 KB`, but the extra CPU
 compression/decompression cost lowered throughput. `png` reduced request size
 to about `279 KB`, but server/client image encode/decode overhead lowered
@@ -70,4 +79,3 @@ request png / response png
 
 Do not treat this report as the final full compression matrix until those
 server-side response variants have been run.
-

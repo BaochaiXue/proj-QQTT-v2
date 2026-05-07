@@ -20,6 +20,20 @@ RTT/server/depth/payload metrics.
 - Save first returned depth `.npy` and preview image when requested.
 - Update generated remote FFS reports with the new synthetic-vs-real-IR
   validation boundary.
+- Add benchmark-only multi-inflight support using multiple independent REQ
+  sockets, each with at most one in-flight request, to measure whether full
+  `depth_u16` can approach the realtime target.
+
+## Performance Target
+
+```text
+single camera realtime: 45 FPS
+three camera realtime: 15 FPS per camera, aggregate 45 camera-FPS
+```
+
+Full `depth_u16` remains the semantic correctness baseline. If full depth cannot
+reach the target after transport pipelining, `masked_uv_depth` becomes the
+realtime hot-path candidate.
 
 ## Non-Goals
 
@@ -27,6 +41,8 @@ RTT/server/depth/payload metrics.
 - Do not start or manage the Ubuntu-4090 server from WSL.
 - Do not use synthetic echo as a formal remote FFS pass/fail criterion.
 - Do not change formal recording/alignment code.
+- Do not fake multi-camera load with synthetic IR. Any proxy must use recorded
+  real IR frames.
 
 ## Validation
 
