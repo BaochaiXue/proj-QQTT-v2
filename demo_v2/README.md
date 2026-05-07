@@ -230,7 +230,9 @@ starting the real server. Do not assume an engine serialized on the 5090 laptop
 will run on a 4090; TensorRT engines are not generally portable across GPU
 architectures without explicit compatibility settings.
 
-First verify the network path with echo-only mode:
+First verify the network path with echo-only mode. This sends synthetic IR
+payloads and proves only TCP/ZeroMQ/protocol connectivity; do not use it as the
+remote FFS handoff performance result:
 
 ```bash
 # Remote GPU machine
@@ -254,7 +256,9 @@ conda run --no-capture-output -n demo_2_max \
 Start the server on the remote GPU machine. The official Demo 2 remote path
 must prove the same FFS engine contract as the local quality baseline:
 `20-30-48`, `valid_iters=4`, `848x480 -> pad 864x480`,
-`builderOptimizationLevel=5`, `max_disp=192`.
+`builderOptimizationLevel=5`, `max_disp=192`. The first formal handoff uses
+full-frame `depth_u16`; the local Demo 2 process applies the current object mask
+to that returned FFS depth for PCD construction.
 
 ```bash
 conda run --no-capture-output -n demo_2_max \
@@ -262,7 +266,8 @@ conda run --no-capture-output -n demo_2_max \
   --bind tcp://0.0.0.0:7001 \
   --ffs-repo ../Fast-FoundationStereo \
   --ffs-trt-model-dir data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864 \
-  --return masked_uv_depth \
+  --return depth_u16 \
+  --compress lz4 \
   --warmup 20 \
   --debug \
   --strict-engine-contract \
@@ -272,6 +277,27 @@ conda run --no-capture-output -n demo_2_max \
   --required-width 864 \
   --required-builder-optimization-level 5 \
   --required-max-disp 192
+```
+
+Validate the real handoff from the local camera/UI machine with real RealSense
+IR1/IR2 frames before running the full Demo 2 UI. This path captures real IR
+stereo, sends a compressed request, runs real FFS TensorRT on the remote server,
+and saves the first returned depth:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python services/ffs_remote/ffs_depth_client.py \
+  --endpoint tcp://<remote_tailscale_ip>:7001 \
+  --real-ir-depth-benchmark \
+  --serial 239222300412 \
+  --profile 848x480 \
+  --fps 30 \
+  --duration-s 20 \
+  --timeout-ms 5000 \
+  --compress lz4 \
+  --return-type depth_u16 \
+  --save-first-depth-preview \
+  --debug
 ```
 
 Run the formal local FFS quality baseline on the local camera/UI machine when a
@@ -300,10 +326,8 @@ conda run --no-capture-output -n demo_2_max \
   --profile-cuda-events
 ```
 
-Run the formal remote sparse FFS path only when the network can support it. This
-path sends the same-frame EdgeTAM mask plus IR pair to the remote server and
-builds the PCD only from returned FFS-derived sparse depth/points. It does not
-fall back to native RealSense depth:
+Run the formal remote full-depth FFS path only after the real-IR benchmark
+passes. It does not fall back to native RealSense depth:
 
 ```bash
 conda run --no-capture-output -n demo_2_max \
@@ -315,7 +339,8 @@ conda run --no-capture-output -n demo_2_max \
   --ffs-remote-endpoint tcp://<remote_tailscale_ip>:7001 \
   --ffs-remote-max-inflight 1 \
   --ffs-remote-timeout-ms 5000 \
-  --ffs-remote-return masked_uv_depth \
+  --ffs-remote-return depth_u16 \
+  --ffs-remote-compress lz4 \
   --init-mode sam31-first-frame \
   --track-mode object-only \
   --object-prompt "stuffed animal" \
@@ -366,8 +391,9 @@ conda run --no-capture-output -n demo_2_max \
 
 Protocol experiments can use `--return masked_uv_depth` or `--return
 masked_xyz` on the server/client utilities, plus `--compress none|zstd|lz4|png`.
-For formal Demo 2, sparse modes are official only when they are the main
-`--depth-source ffs_remote` path and are computed by the remote FFS opt5 engine.
+Sparse modes are not the first formal handoff validation; start with real IR to
+full `depth_u16`, then compare sparse/side-channel modes only as follow-up
+payload experiments.
 
 Object-only startup when no hand is in view:
 

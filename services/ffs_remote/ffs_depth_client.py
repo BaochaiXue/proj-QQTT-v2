@@ -48,7 +48,21 @@ class FfsRemoteDepthResult:
     return_type: str = "depth_u16"
     compression: str = "none"
     sparse_payload: np.ndarray | None = None
+    raw_depth: np.ndarray | None = None
     metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class RealIrDepthFrame:
+    frame_id: int
+    ir_left_u8: np.ndarray
+    ir_right_u8: np.ndarray
+    color_shape: tuple[int, int]
+    k_ir_left: np.ndarray
+    k_color: np.ndarray
+    t_ir_left_to_color: np.ndarray
+    baseline_m: float
+    depth_scale_m_per_unit: float
 
 
 class FfsRemoteDepthClient:
@@ -179,6 +193,7 @@ class FfsRemoteDepthClient:
             return_type=return_type,
             compression=str(metadata.get("compression", self.compression)),
             sparse_payload=sparse_payload,
+            raw_depth=np.ascontiguousarray(depth),
             metadata=dict(metadata),
         )
 
@@ -272,12 +287,132 @@ def _rs_translation_norm(extrinsics: Any) -> float:
     return float((tx * tx + ty * ty + tz * tz) ** 0.5)
 
 
-def _save_depth_artifacts(depth_m: np.ndarray, *, output_dir: Path, prefix: str) -> tuple[Path, Path]:
+class RealSenseIrDepthFrameSource:
+    def __init__(
+        self,
+        *,
+        serial: str | None,
+        width: int,
+        height: int,
+        fps: int,
+        timeout_ms: int,
+        fallback_baseline_m: float,
+    ) -> None:
+        self.serial = serial
+        self.width = int(width)
+        self.height = int(height)
+        self.fps = int(fps)
+        self.timeout_ms = int(timeout_ms)
+        self.fallback_baseline_m = float(fallback_baseline_m)
+        self.rs: Any | None = None
+        self.pipeline: Any | None = None
+        self.k_ir_left: np.ndarray | None = None
+        self.k_color: np.ndarray | None = None
+        self.t_ir_left_to_color: np.ndarray | None = None
+        self.baseline_m = 0.0
+        self.depth_scale_m_per_unit = 0.001
+        self.frame_id = 0
+
+    def start(self) -> None:
+        rs = _load_realsense_module()
+        serial = _resolve_serial(rs, self.serial)
+        pipeline = rs.pipeline()
+        config = rs.config()
+        config.enable_device(serial)
+        config.enable_stream(rs.stream.infrared, 1, self.width, self.height, rs.format.y8, self.fps)
+        config.enable_stream(rs.stream.infrared, 2, self.width, self.height, rs.format.y8, self.fps)
+        config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
+        profile = pipeline.start(config)
+        try:
+            depth_sensor = profile.get_device().first_depth_sensor()
+            self.depth_scale_m_per_unit = float(depth_sensor.get_depth_scale())
+            color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
+            ir_left_profile = profile.get_stream(rs.stream.infrared, 1).as_video_stream_profile()
+            ir_right_profile = profile.get_stream(rs.stream.infrared, 2).as_video_stream_profile()
+            self.k_ir_left = _rs_intrinsics_to_matrix(ir_left_profile.get_intrinsics())
+            self.k_color = _rs_intrinsics_to_matrix(color_profile.get_intrinsics())
+            self.t_ir_left_to_color = _rs_extrinsics_to_matrix(ir_left_profile.get_extrinsics_to(color_profile))
+            self.baseline_m = _rs_translation_norm(ir_left_profile.get_extrinsics_to(ir_right_profile))
+            if self.baseline_m <= 0.0:
+                self.baseline_m = self.fallback_baseline_m
+            if self.baseline_m <= 0.0:
+                raise RuntimeError(f"invalid RealSense IR baseline: {self.baseline_m}")
+        except Exception:
+            pipeline.stop()
+            raise
+        self.serial = serial
+        self.rs = rs
+        self.pipeline = pipeline
+
+    def warmup(self, frames: int) -> None:
+        if self.pipeline is None:
+            raise RuntimeError("RealSense pipeline is not started")
+        for _ in range(int(frames)):
+            self.pipeline.wait_for_frames(self.timeout_ms)
+
+    def close(self) -> None:
+        if self.pipeline is not None:
+            self.pipeline.stop()
+        self.pipeline = None
+
+    def next_frame(self) -> RealIrDepthFrame | None:
+        if self.pipeline is None:
+            raise RuntimeError("RealSense pipeline is not started")
+        frames = self.pipeline.wait_for_frames(self.timeout_ms)
+        ir_left_frame = frames.get_infrared_frame(1)
+        ir_right_frame = frames.get_infrared_frame(2)
+        color_frame = frames.get_color_frame()
+        if not ir_left_frame or not ir_right_frame or not color_frame:
+            return None
+        ir_left = np.ascontiguousarray(np.asanyarray(ir_left_frame.get_data()), dtype=np.uint8)
+        ir_right = np.ascontiguousarray(np.asanyarray(ir_right_frame.get_data()), dtype=np.uint8)
+        color = np.asanyarray(color_frame.get_data())
+        if self.k_ir_left is None or self.k_color is None or self.t_ir_left_to_color is None:
+            raise RuntimeError("RealSense calibration was not initialized")
+        frame_id = int(self.frame_id)
+        self.frame_id += 1
+        return RealIrDepthFrame(
+            frame_id=frame_id,
+            ir_left_u8=ir_left,
+            ir_right_u8=ir_right,
+            color_shape=(int(color.shape[0]), int(color.shape[1])),
+            k_ir_left=self.k_ir_left,
+            k_color=self.k_color,
+            t_ir_left_to_color=self.t_ir_left_to_color,
+            baseline_m=float(self.baseline_m),
+            depth_scale_m_per_unit=float(self.depth_scale_m_per_unit),
+        )
+
+
+def _format_summary(prefix: str, summary: dict[str, Any]) -> str:
+    fields: list[str] = []
+    for key, value in summary.items():
+        if isinstance(value, float):
+            fields.append(f"{key}={value:.2f}")
+        else:
+            fields.append(f"{key}={value}")
+    return f"[{prefix}] " + " ".join(fields)
+
+
+def _save_depth_artifacts(
+    depth_m: np.ndarray,
+    *,
+    raw_depth: np.ndarray | None,
+    output_dir: Path,
+    prefix: str,
+) -> tuple[Path, Path, Path | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    depth = np.ascontiguousarray(depth_m, dtype=np.float32)
-    npy_path = output_dir / f"{prefix}_depth_m.npy"
+    depth = np.asarray(depth_m, dtype=np.float32)
+    depth_m_path = output_dir / f"{prefix}_depth_m.npy"
     preview_path = output_dir / f"{prefix}_depth_preview.png"
-    np.save(npy_path, depth)
+    np.save(depth_m_path, np.ascontiguousarray(depth, dtype=np.float32))
+
+    raw_path: Path | None = None
+    if raw_depth is not None:
+        raw = np.ascontiguousarray(raw_depth)
+        raw_suffix = "depth_u16" if raw.dtype == np.uint16 else "depth_raw"
+        raw_path = output_dir / f"{prefix}_{raw_suffix}.npy"
+        np.save(raw_path, raw)
 
     valid = np.isfinite(depth) & (depth > 0.0)
     if np.any(valid):
@@ -298,7 +433,7 @@ def _save_depth_artifacts(depth_m: np.ndarray, *, output_dir: Path, prefix: str)
     except Exception as exc:
         raise RuntimeError("Pillow is required to save --save-first-depth-preview PNG output") from exc
     Image.fromarray(preview).save(preview_path)
-    return npy_path, preview_path
+    return depth_m_path, preview_path, raw_path
 
 
 @dataclass(frozen=True)
@@ -450,13 +585,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--mask-fraction",
         type=float,
         default=0.0,
-        help="Synthetic mask occupancy for sparse return echo benchmarks. Use 0 to omit the mask payload.",
+        help="Synthetic mask occupancy for sparse return echo sanity checks. Use 0 to omit the mask payload.",
     )
-    parser.add_argument("--echo-benchmark", action="store_true", help="Send synthetic IR pairs and report RTT/throughput.")
+    parser.add_argument(
+        "--echo-benchmark",
+        action="store_true",
+        help="Send synthetic IR pairs for TCP/protocol sanity only; not a remote FFS handoff benchmark.",
+    )
     parser.add_argument(
         "--real-ir-depth-benchmark",
         action="store_true",
-        help="Capture real RealSense IR left/right frames and request real remote FFS depth.",
+        help="Capture real RealSense IR1/IR2 frames, request real remote FFS depth, and report handoff timings.",
     )
     parser.add_argument(
         "--three-camera-real-ir-depth-benchmark",
@@ -467,7 +606,7 @@ def build_parser() -> argparse.ArgumentParser:
             "measure async client-side aggregate camera-FPS."
         ),
     )
-    parser.add_argument("--serial", default=None, help="RealSense D400 serial for --real-ir-depth-benchmark.")
+    parser.add_argument("--serial", default=None, help="Optional RealSense D400 serial for --real-ir-depth-benchmark.")
     parser.add_argument(
         "--serials",
         nargs="*",
@@ -475,7 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="RealSense D400 serials for --three-camera-real-ir-depth-benchmark. Defaults to the first --max-cams devices.",
     )
     parser.add_argument("--max-cams", type=int, default=3, help="Maximum cameras for --three-camera-real-ir-depth-benchmark.")
-    parser.add_argument("--profile", default="848x480", help="Synthetic IR payload profile for --echo-benchmark.")
+    parser.add_argument("--profile", default="848x480", help="IR/color capture profile, formatted WIDTHxHEIGHT.")
     parser.add_argument(
         "--fps",
         type=float,
@@ -492,7 +631,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--save-first-depth-preview",
         action="store_true",
-        help="Save the first successful returned depth as .npy plus a PNG preview.",
+        help="Save the first successful real remote depth as .npy artifacts plus a PNG preview.",
     )
     parser.add_argument(
         "--inflight",
@@ -509,7 +648,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         type=Path,
         default=Path("docs/generated"),
-        help="Directory for --save-first-depth-preview artifacts.",
+        help="Output directory for --save-first-depth-preview artifacts.",
     )
     parser.add_argument("--debug", action="store_true", help="Print once-per-second echo benchmark progress.")
     return parser
@@ -621,11 +760,7 @@ def run_echo_benchmark(args: argparse.Namespace, *, client: FfsRemoteDepthClient
         "mbps_payload": float(((request_bytes + response_bytes) * 8.0) / (elapsed_s * 1_000_000.0)),
         "sparse_points_mean": float(np.mean(np.asarray(sparse_points, dtype=np.float64))) if sparse_points else 0.0,
     }
-    print(
-        "[ffs-remote-client-summary] "
-        + " ".join(f"{key}={value:.2f}" for key, value in summary.items()),
-        flush=True,
-    )
+    print(_format_summary("ffs-remote-client-summary", summary), flush=True)
     return summary
 
 
@@ -730,52 +865,46 @@ def run_real_ir_depth_benchmark(
     args: argparse.Namespace,
     *,
     client: FfsRemoteDepthClient | None = None,
-) -> dict[str, float | str]:
+    frame_source: Any | None = None,
+) -> dict[str, Any]:
     _validate_real_ir_depth_args(args)
     width, height = _parse_profile(str(args.profile))
-    rs = _load_realsense_module()
-    serial = _resolve_serial(rs, None if args.serial is None else str(args.serial))
-    owned_client = client is None
+    inflight = int(args.inflight)
     if client is not None and int(args.inflight) != 1:
         raise ValueError("injected real-IR benchmark client only supports --inflight 1")
-    if client is None and int(args.inflight) == 1:
+    owned_source = frame_source is None
+    owned_client = client is None and inflight == 1
+    if client is None and inflight == 1:
         client = FfsRemoteDepthClient(
             endpoint=str(args.endpoint),
             timeout_ms=int(args.timeout_ms),
             return_type=str(args.return_type),
             compression=str(args.compress),
         )
+    if frame_source is None:
+        frame_source = RealSenseIrDepthFrameSource(
+            serial=None if args.serial is None else str(args.serial),
+            width=width,
+            height=height,
+            fps=int(round(float(args.fps))),
+            timeout_ms=int(args.timeout_ms),
+            fallback_baseline_m=float(args.baseline_m),
+        )
 
-    pipeline = rs.pipeline()
-    config = rs.config()
-    config.enable_device(serial)
-    config.enable_stream(rs.stream.infrared, 1, width, height, rs.format.y8, int(args.fps))
-    config.enable_stream(rs.stream.infrared, 2, width, height, rs.format.y8, int(args.fps))
-    config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, int(args.fps))
-
-    profile = pipeline.start(config)
     first_depth_npy = ""
+    first_depth_m_npy = ""
     first_depth_preview = ""
+    first_depth_raw_npy = ""
+    first_depth_u16_npy = ""
     try:
-        depth_sensor = profile.get_device().first_depth_sensor()
-        depth_scale = float(depth_sensor.get_depth_scale())
-        color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
-        ir_left_stream = profile.get_stream(rs.stream.infrared, 1).as_video_stream_profile()
-        ir_right_stream = profile.get_stream(rs.stream.infrared, 2).as_video_stream_profile()
-        k_ir_left = _rs_intrinsics_to_matrix(ir_left_stream.get_intrinsics())
-        k_color = _rs_intrinsics_to_matrix(color_stream.get_intrinsics())
-        t_ir_left_to_color = _rs_extrinsics_to_matrix(ir_left_stream.get_extrinsics_to(color_stream))
-        baseline_m = _rs_translation_norm(ir_left_stream.get_extrinsics_to(ir_right_stream))
-        if baseline_m <= 0:
-            baseline_m = float(args.baseline_m)
-
-        for _ in range(int(args.warmup_frames)):
-            pipeline.wait_for_frames(int(args.timeout_ms))
+        if hasattr(frame_source, "start"):
+            frame_source.start()
+        if int(args.warmup_frames) > 0 and hasattr(frame_source, "warmup"):
+            frame_source.warmup(int(args.warmup_frames))
 
         started_s = time.perf_counter()
         deadline_s = started_s + float(args.duration_s)
         next_send_s = started_s
-        frame_id = 0
         submitted = 0
         successes = 0
         accepted_replies = 0
@@ -796,7 +925,6 @@ def run_real_ir_depth_benchmark(
         response_compressions: set[str] = set()
         last_log_s = started_s
 
-        inflight = int(args.inflight)
         result_queue: "queue.Queue[_RealIrDepthReply]" = queue.Queue()
         workers: list[_RealIrDepthWorker] = []
         pending_frame_ids: set[int] = set()
@@ -826,7 +954,10 @@ def run_real_ir_depth_benchmark(
             nonlocal request_bytes
             nonlocal response_bytes
             nonlocal first_depth_npy
+            nonlocal first_depth_m_npy
             nonlocal first_depth_preview
+            nonlocal first_depth_raw_npy
+            nonlocal first_depth_u16_npy
             nonlocal latest_accepted_frame_id
             pending_frame_ids.discard(int(reply.frame_id))
             if not reply.ok:
@@ -849,9 +980,9 @@ def run_real_ir_depth_benchmark(
             server_totals.append(float(result.server_total_ms))
             request_bytes += int(result.request_bytes)
             response_bytes += int(result.response_bytes)
-            depth = result.depth_color_m
+            depth = np.asarray(result.depth_color_m, dtype=np.float32)
             depth_shapes.add(tuple(int(item) for item in depth.shape))
-            response_compressions.add(str(result.compression))
+            response_compressions.add(str((result.metadata or {}).get("compression", result.compression)))
             depth_nonzero_counts.append(float(np.count_nonzero(np.isfinite(depth) & (depth > 0.0))))
             if bool(args.drop_stale_replies) and int(result.frame_id) < latest_accepted_frame_id:
                 stale_replies += 1
@@ -861,13 +992,19 @@ def run_real_ir_depth_benchmark(
             if bool(args.save_first_depth_preview) and not first_depth_npy:
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 prefix = f"demo2_real_ir_remote_depth_{timestamp}_frame{int(result.frame_id):06d}"
-                npy_path, preview_path = _save_depth_artifacts(
+                npy_path, preview_path, raw_path = _save_depth_artifacts(
                     depth,
+                    raw_depth=result.raw_depth,
                     output_dir=Path(args.output_dir),
                     prefix=prefix,
                 )
                 first_depth_npy = str(npy_path)
+                first_depth_m_npy = str(npy_path)
                 first_depth_preview = str(preview_path)
+                if raw_path is not None:
+                    first_depth_raw_npy = str(raw_path)
+                    if raw_path.name.endswith("_depth_u16.npy"):
+                        first_depth_u16_npy = str(raw_path)
 
         def drain_replies(*, block: bool = False) -> None:
             while True:
@@ -890,28 +1027,21 @@ def run_real_ir_depth_benchmark(
                     next_send_s += 1.0 / float(args.fps)
                     continue
                 try:
-                    frames = pipeline.wait_for_frames(int(args.timeout_ms))
-                    left_frame = frames.get_infrared_frame(1)
-                    right_frame = frames.get_infrared_frame(2)
-                    color_frame = frames.get_color_frame()
-                    if not left_frame or not right_frame or not color_frame:
+                    frame = frame_source.next_frame()
+                    if frame is None:
                         capture_misses += 1
                         next_send_s += 1.0 / float(args.fps)
                         continue
-                    left = np.array(np.asanyarray(left_frame.get_data()), dtype=np.uint8, copy=True)
-                    right = np.array(np.asanyarray(right_frame.get_data()), dtype=np.uint8, copy=True)
-                    color = np.asanyarray(color_frame.get_data())
-                    color_shape = (int(color.shape[0]), int(color.shape[1]))
                     request = _RealIrDepthRequest(
-                        frame_id=frame_id,
-                        ir_left_u8=left,
-                        ir_right_u8=right,
-                        color_shape=color_shape,
-                        k_ir_left=k_ir_left,
-                        k_color=k_color,
-                        t_ir_left_to_color=t_ir_left_to_color,
-                        baseline_m=baseline_m,
-                        depth_scale_m_per_unit=depth_scale,
+                        frame_id=int(frame.frame_id),
+                        ir_left_u8=frame.ir_left_u8,
+                        ir_right_u8=frame.ir_right_u8,
+                        color_shape=tuple(frame.color_shape),
+                        k_ir_left=frame.k_ir_left,
+                        k_color=frame.k_color,
+                        t_ir_left_to_color=frame.t_ir_left_to_color,
+                        baseline_m=float(frame.baseline_m),
+                        depth_scale_m_per_unit=float(frame.depth_scale_m_per_unit),
                         submitted_s=time.perf_counter(),
                     )
                     if workers:
@@ -925,7 +1055,7 @@ def run_real_ir_depth_benchmark(
                             next_send_s += 1.0 / float(args.fps)
                             continue
                         next_worker_idx = (submitted_worker_idx + 1) % len(workers)
-                        pending_frame_ids.add(frame_id)
+                        pending_frame_ids.add(int(frame.frame_id))
                         max_pending_observed = max(max_pending_observed, len(pending_frame_ids))
                     else:
                         assert client is not None
@@ -940,6 +1070,7 @@ def run_real_ir_depth_benchmark(
                                 t_ir_left_to_color=request.t_ir_left_to_color,
                                 baseline_m=request.baseline_m,
                                 depth_scale_m_per_unit=request.depth_scale_m_per_unit,
+                                mask_u8=None,
                             )
                             process_reply(
                                 _RealIrDepthReply(
@@ -961,11 +1092,14 @@ def run_real_ir_depth_benchmark(
                                 )
                             )
                     submitted += 1
-                    frame_id += 1
                 except Exception as exc:
                     failures += 1
                     if bool(args.debug):
-                        print(f"[ffs-remote-real-ir] frame_id={frame_id} status=error error={type(exc).__name__}: {exc}", flush=True)
+                        print(
+                            f"[ffs-remote-real-ir] submitted={submitted} "
+                            f"status=error error={type(exc).__name__}: {exc}",
+                            flush=True,
+                        )
                 next_send_s += 1.0 / float(args.fps)
                 now_s = time.perf_counter()
                 if bool(args.debug) and now_s - last_log_s >= 1.0:
@@ -993,14 +1127,14 @@ def run_real_ir_depth_benchmark(
             for worker in workers:
                 worker.join(timeout=1.0)
     finally:
-        try:
-            pipeline.stop()
-        finally:
-            if owned_client and client is not None:
-                client.close()
+        if owned_source and hasattr(frame_source, "close"):
+            frame_source.close()
+        if owned_client and client is not None:
+            client.close()
 
     elapsed_s = max(1e-9, time.perf_counter() - started_s)
-    summary: dict[str, float | str] = {
+    serial = str(getattr(frame_source, "serial", "") or "")
+    summary: dict[str, Any] = {
         "duration_s": float(elapsed_s),
         "sent": float(submitted),
         "submitted": float(submitted),
@@ -1026,22 +1160,19 @@ def run_real_ir_depth_benchmark(
         "response_kb_mean": float((response_bytes / max(1, successes)) / 1024.0),
         "mbps_payload": float(((request_bytes + response_bytes) * 8.0) / (elapsed_s * 1_000_000.0)),
         "depth_nonzero_count_mean": _mean(depth_nonzero_counts),
+        "input_source": "real_realsense_ir",
         "serial": serial,
         "request_compression": str(args.compress),
         "response_compression": ",".join(sorted(response_compressions)) if response_compressions else "",
         "return_type": str(args.return_type),
         "depth_shapes": ",".join(f"{h}x{w}" for h, w in sorted(depth_shapes)) if depth_shapes else "",
         "first_depth_npy_path": first_depth_npy,
+        "first_depth_m_npy_path": first_depth_m_npy,
         "first_depth_preview_path": first_depth_preview,
+        "first_depth_raw_npy_path": first_depth_raw_npy,
+        "first_depth_u16_npy_path": first_depth_u16_npy,
     }
-    print(
-        "[ffs-remote-real-ir-summary] "
-        + " ".join(
-            f"{key}={value:.2f}" if isinstance(value, float) else f"{key}={value}"
-            for key, value in summary.items()
-        ),
-        flush=True,
-    )
+    print(_format_summary("ffs-remote-real-ir-summary", summary), flush=True)
     return summary
 
 

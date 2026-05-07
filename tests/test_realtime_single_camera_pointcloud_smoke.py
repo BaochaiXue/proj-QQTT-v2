@@ -630,6 +630,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--profile PROFILE", result.stdout)
         self.assertIn("--compress {none,zstd,lz4,png}", result.stdout)
         self.assertIn("--mask-fraction MASK_FRACTION", result.stdout)
+        self.assertIn("--save-first-depth-preview", result.stdout)
 
         class FakeClient:
             def __init__(self) -> None:
@@ -787,6 +788,96 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "duplicate"):
             ffs_remote_client._validate_three_camera_real_ir_depth_args(duplicate_serial_args)
+
+    def test_ffs_remote_client_real_ir_benchmark_summary_and_artifacts(self) -> None:
+        class FakeClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def request_depth_color_m(self, **kwargs):
+                self.calls += 1
+                frame_id = int(kwargs["frame_id"])
+                depth = np.array([[0.0, 1.0, 1.2], [1.3, 0.0, 1.4]], dtype=np.float32)
+                return ffs_remote_client.FfsRemoteDepthResult(
+                    frame_id=frame_id,
+                    depth_color_m=depth,
+                    rtt_ms=7.0,
+                    server_ffs_ms=9.0,
+                    server_align_ms=3.0,
+                    server_total_ms=14.0,
+                    request_bytes=320,
+                    response_bytes=160,
+                    raw_depth=np.array([[0, 1000, 1200], [1300, 0, 1400]], dtype=np.uint16),
+                    metadata={"compression": "lz4"},
+                )
+
+        class FakeFrameSource:
+            def __init__(self) -> None:
+                self.frame_id = 0
+                self.serial = "fake-serial"
+                self.started = False
+
+            def start(self) -> None:
+                self.started = True
+
+            def next_frame(self) -> ffs_remote_client.RealIrDepthFrame:
+                frame_id = self.frame_id
+                self.frame_id += 1
+                k = np.array([[600.0, 0.0, 1.5], [0.0, 600.0, 1.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+                return ffs_remote_client.RealIrDepthFrame(
+                    frame_id=frame_id,
+                    ir_left_u8=np.full((2, 3), frame_id % 255, dtype=np.uint8),
+                    ir_right_u8=np.full((2, 3), (frame_id + 1) % 255, dtype=np.uint8),
+                    color_shape=(2, 3),
+                    k_ir_left=k,
+                    k_color=k,
+                    t_ir_left_to_color=np.eye(4, dtype=np.float32),
+                    baseline_m=0.055,
+                    depth_scale_m_per_unit=0.001,
+                )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            args = ffs_remote_client.build_parser().parse_args(
+                [
+                    "--endpoint",
+                    "tcp://127.0.0.1:7001",
+                    "--real-ir-depth-benchmark",
+                    "--profile",
+                    "3x2",
+                    "--fps",
+                    "20",
+                    "--duration-s",
+                    "0.12",
+                    "--compress",
+                    "lz4",
+                    "--return-type",
+                    "depth_u16",
+                    "--save-first-depth-preview",
+                    "--output-dir",
+                    tmp_dir,
+                ]
+            )
+            fake_client = FakeClient()
+            fake_source = FakeFrameSource()
+            summary = ffs_remote_client.run_real_ir_depth_benchmark(
+                args,
+                client=fake_client,
+                frame_source=fake_source,
+            )
+            self.assertTrue(fake_source.started)
+            self.assertGreaterEqual(fake_client.calls, 1)
+            self.assertGreaterEqual(summary["ok"], 1.0)
+            self.assertEqual(summary["failed"], 0.0)
+            self.assertEqual(summary["input_source"], "real_realsense_ir")
+            self.assertEqual(summary["request_compression"], "lz4")
+            self.assertEqual(summary["response_compression"], "lz4")
+            self.assertGreater(summary["depth_nonzero_count_mean"], 0.0)
+            self.assertTrue(Path(str(summary["first_depth_npy_path"])).is_file())
+            self.assertEqual(summary["first_depth_npy_path"], summary["first_depth_m_npy_path"])
+            self.assertTrue(Path(str(summary["first_depth_m_npy_path"])).is_file())
+            self.assertTrue(Path(str(summary["first_depth_u16_npy_path"])).is_file())
+            self.assertTrue(Path(str(summary["first_depth_u16_npy_path"])).name.endswith("_depth_u16.npy"))
+            self.assertTrue(Path(str(summary["first_depth_preview_path"])).is_file())
 
     def test_ffs_remote_server_strict_engine_contract_validates_path_tokens(self) -> None:
         args = ffs_remote_server.build_parser().parse_args(
