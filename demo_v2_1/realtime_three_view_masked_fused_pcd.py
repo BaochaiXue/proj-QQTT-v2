@@ -28,6 +28,11 @@ from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_VALID_ITERS,
 )
 from data_process.depth_backends.geometry import transform_points  # noqa: E402
+from data_process.depth_backends.fast_foundation_stereo import (  # noqa: E402
+    FFS_INPUT_STAGING_MODES,
+    FFS_INPUT_STAGING_PAGEABLE,
+    FFS_INPUT_STAGING_PINNED,
+)
 from demo_v2.realtime_masked_edgetam_pcd import (  # noqa: E402
     _bgr_to_pil_rgb,
     _elapsed_ms,
@@ -77,7 +82,9 @@ RENDER_MODES = ("pointcloud", "none")
 FFS_WORKER_MODES = ("shared",)
 FFS_SCHEDULES = ("strict3-latest",)
 EDGETAM_WORKER_MODES = ("per-camera",)
-EDGETAM_MODEL_TOPOLOGIES = ("replicated",)
+EDGETAM_MODEL_TOPOLOGY_REPLICATED = "replicated"
+EDGETAM_MODEL_TOPOLOGY_SHARED = "shared-model"
+EDGETAM_MODEL_TOPOLOGIES = (EDGETAM_MODEL_TOPOLOGY_REPLICATED, EDGETAM_MODEL_TOPOLOGY_SHARED)
 INIT_MODES = ("sam31-first-frame", "saved-masks")
 
 POSTPROCESS_NONE = "none"
@@ -96,6 +103,7 @@ PRESET_NONE = "none"
 PRESET_PROFESSOR_SAFE = "professor-safe"
 PRESET_VISUAL_5FPS = "visual-5fps"
 PRESET_VISUAL_5FPS_NO_GATE = "visual-5fps-no-gate"
+PRESET_VISUAL_5FPS_SINGLE_OWNER = "visual-5fps-single-owner"
 PRESET_CLIMB_5 = "climb-5"
 PRESET_CLIMB_10 = "climb-10"
 PRESET_DIAGNOSTICS = "diagnostics"
@@ -104,6 +112,7 @@ PRESETS = (
     PRESET_PROFESSOR_SAFE,
     PRESET_VISUAL_5FPS,
     PRESET_VISUAL_5FPS_NO_GATE,
+    PRESET_VISUAL_5FPS_SINGLE_OWNER,
     PRESET_CLIMB_5,
     PRESET_CLIMB_10,
     PRESET_DIAGNOSTICS,
@@ -127,6 +136,25 @@ GPU_GATE_MODE_SERIALIZED = "serialized"
 GPU_GATE_MODE_LIMITED = "limited"
 GPU_GATE_MODE_OFF = "off"
 GPU_GATE_MODES = (GPU_GATE_MODE_SERIALIZED, GPU_GATE_MODE_LIMITED, GPU_GATE_MODE_OFF)
+PIN_MEMORY_MODE_OFF = "off"
+PIN_MEMORY_MODE_EDGE = "edge"
+PIN_MEMORY_MODE_FFS = "ffs"
+PIN_MEMORY_MODE_ALL = "all"
+PIN_MEMORY_MODES = (PIN_MEMORY_MODE_OFF, PIN_MEMORY_MODE_EDGE, PIN_MEMORY_MODE_FFS, PIN_MEMORY_MODE_ALL)
+H2D_STREAM_MODE_DEFAULT = "default"
+H2D_STREAM_MODE_DEDICATED = "dedicated"
+H2D_STREAM_MODES = (H2D_STREAM_MODE_DEFAULT, H2D_STREAM_MODE_DEDICATED)
+GPU_PIPELINE_MODE_SEPARATE_WORKERS = "separate-workers"
+GPU_PIPELINE_MODE_SINGLE_OWNER = "single-owner"
+GPU_PIPELINE_MODES = (GPU_PIPELINE_MODE_SEPARATE_WORKERS, GPU_PIPELINE_MODE_SINGLE_OWNER)
+SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM = "ffs-then-edgetam"
+SINGLE_OWNER_ORDER_EDGETAM_THEN_FFS = "edgetam-then-ffs"
+SINGLE_OWNER_ORDER_INTERLEAVED = "interleaved"
+SINGLE_OWNER_ORDERS = (
+    SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM,
+    SINGLE_OWNER_ORDER_EDGETAM_THEN_FFS,
+    SINGLE_OWNER_ORDER_INTERLEAVED,
+)
 CAPTURE_GROUP_POLICY_LATEST = "latest"
 CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST = "timestamp-nearest"
 CAPTURE_GROUP_POLICY_TIMESTAMP_STRICT = "timestamp-strict"
@@ -264,6 +292,22 @@ class CameraMaskPacket:
 
 
 @dataclass(frozen=True)
+class CompleteInferenceGroup:
+    group_id: int
+    capture_group: CaptureGroup
+    depth_group: DepthGroup
+    mask_packets: dict[int, CameraMaskPacket]
+    ffs_cycle_ms: float
+    edgetam_cycle_ms: float
+    total_gpu_owner_ms: float
+    internal_order: str
+
+    @property
+    def seq(self) -> int:
+        return int(self.group_id)
+
+
+@dataclass(frozen=True)
 class FusedPcdPacket:
     group_id: int
     created_perf_s: float
@@ -302,6 +346,7 @@ PROFILE_FLAG_ATTRS = (
     "profile_filter_detail",
     "profile_visualization",
     "profile_gpu_gate",
+    "profile_h2d",
 )
 
 
@@ -398,6 +443,112 @@ class GpuInferenceGate:
             self._sem.release()
 
 
+def edge_pin_memory_enabled(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "pin_memory", False)) and str(getattr(args, "pin_memory_mode", PIN_MEMORY_MODE_OFF)) in {
+        PIN_MEMORY_MODE_EDGE,
+        PIN_MEMORY_MODE_ALL,
+    }
+
+
+def ffs_pin_memory_requested(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "pin_memory", False)) and str(getattr(args, "pin_memory_mode", PIN_MEMORY_MODE_OFF)) in {
+        PIN_MEMORY_MODE_FFS,
+        PIN_MEMORY_MODE_ALL,
+    }
+
+
+class PinnedPixelValueStager:
+    """Reusable pinned CPU staging ring for EdgeTAM processor pixel_values."""
+
+    def __init__(
+        self,
+        *,
+        torch_module: Any,
+        device: str,
+        ring_size: int,
+        h2d_stream_mode: str,
+        verify_copies: bool = False,
+    ) -> None:
+        self.torch = torch_module
+        self.device = str(device)
+        self.ring_size = max(1, int(ring_size))
+        self.h2d_stream_mode = str(h2d_stream_mode)
+        if self.h2d_stream_mode not in H2D_STREAM_MODES:
+            raise ValueError(f"Unsupported H2D stream mode: {self.h2d_stream_mode}")
+        self.verify_copies = bool(verify_copies)
+        self._slots: list[Any] = []
+        self._events: list[Any | None] = []
+        self._next_slot = 0
+        self._verified = 0
+        self._h2d_stream = (
+            torch_module.cuda.Stream()
+            if self.h2d_stream_mode == H2D_STREAM_MODE_DEDICATED and self.device.startswith("cuda")
+            else None
+        )
+
+    def _ensure_slots(self, sample_cpu: Any) -> None:
+        if self._slots:
+            return
+        if getattr(sample_cpu, "is_cuda", False):
+            raise RuntimeError("PinnedPixelValueStager expects CPU pixel_values from the HF processor.")
+        shape = tuple(int(item) for item in sample_cpu.shape)
+        self._slots = [
+            self.torch.empty(shape, dtype=sample_cpu.dtype, pin_memory=True)
+            for _ in range(self.ring_size)
+        ]
+        self._events = [None for _ in range(self.ring_size)]
+
+    def stage(self, pixel_values_cpu: Any, *, dtype: Any) -> tuple[Any, dict[str, Any]]:
+        self._ensure_slots(pixel_values_cpu)
+        slot_idx = int(self._next_slot)
+        self._next_slot = (self._next_slot + 1) % self.ring_size
+        prior_event = self._events[slot_idx]
+        slot_reuse_wait_ms = 0.0
+        if prior_event is not None and not prior_event.query():
+            wait_start_s = time.perf_counter()
+            prior_event.synchronize()
+            slot_reuse_wait_ms = _elapsed_ms(wait_start_s, time.perf_counter())
+
+        slot = self._slots[slot_idx]
+        pin_copy_start_s = time.perf_counter()
+        slot.copy_(pixel_values_cpu, non_blocking=False)
+        pin_copy_ms = _elapsed_ms(pin_copy_start_s, time.perf_counter())
+        if self.verify_copies and self._verified < 5 and not self.torch.equal(slot, pixel_values_cpu):
+            raise RuntimeError("Pinned EdgeTAM pixel_values staging copy mismatch.")
+        self._verified += 1
+
+        stream = self._h2d_stream
+        h2d_enqueue_start_s = time.perf_counter()
+        if stream is not None:
+            with self.torch.cuda.stream(stream):
+                pixel_values_cuda = slot.to(device=self.device, dtype=dtype, non_blocking=True)
+                event = self.torch.cuda.Event()
+                event.record(stream)
+            h2d_enqueue_ms = _elapsed_ms(h2d_enqueue_start_s, time.perf_counter())
+            h2d_wait_start_s = time.perf_counter()
+            self.torch.cuda.current_stream().wait_event(event)
+            h2d_wait_ms = _elapsed_ms(h2d_wait_start_s, time.perf_counter())
+        else:
+            pixel_values_cuda = slot.to(device=self.device, dtype=dtype, non_blocking=True)
+            event = self.torch.cuda.Event()
+            event.record(self.torch.cuda.current_stream())
+            h2d_enqueue_ms = _elapsed_ms(h2d_enqueue_start_s, time.perf_counter())
+            h2d_wait_ms = 0.0
+
+        self._events[slot_idx] = event
+        return pixel_values_cuda, {
+            "pin_memory": True,
+            "processor_device": "cpu",
+            "processor_is_pinned": False,
+            "pinned_slot_idx": int(slot_idx),
+            "pin_copy_ms": float(pin_copy_ms),
+            "slot_reuse_wait_ms": float(slot_reuse_wait_ms),
+            "h2d_enqueue_ms": float(h2d_enqueue_ms),
+            "h2d_wait_ms": float(h2d_wait_ms),
+            "h2d_stream_mode": self.h2d_stream_mode,
+        }
+
+
 def _normalize_label(label: str) -> str:
     return str(label).strip().lower().replace("_", " ").replace("-", " ")
 
@@ -490,6 +641,14 @@ def _nested_get(record: dict[str, Any], path: Sequence[str]) -> Any:
             return None
         value = value[key]
     return value
+
+
+def _deep_update_dict(target: dict[str, Any], update: dict[str, Any]) -> None:
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_update_dict(target[key], value)
+        else:
+            target[key] = value
 
 
 def _series_for_path(records: Sequence[dict[str, Any]], path: Sequence[str]) -> list[float]:
@@ -689,58 +848,76 @@ def _set_if_not_explicit(
         setattr(args, attr, value)
 
 
+def _normalize_pin_memory_options(args: argparse.Namespace, explicit: set[str]) -> None:
+    explicit_mode = "--pin-memory-mode" in explicit
+    if explicit_mode:
+        setattr(args, "pin_memory", str(args.pin_memory_mode) != PIN_MEMORY_MODE_OFF)
+        return
+    if bool(getattr(args, "pin_memory", False)):
+        setattr(args, "pin_memory_mode", PIN_MEMORY_MODE_ALL)
+    else:
+        setattr(args, "pin_memory_mode", PIN_MEMORY_MODE_OFF)
+
+
 def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str] | None = None) -> argparse.Namespace:
     explicit = set() if explicit_options is None else set(explicit_options)
     preset = str(getattr(args, "preset", PRESET_NONE))
-    if preset in {"", PRESET_NONE}:
-        return args
     if preset not in PRESETS:
         raise ValueError(f"Unsupported Demo 2.1 preset: {preset}")
 
-    common: tuple[tuple[str, str, Any], ...] = (
-        ("--profile", "profile", "848x480"),
-        ("--fps", "fps", 30),
-        ("--depth-source", "depth_source", DEPTH_SOURCE_FFS),
-        ("--ffs-worker-mode", "ffs_worker_mode", "shared"),
-        ("--ffs-schedule", "ffs_schedule", "strict3-latest"),
-        ("--edgetam-worker-mode", "edgetam_worker_mode", "per-camera"),
-        ("--edgetam-model-topology", "edgetam_model_topology", "replicated"),
-        ("--compile-mode", "compile_mode", DEFAULT_COMPILE_MODE),
-        ("--dtype", "dtype", DEFAULT_DTYPE),
-        ("--gpu-gate-mode", "gpu_gate_mode", GPU_GATE_MODE_SERIALIZED),
-        ("--gpu-gate-max-concurrent", "gpu_gate_max_concurrent", 1),
-        ("--fusion-timeout-ms", "fusion_timeout_ms", 250.0),
-        ("--capture-group-policy", "capture_group_policy", CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST),
-        ("--max-capture-skew-ms", "max_capture_skew_ms", DEFAULT_MAX_CAPTURE_SKEW_MS),
-        ("--max-frame-age-ms", "max_frame_age_ms", DEFAULT_MAX_FRAME_AGE_MS),
-        ("--capture-buffer-size", "capture_buffer_size", DEFAULT_CAPTURE_BUFFER_SIZE),
-        ("--drop-skewed-groups", "drop_skewed_groups", True),
-    )
-    for flag, attr, value in common:
-        _set_if_not_explicit(args, explicit, flag=flag, attr=attr, value=value)
+    if preset not in {"", PRESET_NONE}:
+        common: tuple[tuple[str, str, Any], ...] = (
+            ("--profile", "profile", "848x480"),
+            ("--fps", "fps", 30),
+            ("--depth-source", "depth_source", DEPTH_SOURCE_FFS),
+            ("--ffs-worker-mode", "ffs_worker_mode", "shared"),
+            ("--ffs-schedule", "ffs_schedule", "strict3-latest"),
+            ("--edgetam-worker-mode", "edgetam_worker_mode", "per-camera"),
+            ("--edgetam-model-topology", "edgetam_model_topology", "replicated"),
+            ("--compile-mode", "compile_mode", DEFAULT_COMPILE_MODE),
+            ("--dtype", "dtype", DEFAULT_DTYPE),
+            ("--gpu-gate-mode", "gpu_gate_mode", GPU_GATE_MODE_SERIALIZED),
+            ("--gpu-gate-max-concurrent", "gpu_gate_max_concurrent", 1),
+            ("--fusion-timeout-ms", "fusion_timeout_ms", 250.0),
+            ("--capture-group-policy", "capture_group_policy", CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST),
+            ("--max-capture-skew-ms", "max_capture_skew_ms", DEFAULT_MAX_CAPTURE_SKEW_MS),
+            ("--max-frame-age-ms", "max_frame_age_ms", DEFAULT_MAX_FRAME_AGE_MS),
+            ("--capture-buffer-size", "capture_buffer_size", DEFAULT_CAPTURE_BUFFER_SIZE),
+            ("--drop-skewed-groups", "drop_skewed_groups", True),
+        )
+        for flag, attr, value in common:
+            _set_if_not_explicit(args, explicit, flag=flag, attr=attr, value=value)
 
-    if preset == PRESET_PROFESSOR_SAFE:
-        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
-        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
-    elif preset == PRESET_VISUAL_5FPS:
-        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
-        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
-        _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_LIMITED)
-        _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=2)
-    elif preset == PRESET_VISUAL_5FPS_NO_GATE:
-        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
-        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
-        _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
-        _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
-    elif preset == PRESET_CLIMB_5:
-        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
-        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
-    elif preset == PRESET_CLIMB_10:
-        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=10.0)
-        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
-    elif preset == PRESET_DIAGNOSTICS:
-        _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
-        _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
+        if preset == PRESET_PROFESSOR_SAFE:
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+        elif preset == PRESET_VISUAL_5FPS:
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_LIMITED)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=2)
+        elif preset == PRESET_VISUAL_5FPS_NO_GATE:
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+        elif preset == PRESET_VISUAL_5FPS_SINGLE_OWNER:
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+            _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
+            _set_if_not_explicit(args, explicit, flag="--single-owner-order", attr="single_owner_order", value=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+        elif preset == PRESET_CLIMB_5:
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
+        elif preset == PRESET_CLIMB_10:
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=10.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
+        elif preset == PRESET_DIAGNOSTICS:
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
+    _normalize_pin_memory_options(args, explicit)
     if getattr(args, "gpu_gate_mode", None) == GPU_GATE_MODE_OFF:
         setattr(args, "gpu_gate_max_concurrent", 0)
     return args
@@ -1023,6 +1200,26 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "mode": args.gpu_gate_mode,
             "max_concurrent": int(args.gpu_gate_max_concurrent),
         },
+        "gpu_pipeline": {
+            "mode": args.gpu_pipeline_mode,
+            "internal_order": args.single_owner_order,
+            "depth_and_masks_published_together": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SINGLE_OWNER,
+            "separate_ffs_and_edgetam_workers": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SEPARATE_WORKERS,
+        },
+        "memory_for_speed": {
+            "static_device_buffers": bool(args.static_device_buffers),
+            "preallocate_pcd_buffers": bool(args.preallocate_pcd_buffers),
+        },
+        "h2d_transfer": {
+            "pin_memory": bool(args.pin_memory),
+            "pin_memory_mode": args.pin_memory_mode,
+            "edge_pin_enabled": edge_pin_memory_enabled(args),
+            "ffs_pin_requested": ffs_pin_memory_requested(args),
+            "ffs_input_staging": args.ffs_input_staging,
+            "pinned_ring_size": int(args.pinned_ring_size),
+            "h2d_stream_mode": args.h2d_stream_mode,
+            "profile_h2d": bool(args.profile_h2d),
+        },
         "ffs_contract": {
             "checkpoint": DEFAULT_FFS_MODEL_NAME,
             "valid_iters": DEFAULT_FFS_VALID_ITERS,
@@ -1033,6 +1230,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "max_disp": DEFAULT_FFS_MAX_DISP,
             "worker_mode": args.ffs_worker_mode,
             "schedule": args.ffs_schedule,
+            "input_staging": args.ffs_input_staging,
         },
         "edgetam": {
             "worker_mode": args.edgetam_worker_mode,
@@ -1083,6 +1281,7 @@ class Demo21Runtime:
         self.stop_event = threading.Event()
         self.capture_group_slot: LatestSlot[CaptureGroup] = LatestSlot()
         self.depth_group_slot: LatestSlot[DepthGroup] = LatestSlot()
+        self.complete_inference_slot: LatestSlot[CompleteInferenceGroup] = LatestSlot()
         self.mask_slots: dict[int, LatestSlot[CameraMaskPacket]] = {
             int(camera_idx): LatestSlot() for camera_idx in args.camera_ids
         }
@@ -1093,6 +1292,7 @@ class Demo21Runtime:
         )
         self.capture_group_stats = StageStats()
         self.ffs_stats = StageStats()
+        self.gpu_owner_stats = StageStats()
         self.edge_stats = {int(camera_idx): StageStats() for camera_idx in args.camera_ids}
         self.gpu_gate_wait_stats: dict[str, MsWindowStats] = {"ffs": MsWindowStats()}
         for camera_idx in args.camera_ids:
@@ -1177,7 +1377,7 @@ class Demo21Runtime:
             record = self._profile_group_record(int(group_id))
             for key, value in sections.items():
                 if isinstance(value, dict) and isinstance(record.get(key), dict):
-                    record[key].update(value)
+                    _deep_update_dict(record[key], value)
                 else:
                     record[key] = value
 
@@ -1217,8 +1417,25 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 requires --ffs-worker-mode shared")
         if self.args.edgetam_worker_mode != "per-camera":
             raise RuntimeError("Demo 2.1 requires --edgetam-worker-mode per-camera")
-        if self.args.edgetam_model_topology != "replicated":
-            raise RuntimeError("Demo 2.1 first live slice requires --edgetam-model-topology replicated")
+        if self.args.gpu_pipeline_mode not in GPU_PIPELINE_MODES:
+            raise RuntimeError(f"Demo 2.1 unsupported --gpu-pipeline-mode {self.args.gpu_pipeline_mode}")
+        if self.args.single_owner_order not in SINGLE_OWNER_ORDERS:
+            raise RuntimeError(f"Demo 2.1 unsupported --single-owner-order {self.args.single_owner_order}")
+        if (
+            self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SINGLE_OWNER
+            and self.args.single_owner_order == SINGLE_OWNER_ORDER_INTERLEAVED
+        ):
+            raise RuntimeError(
+                "Demo 2.1 --single-owner-order interleaved is reserved for a later per-camera interleaving "
+                "implementation; use ffs-then-edgetam or edgetam-then-ffs for current profiling"
+            )
+        if (
+            self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SEPARATE_WORKERS
+            and self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_REPLICATED
+        ):
+            raise RuntimeError("Demo 2.1 separate-workers mode requires --edgetam-model-topology replicated")
+        if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SINGLE_OWNER and self.args.depth_source != DEPTH_SOURCE_FFS:
+            raise RuntimeError("Demo 2.1 single-owner mode currently requires --depth-source ffs")
         if self.args.init_mode != "sam31-first-frame":
             raise RuntimeError("Formal Demo 2.1 requires live SAM3.1 initialization; saved masks are not allowed")
         if int(self.args.object_filter_cap) < 0 or int(self.args.controller_filter_cap) < 0:
@@ -1239,6 +1456,16 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --gpu-gate-max-concurrent must be >= 1 unless --gpu-gate-mode off")
         if self.args.gpu_gate_mode == GPU_GATE_MODE_SERIALIZED and int(self.args.gpu_gate_max_concurrent) != 1:
             raise RuntimeError("Demo 2.1 serialized GPU gate requires --gpu-gate-max-concurrent 1")
+        if int(self.args.pinned_ring_size) < 1:
+            raise RuntimeError("Demo 2.1 --pinned-ring-size must be >= 1")
+        if self.args.pin_memory_mode not in PIN_MEMORY_MODES:
+            raise RuntimeError(f"Demo 2.1 unsupported --pin-memory-mode {self.args.pin_memory_mode}")
+        if self.args.h2d_stream_mode not in H2D_STREAM_MODES:
+            raise RuntimeError(f"Demo 2.1 unsupported --h2d-stream-mode {self.args.h2d_stream_mode}")
+        if self.args.ffs_input_staging not in FFS_INPUT_STAGING_MODES:
+            raise RuntimeError(f"Demo 2.1 unsupported --ffs-input-staging {self.args.ffs_input_staging}")
+        if bool(self.args.pin_memory) and not str(self.args.device).startswith("cuda"):
+            raise RuntimeError("Demo 2.1 pinned-memory ablation requires a CUDA device")
         if int(self.args.capture_buffer_size) < 1:
             raise RuntimeError("Demo 2.1 --capture-buffer-size must be >= 1")
         if float(self.args.max_capture_skew_ms) < 0:
@@ -1333,6 +1560,7 @@ class Demo21Runtime:
         self._summary["final"] = {
             "capture_group_fps": self.capture_group_stats.fps,
             "ffs_cycle_fps": self.ffs_stats.fps,
+            "gpu_owner_fps": self.gpu_owner_stats.fps,
             "fusion_fps": self.fusion_stats.fps,
             "render_fps": self.render_stats.render_fps,
             "latest_group_id": None if latest is None else latest.group_id,
@@ -1364,6 +1592,7 @@ class Demo21Runtime:
             "fusion_fps": _event_fps(complete, ("fusion", "publish_s")),
             "render_fps": _event_fps(rendered, ("render", "render_s")),
         }
+        summary["complete_group_ratio"] = float(len(complete) / len(records)) if records else 0.0
         target_fps = float(self.args.fusion_target_fps)
         summary["target_fps_deficit"] = float(target_fps - summary["render_fps"])
         summary["target_fps_deficit_ratio"] = float((target_fps - summary["render_fps"]) / target_fps) if target_fps > 0 else 0.0
@@ -1375,14 +1604,29 @@ class Demo21Runtime:
             "edgetam_cam0_gate_wait_ms": ("edgetam", "cam0", "gate_wait_ms"),
             "edgetam_cam1_gate_wait_ms": ("edgetam", "cam1", "gate_wait_ms"),
             "edgetam_cam2_gate_wait_ms": ("edgetam", "cam2", "gate_wait_ms"),
+            "edge_cam0_pin_copy_ms": ("h2d", "cam0", "edge", "pin_copy_ms"),
+            "edge_cam1_pin_copy_ms": ("h2d", "cam1", "edge", "pin_copy_ms"),
+            "edge_cam2_pin_copy_ms": ("h2d", "cam2", "edge", "pin_copy_ms"),
+            "edge_cam0_h2d_wait_ms": ("h2d", "cam0", "edge", "h2d_wait_ms"),
+            "edge_cam1_h2d_wait_ms": ("h2d", "cam1", "edge", "h2d_wait_ms"),
+            "edge_cam2_h2d_wait_ms": ("h2d", "cam2", "edge", "h2d_wait_ms"),
             "ffs_gate_wait_ms": ("ffs", "gate_wait_ms"),
             "ffs_cycle_ms": ("ffs", "cycle_ms"),
             "ffs_cam0_ms": ("ffs", "cam0_ffs_ms"),
             "ffs_cam1_ms": ("ffs", "cam1_ffs_ms"),
             "ffs_cam2_ms": ("ffs", "cam2_ffs_ms"),
+            "ffs_cam0_stage_ms": ("h2d", "cam0", "ffs", "stage_ms"),
+            "ffs_cam1_stage_ms": ("h2d", "cam1", "ffs", "stage_ms"),
+            "ffs_cam2_stage_ms": ("h2d", "cam2", "ffs", "stage_ms"),
+            "ffs_cam0_h2d_wait_ms": ("h2d", "cam0", "ffs", "h2d_wait_ms"),
+            "ffs_cam1_h2d_wait_ms": ("h2d", "cam1", "ffs", "h2d_wait_ms"),
+            "ffs_cam2_h2d_wait_ms": ("h2d", "cam2", "ffs", "h2d_wait_ms"),
             "ffs_align_cam0_ms": ("ffs", "cam0_align_ms"),
             "ffs_align_cam1_ms": ("ffs", "cam1_align_ms"),
             "ffs_align_cam2_ms": ("ffs", "cam2_align_ms"),
+            "gpu_owner_total_ms": ("gpu_owner", "total_ms"),
+            "gpu_owner_ffs_cycle_ms": ("gpu_owner", "ffs_cycle_ms"),
+            "gpu_owner_edgetam_cycle_ms": ("gpu_owner", "edgetam_cycle_ms"),
             "fusion_total_ms": ("fusion", "total_ms"),
             "object_enhanced_pt_ms": ("fusion", "object_enhanced_pt_ms"),
             "controller_pt_filter_ms": ("fusion", "controller_pt_filter_ms"),
@@ -1394,6 +1638,33 @@ class Demo21Runtime:
             name: _profile_stats(_series_for_path(records, path))
             for name, path in metric_paths.items()
         }
+        aggregate_metric_paths: dict[str, tuple[tuple[str, ...], ...]] = {
+            "edge_pin_copy_ms": (
+                ("h2d", "cam0", "edge", "pin_copy_ms"),
+                ("h2d", "cam1", "edge", "pin_copy_ms"),
+                ("h2d", "cam2", "edge", "pin_copy_ms"),
+            ),
+            "edge_h2d_wait_ms": (
+                ("h2d", "cam0", "edge", "h2d_wait_ms"),
+                ("h2d", "cam1", "edge", "h2d_wait_ms"),
+                ("h2d", "cam2", "edge", "h2d_wait_ms"),
+            ),
+            "ffs_stage_ms": (
+                ("h2d", "cam0", "ffs", "stage_ms"),
+                ("h2d", "cam1", "ffs", "stage_ms"),
+                ("h2d", "cam2", "ffs", "stage_ms"),
+            ),
+            "ffs_h2d_wait_ms": (
+                ("h2d", "cam0", "ffs", "h2d_wait_ms"),
+                ("h2d", "cam1", "ffs", "h2d_wait_ms"),
+                ("h2d", "cam2", "ffs", "h2d_wait_ms"),
+            ),
+        }
+        for name, paths in aggregate_metric_paths.items():
+            values: list[float] = []
+            for path in paths:
+                values.extend(_series_for_path(records, path))
+            summary["metrics"][name] = _profile_stats(values)
         if summary["fusion_fps"] < target_fps:
             summary["bottleneck_class"] = "upstream_supply"
         elif summary["render_fps"] < target_fps:
@@ -1430,11 +1701,17 @@ class Demo21Runtime:
             "target_fps": float(self.args.fusion_target_fps),
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
+            "gpu_pipeline": contract["gpu_pipeline"],
             "gpu_gate_max_concurrent": int(self.args.gpu_gate_max_concurrent),
             "object_filter": self.args.object_postprocess,
             "controller_filter": self.args.controller_postprocess,
             "object_controller_union_before_filter": bool(contract["fusion"]["object_controller_union_before_filter"]),
             "temporal_grouping": contract["temporal_grouping"],
+            "pin_memory_enabled": bool(self.args.pin_memory),
+            "pin_memory_mode": self.args.pin_memory_mode,
+            "ffs_input_staging": self.args.ffs_input_staging,
+            "h2d_stream_mode": self.args.h2d_stream_mode,
+            "h2d_transfer": contract["h2d_transfer"],
             "warmup_exclude_s": warmup_s,
             "summary_full_run": self._profile_summary_for_records(records),
             "summary_after_warmup": self._profile_summary_for_records(after_warmup),
@@ -1459,8 +1736,14 @@ class Demo21Runtime:
             f"- groups after warmup: `{warm.get('group_count', 0)}`",
             f"- complete fused groups after warmup: `{warm.get('complete_fusion_groups', 0)}`",
             f"- rendered groups after warmup: `{warm.get('rendered_groups', 0)}`",
+            f"- complete group ratio after warmup: `{warm.get('complete_group_ratio', 0.0):.3f}`",
             f"- target deficit: `{warm.get('target_fps_deficit', 0.0):.2f}`",
             f"- bottleneck class: `{warm.get('bottleneck_class', 'unknown')}`",
+            f"- GPU pipeline: `{payload.get('gpu_pipeline', {}).get('mode', 'separate-workers')}`",
+            f"- single-owner order: `{payload.get('gpu_pipeline', {}).get('internal_order', 'ffs-then-edgetam')}`",
+            f"- pin memory mode: `{payload.get('pin_memory_mode', 'off')}`",
+            f"- FFS input staging: `{payload.get('ffs_input_staging', 'pinned')}`",
+            f"- H2D stream mode: `{payload.get('h2d_stream_mode', 'default')}`",
             "",
         ]
         if int(warm.get("complete_fusion_groups", 0)) == 0:
@@ -1484,6 +1767,25 @@ class Demo21Runtime:
             "edgetam_cam0_gate_wait_ms",
             "edgetam_cam1_gate_wait_ms",
             "edgetam_cam2_gate_wait_ms",
+            "edge_pin_copy_ms",
+            "edge_h2d_wait_ms",
+            "edge_cam0_pin_copy_ms",
+            "edge_cam1_pin_copy_ms",
+            "edge_cam2_pin_copy_ms",
+            "edge_cam0_h2d_wait_ms",
+            "edge_cam1_h2d_wait_ms",
+            "edge_cam2_h2d_wait_ms",
+            "ffs_stage_ms",
+            "ffs_h2d_wait_ms",
+            "ffs_cam0_stage_ms",
+            "ffs_cam1_stage_ms",
+            "ffs_cam2_stage_ms",
+            "ffs_cam0_h2d_wait_ms",
+            "ffs_cam1_h2d_wait_ms",
+            "ffs_cam2_h2d_wait_ms",
+            "gpu_owner_total_ms",
+            "gpu_owner_ffs_cycle_ms",
+            "gpu_owner_edgetam_cycle_ms",
             "fusion_total_ms",
             "object_enhanced_pt_ms",
             "controller_pt_filter_ms",
@@ -1506,19 +1808,28 @@ class Demo21Runtime:
         print(f"[demo2.1] profile_json={profile_path}", flush=True)
         print(f"[demo2.1] profile_md={md_path}", flush=True)
 
-    def _start_threads(self) -> None:
+    def _thread_specs(self) -> list[tuple[str, Callable[[], None]]]:
         specs: list[tuple[str, Callable[[], None]]] = [
             ("capture-group", self._capture_group_worker),
         ]
-        if self.args.depth_source == DEPTH_SOURCE_FFS:
-            specs.append(("shared-ffs", self._shared_ffs_worker))
-        if self.args.track_mode != TRACK_MODE_NONE:
-            for camera_idx in self.args.camera_ids:
-                specs.append((f"edgetam-cam{camera_idx}", lambda camera_idx=int(camera_idx): self._edgetam_camera_worker(camera_idx)))
-        if self.args.track_mode != TRACK_MODE_NONE and self.args.depth_source == DEPTH_SOURCE_FFS:
-            specs.append(("fusion", self._fusion_worker))
+        if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SINGLE_OWNER:
+            if self.args.track_mode != TRACK_MODE_NONE and self.args.depth_source == DEPTH_SOURCE_FFS:
+                specs.append(("gpu-owner", self._gpu_owner_pipeline_worker))
+                specs.append(("fusion", self._fusion_worker_single_owner))
+        else:
+            if self.args.depth_source == DEPTH_SOURCE_FFS:
+                specs.append(("shared-ffs", self._shared_ffs_worker))
+            if self.args.track_mode != TRACK_MODE_NONE:
+                for camera_idx in self.args.camera_ids:
+                    specs.append((f"edgetam-cam{camera_idx}", lambda camera_idx=int(camera_idx): self._edgetam_camera_worker(camera_idx)))
+            if self.args.track_mode != TRACK_MODE_NONE and self.args.depth_source == DEPTH_SOURCE_FFS:
+                specs.append(("fusion", self._fusion_worker))
         if self.args.debug and self.args.render_mode == "none":
             specs.append(("debug", self._debug_worker))
+        return specs
+
+    def _start_threads(self) -> None:
+        specs = self._thread_specs()
         for name, target in specs:
             thread = threading.Thread(target=target, name=f"demo2.1-{name}", daemon=True)
             thread.start()
@@ -1598,6 +1909,12 @@ class Demo21Runtime:
             next_tick_s = now_s + interval_s
             build_start_s = time.perf_counter()
             try:
+                realsense_runtime = None if self.camera_system is None else getattr(self.camera_system, "realsense", None)
+                if realsense_runtime is not None and not realsense_runtime.is_ready:
+                    self._summary["capture_not_ready_skip"] = int(self._summary.get("capture_not_ready_skip", 0)) + 1
+                    if self.args.debug:
+                        print("[WARN] Demo 2.1 capture group skipped because not all cameras are ready", flush=True)
+                    continue
                 obs = self.camera_system.get_observation()
                 capture_arrival_perf_ns = time.perf_counter_ns()
                 for camera_idx in self.args.camera_ids:
@@ -1695,6 +2012,7 @@ class Demo21Runtime:
             ffs_repo=Path(self.args.ffs_repo),
             model_dir=Path(self.args.ffs_trt_model_dir),
             trt_root=None if self.args.ffs_trt_root is None else Path(self.args.ffs_trt_root),
+            input_staging=str(self.args.ffs_input_staging),
         )
 
     def _compute_ffs_depth_for_frame(
@@ -1730,7 +2048,91 @@ class Demo21Runtime:
             ffs_ms=_elapsed_ms(ffs_start_s, ffs_done_s),
         )
 
-    def _run_ffs_pair_for_frame(self, *, runner: object, frame: CameraFramePacket) -> tuple[np.ndarray, np.ndarray, float]:
+    def _run_ffs_cycle_for_group(
+        self,
+        *,
+        runner: object,
+        group: CaptureGroup,
+        aligners: dict[int, FfsIrToColorAligner],
+    ) -> tuple[DepthGroup, dict[int, dict[str, Any]]]:
+        cycle_start_s = time.perf_counter()
+        depths: dict[int, DepthPacket] = {}
+        per_camera: dict[int, dict[str, float]] = {}
+        h2d_by_camera: dict[int, dict[str, Any]] = {}
+        gate_wait_ms_total = 0.0
+        for camera_idx in self.args.camera_ids:
+            frame = group.frames[int(camera_idx)]
+            with self.gpu_gate.acquire(stage="ffs", camera_idx=int(camera_idx), group_id=group.group_id) as gate_wait_ms:
+                self._record_gpu_gate_wait("ffs", gate_wait_ms)
+                depth_ir_left_m, k_ir_left_used, ffs_ms, ffs_h2d_profile = self._run_ffs_pair_for_frame(
+                    runner=runner,
+                    frame=frame,
+                )
+            gate_wait_ms_total += float(gate_wait_ms)
+            depth = self._align_ffs_depth_for_frame(
+                frame=frame,
+                aligners=aligners,
+                depth_ir_left_m=depth_ir_left_m,
+                k_ir_left_used=k_ir_left_used,
+                ffs_ms=ffs_ms,
+            )
+            depths[int(camera_idx)] = depth
+            per_camera[int(camera_idx)] = {
+                "ffs_ms": depth.ffs_ms,
+                "align_ms": depth.align_ms,
+                "gate_wait_ms": float(gate_wait_ms),
+            }
+            h2d_by_camera[int(camera_idx)] = dict(ffs_h2d_profile)
+
+        packet = DepthGroup(
+            group_id=group.group_id,
+            depths=depths,
+            total_ms=_elapsed_ms(cycle_start_s, time.perf_counter()),
+            per_camera_ms=per_camera,
+            gpu_gate_wait_ms=gate_wait_ms_total,
+            max_temporal_skew_ms=float(group.max_temporal_skew_ms),
+            per_camera_time_offset_ms=dict(group.per_camera_time_offset_ms),
+            per_camera_frame_seq=dict(group.per_camera_frame_seq),
+            timestamp_source=str(group.timestamp_source),
+        )
+        self._profile_update(
+            group.group_id,
+            ffs={
+                "gate_wait_ms": float(gate_wait_ms_total),
+                "cycle_ms": float(packet.total_ms),
+                "publish_s": self._profile_rel_s(),
+                "capture_temporal_skew_ms": float(group.max_temporal_skew_ms),
+                **{
+                    f"cam{int(camera_idx)}_ffs_ms": float(per_camera[int(camera_idx)].get("ffs_ms", 0.0))
+                    for camera_idx in self.args.camera_ids
+                },
+                **{
+                    f"cam{int(camera_idx)}_align_ms": float(per_camera[int(camera_idx)].get("align_ms", 0.0))
+                    for camera_idx in self.args.camera_ids
+                },
+                **{
+                    f"cam{int(camera_idx)}_gate_wait_ms": float(per_camera[int(camera_idx)].get("gate_wait_ms", 0.0))
+                    for camera_idx in self.args.camera_ids
+                },
+            },
+            h2d={
+                f"cam{int(camera_idx)}": {
+                    "ffs": {
+                        **h2d_by_camera.get(int(camera_idx), {}),
+                        "profile_enabled": bool(self.args.profile_h2d),
+                    }
+                }
+                for camera_idx in self.args.camera_ids
+            },
+        )
+        return packet, h2d_by_camera
+
+    def _run_ffs_pair_for_frame(
+        self,
+        *,
+        runner: object,
+        frame: CameraFramePacket,
+    ) -> tuple[np.ndarray, np.ndarray, float, dict[str, Any]]:
         if (
             frame.ir_left_u8 is None
             or frame.ir_right_u8 is None
@@ -1746,10 +2148,12 @@ class Demo21Runtime:
             baseline_m=float(frame.baseline_m),
         )
         ffs_ms = _elapsed_ms(ffs_start_s, time.perf_counter())
+        h2d_profile = dict(output.get("h2d_profile", {}))
         return (
             np.asarray(output["depth_ir_left_m"], dtype=np.float32),
             np.asarray(output.get("K_ir_left_used", frame.k_ir_left), dtype=np.float32),
             ffs_ms,
+            h2d_profile,
         )
 
     def _align_ffs_depth_for_frame(
@@ -1804,64 +2208,7 @@ class Demo21Runtime:
                     ) + 1
                     self._profile_mark_drop(group.group_id, "ffs_drop_skewed_capture_group")
                     continue
-                cycle_start_s = time.perf_counter()
-                depths: dict[int, DepthPacket] = {}
-                per_camera: dict[int, dict[str, float]] = {}
-                gate_wait_ms_total = 0.0
-                for camera_idx in self.args.camera_ids:
-                    frame = group.frames[int(camera_idx)]
-                    with self.gpu_gate.acquire(stage="ffs", camera_idx=int(camera_idx), group_id=group.group_id) as gate_wait_ms:
-                        self._record_gpu_gate_wait("ffs", gate_wait_ms)
-                        depth_ir_left_m, k_ir_left_used, ffs_ms = self._run_ffs_pair_for_frame(
-                            runner=runner,
-                            frame=frame,
-                        )
-                    gate_wait_ms_total += float(gate_wait_ms)
-                    depth = self._align_ffs_depth_for_frame(
-                        frame=frame,
-                        aligners=aligners,
-                        depth_ir_left_m=depth_ir_left_m,
-                        k_ir_left_used=k_ir_left_used,
-                        ffs_ms=ffs_ms,
-                    )
-                    depths[int(camera_idx)] = depth
-                    per_camera[int(camera_idx)] = {
-                        "ffs_ms": depth.ffs_ms,
-                        "align_ms": depth.align_ms,
-                        "gate_wait_ms": float(gate_wait_ms),
-                    }
-                packet = DepthGroup(
-                    group_id=group.group_id,
-                    depths=depths,
-                    total_ms=_elapsed_ms(cycle_start_s, time.perf_counter()),
-                    per_camera_ms=per_camera,
-                    gpu_gate_wait_ms=gate_wait_ms_total,
-                    max_temporal_skew_ms=float(group.max_temporal_skew_ms),
-                    per_camera_time_offset_ms=dict(group.per_camera_time_offset_ms),
-                    per_camera_frame_seq=dict(group.per_camera_frame_seq),
-                    timestamp_source=str(group.timestamp_source),
-                )
-                self._profile_update(
-                    group.group_id,
-                    ffs={
-                        "gate_wait_ms": float(gate_wait_ms_total),
-                        "cycle_ms": float(packet.total_ms),
-                        "publish_s": self._profile_rel_s(),
-                        "capture_temporal_skew_ms": float(group.max_temporal_skew_ms),
-                        **{
-                            f"cam{int(camera_idx)}_ffs_ms": float(per_camera[int(camera_idx)].get("ffs_ms", 0.0))
-                            for camera_idx in self.args.camera_ids
-                        },
-                        **{
-                            f"cam{int(camera_idx)}_align_ms": float(per_camera[int(camera_idx)].get("align_ms", 0.0))
-                            for camera_idx in self.args.camera_ids
-                        },
-                        **{
-                            f"cam{int(camera_idx)}_gate_wait_ms": float(per_camera[int(camera_idx)].get("gate_wait_ms", 0.0))
-                            for camera_idx in self.args.camera_ids
-                        },
-                    },
-                )
+                packet, _ = self._run_ffs_cycle_for_group(runner=runner, group=group, aligners=aligners)
                 self.depth_group_slot.put(packet)
                 self._latest_depth_group = packet
                 self.ffs_stats.record()
@@ -1903,6 +2250,7 @@ class Demo21Runtime:
         model: Any,
         processor: Any,
         session: Any,
+        pixel_stager: PinnedPixelValueStager | None,
         frame: CameraFramePacket,
         initial_controller_mask: np.ndarray,
         initial_object_mask: np.ndarray,
@@ -1910,13 +2258,32 @@ class Demo21Runtime:
     ) -> CameraMaskPacket:
         frame_started_s = time.perf_counter()
         image = _bgr_to_pil_rgb(frame.color_bgr)
-        inputs, preprocess_ms, _, _ = _time_runtime_ms(
-            torch_module,
-            self.args.device,
-            lambda: processor(images=image, device=self.args.device, return_tensors="pt"),
-            sync_enabled=False,
-        )
-        pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
+        if pixel_stager is not None:
+            inputs, preprocess_ms, _, _ = _time_runtime_ms(
+                torch_module,
+                self.args.device,
+                lambda: processor(images=image, return_tensors="pt"),
+                sync_enabled=False,
+            )
+            pixel_values, edge_h2d_profile = pixel_stager.stage(inputs.pixel_values[0], dtype=dtype)
+        else:
+            inputs, preprocess_ms, _, _ = _time_runtime_ms(
+                torch_module,
+                self.args.device,
+                lambda: processor(images=image, device=self.args.device, return_tensors="pt"),
+                sync_enabled=False,
+            )
+            pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
+            edge_h2d_profile = {
+                "pin_memory": False,
+                "processor_device": str(inputs.pixel_values.device),
+                "processor_is_pinned": bool(inputs.pixel_values.is_pinned()) if hasattr(inputs.pixel_values, "is_pinned") else False,
+                "pin_copy_ms": 0.0,
+                "slot_reuse_wait_ms": 0.0,
+                "h2d_enqueue_ms": 0.0,
+                "h2d_wait_ms": 0.0,
+                "h2d_stream_mode": H2D_STREAM_MODE_DEFAULT,
+            }
         prompt_ms = 0.0
         with self._autocast_context(torch_module):
             if add_prompt:
@@ -1976,10 +2343,21 @@ class Demo21Runtime:
                     "wall_model_ms": float(wall_model_ms),
                     "cuda_event_model_ms": float(cuda_event_model_ms),
                     "preprocess_ms": float(preprocess_ms),
+                    "h2d_pin_copy_ms": float(edge_h2d_profile.get("pin_copy_ms", 0.0)),
+                    "h2d_enqueue_ms": float(edge_h2d_profile.get("h2d_enqueue_ms", 0.0)),
+                    "h2d_wait_ms": float(edge_h2d_profile.get("h2d_wait_ms", 0.0)),
                     "prompt_ms": float(prompt_ms),
                     "postprocess_ms": float(postprocess_ms),
                     "total_ms": float(total_ms),
                     "publish_s": self._profile_rel_s(),
+                }
+            },
+            h2d={
+                f"cam{int(frame.camera_idx)}": {
+                    "edge": {
+                        **edge_h2d_profile,
+                        "profile_enabled": bool(self.args.profile_h2d),
+                    }
                 }
             },
         )
@@ -1998,6 +2376,17 @@ class Demo21Runtime:
     def _edgetam_camera_worker(self, camera_idx: int) -> None:
         try:
             hf_stream, torch_module, dtype, model, processor = self._init_hf_model(camera_idx)
+            pixel_stager = (
+                PinnedPixelValueStager(
+                    torch_module=torch_module,
+                    device=str(self.args.device),
+                    ring_size=int(self.args.pinned_ring_size),
+                    h2d_stream_mode=str(self.args.h2d_stream_mode),
+                    verify_copies=bool(self.args.debug or self.args.profile_h2d),
+                )
+                if edge_pin_memory_enabled(self.args)
+                else None
+            )
             last_group_id = -1
             initialized = False
             init_attempts = 0
@@ -2077,6 +2466,7 @@ class Demo21Runtime:
                         model=model,
                         processor=processor,
                         session=session,
+                        pixel_stager=pixel_stager,
                         frame=frame,
                         initial_controller_mask=controller_mask,
                         initial_object_mask=object_mask,
@@ -2088,6 +2478,218 @@ class Demo21Runtime:
             if not self.stop_event.is_set():
                 print(f"[ERROR] Demo 2.1 EdgeTAM cam{camera_idx} failed: {type(exc).__name__}: {exc}", flush=True)
             self._mark_fatal_error(f"edgetam-cam{int(camera_idx)}", exc)
+            self.stop_event.set()
+
+    def _init_gpu_owner_edgetam_states(self) -> dict[int, dict[str, Any]]:
+        states: dict[int, dict[str, Any]] = {}
+        shared_bundle: tuple[Any, Any, Any, Any, Any] | None = None
+        if self.args.edgetam_model_topology == EDGETAM_MODEL_TOPOLOGY_SHARED:
+            shared_bundle = self._init_hf_model(-1)
+        for camera_idx in self.args.camera_ids:
+            hf_stream, torch_module, dtype, model, processor = (
+                shared_bundle if shared_bundle is not None else self._init_hf_model(int(camera_idx))
+            )
+            pixel_stager = (
+                PinnedPixelValueStager(
+                    torch_module=torch_module,
+                    device=str(self.args.device),
+                    ring_size=int(self.args.pinned_ring_size),
+                    h2d_stream_mode=str(self.args.h2d_stream_mode),
+                    verify_copies=bool(self.args.debug or self.args.profile_h2d),
+                )
+                if edge_pin_memory_enabled(self.args)
+                else None
+            )
+            states[int(camera_idx)] = {
+                "hf_stream": hf_stream,
+                "torch_module": torch_module,
+                "dtype": dtype,
+                "model": model,
+                "processor": processor,
+                "pixel_stager": pixel_stager,
+                "initialized": False,
+                "init_attempts": 0,
+                "last_init_failure_log_s": 0.0,
+                "controller_mask": None,
+                "object_mask": None,
+                "session": None,
+            }
+        return states
+
+    def _ensure_gpu_owner_edgetam_initialized(
+        self,
+        *,
+        state: dict[str, Any],
+        camera_idx: int,
+        frame: CameraFramePacket,
+    ) -> bool:
+        if bool(state["initialized"]):
+            return True
+        state["init_attempts"] = int(state["init_attempts"]) + 1
+        try:
+            controller_mask, object_mask = resolve_initial_masks_for_camera(
+                frame,
+                self.args,
+                sam31_lock=self._sam31_lock,
+            )
+        except Exception as exc:
+            key = f"sam31_init_failures_cam{int(camera_idx)}"
+            self._summary[key] = int(self._summary.get(key, 0)) + 1
+            self._profile_mark_drop(frame.group_id, f"sam31_init_failed_cam{int(camera_idx)}")
+            now_s = time.perf_counter()
+            max_attempts = int(self.args.sam31_init_max_attempts)
+            will_retry = max_attempts == 0 or int(state["init_attempts"]) < max_attempts
+            if self.args.debug and now_s - float(state["last_init_failure_log_s"]) >= 2.0:
+                action = "retrying on the latest live frame" if will_retry else "failing without fallback"
+                print(
+                    "[demo2.1-sam31-init] "
+                    f"single-owner cam={camera_idx} attempt={int(state['init_attempts'])} group={frame.group_id} "
+                    f"failed={type(exc).__name__}: {exc}. "
+                    f"Keep the target visible and steady; {action}.",
+                    flush=True,
+                )
+                state["last_init_failure_log_s"] = now_s
+            if not will_retry:
+                raise RuntimeError(
+                    f"SAM3.1 live initialization failed for cam{camera_idx} "
+                    f"after {int(state['init_attempts'])} attempt(s); no fallback is allowed"
+                ) from exc
+            time.sleep(float(self.args.sam31_init_retry_interval_s))
+            return False
+
+        state["controller_mask"] = controller_mask
+        state["object_mask"] = object_mask
+        self._summary[f"sam31_init_attempts_cam{int(camera_idx)}"] = int(state["init_attempts"])
+        if self.args.debug:
+            print(
+                "[demo2.1-sam31-init] "
+                f"single-owner cam={camera_idx} initialized from live frame group={frame.group_id} "
+                f"attempts={int(state['init_attempts'])} object_px={int(np.count_nonzero(object_mask))} "
+                f"controller_px={int(np.count_nonzero(controller_mask))}",
+                flush=True,
+            )
+        state["session"] = state["hf_stream"].EdgeTamVideoInferenceSession(
+            video=None,
+            video_height=int(frame.color_bgr.shape[0]),
+            video_width=int(frame.color_bgr.shape[1]),
+            inference_device=self.args.device,
+            inference_state_device=self.args.device,
+            video_storage_device=self.args.device,
+            dtype=state["dtype"],
+        )
+        state["initialized"] = True
+        return True
+
+    def _run_gpu_owner_edgetam_cycle(
+        self,
+        *,
+        states: dict[int, dict[str, Any]],
+        group: CaptureGroup,
+    ) -> tuple[dict[int, CameraMaskPacket] | None, float]:
+        cycle_start_s = time.perf_counter()
+        packets: dict[int, CameraMaskPacket] = {}
+        for camera_idx in self.args.camera_ids:
+            idx = int(camera_idx)
+            frame = group.frames[idx]
+            state = states[idx]
+            was_initialized = bool(state["initialized"])
+            if not self._ensure_gpu_owner_edgetam_initialized(state=state, camera_idx=idx, frame=frame):
+                return None, _elapsed_ms(cycle_start_s, time.perf_counter())
+            torch_module = state["torch_module"]
+            with torch_module.inference_mode():
+                packet = self._run_edgetam_frame(
+                    torch_module=torch_module,
+                    dtype=state["dtype"],
+                    model=state["model"],
+                    processor=state["processor"],
+                    session=state["session"],
+                    pixel_stager=state["pixel_stager"],
+                    frame=frame,
+                    initial_controller_mask=state["controller_mask"],
+                    initial_object_mask=state["object_mask"],
+                    add_prompt=not was_initialized,
+                )
+            packets[idx] = packet
+            self.mask_slots[idx].put(packet)
+            self.edge_stats[idx].record()
+        return packets, _elapsed_ms(cycle_start_s, time.perf_counter())
+
+    def _gpu_owner_pipeline_worker(self) -> None:
+        try:
+            warm_up_numba_ffs_align()
+            runner = self._create_ffs_runner()
+            aligners: dict[int, FfsIrToColorAligner] = {}
+            edgetam_states = self._init_gpu_owner_edgetam_states()
+            last_group_id = -1
+            while not self.stop_event.is_set():
+                group = self.capture_group_slot.get_latest_after(last_group_id)
+                if group is None:
+                    time.sleep(0.001)
+                    continue
+                last_group_id = group.group_id
+                if not temporal_group_is_coherent(group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+                    self._summary["gpu_owner_drop_skewed_capture_group"] = int(
+                        self._summary.get("gpu_owner_drop_skewed_capture_group", 0)
+                    ) + 1
+                    self._profile_mark_drop(group.group_id, "gpu_owner_drop_skewed_capture_group")
+                    continue
+
+                owner_start_s = time.perf_counter()
+                depth_group: DepthGroup | None = None
+                mask_packets: dict[int, CameraMaskPacket] | None = None
+                ffs_cycle_ms = 0.0
+                edgetam_cycle_ms = 0.0
+                order = str(self.args.single_owner_order)
+                if order == SINGLE_OWNER_ORDER_EDGETAM_THEN_FFS:
+                    mask_packets, edgetam_cycle_ms = self._run_gpu_owner_edgetam_cycle(
+                        states=edgetam_states,
+                        group=group,
+                    )
+                    if mask_packets is None:
+                        continue
+                    depth_group, _ = self._run_ffs_cycle_for_group(runner=runner, group=group, aligners=aligners)
+                    ffs_cycle_ms = depth_group.total_ms
+                else:
+                    depth_group, _ = self._run_ffs_cycle_for_group(runner=runner, group=group, aligners=aligners)
+                    ffs_cycle_ms = depth_group.total_ms
+                    mask_packets, edgetam_cycle_ms = self._run_gpu_owner_edgetam_cycle(
+                        states=edgetam_states,
+                        group=group,
+                    )
+                    if mask_packets is None:
+                        continue
+
+                total_ms = _elapsed_ms(owner_start_s, time.perf_counter())
+                packet = CompleteInferenceGroup(
+                    group_id=group.group_id,
+                    capture_group=group,
+                    depth_group=depth_group,
+                    mask_packets=mask_packets,
+                    ffs_cycle_ms=float(ffs_cycle_ms),
+                    edgetam_cycle_ms=float(edgetam_cycle_ms),
+                    total_gpu_owner_ms=float(total_ms),
+                    internal_order=order,
+                )
+                self.complete_inference_slot.put(packet)
+                self._latest_depth_group = depth_group
+                self.ffs_stats.record()
+                self.gpu_owner_stats.record()
+                self._profile_update(
+                    group.group_id,
+                    gpu_owner={
+                        "mode": GPU_PIPELINE_MODE_SINGLE_OWNER,
+                        "internal_order": order,
+                        "ffs_cycle_ms": float(ffs_cycle_ms),
+                        "edgetam_cycle_ms": float(edgetam_cycle_ms),
+                        "total_ms": float(total_ms),
+                        "publish_s": self._profile_rel_s(),
+                        "complete_group_published": True,
+                    },
+                )
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                print(f"[ERROR] Demo 2.1 GPU-owner worker failed: {type(exc).__name__}: {exc}", flush=True)
+            self._mark_fatal_error("gpu-owner", exc)
             self.stop_event.set()
 
     def _wait_mask_for_group(self, *, camera_idx: int, group_id: int, deadline_s: float) -> CameraMaskPacket | None:
@@ -2159,6 +2761,51 @@ class Demo21Runtime:
                 self._render_request()
             if incomplete:
                 self._summary["dropped_incomplete_fusion_groups"] = incomplete
+
+    def _fusion_worker_single_owner(self) -> None:
+        last_complete_group = -1
+        rng = np.random.default_rng()
+        ray_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+        while not self.stop_event.is_set():
+            complete = self.complete_inference_slot.get_latest_after(last_complete_group)
+            if complete is None:
+                time.sleep(0.001)
+                continue
+            last_complete_group = complete.group_id
+            depth_group = complete.depth_group
+            if not temporal_group_is_coherent(depth_group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+                self._summary["fusion_drop_skewed_group"] = int(self._summary.get("fusion_drop_skewed_group", 0)) + 1
+                self._profile_mark_drop(depth_group.group_id, "fusion_drop_skewed_group")
+                continue
+            if set(int(idx) for idx in complete.mask_packets) != set(int(idx) for idx in self.args.camera_ids):
+                self._summary["fusion_timeout_groups"] = int(self._summary.get("fusion_timeout_groups", 0)) + 1
+                self._profile_mark_drop(depth_group.group_id, "single_owner_missing_mask")
+                continue
+            self._profile_update(
+                depth_group.group_id,
+                fusion={
+                    "wait_depth_ms": 0.0,
+                    "wait_total_ms": 0.0,
+                    **{f"wait_mask_cam{int(camera_idx)}_ms": 0.0 for camera_idx in self.args.camera_ids},
+                },
+            )
+            try:
+                packet = self._build_fused_packet(
+                    depth_group=depth_group,
+                    masks=complete.mask_packets,
+                    ray_cache=ray_cache,
+                    rng=rng,
+                )
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    print(f"[WARN] Demo 2.1 single-owner fusion group {depth_group.group_id} failed: {type(exc).__name__}: {exc}", flush=True)
+                continue
+            self.render_slot.put(packet)
+            self._latest_fused = packet
+            self.fusion_stats.record()
+            self._summary["fusion_complete_groups"] = int(self._summary.get("fusion_complete_groups", 0)) + 1
+            if packet.group_id % int(self.args.render_every_n) == 0:
+                self._render_request()
 
     def _build_fused_packet(
         self,
@@ -2369,6 +3016,7 @@ class Demo21Runtime:
             "[demo2.1-debug] "
             f"capture_group_fps={self.capture_group_stats.fps:.2f} "
             f"ffs_cycle_fps={self.ffs_stats.fps:.2f} "
+            f"gpu_owner_fps={self.gpu_owner_stats.fps:.2f} "
             f"edge_fps_cam0={self.edge_stats[0].fps:.2f} edge_fps_cam1={self.edge_stats[1].fps:.2f} edge_fps_cam2={self.edge_stats[2].fps:.2f} "
             f"fusion_fps={self.fusion_stats.fps:.2f} render_fps={self.render_stats.render_fps:.2f} "
             f"ffs_cycle_ms={(0.0 if depth is None else depth.total_ms):.1f} "
@@ -2596,6 +3244,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile-filter-detail", action="store_true")
     parser.add_argument("--profile-visualization", action="store_true")
     parser.add_argument("--profile-gpu-gate", action="store_true")
+    parser.add_argument("--profile-h2d", action="store_true")
     parser.add_argument("--profile-json-output", default=None)
     parser.add_argument("--profile-warmup-exclude-s", type=float, default=20.0)
     parser.add_argument("--sam31-init-retry-interval-s", type=float, default=0.5)
@@ -2615,8 +3264,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-inflight-groups", type=int, default=2)
     parser.add_argument("--gpu-gate-mode", choices=GPU_GATE_MODES, default=GPU_GATE_MODE_SERIALIZED)
     parser.add_argument("--gpu-gate-max-concurrent", type=int, default=1)
+    parser.add_argument("--gpu-pipeline-mode", choices=GPU_PIPELINE_MODES, default=GPU_PIPELINE_MODE_SEPARATE_WORKERS)
+    parser.add_argument("--single-owner-order", choices=SINGLE_OWNER_ORDERS, default=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
+    parser.add_argument("--static-device-buffers", action="store_true")
+    parser.add_argument("--preallocate-pcd-buffers", action="store_true")
     parser.add_argument("--ffs-worker-mode", choices=FFS_WORKER_MODES, default="shared")
     parser.add_argument("--ffs-schedule", choices=FFS_SCHEDULES, default="strict3-latest")
+    parser.add_argument("--pin-memory", action="store_true")
+    parser.add_argument("--pin-memory-mode", choices=PIN_MEMORY_MODES, default=PIN_MEMORY_MODE_OFF)
+    parser.add_argument("--pinned-ring-size", type=int, default=3)
+    parser.add_argument("--h2d-stream-mode", choices=H2D_STREAM_MODES, default=H2D_STREAM_MODE_DEFAULT)
+    parser.add_argument("--ffs-input-staging", choices=FFS_INPUT_STAGING_MODES, default=FFS_INPUT_STAGING_PINNED)
     parser.add_argument("--edgetam-worker-mode", choices=EDGETAM_WORKER_MODES, default="per-camera")
     parser.add_argument("--edgetam-model-topology", choices=EDGETAM_MODEL_TOPOLOGIES, default="replicated")
     parser.add_argument("--ffs-repo", default=str(DEFAULT_FFS_REPO))

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+import time
 from typing import Any, Callable
 
 import cv2
@@ -438,6 +439,11 @@ def run_forward_on_non_default_cuda_stream(
     return output
 
 
+FFS_INPUT_STAGING_PINNED = "pinned"
+FFS_INPUT_STAGING_PAGEABLE = "pageable"
+FFS_INPUT_STAGING_MODES = (FFS_INPUT_STAGING_PINNED, FFS_INPUT_STAGING_PAGEABLE)
+
+
 class _PinnedSinglePairImageInputBuffers:
     def __init__(self, *, torch_module: Any, image_shape: tuple[int, int, int]) -> None:
         self.torch = torch_module
@@ -457,6 +463,13 @@ class _PinnedSinglePairImageInputBuffers:
             device="cuda",
             dtype=torch_module.float32,
         )
+        self.last_profile: dict[str, float | str | bool] = {
+            "input_staging": FFS_INPUT_STAGING_PINNED,
+            "stage_ms": 0.0,
+            "h2d_enqueue_ms": 0.0,
+            "h2d_wait_ms": 0.0,
+            "pin_memory": True,
+        }
 
     def load(self, left_image: np.ndarray, right_image: np.ndarray) -> tuple[Any, Any]:
         left = np.ascontiguousarray(left_image)
@@ -470,10 +483,21 @@ class _PinnedSinglePairImageInputBuffers:
             raise ValueError(f"Expected uint8 TensorRT inputs, got {left.dtype!r} and {right.dtype!r}.")
 
         torch = self.torch
+        stage_start_s = time.perf_counter()
         self.left_host.copy_(torch.as_tensor(left, dtype=torch.uint8))
         self.right_host.copy_(torch.as_tensor(right, dtype=torch.uint8))
+        stage_ms = (time.perf_counter() - stage_start_s) * 1000.0
+        h2d_start_s = time.perf_counter()
         self.left_device[0].copy_(self.left_host.permute(2, 0, 1), non_blocking=True)
         self.right_device[0].copy_(self.right_host.permute(2, 0, 1), non_blocking=True)
+        h2d_enqueue_ms = (time.perf_counter() - h2d_start_s) * 1000.0
+        self.last_profile = {
+            "input_staging": FFS_INPUT_STAGING_PINNED,
+            "stage_ms": float(stage_ms),
+            "h2d_enqueue_ms": float(h2d_enqueue_ms),
+            "h2d_wait_ms": 0.0,
+            "pin_memory": True,
+        }
         return self.left_device, self.right_device
 
 
@@ -944,10 +968,17 @@ class FastFoundationStereoTensorRTRunner:
         ffs_repo: str | Path,
         model_dir: str | Path,
         trt_root: str | Path | None = None,
+        input_staging: str = FFS_INPUT_STAGING_PINNED,
     ) -> None:
         self.ffs_repo = Path(ffs_repo).resolve()
         self.model_dir = Path(model_dir).resolve()
         self.trt_root = None if trt_root is None else Path(trt_root).resolve()
+        self.input_staging = str(input_staging)
+        if self.input_staging not in FFS_INPUT_STAGING_MODES:
+            raise ValueError(
+                f"Unsupported FFS TensorRT input staging mode: {self.input_staging!r}. "
+                f"Expected one of {FFS_INPUT_STAGING_MODES!r}."
+            )
         self.feature_engine_path = self.model_dir / "feature_runner.engine"
         self.post_engine_path = self.model_dir / "post_runner.engine"
 
@@ -987,6 +1018,13 @@ class FastFoundationStereoTensorRTRunner:
         )
         self._input_buffers: _PinnedSinglePairImageInputBuffers | None = None
         self._disparity_host_buffer: Any | None = None
+        self._last_h2d_profile: dict[str, float | str | bool] = {
+            "input_staging": self.input_staging,
+            "stage_ms": 0.0,
+            "h2d_enqueue_ms": 0.0,
+            "h2d_wait_ms": 0.0,
+            "pin_memory": self.input_staging == FFS_INPUT_STAGING_PINNED,
+        }
         self._cached_trt_run = _CachedTensorRTRun(
             torch_module=torch,
             trt_module=trt,
@@ -1015,7 +1053,8 @@ class FastFoundationStereoTensorRTRunner:
     ) -> tuple[Any, Any]:
         torch = self.torch
         if (
-            len(prepared_left) == 1
+            self.input_staging == FFS_INPUT_STAGING_PINNED
+            and len(prepared_left) == 1
             and len(prepared_right) == 1
             and prepared_left[0].ndim == 3
             and prepared_right[0].ndim == 3
@@ -1029,8 +1068,11 @@ class FastFoundationStereoTensorRTRunner:
                     torch_module=torch,
                     image_shape=image_shape,
                 )
-            return self._input_buffers.load(prepared_left[0], prepared_right[0])
+            left_tensor, right_tensor = self._input_buffers.load(prepared_left[0], prepared_right[0])
+            self._last_h2d_profile = dict(self._input_buffers.last_profile)
+            return left_tensor, right_tensor
 
+        h2d_start_s = time.perf_counter()
         left_tensor = torch.stack(
             [torch.as_tensor(left).cuda().float().permute(2, 0, 1) for left in prepared_left],
             dim=0,
@@ -1039,6 +1081,14 @@ class FastFoundationStereoTensorRTRunner:
             [torch.as_tensor(right).cuda().float().permute(2, 0, 1) for right in prepared_right],
             dim=0,
         )
+        h2d_enqueue_ms = (time.perf_counter() - h2d_start_s) * 1000.0
+        self._last_h2d_profile = {
+            "input_staging": FFS_INPUT_STAGING_PAGEABLE,
+            "stage_ms": 0.0,
+            "h2d_enqueue_ms": float(h2d_enqueue_ms),
+            "h2d_wait_ms": 0.0,
+            "pin_memory": False,
+        }
         return left_tensor, right_tensor
 
     def _copy_disparity_to_numpy(
@@ -1108,7 +1158,7 @@ class FastFoundationStereoTensorRTRunner:
                 stable_copy=stable_copy,
                 sync_stream=self.inference_stream,
             )
-        return finalize_tensorrt_disparity_batch_outputs(
+        outputs = finalize_tensorrt_disparity_batch_outputs(
             disparity_raw,
             transform=batch_transform or resolve_tensorrt_image_transform(
                 input_height=self.engine_height,
@@ -1120,6 +1170,10 @@ class FastFoundationStereoTensorRTRunner:
             valid_iters=self.valid_iters,
             max_disp=self.max_disp,
         )
+        h2d_profile = dict(self._last_h2d_profile)
+        for output in outputs:
+            output["h2d_profile"] = h2d_profile
+        return outputs
 
     def run_pair(
         self,

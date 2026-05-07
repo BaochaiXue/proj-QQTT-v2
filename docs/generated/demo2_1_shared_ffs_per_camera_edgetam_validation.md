@@ -798,3 +798,161 @@ The next useful experiment is a smarter scheduling gate:
   avoid persistent EdgeTAM stragglers
   keep FFS, live SAM3.1, semantic filters, and point quality unchanged
 ```
+
+## Pinned-Memory H2D Ablation Implementation
+
+Added an explicit transfer ablation without changing the quality chain:
+
+```text
+--pin-memory
+--pin-memory-mode off|edge|ffs|all
+--pinned-ring-size 3
+--h2d-stream-mode default|dedicated
+--profile-h2d
+--ffs-input-staging pinned|pageable
+```
+
+Default behavior remains unchanged:
+
+```text
+pin_memory=false
+pin_memory_mode=off
+ffs_input_staging=pinned
+```
+
+Important detail:
+
+```text
+FFS TensorRT already used pinned input buffers by default.
+True no-pin comparison now requires --ffs-input-staging pageable.
+```
+
+The EdgeTAM pinned path is opt-in. For `--pin-memory-mode edge|all`, Demo 2.1 runs the HF processor on CPU, stages `pixel_values` through a preallocated pinned ring, then enqueues non-blocking H2D on the selected stream. Pinned slots are not reused until their H2D event has completed.
+
+The FFS runner now exposes `input_staging=pinned|pageable` and records staging/H2D profile fields in every result. The shared FFS worker still owns one TensorRT runner/context and still processes cam0, cam1, cam2 sequentially.
+
+See:
+
+- `docs/generated/demo2_1_pin_memory_ablation.md`
+- `docs/generated/demo2_1_pin_memory_ablation.json`
+
+## Cloth-controller live benchmark status
+
+`controller=cloth` is supported as an explicit temporary experiment prompt; the
+default controller remains `hand`.
+
+Dry-run passed for:
+
+```text
+track_mode=controller-object
+controller_prompt=cloth
+object_prompt=stuffed animal
+controller slot -> pt-filter
+object slot -> enhanced-pt
+fallback_allowed=false
+```
+
+Initial camera attach issue: the first 30s live sanity run did not reach SAM3.1
+/ FFS / EdgeTAM. WSL reported zero connected RealSense cameras:
+
+```text
+AssertionError: Only 0 cameras are connected.
+```
+
+Windows `usbipd list` showed three shared D455 devices at `1-3`, `1-4`, and
+`2-19`, but the Windows `usbipd` service was not running, so `usbipd attach
+--wsl` failed.
+
+After starting `usbipd` and attaching all three D455 devices, WSL enumerated
+three cameras and the live sanity run reached SAM3.1 initialization. It then
+failed as a semantic no-fallback condition:
+
+```text
+SAM3.1 cam2 initialized: object_px=11241, controller_px=16956
+SAM3.1 cam0 failed: no mask for label "cloth"
+capture groups emitted=124
+complete fused groups=0
+drop reason=missing_mask_cam0
+```
+
+Prompt probe update: the two physical cloth objects are better segmented as
+`towel` in the current scene. Static one-frame SAM3.1 returned nonzero
+`stuffed animal` and `towel` masks in all three views, and live sanity with
+`--controller-prompt towel` initialized all three cameras.
+
+## Single GPU-Owner Pipeline Experiment
+
+Added an experimental pipeline mode:
+
+```text
+--gpu-pipeline-mode single-owner
+--single-owner-order ffs-then-edgetam|edgetam-then-ffs
+```
+
+`interleaved` is reserved for a later per-camera interleaving implementation and
+fails fast in the current runtime so it cannot be mistaken for a profiled mode.
+
+In single-owner mode Demo 2.1 does not start the old `shared-ffs` worker or the
+three `edgetam-camN` workers. Instead one worker owns the FFS TensorRT runner
+and the EdgeTAM model/session state, processes one temporal-coherent
+`CaptureGroup`, and publishes a `CompleteInferenceGroup`.
+
+Default behavior remains unchanged:
+
+```text
+gpu_pipeline_mode=separate-workers
+```
+
+New preset:
+
+```text
+visual-5fps-single-owner:
+  profile=848x480
+  fps=30
+  fusion_target_fps=5
+  render_mode=pointcloud
+  gpu_pipeline_mode=single-owner
+  single_owner_order=ffs-then-edgetam
+  depth_source=ffs
+  init_mode=sam31-first-frame
+```
+
+Quality remains unchanged:
+
+```text
+FFS-derived depth
+live SAM3.1 first-frame init
+timestamp-nearest temporal grouping
+object enhanced-PT
+controller pt-filter
+object/controller union before filter = false
+```
+
+See:
+
+- `docs/generated/demo2_1_single_gpu_owner_pipeline.md`
+- `docs/generated/demo2_1_single_gpu_owner_pipeline.json`
+- `docs/generated/demo2_1_controller_prompt_probe.md`
+- `docs/generated/demo2_1_controller_towel_single_owner_benchmark.md`
+
+## Towel-Controller A/B Result
+
+This is an explicit temporary controller experiment:
+
+```text
+controller_prompt=towel
+object_prompt=stuffed animal
+default controller remains hand
+```
+
+After-warmup 120s results:
+
+| Mode | Render FPS | Fusion FPS | Complete / Total | Timeout | FFS p95 ms | Verdict |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| separate-workers gate2 | 0.51 | 0.51 | 38 / 367 | 170 | 561.8 | too many partial-group timeouts |
+| single-owner no-pin | 3.85 | 3.85 | 315 / 367 | 0 | 106.7 | best current candidate |
+| single-owner pin-ffs | 3.59 | 3.59 | 299 / 383 | 2 | 114.4 | pinned FFS staging did not help |
+| single-owner edge-first | 3.74 | 3.74 | 313 / 360 | 1 | 74.2 | stable, but lower FPS than ffs-then-edgetam |
+
+The single-owner pipeline is the main improvement. It reduces partial group
+timeouts by publishing depth and masks together as a complete inference group.

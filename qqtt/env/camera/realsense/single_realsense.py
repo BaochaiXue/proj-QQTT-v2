@@ -595,17 +595,40 @@ class SingleRealsense(mp.Process):
                         # put_data['timestamp'] = put_start_time + step_idx / self.put_fps
                         put_data["timestamp"] = receive_time
                         # print(step_idx, data['timestamp'])
-                        self.ring_buffer.put(
-                            put_data, wait=False, serial_number=self.serial_number
-                        )
+                        try:
+                            self.ring_buffer.put(
+                                put_data, wait=False, serial_number=self.serial_number
+                            )
+                        except TimeoutError as exc:
+                            # USBIP/RealSense startup can briefly deliver a burst of frames faster
+                            # than the shared ring buffer's safety window. Throttle this write
+                            # instead of killing the camera process.
+                            if self.verbose:
+                                print(
+                                    f"[SingleRealsense {self.serial_number}] Throttling burst put: {exc}",
+                                    flush=True,
+                                )
+                            self.ring_buffer.put(
+                                put_data, wait=True, serial_number=self.serial_number
+                            )
                 else:
                     step_idx = int((receive_time - put_start_time) * self.put_fps)
                     print(step_idx, receive_time)
                     put_data["step_idx"] = step_idx
                     put_data["timestamp"] = receive_time
-                    self.ring_buffer.put(
-                        put_data, wait=False, serial_number=self.serial_number
-                    )
+                    try:
+                        self.ring_buffer.put(
+                            put_data, wait=False, serial_number=self.serial_number
+                        )
+                    except TimeoutError as exc:
+                        if self.verbose:
+                            print(
+                                f"[SingleRealsense {self.serial_number}] Throttling burst put: {exc}",
+                                flush=True,
+                            )
+                        self.ring_buffer.put(
+                            put_data, wait=True, serial_number=self.serial_number
+                        )
                 if self.verbose:
                     print(
                         f"[SingleRealsense {self.serial_number}] Put data time {time.time() - put_data_start_time}",

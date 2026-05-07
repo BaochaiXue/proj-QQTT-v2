@@ -13,6 +13,7 @@ import numpy as np
 from scripts.harness.sam31_mask_helper import (
     _build_sam31_builder_kwargs,
     _call_download_ckpt_from_hf,
+    _as_numpy_array,
     _collect_image_prompt_masks,
     _merge_initial_frame_segments,
     _patch_sam31_init_state_kwarg_compat,
@@ -210,6 +211,17 @@ class Sam31MaskHelperSmokeTest(unittest.TestCase):
         }
 
         self.assertEqual(_select_image_output_indices(state, keep_all_instances=False), [0])
+
+    def test_as_numpy_array_converts_torch_bfloat16_scores(self) -> None:
+        try:
+            import torch  # noqa: PLC0415
+        except ImportError:
+            self.skipTest("torch is not installed")
+
+        array = _as_numpy_array(torch.asarray([0.25, 0.75], dtype=torch.bfloat16))
+
+        self.assertEqual(array.dtype, np.float32)
+        np.testing.assert_allclose(array, np.asarray([0.25, 0.75], dtype=np.float32))
 
     def test_download_ckpt_compat_supports_versioned_and_versionless_functions(self) -> None:
         calls: list[tuple[str, str | None]] = []

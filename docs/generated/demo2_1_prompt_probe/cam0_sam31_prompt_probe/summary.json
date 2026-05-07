@@ -1,0 +1,150 @@
+{
+  "image": "docs/generated/demo2_1_prompt_probe/cam0_239222300412_rgb.png",
+  "summary": [
+    {
+      "label": "green rag",
+      "count": 2,
+      "pixels": [
+        14767,
+        11430
+      ],
+      "union_px": 26197
+    },
+    {
+      "label": "fabric",
+      "count": 2,
+      "pixels": [
+        11375,
+        14778
+      ],
+      "union_px": 26153
+    },
+    {
+      "label": "two towels",
+      "count": 2,
+      "pixels": [
+        14783,
+        11368
+      ],
+      "union_px": 26151
+    },
+    {
+      "label": "microfiber cloth",
+      "count": 2,
+      "pixels": [
+        11375,
+        14767
+      ],
+      "union_px": 26142
+    },
+    {
+      "label": "green towel",
+      "count": 2,
+      "pixels": [
+        11385,
+        14748
+      ],
+      "union_px": 26133
+    },
+    {
+      "label": "towel",
+      "count": 2,
+      "pixels": [
+        11361,
+        14760
+      ],
+      "union_px": 26121
+    },
+    {
+      "label": "folded cloth",
+      "count": 2,
+      "pixels": [
+        11358,
+        14754
+      ],
+      "union_px": 26112
+    },
+    {
+      "label": "towel on table",
+      "count": 2,
+      "pixels": [
+        11361,
+        14748
+      ],
+      "union_px": 26109
+    },
+    {
+      "label": "washcloth",
+      "count": 2,
+      "pixels": [
+        11346,
+        14749
+      ],
+      "union_px": 26095
+    },
+    {
+      "label": "cloth",
+      "count": 1,
+      "pixels": [
+        14772
+      ],
+      "union_px": 14772
+    },
+    {
+      "label": "green cloth",
+      "count": 1,
+      "pixels": [
+        14751
+      ],
+      "union_px": 14751
+    },
+    {
+      "label": "blue rag",
+      "count": 1,
+      "pixels": [
+        11382
+      ],
+      "union_px": 11382
+    },
+    {
+      "label": "blue cloth",
+      "count": 1,
+      "pixels": [
+        11366
+      ],
+      "union_px": 11366
+    },
+    {
+      "label": "blue towel",
+      "count": 1,
+      "pixels": [
+        11356
+      ],
+      "union_px": 11356
+    },
+    {
+      "label": "cleaning cloth",
+      "count": 0,
+      "pixels": [],
+      "union_px": 0
+    },
+    {
+      "label": "rag",
+      "count": 0,
+      "pixels": [],
+      "union_px": 0
+    },
+    {
+      "label": "two cloths",
+      "count": 0,
+      "pixels": [],
+      "union_px": 0
+    },
+    {
+      "label": "cloth on table",
+      "count": 0,
+      "pixels": [],
+      "union_px": 0
+    }
+  ]
+}

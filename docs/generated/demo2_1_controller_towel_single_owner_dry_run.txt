@@ -1,0 +1,118 @@
+{
+  "camera_ids": [
+    0,
+    1,
+    2
+  ],
+  "compile_mode": "vision-reduce-overhead",
+  "demo": "demo_2_1_three_view_fused_masked_pcd",
+  "depth_source": "ffs",
+  "dtype": "bfloat16",
+  "edge_backend": "HF EdgeTAMVideo",
+  "edgetam": {
+    "model_topology": "replicated",
+    "one_streaming_session_per_camera": true,
+    "worker_mode": "per-camera"
+  },
+  "ffs_contract": {
+    "builderOptimizationLevel": 5,
+    "capture_resolution": "848x480",
+    "checkpoint": "20-30-48",
+    "engine_input": "864x480",
+    "input_staging": "pinned",
+    "max_disp": 192,
+    "padding_policy": "pad_width_848_to_864",
+    "schedule": "strict3-latest",
+    "valid_iters": 4,
+    "worker_mode": "shared"
+  },
+  "filter_scheduler": {
+    "controller": {
+      "cap": 20000,
+      "postprocess": "pt-filter",
+      "voxel_size_m": 0.003
+    },
+    "enabled": false,
+    "filter_budget_ms": 12.0,
+    "filter_every_n": 3,
+    "filtered_path": "latest_wins_async_every_n",
+    "hot_path": "raw_or_capped_pcd_every_frame",
+    "mode": "async",
+    "object": {
+      "cap": 20000,
+      "postprocess": "enhanced-pt",
+      "voxel_size_m": 0.004
+    },
+    "render_blocks_on_filter": false
+  },
+  "fps": 30,
+  "frame_by_frame_streaming": true,
+  "fusion": {
+    "do_not_filter_object_controller_union": true,
+    "labels_are_filtered_separately": true,
+    "mode": "semantic_layers",
+    "object_controller_union_before_filter": false
+  },
+  "fusion_target_fps": 5.0,
+  "fusion_timeout_ms": 250.0,
+  "gpu_gate": {
+    "max_concurrent": 0,
+    "mode": "off"
+  },
+  "gpu_pipeline": {
+    "depth_and_masks_published_together": true,
+    "internal_order": "ffs-then-edgetam",
+    "mode": "single-owner",
+    "separate_ffs_and_edgetam_workers": false
+  },
+  "h2d_transfer": {
+    "edge_pin_enabled": false,
+    "ffs_input_staging": "pinned",
+    "ffs_pin_requested": false,
+    "h2d_stream_mode": "default",
+    "pin_memory": false,
+    "pin_memory_mode": "off",
+    "pinned_ring_size": 3,
+    "profile_h2d": false
+  },
+  "init": {
+    "controller_init_mask_root": null,
+    "fallback_allowed": false,
+    "formal_demo_requires_live_sam31": true,
+    "mode": "sam31-first-frame",
+    "object_init_mask_root": null,
+    "sam31_max_attempts": 1,
+    "sam31_retry_interval_s": 0.5
+  },
+  "memory_for_speed": {
+    "preallocate_pcd_buffers": false,
+    "static_device_buffers": false
+  },
+  "native_realsense_depth_role": "fallback/debug only",
+  "official_quality_depth": true,
+  "offline_video_input_used": false,
+  "preset": "visual-5fps-single-owner",
+  "profile": "848x480",
+  "render_mode": "pointcloud",
+  "semantic_layers": [
+    {
+      "label": "towel",
+      "obj_id": 1,
+      "postprocess": "pt-filter"
+    },
+    {
+      "label": "stuffed animal",
+      "obj_id": 2,
+      "postprocess": "enhanced-pt"
+    }
+  ],
+  "temporal_grouping": {
+    "capture_buffer_size": 4,
+    "drop_skewed_groups": true,
+    "max_capture_skew_ms": 33.4,
+    "max_frame_age_ms": 150.0,
+    "no_temporal_coherent_group_no_ffs": true,
+    "policy": "timestamp-nearest"
+  },
+  "track_mode": "controller-object"
+}

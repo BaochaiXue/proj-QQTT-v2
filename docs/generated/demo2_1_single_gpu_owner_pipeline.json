@@ -1,0 +1,24 @@
+{
+  "artifact": "demo2_1_single_gpu_owner_pipeline",
+  "status": "implementation_ready_live_matrix_pending",
+  "preset": "visual-5fps-single-owner",
+  "gpu_pipeline": {
+    "mode": "single-owner",
+    "default_order": "ffs-then-edgetam",
+    "depth_and_masks_published_together": true
+  },
+  "quality_contract_unchanged": {
+    "depth_source": "ffs",
+    "ffs_checkpoint": "20-30-48",
+    "ffs_valid_iters": 4,
+    "ffs_input_shape": "480x864",
+    "ffs_builder_optimization_level": 5,
+    "edgetam_compile_mode": "vision-reduce-overhead",
+    "init_mode": "sam31-first-frame",
+    "temporal_grouping": "timestamp-nearest",
+    "object_filter": "enhanced-pt",
+    "controller_filter": "pt-filter",
+    "object_controller_union_before_filter": false
+  },
+  "live_results": []
+}

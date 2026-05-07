@@ -92,6 +92,16 @@ visual-5fps:
   quality path unchanged: FFS depth + object enhanced-pt
   temporal grouping uses timestamp-nearest, max skew 33.4 ms
 
+visual-5fps-single-owner:
+  848x480@30
+  fusion-target-fps=5
+  render-mode=pointcloud by default
+  gpu-pipeline-mode=single-owner
+  single-owner-order=ffs-then-edgetam
+  disables separate shared-FFS and per-camera EdgeTAM worker threads
+  publishes depth and masks together as one CompleteInferenceGroup
+  quality path unchanged: FFS depth + object enhanced-pt
+
 climb-5:
   848x480@30
   fusion-target-fps=5
@@ -156,6 +166,32 @@ the global `GpuInferenceGate`. The shared FFS worker still owns a single FFS
 runner/context and processes cam0/cam1/cam2 sequentially, while the quality
 contract remains unchanged: FFS-derived depth, live SAM3.1 init, timestamp
 grouping, and object `enhanced-pt`.
+
+Single GPU-owner profiling candidate:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps-single-owner \
+  --track-mode object-only \
+  --init-mode sam31-first-frame \
+  --object-prompt "stuffed animal" \
+  --duration-s 120 \
+  --debug \
+  --profile-pipeline \
+  --profile-filter \
+  --profile-visualization \
+  --profile-h2d \
+  --profile-warmup-exclude-s 40 \
+  --profile-json-output docs/generated/demo2_1_visual5fps_single_owner_no_pin_object_only_120s.json
+```
+
+In this mode one worker owns the FFS TensorRT runner and all EdgeTAM sessions.
+The worker processes one temporal-coherent `CaptureGroup` into a
+`CompleteInferenceGroup`, then fusion consumes complete depth+masks directly.
+This is designed to reduce partial same-group joins and GPU worker contention.
+The `--static-device-buffers` and `--preallocate-pcd-buffers` flags are recorded
+as memory-for-speed ablation hooks; they do not change the quality contract.
 
 Profiling the 5 FPS candidate:
 

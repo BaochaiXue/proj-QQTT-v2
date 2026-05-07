@@ -18,7 +18,11 @@ manual; use the compressed harness index first.
 | Area | Primary report |
 | --- | --- |
 | Demo 2.1 three-view fused PCD | `demo2_1_shared_ffs_per_camera_edgetam_validation.md` |
+| Demo 2.1 single GPU-owner pipeline | `demo2_1_single_gpu_owner_pipeline.md` |
+| Demo 2.1 temporary controller prompt probe | `demo2_1_controller_prompt_probe.md` |
+| Demo 2.1 towel-controller single-owner benchmark | `demo2_1_controller_towel_single_owner_benchmark.md` |
 | Latest Demo 2.1 visual profile | `demo2_1_visual5fps_image_sam31_profile_object_only_120s.md` |
+| Demo 2.1 pin-memory H2D ablation | `demo2_1_pin_memory_ablation.md` |
 | Demo 2 single-camera local FFS path | `demo2_local_ffs_professor_speed_polish.md` |
 | Demo 2 depth source comparison | `demo2_depth_source_fps_comparison.md` |
 | Remote FFS service | `demo2_remote_ffs_service_validation.md` |

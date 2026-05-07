@@ -1,0 +1,68 @@
+{
+  "prompt": "stuffed animal,towel",
+  "summary": [
+    {
+      "cam": 0,
+      "serial": "239222300412",
+      "labels": {
+        "stuffed animal": {
+          "count": 1,
+          "pixels": [
+            19044
+          ],
+          "union_px": 19044
+        },
+        "towel": {
+          "count": 2,
+          "pixels": [
+            11361,
+            14760
+          ],
+          "union_px": 26121
+        }
+      }
+    },
+    {
+      "cam": 1,
+      "serial": "239222300781",
+      "labels": {
+        "stuffed animal": {
+          "count": 1,
+          "pixels": [
+            18232
+          ],
+          "union_px": 18232
+        },
+        "towel": {
+          "count": 2,
+          "pixels": [
+            12193,
+            5370
+          ],
+          "union_px": 17563
+        }
+      }
+    },
+    {
+      "cam": 2,
+      "serial": "239222303506",
+      "labels": {
+        "stuffed animal": {
+          "count": 1,
+          "pixels": [
+            11266
+          ],
+          "union_px": 11266
+        },
+        "towel": {
+          "count": 2,
+          "pixels": [
+            12849,
+            4097
+          ],
+          "union_px": 16946
+        }
+      }
+    }
+  ]
+}

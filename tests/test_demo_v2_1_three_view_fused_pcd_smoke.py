@@ -298,8 +298,152 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertTrue(contract["temporal_grouping"]["drop_skewed_groups"])
         self.assertEqual(contract["ffs_contract"]["worker_mode"], "shared")
         self.assertEqual(contract["ffs_contract"]["schedule"], "strict3-latest")
+        self.assertEqual(contract["ffs_contract"]["input_staging"], "pinned")
         self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
         self.assertFalse(contract["fusion"]["object_controller_union_before_filter"])
+
+    def test_visual_5fps_single_owner_contract_keeps_quality_path(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps-single-owner", "--track-mode", "object-only"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run", "--track-mode"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["preset"], "visual-5fps-single-owner")
+        self.assertEqual(contract["profile"], "848x480")
+        self.assertEqual(contract["fps"], 30)
+        self.assertEqual(contract["track_mode"], "object-only")
+        self.assertEqual(contract["render_mode"], "pointcloud")
+        self.assertEqual(contract["fusion_target_fps"], 5.0)
+        self.assertEqual(contract["depth_source"], "ffs")
+        self.assertEqual(contract["gpu_pipeline"]["mode"], "single-owner")
+        self.assertEqual(contract["gpu_pipeline"]["internal_order"], "ffs-then-edgetam")
+        self.assertTrue(contract["gpu_pipeline"]["depth_and_masks_published_together"])
+        self.assertFalse(contract["gpu_pipeline"]["separate_ffs_and_edgetam_workers"])
+        self.assertEqual(contract["ffs_contract"]["worker_mode"], "shared")
+        self.assertEqual(contract["ffs_contract"]["input_staging"], "pinned")
+        self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
+        self.assertFalse(contract["fusion"]["object_controller_union_before_filter"])
+
+    def test_single_owner_thread_specs_disable_separate_gpu_workers(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                "visual-5fps-single-owner",
+                "--track-mode",
+                "object-only",
+                "--depth-source",
+                "ffs",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--track-mode", "--depth-source"},
+        )
+        runtime = demo.Demo21Runtime(args)
+        thread_names = [name for name, _target in runtime._thread_specs()]
+
+        self.assertIn("capture-group", thread_names)
+        self.assertIn("gpu-owner", thread_names)
+        self.assertIn("fusion", thread_names)
+        self.assertNotIn("shared-ffs", thread_names)
+        self.assertFalse(any(name.startswith("edgetam-cam") for name in thread_names))
+
+    def test_static_device_buffers_do_not_change_quality_contract(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                "visual-5fps-single-owner",
+                "--static-device-buffers",
+                "--preallocate-pcd-buffers",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--static-device-buffers", "--preallocate-pcd-buffers"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertTrue(contract["memory_for_speed"]["static_device_buffers"])
+        self.assertTrue(contract["memory_for_speed"]["preallocate_pcd_buffers"])
+        self.assertEqual(contract["depth_source"], "ffs")
+        self.assertEqual(contract["compile_mode"], demo.DEFAULT_COMPILE_MODE)
+        self.assertEqual(contract["filter_scheduler"]["object"]["postprocess"], "enhanced-pt")
+
+    def test_pin_memory_shorthand_resolves_to_all(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps", "--pin-memory"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--pin-memory"})
+        contract = demo.build_contract(args)
+
+        self.assertTrue(contract["h2d_transfer"]["pin_memory"])
+        self.assertEqual(contract["h2d_transfer"]["pin_memory_mode"], "all")
+        self.assertTrue(contract["h2d_transfer"]["edge_pin_enabled"])
+        self.assertEqual(contract["h2d_transfer"]["ffs_input_staging"], "pinned")
+
+    def test_true_no_pin_baseline_records_pageable_ffs_staging(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                "visual-5fps",
+                "--profile-h2d",
+                "--ffs-input-staging",
+                "pageable",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--profile-h2d", "--ffs-input-staging"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertFalse(contract["h2d_transfer"]["pin_memory"])
+        self.assertEqual(contract["h2d_transfer"]["pin_memory_mode"], "off")
+        self.assertEqual(contract["h2d_transfer"]["ffs_input_staging"], "pageable")
+        self.assertEqual(contract["ffs_contract"]["input_staging"], "pageable")
+
+    def test_pin_memory_mode_edge_preserves_explicit_pageable_ffs(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                "visual-5fps",
+                "--pin-memory-mode",
+                "edge",
+                "--ffs-input-staging",
+                "pageable",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--pin-memory-mode", "--ffs-input-staging"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertTrue(contract["h2d_transfer"]["pin_memory"])
+        self.assertEqual(contract["h2d_transfer"]["pin_memory_mode"], "edge")
+        self.assertTrue(contract["h2d_transfer"]["edge_pin_enabled"])
+        self.assertEqual(contract["h2d_transfer"]["ffs_input_staging"], "pageable")
+
+    def test_pin_memory_mode_ffs_does_not_enable_edge_pinning(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps", "--pin-memory-mode", "ffs"])
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--pin-memory-mode"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertTrue(contract["h2d_transfer"]["pin_memory"])
+        self.assertEqual(contract["h2d_transfer"]["pin_memory_mode"], "ffs")
+        self.assertFalse(contract["h2d_transfer"]["edge_pin_enabled"])
+        self.assertEqual(contract["h2d_transfer"]["ffs_input_staging"], "pinned")
 
     def test_saved_mask_roots_are_recorded_in_contract(self) -> None:
         parser = demo.build_arg_parser()
@@ -372,6 +516,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertFalse(defaults.profile_filter)
         self.assertFalse(defaults.profile_visualization)
         self.assertFalse(defaults.profile_gpu_gate)
+        self.assertFalse(defaults.profile_h2d)
         self.assertIsNone(defaults.profile_json_output)
 
         args = parser.parse_args(
@@ -484,6 +629,29 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(runtime._summary["capture_timeout_count"], 1)
         self.assertEqual(fake_camera.calls, 2)
         self.assertTrue(runtime.stop_event.is_set())
+
+    def test_pinned_pixel_stager_preserves_values(self) -> None:
+        try:
+            import torch
+        except Exception as exc:  # pragma: no cover - optional dependency guard
+            self.skipTest(f"torch unavailable: {exc}")
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA unavailable")
+
+        stager = demo.PinnedPixelValueStager(
+            torch_module=torch,
+            device="cuda",
+            ring_size=1,
+            h2d_stream_mode=demo.H2D_STREAM_MODE_DEDICATED,
+            verify_copies=True,
+        )
+        source = torch.arange(12, dtype=torch.float32).reshape(1, 3, 2, 2)
+        staged, profile = stager.stage(source, dtype=torch.float32)
+        torch.cuda.current_stream().synchronize()
+
+        self.assertTrue(torch.equal(staged.cpu(), source))
+        self.assertTrue(profile["pin_memory"])
+        self.assertEqual(profile["h2d_stream_mode"], demo.H2D_STREAM_MODE_DEDICATED)
 
 
 if __name__ == "__main__":
