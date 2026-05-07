@@ -1,0 +1,205 @@
+DEBUG conda.gateways.logging:set_log_level(223): log_level set to 10
+DEBUG conda.gateways.subprocess:subprocess_call(97): executing>> /usr/bin/bash /tmp/tmpb2irh9u8
+[ffs-remote-client] frame_id=0 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=1 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=2 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=3 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=4 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=5 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=6 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=7 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=8 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=9 ok=0 failed=9 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=9 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=10 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=11 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=12 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=13 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=14 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=15 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=16 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=17 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=18 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=19 ok=0 failed=19 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=19 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=20 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=21 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=22 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=23 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=24 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=25 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=26 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=27 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=28 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=29 ok=0 failed=29 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=29 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=30 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=31 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=32 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=33 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=34 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=35 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=36 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=37 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=38 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=39 ok=0 failed=39 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=39 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=40 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=41 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=42 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=43 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=44 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=45 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=46 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=47 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=48 ok=0 failed=48 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=48 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=49 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=50 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=51 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=52 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=53 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=54 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=55 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=56 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=57 ok=0 failed=57 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=57 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=58 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=59 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=60 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=61 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=62 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=63 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=64 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=65 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=66 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=67 ok=0 failed=67 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=67 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=68 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=69 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=70 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=71 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=72 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=73 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=74 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=75 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=76 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=77 ok=0 failed=77 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=77 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=78 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=79 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=80 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=81 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=82 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=83 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=84 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=85 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=86 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=87 ok=0 failed=87 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=87 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=88 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=89 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=90 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=91 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=92 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=93 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=94 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=95 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=96 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=97 ok=0 failed=97 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=97 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=98 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=99 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=100 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=101 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=102 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=103 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=104 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=105 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=106 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=107 ok=0 failed=107 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=107 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=108 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=109 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=110 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=111 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=112 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=113 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=114 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=115 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=116 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=117 ok=0 failed=117 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=117 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=118 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=119 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=120 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=121 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=122 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=123 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=124 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=125 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=126 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=127 ok=0 failed=127 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=127 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=128 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=129 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=130 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=131 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=132 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=133 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=134 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=135 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=136 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=137 ok=0 failed=137 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=137 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=138 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=139 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=140 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=141 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=142 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=143 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=144 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=145 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=146 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=147 ok=0 failed=147 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=147 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=148 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=149 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=150 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=151 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=152 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=153 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=154 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=155 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=156 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=157 ok=0 failed=157 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=157 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=158 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=159 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=160 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=161 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=162 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=163 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=164 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=165 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=166 ok=0 failed=166 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=166 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=167 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=168 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=169 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=170 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=171 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=172 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=173 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=174 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=175 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] sent=176 ok=0 failed=176 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p95=0.00
+[ffs-remote-client] frame_id=176 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=177 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=178 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=179 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=180 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=181 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=182 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client] frame_id=183 status=error error=RuntimeError: remote FFS server returned status='error': FfsRemoteProtocolError: request expected 3 parts, got 4
+[ffs-remote-client-summary] duration_s=20.07 sent=184.00 ok=0.00 failed=184.00 reply_fps=0.00 rtt_ms_p50=0.00 rtt_ms_p90=0.00 rtt_ms_p95=0.00 server_total_ms_p50=0.00 request_kb_mean=0.00 response_kb_mean=0.00 mbps_payload=0.00 sparse_points_mean=0.00
