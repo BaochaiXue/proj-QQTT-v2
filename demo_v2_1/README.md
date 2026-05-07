@@ -80,7 +80,7 @@ professor-safe:
   fusion-target-fps=2
   controller-object by default; pass --track-mode object-only when no hand/controller is visible
   render-mode=pointcloud by default
-  GPU gate serialized with max_concurrent=1
+  GPU gate off by default
   temporal grouping uses timestamp-nearest, max skew 33.4 ms
 
 visual-5fps:
@@ -88,7 +88,7 @@ visual-5fps:
   fusion-target-fps=5
   controller-object by default; pass --track-mode object-only when no hand/controller is visible
   render-mode=pointcloud by default
-  GPU gate limited with max_concurrent=2
+  GPU gate off by default
   quality path unchanged: FFS depth + object enhanced-pt
   temporal grouping uses timestamp-nearest, max skew 33.4 ms
 

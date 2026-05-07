@@ -21,6 +21,8 @@ manual; use the compressed harness index first.
 | Demo 2.1 single GPU-owner pipeline | `demo2_1_single_gpu_owner_pipeline.md` |
 | Demo 2.1 temporary controller prompt probe | `demo2_1_controller_prompt_probe.md` |
 | Demo 2.1 towel-controller single-owner benchmark | `demo2_1_controller_towel_single_owner_benchmark.md` |
+| Demo 2.1 single EdgeTAM GPU saturation probe | `demo2_1_single_edgetam_gpu_saturation_probe.md` |
+| Demo 2.1 three EdgeTAM GPU probe | `demo2_1_three_edgetam_gpu_probe.md` |
 | Latest Demo 2.1 visual profile | `demo2_1_visual5fps_image_sam31_profile_object_only_120s.md` |
 | Demo 2.1 pin-memory H2D ablation | `demo2_1_pin_memory_ablation.md` |
 | Demo 2 single-camera local FFS path | `demo2_local_ffs_professor_speed_polish.md` |

@@ -15,7 +15,7 @@ Date: 2026-05-06
 - TensorRT builder optimization level: `5`
 - EdgeTAM backend: HF `EdgeTAMVideo`
 - EdgeTAM compile mode: `vision-reduce-overhead`
-- professor-safe GPU gate: serialized, `max_concurrent=1`
+- professor-safe GPU gate default: off
 - temporal grouping: `timestamp-nearest`, max skew `33.4 ms`
 - object filter: `enhanced-pt`
 - controller filter: `pt-filter`
@@ -47,8 +47,9 @@ Fusion:
 
 GPU gate:
 
-- one shared `GpuInferenceGate`
-- `professor-safe` serializes shared FFS and EdgeTAM model forward
+- one optional shared `GpuInferenceGate`
+- Demo 2.1 presets now default to `gpu_gate=off`, `max_concurrent=0`
+- serialized/limited gate modes remain explicit profiling overrides
 - debug and summary record gate wait for FFS and each EdgeTAM camera worker
 
 Temporal grouping:
@@ -632,6 +633,8 @@ max_capture_skew_ms=33.4
 max_frame_age_ms=150
 capture_buffer_size=4
 drop_skewed_groups=true
+gpu_gate_mode=off
+gpu_gate_max_concurrent=0
 ```
 
 The shared FFS worker now rejects any group that violates the temporal skew
@@ -683,6 +686,16 @@ It disables only the global GpuInferenceGate:
   gpu_gate.mode=off
   gpu_gate.max_concurrent=0
 It does not create parallel FFS workers or multiple FFS TensorRT runners.
+```
+
+Current default:
+
+```text
+Demo 2.1 presets now default to gpu_gate.mode=off and max_concurrent=0.
+Serialized and limited gate modes remain explicit profiling overrides.
+For separate-workers + gate-off compiled EdgeTAM, the runtime wraps the compiled
+vision_encoder output with a clone step to avoid PyTorch CUDAGraph output
+overwrite when three camera workers run concurrently.
 ```
 
 Warmup-excluded live object-only results:

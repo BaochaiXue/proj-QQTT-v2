@@ -144,6 +144,56 @@ PIN_MEMORY_MODES = (PIN_MEMORY_MODE_OFF, PIN_MEMORY_MODE_EDGE, PIN_MEMORY_MODE_F
 H2D_STREAM_MODE_DEFAULT = "default"
 H2D_STREAM_MODE_DEDICATED = "dedicated"
 H2D_STREAM_MODES = (H2D_STREAM_MODE_DEFAULT, H2D_STREAM_MODE_DEDICATED)
+
+
+def mark_torch_cudagraph_step_begin(torch_module: Any) -> bool:
+    """Mark a new compiled/CUDAGraph step when the installed torch exposes it."""
+    compiler = getattr(torch_module, "compiler", None)
+    marker = getattr(compiler, "cudagraph_mark_step_begin", None) if compiler is not None else None
+    if marker is None:
+        return False
+    marker()
+    return True
+
+
+def _clone_tensor_tree(torch_module: Any, value: Any) -> Any:
+    def clone_if_tensor(item: Any) -> Any:
+        return item.clone() if torch_module.is_tensor(item) else item
+
+    pytree = getattr(getattr(torch_module, "utils", None), "_pytree", None)
+    tree_map = getattr(pytree, "tree_map", None) if pytree is not None else None
+    if tree_map is not None:
+        return tree_map(clone_if_tensor, value)
+    if torch_module.is_tensor(value):
+        return value.clone()
+    if isinstance(value, tuple):
+        return tuple(_clone_tensor_tree(torch_module, item) for item in value)
+    if isinstance(value, list):
+        return [_clone_tensor_tree(torch_module, item) for item in value]
+    if isinstance(value, dict):
+        return {key: _clone_tensor_tree(torch_module, item) for key, item in value.items()}
+    return value
+
+
+def wrap_compiled_vision_encoder_outputs_for_parallel(model: Any, torch_module: Any) -> bool:
+    """Clone compiled vision-encoder outputs before the next concurrent CUDAGraph replay."""
+    if not hasattr(model, "vision_encoder"):
+        return False
+    vision_encoder = getattr(model, "vision_encoder")
+    if bool(getattr(vision_encoder, "_qqtt_cudagraph_output_clone_wrapper", False)):
+        return False
+
+    class _OutputCloneWrapper(torch_module.nn.Module):
+        def __init__(self, wrapped: Any) -> None:
+            super().__init__()
+            self.wrapped = wrapped
+            self._qqtt_cudagraph_output_clone_wrapper = True
+
+        def forward(self, *args: Any, **kwargs: Any) -> Any:
+            return _clone_tensor_tree(torch_module, self.wrapped(*args, **kwargs))
+
+    setattr(model, "vision_encoder", _OutputCloneWrapper(vision_encoder))
+    return True
 GPU_PIPELINE_MODE_SEPARATE_WORKERS = "separate-workers"
 GPU_PIPELINE_MODE_SINGLE_OWNER = "single-owner"
 GPU_PIPELINE_MODES = (GPU_PIPELINE_MODE_SEPARATE_WORKERS, GPU_PIPELINE_MODE_SINGLE_OWNER)
@@ -876,8 +926,8 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             ("--edgetam-model-topology", "edgetam_model_topology", "replicated"),
             ("--compile-mode", "compile_mode", DEFAULT_COMPILE_MODE),
             ("--dtype", "dtype", DEFAULT_DTYPE),
-            ("--gpu-gate-mode", "gpu_gate_mode", GPU_GATE_MODE_SERIALIZED),
-            ("--gpu-gate-max-concurrent", "gpu_gate_max_concurrent", 1),
+            ("--gpu-gate-mode", "gpu_gate_mode", GPU_GATE_MODE_OFF),
+            ("--gpu-gate-max-concurrent", "gpu_gate_max_concurrent", 0),
             ("--fusion-timeout-ms", "fusion_timeout_ms", 250.0),
             ("--capture-group-policy", "capture_group_policy", CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST),
             ("--max-capture-skew-ms", "max_capture_skew_ms", DEFAULT_MAX_CAPTURE_SKEW_MS),
@@ -894,8 +944,8 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         elif preset == PRESET_VISUAL_5FPS:
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
-            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_LIMITED)
-            _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=2)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
         elif preset == PRESET_VISUAL_5FPS_NO_GATE:
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
@@ -2233,11 +2283,21 @@ class Demo21Runtime:
         model = hf_stream.EdgeTamVideoModel.from_pretrained(self.args.model_id).to(self.args.device, dtype=dtype)
         model.eval()
         model, compile_metadata = hf_stream._apply_compile_mode(model, self.args.compile_mode)
+        if (
+            self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SEPARATE_WORKERS
+            and self.args.gpu_gate_mode == GPU_GATE_MODE_OFF
+            and "vision_encoder" in set(compile_metadata.get("applied_targets", []))
+        ):
+            compile_metadata["cudagraph_output_clone_wrapper"] = wrap_compiled_vision_encoder_outputs_for_parallel(
+                model,
+                torch_module,
+            )
         processor = hf_stream.Sam2VideoProcessor.from_pretrained(self.args.model_id)
         print(
             "[demo2.1-edgetam] "
             f"cam={camera_idx} topology=replicated model={self.args.model_id} "
-            f"compile={self.args.compile_mode} applied={compile_metadata.get('applied_targets', [])}",
+            f"compile={self.args.compile_mode} applied={compile_metadata.get('applied_targets', [])} "
+            f"clone_wrap={compile_metadata.get('cudagraph_output_clone_wrapper', False)}",
             flush=True,
         )
         return hf_stream, torch_module, dtype, model, processor
@@ -2308,6 +2368,7 @@ class Demo21Runtime:
             gate_key = f"edgetam_cam{int(frame.camera_idx)}"
             with self.gpu_gate.acquire(stage="edgetam", camera_idx=frame.camera_idx, group_id=frame.group_id) as gate_wait_ms:
                 self._record_gpu_gate_wait(gate_key, gate_wait_ms)
+                mark_torch_cudagraph_step_begin(torch_module)
                 output, wall_model_ms, cuda_event_model_ms, _, _ = _time_model_forward(
                     torch_module=torch_module,
                     device=self.args.device,
@@ -3262,8 +3323,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--capture-buffer-size", type=int, default=DEFAULT_CAPTURE_BUFFER_SIZE)
     parser.add_argument("--drop-skewed-groups", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-inflight-groups", type=int, default=2)
-    parser.add_argument("--gpu-gate-mode", choices=GPU_GATE_MODES, default=GPU_GATE_MODE_SERIALIZED)
-    parser.add_argument("--gpu-gate-max-concurrent", type=int, default=1)
+    parser.add_argument("--gpu-gate-mode", choices=GPU_GATE_MODES, default=GPU_GATE_MODE_OFF)
+    parser.add_argument("--gpu-gate-max-concurrent", type=int, default=0)
     parser.add_argument("--gpu-pipeline-mode", choices=GPU_PIPELINE_MODES, default=GPU_PIPELINE_MODE_SEPARATE_WORKERS)
     parser.add_argument("--single-owner-order", choices=SINGLE_OWNER_ORDERS, default=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
     parser.add_argument("--static-device-buffers", action="store_true")
