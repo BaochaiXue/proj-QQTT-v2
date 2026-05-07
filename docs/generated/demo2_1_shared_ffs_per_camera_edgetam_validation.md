@@ -769,18 +769,23 @@ The data argues for a smarter policy instead:
   keep Open3D and quality filters unchanged
 ```
 
-## Cloth-Controller No-GPU-Gate Baseline
+## Historical Cloth-Prompt No-GPU-Gate Baseline
 
 Purpose:
 
 ```text
-Repeat the gate baseline with the current experimental controller setup:
-  controller = cloth
+Repeat the gate baseline with the then-current experimental controller setup:
+  historical controller prompt = cloth
   object = stuffed animal
 
 This is not the default controller semantics. The default Demo 2.1 controller
 label remains hand; cloth is only a temporary live experiment label.
 ```
+
+Current status: this `cloth` prompt is superseded for the present lab scene.
+The same two physical cloth-like controller proxies initialize correctly with
+`controller_prompt=towel`, and current reports/commands should use `towel` for
+the temporary controller experiment.
 
 Quality contract held constant:
 
@@ -788,7 +793,7 @@ Quality contract held constant:
 live SAM3.1 image one-frame initialization
 no saved-mask fallback
 track_mode=controller-object
-controller label=cloth, obj_id=1, postprocess=pt-filter
+historical controller label=cloth, obj_id=1, postprocess=pt-filter
 object label=stuffed animal, obj_id=2, postprocess=enhanced-PT
 FFS-derived depth, 20-30-48 / valid_iters=4 / 480x864 / builderOpt5
 timestamp-nearest grouping with max_capture_skew_ms=66.7
@@ -796,7 +801,7 @@ shared FFS worker remains sequential cam0 -> cam1 -> cam2
 object/controller union before filter = false
 ```
 
-Warmup-excluded live cloth-controller results:
+Warmup-excluded live historical cloth-prompt results:
 
 | Mode | Render FPS | Fusion FPS | Complete | Timeouts | Capture group FPS | FFS cycle median / p95 | FFS gate wait median / p95 | EdgeTAM model median per cam | Object enhanced-PT median / p95 | Controller PT median / p95 | Render p95 | Recommendation |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -807,7 +812,7 @@ Warmup-excluded live cloth-controller results:
 Interpretation:
 
 ```text
-For cloth-controller, no-gate is clearly faster than gate=2, but it still only
+For the historical cloth-prompt run, no-gate is clearly faster than gate=2, but it still only
 reaches ~1.13 FPS after warmup. Removing the global gate fixes the FFS wait
 problem, but EdgeTAM per-camera model time rises to ~257-270 ms, so the
 bottleneck remains upstream GPU contention / scheduling.
@@ -832,10 +837,10 @@ Artifacts:
 - `docs/generated/demo2_1_visual5fps_controller_cloth_no_gate_profile_20260506_103346.md`
 - invalid gate3 startup log: `docs/generated/demo2_1_visual5fps_controller_cloth_gate3_profile_20260506_103631.log`
 
-Next scheduling direction for cloth-controller:
+Historical scheduling direction for the cloth-prompt run:
 
 ```text
-Do not use gate=2 for the cloth-controller visual path; it starves FFS too much.
+Do not use gate=2 for this historical cloth-prompt visual path; it starves FFS too much.
 No-gate is the better baseline, but still not near 5 FPS.
 The next useful experiment is a smarter scheduling gate:
   FFS-priority or deadline-aware gate
@@ -880,16 +885,18 @@ See:
 - `docs/generated/demo2_1_pin_memory_ablation.md`
 - `docs/generated/demo2_1_pin_memory_ablation.json`
 
-## Cloth-controller live benchmark status
+## Cloth prompt failure and towel prompt update
 
-`controller=cloth` is supported as an explicit temporary experiment prompt; the
-default controller remains `hand`.
+`controller=cloth` is supported by the CLI as an explicit prompt string, but it
+is not the current working controller prompt for the lab scene. The default
+controller remains `hand`; the current temporary controller experiment uses
+`controller=towel`.
 
 Dry-run passed for:
 
 ```text
 track_mode=controller-object
-controller_prompt=cloth
+historical_controller_prompt=cloth
 object_prompt=stuffed animal
 controller slot -> pt-filter
 object slot -> enhanced-pt
@@ -919,10 +926,10 @@ complete fused groups=0
 drop reason=missing_mask_cam0
 ```
 
-Prompt probe update: the two physical cloth objects are better segmented as
-`towel` in the current scene. Static one-frame SAM3.1 returned nonzero
-`stuffed animal` and `towel` masks in all three views, and live sanity with
-`--controller-prompt towel` initialized all three cameras.
+Prompt probe update: the two physical cloth-like controller proxies are better
+segmented as `towel` in the current scene. Static one-frame SAM3.1 returned
+nonzero `stuffed animal` and `towel` masks in all three views, and live sanity
+with `--controller-prompt towel` initialized all three cameras.
 
 ## Single GPU-Owner Pipeline Experiment
 
@@ -1042,6 +1049,14 @@ After-warmup 120s results:
 | single-owner no-pin | 3.85 | 3.85 | 315 / 367 | 0 | 106.7 | best current candidate |
 | single-owner pin-ffs | 3.59 | 3.59 | 299 / 383 | 2 | 114.4 | pinned FFS staging did not help |
 | single-owner edge-first | 3.74 | 3.74 | 313 / 360 | 1 | 74.2 | stable, but lower FPS than ffs-then-edgetam |
+| single-owner no-pin repeat | 4.44 | 4.44 | 334 / 349 | 1 | 97.1 | repeat validated; best current candidate |
 
 The single-owner pipeline is the main improvement. It reduces partial group
 timeouts by publishing depth and masks together as a complete inference group.
+
+2026-05-07 repeat validation used the same temporary `controller_prompt=towel`
+and reached a `95.7%` complete-group ratio after warmup. A non-fast-exit WSLg
+Open3D run also completed 120s with live SAM3.1 initialization on all three
+cameras, confirming the visible pointcloud window path works without the
+profiling fast-exit flag. `towel` remains an explicit temporary controller
+experiment; the default controller remains `hand`.

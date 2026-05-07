@@ -191,7 +191,7 @@ complete fused groups: 0
 drop reason: missing_mask_cam0
 ```
 
-This is a valid no-fallback failure for the explicit cloth-controller
+This is a valid no-fallback failure for the historical cloth-prompt
 experiment.
 
 `towel` live sanity result:
@@ -211,6 +211,7 @@ After-warmup 120s benchmark results:
 | single-owner no-pin towel-controller | 3.85 | 3.85 | 315 / 367 | 0 | 19482 / 19535.0 | 11332 / 11593.0 | 106.7 | ~70 | 31.2 object / 18.3 controller | best current candidate |
 | single-owner pin-ffs towel-controller | 3.59 | 3.59 | 299 / 383 | 2 | 19487 / 19538.0 | 11415 / 11607.0 | 114.4 | ~74 | 34.1 object / 18.6 controller | pinned FFS staging did not help |
 | single-owner edge-first towel-controller | 3.74 | 3.74 | 313 / 360 | 1 | 19483 / 19535.0 | 11320 / 11597.0 | 74.2 | cam0 ~102 / cam1-2 ~65 | 33.5 object / 18.5 controller | stable but slower than ffs-then-edgetam |
+| single-owner no-pin repeat towel-controller | 4.44 | 4.44 | 334 / 349 | 1 | 19488 / 19560.0 | 11712 / 11838.5 | 97.1 | ~47-49 | 30.4 object / 17.6 controller | repeat validated; best current candidate |
 
 Conclusion:
 
@@ -219,3 +220,9 @@ single-owner removes most same-group join loss and is the best current
 towel-controller path. Pinned FFS staging should stay an ablation flag, not the
 default. The preferred order remains ffs-then-edgetam.
 ```
+
+2026-05-07 repeat validation strengthened this conclusion. The repeated
+single-owner no-pin run reached `4.44` render/fusion FPS after warmup with a
+`95.7%` complete-group ratio and only one fusion timeout. A non-fast-exit WSLg
+Open3D run also completed 120s with the same towel-controller setup, confirming
+the professor-visible window path can run without the profiling fast-exit flag.

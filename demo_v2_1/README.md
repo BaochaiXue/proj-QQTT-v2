@@ -274,14 +274,35 @@ The default mode is controller-object; current no-hand lab runs must explicitly 
 If SAM3.1 object-only initialization fails in a no-hand run, Demo 2.1 fails fast. That is intentional: there is no saved-mask or native-depth fallback in the formal path.
 
 The default controller prompt remains `hand`. Non-hand controller prompts are
-allowed only as explicit experimental overrides, for example when using two
-cloth pieces to stress-test the controller slot:
+allowed only as explicit experimental overrides. In the current no-hand lab
+scene, the two cloth-like controller proxies initialize reliably with the prompt
+`towel`; the prompt `cloth` failed to initialize cam0 in live SAM3.1 sanity.
 
 ```bash
---track-mode controller-object --controller-prompt "cloth"
+--track-mode controller-object --controller-prompt "towel"
 ```
 
 That override does not change the default professor-facing controller label.
+
+Current temporary controller-object best path:
+
+```bash
+./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
+  --preset visual-5fps-single-owner \
+  --track-mode controller-object \
+  --controller-prompt "towel" \
+  --object-prompt "stuffed animal" \
+  --init-mode sam31-first-frame \
+  --single-owner-order ffs-then-edgetam \
+  --ffs-input-staging pageable \
+  --duration-s 120 \
+  --debug
+```
+
+This command is a temporary towel-controller experiment only. It still uses live
+SAM3.1 first-frame init, FFS official depth, object enhanced-PT, controller
+pt-filter, and no fallback.
 
 Live SAM3.1 5 FPS profiling command:
 

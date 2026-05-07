@@ -1,6 +1,6 @@
 # Demo 2.1 Towel-Controller Single-Owner Benchmark
 
-Date: 2026-05-06
+Date: 2026-05-06, repeated on 2026-05-07
 
 ## Contract
 
@@ -18,8 +18,9 @@ controller_filter=pt-filter
 fallback_allowed=false
 ```
 
-`towel` is a temporary experiment controller prompt for the current two-cloth
-scene. The default controller prompt remains `hand`.
+`towel` is a temporary experiment controller prompt for the current scene with
+two cloth-like controller proxies. The default controller prompt remains
+`hand`.
 
 ## Sanity Result
 
@@ -43,6 +44,41 @@ After-warmup metrics:
 | single-owner no-pin | 3.85 | 3.85 | 315 / 367 | 85.8% | 0 | 106.7 | 298.8 | 191.7 | 11332 / 11593.0 | 19482 / 19535.0 | Best current candidate |
 | single-owner pin-ffs | 3.59 | 3.59 | 299 / 383 | 78.1% | 2 | 114.4 | 341.9 | 218.9 | 11415 / 11607.0 | 19487 / 19538.0 | Pinned FFS staging did not help |
 | single-owner edge-first | 3.74 | 3.74 | 313 / 360 | 86.9% | 1 | 74.2 | 304.8 | 232.7 | 11320 / 11597.0 | 19483 / 19535.0 | Stable, but slower than ffs-then-edgetam |
+
+## 2026-05-07 Repeat Validation
+
+The best candidate was repeated with the same temporary controller setup:
+
+```text
+preset=visual-5fps-single-owner
+track_mode=controller-object
+controller_prompt=towel
+object_prompt=stuffed animal
+single_owner_order=ffs-then-edgetam
+ffs_input_staging=pageable
+gpu_gate=off
+```
+
+Warmup-excluded 120s profile:
+
+| Metric | Value |
+| --- | ---: |
+| Render FPS | 4.44 |
+| Fusion FPS | 4.44 |
+| Complete / Total groups | 334 / 349 |
+| Complete ratio | 95.7% |
+| Fusion timeouts | 1 |
+| FFS cycle p95 | 97.1 ms |
+| GPU-owner total p95 | 243.5 ms |
+| EdgeTAM cycle p95 | 147.4 ms |
+| Object enhanced-PT p95 / max | 30.4 / 209.2 ms |
+| Controller pt-filter p95 / max | 17.6 / 20.1 ms |
+| Open3D render p95 | 1.9 ms |
+
+Non-fast-exit GUI validation also completed a 120s pointcloud run without an
+Open3D/WSLg crash. Final debug summary from that GUI run reported
+`render_fps=4.46`, `fusion_fps=4.33`, `capture_group_fps=5.00`, with live
+SAM3.1 masks initialized for all three cameras.
 
 ## Interpretation
 
@@ -75,5 +111,8 @@ docs/generated/demo2_1_controller_towel_separate_workers_visual5fps_120s.json
 docs/generated/demo2_1_controller_towel_single_owner_no_pin_120s.json
 docs/generated/demo2_1_controller_towel_single_owner_pin_ffs_120s.json
 docs/generated/demo2_1_controller_towel_single_owner_edge_first_120s.json
+docs/generated/demo2_1_controller_towel_single_owner_no_pin_repeat_120s.json
+docs/generated/demo2_1_controller_towel_single_owner_no_pin_repeat_120s.md
+docs/generated/demo2_1_controller_towel_single_owner_gui_120s.log
+result/demo2_1_three_view_fused_pcd/session_20260507_124917_summary.json
 ```
-
