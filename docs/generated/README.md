@@ -27,7 +27,7 @@ manual; use the compressed harness index first.
 | Demo 2.1 pin-memory H2D ablation | `demo2_1_pin_memory_ablation.md` |
 | Demo 2 single-camera local FFS path | `demo2_local_ffs_professor_speed_polish.md` |
 | Demo 2 depth source comparison | `demo2_depth_source_fps_comparison.md` |
-| Remote FFS service | `demo2_remote_ffs_service_validation.md`; latest 4090/5090 probe: `demo2_remote_ffs_4090_server_5090_client_validation.md`; WSL-5090 LAN echo client: `demo2_remote_ffs_echo_wsl5090_client.md` |
+| Remote FFS service | `demo2_remote_ffs_service_validation.md`; latest 4090/5090 probe: `demo2_remote_ffs_4090_server_5090_client_validation.md`; WSL-5090 synthetic LAN echo: `demo2_remote_ffs_echo_wsl5090_client.md`; WSL-5090 real-IR depth benchmark: `demo2_remote_ffs_real_ir_depth_benchmark_wsl5090.md` |
 | HF EdgeTAM streaming | `hf_edgetam_streaming_processor_session_validation.md` |
 | HF EdgeTAM compile ablation | `sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.md` |
 | FFS backend integration | `ffs_depth_backend_integration_validation.md` |

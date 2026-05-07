@@ -620,6 +620,8 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         )
         self.assertIn("--endpoint ENDPOINT", result.stdout)
         self.assertIn("--echo-benchmark", result.stdout)
+        self.assertIn("--real-ir-depth-benchmark", result.stdout)
+        self.assertIn("--serial SERIAL", result.stdout)
         self.assertIn("--profile PROFILE", result.stdout)
         self.assertIn("--compress {none,zstd,lz4,png}", result.stdout)
         self.assertIn("--mask-fraction MASK_FRACTION", result.stdout)
@@ -665,6 +667,42 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertGreaterEqual(summary["ok"], 1.0)
         self.assertEqual(summary["failed"], 0.0)
         self.assertFalse(fake_client.closed)
+
+        real_args = ffs_remote_client.build_parser().parse_args(
+            [
+                "--endpoint",
+                "tcp://127.0.0.1:7001",
+                "--real-ir-depth-benchmark",
+                "--serial",
+                "239222300412",
+                "--profile",
+                "848x480",
+                "--fps",
+                "30",
+                "--duration-s",
+                "1",
+                "--compress",
+                "lz4",
+                "--return-type",
+                "depth_u16",
+                "--save-first-depth-preview",
+            ]
+        )
+        ffs_remote_client._validate_real_ir_depth_args(real_args)
+        self.assertTrue(real_args.real_ir_depth_benchmark)
+        self.assertFalse(real_args.echo_benchmark)
+
+        sparse_real_args = ffs_remote_client.build_parser().parse_args(
+            [
+                "--endpoint",
+                "tcp://127.0.0.1:7001",
+                "--real-ir-depth-benchmark",
+                "--return-type",
+                "masked_uv_depth",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "requires a full-frame return type"):
+            ffs_remote_client._validate_real_ir_depth_args(sparse_real_args)
 
     def test_ffs_remote_server_strict_engine_contract_validates_path_tokens(self) -> None:
         args = ffs_remote_server.build_parser().parse_args(
