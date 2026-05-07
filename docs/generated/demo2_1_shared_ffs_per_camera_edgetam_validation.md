@@ -15,8 +15,9 @@ Date: 2026-05-06
 - TensorRT builder optimization level: `5`
 - EdgeTAM backend: HF `EdgeTAMVideo`
 - EdgeTAM compile mode: `vision-reduce-overhead`
-- professor-safe GPU gate default: off
-- temporal grouping: `timestamp-nearest`, max skew `33.4 ms`
+- official-lowfps GPU gate default: off
+- preset capture: `848x480@15` per camera
+- temporal grouping: `timestamp-nearest`, max skew `66.7 ms`
 - object filter: `enhanced-pt`
 - controller filter: `pt-filter`
 - object/controller union before filter: `false`
@@ -57,7 +58,7 @@ Temporal grouping:
 - no temporal-coherent `CaptureGroup`, no FFS
 - `CaptureGroupBuilder` keeps a small per-camera timestamp buffer
 - default policy is `timestamp-nearest`
-- default max skew is `33.4 ms`, one frame at `30 FPS`
+- default max skew is `66.7 ms`, one frame at `15 FPS`
 - skewed groups are dropped before shared FFS
 - shared FFS and fusion both re-check the same skew contract
 - debug/profile/summary record timestamp source, per-camera offsets, skew, skew drops, and no-candidate drops
@@ -66,13 +67,40 @@ Temporal grouping:
 
 | Preset | Profile | Target | Render default | Intended use |
 | --- | --- | ---: | --- | --- |
-| `professor-safe` | `848x480@30` | 2 FPS | pointcloud | default controller-object FFS-quality fused demo; pass `--track-mode object-only` only when no controller is visible |
-| `visual-5fps` | `848x480@30` | 5 FPS | pointcloud | default controller-object quality-preserving visual candidate; current no-hand tests explicitly pass `--track-mode object-only` |
-| `climb-5` | `848x480@30` | 5 FPS | none | headless performance climb |
-| `climb-10` | `848x480@30` | 10 FPS | none | diagnostic stress test |
-| `diagnostics` | `848x480@30` | 2 FPS | none | capture/EdgeTAM/FFS isolation |
+| `official-lowfps` | `848x480@15` | 2 FPS | pointcloud | default controller-object FFS-quality fused demo; pass `--track-mode object-only` only when no controller is visible |
+| `perf-5fps` | `848x480@15` | 5 FPS | pointcloud | controller-object quality-preserving performance target; current no-hand tests explicitly pass `--track-mode object-only` |
+| `perf-5fps-single-owner` | `848x480@15` | 5 FPS | pointcloud | single GPU-owner performance target; publishes complete depth+masks together |
+| `climb-5` | `848x480@15` | 5 FPS | none | headless performance climb |
+| `climb-10` | `848x480@15` | 10 FPS | none | diagnostic stress test |
+| `diagnostics` | `848x480@15` | 2 FPS | none | capture/EdgeTAM/FFS isolation |
 
-The professor-safe preset prioritizes semantic correctness and startup stability over frame rate.
+Compatibility aliases are kept for older commands:
+
+```text
+professor-safe              -> official-lowfps
+visual-5fps                 -> perf-5fps
+visual-5fps-no-gate         -> perf-5fps
+visual-5fps-single-owner    -> perf-5fps-single-owner
+```
+
+The official-lowfps preset prioritizes semantic correctness and startup stability over frame rate.
+
+## Preset Taxonomy Cleanup
+
+`visual-5fps` was originally a visual performance candidate and then became
+overloaded for render, EdgeTAM, FFS, gate, and H2D profiling. New commands
+should use canonical preset names:
+
+```text
+official-lowfps          formal low-FPS professor-facing quality path
+perf-5fps                5 FPS separate-workers performance target
+perf-5fps-single-owner   5 FPS single GPU-owner performance target
+diagnostics              capture / EdgeTAM / FFS isolation base
+climb-5, climb-10        headless target-rate stress tests
+```
+
+Old names remain compatibility aliases only. Historical results below still use
+the old filenames and command strings where that is how the experiment was run.
 
 ## Validation Commands
 
@@ -619,7 +647,7 @@ New CLI/contract fields:
 
 ```text
 --capture-group-policy latest|timestamp-nearest|timestamp-strict
---max-capture-skew-ms 33.4
+--max-capture-skew-ms 66.7
 --max-frame-age-ms 150
 --capture-buffer-size 4
 --drop-skewed-groups / --no-drop-skewed-groups
@@ -629,7 +657,7 @@ New CLI/contract fields:
 
 ```text
 capture_group_policy=timestamp-nearest
-max_capture_skew_ms=33.4
+max_capture_skew_ms=66.7
 max_frame_age_ms=150
 capture_buffer_size=4
 drop_skewed_groups=true
@@ -671,7 +699,7 @@ Quality contract held constant:
 live SAM3.1 image one-frame initialization
 explicit object-only mode for the current no-controller scene
 FFS-derived depth, 20-30-48 / valid_iters=4 / 480x864 / builderOpt5
-timestamp-nearest grouping with max_capture_skew_ms=33.4
+timestamp-nearest grouping with max_capture_skew_ms=66.7
 shared FFS worker remains sequential cam0 -> cam1 -> cam2
 three per-camera EdgeTAM streaming sessions
 object enhanced-PT
@@ -760,7 +788,7 @@ track_mode=controller-object
 controller label=cloth, obj_id=1, postprocess=pt-filter
 object label=stuffed animal, obj_id=2, postprocess=enhanced-PT
 FFS-derived depth, 20-30-48 / valid_iters=4 / 480x864 / builderOpt5
-timestamp-nearest grouping with max_capture_skew_ms=33.4
+timestamp-nearest grouping with max_capture_skew_ms=66.7
 shared FFS worker remains sequential cam0 -> cam1 -> cam2
 object/controller union before filter = false
 ```
@@ -921,7 +949,7 @@ New preset:
 ```text
 visual-5fps-single-owner:
   profile=848x480
-  fps=30
+  fps=15
   fusion_target_fps=5
   render_mode=pointcloud
   gpu_pipeline_mode=single-owner

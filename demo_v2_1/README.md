@@ -41,9 +41,9 @@ Temporal grouping policy:
 ```text
 No temporal-coherent CaptureGroup, no FFS.
 
-professor-safe / visual-5fps defaults:
+official/performance preset defaults:
   capture-group-policy=timestamp-nearest
-  max-capture-skew-ms=33.4
+  max-capture-skew-ms=66.7
   max-frame-age-ms=150
   capture-buffer-size=4
   drop-skewed-groups=true
@@ -69,31 +69,31 @@ filter path:
 Dry-run contract:
 
 ```bash
-python demo_v2_1/realtime_three_view_masked_fused_pcd.py --dry-run --preset professor-safe
+python demo_v2_1/realtime_three_view_masked_fused_pcd.py --dry-run --preset official-lowfps
 ```
 
 Presets:
 
 ```text
-professor-safe:
-  848x480@30
+official-lowfps:
+  848x480@15
   fusion-target-fps=2
   controller-object by default; pass --track-mode object-only when no hand/controller is visible
   render-mode=pointcloud by default
   GPU gate off by default
-  temporal grouping uses timestamp-nearest, max skew 33.4 ms
+  temporal grouping uses timestamp-nearest, max skew 66.7 ms
 
-visual-5fps:
-  848x480@30
+perf-5fps:
+  848x480@15
   fusion-target-fps=5
   controller-object by default; pass --track-mode object-only when no hand/controller is visible
   render-mode=pointcloud by default
   GPU gate off by default
   quality path unchanged: FFS depth + object enhanced-pt
-  temporal grouping uses timestamp-nearest, max skew 33.4 ms
+  temporal grouping uses timestamp-nearest, max skew 66.7 ms
 
-visual-5fps-single-owner:
-  848x480@30
+perf-5fps-single-owner:
+  848x480@15
   fusion-target-fps=5
   render-mode=pointcloud by default
   gpu-pipeline-mode=single-owner
@@ -103,38 +103,50 @@ visual-5fps-single-owner:
   quality path unchanged: FFS depth + object enhanced-pt
 
 climb-5:
-  848x480@30
+  848x480@15
   fusion-target-fps=5
   render-mode=none by default
 
 climb-10:
-  848x480@30
+  848x480@15
   fusion-target-fps=10
   render-mode=none by default
 
 diagnostics:
-  starts from the same 848x480@30, serialized GPU gate surface
+  starts from the same 848x480@15, gate-off surface
   combine with --depth-source none, --track-mode none, or --render-mode none
 ```
 
-Current no-hand professor-safe object-only run:
+Compatibility aliases:
+
+```text
+professor-safe              -> official-lowfps
+visual-5fps                 -> perf-5fps
+visual-5fps-no-gate         -> perf-5fps
+visual-5fps-single-owner    -> perf-5fps-single-owner
+```
+
+Use the canonical names in new scripts. The old names are kept only so older
+profiling commands and generated reports still run.
+
+Current no-hand official low-FPS object-only run:
 
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --preset professor-safe \
+  --preset official-lowfps \
   --track-mode object-only \
   --object-prompt "stuffed animal" \
   --duration-s 120 \
   --debug
 ```
 
-Current no-hand 5 FPS visual candidate:
+Current no-hand 5 FPS performance candidate:
 
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --preset visual-5fps \
+  --preset perf-5fps \
   --track-mode object-only \
   --object-prompt "stuffed animal" \
   --duration-s 120 \
@@ -147,7 +159,7 @@ No-GPU-gate profiling baseline:
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --preset visual-5fps-no-gate \
+  --preset perf-5fps \
   --track-mode object-only \
   --init-mode sam31-first-frame \
   --object-prompt "stuffed animal" \
@@ -158,7 +170,7 @@ No-GPU-gate profiling baseline:
   --profile-visualization \
   --profile-gpu-gate \
   --profile-warmup-exclude-s 40 \
-  --profile-json-output docs/generated/demo2_1_visual5fps_live_sam31_no_gate_profile_object_only_120s.json
+  --profile-json-output docs/generated/demo2_1_perf5fps_live_sam31_no_gate_profile_object_only_120s.json
 ```
 
 This is a profiling baseline, not a default professor preset. It disables only
@@ -172,7 +184,7 @@ Single GPU-owner profiling candidate:
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --preset visual-5fps-single-owner \
+  --preset perf-5fps-single-owner \
   --track-mode object-only \
   --init-mode sam31-first-frame \
   --object-prompt "stuffed animal" \
@@ -183,7 +195,7 @@ Single GPU-owner profiling candidate:
   --profile-visualization \
   --profile-h2d \
   --profile-warmup-exclude-s 40 \
-  --profile-json-output docs/generated/demo2_1_visual5fps_single_owner_no_pin_object_only_120s.json
+  --profile-json-output docs/generated/demo2_1_perf5fps_single_owner_no_pin_object_only_120s.json
 ```
 
 In this mode one worker owns the FFS TensorRT runner and all EdgeTAM sessions.
@@ -198,7 +210,7 @@ Profiling the 5 FPS candidate:
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --preset visual-5fps \
+  --preset perf-5fps \
   --track-mode object-only \
   --object-prompt "stuffed animal" \
   --duration-s 120 \
@@ -208,7 +220,7 @@ Profiling the 5 FPS candidate:
   --profile-visualization \
   --profile-gpu-gate \
   --profile-warmup-exclude-s 20 \
-  --profile-json-output docs/generated/demo2_1_visual5fps_profile_object_only.json
+  --profile-json-output docs/generated/demo2_1_perf5fps_profile_object_only.json
 ```
 
 Formal Demo 2.1 initialization requirement:
@@ -237,7 +249,7 @@ Live SAM3.1 5 FPS profiling command:
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --preset visual-5fps \
+  --preset perf-5fps \
   --track-mode object-only \
   --init-mode sam31-first-frame \
   --object-prompt "stuffed animal" \
@@ -248,7 +260,7 @@ Live SAM3.1 5 FPS profiling command:
   --profile-visualization \
   --profile-gpu-gate \
   --profile-warmup-exclude-s 40 \
-  --profile-json-output docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.json
+  --profile-json-output docs/generated/demo2_1_perf5fps_live_sam31_profile_object_only_120s.json
 ```
 
 `saved-masks` is rejected by the formal Demo 2.1 runtime. Use it only in separate diagnostic scripts, not this live demo.
@@ -258,7 +270,7 @@ Controller-object run, only when a hand is visible:
 ```bash
 ./demo_v2_1/run_wslg_open3d.sh conda run --no-capture-output -n demo_2_max \
   python demo_v2_1/realtime_three_view_masked_fused_pcd.py \
-  --preset professor-safe \
+  --preset official-lowfps \
   --track-mode controller-object \
   --controller-prompt "hand" \
   --object-prompt "stuffed animal" \
@@ -299,7 +311,7 @@ SharedFfsWorker:
   sequentially computes cam0, cam1, cam2 depth only for temporal-coherent group_id
 
 GpuInferenceGate:
-  serializes FFS and EdgeTAM GPU inference in professor-safe mode
+  is off by default; serialized/limited modes are explicit profiling overrides
   records per-stage wait time in debug and session summary
 
 EdgeTamCameraWorker:

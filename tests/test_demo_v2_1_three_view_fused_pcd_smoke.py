@@ -241,60 +241,63 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertTrue(contract["temporal_grouping"]["drop_skewed_groups"])
         self.assertTrue(contract["temporal_grouping"]["no_temporal_coherent_group_no_ffs"])
 
-    def test_professor_safe_preset_defaults_to_controller_object_demo(self) -> None:
+    def test_official_lowfps_preset_defaults_to_controller_object_demo(self) -> None:
         parser = demo.build_arg_parser()
-        args = parser.parse_args(["--dry-run", "--preset", "professor-safe"])
+        args = parser.parse_args(["--dry-run", "--preset", "official-lowfps"])
         args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run"})
         contract = demo.build_contract(args)
 
-        self.assertEqual(contract["preset"], "professor-safe")
+        self.assertEqual(contract["preset"], "official-lowfps")
+        self.assertEqual(contract["preset_canonical"], "official-lowfps")
         self.assertEqual(contract["profile"], "848x480")
-        self.assertEqual(contract["fps"], 30)
+        self.assertEqual(contract["fps"], demo.DEFAULT_PRESET_CAPTURE_FPS)
         self.assertEqual(contract["track_mode"], "controller-object")
         self.assertEqual(contract["render_mode"], "pointcloud")
         self.assertEqual(contract["fusion_target_fps"], 2.0)
         self.assertEqual(contract["fusion_timeout_ms"], 250.0)
         self.assertEqual(contract["gpu_gate"], {"mode": "off", "max_concurrent": 0})
         self.assertEqual(contract["temporal_grouping"]["policy"], "timestamp-nearest")
-        self.assertEqual(contract["temporal_grouping"]["max_capture_skew_ms"], 33.4)
+        self.assertEqual(contract["temporal_grouping"]["max_capture_skew_ms"], demo.DEFAULT_PRESET_MAX_CAPTURE_SKEW_MS)
         self.assertEqual(contract["temporal_grouping"]["capture_buffer_size"], 4)
         self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["hand", "stuffed animal"])
 
-    def test_visual_5fps_preset_keeps_quality_path_with_gate_off(self) -> None:
+    def test_perf_5fps_preset_keeps_quality_path_with_gate_off(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", "perf-5fps", "--track-mode", "object-only"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run", "--track-mode"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["preset"], "perf-5fps")
+        self.assertEqual(contract["profile"], "848x480")
+        self.assertEqual(contract["fps"], demo.DEFAULT_PRESET_CAPTURE_FPS)
+        self.assertEqual(contract["track_mode"], "object-only")
+        self.assertEqual(contract["render_mode"], "pointcloud")
+        self.assertEqual(contract["fusion_target_fps"], 5.0)
+        self.assertEqual(contract["depth_source"], "ffs")
+        self.assertEqual(contract["preset_canonical"], "perf-5fps")
+        self.assertEqual(contract["gpu_gate"], {"mode": "off", "max_concurrent": 0})
+        self.assertEqual(contract["temporal_grouping"]["policy"], "timestamp-nearest")
+        self.assertEqual(contract["temporal_grouping"]["max_capture_skew_ms"], demo.DEFAULT_PRESET_MAX_CAPTURE_SKEW_MS)
+        self.assertTrue(contract["temporal_grouping"]["drop_skewed_groups"])
+        self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
+
+    def test_legacy_visual_5fps_alias_maps_to_perf_5fps(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", "visual-5fps", "--track-mode", "object-only"])
         args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run", "--track-mode"})
         contract = demo.build_contract(args)
 
         self.assertEqual(contract["preset"], "visual-5fps")
+        self.assertEqual(contract["preset_canonical"], "perf-5fps")
         self.assertEqual(contract["profile"], "848x480")
-        self.assertEqual(contract["fps"], 30)
+        self.assertEqual(contract["fps"], demo.DEFAULT_PRESET_CAPTURE_FPS)
         self.assertEqual(contract["track_mode"], "object-only")
         self.assertEqual(contract["render_mode"], "pointcloud")
         self.assertEqual(contract["fusion_target_fps"], 5.0)
         self.assertEqual(contract["depth_source"], "ffs")
         self.assertEqual(contract["gpu_gate"], {"mode": "off", "max_concurrent": 0})
         self.assertEqual(contract["temporal_grouping"]["policy"], "timestamp-nearest")
-        self.assertEqual(contract["temporal_grouping"]["max_capture_skew_ms"], 33.4)
-        self.assertTrue(contract["temporal_grouping"]["drop_skewed_groups"])
-        self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
-
-    def test_visual_5fps_no_gate_contract_keeps_quality_path(self) -> None:
-        parser = demo.build_arg_parser()
-        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps-no-gate", "--track-mode", "object-only"])
-        args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run", "--track-mode"})
-        contract = demo.build_contract(args)
-
-        self.assertEqual(contract["preset"], "visual-5fps-no-gate")
-        self.assertEqual(contract["profile"], "848x480")
-        self.assertEqual(contract["fps"], 30)
-        self.assertEqual(contract["track_mode"], "object-only")
-        self.assertEqual(contract["render_mode"], "pointcloud")
-        self.assertEqual(contract["fusion_target_fps"], 5.0)
-        self.assertEqual(contract["depth_source"], "ffs")
-        self.assertEqual(contract["gpu_gate"], {"mode": "off", "max_concurrent": 0})
-        self.assertEqual(contract["temporal_grouping"]["policy"], "timestamp-nearest")
-        self.assertEqual(contract["temporal_grouping"]["max_capture_skew_ms"], 33.4)
+        self.assertEqual(contract["temporal_grouping"]["max_capture_skew_ms"], demo.DEFAULT_PRESET_MAX_CAPTURE_SKEW_MS)
         self.assertTrue(contract["temporal_grouping"]["drop_skewed_groups"])
         self.assertEqual(contract["ffs_contract"]["worker_mode"], "shared")
         self.assertEqual(contract["ffs_contract"]["schedule"], "strict3-latest")
@@ -302,15 +305,16 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
         self.assertFalse(contract["fusion"]["object_controller_union_before_filter"])
 
-    def test_visual_5fps_single_owner_contract_keeps_quality_path(self) -> None:
+    def test_perf_5fps_single_owner_contract_keeps_quality_path(self) -> None:
         parser = demo.build_arg_parser()
-        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps-single-owner", "--track-mode", "object-only"])
+        args = parser.parse_args(["--dry-run", "--preset", "perf-5fps-single-owner", "--track-mode", "object-only"])
         args = demo.apply_preset_defaults(args, explicit_options={"--preset", "--dry-run", "--track-mode"})
         contract = demo.build_contract(args)
 
-        self.assertEqual(contract["preset"], "visual-5fps-single-owner")
+        self.assertEqual(contract["preset"], "perf-5fps-single-owner")
+        self.assertEqual(contract["preset_canonical"], "perf-5fps-single-owner")
         self.assertEqual(contract["profile"], "848x480")
-        self.assertEqual(contract["fps"], 30)
+        self.assertEqual(contract["fps"], demo.DEFAULT_PRESET_CAPTURE_FPS)
         self.assertEqual(contract["track_mode"], "object-only")
         self.assertEqual(contract["render_mode"], "pointcloud")
         self.assertEqual(contract["fusion_target_fps"], 5.0)
@@ -330,7 +334,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
             [
                 "--dry-run",
                 "--preset",
-                "visual-5fps-single-owner",
+                "perf-5fps-single-owner",
                 "--track-mode",
                 "object-only",
                 "--depth-source",
@@ -356,7 +360,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
             [
                 "--dry-run",
                 "--preset",
-                "visual-5fps-single-owner",
+                "perf-5fps-single-owner",
                 "--static-device-buffers",
                 "--preallocate-pcd-buffers",
             ]
@@ -375,7 +379,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
 
     def test_pin_memory_shorthand_resolves_to_all(self) -> None:
         parser = demo.build_arg_parser()
-        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps", "--pin-memory"])
+        args = parser.parse_args(["--dry-run", "--preset", "perf-5fps", "--pin-memory"])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--pin-memory"})
         contract = demo.build_contract(args)
 
@@ -390,7 +394,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
             [
                 "--dry-run",
                 "--preset",
-                "visual-5fps",
+                "perf-5fps",
                 "--profile-h2d",
                 "--ffs-input-staging",
                 "pageable",
@@ -413,7 +417,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
             [
                 "--dry-run",
                 "--preset",
-                "visual-5fps",
+                "perf-5fps",
                 "--pin-memory-mode",
                 "edge",
                 "--ffs-input-staging",
@@ -433,7 +437,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
 
     def test_pin_memory_mode_ffs_does_not_enable_edge_pinning(self) -> None:
         parser = demo.build_arg_parser()
-        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps", "--pin-memory-mode", "ffs"])
+        args = parser.parse_args(["--dry-run", "--preset", "perf-5fps", "--pin-memory-mode", "ffs"])
         args = demo.apply_preset_defaults(
             args,
             explicit_options={"--dry-run", "--preset", "--pin-memory-mode"},
@@ -451,7 +455,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
             [
                 "--dry-run",
                 "--preset",
-                "visual-5fps",
+                "perf-5fps",
                 "--init-mode",
                 "saved-masks",
                 "--object-init-mask-root",
@@ -471,7 +475,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
 
     def test_live_sam31_defaults_are_fail_fast_for_formal_demo(self) -> None:
         parser = demo.build_arg_parser()
-        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps", "--init-mode", "sam31-first-frame"])
+        args = parser.parse_args(["--dry-run", "--preset", "perf-5fps", "--init-mode", "sam31-first-frame"])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--init-mode"})
         contract = demo.build_contract(args)
 
@@ -511,7 +515,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
 
     def test_visual_profile_flags_are_explicit_and_default_off(self) -> None:
         parser = demo.build_arg_parser()
-        defaults = parser.parse_args(["--dry-run", "--preset", "visual-5fps"])
+        defaults = parser.parse_args(["--dry-run", "--preset", "perf-5fps"])
         self.assertFalse(defaults.profile_pipeline)
         self.assertFalse(defaults.profile_filter)
         self.assertFalse(defaults.profile_visualization)
@@ -523,7 +527,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
             [
                 "--dry-run",
                 "--preset",
-                "visual-5fps",
+                "perf-5fps",
                 "--profile-pipeline",
                 "--profile-filter",
                 "--profile-visualization",
@@ -531,7 +535,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
                 "--profile-warmup-exclude-s",
                 "20",
                 "--profile-json-output",
-                "docs/generated/demo2_1_visual5fps_profile_object_only.json",
+                "docs/generated/demo2_1_perf5fps_profile_object_only.json",
             ]
         )
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
@@ -541,11 +545,11 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertTrue(args.profile_visualization)
         self.assertTrue(args.profile_gpu_gate)
         self.assertEqual(args.profile_warmup_exclude_s, 20)
-        self.assertEqual(args.profile_json_output, "docs/generated/demo2_1_visual5fps_profile_object_only.json")
+        self.assertEqual(args.profile_json_output, "docs/generated/demo2_1_perf5fps_profile_object_only.json")
 
     def test_profile_summary_distinguishes_upstream_from_visualization(self) -> None:
         parser = demo.build_arg_parser()
-        args = parser.parse_args(["--dry-run", "--preset", "visual-5fps", "--profile-pipeline"])
+        args = parser.parse_args(["--dry-run", "--preset", "perf-5fps", "--profile-pipeline"])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--profile-pipeline"})
         runtime = demo.Demo21Runtime(args)
 

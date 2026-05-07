@@ -99,7 +99,11 @@ DEFAULT_CONTROLLER_LABEL = "hand"
 DEFAULT_MODEL_ID = "yonigozlan/EdgeTAM-hf"
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
+DEFAULT_PRESET_CAPTURE_FPS = 15
 PRESET_NONE = "none"
+PRESET_OFFICIAL_LOWFPS = "official-lowfps"
+PRESET_PERF_5FPS = "perf-5fps"
+PRESET_PERF_5FPS_SINGLE_OWNER = "perf-5fps-single-owner"
 PRESET_PROFESSOR_SAFE = "professor-safe"
 PRESET_VISUAL_5FPS = "visual-5fps"
 PRESET_VISUAL_5FPS_NO_GATE = "visual-5fps-no-gate"
@@ -109,6 +113,9 @@ PRESET_CLIMB_10 = "climb-10"
 PRESET_DIAGNOSTICS = "diagnostics"
 PRESETS = (
     PRESET_NONE,
+    PRESET_OFFICIAL_LOWFPS,
+    PRESET_PERF_5FPS,
+    PRESET_PERF_5FPS_SINGLE_OWNER,
     PRESET_PROFESSOR_SAFE,
     PRESET_VISUAL_5FPS,
     PRESET_VISUAL_5FPS_NO_GATE,
@@ -117,6 +124,12 @@ PRESETS = (
     PRESET_CLIMB_10,
     PRESET_DIAGNOSTICS,
 )
+PRESET_COMPAT_ALIASES = {
+    PRESET_PROFESSOR_SAFE: PRESET_OFFICIAL_LOWFPS,
+    PRESET_VISUAL_5FPS: PRESET_PERF_5FPS,
+    PRESET_VISUAL_5FPS_NO_GATE: PRESET_PERF_5FPS,
+    PRESET_VISUAL_5FPS_SINGLE_OWNER: PRESET_PERF_5FPS_SINGLE_OWNER,
+}
 DEFAULT_DEVICE = "cuda"
 DEFAULT_DTYPE = "bfloat16"
 DEFAULT_COMPILE_MODE = "vision-reduce-overhead"
@@ -144,6 +157,10 @@ PIN_MEMORY_MODES = (PIN_MEMORY_MODE_OFF, PIN_MEMORY_MODE_EDGE, PIN_MEMORY_MODE_F
 H2D_STREAM_MODE_DEFAULT = "default"
 H2D_STREAM_MODE_DEDICATED = "dedicated"
 H2D_STREAM_MODES = (H2D_STREAM_MODE_DEFAULT, H2D_STREAM_MODE_DEDICATED)
+
+
+def canonical_preset_name(preset: str) -> str:
+    return PRESET_COMPAT_ALIASES.get(str(preset), str(preset))
 
 
 def mark_torch_cudagraph_step_begin(torch_module: Any) -> bool:
@@ -214,6 +231,7 @@ CAPTURE_GROUP_POLICIES = (
     CAPTURE_GROUP_POLICY_TIMESTAMP_STRICT,
 )
 DEFAULT_MAX_CAPTURE_SKEW_MS = 33.4
+DEFAULT_PRESET_MAX_CAPTURE_SKEW_MS = 66.7
 DEFAULT_MAX_FRAME_AGE_MS = 150.0
 DEFAULT_CAPTURE_BUFFER_SIZE = 4
 
@@ -911,14 +929,16 @@ def _normalize_pin_memory_options(args: argparse.Namespace, explicit: set[str]) 
 
 def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str] | None = None) -> argparse.Namespace:
     explicit = set() if explicit_options is None else set(explicit_options)
-    preset = str(getattr(args, "preset", PRESET_NONE))
-    if preset not in PRESETS:
-        raise ValueError(f"Unsupported Demo 2.1 preset: {preset}")
+    raw_preset = str(getattr(args, "preset", PRESET_NONE))
+    if raw_preset not in PRESETS:
+        raise ValueError(f"Unsupported Demo 2.1 preset: {raw_preset}")
+    preset = canonical_preset_name(raw_preset)
+    setattr(args, "preset_canonical", preset)
 
     if preset not in {"", PRESET_NONE}:
         common: tuple[tuple[str, str, Any], ...] = (
             ("--profile", "profile", "848x480"),
-            ("--fps", "fps", 30),
+            ("--fps", "fps", DEFAULT_PRESET_CAPTURE_FPS),
             ("--depth-source", "depth_source", DEPTH_SOURCE_FFS),
             ("--ffs-worker-mode", "ffs_worker_mode", "shared"),
             ("--ffs-schedule", "ffs_schedule", "strict3-latest"),
@@ -930,7 +950,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             ("--gpu-gate-max-concurrent", "gpu_gate_max_concurrent", 0),
             ("--fusion-timeout-ms", "fusion_timeout_ms", 250.0),
             ("--capture-group-policy", "capture_group_policy", CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST),
-            ("--max-capture-skew-ms", "max_capture_skew_ms", DEFAULT_MAX_CAPTURE_SKEW_MS),
+            ("--max-capture-skew-ms", "max_capture_skew_ms", DEFAULT_PRESET_MAX_CAPTURE_SKEW_MS),
             ("--max-frame-age-ms", "max_frame_age_ms", DEFAULT_MAX_FRAME_AGE_MS),
             ("--capture-buffer-size", "capture_buffer_size", DEFAULT_CAPTURE_BUFFER_SIZE),
             ("--drop-skewed-groups", "drop_skewed_groups", True),
@@ -938,20 +958,15 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         for flag, attr, value in common:
             _set_if_not_explicit(args, explicit, flag=flag, attr=attr, value=value)
 
-        if preset == PRESET_PROFESSOR_SAFE:
+        if preset == PRESET_OFFICIAL_LOWFPS:
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
-        elif preset == PRESET_VISUAL_5FPS:
+        elif preset == PRESET_PERF_5FPS:
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
-        elif preset == PRESET_VISUAL_5FPS_NO_GATE:
-            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
-            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
-            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
-            _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
-        elif preset == PRESET_VISUAL_5FPS_SINGLE_OWNER:
+        elif preset == PRESET_PERF_5FPS_SINGLE_OWNER:
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
             _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
@@ -1214,6 +1229,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "demo": "demo_2_1_three_view_fused_masked_pcd",
         "preset": getattr(args, "preset", PRESET_NONE),
+        "preset_canonical": getattr(args, "preset_canonical", canonical_preset_name(getattr(args, "preset", PRESET_NONE))),
         "camera_ids": list(args.camera_ids),
         "profile": args.profile,
         "fps": int(args.fps),
@@ -1748,6 +1764,7 @@ class Demo21Runtime:
         )[:10]
         return {
             "preset": self.args.preset,
+            "preset_canonical": getattr(self.args, "preset_canonical", canonical_preset_name(self.args.preset)),
             "target_fps": float(self.args.fusion_target_fps),
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
@@ -1777,9 +1794,10 @@ class Demo21Runtime:
         warm = payload["summary_after_warmup"]
         metrics = warm.get("metrics", {})
         lines = [
-            "# Demo 2.1 visual-5fps performance profile",
+            "# Demo 2.1 performance profile",
             "",
             f"- preset: `{payload['preset']}`",
+            f"- canonical preset: `{payload.get('preset_canonical', payload['preset'])}`",
             f"- target FPS: `{payload['target_fps']:.2f}`",
             f"- render FPS after warmup: `{warm.get('render_fps', 0.0):.2f}`",
             f"- fusion FPS after warmup: `{warm.get('fusion_fps', 0.0):.2f}`",
