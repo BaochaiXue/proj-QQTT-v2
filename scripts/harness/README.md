@@ -110,3 +110,27 @@ Result retention policy:
 - Keep invalid-for-QQTT controls under `result/_archived_invalid_for_qqtt/`.
 - Keep saved-pair offline FFS screening under `data/ffs_benchmarks/_archived_saved_pair_offline/`.
 - Prefer the top-level `builderopt5`, `concurrent3view`, `stable_throughput`, and `live_3cam_scale*.log` results for current reporting.
+
+## Demo v0.3 Remote FFS Track
+
+- Current remote FFS work is Demo v0.3, not Demo v0.2.
+- Demo v0.3 uses a fixed 100-kit IR triplet replay dataset, not live camera capture, for the next profiling pass.
+- A kit means synchronized `cam0/cam1/cam2` IR pairs: each camera has left/right IR.
+- Use 20 warmup kits plus 100 measured kits; all official latency and throughput summaries exclude warmup and report avg/min/max/p50/p90/p95/p99 over the measured window.
+- The 100-kit folder is local binary data under `result/demo_v0_3_ir_triplet_100kits_848x480/`; it must not be committed.
+- `demo_v0_2` is legacy. It may be used only as a source replay folder or historical reference.
+- Active plan: `docs/exec-plans/active/2026-05-08-demo-v0-3-100kit-staged-remote-ffs.md`.
+- Data-prep CLI:
+
+```bash
+python scripts/demo_v0_3/prepare_ir_triplet_100kits.py \
+  --src-replay-dir result/demo_v0_2_data_ir_triplet_replay_848x480_still_object_round8 \
+  --out-replay-dir result/demo_v0_3_ir_triplet_100kits_848x480 \
+  --num-kits 100 \
+  --camera-count 3 \
+  --width 848 \
+  --height 480 \
+  --capture-kit-fps 15 \
+  --allow-cycle-if-needed \
+  --write-manifest
+```

@@ -31,6 +31,7 @@ FULL_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
 )
 
 DEMO_HELP_SCRIPTS: tuple[str, ...] = (
+    "scripts/demo_v0_3/prepare_ir_triplet_100kits.py",
     "demo_v1/realtime_single_camera_pointcloud.py",
     "demo_v2/realtime_single_camera_pointcloud.py",
     "demo_v2/realtime_masked_edgetam_pcd.py",
@@ -60,6 +61,7 @@ QUICK_UNITTEST_BATCHES: tuple[tuple[str, ...], ...] = (
         "tests.test_ffs_remove_invisible_mask_smoke",
         "tests.test_sam31_still_object_benchmark_smoke",
         "tests.test_sam21_checkpoint_ladder_panel_smoke",
+        "tests.test_demo_v03_prepare_ir_triplets_smoke",
         "tests.test_demo_v2_1_three_view_fused_pcd_smoke",
         "tests.test_check_all_smoke",
     ),
@@ -95,6 +97,7 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_sam31_mask_helper_smoke",
     "tests.test_sam31_still_object_benchmark_smoke",
     "tests.test_sam21_checkpoint_ladder_panel_smoke",
+    "tests.test_demo_v03_prepare_ir_triplets_smoke",
     "tests.test_recording_metadata_schema_v2",
     "tests.test_calibration_metadata_smoke",
     "tests.test_camera_system_partial_stall_smoke",

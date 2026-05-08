@@ -7,6 +7,7 @@ import json
 import math
 from pathlib import Path
 import queue
+import shutil
 import sys
 import threading
 import time
@@ -191,6 +192,21 @@ def _mean(values: list[float]) -> float:
     return float(np.mean(np.asarray(values, dtype=np.float64)))
 
 
+def _add_distribution(summary: dict[str, float | str], prefix: str, values: list[float]) -> None:
+    array = np.asarray(values, dtype=np.float64)
+    if array.size == 0:
+        for suffix in ("min", "mean", "p50", "p90", "p95", "p99", "max"):
+            summary[f"{prefix}_{suffix}"] = 0.0
+        return
+    summary[f"{prefix}_min"] = float(np.min(array))
+    summary[f"{prefix}_mean"] = float(np.mean(array))
+    summary[f"{prefix}_p50"] = float(np.percentile(array, 50))
+    summary[f"{prefix}_p90"] = float(np.percentile(array, 90))
+    summary[f"{prefix}_p95"] = float(np.percentile(array, 95))
+    summary[f"{prefix}_p99"] = float(np.percentile(array, 99))
+    summary[f"{prefix}_max"] = float(np.max(array))
+
+
 def _camera_to_payload(packet: CameraIrPacket) -> dict[str, Any]:
     calibration = packet.calibration
     return {
@@ -227,7 +243,11 @@ def _save_depth_preview(depth_u16: np.ndarray, *, output_dir: Path, prefix: str)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Demo v0.2 async remote FFS triplet throughput client.")
-    parser.add_argument("--mode", choices=("triplet-live", "triplet-replay", "single-live", "single-replay"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("prepare-replay-from-case", "triplet-live", "triplet-replay", "single-live", "single-replay"),
+        required=True,
+    )
     parser.add_argument("--endpoint", default="tcp://192.168.0.162:7002")
     parser.add_argument("--serials", default="239222300412,239222300781,239222303506")
     parser.add_argument("--camera-id", default="cam0")
@@ -238,9 +258,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration-s", type=float, default=60.0)
     parser.add_argument("--record-duration-s", type=float, default=30.0)
     parser.add_argument("--max-inflight", type=int, default=6)
+    parser.add_argument("--max-submit-kits", type=int, default=0, help="Stop after submitting this many kits; 0 uses --duration-s.")
     parser.add_argument("--compression", choices=("lz4",), default="lz4")
     parser.add_argument("--return-type", choices=("depth_u16",), default="depth_u16")
     parser.add_argument("--drop-stale-replies", action="store_true")
+    parser.add_argument("--source-case", type=Path, default=None, help="Existing aligned/raw case used by prepare-replay-from-case.")
+    parser.add_argument("--replay-frame-count", type=int, default=100, help="Number of triplet kits to write in prepare-replay-from-case.")
     parser.add_argument("--record-dir", type=Path, default=None)
     parser.add_argument("--replay-dir", type=Path, default=None)
     parser.add_argument("--no-send", action="store_true")
@@ -315,6 +338,121 @@ def _calibration_from_metadata(item: dict[str, Any]) -> CameraCalibration:
         t_ir_left_to_color=np.asarray(item["T_ir_left_to_color"], dtype=np.float32).reshape(4, 4),
         baseline_m=float(item["baseline_m"]),
     )
+
+
+def _sorted_png_stems(path: Path) -> list[str]:
+    return sorted((p.stem for p in path.glob("*.png")), key=lambda value: int(value))
+
+
+def _metadata_list(metadata: dict[str, Any], key: str, *, fallback_key: str | None = None) -> list[Any]:
+    if key in metadata:
+        value = metadata[key]
+    elif fallback_key is not None and fallback_key in metadata:
+        value = metadata[fallback_key]
+    else:
+        raise ValueError(f"source case metadata missing {key!r}")
+    if not isinstance(value, list) or len(value) < 3:
+        raise ValueError(f"source case metadata {key!r} must contain at least 3 camera entries")
+    return value
+
+
+def prepare_replay_from_case(args: argparse.Namespace) -> dict[str, float | str]:
+    if args.source_case is None:
+        raise ValueError("--source-case is required for prepare-replay-from-case")
+    if args.replay_dir is None:
+        raise ValueError("--replay-dir is required for prepare-replay-from-case")
+    if int(args.replay_frame_count) <= 0:
+        raise ValueError("--replay-frame-count must be positive")
+    source_case = Path(args.source_case)
+    replay_dir = Path(args.replay_dir)
+    metadata_path = source_case / "metadata.json"
+    if not metadata_path.is_file():
+        raise ValueError(f"source case metadata not found: {metadata_path}")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    width, height = [int(item) for item in metadata.get("WH", _parse_profile(str(args.profile)))]
+    serials = _metadata_list(metadata, "serial_numbers")
+    k_ir_left = _metadata_list(metadata, "K_ir_left")
+    k_color = _metadata_list(metadata, "K_color", fallback_key="intrinsics")
+    t_ir_left_to_color = _metadata_list(metadata, "T_ir_left_to_color")
+    baselines = _metadata_list(metadata, "ir_baseline_m")
+
+    common_sets: list[set[str]] = []
+    for cam_idx in range(3):
+        left_dir = source_case / "ir_left" / str(cam_idx)
+        right_dir = source_case / "ir_right" / str(cam_idx)
+        if not left_dir.is_dir() or not right_dir.is_dir():
+            raise ValueError(f"source case missing IR dirs for camera {cam_idx}: {left_dir}, {right_dir}")
+        common_sets.append(set(_sorted_png_stems(left_dir)) & set(_sorted_png_stems(right_dir)))
+    source_frame_ids = sorted(set.intersection(*common_sets), key=lambda value: int(value))
+    if not source_frame_ids:
+        raise ValueError(f"source case has no common three-camera IR frame ids: {source_case}")
+
+    if replay_dir.exists():
+        shutil.rmtree(replay_dir)
+    for cam_idx in range(3):
+        (replay_dir / f"cam{cam_idx}" / "left").mkdir(parents=True, exist_ok=True)
+        (replay_dir / f"cam{cam_idx}" / "right").mkdir(parents=True, exist_ok=True)
+
+    selected_frame_ids = [
+        source_frame_ids[idx % len(source_frame_ids)]
+        for idx in range(int(args.replay_frame_count))
+    ]
+    for output_idx, source_frame_id in enumerate(selected_frame_ids):
+        for cam_idx in range(3):
+            shutil.copy2(
+                source_case / "ir_left" / str(cam_idx) / f"{source_frame_id}.png",
+                replay_dir / f"cam{cam_idx}" / "left" / f"{output_idx:06d}.png",
+            )
+            shutil.copy2(
+                source_case / "ir_right" / str(cam_idx) / f"{source_frame_id}.png",
+                replay_dir / f"cam{cam_idx}" / "right" / f"{output_idx:06d}.png",
+            )
+
+    cameras = [
+        {
+            "camera_idx": cam_idx,
+            "serial": str(serials[cam_idx]),
+            "width": width,
+            "height": height,
+            "K_ir_left": k_ir_left[cam_idx],
+            "K_color": k_color[cam_idx],
+            "T_ir_left_to_color": t_ir_left_to_color[cam_idx],
+            "baseline_m": float(baselines[cam_idx]),
+            "source_camera_idx": cam_idx,
+        }
+        for cam_idx in range(3)
+    ]
+    replay_metadata = {
+        "mode": "triplet-replay",
+        "source_case": str(source_case),
+        "source_unique_frame_count": len(source_frame_ids),
+        "source_frame_ids": selected_frame_ids,
+        "profile": f"{width}x{height}",
+        "camera_fps": int(round(float(args.target_kit_fps))),
+        "target_kit_fps": float(args.target_kit_fps),
+        "frame_count": len(selected_frame_ids),
+        "cameras": cameras,
+    }
+    (replay_dir / "metadata.json").write_text(
+        json.dumps(replay_metadata, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    summary: dict[str, float | str] = {
+        "source_unique_frame_count": float(len(source_frame_ids)),
+        "replay_frame_count": float(len(selected_frame_ids)),
+        "target_kit_fps": float(args.target_kit_fps),
+        "source_case": str(source_case),
+        "replay_dir": str(replay_dir),
+    }
+    print(
+        "[demo-v0.2-prepare-summary] "
+        + " ".join(
+            f"{key}={value:.2f}" if isinstance(value, float) else f"{key}={value}"
+            for key, value in summary.items()
+        ),
+        flush=True,
+    )
+    return summary
 
 
 def record_triplet_live(args: argparse.Namespace) -> dict[str, float | str]:
@@ -530,8 +668,11 @@ def run_network_benchmark(args: argparse.Namespace, *, replay: bool, single: boo
     deadline_s = started_s + float(args.duration_s)
     next_send_s = started_s
     group_id = 0
+    max_submit_kits = int(args.max_submit_kits)
     try:
         while time.perf_counter() < deadline_s:
+            if max_submit_kits > 0 and int(stats["submitted_kits"]) >= max_submit_kits:
+                break
             _drain_replies(socket=socket, poller=poller, pending=pending, stats=stats, args=args)
             now_s = time.perf_counter()
             stats["inflight_samples"].append(float(len(pending)))
@@ -605,29 +746,15 @@ def run_network_benchmark(args: argparse.Namespace, *, replay: bool, single: boo
         "mode": str(args.mode),
         "target_kit_fps": float(args.target_kit_fps),
         "target_camera_fps": float(args.target_camera_fps),
+        "max_submit_kits": float(args.max_submit_kits),
         "max_inflight": float(args.max_inflight),
+        "submitted_kits": float(stats["submitted_kits"]),
+        "completed_kits": float(stats["completed_kits"]),
+        "completed_depths": float(stats["completed_depths"]),
         "submitted_kit_fps": float(stats["submitted_kits"] / elapsed_s),
         "submitted_camera_fps": float(stats["submitted_depths"] / elapsed_s),
         "completed_kit_fps": float(stats["completed_kits"] / elapsed_s),
         "completed_camera_depth_fps": float(stats["completed_depths"] / elapsed_s),
-        "kit_e2e_ms_p50": _percentile(stats["kit_latencies_ms"], 50),
-        "kit_e2e_ms_p90": _percentile(stats["kit_latencies_ms"], 90),
-        "kit_e2e_ms_p95": _percentile(stats["kit_latencies_ms"], 95),
-        "server_total_ms_p50": _percentile(stats["server_total_ms"], 50),
-        "server_total_ms_p95": _percentile(stats["server_total_ms"], 95),
-        "server_decode_ms_p50": _percentile(stats["server_decode_ms"], 50),
-        "server_decode_ms_p95": _percentile(stats["server_decode_ms"], 95),
-        "server_ffs_stage_ms_p50": _percentile(stats["server_ffs_stage_ms"], 50),
-        "server_ffs_stage_ms_p95": _percentile(stats["server_ffs_stage_ms"], 95),
-        "server_encode_ms_p50": _percentile(stats["server_encode_ms"], 50),
-        "server_encode_ms_p95": _percentile(stats["server_encode_ms"], 95),
-        "server_router_queue_ms_p50": _percentile(stats["server_router_queue_ms"], 50),
-        "server_ffs_queue_ms_p50": _percentile(stats["server_ffs_queue_ms"], 50),
-        "server_encode_queue_ms_p50": _percentile(stats["server_encode_queue_ms"], 50),
-        "server_ffs_ms_per_camera_p50": _percentile(stats["server_ffs_ms"], 50),
-        "server_ffs_ms_per_camera_p95": _percentile(stats["server_ffs_ms"], 95),
-        "server_align_ms_per_camera_p50": _percentile(stats["server_align_ms"], 50),
-        "server_align_ms_per_camera_p95": _percentile(stats["server_align_ms"], 95),
         "request_kb_mean": float((stats["request_bytes"] / max(1, stats["submitted_kits"])) / 1024.0),
         "response_kb_mean": float((stats["response_bytes"] / max(1, stats["completed_kits"])) / 1024.0),
         "inflight_mean": _mean(stats["inflight_samples"]),
@@ -639,9 +766,23 @@ def run_network_benchmark(args: argparse.Namespace, *, replay: bool, single: boo
         "failed": float(stats["failed"]),
         "submit_skips": float(stats["submit_skips"]),
         "per_camera_completed_fps": ",".join(f"{serial}:{fps:.2f}" for serial, fps in sorted(per_camera_fps.items())),
+        "per_camera_depth_nonzero_mean": ",".join(
+            f"{serial}:{(float(stats['depth_nonzero'].get(serial, 0.0)) / max(1, int(stats['per_camera_depths'].get(serial, 0)))):.2f}"
+            for serial in sorted(stats["per_camera_depths"])
+        ),
         "first_depth_npy": str(stats["first_depth_npy"]),
         "first_depth_preview": str(stats["first_depth_preview"]),
     }
+    _add_distribution(summary, "kit_e2e_ms", stats["kit_latencies_ms"])
+    _add_distribution(summary, "server_total_ms", stats["server_total_ms"])
+    _add_distribution(summary, "server_decode_ms", stats["server_decode_ms"])
+    _add_distribution(summary, "server_ffs_stage_ms", stats["server_ffs_stage_ms"])
+    _add_distribution(summary, "server_encode_ms", stats["server_encode_ms"])
+    _add_distribution(summary, "server_router_queue_ms", stats["server_router_queue_ms"])
+    _add_distribution(summary, "server_ffs_queue_ms", stats["server_ffs_queue_ms"])
+    _add_distribution(summary, "server_encode_queue_ms", stats["server_encode_queue_ms"])
+    _add_distribution(summary, "server_ffs_ms_per_camera", stats["server_ffs_ms"])
+    _add_distribution(summary, "server_align_ms_per_camera", stats["server_align_ms"])
     print(
         "[demo-v0.2-summary] "
         + " ".join(
@@ -655,6 +796,12 @@ def run_network_benchmark(args: argparse.Namespace, *, replay: bool, single: boo
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if str(args.mode) == "prepare-replay-from-case":
+        try:
+            prepare_replay_from_case(args)
+        except (RuntimeError, ValueError, OSError, AsyncFfsProtocolError) as exc:
+            build_parser().exit(2, f"async_remote_ffs_triplet_client.py: error: {exc}\n")
+        return 0
     single = str(args.mode).startswith("single")
     replay = str(args.mode).endswith("replay")
     try:

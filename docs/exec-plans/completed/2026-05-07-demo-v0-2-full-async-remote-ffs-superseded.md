@@ -1,5 +1,12 @@
 # Demo v0.2 Full Async Remote FFS
 
+## Status
+
+Superseded by `docs/exec-plans/active/2026-05-08-demo-v0-3-100kit-staged-remote-ffs.md`.
+Do not extend Demo v0.2 as the active benchmark track. Keep this plan only as
+historical context and as documentation for the existing v0.2 replay source
+folder that Demo v0.3 may normalize into a fixed 100-kit dataset.
+
 ## Goal
 
 Build an independent full-async remote FFS capacity benchmark:

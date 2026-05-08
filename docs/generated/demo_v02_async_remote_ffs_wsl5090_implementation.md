@@ -25,6 +25,8 @@ run live three-camera triplet requests
 run single-camera replay/live requests
 measure async inflight throughput and latency
 report server stage timing for staged server runs
+prepare a 100-kit replay dataset from existing real IR cases
+run fixed-size 100-kit profiling with min/mean/max/p90/p99 summaries
 ```
 
 ## Files
@@ -75,6 +77,7 @@ request_kb_mean
 response_kb_mean
 inflight_mean/max
 per_camera_completed_fps
+latency/stage min/mean/p50/p90/p95/p99/max
 ```
 
 ## Validation
@@ -107,3 +110,19 @@ The v0.2 server now supports:
 `staged` separates receive/decode, FFS, and reply encode/compression into
 distinct queues. This directly tests whether throughput follows the slowest
 stage while latency follows the sum of the overlapped stages plus queueing.
+
+## 2026-05-08 100-Kit Replay Profiling Addition
+
+The v0.2 client now supports:
+
+```text
+--mode prepare-replay-from-case
+--source-case <case with ir_left/ir_right metadata>
+--replay-frame-count 100
+--max-submit-kits 100
+```
+
+This copies/cycles real IR triplets from `data/` or `data_collect/` into a
+100-kit replay directory. The benchmark can then submit exactly 100 kits at
+`--target-kit-fps 15`, simulating a 15 FPS three-camera IR video without live
+camera attachment.

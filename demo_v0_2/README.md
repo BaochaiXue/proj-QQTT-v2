@@ -95,6 +95,36 @@ conda run --no-capture-output -n demo_2_max \
   --debug
 ```
 
+## WSL Prepare 100-Kit Replay From Existing Data
+
+If the cameras are not attached, build a 100-kit replay set from an existing
+case that already contains real three-camera IR left/right frames:
+
+```bash
+cd /home/zhangxinjie/proj-QQTT-v2
+
+conda run --no-capture-output -n demo_2_max \
+  python demo_v0_2/async_remote_ffs_triplet_client.py \
+  --mode prepare-replay-from-case \
+  --source-case data_collect/both_30_still_object_round8_20260428 \
+  --replay-dir result/demo_v0_2_data_ir_triplet_replay_100kits_848x480 \
+  --replay-frame-count 100 \
+  --target-kit-fps 15 \
+  --debug
+```
+
+This copies/cycles real IR triplets into:
+
+```text
+result/demo_v0_2_data_ir_triplet_replay_100kits_848x480/
+  metadata.json
+  cam0/left/000000.png
+  cam0/right/000000.png
+  ...
+```
+
+It still uses real IR frames; it does not synthesize image contents.
+
 ## WSL Replay Matrix
 
 ```bash
@@ -104,14 +134,15 @@ for N in 1 2 3 6 9 12 16; do
   conda run --no-capture-output -n demo_2_max \
     python demo_v0_2/async_remote_ffs_triplet_client.py \
     --mode triplet-replay \
-    --replay-dir result/demo_v0_2_real_ir_triplet_record_848x480 \
+    --replay-dir result/demo_v0_2_data_ir_triplet_replay_100kits_848x480 \
     --endpoint tcp://192.168.0.162:7002 \
     --target-kit-fps 15 \
     --compression lz4 \
     --return-type depth_u16 \
     --max-inflight "$N" \
+    --max-submit-kits 100 \
     --drop-stale-replies \
-    --duration-s 60 \
+    --duration-s 90 \
     --save-first-depth-preview \
     --debug
 done
@@ -161,6 +192,25 @@ server_encode_queue_ms_p50
 kit_e2e_ms_p50/p95
 completed_kit_fps
 completed_camera_depth_fps
+```
+
+For fixed-size 100-kit profiling, use:
+
+```text
+--max-submit-kits 100
+--target-kit-fps 15
+```
+
+The summary includes min/mean/p50/p90/p95/p99/max for:
+
+```text
+kit_e2e_ms
+server_total_ms
+server_decode_ms
+server_ffs_stage_ms
+server_encode_ms
+server_ffs_ms_per_camera
+server_align_ms_per_camera
 ```
 
 Pass:
