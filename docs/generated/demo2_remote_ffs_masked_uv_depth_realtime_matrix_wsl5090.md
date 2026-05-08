@@ -47,6 +47,8 @@ full-frame depth for full-depth modes.
 
 ## Demo 2 No-Render Attempt
 
+### Stale Prompt Attempt
+
 Command:
 
 ```bash
@@ -101,6 +103,59 @@ formal live SAM3.1 path. To run the masked realtime matrix, place a visible
 object that SAM3.1 can initialize with the chosen prompt, or explicitly choose a
 different prompt for the current scene.
 
+### Current-Scene Prompt Attempt
+
+The current scene prompt was updated to:
+
+```text
+object = "stuff toy"
+controller = "rag"
+```
+
+Before sending any remote requests, WSL-5090 ran a local object-only preflight:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python demo_v2/realtime_masked_edgetam_pcd.py \
+  --serial 239222300412 \
+  --profile 848x480 \
+  --fps 60 \
+  --depth-source none \
+  --init-mode sam31-first-frame \
+  --track-mode object-only \
+  --object-prompt "stuff toy" \
+  --pcd-mode none \
+  --render-mode none \
+  --compile-mode vision-reduce-overhead \
+  --dtype bfloat16 \
+  --duration-s 40 \
+  --debug \
+  --profile-cuda-events
+```
+
+Result:
+
+```text
+status = fail-fast before remote PCD benchmark
+reason = SAM3.1 did not produce a mask for label 'stuff toy'
+controller prompt "rag" = not tested because object preflight failed
+remote requests = none
+```
+
+Log path:
+
+```text
+/tmp/demo2_sam31_init_stuff_toy_object_only_5090.log
+```
+
+Current decision:
+
+```text
+masked_uv_depth/lz4 server readiness: pass
+masked_uv_depth FPS: not measured
+blocker: live SAM3.1 first-frame init still has no current-scene object mask
+```
+
 ## Current Runtime Limitation
 
 Demo 2 runtime currently rejects:
@@ -113,4 +168,3 @@ The `services/ffs_remote/ffs_depth_client.py` utility has benchmark-only
 multi-inflight support, but `demo_v2/realtime_masked_edgetam_pcd.py` still needs
 a runtime async remote-depth worker before a real `1/2/4/8` Demo matrix can be
 run.
-
