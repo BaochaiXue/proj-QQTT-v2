@@ -621,7 +621,10 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--endpoint ENDPOINT", result.stdout)
         self.assertIn("--echo-benchmark", result.stdout)
         self.assertIn("--real-ir-depth-benchmark", result.stdout)
+        self.assertIn("--three-camera-real-ir-depth-benchmark", result.stdout)
         self.assertIn("--serial SERIAL", result.stdout)
+        self.assertIn("--serials [SERIALS ...]", result.stdout)
+        self.assertIn("--max-cams MAX_CAMS", result.stdout)
         self.assertIn("--inflight INFLIGHT", result.stdout)
         self.assertIn("--drop-stale-replies", result.stdout)
         self.assertIn("--profile PROFILE", result.stdout)
@@ -736,6 +739,54 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "inflight must be positive"):
             ffs_remote_client._validate_real_ir_depth_args(bad_inflight_args)
+
+        three_cam_args = ffs_remote_client.build_parser().parse_args(
+            [
+                "--endpoint",
+                "tcp://127.0.0.1:7001",
+                "--three-camera-real-ir-depth-benchmark",
+                "--return-type",
+                "depth_u16",
+                "--serials",
+                "cam0",
+                "cam1",
+                "cam2",
+                "--fps",
+                "15",
+                "--inflight",
+                "6",
+            ]
+        )
+        ffs_remote_client._validate_three_camera_real_ir_depth_args(three_cam_args)
+        self.assertTrue(three_cam_args.three_camera_real_ir_depth_benchmark)
+        self.assertEqual(three_cam_args.serials, ["cam0", "cam1", "cam2"])
+        self.assertEqual(three_cam_args.max_cams, 3)
+        self.assertEqual(three_cam_args.inflight, 6)
+
+        sparse_three_cam_args = ffs_remote_client.build_parser().parse_args(
+            [
+                "--endpoint",
+                "tcp://127.0.0.1:7001",
+                "--three-camera-real-ir-depth-benchmark",
+                "--return-type",
+                "masked_uv_depth",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "requires a full-frame return type"):
+            ffs_remote_client._validate_three_camera_real_ir_depth_args(sparse_three_cam_args)
+
+        duplicate_serial_args = ffs_remote_client.build_parser().parse_args(
+            [
+                "--endpoint",
+                "tcp://127.0.0.1:7001",
+                "--three-camera-real-ir-depth-benchmark",
+                "--serials",
+                "cam0",
+                "cam0",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            ffs_remote_client._validate_three_camera_real_ir_depth_args(duplicate_serial_args)
 
     def test_ffs_remote_server_strict_engine_contract_validates_path_tokens(self) -> None:
         args = ffs_remote_server.build_parser().parse_args(

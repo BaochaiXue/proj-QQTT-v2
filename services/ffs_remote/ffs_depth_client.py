@@ -329,6 +329,17 @@ class _RealIrDepthReply:
         return self.result is not None
 
 
+@dataclass(frozen=True)
+class _RealIrCameraRuntime:
+    serial: str
+    pipeline: Any
+    k_ir_left: np.ndarray
+    k_color: np.ndarray
+    t_ir_left_to_color: np.ndarray
+    baseline_m: float
+    depth_scale_m_per_unit: float
+
+
 def _is_timeout_error_text(error: str) -> bool:
     lowered = error.lower()
     return "timeout" in lowered or "timed out" in lowered or "again" in lowered
@@ -447,9 +458,33 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Capture real RealSense IR left/right frames and request real remote FFS depth.",
     )
+    parser.add_argument(
+        "--three-camera-real-ir-depth-benchmark",
+        action="store_true",
+        help=(
+            "Demo v0.1 benchmark: capture up to three local RealSense IR pairs, "
+            "send one full-depth remote FFS request per camera per group, and "
+            "measure async client-side aggregate camera-FPS."
+        ),
+    )
     parser.add_argument("--serial", default=None, help="RealSense D400 serial for --real-ir-depth-benchmark.")
+    parser.add_argument(
+        "--serials",
+        nargs="*",
+        default=None,
+        help="RealSense D400 serials for --three-camera-real-ir-depth-benchmark. Defaults to the first --max-cams devices.",
+    )
+    parser.add_argument("--max-cams", type=int, default=3, help="Maximum cameras for --three-camera-real-ir-depth-benchmark.")
     parser.add_argument("--profile", default="848x480", help="Synthetic IR payload profile for --echo-benchmark.")
-    parser.add_argument("--fps", type=float, default=30.0, help="Target request rate for --echo-benchmark.")
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=30.0,
+        help=(
+            "Target FPS. For --three-camera-real-ir-depth-benchmark this is the group/per-camera rate; "
+            "--fps 15 with three cameras targets 45 aggregate camera-FPS."
+        ),
+    )
     parser.add_argument("--duration-s", type=float, default=20.0, help="Benchmark duration in seconds.")
     parser.add_argument("--warmup-frames", type=int, default=15, help="RealSense warmup frames before real-IR benchmark timing.")
     parser.add_argument("--depth-scale-m-per-unit", type=float, default=0.001)
@@ -610,6 +645,85 @@ def _validate_real_ir_depth_args(args: argparse.Namespace) -> None:
         raise ValueError("--warmup-frames must be non-negative")
     if int(args.inflight) <= 0:
         raise ValueError("--inflight must be positive")
+
+
+def _validate_three_camera_real_ir_depth_args(args: argparse.Namespace) -> None:
+    if str(args.return_type) not in FULL_DEPTH_RETURN_TYPES:
+        raise ValueError(
+            "--three-camera-real-ir-depth-benchmark requires a full-frame return type: "
+            + ", ".join(FULL_DEPTH_RETURN_TYPES)
+        )
+    if float(args.duration_s) <= 0:
+        raise ValueError("--duration-s must be positive")
+    if float(args.fps) <= 0:
+        raise ValueError("--fps must be positive")
+    if int(args.timeout_ms) <= 0:
+        raise ValueError("--timeout-ms must be positive")
+    if int(args.warmup_frames) < 0:
+        raise ValueError("--warmup-frames must be non-negative")
+    if int(args.inflight) <= 0:
+        raise ValueError("--inflight must be positive")
+    if int(args.max_cams) <= 0:
+        raise ValueError("--max-cams must be positive")
+    if args.serials is not None and len(args.serials) != len(set(args.serials)):
+        raise ValueError("--serials contains duplicate serial numbers")
+
+
+def _resolve_serials(rs: Any, requested_serials: list[str] | None, *, max_cams: int) -> list[str]:
+    serials = _list_d400_serials(rs)
+    if requested_serials:
+        missing = [str(serial) for serial in requested_serials if str(serial) not in serials]
+        if serials and missing:
+            raise RuntimeError(
+                f"requested serials are not detected D400 devices: {', '.join(missing)}; "
+                f"available: {', '.join(serials)}"
+            )
+        return [str(serial) for serial in requested_serials]
+    if not serials:
+        raise RuntimeError("no D400 RealSense device detected")
+    return serials[: int(max_cams)]
+
+
+def _start_real_ir_camera_runtime(
+    *,
+    rs: Any,
+    serial: str,
+    width: int,
+    height: int,
+    fps: int,
+    fallback_baseline_m: float,
+) -> _RealIrCameraRuntime:
+    pipeline = rs.pipeline()
+    config = rs.config()
+    config.enable_device(str(serial))
+    config.enable_stream(rs.stream.infrared, 1, int(width), int(height), rs.format.y8, int(fps))
+    config.enable_stream(rs.stream.infrared, 2, int(width), int(height), rs.format.y8, int(fps))
+    config.enable_stream(rs.stream.color, int(width), int(height), rs.format.bgr8, int(fps))
+    profile = pipeline.start(config)
+    try:
+        depth_sensor = profile.get_device().first_depth_sensor()
+        depth_scale = float(depth_sensor.get_depth_scale())
+        color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
+        ir_left_stream = profile.get_stream(rs.stream.infrared, 1).as_video_stream_profile()
+        ir_right_stream = profile.get_stream(rs.stream.infrared, 2).as_video_stream_profile()
+        baseline_m = _rs_translation_norm(ir_left_stream.get_extrinsics_to(ir_right_stream))
+        if baseline_m <= 0:
+            baseline_m = float(fallback_baseline_m)
+        return _RealIrCameraRuntime(
+            serial=str(serial),
+            pipeline=pipeline,
+            k_ir_left=_rs_intrinsics_to_matrix(ir_left_stream.get_intrinsics()),
+            k_color=_rs_intrinsics_to_matrix(color_stream.get_intrinsics()),
+            t_ir_left_to_color=_rs_extrinsics_to_matrix(ir_left_stream.get_extrinsics_to(color_stream)),
+            baseline_m=baseline_m,
+            depth_scale_m_per_unit=depth_scale,
+        )
+    except Exception:
+        try:
+            pipeline.stop()
+        except Exception:
+            pass
+        raise
 
 
 def run_real_ir_depth_benchmark(
@@ -931,15 +1045,363 @@ def run_real_ir_depth_benchmark(
     return summary
 
 
+def run_three_camera_real_ir_depth_benchmark(args: argparse.Namespace) -> dict[str, float | str]:
+    _validate_three_camera_real_ir_depth_args(args)
+    width, height = _parse_profile(str(args.profile))
+    rs = _load_realsense_module()
+    serials = _resolve_serials(
+        rs,
+        None if args.serials is None else [str(serial) for serial in args.serials],
+        max_cams=int(args.max_cams),
+    )
+    if not serials:
+        raise RuntimeError("no RealSense cameras selected")
+    capture_fps = int(round(float(args.fps)))
+    if capture_fps <= 0:
+        raise ValueError("--fps must round to a positive integer for RealSense capture")
+
+    runtimes: list[_RealIrCameraRuntime] = []
+    result_queue: "queue.Queue[_RealIrDepthReply]" = queue.Queue()
+    workers: list[_RealIrDepthWorker] = [
+        _RealIrDepthWorker(
+            worker_idx=idx,
+            endpoint=str(args.endpoint),
+            timeout_ms=int(args.timeout_ms),
+            return_type=str(args.return_type),
+            compression=str(args.compress),
+            result_queue=result_queue,
+        )
+        for idx in range(int(args.inflight))
+    ]
+    for worker in workers:
+        worker.start()
+
+    first_depth_npy = ""
+    first_depth_preview = ""
+    started_s = time.perf_counter()
+    try:
+        for serial in serials:
+            runtimes.append(
+                _start_real_ir_camera_runtime(
+                    rs=rs,
+                    serial=str(serial),
+                    width=width,
+                    height=height,
+                    fps=capture_fps,
+                    fallback_baseline_m=float(args.baseline_m),
+                )
+            )
+        for _ in range(int(args.warmup_frames)):
+            for runtime in runtimes:
+                runtime.pipeline.wait_for_frames(int(args.timeout_ms))
+
+        cam_count = len(runtimes)
+        deadline_s = time.perf_counter() + float(args.duration_s)
+        next_group_s = time.perf_counter()
+        group_id = 0
+        next_worker_idx = 0
+        pending_frame_ids: set[int] = set()
+        pending_info: dict[int, tuple[int, int, str]] = {}
+        group_expected_counts: dict[int, int] = {}
+        group_success_counts: dict[int, int] = {}
+        per_camera_submitted = {runtime.serial: 0 for runtime in runtimes}
+        per_camera_success = {runtime.serial: 0 for runtime in runtimes}
+        per_camera_failure = {runtime.serial: 0 for runtime in runtimes}
+        per_camera_latest_group = {runtime.serial: -1 for runtime in runtimes}
+        groups_submitted = 0
+        full_groups_submitted = 0
+        submitted = 0
+        successes = 0
+        accepted_replies = 0
+        failures = 0
+        capture_misses = 0
+        submit_skips = 0
+        stale_replies = 0
+        timeout_count = 0
+        max_pending_observed = 0
+        rtts: list[float] = []
+        server_ffs: list[float] = []
+        server_align: list[float] = []
+        server_totals: list[float] = []
+        request_bytes = 0
+        response_bytes = 0
+        depth_nonzero_counts: list[float] = []
+        depth_shapes: set[tuple[int, int]] = set()
+        response_compressions: set[str] = set()
+        response_return_types: set[str] = set()
+        last_log_s = time.perf_counter()
+
+        def process_reply(reply: _RealIrDepthReply) -> None:
+            nonlocal successes
+            nonlocal accepted_replies
+            nonlocal failures
+            nonlocal stale_replies
+            nonlocal timeout_count
+            nonlocal request_bytes
+            nonlocal response_bytes
+            nonlocal first_depth_npy
+            nonlocal first_depth_preview
+            info = pending_info.pop(int(reply.frame_id), (-1, -1, "unknown"))
+            pending_frame_ids.discard(int(reply.frame_id))
+            reply_group_id, _reply_cam_idx, reply_serial = info
+            if not reply.ok:
+                failures += 1
+                if reply_serial in per_camera_failure:
+                    per_camera_failure[reply_serial] += 1
+                if _is_timeout_error_text(reply.error):
+                    timeout_count += 1
+                if bool(args.debug):
+                    print(
+                        "[ffs-remote-demo-v0.1] "
+                        f"group={reply_group_id} serial={reply_serial} frame_id={reply.frame_id} "
+                        f"worker={reply.worker_idx} status=error error={reply.error}",
+                        flush=True,
+                    )
+                return
+            result = reply.result
+            assert result is not None
+            successes += 1
+            rtts.append(float(result.rtt_ms))
+            server_ffs.append(float(result.server_ffs_ms))
+            server_align.append(float(result.server_align_ms))
+            server_totals.append(float(result.server_total_ms))
+            request_bytes += int(result.request_bytes)
+            response_bytes += int(result.response_bytes)
+            response_compressions.add(str(result.compression))
+            response_return_types.add(str(result.return_type))
+            depth = result.depth_color_m
+            depth_shapes.add(tuple(int(item) for item in depth.shape))
+            depth_nonzero_counts.append(float(np.count_nonzero(np.isfinite(depth) & (depth > 0.0))))
+            if bool(args.drop_stale_replies) and reply_group_id < per_camera_latest_group.get(reply_serial, -1):
+                stale_replies += 1
+                return
+            accepted_replies += 1
+            if reply_serial in per_camera_success:
+                per_camera_success[reply_serial] += 1
+                per_camera_latest_group[reply_serial] = max(per_camera_latest_group[reply_serial], int(reply_group_id))
+            if reply_group_id >= 0:
+                group_success_counts[reply_group_id] = group_success_counts.get(reply_group_id, 0) + 1
+            if bool(args.save_first_depth_preview) and not first_depth_npy and depth.size:
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                prefix = f"demo_v0_1_threecam_remote_depth_{timestamp}_frame{int(result.frame_id):06d}"
+                npy_path, preview_path = _save_depth_artifacts(
+                    depth,
+                    output_dir=Path(args.output_dir),
+                    prefix=prefix,
+                )
+                first_depth_npy = str(npy_path)
+                first_depth_preview = str(preview_path)
+
+        def drain_replies(*, block: bool = False) -> None:
+            while True:
+                try:
+                    reply = result_queue.get(timeout=0.05 if block else 0.0)
+                except queue.Empty:
+                    return
+                process_reply(reply)
+
+        try:
+            while time.perf_counter() < deadline_s:
+                drain_replies()
+                now_s = time.perf_counter()
+                if now_s < next_group_s:
+                    time.sleep(min(0.002, next_group_s - now_s))
+                    continue
+                if len(pending_frame_ids) + cam_count > int(args.inflight):
+                    submit_skips += cam_count
+                    next_group_s += 1.0 / float(args.fps)
+                    continue
+
+                group_requests: list[tuple[int, _RealIrCameraRuntime, _RealIrDepthRequest]] = []
+                group_capture_ok = True
+                for cam_idx, runtime in enumerate(runtimes):
+                    try:
+                        frames = runtime.pipeline.wait_for_frames(int(args.timeout_ms))
+                        left_frame = frames.get_infrared_frame(1)
+                        right_frame = frames.get_infrared_frame(2)
+                        color_frame = frames.get_color_frame()
+                        if not left_frame or not right_frame or not color_frame:
+                            raise RuntimeError("missing IR or color frame")
+                        left = np.array(np.asanyarray(left_frame.get_data()), dtype=np.uint8, copy=True)
+                        right = np.array(np.asanyarray(right_frame.get_data()), dtype=np.uint8, copy=True)
+                        color = np.asanyarray(color_frame.get_data())
+                        frame_id = int(group_id * cam_count + cam_idx)
+                        request = _RealIrDepthRequest(
+                            frame_id=frame_id,
+                            ir_left_u8=left,
+                            ir_right_u8=right,
+                            color_shape=(int(color.shape[0]), int(color.shape[1])),
+                            k_ir_left=runtime.k_ir_left,
+                            k_color=runtime.k_color,
+                            t_ir_left_to_color=runtime.t_ir_left_to_color,
+                            baseline_m=runtime.baseline_m,
+                            depth_scale_m_per_unit=runtime.depth_scale_m_per_unit,
+                            submitted_s=time.perf_counter(),
+                        )
+                        group_requests.append((cam_idx, runtime, request))
+                    except Exception as exc:
+                        capture_misses += 1
+                        group_capture_ok = False
+                        if bool(args.debug):
+                            print(
+                                "[ffs-remote-demo-v0.1] "
+                                f"group={group_id} serial={runtime.serial} status=capture_error "
+                                f"error={type(exc).__name__}: {exc}",
+                                flush=True,
+                            )
+                if not group_capture_ok or len(group_requests) != cam_count:
+                    group_id += 1
+                    next_group_s += 1.0 / float(args.fps)
+                    continue
+
+                submitted_this_group = 0
+                for cam_idx, runtime, request in group_requests:
+                    submitted_worker_idx = _submit_to_real_ir_worker(
+                        workers,
+                        request,
+                        start_idx=next_worker_idx,
+                    )
+                    if submitted_worker_idx is None:
+                        submit_skips += 1
+                        continue
+                    next_worker_idx = (submitted_worker_idx + 1) % len(workers)
+                    pending_frame_ids.add(request.frame_id)
+                    pending_info[request.frame_id] = (int(group_id), int(cam_idx), runtime.serial)
+                    per_camera_submitted[runtime.serial] += 1
+                    submitted += 1
+                    submitted_this_group += 1
+                    max_pending_observed = max(max_pending_observed, len(pending_frame_ids))
+                if submitted_this_group:
+                    groups_submitted += 1
+                    group_expected_counts[int(group_id)] = submitted_this_group
+                    if submitted_this_group == cam_count:
+                        full_groups_submitted += 1
+                group_id += 1
+                next_group_s += 1.0 / float(args.fps)
+
+                now_s = time.perf_counter()
+                if bool(args.debug) and now_s - last_log_s >= 1.0:
+                    elapsed_s = max(1e-9, now_s - started_s)
+                    complete_groups = sum(
+                        1
+                        for gid, expected in group_expected_counts.items()
+                        if expected == cam_count and group_success_counts.get(gid, 0) >= cam_count
+                    )
+                    print(
+                        "[ffs-remote-demo-v0.1] "
+                        f"groups={groups_submitted} full_groups={full_groups_submitted} "
+                        f"complete_groups={complete_groups} submitted={submitted} ok={successes} "
+                        f"accepted={accepted_replies} failed={failures} stale={stale_replies} "
+                        f"capture_miss={capture_misses} submit_skip={submit_skips} "
+                        f"aggregate_completed_fps={successes / elapsed_s:.2f} "
+                        f"complete_group_fps={complete_groups / elapsed_s:.2f} "
+                        f"inflight={len(pending_frame_ids)} "
+                        f"rtt_ms_p50={_percentile(rtts, 50):.2f} "
+                        f"server_total_ms_p50={_percentile(server_totals, 50):.2f}",
+                        flush=True,
+                    )
+                    last_log_s = now_s
+
+            while pending_frame_ids:
+                drain_replies(block=True)
+        finally:
+            for worker in workers:
+                worker.stop()
+            for worker in workers:
+                worker.join(timeout=1.0)
+    finally:
+        for runtime in runtimes:
+            try:
+                runtime.pipeline.stop()
+            except Exception:
+                pass
+
+    elapsed_s = max(1e-9, time.perf_counter() - started_s)
+    cam_count = max(1, len(runtimes))
+    complete_groups = sum(
+        1
+        for gid, expected in group_expected_counts.items()
+        if expected == cam_count and group_success_counts.get(gid, 0) >= cam_count
+    )
+    per_camera_completed_fps = {
+        serial: float(count / elapsed_s)
+        for serial, count in per_camera_success.items()
+    }
+    summary: dict[str, float | str] = {
+        "duration_s": float(elapsed_s),
+        "camera_count": float(len(runtimes)),
+        "target_per_camera_fps": float(args.fps),
+        "target_aggregate_camera_fps": float(args.fps) * float(len(runtimes)),
+        "groups_submitted": float(groups_submitted),
+        "full_groups_submitted": float(full_groups_submitted),
+        "complete_groups": float(complete_groups),
+        "group_submit_fps": float(groups_submitted / elapsed_s),
+        "complete_group_fps": float(complete_groups / elapsed_s),
+        "submitted": float(submitted),
+        "ok": float(successes),
+        "accepted": float(accepted_replies),
+        "failed": float(failures),
+        "capture_miss": float(capture_misses),
+        "submit_skip": float(submit_skips),
+        "stale_replies": float(stale_replies),
+        "timeout_count": float(timeout_count),
+        "inflight": float(args.inflight),
+        "max_pending_observed": float(max_pending_observed),
+        "aggregate_submitted_fps": float(submitted / elapsed_s),
+        "aggregate_completed_fps": float(successes / elapsed_s),
+        "aggregate_reply_fps": float(accepted_replies / elapsed_s),
+        "rtt_ms_p50": _percentile(rtts, 50),
+        "rtt_ms_p90": _percentile(rtts, 90),
+        "rtt_ms_p95": _percentile(rtts, 95),
+        "server_ffs_ms_p50": _percentile(server_ffs, 50),
+        "server_align_ms_p50": _percentile(server_align, 50),
+        "server_total_ms_p50": _percentile(server_totals, 50),
+        "request_kb_mean": float((request_bytes / max(1, successes)) / 1024.0),
+        "response_kb_mean": float((response_bytes / max(1, successes)) / 1024.0),
+        "mbps_payload": float(((request_bytes + response_bytes) * 8.0) / (elapsed_s * 1_000_000.0)),
+        "depth_nonzero_count_mean": _mean(depth_nonzero_counts),
+        "serials": ",".join(runtime.serial for runtime in runtimes),
+        "per_camera_completed_fps": ",".join(
+            f"{serial}:{per_camera_completed_fps.get(serial, 0.0):.2f}"
+            for serial in per_camera_success
+        ),
+        "request_compression": str(args.compress),
+        "response_compression": ",".join(sorted(response_compressions)) if response_compressions else "",
+        "return_type": ",".join(sorted(response_return_types)) if response_return_types else str(args.return_type),
+        "depth_shapes": ",".join(f"{h}x{w}" for h, w in sorted(depth_shapes)) if depth_shapes else "",
+        "first_depth_npy_path": first_depth_npy,
+        "first_depth_preview_path": first_depth_preview,
+    }
+    print(
+        "[ffs-remote-demo-v0.1-summary] "
+        + " ".join(
+            f"{key}={value:.2f}" if isinstance(value, float) else f"{key}={value}"
+            for key, value in summary.items()
+        ),
+        flush=True,
+    )
+    return summary
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if bool(args.echo_benchmark) == bool(args.real_ir_depth_benchmark):
-            raise ValueError("choose exactly one mode: --echo-benchmark or --real-ir-depth-benchmark")
+        selected_modes = [
+            bool(args.echo_benchmark),
+            bool(args.real_ir_depth_benchmark),
+            bool(args.three_camera_real_ir_depth_benchmark),
+        ]
+        if sum(1 for selected in selected_modes if selected) != 1:
+            raise ValueError(
+                "choose exactly one mode: --echo-benchmark, --real-ir-depth-benchmark, "
+                "or --three-camera-real-ir-depth-benchmark"
+            )
         if args.echo_benchmark:
             run_echo_benchmark(args)
-        else:
+        elif args.real_ir_depth_benchmark:
             run_real_ir_depth_benchmark(args)
+        else:
+            run_three_camera_real_ir_depth_benchmark(args)
     except (RuntimeError, ValueError, OSError) as exc:
         build_parser().exit(2, f"ffs_depth_client.py: error: {exc}\n")
     return 0
