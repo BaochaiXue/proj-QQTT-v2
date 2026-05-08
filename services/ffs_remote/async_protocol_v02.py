@@ -300,6 +300,7 @@ def build_reply_parts(
     error: str = "",
     per_camera_stats: list[dict[str, Any]] | None = None,
     server_total_ms: float = 0.0,
+    server_stage_ms: dict[str, Any] | None = None,
     compression: str = "lz4",
     return_type: str = "depth_u16",
 ) -> list[bytes]:
@@ -321,6 +322,7 @@ def build_reply_parts(
         "error": str(error),
         "created_perf_ns": int(header_source.get("created_perf_ns", 0) or 0),
         "server_total_ms": float(server_total_ms),
+        "server_stage_ms": {} if server_stage_ms is None else dict(server_stage_ms),
         "cameras": [],
         "per_camera_stats": [] if per_camera_stats is None else list(per_camera_stats),
         "response_uncompressed_bytes": 0,
@@ -360,6 +362,7 @@ def build_error_reply_parts(
     compression: str = "lz4",
     return_type: str = "depth_u16",
     server_total_ms: float = 0.0,
+    server_stage_ms: dict[str, Any] | None = None,
 ) -> list[bytes]:
     return build_reply_parts(
         request=None,
@@ -372,6 +375,7 @@ def build_error_reply_parts(
         status="error",
         error=str(error),
         server_total_ms=float(server_total_ms),
+        server_stage_ms=server_stage_ms,
         compression=compression,
         return_type=return_type,
     )

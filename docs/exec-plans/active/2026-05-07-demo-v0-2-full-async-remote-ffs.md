@@ -19,6 +19,9 @@ WSL-5090 real IR capture/replay
 - Add `demo_v0_2/async_remote_ffs_triplet_client.py`.
 - Add protocol unit tests.
 - Add generated documentation and commands.
+- Add a `--server-pipeline-mode staged` server mode that separates
+  decode/decompress, FFS, and reply encode/compress into distinct queues and
+  reports stage timing fields.
 
 ## Non-Goals
 
@@ -35,6 +38,19 @@ WSL-5090 real IR capture/replay
 single camera: >=45 camera-depth-FPS
 three cameras: >=15 kit-FPS, aggregate >=45 camera-depth-FPS
 ```
+
+## Pipeline Ablation
+
+```text
+fused-worker:
+  one worker performs decode -> FFS -> encode for a full request
+
+staged:
+  ROUTER receive -> decode worker -> FFS worker -> encode worker -> ROUTER send
+```
+
+The staged mode tests whether throughput is limited by the slowest overlapped
+stage, while latency is the sum of stage delays plus queueing.
 
 ## Validation
 

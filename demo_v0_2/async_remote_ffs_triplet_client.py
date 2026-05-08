@@ -436,6 +436,17 @@ def _drain_replies(
         stats["completed_depths"] += len(reply.depths)
         stats["response_bytes"] += sum(len(part) for part in parts)
         stats["server_total_ms"].append(float(reply.header.get("server_total_ms", 0.0)))
+        stage_ms = reply.header.get("server_stage_ms", {})
+        if isinstance(stage_ms, dict):
+            for key, stats_key in (
+                ("decode_ms", "server_decode_ms"),
+                ("ffs_stage_ms", "server_ffs_stage_ms"),
+                ("encode_ms", "server_encode_ms"),
+                ("router_queue_ms", "server_router_queue_ms"),
+                ("ffs_queue_ms", "server_ffs_queue_ms"),
+                ("encode_queue_ms", "server_encode_queue_ms"),
+            ):
+                stats[stats_key].append(float(stage_ms.get(key, 0.0)))
         per_camera = reply.header.get("per_camera_stats", [])
         if isinstance(per_camera, list):
             for item in per_camera:
@@ -500,6 +511,12 @@ def run_network_benchmark(args: argparse.Namespace, *, replay: bool, single: boo
         "response_bytes": 0,
         "kit_latencies_ms": [],
         "server_total_ms": [],
+        "server_decode_ms": [],
+        "server_ffs_stage_ms": [],
+        "server_encode_ms": [],
+        "server_router_queue_ms": [],
+        "server_ffs_queue_ms": [],
+        "server_encode_queue_ms": [],
         "server_ffs_ms": [],
         "server_align_ms": [],
         "per_camera_depths": {},
@@ -598,6 +615,15 @@ def run_network_benchmark(args: argparse.Namespace, *, replay: bool, single: boo
         "kit_e2e_ms_p95": _percentile(stats["kit_latencies_ms"], 95),
         "server_total_ms_p50": _percentile(stats["server_total_ms"], 50),
         "server_total_ms_p95": _percentile(stats["server_total_ms"], 95),
+        "server_decode_ms_p50": _percentile(stats["server_decode_ms"], 50),
+        "server_decode_ms_p95": _percentile(stats["server_decode_ms"], 95),
+        "server_ffs_stage_ms_p50": _percentile(stats["server_ffs_stage_ms"], 50),
+        "server_ffs_stage_ms_p95": _percentile(stats["server_ffs_stage_ms"], 95),
+        "server_encode_ms_p50": _percentile(stats["server_encode_ms"], 50),
+        "server_encode_ms_p95": _percentile(stats["server_encode_ms"], 95),
+        "server_router_queue_ms_p50": _percentile(stats["server_router_queue_ms"], 50),
+        "server_ffs_queue_ms_p50": _percentile(stats["server_ffs_queue_ms"], 50),
+        "server_encode_queue_ms_p50": _percentile(stats["server_encode_queue_ms"], 50),
         "server_ffs_ms_per_camera_p50": _percentile(stats["server_ffs_ms"], 50),
         "server_ffs_ms_per_camera_p95": _percentile(stats["server_ffs_ms"], 95),
         "server_align_ms_per_camera_p50": _percentile(stats["server_align_ms"], 50),

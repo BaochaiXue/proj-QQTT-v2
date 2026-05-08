@@ -87,12 +87,15 @@ class DemoV02AsyncProtocolTest(unittest.TestCase):
                     for idx in range(3)
                 ],
                 server_total_ms=39.0,
+                server_stage_ms={"pipeline_mode": "staged", "decode_ms": 3.0, "ffs_stage_ms": 30.0, "encode_ms": 6.0},
             )
         )
 
         self.assertEqual(reply.header["request_id"], "triplet-2")
         self.assertEqual(reply.header["return_type"], "depth_u16")
         self.assertEqual(reply.header["status"], "ok")
+        self.assertEqual(reply.header["server_stage_ms"]["pipeline_mode"], "staged")
+        self.assertEqual(reply.header["server_stage_ms"]["decode_ms"], 3.0)
         self.assertEqual(len(reply.depths), 3)
         for idx, depth in enumerate(reply.depths):
             self.assertEqual(depth.depth_u16.dtype, np.uint16)

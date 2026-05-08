@@ -21,6 +21,19 @@ WSL-5090 real RealSense IR
 -> depth_u16 replies
 ```
 
+The server has two pipeline modes:
+
+```text
+fused-worker:
+  decode/decompress request -> FFS -> encode/compress reply inside one worker
+
+staged:
+  ROUTER receive -> decode/decompress worker -> FFS worker -> encode/compress worker -> ROUTER send
+```
+
+Use `staged` to test whether throughput follows `1000 / max(stage_ms)`
+while end-to-end latency follows the sum of the overlapped stages.
+
 ## Targets
 
 ```text
@@ -47,7 +60,10 @@ conda run --no-capture-output -n demo_2_max \
   --ffs-trt-model-dir data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864 \
   --return depth_u16 \
   --compress lz4 \
+  --server-pipeline-mode staged \
+  --decode-workers 1 \
   --gpu-workers 1 \
+  --encode-workers 1 \
   --max-queue 32 \
   --warmup 20 \
   --debug \
@@ -131,6 +147,20 @@ The WSL client prints:
 
 ```text
 [demo-v0.2-summary] ...
+```
+
+Important fields for the staged pipeline:
+
+```text
+server_decode_ms_p50/p95
+server_ffs_stage_ms_p50/p95
+server_encode_ms_p50/p95
+server_router_queue_ms_p50
+server_ffs_queue_ms_p50
+server_encode_queue_ms_p50
+kit_e2e_ms_p50/p95
+completed_kit_fps
+completed_camera_depth_fps
 ```
 
 Pass:

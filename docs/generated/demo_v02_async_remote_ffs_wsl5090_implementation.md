@@ -2,6 +2,8 @@
 
 Date: 2026-05-07
 
+Update: 2026-05-08
+
 ## Summary
 
 Demo v0.2 is implemented as an independent full-depth capacity benchmark.
@@ -22,6 +24,7 @@ replay recorded triplets to an async server
 run live three-camera triplet requests
 run single-camera replay/live requests
 measure async inflight throughput and latency
+report server stage timing for staged server runs
 ```
 
 ## Files
@@ -60,6 +63,12 @@ completed_kit_fps
 completed_camera_depth_fps
 kit_e2e_ms_p50/p95
 server_total_ms_p50/p95
+server_decode_ms_p50/p95
+server_ffs_stage_ms_p50/p95
+server_encode_ms_p50/p95
+server_router_queue_ms_p50
+server_ffs_queue_ms_p50
+server_encode_queue_ms_p50
 server_ffs_ms_per_camera_p50/p95
 server_align_ms_per_camera_p50/p95
 request_kb_mean
@@ -85,3 +94,16 @@ SAM21-max protocol tests: pass, lz4 payload roundtrip skipped because lz4 is not
 check_all quick: pass, 132 tests
 git diff --check: pass
 ```
+
+## 2026-05-08 Staged Pipeline Addition
+
+The v0.2 server now supports:
+
+```text
+--server-pipeline-mode fused-worker
+--server-pipeline-mode staged
+```
+
+`staged` separates receive/decode, FFS, and reply encode/compression into
+distinct queues. This directly tests whether throughput follows the slowest
+stage while latency follows the sum of the overlapped stages plus queueing.
