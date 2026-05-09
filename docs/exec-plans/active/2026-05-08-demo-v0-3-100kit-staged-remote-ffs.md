@@ -30,8 +30,15 @@ cam0 left/right + cam1 left/right + cam2 left/right
   v0.2 real IR replay folder without committing binary data.
 - Keep Demo v0.3 managed by harness engineering docs, generated reports, and
   deterministic smoke tests.
+- Add v0.3 staged 7003 protocol/server/client code:
+  `services/ffs_remote/async_protocol_v03.py`,
+  `services/ffs_remote/ffs_depth_staged_server_v03.py`, and
+  `demo_v0_3/staged_remote_ffs_triplet_client.py`.
 - Add warmup/measured split to v0.3 client and local 4090 profile scripts.
 - Use 7003 for staged v0.3 service tests; do not disturb 7001/7002.
+- Use GitHub-first branch/PR collaboration for staged server/client work.
+- Keep branch merge timing tied to explicit experiment gates, not code
+  availability alone.
 
 ## Non-Goals
 
@@ -39,6 +46,68 @@ cam0 left/right + cam1 left/right + cam2 left/right
 - No SAM3.1, EdgeTAM, masks, PCD, Open3D, or demo rendering.
 - No single-triplet benchmark claims.
 - No binary replay data in Git.
+- Do not merge v0.2 runtime/doc dirty changes into v0.3.
+- Do not merge v0.3 staged server/client code to `main` before remote 100-kit
+  matrix passes.
+
+## Experiment Rhythm
+
+```text
+P0: 5090 transfers the fixed 100-kit folder to 4090.
+P1: 4090 profiles existing main-branch batch1 and batch3 scripts on 100 kits.
+P2: 5090 implements v0.3 staged 7003 server/client in a clean feature worktree.
+P3: 4090 fetches the feature branch and runs 7003 smoke/profile.
+P4: 5090 runs the remote 100-kit 15 kit-FPS inflight matrix.
+```
+
+## Merge Gates
+
+Gate A can merge to `main`:
+
+```text
+v0.3 foundation only:
+  active plan
+  100-kit prepare script
+  smoke test
+  check_all pass
+```
+
+Gate B can merge docs only:
+
+```text
+4090 batch1/batch3 100-kit validation report
+no engine, ONNX, timing cache, or result binary data
+```
+
+Gate C opens a draft PR only:
+
+```text
+v0.3 staged server/client branch
+5090 local tests pass
+4090 py_compile/unit tests pass
+7003 smoke pass
+```
+
+Gate D can merge staged server/client to `main`:
+
+```text
+remote 100-kit 15 kit-FPS matrix passes:
+  measured_completed_kits=100
+  measured_failed_kits=0
+  measured_stale_kits=0
+  completed_kit_fps_mean >= 15
+  completed_camera_depth_fps_mean >= 45
+```
+
+## Branch Policy
+
+- Use a clean worktree such as
+  `/home/zhangxinjie/proj-QQTT-v2-demo-v03` for
+  `feat/demo-v03-staged-100kit-remote`.
+- Keep `result/`, TensorRT engines, ONNX files, timing caches, and generated
+  binary previews out of commits.
+- v0.2 changes, if retained, must live on a separate archival branch and must
+  not be mixed into the v0.3 feature PR.
 
 ## 5090 Data Preparation
 

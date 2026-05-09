@@ -32,15 +32,65 @@ remote profiles are still pending.
 
 - status: pending
 - attempted host: `xinjie@192.168.0.162`
+- latest attempt: 2026-05-09
 - result: non-interactive SSH is not currently available from this 5090 WSL
-  session; `BatchMode=yes` returned permission denied after accepting the host
-  key.
+  session; `BatchMode=yes` returned permission denied for both
+  `xinjie@192.168.0.162` and `zhangxinjie@192.168.0.162`.
+- prepared HTTP fallback tarball:
+  `/tmp/demo_v0_3_ir_triplet_100kits_848x480.tgz`
+- tarball size: 126M
+- tarball sha256:
+  `192b07f5b5f0564ed3fa32377d833e291a5e1c0bb7422cdf30d64419b707480d`
+- candidate 5090 IPs:
+  `100.93.16.124`, `192.168.0.166`, `fd7a:115c:a1e0::453a:107c`
 - next command after SSH credentials are available:
 
 ```bash
 rsync -aP --info=progress2 \
   result/demo_v0_3_ir_triplet_100kits_848x480/ \
   xinjie@192.168.0.162:/home/xinjie/proj-QQTT-v2/result/demo_v0_3_ir_triplet_100kits_848x480/
+```
+
+HTTP fallback from 5090 when 4090 is ready:
+
+```bash
+python3 -m http.server 8799 --directory /tmp
+```
+
+Then on 4090:
+
+```bash
+curl -fL http://192.168.0.166:8799/demo_v0_3_ir_triplet_100kits_848x480.tgz \
+  -o /tmp/demo_v0_3_ir_triplet_100kits_848x480.tgz
+curl -fL http://192.168.0.166:8799/demo_v0_3_ir_triplet_100kits_848x480.tgz.sha256 \
+  -o /tmp/demo_v0_3_ir_triplet_100kits_848x480.tgz.sha256
+cd /tmp
+sha256sum -c demo_v0_3_ir_triplet_100kits_848x480.tgz.sha256
+mkdir -p /home/xinjie/proj-QQTT-v2/result
+tar -C /home/xinjie/proj-QQTT-v2/result -xzf /tmp/demo_v0_3_ir_triplet_100kits_848x480.tgz
+```
+
+## Branch / Merge Rhythm
+
+- current merge stance: do not merge v0.3 staged server/client to `main` yet.
+- P0 transfer: pending
+- P1 4090 local batch1/batch3 profile: pending
+- P2 clean feature branch implementation: local 5090 implementation/tests pass
+- P3 4090 7003 smoke: pending
+- P4 remote 100-kit matrix: pending
+- merge gate for staged server/client: P4 pass only
+
+Required pass condition for final merge:
+
+```text
+measured_completed_kits=100
+measured_failed_kits=0
+measured_stale_kits=0
+completed_kit_fps_mean >= 15
+completed_camera_depth_fps_mean >= 45
+depth_nonzero_cam0_min > 0
+depth_nonzero_cam1_min > 0
+depth_nonzero_cam2_min > 0
 ```
 
 ## 4090 Local Batch1 Profile
