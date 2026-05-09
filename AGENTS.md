@@ -55,15 +55,17 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 
 ## Required Workflow For Future Changes
 
-1. Start with an exec plan under `docs/exec-plans/active/` for any non-trivial change.
-2. Keep changes inside camera preview / calibration / recording / alignment scope.
-3. Update docs and tests in the same change when behavior changes.
-4. Run deterministic checks before finishing:
+1. Before modifying files, run `git pull --ff-only origin main` and confirm the local branch is up to date with GitHub.
+2. Start with an exec plan under `docs/exec-plans/active/` for any non-trivial change.
+3. Keep changes inside camera preview / calibration / recording / alignment scope.
+4. Update docs and tests in the same change when behavior changes.
+5. Run deterministic checks before finishing:
    - `python scripts/harness/check_all.py`
    - use `python scripts/harness/check_all.py --full` when the change is broad enough that the default quick profile is not sufficient
-5. For external dependency proof-of-life work, record exact commands and outcomes under `docs/generated/`.
-6. For FFS changes, keep weights external and validate both deterministic tests and manual hardware outcomes.
-7. For comparison visualization changes, validate the calibration loader and non-interactive render path.
+6. For external dependency proof-of-life work, record exact commands and outcomes under `docs/generated/`.
+7. For FFS changes, keep weights external and validate both deterministic tests and manual hardware outcomes.
+8. For comparison visualization changes, validate the calibration loader and non-interactive render path.
+9. After committing validated modifications, push them to GitHub with `git push origin main` unless the user explicitly says not to push.
 
 ## Invariants
 
