@@ -13,6 +13,15 @@ This 4090 host has no camera role in the experiment. It does not open
 RealSense, does not run EdgeTAM/SAM/UI, and does not run the real-IR client
 benchmark.
 
+Targets for all follow-up remote FFS reports:
+
+- single-camera realtime: 45 FPS
+- three-camera realtime: 15 FPS per camera, aggregate 45 camera-FPS
+- semantic requirement: real RealSense IR left/right input and real server depth output
+- synthetic echo: protocol sanity only, never formal performance evidence
+- full `depth_u16`: semantic correctness / baseline mode
+- `masked_uv_depth`: realtime hot-path candidate if full-depth transport cannot reach target
+
 ## Server
 
 - machine: Native Ubuntu RTX 4090
@@ -32,18 +41,18 @@ benchmark.
 - secondary endpoint for comparison: tcp://128.59.19.35:7001
 - ufw: inactive
 
-`nvidia-smi` snapshot after server startup:
+`nvidia-smi` snapshot before the masked server switch:
 
 ```text
-0, NVIDIA GeForce RTX 4090, 570.211.01, 6243 MiB / 24564 MiB, 60 %
-1, NVIDIA GeForce RTX 4090, 570.211.01, 6033 MiB / 24564 MiB, 40 %
+0, NVIDIA GeForce RTX 4090, 570.211.01, 6137 MiB / 24564 MiB, 72 %
+1, NVIDIA GeForce RTX 4090, 570.211.01, 4354 MiB / 24564 MiB, 31 %
 ```
 
 ## FFS Contract
 
 - Fast-FoundationStereo repo: `/home/xinjie/Fast-FoundationStereo`
 - engine path: `data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864`
-- return_type: `depth_u16`
+- return_type: currently `masked_uv_depth`; previous full-depth baseline used `depth_u16`
 - response_compression: `lz4`
 - strict contract: pass
 - required model: `20-30-48`
@@ -56,14 +65,15 @@ benchmark.
 
 ## Active Process
 
-- server PID: 550803
-- PID file: `/tmp/qqtt_ffs_strict_depth_u16_lz4_7001.pid`
-- log file: `/tmp/qqtt_ffs_strict_depth_u16_lz4_7001.log`
+- server PID: 860860
+- PID file: `/tmp/qqtt_ffs_strict_masked_uv_depth_lz4_7001.pid`
+- log file: `/tmp/qqtt_ffs_strict_masked_uv_depth_lz4_7001.log`
 - listen status: pass, `0.0.0.0:7001`
-- current variant: response `lz4`
+- current variant: `masked_uv_depth` with response `lz4`
 - real request status: pass, server has processed real-depth requests
+- current performance decision: full `depth_u16/lz4` semantic pass, full-depth realtime fail, masked realtime candidate active
 
-Startup command:
+Previous full-depth semantic baseline command:
 
 ```bash
 cd /home/xinjie/proj-QQTT-v2
@@ -113,8 +123,61 @@ Current interpretation:
 - return shape: `(480, 848)`
 - observed FFS time: mostly about 13-15 ms
 - observed align time: mostly about 4-8 ms
-- observed server total time: mostly about 18-24 ms
+- observed server total time: earlier about 18-24 ms, latest lz4/full-depth run about 23-28 ms
 - bottleneck under investigation: network / serialization / compression / REQ-REP roundtrip, not 4090 TensorRT FFS
+- current WSL conclusion for full-depth transport: `lz4/lz4` is best observed full-depth baseline
+- best completed FPS for full `depth_u16/lz4`: 14.82
+- full-depth realtime target status: not pass for single-camera 45 FPS or three-camera 15 FPS/camera
+- next official realtime candidate: `masked_uv_depth/lz4` on `tcp://192.168.0.162:7001`
+
+## Active masked_uv_depth Server
+
+Switched on 2026-05-07 to the realtime hot-path candidate:
+
+```text
+pid: 860860
+return_type: masked_uv_depth
+response_compression: lz4
+bind: tcp://0.0.0.0:7001
+pid_file: /tmp/qqtt_ffs_strict_masked_uv_depth_lz4_7001.pid
+log_file: /tmp/qqtt_ffs_strict_masked_uv_depth_lz4_7001.log
+```
+
+Startup log:
+
+```text
+[ffs-remote-server] {"bind": "tcp://0.0.0.0:7001", "compress": "lz4", "echo_only": false, "engine_contract": {"ffs_contract_builder_optimization_level": 5, "ffs_contract_capture_height": 480, "ffs_contract_capture_width": 848, "ffs_contract_engine_dir": "data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864", "ffs_contract_engine_height": 480, "ffs_contract_engine_width": 864, "ffs_contract_max_disp": 192, "ffs_contract_model": "20-30-48", "ffs_contract_padding_policy": "480x848->pad_to_480x864", "ffs_contract_strict": true, "ffs_contract_valid_iters": 4}, "ffs_repo": "/home/xinjie/Fast-FoundationStereo", "ffs_trt_model_dir": "data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864", "return_type": "masked_uv_depth", "warmup": 20}
+```
+
+Initial masked request log observed after the switch:
+
+```text
+[ffs-remote-server] lazy_warmup count=20 elapsed_ms=1354.42
+[ffs-remote-server] frame_id=0 status=ok return=masked_uv_depth shape=(0, 4) ffs_ms=12.76 align_ms=10.88 total_ms=1378.98
+[ffs-remote-server] frame_id=1 status=ok return=masked_uv_depth shape=(0, 4) ffs_ms=12.59 align_ms=4.12 total_ms=17.15
+[ffs-remote-server] frame_id=2 status=ok return=masked_uv_depth shape=(0, 4) ffs_ms=13.42 align_ms=3.87 total_ms=17.70
+[ffs-remote-server] frame_id=3 status=ok return=masked_uv_depth shape=(0, 4) ffs_ms=12.47 align_ms=4.08 total_ms=17.32
+[ffs-remote-server] frame_id=4 status=ok return=masked_uv_depth shape=(0, 4) ffs_ms=12.46 align_ms=3.92 total_ms=16.74
+```
+
+The `shape=(0, 4)` response is a valid empty sparse payload, but it is not a
+PCD success condition. WSL-5090 should confirm that object masks are non-empty
+and are being attached to remote requests before interpreting masked PCD
+throughput as valid.
+
+Current prompt-corrected wait state:
+
+- waiting for WSL-5090 to rerun with current-scene prompts:
+  `object-prompt="stuff toy"` and `controller-prompt="rag"`
+- current server return mode remains `masked_uv_depth/lz4`
+- recent empty sparse responses, `shape=(0, 4)`, are attributed to an
+  empty/missing WSL mask from stale first-frame SAM3.1 init prompts, not an FFS
+  server failure
+- server readiness for the corrected prompt run: pass, `0.0.0.0:7001`
+  listening with strict 4090 TensorRT engine contract
+
+No RealSense, `pyrealsense2`, EdgeTAM, SAM, or UI process was started on the
+4090. The 4090 remains an FFS TensorRT server only.
 
 ## Validation Commands
 
@@ -142,13 +205,15 @@ Not run on 4090:
 
 ## iperf3 Server
 
-Installed and started for WSL-5090 network baseline:
+Installed and restarted with explicit IPv4 bind for WSL-5090 network baseline:
 
 ```text
-pid: 750173
-command: iperf3 -s -p 5201
+pid: 805787
+command: iperf3 -s -B 0.0.0.0 -p 5201 -D --logfile /tmp/qqtt_iperf3_5201.log
 log: /tmp/qqtt_iperf3_5201.log
-listen: *:5201
+listen: 0.0.0.0:5201
+local nc check: pass, `nc -vz 127.0.0.1 5201`
+note: `nc` is not a valid iperf3 handshake, so the final server was restarted after the nc probe with iperf3 daemon mode
 ```
 
 WSL-5090 can run:
@@ -163,21 +228,17 @@ iperf3 -c 128.59.19.35 -p 5201 -t 20 -R
 iperf3 -c 128.59.19.35 -p 5201 -t 20 -P 4
 ```
 
-## Compression Variants
+## masked_uv_depth Restart Template
 
-Do not run these until the WSL-5090 client is ready for the matching matrix
-row. Each variant keeps the same strict FFS engine contract and changes only the
-server response compression.
-
-Shared command template:
+Use this if the current masked server must be restarted. It keeps the same
+strict FFS TensorRT engine and returns sparse/ROI `masked_uv_depth`.
 
 ```bash
 cd /home/xinjie/proj-QQTT-v2
 export CUDA_VISIBLE_DEVICES=1
 
 kill "$(cat /tmp/qqtt_ffs_strict_depth_u16_lz4_7001.pid 2>/dev/null)" 2>/dev/null || true
-kill "$(cat /tmp/qqtt_ffs_strict_depth_u16_png_7001.pid 2>/dev/null)" 2>/dev/null || true
-kill "$(cat /tmp/qqtt_ffs_strict_depth_u16_none_7001.pid 2>/dev/null)" 2>/dev/null || true
+kill "$(cat /tmp/qqtt_ffs_strict_masked_uv_depth_lz4_7001.pid 2>/dev/null)" 2>/dev/null || true
 sleep 2
 
 setsid bash -lc '
@@ -189,8 +250,8 @@ setsid bash -lc '
     --bind tcp://0.0.0.0:7001 \
     --ffs-repo /home/xinjie/Fast-FoundationStereo \
     --ffs-trt-model-dir data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864 \
-    --return depth_u16 \
-    --compress COMPRESSION \
+    --return masked_uv_depth \
+    --compress lz4 \
     --warmup 20 \
     --debug \
     --strict-engine-contract \
@@ -200,41 +261,20 @@ setsid bash -lc '
     --required-width 864 \
     --required-builder-optimization-level 5 \
     --required-max-disp 192
-' > LOG_PATH 2>&1 < /dev/null &
-echo $! > PID_PATH
+' > /tmp/qqtt_ffs_strict_masked_uv_depth_lz4_7001.log 2>&1 < /dev/null &
+echo $! > /tmp/qqtt_ffs_strict_masked_uv_depth_lz4_7001.pid
 sleep 8
-tail -n 120 LOG_PATH
+tail -n 120 /tmp/qqtt_ffs_strict_masked_uv_depth_lz4_7001.log
 ss -ltnp | grep 7001 || true
 ```
 
-Variant substitutions:
+## Next WSL-5090 Steps
 
-| Variant | `COMPRESSION` | `LOG_PATH` | `PID_PATH` |
-| --- | --- | --- | --- |
-| lz4 response | `lz4` | `/tmp/qqtt_ffs_strict_depth_u16_lz4_7001.log` | `/tmp/qqtt_ffs_strict_depth_u16_lz4_7001.pid` |
-| png response | `png` | `/tmp/qqtt_ffs_strict_depth_u16_png_7001.log` | `/tmp/qqtt_ffs_strict_depth_u16_png_7001.pid` |
-| none response | `none` | `/tmp/qqtt_ffs_strict_depth_u16_none_7001.log` | `/tmp/qqtt_ffs_strict_depth_u16_none_7001.pid` |
+The 4090 server is now ready for WSL-5090 to run:
 
-## Next Client Command
-
-Run this from WSL-5090. This is the first formal handoff benchmark because it
-uses real RealSense IR and requests real depth from the 4090 server:
-
-```bash
-conda run --no-capture-output -n demo_2_max \
-  python services/ffs_remote/ffs_depth_client.py \
-  --endpoint tcp://192.168.0.162:7001 \
-  --real-ir-depth-benchmark \
-  --serial 239222300412 \
-  --profile 848x480 \
-  --fps 30 \
-  --duration-s 20 \
-  --timeout-ms 5000 \
-  --compress lz4 \
-  --return-type depth_u16 \
-  --save-first-depth-preview \
-  --debug
-```
-
-Expected server-side request logs will include `frame_id`, `status=ok`,
-`return=depth_u16`, `ffs_ms`, `align_ms`, and `total_ms`.
+1. `masked_uv_depth/lz4` no-render inflight matrix against
+   `tcp://192.168.0.162:7001`.
+2. If single-camera no-render reaches 45 FPS, run the rendered single-camera
+   masked test with the best inflight value.
+3. If single-camera masked no-render passes, run the three-camera 15 FPS/camera
+   proxy using real IR replay.
