@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -74,10 +75,40 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["edgetam"]["prewarm_runs"], 1)
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_SINGLE_OWNER)
         self.assertEqual(contract["gpu_pipeline"]["internal_order"], demo.SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
+        self.assertEqual(contract["ffs_contract"]["trt_batch_size"], 3)
+        self.assertTrue(contract["ffs_contract"]["batch3_isolated_artifact"])
+        self.assertEqual(
+            Path(contract["ffs_contract"]["trt_model_dir"]),
+            demo.DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR,
+        )
         self.assertEqual(contract["filter_scheduler"]["mode"], "async")
         self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])
         self.assertFalse(contract["filter_scheduler"]["render_accepts_raw_fused_pcd"])
         self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["towel", "stuffed animal"])
+
+    def test_demo22_preset_allows_explicit_batch1_rollback(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--ffs-trt-batch-size",
+                "1",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--ffs-trt-batch-size"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["ffs_contract"]["trt_batch_size"], 1)
+        self.assertFalse(contract["ffs_contract"]["batch3_isolated_artifact"])
+        self.assertEqual(
+            Path(contract["ffs_contract"]["trt_model_dir"]),
+            demo.DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
+        )
 
     def test_demo22_staged_parallel_preset_contract(self) -> None:
         parser = demo.build_arg_parser()

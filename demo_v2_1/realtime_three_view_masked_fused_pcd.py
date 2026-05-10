@@ -1077,6 +1077,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+            _set_if_not_explicit(args, explicit, flag="--ffs-trt-batch-size", attr="ffs_trt_batch_size", value=3)
             _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
             _set_if_not_explicit(args, explicit, flag="--single-owner-order", attr="single_owner_order", value=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_SHARED)
@@ -4811,8 +4812,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=FFS_TRT_BATCH_SIZES,
         default=1,
         help=(
-            "Static TensorRT FFS batch size. Default batch=1 preserves the existing engine path. "
-            "Use 3 with the isolated batch3 engine path for one triplet enqueue."
+            "Static TensorRT FFS batch size. Base parser default batch=1 preserves the existing engine path; "
+            "Demo 2.2 async-filter preset defaults to 3 with the isolated batch3 engine path."
         ),
     )
     parser.add_argument("--ffs-trt-root", default=None)

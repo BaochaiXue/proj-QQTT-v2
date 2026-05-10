@@ -52,12 +52,15 @@ Command:
 conda run --no-capture-output -n demo_2_max \
   python demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py \
   --preset demo2.2-async-filter-5fps \
-  --ffs-trt-batch-size 3 \
   --duration-s 40 \
   --profile-warmup-exclude-s 20 \
   --profile-json-output docs/generated/demo2_2_async_filter_batch3_ffs_20s_warmup_20s_formal_profile.json \
   --debug
 ```
+
+The Demo 2.2 async-filter preset now defaults to `--ffs-trt-batch-size 3`; the
+flag was required when this profile was first generated, but is no longer
+needed for the default wrapper path.
 
 Profile output:
 
