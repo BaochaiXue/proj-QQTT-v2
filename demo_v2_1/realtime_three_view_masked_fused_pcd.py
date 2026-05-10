@@ -2425,12 +2425,17 @@ class Demo21Runtime:
     def _create_ffs_runner(self) -> object:
         from data_process.depth_backends import FastFoundationStereoTensorRTRunner
 
-        return FastFoundationStereoTensorRTRunner(
+        start_s = time.perf_counter()
+        runner = FastFoundationStereoTensorRTRunner(
             ffs_repo=Path(self.args.ffs_repo),
             model_dir=Path(self.args.ffs_trt_model_dir),
             trt_root=None if self.args.ffs_trt_root is None else Path(self.args.ffs_trt_root),
             input_staging=str(self.args.ffs_input_staging),
         )
+        init_ms = _elapsed_ms(start_s, time.perf_counter())
+        self._init_profile_add(("ffs", "runner_init_ms_total"), init_ms)
+        self._init_profile_set_once(("ffs", "first_runner_init_ms"), init_ms)
+        return runner
 
     def _compute_ffs_depth_for_frame(
         self,
@@ -2512,6 +2517,27 @@ class Demo21Runtime:
             per_camera_frame_seq=dict(group.per_camera_frame_seq),
             timestamp_source=str(group.timestamp_source),
         )
+        if not self._first_ffs_cycle_recorded:
+            self._first_ffs_cycle_recorded = True
+            first_run_by_camera = {
+                f"cam{int(camera_idx)}": float(per_camera[int(camera_idx)].get("ffs_ms", 0.0))
+                for camera_idx in self.args.camera_ids
+            }
+            first_align_by_camera = {
+                f"cam{int(camera_idx)}": float(per_camera[int(camera_idx)].get("align_ms", 0.0))
+                for camera_idx in self.args.camera_ids
+            }
+            self._init_profile_update(
+                ("ffs",),
+                {
+                    "first_group_id": int(group.group_id),
+                    "first_cycle_ms": float(packet.total_ms),
+                    "first_run_ms_by_camera": first_run_by_camera,
+                    "first_align_ms_by_camera": first_align_by_camera,
+                    "first_run_ms_sum": float(sum(first_run_by_camera.values())),
+                    "first_align_ms_sum": float(sum(first_align_by_camera.values())),
+                },
+            )
         self._profile_update(
             group.group_id,
             ffs={
@@ -2688,20 +2714,12 @@ class Demo21Runtime:
                 "topology": topology_label,
             },
         )
-        self._init_profile_set(
-            ("edgetam", "model_load_ms_total"),
-            float(_nested_get(self._init_profile_snapshot(), ("edgetam", "model_load_ms_total")) or 0.0) + float(model_load_ms),
-        )
-        self._init_profile_set(
+        self._init_profile_add(("edgetam", "model_load_ms_total"), float(model_load_ms))
+        self._init_profile_add(
             ("edgetam", "compile_wrap_ms_total"),
-            float(_nested_get(self._init_profile_snapshot(), ("edgetam", "compile_wrap_ms_total")) or 0.0)
-            + float(compile_metadata.get("wrap_ms", compile_wrap_ms)),
+            float(compile_metadata.get("wrap_ms", compile_wrap_ms)),
         )
-        self._init_profile_set(
-            ("edgetam", "processor_load_ms_total"),
-            float(_nested_get(self._init_profile_snapshot(), ("edgetam", "processor_load_ms_total")) or 0.0)
-            + float(processor_load_ms),
-        )
+        self._init_profile_add(("edgetam", "processor_load_ms_total"), float(processor_load_ms))
         print(
             "[demo2.1-edgetam] "
             f"cam={camera_idx} topology={topology_label} model={self.args.model_id} "
@@ -2821,6 +2839,34 @@ class Demo21Runtime:
         if controller_mask is None:
             controller_mask = np.zeros_like(object_mask, dtype=bool)
         total_ms = _elapsed_ms(frame_started_s, time.perf_counter())
+        if add_prompt:
+            cam_key = f"cam{int(frame.camera_idx)}"
+            self._init_profile_update(
+                ("edgetam", "sessions", cam_key),
+                {
+                    "prompt_add_ms": float(prompt_ms),
+                    "first_forward_wall_model_ms": float(wall_model_ms),
+                    "first_forward_cuda_event_ms": float(cuda_event_model_ms),
+                    "first_forward_total_ms": float(total_ms),
+                    "first_forward_group_id": int(frame.group_id),
+                },
+            )
+            self._init_profile_add(("edgetam", "prompt_add_ms_total"), float(prompt_ms))
+            self._init_profile_add(("edgetam", "first_forward_total_ms_sum"), float(total_ms))
+            self._init_profile_add(("edgetam", "first_forward_model_ms_sum"), float(wall_model_ms))
+            session_init_ms = float(
+                _nested_get(self._init_profile_snapshot(), ("edgetam", "sessions", cam_key, "session_init_ms"))
+                or 0.0
+            )
+            self._init_profile_set(
+                ("edgetam", "session_init_plus_prompt_ms_total"),
+                float(_nested_get(self._init_profile_snapshot(), ("edgetam", "session_init_ms_total")) or 0.0)
+                + float(_nested_get(self._init_profile_snapshot(), ("edgetam", "prompt_add_ms_total")) or 0.0),
+            )
+            self._init_profile_update(
+                ("edgetam", "sessions", cam_key),
+                {"session_init_plus_prompt_ms": float(session_init_ms + prompt_ms)},
+            )
         self._profile_update(
             frame.group_id,
             edgetam={
@@ -3023,12 +3069,14 @@ class Demo21Runtime:
         if bool(state["initialized"]):
             return True
         state["init_attempts"] = int(state["init_attempts"]) + 1
+        sam31_start_s = time.perf_counter()
         try:
             controller_mask, object_mask = resolve_initial_masks_for_camera(
                 frame,
                 self.args,
                 sam31_lock=self._sam31_lock,
             )
+            sam31_call_ms = _elapsed_ms(sam31_start_s, time.perf_counter())
         except Exception as exc:
             key = f"sam31_init_failures_cam{int(camera_idx)}"
             self._summary[key] = int(self._summary.get(key, 0)) + 1
@@ -3056,6 +3104,22 @@ class Demo21Runtime:
 
         state["controller_mask"] = controller_mask
         state["object_mask"] = object_mask
+        sam31_timing = dict(getattr(self.args, "_sam31_last_timing_ms", {}) or {})
+        sam31_timing.setdefault("total_ms", float(sam31_call_ms))
+        cam_key = f"cam{int(camera_idx)}"
+        self._init_profile_update(
+            ("sam31", cam_key),
+            {
+                **sam31_timing,
+                "call_wall_ms": float(sam31_call_ms),
+                "object_pixels": int(np.count_nonzero(object_mask)),
+                "controller_pixels": int(np.count_nonzero(controller_mask)),
+                "group_id": int(frame.group_id),
+                "attempts": int(state["init_attempts"]),
+            },
+        )
+        self._init_profile_add(("sam31", "model_load_ms_total"), float(sam31_timing.get("model_load_ms", 0.0) or 0.0))
+        self._init_profile_add(("sam31", "segment_total_ms_total"), float(sam31_timing.get("total_ms", sam31_call_ms) or 0.0))
         self._summary[f"sam31_init_attempts_cam{int(camera_idx)}"] = int(state["init_attempts"])
         if self.args.debug:
             print(
@@ -3065,6 +3129,7 @@ class Demo21Runtime:
                 f"controller_px={int(np.count_nonzero(controller_mask))}",
                 flush=True,
             )
+        session_start_s = time.perf_counter()
         state["session"] = state["hf_stream"].EdgeTamVideoInferenceSession(
             video=None,
             video_height=int(frame.color_bgr.shape[0]),
@@ -3074,6 +3139,15 @@ class Demo21Runtime:
             video_storage_device=self.args.device,
             dtype=state["dtype"],
         )
+        session_init_ms = _elapsed_ms(session_start_s, time.perf_counter())
+        self._init_profile_update(
+            ("edgetam", "sessions", cam_key),
+            {
+                "session_init_ms": float(session_init_ms),
+                "init_group_id": int(frame.group_id),
+            },
+        )
+        self._init_profile_add(("edgetam", "session_init_ms_total"), float(session_init_ms))
         state["initialized"] = True
         return True
 
@@ -3115,9 +3189,14 @@ class Demo21Runtime:
             and not self._sam31_runtime_released_after_init
             and all(bool(state["initialized"]) for state in states.values())
         ):
-            release_sam31_runtime_resources(str(self.args.device))
+            release_start_s = time.perf_counter()
+            release_ms = release_sam31_runtime_resources(str(self.args.device))
             self._sam31_runtime_released_after_init = True
             self._summary["sam31_runtime_released_after_all_cameras_init"] = True
+            self._init_profile_set(
+                ("sam31", "release_cleanup_ms"),
+                float(release_ms if release_ms is not None else _elapsed_ms(release_start_s, time.perf_counter())),
+            )
         return packets, _elapsed_ms(cycle_start_s, time.perf_counter())
 
     def _run_staged_edgetam_cycle_parallel(
@@ -3235,6 +3314,8 @@ class Demo21Runtime:
                     internal_order=order,
                 )
                 self.complete_inference_slot.put(packet)
+                self._init_profile_set_once(("first_complete_inference_group_s",), self._profile_rel_s())
+                self._init_profile_set_once(("first_complete_inference_group_id",), int(group.group_id))
                 self._latest_depth_group = depth_group
                 self.ffs_stats.record()
                 self.gpu_owner_stats.record()
@@ -3319,6 +3400,8 @@ class Demo21Runtime:
                         internal_order=str(self.args.staged_order),
                     )
                     self.complete_inference_slot.put(packet)
+                    self._init_profile_set_once(("first_complete_inference_group_s",), self._profile_rel_s())
+                    self._init_profile_set_once(("first_complete_inference_group_id",), int(group.group_id))
                     self._latest_depth_group = depth_group
                     self.ffs_stats.record()
                     self.gpu_owner_stats.record()
@@ -3692,6 +3775,8 @@ class Demo21Runtime:
             complete=True,
             drop_reason=None,
         )
+        self._init_profile_set_once(("first_complete_fused_group_s",), self._profile_rel_s())
+        self._init_profile_set_once(("first_complete_fused_group_id",), int(raw.group_id))
         return FusedPcdPacket(
             group_id=raw.group_id,
             created_perf_s=time.perf_counter(),
@@ -3903,6 +3988,8 @@ class Demo21Runtime:
             complete=True,
             drop_reason=None,
         )
+        self._init_profile_set_once(("first_complete_fused_group_s",), self._profile_rel_s())
+        self._init_profile_set_once(("first_complete_fused_group_id",), int(depth_group.group_id))
         return FusedPcdPacket(
             group_id=depth_group.group_id,
             created_perf_s=time.perf_counter(),
@@ -4113,6 +4200,8 @@ class Demo21Runtime:
                     "render_s": self._profile_rel_s(),
                 },
             )
+            self._init_profile_set_once(("first_render_s",), self._profile_rel_s())
+            self._init_profile_set_once(("first_render_group_id",), int(packet.group_id))
 
         def request_render() -> None:
             if self.stop_event.is_set():

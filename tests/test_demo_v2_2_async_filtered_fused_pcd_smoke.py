@@ -212,6 +212,21 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertAlmostEqual(summary["filter_output_fps"], 5.0)
         self.assertAlmostEqual(summary["render_fps"], 5.0)
 
+    def test_profile_payload_includes_init_profile_breakdown(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS, "--profile-pipeline"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--profile-pipeline"})
+        runtime = demo.Demo21Runtime(args)
+
+        runtime._init_profile_set(("camera_startup_ms",), 12.0)
+        runtime._init_profile_update(("sam31", "cam0"), {"total_ms": 3.0})
+        runtime._init_profile_add(("edgetam", "model_load_ms_total"), 4.0)
+        payload = runtime._build_profile_payload()
+
+        self.assertEqual(payload["init_profile"]["camera_startup_ms"], 12.0)
+        self.assertEqual(payload["init_profile"]["sam31"]["cam0"]["total_ms"], 3.0)
+        self.assertEqual(payload["init_profile"]["edgetam"]["model_load_ms_total"], 4.0)
+
 
 if __name__ == "__main__":
     unittest.main()
