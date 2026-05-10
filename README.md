@@ -84,6 +84,18 @@ conda run -n FFS-SAM-RS python demo_v2/realtime_single_camera_pointcloud.py --pr
 See [demo_v2/README.md](demo_v2/README.md) for native RealSense, FFS depth,
 and WSLg/Open3D commands. `demo_v1/` is kept as the baseline copy.
 
+Three-camera fused semantic PCD demos:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python demo_v2_1/realtime_three_view_masked_fused_pcd.py --preset demo2.2-staged-parallel-5fps
+```
+
+See [demo_v2_1/README.md](demo_v2_1/README.md) for Demo 2.1.5 / Demo 2.2.
+These demos read `calibrate.pkl`, backproject each camera in its local camera
+frame, transform points with the corresponding camera-to-world `c2w`, and fuse
+object/controller semantic PCDs in the shared world frame.
+
 True no-render FFS throughput probe:
 
 ```bash

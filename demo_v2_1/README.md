@@ -2,6 +2,19 @@
 
 Demo 2.1 is the three-camera successor to Demo 2. It keeps the Demo 2 quality contract but changes the output from a single-camera masked PCD to fused semantic point clouds from `cam0/cam1/cam2`.
 
+World-fusion contract:
+
+```text
+per-camera masked RGB-D
+-> backproject in that camera's local color frame
+-> transform with calibrate.pkl camera-to-world c2w
+-> fuse object/controller PCDs in the shared world frame
+```
+
+The runtime default calibration path is the repo-root `calibrate.pkl`. When
+world fusion is needed and the file is missing, startup fails instead of falling
+back to single-camera coordinates.
+
 Official quality path:
 
 ```text

@@ -111,6 +111,13 @@ Orbit point-cloud mode defaults to `--max-points 200000 --point-size 1.0` so
 the draw path is less dominated by point rasterization; pass explicit values
 when you want denser or larger splats for inspection.
 
+The single-camera coordinate contract above applies only to
+`demo_v2/realtime_single_camera_pointcloud.py`. Demo 2.1.5 / Demo 2.2 fused PCD
+uses the three-camera entrypoint in `demo_v2_1/`: it requires `calibrate.pkl`
+when world fusion is enabled, loads camera-to-world transforms after
+`CameraSystem` startup, transforms each camera's backprojected masked RGB-D
+points into the shared world frame, then fuses object/controller semantic PCDs.
+
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:
 
