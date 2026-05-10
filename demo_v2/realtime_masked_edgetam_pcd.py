@@ -1137,6 +1137,9 @@ def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> float:
             print(f"[WARN] SAM3.1 autocast cleanup failed: {type(exc).__name__}: {exc}", flush=True)
         if helper is not None:
             setattr(helper, "_CUDA_AUTOCAST_CONTEXT", None)
+            contexts = getattr(helper, "_CUDA_AUTOCAST_CONTEXTS_BY_THREAD", None)
+            if isinstance(contexts, dict):
+                contexts.clear()
 
     gc.collect()
     try:

@@ -7,6 +7,7 @@ import platform
 import re
 import shutil
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,8 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp")
 BPE_VOCAB_NAME = "bpe_simple_vocab_16e6.txt.gz"
 PROMPT_SPLIT_PATTERN = re.compile(r"[,\n;]+|(?<!\d)\.(?!\d)")
 _CUDA_AUTOCAST_CONTEXT = None
+_CUDA_AUTOCAST_CONTEXTS_BY_THREAD: dict[int, Any] = {}
+_CUDA_AUTOCAST_CONTEXT_LOCK = threading.Lock()
 _IMAGE_PROCESSOR_CACHE: dict[tuple[str, str | None, bool, float, str], tuple[Any, Any]] = {}
 
 
@@ -204,9 +207,12 @@ def _configure_torch_inference(torch_module) -> None:
             torch_module.backends.cuda.enable_math_sdp(True)
         return
 
-    if _CUDA_AUTOCAST_CONTEXT is None:
-        _CUDA_AUTOCAST_CONTEXT = torch_module.autocast(device_type="cuda", dtype=torch_module.bfloat16)
-        _CUDA_AUTOCAST_CONTEXT.__enter__()
+    thread_id = threading.get_ident()
+    with _CUDA_AUTOCAST_CONTEXT_LOCK:
+        if thread_id not in _CUDA_AUTOCAST_CONTEXTS_BY_THREAD:
+            _CUDA_AUTOCAST_CONTEXT = torch_module.autocast(device_type="cuda", dtype=torch_module.bfloat16)
+            _CUDA_AUTOCAST_CONTEXT.__enter__()
+            _CUDA_AUTOCAST_CONTEXTS_BY_THREAD[thread_id] = _CUDA_AUTOCAST_CONTEXT
 
     device_properties = torch_module.cuda.get_device_properties(torch_module.cuda.current_device())
     if device_properties.major >= 8:
@@ -309,6 +315,29 @@ def build_sam31_video_predictor(
 
 def clear_sam31_image_processor_cache() -> None:
     _IMAGE_PROCESSOR_CACHE.clear()
+
+
+def preload_sam31_image_processor_cache(
+    *,
+    checkpoint_path: str | Path | None = None,
+    compile_model: bool = False,
+    confidence_threshold: float = 0.5,
+    device: str = "cuda",
+) -> dict[str, Any]:
+    """Load and cache the SAM3.1 image processor without segmenting an image."""
+
+    _, _, resolved_checkpoint, resolved_bpe_path, build_timing = _build_sam31_image_processor(
+        checkpoint_path=checkpoint_path,
+        compile_model=compile_model,
+        confidence_threshold=float(confidence_threshold),
+        device=device,
+        reuse_model=True,
+    )
+    return {
+        "checkpoint_path": resolved_checkpoint,
+        "bpe_path": resolved_bpe_path,
+        "timing_ms": build_timing,
+    }
 
 
 def _build_sam31_image_processor(

@@ -18,9 +18,15 @@ Reduce Demo 2.2 startup latency toward <10s before the steady 15 FPS profile win
 - Move EdgeTAM torch.compile lazy first-forward cost into an explicit init
   prewarm step for Demo 2.2, using a dummy streaming session and dummy mask
   prompt before the live first-frame sessions are created.
+- Start camera setup, FFS runner init, EdgeTAM shared-model/session prewarm,
+  and SAM3.1 image-processor preload concurrently for Demo 2.2 presets.
+- Make SAM3.1 helper CUDA autocast state thread-local enough for background
+  preload plus foreground first-frame segmentation.
 
 ## Validation
 - Demo 2.2 dry-run contract.
 - Demo 2.2/Demo 2.1 smoke tests.
 - `scripts/harness/check_all.py`.
 - Then rerun hardware startup/profile.
+- Parallel-init profile:
+  `docs/generated/demo2_2_async_filter_parallel_init_20s_warmup_20s_formal_profile.md`.

@@ -1080,6 +1080,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_SHARED)
             _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-compile", attr="edgetam_prewarm_compile", value=True)
             _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-runs", attr="edgetam_prewarm_runs", value=1)
+            _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
             _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
             _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
             _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
@@ -1100,6 +1101,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
             _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-compile", attr="edgetam_prewarm_compile", value=True)
             _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-runs", attr="edgetam_prewarm_runs", value=1)
+            _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
             _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
             _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
             _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
@@ -1407,6 +1409,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         },
         "init": {
             "mode": args.init_mode,
+            "parallel_init": bool(getattr(args, "parallel_init", False)),
             "object_init_mask_root": args.object_init_mask_root,
             "controller_init_mask_root": args.controller_init_mask_root,
             "sam31_retry_interval_s": float(args.sam31_init_retry_interval_s),
@@ -1554,6 +1557,9 @@ class Demo21Runtime:
         self._threads: list[threading.Thread] = []
         self._sam31_lock = threading.Lock()
         self._sam31_runtime_released_after_init = False
+        self._parallel_init_executor: ThreadPoolExecutor | None = None
+        self._parallel_init_futures: dict[str, Any] = {}
+        self._parallel_init_started_s: float | None = None
         self._init_profile_lock = threading.Lock()
         self._init_profile: dict[str, Any] = {
             "process_start_s": 0.0,
@@ -1707,10 +1713,11 @@ class Demo21Runtime:
         )
         apply_wslg_open3d_env_defaults()
         self._validate_live_contract()
-        camera_start_s = time.perf_counter()
-        self._start_camera_system()
-        self._init_profile_set(("camera_startup_ms",), _elapsed_ms(camera_start_s, time.perf_counter()))
+        self._start_parallel_init()
         try:
+            camera_start_s = time.perf_counter()
+            self._start_camera_system()
+            self._init_profile_set(("camera_startup_ms",), _elapsed_ms(camera_start_s, time.perf_counter()))
             if self.args.render_mode == "pointcloud":
                 self._run_open3d()
             else:
@@ -1719,6 +1726,85 @@ class Demo21Runtime:
             self.stop()
             self._write_summary()
         return 1 if self._fatal_error is not None else 0
+
+    def _start_parallel_init(self) -> None:
+        if not bool(getattr(self.args, "parallel_init", False)):
+            self._init_profile_set(("parallel_init", "enabled"), False)
+            return
+        tasks: dict[str, Callable[[], Any]] = {}
+        if self.args.depth_source == DEPTH_SOURCE_FFS and self.args.gpu_pipeline_mode in {
+            GPU_PIPELINE_MODE_SINGLE_OWNER,
+            GPU_PIPELINE_MODE_STAGED,
+        }:
+            tasks["ffs_runner"] = self._prepare_ffs_runner
+        if self.args.track_mode != TRACK_MODE_NONE and self.args.gpu_pipeline_mode in {
+            GPU_PIPELINE_MODE_SINGLE_OWNER,
+            GPU_PIPELINE_MODE_STAGED,
+        }:
+            tasks["edgetam_states"] = self._init_gpu_owner_edgetam_states
+        if (
+            self.args.init_mode == "sam31-first-frame"
+            and bool(getattr(self.args, "sam31_cache_init_model", False))
+        ):
+            tasks["sam31_preload"] = self._preload_sam31_init_model
+        self._init_profile_update(
+            ("parallel_init",),
+            {
+                "enabled": True,
+                "tasks": sorted(tasks),
+            },
+        )
+        if not tasks:
+            return
+        self._parallel_init_started_s = time.perf_counter()
+        self._parallel_init_executor = ThreadPoolExecutor(
+            max_workers=len(tasks),
+            thread_name_prefix="demo2.2-init",
+        )
+        self._parallel_init_futures = {
+            name: self._parallel_init_executor.submit(task) for name, task in tasks.items()
+        }
+
+    def _consume_parallel_init_future(self, name: str) -> Any | None:
+        future = self._parallel_init_futures.pop(str(name), None)
+        if future is None:
+            return None
+        wait_start_s = time.perf_counter()
+        try:
+            value = future.result()
+        except Exception as exc:
+            self._init_profile_update(
+                ("parallel_init", name),
+                {
+                    "failed": True,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "wait_ms": float(_elapsed_ms(wait_start_s, time.perf_counter())),
+                },
+            )
+            raise
+        wait_ms = _elapsed_ms(wait_start_s, time.perf_counter())
+        self._init_profile_update(
+            ("parallel_init", name),
+            {
+                "failed": False,
+                "wait_ms": float(wait_ms),
+                "consumed_s": self._profile_rel_s(),
+            },
+        )
+        self._init_profile_set(
+            ("parallel_init", "max_consume_wait_ms"),
+            max(
+                float(_nested_get(self._init_profile_snapshot(), ("parallel_init", "max_consume_wait_ms")) or 0.0),
+                float(wait_ms),
+            ),
+        )
+        return value
+
+    def _shutdown_parallel_init_executor(self) -> None:
+        executor = self._parallel_init_executor
+        self._parallel_init_executor = None
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _validate_live_contract(self) -> None:
         if tuple(self.args.camera_ids) != DEFAULT_CAMERA_IDS:
@@ -1885,6 +1971,7 @@ class Demo21Runtime:
             if thread.is_alive():
                 thread.join(timeout=1.0)
         self._threads.clear()
+        self._shutdown_parallel_init_executor()
         if self.camera_system is not None:
             try:
                 if getattr(self.camera_system, "listener", None) is not None:
@@ -2143,6 +2230,7 @@ class Demo21Runtime:
                 ]
             )
         startup_rows = (
+            ("parallel init max wait ms", ("parallel_init", "max_consume_wait_ms")),
             ("camera startup ms", ("camera_startup_ms",)),
             ("EdgeTAM model load ms", ("edgetam", "model_load_ms_total")),
             ("EdgeTAM compile wrap ms", ("edgetam", "compile_wrap_ms_total")),
@@ -2444,6 +2532,59 @@ class Demo21Runtime:
         self._init_profile_set_once(("ffs", "first_runner_init_ms"), init_ms)
         return runner
 
+    def _prepare_ffs_runner(self) -> object:
+        start_s = time.perf_counter()
+        warm_up_numba_ffs_align()
+        self._init_profile_set_once(
+            ("ffs", "numba_warmup_ms"),
+            _elapsed_ms(start_s, time.perf_counter()),
+        )
+        return self._create_ffs_runner()
+
+    def _get_or_prepare_ffs_runner(self) -> object:
+        runner = self._consume_parallel_init_future("ffs_runner")
+        if runner is not None:
+            return runner
+        return self._prepare_ffs_runner()
+
+    def _preload_sam31_init_model(self) -> dict[str, Any]:
+        from scripts.harness.sam31_mask_helper import preload_sam31_image_processor_cache
+
+        start_s = time.perf_counter()
+        with self._sam31_lock:
+            result = preload_sam31_image_processor_cache(
+                checkpoint_path=None,
+                compile_model=False,
+                device=str(self.args.device),
+            )
+        timing = dict(result.get("timing_ms", {}) or {})
+        self._init_profile_update(
+            ("sam31", "preload"),
+            {
+                **timing,
+                "call_wall_ms": float(_elapsed_ms(start_s, time.perf_counter())),
+                "checkpoint_path": result.get("checkpoint_path"),
+                "bpe_path": result.get("bpe_path"),
+            },
+        )
+        self._init_profile_add(("sam31", "model_load_ms_total"), float(timing.get("model_load_ms", 0.0) or 0.0))
+        return result
+
+    def _consume_sam31_preload_if_ready(self) -> None:
+        if "sam31_preload" not in self._parallel_init_futures:
+            return
+        result = self._consume_parallel_init_future("sam31_preload")
+        timing = dict((result or {}).get("timing_ms", {}) or {})
+        self._summary["sam31_parallel_preload_consumed"] = True
+        self._init_profile_update(
+            ("sam31", "preload_consumed"),
+            {
+                **timing,
+                "checkpoint_path": (result or {}).get("checkpoint_path"),
+                "bpe_path": (result or {}).get("bpe_path"),
+            },
+        )
+
     def _compute_ffs_depth_for_frame(
         self,
         *,
@@ -2642,8 +2783,7 @@ class Demo21Runtime:
 
     def _shared_ffs_worker(self) -> None:
         try:
-            warm_up_numba_ffs_align()
-            runner = self._create_ffs_runner()
+            runner = self._get_or_prepare_ffs_runner()
             aligners: dict[int, FfsIrToColorAligner] = {}
             last_group_id = -1
             while not self.stop_event.is_set():
@@ -3086,6 +3226,7 @@ class Demo21Runtime:
                     if not initialized:
                         init_attempts += 1
                         try:
+                            self._consume_sam31_preload_if_ready()
                             controller_mask, object_mask = resolve_initial_masks_for_camera(
                                 frame,
                                 self.args,
@@ -3203,6 +3344,12 @@ class Demo21Runtime:
             }
         return states
 
+    def _get_or_init_gpu_owner_edgetam_states(self) -> dict[int, dict[str, Any]]:
+        states = self._consume_parallel_init_future("edgetam_states")
+        if states is not None:
+            return states
+        return self._init_gpu_owner_edgetam_states()
+
     def _ensure_gpu_owner_edgetam_initialized(
         self,
         *,
@@ -3215,6 +3362,7 @@ class Demo21Runtime:
         state["init_attempts"] = int(state["init_attempts"]) + 1
         sam31_start_s = time.perf_counter()
         try:
+            self._consume_sam31_preload_if_ready()
             controller_mask, object_mask = resolve_initial_masks_for_camera(
                 frame,
                 self.args,
@@ -3396,10 +3544,9 @@ class Demo21Runtime:
 
     def _gpu_owner_pipeline_worker(self) -> None:
         try:
-            warm_up_numba_ffs_align()
-            runner = self._create_ffs_runner()
+            runner = self._get_or_prepare_ffs_runner()
             aligners: dict[int, FfsIrToColorAligner] = {}
-            edgetam_states = self._init_gpu_owner_edgetam_states()
+            edgetam_states = self._get_or_init_gpu_owner_edgetam_states()
             last_group_id = -1
             while not self.stop_event.is_set():
                 group = self.capture_group_slot.get_latest_after(last_group_id)
@@ -3489,10 +3636,9 @@ class Demo21Runtime:
 
     def _staged_gpu_pipeline_worker(self) -> None:
         try:
-            warm_up_numba_ffs_align()
-            runner = self._create_ffs_runner()
+            runner = self._get_or_prepare_ffs_runner()
             aligners: dict[int, FfsIrToColorAligner] = {}
-            edgetam_states = self._init_gpu_owner_edgetam_states()
+            edgetam_states = self._get_or_init_gpu_owner_edgetam_states()
             last_group_id = -1
             with ThreadPoolExecutor(max_workers=len(self.args.camera_ids), thread_name_prefix="demo2.1-staged-edgetam") as edge_executor:
                 while not self.stop_event.is_set():
@@ -4420,6 +4566,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dtype", choices=("bfloat16", "float16"), default="bfloat16")
     parser.add_argument("--duration-s", type=float, default=0.0)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--parallel-init",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Start camera, EdgeTAM load/prewarm, FFS runner init, and SAM3.1 model preload in parallel where possible.",
+    )
     parser.add_argument("--profile-cuda-events", action="store_true")
     parser.add_argument("--profile-pipeline", action="store_true")
     parser.add_argument("--profile-filter", action="store_true")
