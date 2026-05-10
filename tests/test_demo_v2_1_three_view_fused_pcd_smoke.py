@@ -719,9 +719,17 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         source = torch.arange(12, dtype=torch.float32).reshape(1, 3, 2, 2)
         staged, profile = stager.stage(source, dtype=torch.float32)
         torch.cuda.current_stream().synchronize()
-
         self.assertTrue(torch.equal(staged.cpu(), source))
+        stager.mark_consumed(int(profile["pinned_slot_idx"]))
+        ptr = int(staged.data_ptr())
+        staged_again, profile_again = stager.stage(source + 1.0, dtype=torch.float32)
+        torch.cuda.current_stream().synchronize()
+
+        self.assertTrue(torch.equal(staged_again.cpu(), source + 1.0))
+        self.assertEqual(int(staged_again.data_ptr()), ptr)
         self.assertTrue(profile["pin_memory"])
+        self.assertTrue(profile["device_slot_reused"])
+        self.assertTrue(profile_again["device_slot_reused"])
         self.assertEqual(profile["h2d_stream_mode"], demo.H2D_STREAM_MODE_DEDICATED)
 
 

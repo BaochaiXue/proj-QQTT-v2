@@ -49,7 +49,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
     def test_demo22_wrapper_defaults_to_async_filter_preset(self) -> None:
         argv = demo22._with_default_preset(["--dry-run"])
 
-        self.assertEqual(argv[:3], ["--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS, "--dry-run"])
+        self.assertEqual(argv[:3], ["--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS, "--dry-run"])
 
     def test_demo22_preset_contract_is_filtered_only_single_owner(self) -> None:
         parser = demo.build_arg_parser()
@@ -72,6 +72,34 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertFalse(contract["filter_scheduler"]["render_accepts_raw_fused_pcd"])
         self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["towel", "stuffed animal"])
 
+    def test_demo22_staged_parallel_preset_contract(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["demo"], "demo_2_2_async_filtered_fused_pcd")
+        self.assertEqual(contract["preset_canonical"], demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS)
+        self.assertEqual(contract["fps"], 5)
+        self.assertEqual(contract["fusion_target_fps"], 5.0)
+        self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_FFS)
+        self.assertEqual(contract["compile_mode"], demo.DEFAULT_COMPILE_MODE)
+        self.assertEqual(contract["track_mode"], demo.TRACK_MODE_CONTROLLER_OBJECT)
+        self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_STAGED)
+        self.assertEqual(contract["gpu_pipeline"]["internal_order"], demo.STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM)
+        self.assertEqual(contract["gpu_pipeline"]["ffs_stage"], "sequential_cam0_cam1_cam2")
+        self.assertEqual(contract["gpu_pipeline"]["edgetam_stage"], "parallel_cam0_cam1_cam2")
+        self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_REPLICATED)
+        self.assertEqual(contract["edgetam"]["stream_mode"], demo.EDGETAM_STREAM_MODE_PER_CAMERA)
+        self.assertEqual(contract["h2d_transfer"]["pin_memory_mode"], demo.PIN_MEMORY_MODE_ALL)
+        self.assertTrue(contract["h2d_transfer"]["edge_pin_enabled"])
+        self.assertTrue(contract["h2d_transfer"]["ffs_pin_requested"])
+        self.assertEqual(contract["h2d_transfer"]["h2d_stream_mode"], demo.H2D_STREAM_MODE_DEDICATED)
+        self.assertTrue(contract["memory_for_speed"]["static_device_buffers"])
+        self.assertTrue(contract["memory_for_speed"]["ffs_reusable_cuda_input_buffers"])
+        self.assertTrue(contract["memory_for_speed"]["edgetam_reusable_cuda_pixel_slots"])
+        self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])
+
     def test_demo22_thread_specs_include_filter_worker(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
@@ -80,6 +108,15 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         names = [name for name, _target in runtime._thread_specs()]
 
         self.assertEqual(names, ["capture-group", "gpu-owner", "fusion", "filter"])
+
+    def test_demo22_staged_parallel_thread_specs_include_staged_gpu_and_filter(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
+        runtime = demo.Demo21Runtime(args)
+        names = [name for name, _target in runtime._thread_specs()]
+
+        self.assertEqual(names, ["capture-group", "staged-gpu", "fusion", "filter"])
 
     def test_raw_fused_packet_is_not_published_to_render_slot(self) -> None:
         parser = demo.build_arg_parser()

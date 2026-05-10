@@ -112,6 +112,7 @@ PRESET_VISUAL_5FPS_NO_GATE = "visual-5fps-no-gate"
 PRESET_VISUAL_5FPS_SINGLE_OWNER = "visual-5fps-single-owner"
 PRESET_VISUAL_5FPS_STAGED = "visual-5fps-staged"
 PRESET_DEMO22_ASYNC_FILTER_5FPS = "demo2.2-async-filter-5fps"
+PRESET_DEMO22_STAGED_PARALLEL_5FPS = "demo2.2-staged-parallel-5fps"
 PRESET_CLIMB_5 = "climb-5"
 PRESET_CLIMB_10 = "climb-10"
 PRESET_DIAGNOSTICS = "diagnostics"
@@ -127,6 +128,7 @@ PRESETS = (
     PRESET_VISUAL_5FPS_SINGLE_OWNER,
     PRESET_VISUAL_5FPS_STAGED,
     PRESET_DEMO22_ASYNC_FILTER_5FPS,
+    PRESET_DEMO22_STAGED_PARALLEL_5FPS,
     PRESET_CLIMB_5,
     PRESET_CLIMB_10,
     PRESET_DIAGNOSTICS,
@@ -573,7 +575,7 @@ def ffs_pin_memory_requested(args: argparse.Namespace) -> bool:
 
 
 class PinnedPixelValueStager:
-    """Reusable pinned CPU staging ring for EdgeTAM processor pixel_values."""
+    """Reusable pinned CPU + CUDA staging ring for EdgeTAM processor pixel_values."""
 
     def __init__(
         self,
@@ -592,29 +594,38 @@ class PinnedPixelValueStager:
             raise ValueError(f"Unsupported H2D stream mode: {self.h2d_stream_mode}")
         self.verify_copies = bool(verify_copies)
         self._slots: list[Any] = []
+        self._device_slots: list[Any] = []
         self._events: list[Any | None] = []
         self._next_slot = 0
         self._verified = 0
+        self._slot_shape: tuple[int, ...] | None = None
+        self._slot_device_dtype: Any | None = None
         self._h2d_stream = (
             torch_module.cuda.Stream()
             if self.h2d_stream_mode == H2D_STREAM_MODE_DEDICATED and self.device.startswith("cuda")
             else None
         )
 
-    def _ensure_slots(self, sample_cpu: Any) -> None:
-        if self._slots:
+    def _ensure_slots(self, sample_cpu: Any, *, dtype: Any) -> None:
+        shape = tuple(int(item) for item in sample_cpu.shape)
+        if self._slots and self._slot_shape == shape and self._slot_device_dtype == dtype:
             return
         if getattr(sample_cpu, "is_cuda", False):
             raise RuntimeError("PinnedPixelValueStager expects CPU pixel_values from the HF processor.")
-        shape = tuple(int(item) for item in sample_cpu.shape)
         self._slots = [
             self.torch.empty(shape, dtype=sample_cpu.dtype, pin_memory=True)
             for _ in range(self.ring_size)
         ]
+        self._device_slots = [
+            self.torch.empty(shape, dtype=dtype, device=self.device)
+            for _ in range(self.ring_size)
+        ] if self.device.startswith("cuda") else []
         self._events = [None for _ in range(self.ring_size)]
+        self._slot_shape = shape
+        self._slot_device_dtype = dtype
 
-    def stage(self, pixel_values_cpu: Any, *, dtype: Any) -> tuple[Any, dict[str, Any]]:
-        self._ensure_slots(pixel_values_cpu)
+    def stage(self, pixel_values_cpu: Any, *, dtype: Any, consumer_stream: Any | None = None) -> tuple[Any, dict[str, Any]]:
+        self._ensure_slots(pixel_values_cpu, dtype=dtype)
         slot_idx = int(self._next_slot)
         self._next_slot = (self._next_slot + 1) % self.ring_size
         prior_event = self._events[slot_idx]
@@ -634,19 +645,31 @@ class PinnedPixelValueStager:
 
         stream = self._h2d_stream
         h2d_enqueue_start_s = time.perf_counter()
+        device_slot = self._device_slots[slot_idx] if self._device_slots else None
         if stream is not None:
             with self.torch.cuda.stream(stream):
-                pixel_values_cuda = slot.to(device=self.device, dtype=dtype, non_blocking=True)
+                if device_slot is not None:
+                    device_slot.copy_(slot, non_blocking=True)
+                    pixel_values_cuda = device_slot
+                else:
+                    pixel_values_cuda = slot.to(device=self.device, dtype=dtype, non_blocking=True)
                 event = self.torch.cuda.Event()
                 event.record(stream)
             h2d_enqueue_ms = _elapsed_ms(h2d_enqueue_start_s, time.perf_counter())
             h2d_wait_start_s = time.perf_counter()
-            self.torch.cuda.current_stream().wait_event(event)
+            wait_stream = consumer_stream if consumer_stream is not None else self.torch.cuda.current_stream()
+            wait_stream.wait_event(event)
             h2d_wait_ms = _elapsed_ms(h2d_wait_start_s, time.perf_counter())
         else:
-            pixel_values_cuda = slot.to(device=self.device, dtype=dtype, non_blocking=True)
+            if device_slot is not None:
+                device_slot.copy_(slot, non_blocking=True)
+                pixel_values_cuda = device_slot
+            else:
+                pixel_values_cuda = slot.to(device=self.device, dtype=dtype, non_blocking=True)
             event = self.torch.cuda.Event()
             event.record(self.torch.cuda.current_stream())
+            if consumer_stream is not None:
+                consumer_stream.wait_event(event)
             h2d_enqueue_ms = _elapsed_ms(h2d_enqueue_start_s, time.perf_counter())
             h2d_wait_ms = 0.0
 
@@ -656,12 +679,23 @@ class PinnedPixelValueStager:
             "processor_device": "cpu",
             "processor_is_pinned": False,
             "pinned_slot_idx": int(slot_idx),
+            "device_slot_reused": bool(device_slot is not None),
+            "device_slot_idx": int(slot_idx) if device_slot is not None else -1,
+            "device_slot_dtype": str(dtype),
             "pin_copy_ms": float(pin_copy_ms),
             "slot_reuse_wait_ms": float(slot_reuse_wait_ms),
             "h2d_enqueue_ms": float(h2d_enqueue_ms),
             "h2d_wait_ms": float(h2d_wait_ms),
             "h2d_stream_mode": self.h2d_stream_mode,
         }
+
+    def mark_consumed(self, slot_idx: int, consumer_stream: Any | None = None) -> None:
+        if not self.device.startswith("cuda") or int(slot_idx) < 0:
+            return
+        event = self.torch.cuda.Event()
+        record_stream = consumer_stream if consumer_stream is not None else self.torch.cuda.current_stream()
+        event.record(record_stream)
+        self._events[int(slot_idx) % self.ring_size] = event
 
 
 def _normalize_label(label: str) -> str:
@@ -1043,6 +1077,26 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+        elif preset == PRESET_DEMO22_STAGED_PARALLEL_5FPS:
+            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=5)
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+            _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_STAGED)
+            _set_if_not_explicit(args, explicit, flag="--staged-order", attr="staged_order", value=STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-stream-mode", attr="edgetam_stream_mode", value=EDGETAM_STREAM_MODE_PER_CAMERA)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
+            _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+            _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
+            _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
+            _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
+            _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+            _set_if_not_explicit(args, explicit, flag="--pin-memory", attr="pin_memory", value=True)
+            _set_if_not_explicit(args, explicit, flag="--pin-memory-mode", attr="pin_memory_mode", value=PIN_MEMORY_MODE_ALL)
+            _set_if_not_explicit(args, explicit, flag="--h2d-stream-mode", attr="h2d_stream_mode", value=H2D_STREAM_MODE_DEDICATED)
+            _set_if_not_explicit(args, explicit, flag="--static-device-buffers", attr="static_device_buffers", value=True)
         elif preset == PRESET_CLIMB_5:
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
@@ -1297,10 +1351,14 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         controller_postprocess=args.controller_postprocess,
     )
     preset_canonical = getattr(args, "preset_canonical", canonical_preset_name(getattr(args, "preset", PRESET_NONE)))
+    is_demo22_preset = preset_canonical in {
+        PRESET_DEMO22_ASYNC_FILTER_5FPS,
+        PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+    }
     return {
         "demo": (
             "demo_2_2_async_filtered_fused_pcd"
-            if preset_canonical == PRESET_DEMO22_ASYNC_FILTER_5FPS
+            if is_demo22_preset
             else "demo_2_1_three_view_fused_masked_pcd"
         ),
         "preset": getattr(args, "preset", PRESET_NONE),
@@ -1360,6 +1418,12 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "memory_for_speed": {
             "static_device_buffers": bool(args.static_device_buffers),
             "preallocate_pcd_buffers": bool(args.preallocate_pcd_buffers),
+            "ffs_reusable_cuda_input_buffers": args.depth_source == DEPTH_SOURCE_FFS and args.ffs_input_staging == FFS_INPUT_STAGING_PINNED,
+            "edgetam_reusable_cuda_pixel_slots": edge_pin_memory_enabled(args),
+            "models_loaded_once_per_worker": args.gpu_pipeline_mode in {
+                GPU_PIPELINE_MODE_SINGLE_OWNER,
+                GPU_PIPELINE_MODE_STAGED,
+            },
         },
         "h2d_transfer": {
             "pin_memory": bool(args.pin_memory),
@@ -1606,13 +1670,29 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 staged mode requires --gpu-gate-mode off so EdgeTAM can run in parallel")
         if self.args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_SINGLE_OWNER, GPU_PIPELINE_MODE_STAGED} and self.args.depth_source != DEPTH_SOURCE_FFS:
             raise RuntimeError("Demo 2.1 single-owner/staged modes currently require --depth-source ffs")
-        if canonical_preset_name(self.args.preset) == PRESET_DEMO22_ASYNC_FILTER_5FPS:
+        preset_canonical = canonical_preset_name(self.args.preset)
+        if preset_canonical == PRESET_DEMO22_ASYNC_FILTER_5FPS:
             if self.args.depth_source != DEPTH_SOURCE_FFS:
                 raise RuntimeError("Demo 2.2 requires local FFS depth")
             if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_SINGLE_OWNER:
                 raise RuntimeError("Demo 2.2 requires single-owner GPU pipeline")
             if not async_fusion_filter_enabled(self.args):
                 raise RuntimeError("Demo 2.2 requires async latest-wins PCD filtering")
+        if preset_canonical == PRESET_DEMO22_STAGED_PARALLEL_5FPS:
+            if self.args.depth_source != DEPTH_SOURCE_FFS:
+                raise RuntimeError("Demo 2.2 staged parallel requires local FFS depth")
+            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_STAGED:
+                raise RuntimeError("Demo 2.2 staged parallel requires staged GPU pipeline")
+            if self.args.staged_order != STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM:
+                raise RuntimeError("Demo 2.2 staged parallel requires FFS then parallel EdgeTAM")
+            if self.args.edgetam_stream_mode != EDGETAM_STREAM_MODE_PER_CAMERA:
+                raise RuntimeError("Demo 2.2 staged parallel requires per-camera EdgeTAM streams")
+            if not async_fusion_filter_enabled(self.args):
+                raise RuntimeError("Demo 2.2 staged parallel requires async latest-wins PCD filtering")
+            if self.args.pin_memory_mode != PIN_MEMORY_MODE_ALL or not bool(self.args.pin_memory):
+                raise RuntimeError("Demo 2.2 staged parallel requires --pin-memory-mode all")
+            if self.args.ffs_input_staging != FFS_INPUT_STAGING_PINNED:
+                raise RuntimeError("Demo 2.2 staged parallel requires pinned FFS input staging")
         if self.args.init_mode != "sam31-first-frame":
             raise RuntimeError("Formal Demo 2.1 requires live SAM3.1 initialization; saved masks are not allowed")
         if int(self.args.object_filter_cap) < 0 or int(self.args.controller_filter_cap) < 0:
@@ -1920,7 +2000,10 @@ class Demo21Runtime:
         md_path = profile_path.with_suffix(".md")
         warm = payload["summary_after_warmup"]
         metrics = warm.get("metrics", {})
-        is_demo22 = payload.get("preset_canonical") == PRESET_DEMO22_ASYNC_FILTER_5FPS
+        is_demo22 = payload.get("preset_canonical") in {
+            PRESET_DEMO22_ASYNC_FILTER_5FPS,
+            PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+        }
         pass_threshold = float(payload.get("demo22_pass_threshold_fps", 4.8))
         pass_status = (
             "PASS"
@@ -2497,7 +2580,11 @@ class Demo21Runtime:
                 lambda: processor(images=image, return_tensors="pt"),
                 sync_enabled=False,
             )
-            pixel_values, edge_h2d_profile = pixel_stager.stage(inputs.pixel_values[0], dtype=dtype)
+            pixel_values, edge_h2d_profile = pixel_stager.stage(
+                inputs.pixel_values[0],
+                dtype=dtype,
+                consumer_stream=stream,
+            )
         else:
             inputs, preprocess_ms, _, _ = _time_runtime_ms(
                 torch_module,
@@ -2568,6 +2655,8 @@ class Demo21Runtime:
                 done_event = torch_module.cuda.Event()
                 done_event.record(stream)
                 done_event.synchronize()
+            if pixel_stager is not None:
+                pixel_stager.mark_consumed(int(edge_h2d_profile.get("pinned_slot_idx", -1)), stream)
         masks_by_id = extract_object_masks_from_hf_output(output, post_masks)
         missing = [obj_id for obj_id in active_object_ids(self.args) if obj_id not in masks_by_id]
         if missing:
