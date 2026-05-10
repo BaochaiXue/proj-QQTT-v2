@@ -15,6 +15,9 @@ Reduce Demo 2.2 startup latency toward <10s before the steady 15 FPS profile win
 - Add explicit init-stage profiling for camera startup, FFS runner/first run,
   EdgeTAM model load/compile/first forward, SAM3.1 model/segmentation/release,
   EdgeTAM session init/prompt add, and time to first complete/rendered group.
+- Move EdgeTAM torch.compile lazy first-forward cost into an explicit init
+  prewarm step for Demo 2.2, using a dummy streaming session and dummy mask
+  prompt before the live first-frame sessions are created.
 
 ## Validation
 - Demo 2.2 dry-run contract.

@@ -1078,6 +1078,8 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
             _set_if_not_explicit(args, explicit, flag="--single-owner-order", attr="single_owner_order", value=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_SHARED)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-compile", attr="edgetam_prewarm_compile", value=True)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-runs", attr="edgetam_prewarm_runs", value=1)
             _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
             _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
             _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
@@ -1096,6 +1098,8 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--staged-order", attr="staged_order", value=STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM)
             _set_if_not_explicit(args, explicit, flag="--edgetam-stream-mode", attr="edgetam_stream_mode", value=EDGETAM_STREAM_MODE_PER_CAMERA)
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-compile", attr="edgetam_prewarm_compile", value=True)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-runs", attr="edgetam_prewarm_runs", value=1)
             _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
             _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
             _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
@@ -1473,6 +1477,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "model_topology": args.edgetam_model_topology,
             "stream_mode": args.edgetam_stream_mode,
             "one_streaming_session_per_camera": True,
+            "prewarm_compile": bool(getattr(args, "edgetam_prewarm_compile", False)),
+            "prewarm_runs": int(getattr(args, "edgetam_prewarm_runs", 0)),
         },
         "fusion": {
             "mode": "semantic_layers",
@@ -2140,6 +2146,7 @@ class Demo21Runtime:
             ("camera startup ms", ("camera_startup_ms",)),
             ("EdgeTAM model load ms", ("edgetam", "model_load_ms_total")),
             ("EdgeTAM compile wrap ms", ("edgetam", "compile_wrap_ms_total")),
+            ("EdgeTAM compile prewarm ms", ("edgetam", "prewarm", "total_ms")),
             ("EdgeTAM warmup/first forward ms", ("edgetam", "first_forward_total_ms_sum")),
             ("SAM3.1 model load ms", ("sam31", "model_load_ms_total")),
             ("SAM3.1 cam0 segment ms", ("sam31", "cam0", "total_ms")),
@@ -2720,6 +2727,24 @@ class Demo21Runtime:
             float(compile_metadata.get("wrap_ms", compile_wrap_ms)),
         )
         self._init_profile_add(("edgetam", "processor_load_ms_total"), float(processor_load_ms))
+        prewarm_profile = self._prewarm_edgetam_compile(
+            hf_stream=hf_stream,
+            torch_module=torch_module,
+            dtype=dtype,
+            model=model,
+            processor=processor,
+            loader_key=loader_key,
+        )
+        if prewarm_profile:
+            self._init_profile_update(("edgetam", "loaders", loader_key, "prewarm"), prewarm_profile)
+            if bool(prewarm_profile.get("enabled", False)):
+                self._init_profile_set(("edgetam", "prewarm", "enabled"), True)
+                self._init_profile_add(("edgetam", "prewarm", "total_ms"), float(prewarm_profile.get("total_ms", 0.0)))
+                self._init_profile_add(
+                    ("edgetam", "prewarm", "model_total_ms"),
+                    float(prewarm_profile.get("model_total_ms", 0.0)),
+                )
+                self._init_profile_add(("edgetam", "prewarm", "runs"), float(prewarm_profile.get("runs", 0)))
         print(
             "[demo2.1-edgetam] "
             f"cam={camera_idx} topology={topology_label} model={self.args.model_id} "
@@ -2728,6 +2753,125 @@ class Demo21Runtime:
             flush=True,
         )
         return hf_stream, torch_module, dtype, model, processor
+
+    def _dummy_prewarm_prompt_masks(self) -> tuple[list[int], list[np.ndarray]]:
+        height = int(self.height)
+        width = int(self.width)
+        object_mask = np.zeros((height, width), dtype=bool)
+        y0 = max(0, int(height * 0.36))
+        y1 = min(height, int(height * 0.64))
+        x0 = max(0, int(width * 0.38))
+        x1 = min(width, int(width * 0.62))
+        object_mask[y0:y1, x0:x1] = True
+        obj_ids: list[int] = []
+        masks: list[np.ndarray] = []
+        if controller_tracking_enabled(self.args.track_mode):
+            controller_mask = np.zeros((height, width), dtype=bool)
+            cy0 = max(0, int(height * 0.18))
+            cy1 = min(height, int(height * 0.34))
+            cx0 = max(0, int(width * 0.18))
+            cx1 = min(width, int(width * 0.34))
+            controller_mask[cy0:cy1, cx0:cx1] = True
+            obj_ids.append(CONTROLLER_ID)
+            masks.append(controller_mask)
+        obj_ids.append(OBJECT_ID)
+        masks.append(object_mask)
+        return obj_ids, masks
+
+    def _prewarm_edgetam_compile(
+        self,
+        *,
+        hf_stream: Any,
+        torch_module: Any,
+        dtype: Any,
+        model: Any,
+        processor: Any,
+        loader_key: str,
+    ) -> dict[str, Any]:
+        enabled = bool(getattr(self.args, "edgetam_prewarm_compile", False))
+        runs = max(0, int(getattr(self.args, "edgetam_prewarm_runs", 0)))
+        if not enabled or runs <= 0:
+            return {"enabled": False, "runs": runs}
+        total_start_s = time.perf_counter()
+        image_bgr = np.zeros((int(self.height), int(self.width), 3), dtype=np.uint8)
+        image = _bgr_to_pil_rgb(image_bgr)
+        obj_ids, masks = self._dummy_prewarm_prompt_masks()
+        session_start_s = time.perf_counter()
+        session = hf_stream.EdgeTamVideoInferenceSession(
+            video=None,
+            video_height=int(self.height),
+            video_width=int(self.width),
+            inference_device=self.args.device,
+            inference_state_device=self.args.device,
+            video_storage_device=self.args.device,
+            dtype=dtype,
+        )
+        session_ms = _elapsed_ms(session_start_s, time.perf_counter())
+        with torch_module.inference_mode():
+            inputs, preprocess_ms, preprocess_pre_sync_ms, preprocess_post_sync_ms = _time_runtime_ms(
+                torch_module,
+                self.args.device,
+                lambda: processor(images=image, device=self.args.device, return_tensors="pt"),
+                sync_enabled=True,
+            )
+            pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
+            prompt_ms = 0.0
+            model_runs: list[dict[str, float]] = []
+            with self._autocast_context(torch_module):
+                _, prompt_ms, prompt_pre_sync_ms, prompt_post_sync_ms = _time_runtime_ms(
+                    torch_module,
+                    self.args.device,
+                    lambda: processor.add_inputs_to_inference_session(
+                        inference_session=session,
+                        frame_idx=0,
+                        obj_ids=obj_ids,
+                        input_masks=masks,
+                    ),
+                    sync_enabled=True,
+                )
+                for run_idx in range(runs):
+                    mark_torch_cudagraph_step_begin(torch_module)
+                    _, wall_model_ms, cuda_event_model_ms, pre_sync_ms, post_sync_ms = _time_model_forward(
+                        torch_module=torch_module,
+                        device=self.args.device,
+                        profile_sync=True,
+                        profile_cuda_events=bool(self.args.profile_cuda_events),
+                        fn=lambda: model(inference_session=session, frame=pixel_values),
+                    )
+                    model_runs.append(
+                        {
+                            "run_idx": float(run_idx),
+                            "wall_model_ms": float(wall_model_ms),
+                            "cuda_event_model_ms": float(cuda_event_model_ms),
+                            "pre_sync_ms": float(pre_sync_ms),
+                            "post_sync_ms": float(post_sync_ms),
+                            "total_ms": float(pre_sync_ms + wall_model_ms + post_sync_ms),
+                        }
+                    )
+        total_ms = _elapsed_ms(total_start_s, time.perf_counter())
+        model_total_ms = float(sum(run["total_ms"] for run in model_runs))
+        if self.args.debug:
+            first_run = model_runs[0]["total_ms"] if model_runs else 0.0
+            print(
+                "[demo2.1-edgetam-prewarm] "
+                f"loader={loader_key} runs={runs} total_ms={total_ms:.2f} "
+                f"first_model_total_ms={first_run:.2f}",
+                flush=True,
+            )
+        return {
+            "enabled": True,
+            "runs": int(runs),
+            "session_ms": float(session_ms),
+            "preprocess_ms": float(preprocess_ms),
+            "preprocess_pre_sync_ms": float(preprocess_pre_sync_ms),
+            "preprocess_post_sync_ms": float(preprocess_post_sync_ms),
+            "prompt_ms": float(prompt_ms),
+            "prompt_pre_sync_ms": float(prompt_pre_sync_ms),
+            "prompt_post_sync_ms": float(prompt_post_sync_ms),
+            "model_total_ms": float(model_total_ms),
+            "model_runs": model_runs,
+            "total_ms": float(total_ms),
+        }
 
     def _run_edgetam_frame(
         self,
@@ -4261,6 +4405,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--compile-mode", choices=("vision-reduce-overhead",), default="vision-reduce-overhead")
+    parser.add_argument(
+        "--edgetam-prewarm-compile",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Run dummy EdgeTAM video forward(s) during init to pay torch.compile lazy cost before live sessions.",
+    )
+    parser.add_argument(
+        "--edgetam-prewarm-runs",
+        type=int,
+        default=1,
+        help="Number of dummy EdgeTAM video forward passes for compile prewarm when enabled.",
+    )
     parser.add_argument("--dtype", choices=("bfloat16", "float16"), default="bfloat16")
     parser.add_argument("--duration-s", type=float, default=0.0)
     parser.add_argument("--debug", action="store_true")

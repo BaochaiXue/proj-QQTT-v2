@@ -4,17 +4,17 @@
 - canonical preset: `demo2.2-async-filter-5fps`
 - target FPS: `15.00`
 - capture group target FPS: `15.00`
-- render FPS after warmup: `5.13`
-- raw fusion FPS after warmup: `5.13`
-- filter output FPS after warmup: `5.13`
-- fusion FPS after warmup: `5.13`
-- groups after warmup: `364`
-- complete fused groups after warmup: `71`
-- rendered groups after warmup: `71`
-- complete group ratio after warmup: `0.195`
+- render FPS after warmup: `5.07`
+- raw fusion FPS after warmup: `5.06`
+- filter output FPS after warmup: `5.06`
+- fusion FPS after warmup: `5.06`
+- groups after warmup: `381`
+- complete fused groups after warmup: `64`
+- rendered groups after warmup: `64`
+- complete group ratio after warmup: `0.168`
 - Demo 2.2 PASS threshold: `14.40 FPS`
 - Demo 2.2 result: `FAIL`
-- target deficit: `9.87`
+- target deficit: `9.93`
 - bottleneck class: `upstream_supply`
 - GPU pipeline: `single-owner`
 - single-owner order: `ffs-then-edgetam`
@@ -28,29 +28,30 @@
 
 | Stage | value |
 | --- | ---: |
-| camera startup ms | `4334.45` |
-| EdgeTAM model load ms | `792.38` |
+| camera startup ms | `4430.62` |
+| EdgeTAM model load ms | `792.01` |
 | EdgeTAM compile wrap ms | `0.01` |
-| EdgeTAM warmup/first forward ms | `800.67` |
-| SAM3.1 model load ms | `7360.88` |
-| SAM3.1 cam0 segment ms | `7908.74` |
-| SAM3.1 cam1 segment ms | `159.50` |
-| SAM3.1 cam2 segment ms | `167.19` |
-| FFS runner init ms | `3105.81` |
-| FFS first run ms | `1018.58` |
-| session init + prompt add ms | `2.81` |
-| SAM3.1 release cleanup ms | `216.82` |
-| time to first complete group s | `24.10` |
-| time to first rendered group s | `24.11` |
+| EdgeTAM compile prewarm ms | `1490.59` |
+| EdgeTAM warmup/first forward ms | `93.02` |
+| SAM3.1 model load ms | `7445.50` |
+| SAM3.1 cam0 segment ms | `7721.65` |
+| SAM3.1 cam1 segment ms | `172.75` |
+| SAM3.1 cam2 segment ms | `170.20` |
+| FFS runner init ms | `3168.81` |
+| FFS first run ms | `1277.43` |
+| session init + prompt add ms | `3.32` |
+| SAM3.1 release cleanup ms | `213.36` |
+| time to first complete group s | `25.18` |
+| time to first rendered group s | `25.20` |
 
 | Metric | median | p90 | p95 | max |
 | --- | ---: | ---: | ---: | ---: |
-| `capture_temporal_skew_ms` | `21.97` | `45.64` | `52.95` | `65.52` |
-| `ffs_cycle_ms` | `86.83` | `98.76` | `100.70` | `1055.05` |
+| `capture_temporal_skew_ms` | `21.34` | `49.28` | `57.85` | `65.90` |
+| `ffs_cycle_ms` | `88.59` | `96.06` | `101.71` | `1315.02` |
 | `ffs_gate_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
-| `edgetam_cam0_model_ms` | `31.00` | `38.64` | `42.18` | `126.65` |
-| `edgetam_cam1_model_ms` | `30.56` | `36.26` | `37.72` | `40.53` |
-| `edgetam_cam2_model_ms` | `30.09` | `34.06` | `36.43` | `44.07` |
+| `edgetam_cam0_model_ms` | `31.80` | `36.29` | `40.98` | `44.37` |
+| `edgetam_cam1_model_ms` | `31.72` | `36.83` | `38.45` | `45.90` |
+| `edgetam_cam2_model_ms` | `30.50` | `36.18` | `38.85` | `42.25` |
 | `edgetam_cam0_gate_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `edgetam_cam1_gate_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `edgetam_cam2_gate_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
@@ -62,38 +63,38 @@
 | `edge_cam0_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `edge_cam1_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `edge_cam2_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
-| `ffs_stage_ms` | `0.77` | `7.34` | `7.62` | `8.37` |
+| `ffs_stage_ms` | `0.78` | `7.73` | `8.08` | `8.78` |
 | `ffs_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
-| `ffs_cam0_stage_ms` | `0.63` | `1.00` | `1.20` | `1.90` |
-| `ffs_cam1_stage_ms` | `6.80` | `7.85` | `8.18` | `8.37` |
-| `ffs_cam2_stage_ms` | `0.78` | `1.36` | `1.50` | `3.00` |
+| `ffs_cam0_stage_ms` | `0.68` | `1.12` | `1.27` | `2.17` |
+| `ffs_cam1_stage_ms` | `7.33` | `8.26` | `8.56` | `8.78` |
+| `ffs_cam2_stage_ms` | `0.75` | `1.17` | `1.47` | `2.27` |
 | `ffs_cam0_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `ffs_cam1_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `ffs_cam2_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
-| `gpu_owner_total_ms` | `188.75` | `204.31` | `219.42` | `10436.22` |
-| `gpu_owner_ffs_cycle_ms` | `86.83` | `98.76` | `100.70` | `1055.05` |
-| `gpu_owner_edgetam_cycle_ms` | `102.04` | `113.52` | `115.49` | `9381.09` |
-| `raw_fusion_total_ms` | `8.37` | `11.13` | `11.38` | `18.02` |
-| `fusion_total_ms` | `43.05` | `46.73` | `48.99` | `209.47` |
-| `filter_total_ms` | `34.40` | `37.60` | `39.32` | `201.44` |
-| `filter_input_age_ms` | `34.69` | `38.38` | `39.52` | `201.91` |
-| `object_enhanced_pt_ms` | `21.73` | `24.43` | `25.95` | `189.04` |
-| `controller_pt_filter_ms` | `12.56` | `13.29` | `14.23` | `15.57` |
-| `render_total_ms` | `0.38` | `2.22` | `2.63` | `5.60` |
-| `open3d_object_update_geometry_ms` | `0.03` | `1.32` | `1.82` | `2.86` |
-| `open3d_controller_update_geometry_ms` | `0.01` | `0.02` | `0.20` | `2.59` |
+| `gpu_owner_total_ms` | `192.84` | `210.26` | `214.11` | `9821.29` |
+| `gpu_owner_ffs_cycle_ms` | `88.59` | `96.06` | `101.71` | `1315.02` |
+| `gpu_owner_edgetam_cycle_ms` | `103.69` | `116.60` | `121.49` | `8506.17` |
+| `raw_fusion_total_ms` | `8.64` | `10.79` | `11.05` | `14.94` |
+| `fusion_total_ms` | `44.38` | `46.76` | `47.82` | `212.70` |
+| `filter_total_ms` | `35.63` | `37.77` | `38.54` | `204.02` |
+| `filter_input_age_ms` | `36.09` | `38.43` | `38.76` | `204.31` |
+| `object_enhanced_pt_ms` | `22.43` | `24.51` | `25.36` | `191.20` |
+| `controller_pt_filter_ms` | `12.90` | `13.94` | `14.39` | `14.97` |
+| `render_total_ms` | `0.39` | `2.09` | `3.03` | `5.66` |
+| `open3d_object_update_geometry_ms` | `0.03` | `0.06` | `1.31` | `2.77` |
+| `open3d_controller_update_geometry_ms` | `0.01` | `1.27` | `1.60` | `2.76` |
 
 ## Top slowest object enhanced-PT groups
 
 | group | ms | input points | kept points |
 | ---: | ---: | ---: | ---: |
-| `285` | `189.04` | `45740` | `7913` |
-| `380` | `188.55` | `45802` | `7961` |
-| `66` | `33.94` | `45240` | `7716` |
-| `244` | `26.53` | `45744` | `7859` |
-| `300` | `25.36` | `45776` | `8020` |
-| `263` | `24.86` | `45753` | `7891` |
-| `384` | `24.67` | `45746` | `7958` |
-| `314` | `24.43` | `45748` | `7903` |
-| `354` | `24.26` | `45772` | `7969` |
-| `317` | `24.16` | `45754` | `7902` |
+| `313` | `191.20` | `45767` | `7966` |
+| `88` | `32.66` | `45221` | `7726` |
+| `337` | `25.41` | `45816` | `8010` |
+| `261` | `25.37` | `45779` | `7972` |
+| `332` | `25.31` | `45823` | `7998` |
+| `277` | `25.08` | `45743` | `7960` |
+| `395` | `24.55` | `45811` | `7971` |
+| `307` | `24.42` | `45815` | `8045` |
+| `320` | `24.34` | `45773` | `7944` |
+| `326` | `24.16` | `45814` | `7942` |
