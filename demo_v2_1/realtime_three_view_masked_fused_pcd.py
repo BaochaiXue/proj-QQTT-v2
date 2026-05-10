@@ -111,6 +111,7 @@ PRESET_VISUAL_5FPS = "visual-5fps"
 PRESET_VISUAL_5FPS_NO_GATE = "visual-5fps-no-gate"
 PRESET_VISUAL_5FPS_SINGLE_OWNER = "visual-5fps-single-owner"
 PRESET_VISUAL_5FPS_STAGED = "visual-5fps-staged"
+PRESET_DEMO22_ASYNC_FILTER_5FPS = "demo2.2-async-filter-5fps"
 PRESET_CLIMB_5 = "climb-5"
 PRESET_CLIMB_10 = "climb-10"
 PRESET_DIAGNOSTICS = "diagnostics"
@@ -125,6 +126,7 @@ PRESETS = (
     PRESET_VISUAL_5FPS_NO_GATE,
     PRESET_VISUAL_5FPS_SINGLE_OWNER,
     PRESET_VISUAL_5FPS_STAGED,
+    PRESET_DEMO22_ASYNC_FILTER_5FPS,
     PRESET_CLIMB_5,
     PRESET_CLIMB_10,
     PRESET_DIAGNOSTICS,
@@ -139,6 +141,7 @@ PRESET_COMPAT_ALIASES = {
 DEFAULT_DEVICE = "cuda"
 DEFAULT_DTYPE = "bfloat16"
 DEFAULT_COMPILE_MODE = "vision-reduce-overhead"
+DEFAULT_DEMO22_CONTROLLER_LABEL = "towel"
 DEFAULT_OUTPUT_ROOT = ROOT / "result" / "demo2_1_three_view_fused_pcd"
 DEFAULT_OBJECT_FILTER_CAP = 20_000
 DEFAULT_CONTROLLER_FILTER_CAP = 20_000
@@ -167,6 +170,10 @@ H2D_STREAM_MODES = (H2D_STREAM_MODE_DEFAULT, H2D_STREAM_MODE_DEDICATED)
 
 def canonical_preset_name(preset: str) -> str:
     return PRESET_COMPAT_ALIASES.get(str(preset), str(preset))
+
+
+def async_fusion_filter_enabled(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "enable_pcd_filter", False)) and str(getattr(args, "pcd_filter_mode", "none")) == "async"
 
 
 def mark_torch_cudagraph_step_begin(torch_module: Any) -> bool:
@@ -385,6 +392,30 @@ class CompleteInferenceGroup:
     total_gpu_owner_ms: float
     pipeline_mode: str
     internal_order: str
+
+    @property
+    def seq(self) -> int:
+        return int(self.group_id)
+
+
+@dataclass(frozen=True)
+class RawFusedPcdPacket:
+    group_id: int
+    created_perf_s: float
+    raw_object: FusedLayerCloud | None
+    raw_controller: FusedLayerCloud | None
+    raw_fusion_ms: float
+    build_object_raw_ms: float
+    build_controller_raw_ms: float
+    object_raw_points: int
+    controller_raw_points: int
+    ffs_cycle_ms: float
+    edgetam_ms_by_camera: dict[int, float]
+    ffs_gpu_gate_wait_ms: float
+    edgetam_gpu_gate_wait_ms_by_camera: dict[int, float]
+    capture_temporal_skew_ms: float
+    capture_time_offsets_ms_by_camera: dict[int, float]
+    timestamp_source: str
 
     @property
     def seq(self) -> int:
@@ -998,6 +1029,20 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+        elif preset == PRESET_DEMO22_ASYNC_FILTER_5FPS:
+            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=5)
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+            _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
+            _set_if_not_explicit(args, explicit, flag="--single-owner-order", attr="single_owner_order", value=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
+            _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+            _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
+            _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
+            _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
+            _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
         elif preset == PRESET_CLIMB_5:
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
@@ -1251,10 +1296,15 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         object_postprocess=args.object_postprocess,
         controller_postprocess=args.controller_postprocess,
     )
+    preset_canonical = getattr(args, "preset_canonical", canonical_preset_name(getattr(args, "preset", PRESET_NONE)))
     return {
-        "demo": "demo_2_1_three_view_fused_masked_pcd",
+        "demo": (
+            "demo_2_2_async_filtered_fused_pcd"
+            if preset_canonical == PRESET_DEMO22_ASYNC_FILTER_5FPS
+            else "demo_2_1_three_view_fused_masked_pcd"
+        ),
         "preset": getattr(args, "preset", PRESET_NONE),
-        "preset_canonical": getattr(args, "preset_canonical", canonical_preset_name(getattr(args, "preset", PRESET_NONE))),
+        "preset_canonical": preset_canonical,
         "camera_ids": list(args.camera_ids),
         "profile": args.profile,
         "fps": int(args.fps),
@@ -1344,13 +1394,16 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "labels_are_filtered_separately": True,
             "do_not_filter_object_controller_union": True,
             "object_controller_union_before_filter": False,
+            "raw_fusion_before_filter": async_fusion_filter_enabled(args),
         },
         "filter_scheduler": {
             "enabled": bool(args.enable_pcd_filter) and args.pcd_filter_mode != "none",
             "mode": args.pcd_filter_mode,
-            "hot_path": "raw_or_capped_pcd_every_frame",
-            "filtered_path": "latest_wins_async_every_n",
+            "hot_path": "raw_fused_semantic_pcd" if async_fusion_filter_enabled(args) else "sync_filtered_fused_pcd",
+            "filtered_path": "latest_wins_async_filtered_packet" if async_fusion_filter_enabled(args) else "inline_filter",
             "render_blocks_on_filter": args.pcd_filter_mode == "sync",
+            "render_accepts_raw_fused_pcd": not async_fusion_filter_enabled(args),
+            "render_filtered_only": async_fusion_filter_enabled(args),
             "filter_every_n": int(args.filter_every_n),
             "filter_budget_ms": float(args.filter_budget_ms),
             "object": {
@@ -1387,6 +1440,7 @@ class Demo21Runtime:
         self.mask_slots: dict[int, LatestSlot[CameraMaskPacket]] = {
             int(camera_idx): LatestSlot() for camera_idx in args.camera_ids
         }
+        self.raw_fused_slot: LatestSlot[RawFusedPcdPacket] = LatestSlot()
         self.render_slot: LatestSlot[FusedPcdPacket] = LatestSlot()
         self.gpu_gate = GpuInferenceGate(
             mode=str(args.gpu_gate_mode),
@@ -1400,6 +1454,8 @@ class Demo21Runtime:
         for camera_idx in args.camera_ids:
             self.gpu_gate_wait_stats[f"edgetam_cam{int(camera_idx)}"] = MsWindowStats()
         self.fusion_stats = StageStats()
+        self.raw_fusion_stats = StageStats()
+        self.filter_output_stats = StageStats()
         self.render_stats = RenderStats()
         self.temporal_skew_stats = MsWindowStats()
         self._temporal_skews_lock = threading.Lock()
@@ -1414,6 +1470,7 @@ class Demo21Runtime:
         self._profile_started_perf_s = time.perf_counter()
         self._profile_records: dict[int, dict[str, Any]] = {}
         self._latest_depth_group: DepthGroup | None = None
+        self._latest_raw_fused: RawFusedPcdPacket | None = None
         self._latest_fused: FusedPcdPacket | None = None
         self._last_debug_s = 0.0
         self._render_request: Callable[[], None] = lambda: None
@@ -1549,6 +1606,13 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 staged mode requires --gpu-gate-mode off so EdgeTAM can run in parallel")
         if self.args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_SINGLE_OWNER, GPU_PIPELINE_MODE_STAGED} and self.args.depth_source != DEPTH_SOURCE_FFS:
             raise RuntimeError("Demo 2.1 single-owner/staged modes currently require --depth-source ffs")
+        if canonical_preset_name(self.args.preset) == PRESET_DEMO22_ASYNC_FILTER_5FPS:
+            if self.args.depth_source != DEPTH_SOURCE_FFS:
+                raise RuntimeError("Demo 2.2 requires local FFS depth")
+            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_SINGLE_OWNER:
+                raise RuntimeError("Demo 2.2 requires single-owner GPU pipeline")
+            if not async_fusion_filter_enabled(self.args):
+                raise RuntimeError("Demo 2.2 requires async latest-wins PCD filtering")
         if self.args.init_mode != "sam31-first-frame":
             raise RuntimeError("Formal Demo 2.1 requires live SAM3.1 initialization; saved masks are not allowed")
         if int(self.args.object_filter_cap) < 0 or int(self.args.controller_filter_cap) < 0:
@@ -1674,11 +1738,15 @@ class Demo21Runtime:
             "capture_group_fps": self.capture_group_stats.fps,
             "ffs_cycle_fps": self.ffs_stats.fps,
             "gpu_owner_fps": self.gpu_owner_stats.fps,
+            "raw_fusion_fps": self.raw_fusion_stats.fps,
+            "filter_output_fps": self.filter_output_stats.fps,
             "fusion_fps": self.fusion_stats.fps,
             "render_fps": self.render_stats.render_fps,
             "latest_group_id": None if latest is None else latest.group_id,
             "object_points": None if latest is None else latest.object_point_count,
             "controller_points": None if latest is None else latest.controller_point_count,
+            "raw_fused_pending_replacements": self.raw_fused_slot.dropped_count,
+            "raw_fused_pending_replacements_total": self.raw_fused_slot.total_dropped_count,
             "gpu_gate_wait_ms_median": {
                 key: stats.median for key, stats in sorted(self.gpu_gate_wait_stats.items())
             },
@@ -1702,6 +1770,8 @@ class Demo21Runtime:
             "fusion_timeout_groups": int(sum(1 for record in records if record.get("drop_reason"))),
             "rendered_groups": int(len(rendered)),
             "capture_group_fps": _event_fps(records, ("t_group_created",)),
+            "raw_fusion_fps": _event_fps(records, ("raw_fusion", "publish_s")),
+            "filter_output_fps": _event_fps(complete, ("filter", "publish_s")),
             "fusion_fps": _event_fps(complete, ("fusion", "publish_s")),
             "render_fps": _event_fps(rendered, ("render", "render_s")),
         }
@@ -1745,7 +1815,10 @@ class Demo21Runtime:
             "staged_edgetam_stage_sum_model_ms": ("gpu_owner", "edgetam_stage_sum_model_ms"),
             "staged_edgetam_parallel_efficiency": ("gpu_owner", "edgetam_parallel_efficiency"),
             "staged_stage_barrier_ms": ("gpu_owner", "stage_barrier_ms"),
+            "raw_fusion_total_ms": ("raw_fusion", "total_ms"),
             "fusion_total_ms": ("fusion", "total_ms"),
+            "filter_total_ms": ("filter", "total_ms"),
+            "filter_input_age_ms": ("filter", "input_age_ms"),
             "object_enhanced_pt_ms": ("fusion", "object_enhanced_pt_ms"),
             "controller_pt_filter_ms": ("fusion", "controller_pt_filter_ms"),
             "render_total_ms": ("render", "total_ms"),
@@ -1818,9 +1891,11 @@ class Demo21Runtime:
             "preset": self.args.preset,
             "preset_canonical": getattr(self.args, "preset_canonical", canonical_preset_name(self.args.preset)),
             "target_fps": float(self.args.fusion_target_fps),
+            "demo22_pass_threshold_fps": 4.8,
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
             "gpu_pipeline": contract["gpu_pipeline"],
+            "filter_scheduler": contract["filter_scheduler"],
             "gpu_gate_max_concurrent": int(self.args.gpu_gate_max_concurrent),
             "object_filter": self.args.object_postprocess,
             "controller_filter": self.args.controller_postprocess,
@@ -1845,13 +1920,25 @@ class Demo21Runtime:
         md_path = profile_path.with_suffix(".md")
         warm = payload["summary_after_warmup"]
         metrics = warm.get("metrics", {})
+        is_demo22 = payload.get("preset_canonical") == PRESET_DEMO22_ASYNC_FILTER_5FPS
+        pass_threshold = float(payload.get("demo22_pass_threshold_fps", 4.8))
+        pass_status = (
+            "PASS"
+            if is_demo22
+            and float(warm.get("render_fps", 0.0)) >= pass_threshold
+            and payload.get("depth_source") == DEPTH_SOURCE_FFS
+            and payload.get("filter_scheduler", {}).get("render_filtered_only")
+            else "FAIL"
+        )
         lines = [
-            "# Demo 2.1 performance profile",
+            "# Demo 2.2 performance profile" if is_demo22 else "# Demo 2.1 performance profile",
             "",
             f"- preset: `{payload['preset']}`",
             f"- canonical preset: `{payload.get('preset_canonical', payload['preset'])}`",
             f"- target FPS: `{payload['target_fps']:.2f}`",
             f"- render FPS after warmup: `{warm.get('render_fps', 0.0):.2f}`",
+            f"- raw fusion FPS after warmup: `{warm.get('raw_fusion_fps', 0.0):.2f}`",
+            f"- filter output FPS after warmup: `{warm.get('filter_output_fps', 0.0):.2f}`",
             f"- fusion FPS after warmup: `{warm.get('fusion_fps', 0.0):.2f}`",
             f"- groups after warmup: `{warm.get('group_count', 0)}`",
             f"- complete fused groups after warmup: `{warm.get('complete_fusion_groups', 0)}`",
@@ -1861,11 +1948,16 @@ class Demo21Runtime:
             f"- bottleneck class: `{warm.get('bottleneck_class', 'unknown')}`",
             f"- GPU pipeline: `{payload.get('gpu_pipeline', {}).get('mode', 'separate-workers')}`",
             f"- single-owner order: `{payload.get('gpu_pipeline', {}).get('internal_order', 'ffs-then-edgetam')}`",
+            f"- filter scheduler: `{payload.get('filter_scheduler', {}).get('mode', 'sync')}`",
+            f"- render filtered only: `{payload.get('filter_scheduler', {}).get('render_filtered_only', False)}`",
             f"- pin memory mode: `{payload.get('pin_memory_mode', 'off')}`",
             f"- FFS input staging: `{payload.get('ffs_input_staging', 'pinned')}`",
             f"- H2D stream mode: `{payload.get('h2d_stream_mode', 'default')}`",
             "",
         ]
+        if is_demo22:
+            lines.insert(14, f"- Demo 2.2 PASS threshold: `{pass_threshold:.2f} FPS`")
+            lines.insert(15, f"- Demo 2.2 result: `{pass_status}`")
         if int(warm.get("complete_fusion_groups", 0)) == 0:
             lines.extend(
                 [
@@ -1906,7 +1998,10 @@ class Demo21Runtime:
             "gpu_owner_total_ms",
             "gpu_owner_ffs_cycle_ms",
             "gpu_owner_edgetam_cycle_ms",
+            "raw_fusion_total_ms",
             "fusion_total_ms",
+            "filter_total_ms",
+            "filter_input_age_ms",
             "object_enhanced_pt_ms",
             "controller_pt_filter_ms",
             "render_total_ms",
@@ -1948,6 +2043,8 @@ class Demo21Runtime:
                     specs.append((f"edgetam-cam{camera_idx}", lambda camera_idx=int(camera_idx): self._edgetam_camera_worker(camera_idx)))
             if self.args.track_mode != TRACK_MODE_NONE and self.args.depth_source == DEPTH_SOURCE_FFS:
                 specs.append(("fusion", self._fusion_worker))
+        if async_fusion_filter_enabled(self.args) and self.args.track_mode != TRACK_MODE_NONE and self.args.depth_source == DEPTH_SOURCE_FFS:
+            specs.append(("filter", self._async_filter_worker))
         if self.args.debug and self.args.render_mode == "none":
             specs.append(("debug", self._debug_worker))
         return specs
@@ -3053,6 +3150,15 @@ class Demo21Runtime:
             mask_waits["wait_total_ms"] = _elapsed_ms(fusion_wait_start_s, time.perf_counter())
             self._profile_update(depth_group.group_id, fusion=mask_waits)
             try:
+                if async_fusion_filter_enabled(self.args):
+                    raw_packet = self._build_raw_fused_packet(
+                        depth_group=depth_group,
+                        masks=mask_by_camera,
+                        ray_cache=ray_cache,
+                        rng=rng,
+                    )
+                    self._publish_raw_fused_for_async_filter(raw_packet)
+                    continue
                 packet = self._build_fused_packet(
                     depth_group=depth_group,
                     masks=mask_by_camera,
@@ -3100,6 +3206,15 @@ class Demo21Runtime:
                 },
             )
             try:
+                if async_fusion_filter_enabled(self.args):
+                    raw_packet = self._build_raw_fused_packet(
+                        depth_group=depth_group,
+                        masks=complete.mask_packets,
+                        ray_cache=ray_cache,
+                        rng=rng,
+                    )
+                    self._publish_raw_fused_for_async_filter(raw_packet)
+                    continue
                 packet = self._build_fused_packet(
                     depth_group=depth_group,
                     masks=complete.mask_packets,
@@ -3113,6 +3228,264 @@ class Demo21Runtime:
             self.render_slot.put(packet)
             self._latest_fused = packet
             self.fusion_stats.record()
+            self._summary["fusion_complete_groups"] = int(self._summary.get("fusion_complete_groups", 0)) + 1
+            if packet.group_id % int(self.args.render_every_n) == 0:
+                self._render_request()
+
+    def _build_raw_fused_packet(
+        self,
+        *,
+        depth_group: DepthGroup,
+        masks: dict[int, CameraMaskPacket],
+        ray_cache: dict[int, tuple[np.ndarray, np.ndarray]],
+        rng: np.random.Generator,
+    ) -> RawFusedPcdPacket:
+        started_s = time.perf_counter()
+        object_clouds: list[CameraLayerCloud] = []
+        controller_clouds: list[CameraLayerCloud] = []
+        build_object_raw_ms = 0.0
+        build_controller_raw_ms = 0.0
+        for camera_idx in self.args.camera_ids:
+            depth = depth_group.depths[int(camera_idx)]
+            mask = masks[int(camera_idx)]
+            if depth.group_id != mask.group_id:
+                raise RuntimeError("depth/mask group mismatch")
+            if int(camera_idx) not in ray_cache:
+                intrinsics = self._metadata_frame_packet(
+                    group_id=depth_group.group_id,
+                    camera_idx=int(camera_idx),
+                    obs={"color": mask.color_bgr, "ir_left": np.zeros(mask.object_mask.shape, np.uint8), "ir_right": np.zeros(mask.object_mask.shape, np.uint8)},
+                ).intrinsics
+                ray_cache[int(camera_idx)] = build_projection_grid(
+                    width=self.width,
+                    height=self.height,
+                    stride=1,
+                    intrinsics=intrinsics,
+                )
+            ray_x, ray_y = ray_cache[int(camera_idx)]
+            depth_m = depth.depth_m
+            object_build_start_s = time.perf_counter()
+            object_pts_cam, object_cols, _ = backproject_masked_rgbd_profiled(
+                color_bgr=mask.color_bgr,
+                depth_m=depth_m,
+                mask=mask.object_mask,
+                ray_x=ray_x,
+                ray_y=ray_y,
+                depth_min_m=float(self.args.depth_min_m),
+                depth_max_m=float(self.args.depth_max_m),
+                max_points=int(self.args.pcd_max_points_per_camera),
+                color_mode=str(self.args.pcd_color_mode),
+                class_rgb=tuple(self.args.object_color),
+                rng=rng,
+            )
+            build_object_raw_ms += _elapsed_ms(object_build_start_s, time.perf_counter())
+            object_clouds.append(
+                CameraLayerCloud(
+                    camera_idx=int(camera_idx),
+                    label=str(self.args.object_prompt),
+                    points_m=transform_points(object_pts_cam, self._c2w_by_camera[int(camera_idx)]),
+                    colors_rgb=object_cols,
+                )
+            )
+            controller_build_start_s = time.perf_counter()
+            if controller_tracking_enabled(self.args.track_mode):
+                controller_pts_cam, controller_cols, _ = backproject_masked_rgbd_profiled(
+                    color_bgr=mask.color_bgr,
+                    depth_m=depth_m,
+                    mask=mask.controller_mask,
+                    ray_x=ray_x,
+                    ray_y=ray_y,
+                    depth_min_m=float(self.args.depth_min_m),
+                    depth_max_m=float(self.args.depth_max_m),
+                    max_points=int(self.args.pcd_max_points_per_camera),
+                    color_mode=str(self.args.pcd_color_mode),
+                    class_rgb=tuple(self.args.controller_color),
+                    rng=rng,
+                )
+            else:
+                controller_pts_cam = np.empty((0, 3), dtype=np.float32)
+                controller_cols = np.empty((0, 3), dtype=np.uint8)
+            build_controller_raw_ms += _elapsed_ms(controller_build_start_s, time.perf_counter())
+            controller_clouds.append(
+                CameraLayerCloud(
+                    camera_idx=int(camera_idx),
+                    label=str(self.args.controller_prompt),
+                    points_m=transform_points(controller_pts_cam, self._c2w_by_camera[int(camera_idx)]),
+                    colors_rgb=controller_cols,
+                )
+            )
+
+        layers = semantic_layers_for_track_mode(
+            self.args.track_mode,
+            object_label=self.args.object_prompt,
+            controller_label=self.args.controller_prompt,
+            object_postprocess=self.args.object_postprocess,
+            controller_postprocess=self.args.controller_postprocess,
+        )
+        assert build_contract(self.args)["fusion"]["object_controller_union_before_filter"] is False
+        fused = fuse_semantic_camera_clouds([*object_clouds, *controller_clouds], layers)
+        raw_object = fused.get(str(self.args.object_prompt))
+        raw_controller = fused.get(str(self.args.controller_prompt))
+        object_raw_count = 0 if raw_object is None else raw_object.point_count
+        controller_raw_count = 0 if raw_controller is None else raw_controller.point_count
+        raw_fusion_ms = _elapsed_ms(started_s, time.perf_counter())
+        self._profile_update(
+            depth_group.group_id,
+            raw_fusion={
+                "build_object_raw_ms": float(build_object_raw_ms),
+                "build_controller_raw_ms": float(build_controller_raw_ms),
+                "capture_temporal_skew_ms": float(depth_group.max_temporal_skew_ms),
+                "timestamp_source": depth_group.timestamp_source,
+                "total_ms": float(raw_fusion_ms),
+                "publish_s": self._profile_rel_s(),
+                "raw_packet_submitted": True,
+            },
+            points={
+                "object_raw": int(object_raw_count),
+                "controller_raw": int(controller_raw_count),
+            },
+        )
+        return RawFusedPcdPacket(
+            group_id=depth_group.group_id,
+            created_perf_s=time.perf_counter(),
+            raw_object=raw_object,
+            raw_controller=raw_controller,
+            raw_fusion_ms=float(raw_fusion_ms),
+            build_object_raw_ms=float(build_object_raw_ms),
+            build_controller_raw_ms=float(build_controller_raw_ms),
+            object_raw_points=int(object_raw_count),
+            controller_raw_points=int(controller_raw_count),
+            ffs_cycle_ms=depth_group.total_ms,
+            edgetam_ms_by_camera={idx: masks[idx].cuda_event_model_ms or masks[idx].model_ms for idx in masks},
+            ffs_gpu_gate_wait_ms=depth_group.gpu_gate_wait_ms,
+            edgetam_gpu_gate_wait_ms_by_camera={idx: masks[idx].gpu_gate_wait_ms for idx in masks},
+            capture_temporal_skew_ms=float(depth_group.max_temporal_skew_ms),
+            capture_time_offsets_ms_by_camera=dict(depth_group.per_camera_time_offset_ms),
+            timestamp_source=str(depth_group.timestamp_source),
+        )
+
+    def _filter_raw_fused_packet(self, raw: RawFusedPcdPacket) -> FusedPcdPacket:
+        filter_start_s = time.perf_counter()
+        object_filter_ms = 0.0
+        controller_filter_ms = 0.0
+        object_filter_stats: dict[str, Any] = {}
+        controller_filter_stats: dict[str, Any] = {}
+        if raw.raw_object is not None:
+            object_filter_start_s = time.perf_counter()
+            object_points, object_colors, stats = apply_semantic_postprocess(
+                raw.raw_object,
+                filter_cap=int(self.args.object_filter_cap),
+                filter_voxel_size_m=float(self.args.object_filter_voxel_m),
+                phystwin_radius_m=float(self.args.phystwin_radius_m),
+                phystwin_nb_points=int(self.args.phystwin_nb_points),
+                enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
+                enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
+            )
+            object_filter_ms = _elapsed_ms(object_filter_start_s, time.perf_counter())
+            object_filter_stats = stats if isinstance(stats, dict) else {}
+        else:
+            object_points = np.empty((0, 3), dtype=np.float32)
+            object_colors = np.empty((0, 3), dtype=np.uint8)
+        if raw.raw_controller is not None:
+            controller_filter_start_s = time.perf_counter()
+            controller_points, controller_colors, stats = apply_semantic_postprocess(
+                raw.raw_controller,
+                filter_cap=int(self.args.controller_filter_cap),
+                filter_voxel_size_m=float(self.args.controller_filter_voxel_m),
+                phystwin_radius_m=float(self.args.phystwin_radius_m),
+                phystwin_nb_points=int(self.args.phystwin_nb_points),
+                enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
+                enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
+            )
+            controller_filter_ms = _elapsed_ms(controller_filter_start_s, time.perf_counter())
+            controller_filter_stats = stats if isinstance(stats, dict) else {}
+        else:
+            controller_points = np.empty((0, 3), dtype=np.float32)
+            controller_colors = np.empty((0, 3), dtype=np.uint8)
+        filter_ms = _elapsed_ms(filter_start_s, time.perf_counter())
+        input_age_ms = _elapsed_ms(raw.created_perf_s, time.perf_counter())
+        profile_filter: dict[str, Any] = {
+            "object_enhanced_pt_ms": float(object_filter_ms),
+            "controller_pt_filter_ms": float(controller_filter_ms),
+            "total_ms": float(filter_ms),
+            "input_age_ms": float(input_age_ms),
+            "publish_s": self._profile_rel_s(),
+            "pending_replacements": int(self.raw_fused_slot.dropped_count),
+            "pending_replacements_total": int(self.raw_fused_slot.total_dropped_count),
+        }
+        if self.args.profile_filter_detail:
+            profile_filter["object_filter_detail"] = object_filter_stats
+            profile_filter["controller_filter_detail"] = controller_filter_stats
+        self._profile_update(
+            raw.group_id,
+            filter=profile_filter,
+            fusion={
+                "build_object_raw_ms": float(raw.build_object_raw_ms),
+                "build_controller_raw_ms": float(raw.build_controller_raw_ms),
+                "capture_temporal_skew_ms": float(raw.capture_temporal_skew_ms),
+                "timestamp_source": raw.timestamp_source,
+                "object_enhanced_pt_ms": float(object_filter_ms),
+                "controller_pt_filter_ms": float(controller_filter_ms),
+                "filter_ms": float(filter_ms),
+                "raw_fusion_ms": float(raw.raw_fusion_ms),
+                "total_ms": float(raw.raw_fusion_ms + filter_ms),
+                "publish_s": self._profile_rel_s(),
+            },
+            points={
+                "object_raw": int(raw.object_raw_points),
+                "object_filtered": int(len(object_points)),
+                "controller_raw": int(raw.controller_raw_points),
+                "controller_filtered": int(len(controller_points)),
+            },
+            complete=True,
+            drop_reason=None,
+        )
+        return FusedPcdPacket(
+            group_id=raw.group_id,
+            created_perf_s=time.perf_counter(),
+            object_points_m=object_points,
+            object_colors_rgb=object_colors,
+            controller_points_m=controller_points,
+            controller_colors_rgb=controller_colors,
+            fusion_ms=float(raw.raw_fusion_ms),
+            filter_ms=float(filter_ms),
+            object_raw_points=int(raw.object_raw_points),
+            controller_raw_points=int(raw.controller_raw_points),
+            ffs_cycle_ms=raw.ffs_cycle_ms,
+            edgetam_ms_by_camera=dict(raw.edgetam_ms_by_camera),
+            ffs_gpu_gate_wait_ms=raw.ffs_gpu_gate_wait_ms,
+            edgetam_gpu_gate_wait_ms_by_camera=dict(raw.edgetam_gpu_gate_wait_ms_by_camera),
+            capture_temporal_skew_ms=float(raw.capture_temporal_skew_ms),
+            capture_time_offsets_ms_by_camera=dict(raw.capture_time_offsets_ms_by_camera),
+            timestamp_source=str(raw.timestamp_source),
+        )
+
+    def _publish_raw_fused_for_async_filter(self, raw: RawFusedPcdPacket) -> None:
+        self.raw_fused_slot.put(raw)
+        self._latest_raw_fused = raw
+        self.raw_fusion_stats.record(raw.created_perf_s)
+        self._summary["raw_fusion_groups"] = int(self._summary.get("raw_fusion_groups", 0)) + 1
+
+    def _async_filter_worker(self) -> None:
+        last_raw_group = -1
+        while not self.stop_event.is_set():
+            raw = self.raw_fused_slot.get_latest_after(last_raw_group)
+            if raw is None:
+                time.sleep(0.001)
+                continue
+            last_raw_group = raw.group_id
+            try:
+                packet = self._filter_raw_fused_packet(raw)
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    print(f"[WARN] Demo 2.1 async filter group {raw.group_id} failed: {type(exc).__name__}: {exc}", flush=True)
+                self._profile_mark_drop(raw.group_id, "async_filter_failed")
+                continue
+            self.render_slot.put(packet)
+            self._latest_fused = packet
+            self.filter_output_stats.record(packet.created_perf_s)
+            self.fusion_stats.record(packet.created_perf_s)
+            self._summary["filter_output_groups"] = int(self._summary.get("filter_output_groups", 0)) + 1
             self._summary["fusion_complete_groups"] = int(self._summary.get("fusion_complete_groups", 0)) + 1
             if packet.group_id % int(self.args.render_every_n) == 0:
                 self._render_request()
@@ -3328,10 +3701,12 @@ class Demo21Runtime:
             f"ffs_cycle_fps={self.ffs_stats.fps:.2f} "
             f"gpu_owner_fps={self.gpu_owner_stats.fps:.2f} "
             f"edge_fps_cam0={self.edge_stats[0].fps:.2f} edge_fps_cam1={self.edge_stats[1].fps:.2f} edge_fps_cam2={self.edge_stats[2].fps:.2f} "
+            f"raw_fusion_fps={self.raw_fusion_stats.fps:.2f} filter_fps={self.filter_output_stats.fps:.2f} "
             f"fusion_fps={self.fusion_stats.fps:.2f} render_fps={self.render_stats.render_fps:.2f} "
             f"ffs_cycle_ms={(0.0 if depth is None else depth.total_ms):.1f} "
             f"fusion_ms={(0.0 if latest is None else latest.fusion_ms):.1f} "
             f"filter_ms={(0.0 if latest is None else latest.filter_ms):.1f} "
+            f"raw_drop={self.raw_fused_slot.dropped_count} "
             f"skew_ms_med/latest={self.temporal_skew_stats.median:.1f}/{self.temporal_skew_stats.latest:.1f} "
             f"skew_drop={int(self._summary.get('capture_group_skew_drop', 0))} "
             f"no_candidate={int(self._summary.get('capture_group_no_candidate', 0))} "

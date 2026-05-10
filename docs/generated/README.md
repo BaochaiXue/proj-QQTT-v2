@@ -25,6 +25,7 @@ manual; use the compressed harness index first.
 | Demo 2.1 three EdgeTAM GPU probe | `demo2_1_three_edgetam_gpu_probe.md` |
 | Latest Demo 2.1 visual profile | `demo2_1_visual5fps_image_sam31_profile_object_only_120s.md` |
 | Demo 2.1 pin-memory H2D ablation | `demo2_1_pin_memory_ablation.md` |
+| Demo 2.2 async filtered fused PCD | `demo2_2_async_filter_5fps_benchmark.md` |
 | Demo 2 / 2.1 RTX 4090 `demo_2_max` environment | `demo_2_max_4090_env_validation.md` |
 | Demo 2 single-camera local FFS path | `demo2_local_ffs_professor_speed_polish.md` |
 | Demo 2 depth source comparison | `demo2_depth_source_fps_comparison.md` |
