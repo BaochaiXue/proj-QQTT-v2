@@ -113,6 +113,8 @@ PRESET_VISUAL_5FPS = "visual-5fps"
 PRESET_VISUAL_5FPS_NO_GATE = "visual-5fps-no-gate"
 PRESET_VISUAL_5FPS_SINGLE_OWNER = "visual-5fps-single-owner"
 PRESET_VISUAL_5FPS_STAGED = "visual-5fps-staged"
+PRESET_DEMO215_ASYNC_FILTER_5FPS = "demo2.1.5-async-filter-5fps"
+PRESET_DEMO215_STAGED_PARALLEL_5FPS = "demo2.1.5-staged-parallel-5fps"
 PRESET_DEMO22_ASYNC_FILTER_5FPS = "demo2.2-async-filter-5fps"
 PRESET_DEMO22_STAGED_PARALLEL_5FPS = "demo2.2-staged-parallel-5fps"
 PRESET_CLIMB_5 = "climb-5"
@@ -129,6 +131,8 @@ PRESETS = (
     PRESET_VISUAL_5FPS_NO_GATE,
     PRESET_VISUAL_5FPS_SINGLE_OWNER,
     PRESET_VISUAL_5FPS_STAGED,
+    PRESET_DEMO215_ASYNC_FILTER_5FPS,
+    PRESET_DEMO215_STAGED_PARALLEL_5FPS,
     PRESET_DEMO22_ASYNC_FILTER_5FPS,
     PRESET_DEMO22_STAGED_PARALLEL_5FPS,
     PRESET_CLIMB_5,
@@ -315,6 +319,8 @@ class CameraFramePacket:
     baseline_m: float
     intrinsics: CameraIntrinsics
     c2w: np.ndarray
+    depth_u16: np.ndarray | None = None
+    depth_scale_m_per_unit: float = 0.0
 
     @property
     def seq(self) -> int:
@@ -1084,11 +1090,14 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
-        elif preset == PRESET_DEMO22_ASYNC_FILTER_5FPS:
+        elif preset in {PRESET_DEMO22_ASYNC_FILTER_5FPS, PRESET_DEMO215_ASYNC_FILTER_5FPS}:
+            if preset == PRESET_DEMO215_ASYNC_FILTER_5FPS:
+                _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
-            _set_if_not_explicit(args, explicit, flag="--ffs-trt-batch-size", attr="ffs_trt_batch_size", value=3)
+            if preset == PRESET_DEMO22_ASYNC_FILTER_5FPS:
+                _set_if_not_explicit(args, explicit, flag="--ffs-trt-batch-size", attr="ffs_trt_batch_size", value=3)
             _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
             _set_if_not_explicit(args, explicit, flag="--single-owner-order", attr="single_owner_order", value=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_SHARED)
@@ -1106,7 +1115,9 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
-        elif preset == PRESET_DEMO22_STAGED_PARALLEL_5FPS:
+        elif preset in {PRESET_DEMO22_STAGED_PARALLEL_5FPS, PRESET_DEMO215_STAGED_PARALLEL_5FPS}:
+            if preset == PRESET_DEMO215_STAGED_PARALLEL_5FPS:
+                _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
@@ -1140,7 +1151,12 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
         if (
-            preset in {PRESET_DEMO22_ASYNC_FILTER_5FPS, PRESET_DEMO22_STAGED_PARALLEL_5FPS}
+            preset in {
+                PRESET_DEMO215_ASYNC_FILTER_5FPS,
+                PRESET_DEMO215_STAGED_PARALLEL_5FPS,
+                PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+            }
             and "--capture-group-target-fps" not in explicit
         ):
             setattr(args, "capture_group_target_fps", float(args.fps))
@@ -1427,10 +1443,16 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         PRESET_DEMO22_ASYNC_FILTER_5FPS,
         PRESET_DEMO22_STAGED_PARALLEL_5FPS,
     }
+    is_demo215_preset = preset_canonical in {
+        PRESET_DEMO215_ASYNC_FILTER_5FPS,
+        PRESET_DEMO215_STAGED_PARALLEL_5FPS,
+    }
     return {
         "demo": (
             "demo_2_2_async_filtered_fused_pcd"
             if is_demo22_preset
+            else "demo_2_1_5_realsense_async_filtered_fused_pcd"
+            if is_demo215_preset
             else "demo_2_1_three_view_fused_masked_pcd"
         ),
         "preset": getattr(args, "preset", PRESET_NONE),
@@ -1472,7 +1494,9 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "fallback_allowed": False,
         },
         "official_quality_depth": args.depth_source in set(OFFICIAL_DEPTH_SOURCES),
-        "native_realsense_depth_role": "fallback/debug only",
+        "native_realsense_depth_role": (
+            "primary" if args.depth_source == DEPTH_SOURCE_REALSENSE else "fallback/debug only"
+        ),
         "gpu_gate": {
             "mode": args.gpu_gate_mode,
             "max_concurrent": int(args.gpu_gate_max_concurrent),
@@ -1763,10 +1787,10 @@ class Demo21Runtime:
             record["drop_reason"] = str(reason)
 
     def run(self) -> int:
-        if self.args.depth_source not in {DEPTH_SOURCE_FFS, DEPTH_SOURCE_NONE}:
+        if self.args.depth_source not in {DEPTH_SOURCE_FFS, DEPTH_SOURCE_REALSENSE, DEPTH_SOURCE_NONE}:
             raise RuntimeError(
-                "Demo 2.1 live runtime currently supports --depth-source ffs for official output "
-                "and --depth-source none for capture/EdgeTAM isolation."
+                "Demo 2.1 live runtime currently supports --depth-source ffs, realsense, "
+                "and none for capture/EdgeTAM isolation."
         )
         apply_wslg_open3d_env_defaults()
         self._validate_live_contract()
@@ -1783,6 +1807,43 @@ class Demo21Runtime:
             self.stop()
             self._write_summary()
         return 1 if self._fatal_error is not None else 0
+
+    def warm_init_caches(
+        self,
+        *,
+        repeats: int = 1,
+        include_edgetam: bool = True,
+        include_sam31: bool = True,
+    ) -> dict[str, Any]:
+        repeats = max(1, int(repeats))
+        results: list[dict[str, Any]] = []
+        for repeat_idx in range(repeats):
+            repeat_start_s = time.perf_counter()
+            entry: dict[str, Any] = {"repeat_idx": int(repeat_idx)}
+            if include_edgetam and self.args.track_mode != TRACK_MODE_NONE:
+                edge_start_s = time.perf_counter()
+                hf_stream, torch_module, _dtype, model, processor = self._init_hf_model(camera_idx=-1)
+                entry["edgetam_total_ms"] = float(_elapsed_ms(edge_start_s, time.perf_counter()))
+                entry["edgetam_loader_profile"] = self._init_profile_snapshot().get("edgetam", {}).get("loaders", {}).get("shared", {})
+                try:
+                    del processor
+                    del model
+                    if str(self.args.device).startswith("cuda") and hasattr(torch_module, "cuda"):
+                        torch_module.cuda.empty_cache()
+                finally:
+                    del hf_stream
+            if include_sam31 and self.args.init_mode == "sam31-first-frame":
+                sam_start_s = time.perf_counter()
+                sam31_result = self._preload_sam31_init_model()
+                entry["sam31_total_ms"] = float(_elapsed_ms(sam_start_s, time.perf_counter()))
+                entry["sam31_preload_profile"] = dict(sam31_result.get("timing_ms", {}) or {})
+            entry["total_ms"] = float(_elapsed_ms(repeat_start_s, time.perf_counter()))
+            results.append(entry)
+        return {
+            "contract": build_contract(self.args),
+            "repeats": results,
+            "init_profile": self._init_profile_snapshot(),
+        }
 
     def _start_parallel_init(self) -> None:
         if not bool(getattr(self.args, "parallel_init", False)):
@@ -1819,8 +1880,28 @@ class Demo21Runtime:
             thread_name_prefix="demo2.2-init",
         )
         self._parallel_init_futures = {
-            name: self._parallel_init_executor.submit(task) for name, task in tasks.items()
+            name: self._parallel_init_executor.submit(self._run_parallel_init_task, name, task)
+            for name, task in tasks.items()
         }
+
+    def _run_parallel_init_task(self, name: str, task: Callable[[], Any]) -> Any:
+        task_start_s = time.perf_counter()
+        self._init_profile_update(
+            ("parallel_init", str(name)),
+            {
+                "started_s": self._profile_rel_s(),
+            },
+        )
+        try:
+            return task()
+        finally:
+            self._init_profile_update(
+                ("parallel_init", str(name)),
+                {
+                    "finished_s": self._profile_rel_s(),
+                    "duration_ms": float(_elapsed_ms(task_start_s, time.perf_counter())),
+                },
+            )
 
     def _consume_parallel_init_future(self, name: str) -> Any | None:
         future = self._parallel_init_futures.pop(str(name), None)
@@ -1910,9 +1991,33 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 staged mode requires --edgetam-model-topology replicated")
         if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED and self.args.gpu_gate_mode != GPU_GATE_MODE_OFF:
             raise RuntimeError("Demo 2.1 staged mode requires --gpu-gate-mode off so EdgeTAM can run in parallel")
-        if self.args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_SINGLE_OWNER, GPU_PIPELINE_MODE_STAGED} and self.args.depth_source != DEPTH_SOURCE_FFS:
-            raise RuntimeError("Demo 2.1 single-owner/staged modes currently require --depth-source ffs")
+        depth_pipeline_sources = {DEPTH_SOURCE_FFS, DEPTH_SOURCE_REALSENSE}
+        if (
+            self.args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_SINGLE_OWNER, GPU_PIPELINE_MODE_STAGED}
+            and self.args.depth_source not in depth_pipeline_sources
+        ):
+            raise RuntimeError("Demo 2.1 single-owner/staged modes require --depth-source ffs or realsense")
         preset_canonical = canonical_preset_name(self.args.preset)
+        if preset_canonical == PRESET_DEMO215_ASYNC_FILTER_5FPS:
+            if self.args.depth_source != DEPTH_SOURCE_REALSENSE:
+                raise RuntimeError("Demo 2.1.5 requires native RealSense depth")
+            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_SINGLE_OWNER:
+                raise RuntimeError("Demo 2.1.5 requires single-owner GPU pipeline")
+            if not async_fusion_filter_enabled(self.args):
+                raise RuntimeError("Demo 2.1.5 requires async latest-wins PCD filtering")
+        if preset_canonical == PRESET_DEMO215_STAGED_PARALLEL_5FPS:
+            if self.args.depth_source != DEPTH_SOURCE_REALSENSE:
+                raise RuntimeError("Demo 2.1.5 staged parallel requires native RealSense depth")
+            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_STAGED:
+                raise RuntimeError("Demo 2.1.5 staged parallel requires staged GPU pipeline")
+            if self.args.staged_order != STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM:
+                raise RuntimeError("Demo 2.1.5 staged parallel requires depth then parallel EdgeTAM")
+            if self.args.edgetam_stream_mode != EDGETAM_STREAM_MODE_PER_CAMERA:
+                raise RuntimeError("Demo 2.1.5 staged parallel requires per-camera EdgeTAM streams")
+            if not async_fusion_filter_enabled(self.args):
+                raise RuntimeError("Demo 2.1.5 staged parallel requires async latest-wins PCD filtering")
+            if self.args.pin_memory_mode != PIN_MEMORY_MODE_ALL or not bool(self.args.pin_memory):
+                raise RuntimeError("Demo 2.1.5 staged parallel requires --pin-memory-mode all")
         if preset_canonical == PRESET_DEMO22_ASYNC_FILTER_5FPS:
             if self.args.depth_source != DEPTH_SOURCE_FFS:
                 raise RuntimeError("Demo 2.2 requires local FFS depth")
@@ -2004,19 +2109,21 @@ class Demo21Runtime:
             raise FileNotFoundError(f"Demo 2.1 requires calibrate.pkl for world fusion: {self.args.calibrate_path}")
 
     def _needs_world_fusion(self) -> bool:
-        return self.args.depth_source == DEPTH_SOURCE_FFS and self.args.track_mode != TRACK_MODE_NONE
+        return self.args.depth_source in {DEPTH_SOURCE_FFS, DEPTH_SOURCE_REALSENSE} and self.args.track_mode != TRACK_MODE_NONE
 
     def _start_camera_system(self) -> None:
         from data_process.visualization.calibration_io import load_calibration_transforms
         from qqtt.env.camera import CameraSystem
 
+        capture_mode = "rgbd" if self.args.depth_source == DEPTH_SOURCE_REALSENSE else "stereo_ir"
+        emitter = "auto" if self.args.depth_source == DEPTH_SOURCE_REALSENSE else "off"
         self.camera_system = CameraSystem(
             WH=(self.width, self.height),
             fps=int(self.args.fps),
             num_cam=3,
             serial_numbers=self.args.serials,
-            capture_mode="stereo_ir",
-            emitter="off",
+            capture_mode=capture_mode,
+            emitter=emitter,
             calibration_reference_serials=self.args.calibration_reference_serials,
             enable_keyboard_listener=False,
         )
@@ -2401,23 +2508,26 @@ class Demo21Runtime:
         specs: list[tuple[str, Callable[[], None]]] = [
             ("capture-group", self._capture_group_worker),
         ]
+        depth_for_pcd = self.args.depth_source in {DEPTH_SOURCE_FFS, DEPTH_SOURCE_REALSENSE}
         if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SINGLE_OWNER:
-            if self.args.track_mode != TRACK_MODE_NONE and self.args.depth_source == DEPTH_SOURCE_FFS:
+            if self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
                 specs.append(("gpu-owner", self._gpu_owner_pipeline_worker))
                 specs.append(("fusion", self._fusion_worker_single_owner))
         elif self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED:
-            if self.args.track_mode != TRACK_MODE_NONE and self.args.depth_source == DEPTH_SOURCE_FFS:
+            if self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
                 specs.append(("staged-gpu", self._staged_gpu_pipeline_worker))
                 specs.append(("fusion", self._fusion_worker_single_owner))
         else:
             if self.args.depth_source == DEPTH_SOURCE_FFS:
                 specs.append(("shared-ffs", self._shared_ffs_worker))
+            if self.args.depth_source == DEPTH_SOURCE_REALSENSE:
+                specs.append(("realsense-depth", self._native_realsense_depth_worker))
             if self.args.track_mode != TRACK_MODE_NONE:
                 for camera_idx in self.args.camera_ids:
                     specs.append((f"edgetam-cam{camera_idx}", lambda camera_idx=int(camera_idx): self._edgetam_camera_worker(camera_idx)))
-            if self.args.track_mode != TRACK_MODE_NONE and self.args.depth_source == DEPTH_SOURCE_FFS:
+            if self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
                 specs.append(("fusion", self._fusion_worker))
-        if async_fusion_filter_enabled(self.args) and self.args.track_mode != TRACK_MODE_NONE and self.args.depth_source == DEPTH_SOURCE_FFS:
+        if async_fusion_filter_enabled(self.args) and self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
             specs.append(("filter", self._async_filter_worker))
         if self.args.debug and self.args.render_mode == "none":
             specs.append(("debug", self._debug_worker))
@@ -2476,14 +2586,30 @@ class Demo21Runtime:
             timestamp_domain=None if obs.get("timestamp_domain") is None else str(obs.get("timestamp_domain")),
             capture_arrival_perf_ns=int(time.perf_counter_ns() if capture_arrival_perf_ns is None else capture_arrival_perf_ns),
             color_bgr=np.ascontiguousarray(obs["color"].copy()),
-            ir_left_u8=np.ascontiguousarray(obs["ir_left"].copy()),
-            ir_right_u8=np.ascontiguousarray(obs["ir_right"].copy()),
+            ir_left_u8=(
+                np.ascontiguousarray(obs["ir_left"].copy()) if obs.get("ir_left") is not None else None
+            ),
+            ir_right_u8=(
+                np.ascontiguousarray(obs["ir_right"].copy()) if obs.get("ir_right") is not None else None
+            ),
             k_color=k_color,
-            k_ir_left=np.asarray(metadata["K_ir_left"], dtype=np.float32).reshape(3, 3),
-            t_ir_left_to_color=np.asarray(metadata["T_ir_left_to_color"], dtype=np.float32).reshape(4, 4),
-            baseline_m=float(metadata["ir_baseline_m"]),
+            k_ir_left=(
+                np.asarray(metadata["K_ir_left"], dtype=np.float32).reshape(3, 3)
+                if metadata.get("K_ir_left") is not None
+                else None
+            ),
+            t_ir_left_to_color=(
+                np.asarray(metadata["T_ir_left_to_color"], dtype=np.float32).reshape(4, 4)
+                if metadata.get("T_ir_left_to_color") is not None
+                else None
+            ),
+            baseline_m=float(metadata.get("ir_baseline_m", 0.0) or 0.0),
             intrinsics=intrinsics,
             c2w=self._c2w_by_camera[int(camera_idx)],
+            depth_u16=(
+                np.ascontiguousarray(obs["depth"].copy()) if obs.get("depth") is not None else None
+            ),
+            depth_scale_m_per_unit=float(metadata.get("depth_scale_m_per_unit", 0.0) or 0.0),
         )
 
     def _capture_group_worker(self) -> None:
@@ -3016,6 +3142,95 @@ class Demo21Runtime:
             align_ms=_elapsed_ms(align_start_s, align_done_s),
         )
 
+    def _compute_realsense_depth_for_frame(self, *, frame: CameraFramePacket) -> DepthPacket:
+        if frame.depth_u16 is None:
+            raise RuntimeError(f"cam{frame.camera_idx} is missing native RealSense depth data")
+        if float(frame.depth_scale_m_per_unit) <= 0.0:
+            raise RuntimeError(f"cam{frame.camera_idx} is missing native RealSense depth scale")
+        convert_start_s = time.perf_counter()
+        depth_m = np.ascontiguousarray(
+            frame.depth_u16.astype(np.float32) * np.float32(frame.depth_scale_m_per_unit),
+            dtype=np.float32,
+        )
+        convert_ms = _elapsed_ms(convert_start_s, time.perf_counter())
+        return DepthPacket(
+            group_id=frame.group_id,
+            camera_idx=frame.camera_idx,
+            depth_m=depth_m,
+            ffs_ms=0.0,
+            align_ms=float(convert_ms),
+        )
+
+    def _run_realsense_depth_cycle_for_group(self, *, group: CaptureGroup) -> DepthGroup:
+        cycle_start_s = time.perf_counter()
+        depths: dict[int, DepthPacket] = {}
+        per_camera: dict[int, dict[str, float]] = {}
+        for camera_idx in self.args.camera_ids:
+            frame = group.frames[int(camera_idx)]
+            depth = self._compute_realsense_depth_for_frame(frame=frame)
+            depths[int(camera_idx)] = depth
+            per_camera[int(camera_idx)] = {
+                "realsense_depth_ms": depth.align_ms,
+                "ffs_ms": 0.0,
+                "align_ms": depth.align_ms,
+                "gate_wait_ms": 0.0,
+            }
+
+        packet = DepthGroup(
+            group_id=group.group_id,
+            depths=depths,
+            total_ms=_elapsed_ms(cycle_start_s, time.perf_counter()),
+            per_camera_ms=per_camera,
+            gpu_gate_wait_ms=0.0,
+            max_temporal_skew_ms=float(group.max_temporal_skew_ms),
+            per_camera_time_offset_ms=dict(group.per_camera_time_offset_ms),
+            per_camera_frame_seq=dict(group.per_camera_frame_seq),
+            timestamp_source=str(group.timestamp_source),
+        )
+        if not self._first_ffs_cycle_recorded:
+            self._first_ffs_cycle_recorded = True
+            self._init_profile_update(
+                ("realsense_depth",),
+                {
+                    "first_group_id": int(group.group_id),
+                    "first_cycle_ms": float(packet.total_ms),
+                    "first_convert_ms_by_camera": {
+                        f"cam{int(camera_idx)}": float(per_camera[int(camera_idx)]["realsense_depth_ms"])
+                        for camera_idx in self.args.camera_ids
+                    },
+                },
+            )
+        self._profile_update(
+            group.group_id,
+            realsense_depth={
+                "cycle_ms": float(packet.total_ms),
+                "publish_s": self._profile_rel_s(),
+                "capture_temporal_skew_ms": float(group.max_temporal_skew_ms),
+                **{
+                    f"cam{int(camera_idx)}_convert_ms": float(
+                        per_camera[int(camera_idx)].get("realsense_depth_ms", 0.0)
+                    )
+                    for camera_idx in self.args.camera_ids
+                },
+            },
+        )
+        return packet
+
+    def _run_depth_cycle_for_group(
+        self,
+        *,
+        group: CaptureGroup,
+        runner: object | None,
+        aligners: dict[int, FfsIrToColorAligner],
+    ) -> tuple[DepthGroup, dict[int, dict[str, Any]]]:
+        if self.args.depth_source == DEPTH_SOURCE_REALSENSE:
+            return self._run_realsense_depth_cycle_for_group(group=group), {}
+        if self.args.depth_source == DEPTH_SOURCE_FFS:
+            if runner is None:
+                raise RuntimeError("FFS runner is required for FFS depth")
+            return self._run_ffs_cycle_for_group(runner=runner, group=group, aligners=aligners)
+        raise RuntimeError(f"unsupported depth source for PCD fusion: {self.args.depth_source}")
+
     def _shared_ffs_worker(self) -> None:
         try:
             runner = self._get_or_prepare_ffs_runner()
@@ -3041,6 +3256,31 @@ class Demo21Runtime:
             if not self.stop_event.is_set():
                 print(f"[ERROR] Demo 2.1 shared FFS worker failed: {type(exc).__name__}: {exc}", flush=True)
             self._mark_fatal_error("shared-ffs", exc)
+            self.stop_event.set()
+
+    def _native_realsense_depth_worker(self) -> None:
+        try:
+            last_group_id = -1
+            while not self.stop_event.is_set():
+                group = self.capture_group_slot.get_latest_after(last_group_id)
+                if group is None:
+                    time.sleep(0.001)
+                    continue
+                last_group_id = group.group_id
+                if not temporal_group_is_coherent(group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+                    self._summary["realsense_depth_drop_skewed_capture_group"] = int(
+                        self._summary.get("realsense_depth_drop_skewed_capture_group", 0)
+                    ) + 1
+                    self._profile_mark_drop(group.group_id, "realsense_depth_drop_skewed_capture_group")
+                    continue
+                packet = self._run_realsense_depth_cycle_for_group(group=group)
+                self.depth_group_slot.put(packet)
+                self._latest_depth_group = packet
+                self.ffs_stats.record()
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                print(f"[ERROR] Demo 2.1 native RealSense depth worker failed: {type(exc).__name__}: {exc}", flush=True)
+            self._mark_fatal_error("realsense-depth", exc)
             self.stop_event.set()
 
     def _autocast_context(self, torch_module: Any) -> Any:
@@ -3944,7 +4184,7 @@ class Demo21Runtime:
 
     def _gpu_owner_pipeline_worker(self) -> None:
         try:
-            runner = self._get_or_prepare_ffs_runner()
+            runner = self._get_or_prepare_ffs_runner() if self.args.depth_source == DEPTH_SOURCE_FFS else None
             aligners: dict[int, FfsIrToColorAligner] = {}
             edgetam_states = self._get_or_init_gpu_owner_edgetam_states()
             last_group_id = -1
@@ -3974,10 +4214,18 @@ class Demo21Runtime:
                     )
                     if mask_packets is None:
                         continue
-                    depth_group, _ = self._run_ffs_cycle_for_group(runner=runner, group=group, aligners=aligners)
+                    depth_group, _ = self._run_depth_cycle_for_group(
+                        group=group,
+                        runner=runner,
+                        aligners=aligners,
+                    )
                     ffs_cycle_ms = depth_group.total_ms
                 else:
-                    depth_group, _ = self._run_ffs_cycle_for_group(runner=runner, group=group, aligners=aligners)
+                    depth_group, _ = self._run_depth_cycle_for_group(
+                        group=group,
+                        runner=runner,
+                        aligners=aligners,
+                    )
                     ffs_cycle_ms = depth_group.total_ms
                     mask_packets, edgetam_cycle_ms = self._run_gpu_owner_edgetam_cycle(
                         states=edgetam_states,
@@ -4036,7 +4284,7 @@ class Demo21Runtime:
 
     def _staged_gpu_pipeline_worker(self) -> None:
         try:
-            runner = self._get_or_prepare_ffs_runner()
+            runner = self._get_or_prepare_ffs_runner() if self.args.depth_source == DEPTH_SOURCE_FFS else None
             aligners: dict[int, FfsIrToColorAligner] = {}
             edgetam_states = self._get_or_init_gpu_owner_edgetam_states()
             last_group_id = -1
@@ -4055,12 +4303,16 @@ class Demo21Runtime:
                         continue
 
                     owner_start_s = time.perf_counter()
-                    depth_group, _ = self._run_ffs_cycle_for_group(runner=runner, group=group, aligners=aligners)
+                    depth_group, _ = self._run_depth_cycle_for_group(
+                        group=group,
+                        runner=runner,
+                        aligners=aligners,
+                    )
                     ffs_cycle_ms = depth_group.total_ms
 
                     barrier_start_s = time.perf_counter()
                     first_state = next(iter(edgetam_states.values()), None)
-                    if first_state is not None:
+                    if self.args.depth_source == DEPTH_SOURCE_FFS and first_state is not None:
                         torch_module = first_state["torch_module"]
                         if str(self.args.device).startswith("cuda") and torch_module.cuda.is_available():
                             torch_module.cuda.synchronize()

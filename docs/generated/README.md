@@ -35,6 +35,8 @@ manual; use the compressed harness index first.
 | Demo 2.2 simplified public CLI | `demo2_2_cli_simplification.md` |
 | Demo 2.2 staged-parallel GPU-resident probe | `demo2_2_staged_parallel_5fps_benchmark.md` |
 | Demo 2.2 staged-parallel async GPU observation | `demo2_2_staged_parallel_async_gpu_observation.md` |
+| Demo 2.1.5 RealSense-depth async filtered fused PCD | `demo2_1_5_realsense_depth_60s_profile.md` |
+| Demo 2.1.5 init cache warmup probe | `demo2_1_5_init_cache_warmup.md` |
 | Demo 2 / 2.1 RTX 4090 `demo_2_max` environment | `demo_2_max_4090_env_validation.md` |
 | Demo 2 single-camera local FFS path | `demo2_local_ffs_professor_speed_polish.md` |
 | Demo 2 depth source comparison | `demo2_depth_source_fps_comparison.md` |

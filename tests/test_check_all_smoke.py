@@ -53,6 +53,7 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_sam21_checkpoint_ladder_panel_smoke",
                 "tests.test_demo_v03_prepare_ir_triplets_smoke",
                 "tests.test_demo_v2_1_three_view_fused_pcd_smoke",
+                "tests.test_demo_v2_1_5_realsense_depth_smoke",
                 "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
                 "tests.test_check_all_smoke",
             ],
@@ -73,6 +74,7 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertIn(["python", "demo_v2/realtime_single_camera_pointcloud.py", "--help"], commands)
         self.assertIn(["python", "demo_v2/realtime_masked_edgetam_pcd.py", "--help"], commands)
         self.assertIn(["python", "demo_v2_1/realtime_three_view_masked_fused_pcd.py", "--help"], commands)
+        self.assertIn(["python", "demo_v2_1_5/realtime_three_view_async_filtered_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "scripts/demo_v0_3/prepare_ir_triplet_100kits.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/realtime_single_camera_pointcloud.py", "--help"], commands)
