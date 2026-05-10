@@ -86,6 +86,33 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         cloned.add_(1)
         torch.testing.assert_close(source, torch.ones(2))
 
+    def test_cuda_inline_hf_mask_extraction_thresholds_and_maps_object_ids(self) -> None:
+        import torch
+
+        output = SimpleNamespace(
+            object_ids=torch.tensor([demo.CONTROLLER_ID, demo.OBJECT_ID]),
+            pred_masks=torch.tensor(
+                [
+                    [[[1.0, -1.0], [-1.0, 1.0]]],
+                    [[[-1.0, 1.0], [1.0, -1.0]]],
+                ]
+            ),
+        )
+
+        masks, profile = demo.extract_object_masks_from_hf_output_cuda_inline(
+            torch_module=torch,
+            output=output,
+            height=2,
+            width=2,
+        )
+
+        self.assertEqual(set(masks), {demo.CONTROLLER_ID, demo.OBJECT_ID})
+        np.testing.assert_array_equal(masks[demo.CONTROLLER_ID], np.array([[True, False], [False, True]]))
+        np.testing.assert_array_equal(masks[demo.OBJECT_ID], np.array([[False, True], [True, False]]))
+        self.assertGreaterEqual(profile["mask_resize_ms"], 0.0)
+        self.assertGreaterEqual(profile["mask_threshold_ms"], 0.0)
+        self.assertGreaterEqual(profile["mask_to_cpu_ms"], 0.0)
+
     def test_timestamp_nearest_grouping_selects_min_skew_triplet(self) -> None:
         buffers = {
             0: deque([_dummy_frame(0, seq=0, timestamp_ms=0), _dummy_frame(0, seq=1, timestamp_ms=33), _dummy_frame(0, seq=2, timestamp_ms=66)]),

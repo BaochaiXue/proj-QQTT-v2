@@ -40,6 +40,7 @@ manual; use the compressed harness index first.
 | Demo 2.1.5 NVML GPU utilization profile | `demo2_1_5_gpu_nvml_profile.md` |
 | Demo 2.1.5 parallel EdgeTAM NVML GPU profile | `demo2_1_5_parallel_edgetam_gpu_nvml_profile.md` |
 | Demo 2.1.5 parallel EdgeTAM eager probe | `demo2_1_5_parallel_edgetam_eager_probe_profile.md` |
+| Demo 2.1.5 HF EdgeTAM mitigation matrix | `demo215_hf_edgetam_gpu_underutilization_mitigation.md` |
 | Demo 2.1.5 init cache warmup probe | `demo2_1_5_init_cache_warmup.md` |
 | Demo 2 GPU utilization sampling support | `demo2_gpu_sampling_profile_support.md` |
 | Demo 2 / 2.1 RTX 4090 `demo_2_max` environment | `demo_2_max_4090_env_validation.md` |

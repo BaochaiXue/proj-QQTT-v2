@@ -51,6 +51,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 2.1.5 runtime contract and exit.")
     run.add_argument("--debug", action="store_true", help="Enable verbose runtime logs.")
+    run.add_argument("--dtype", choices=("bfloat16", "float16", "float32"), default=None, help="HF EdgeTAM dtype ablation.")
+    run.add_argument(
+        "--compile-mode",
+        choices=(
+            runtime.COMPILE_MODE_NONE,
+            runtime.COMPILE_MODE_VISION_REDUCE_OVERHEAD,
+            runtime.COMPILE_MODE_VISION_DEFAULT,
+            runtime.COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS,
+            runtime.COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD,
+            runtime.COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS,
+        ),
+        default=None,
+        help="HF EdgeTAM submodule compile mode.",
+    )
+    run.add_argument("--mask-postprocess", choices=runtime.MASK_POSTPROCESS_MODES, default=None, help="Mask resize/threshold path.")
+    run.add_argument("--profile-cuda-events", action="store_true", help="Record CUDA event model timings.")
+    run.add_argument("--profile-sync", action="store_true", help="Allow explicit full-device syncs for profiling only.")
+    run.add_argument("--profile-edgetam-stages", action="store_true", help="Record fine-grained EdgeTAM hot-path stages.")
+    run.add_argument("--profile-nsys-markers", action="store_true", help="Emit NVTX ranges for nsys profiling.")
 
     cameras = parser.add_argument_group("Cameras")
     cameras.add_argument("--serials", nargs="*", default=None, help="Optional RealSense serial list.")
@@ -108,6 +127,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Use the staged depth-then-parallel-EdgeTAM probe instead of the default single-owner path.",
     )
     experiments.add_argument(
+        "--live-fast-native",
+        action="store_true",
+        help="Use the native-depth fast preset; keeps heavy PCD filter out of the hot path.",
+    )
+    experiments.add_argument(
+        "--live-quality-ffs",
+        action="store_true",
+        help="Use the local-FFS quality preset with async filtered fused PCD.",
+    )
+    experiments.add_argument(
+        "--mask-only-debug",
+        action="store_true",
+        help="Use capture + EdgeTAM only, with no depth/PCD/render path.",
+    )
+    experiments.add_argument(
         "--advanced-help",
         action="store_true",
         help="Show the full internal runtime help with low-level and experiment flags.",
@@ -147,6 +181,12 @@ def _to_demo215_argv(argv: Sequence[str] | None) -> list[str]:
     translated: list[str] = []
     if parsed.parallel_edgetam and not _has_flag(passthrough, "--preset"):
         translated.extend(["--preset", runtime.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS])
+    elif parsed.live_fast_native and not _has_flag(passthrough, "--preset"):
+        translated.extend(["--preset", runtime.PRESET_DEMO215_LIVE_FAST_NATIVE])
+    elif parsed.live_quality_ffs and not _has_flag(passthrough, "--preset"):
+        translated.extend(["--preset", runtime.PRESET_DEMO215_LIVE_QUALITY_FFS])
+    elif parsed.mask_only_debug and not _has_flag(passthrough, "--preset"):
+        translated.extend(["--preset", runtime.PRESET_DEMO215_MASK_ONLY_DEBUG])
     elif parsed.experimental_staged_parallel and not _has_flag(passthrough, "--preset"):
         translated.extend(["--preset", runtime.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
 
@@ -157,7 +197,10 @@ def _to_demo215_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--gpu-sampling-backend", parsed.gpu_sampling_backend)
     _append_option(translated, "--gpu-sampling-device-index", parsed.gpu_sampling_device_index)
     _append_option(translated, "--fps", parsed.fps)
-    if parsed.no_compile_edgetam and not _has_flag(passthrough, "--compile-mode"):
+    _append_option(translated, "--dtype", parsed.dtype)
+    _append_option(translated, "--compile-mode", parsed.compile_mode)
+    _append_option(translated, "--mask-postprocess", parsed.mask_postprocess)
+    if parsed.no_compile_edgetam and parsed.compile_mode is None and not _has_flag(passthrough, "--compile-mode"):
         translated.extend(["--compile-mode", runtime.COMPILE_MODE_NONE])
     _append_many(translated, "--serials", parsed.serials)
     _append_option(translated, "--camera-ids", _format_camera_ids(parsed.camera_ids))
@@ -176,6 +219,14 @@ def _to_demo215_argv(argv: Sequence[str] | None) -> list[str]:
         translated.append("--debug")
     if parsed.gpu_sampling:
         translated.append("--gpu-sampling")
+    if parsed.profile_cuda_events:
+        translated.append("--profile-cuda-events")
+    if parsed.profile_sync:
+        translated.append("--profile-sync")
+    if parsed.profile_edgetam_stages:
+        translated.append("--profile-edgetam-stages")
+    if parsed.profile_nsys_markers:
+        translated.append("--profile-nsys-markers")
     if parsed.object_only:
         translated.extend(["--track-mode", runtime.TRACK_MODE_OBJECT_ONLY])
     if parsed.controller_object:

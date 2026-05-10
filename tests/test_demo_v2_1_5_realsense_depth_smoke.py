@@ -148,6 +148,47 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         compile_idx = argv.index("--compile-mode")
         self.assertEqual(argv[compile_idx + 1], demo.COMPILE_MODE_NONE)
 
+    def test_demo215_public_profile_and_postprocess_flags_translate(self) -> None:
+        argv = demo215._to_demo215_argv(
+            [
+                "--dry-run",
+                "--mask-only-debug",
+                "--compile-mode",
+                demo.COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD,
+                "--dtype",
+                "float16",
+                "--mask-postprocess",
+                demo.MASK_POSTPROCESS_CUDA_INLINE,
+                "--profile-cuda-events",
+                "--profile-sync",
+                "--profile-edgetam-stages",
+                "--profile-nsys-markers",
+            ]
+        )
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_MASK_ONLY_DEBUG])
+        self.assertIn("--profile-cuda-events", argv)
+        self.assertIn("--profile-sync", argv)
+        self.assertIn("--profile-edgetam-stages", argv)
+        self.assertIn("--profile-nsys-markers", argv)
+        self.assertEqual(argv[argv.index("--compile-mode") + 1], demo.COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD)
+        self.assertEqual(argv[argv.index("--dtype") + 1], "float16")
+        self.assertEqual(argv[argv.index("--mask-postprocess") + 1], demo.MASK_POSTPROCESS_CUDA_INLINE)
+
+    def test_demo215_public_clear_presets_translate(self) -> None:
+        self.assertEqual(
+            demo215._to_demo215_argv(["--dry-run", "--live-fast-native"])[:2],
+            ["--preset", demo.PRESET_DEMO215_LIVE_FAST_NATIVE],
+        )
+        self.assertEqual(
+            demo215._to_demo215_argv(["--dry-run", "--live-quality-ffs"])[:2],
+            ["--preset", demo.PRESET_DEMO215_LIVE_QUALITY_FFS],
+        )
+        self.assertEqual(
+            demo215._to_demo215_argv(["--dry-run", "--mask-only-debug"])[:2],
+            ["--preset", demo.PRESET_DEMO215_MASK_ONLY_DEBUG],
+        )
+
     def test_demo215_public_parallel_edgetam_preserves_explicit_runtime_preset(self) -> None:
         argv = demo215._to_demo215_argv(
             [
@@ -246,6 +287,30 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertFalse(contract["edgetam"]["prewarm_compile"])
         self.assertFalse(contract["edgetam"]["serialize_first_compiled_forward"])
         self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])
+
+    def test_demo215_mask_only_debug_contract_is_mask_only(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO215_MASK_ONLY_DEBUG,
+                "--mask-postprocess",
+                demo.MASK_POSTPROCESS_CUDA_INLINE,
+                "--profile-edgetam-stages",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--mask-postprocess", "--profile-edgetam-stages"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["depth_source"], "none")
+        self.assertEqual(contract["render_mode"], "none")
+        self.assertEqual(contract["mask_postprocess"], demo.MASK_POSTPROCESS_CUDA_INLINE)
+        self.assertTrue(contract["profiling"]["profile_edgetam_stages"])
+        self.assertEqual(contract["edgetam"]["active_object_ids"], [1, 2])
 
     def test_demo215_thread_specs_include_gpu_owner_and_filter(self) -> None:
         parser = demo.build_arg_parser()

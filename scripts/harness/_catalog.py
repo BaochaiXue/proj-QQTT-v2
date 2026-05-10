@@ -254,6 +254,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/run_demo215_hf_edgetam_mitigation_matrix.py",
+        "experiments",
+        "Demo 2.1.5 HF EdgeTAM mitigation benchmark matrix/report generator.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/experiments/run_sloth_set2_hf_edgetam_streaming_pcd_xor_gif.py",
         "experiments",
         "Render Sloth Set 2 HF EdgeTAM streaming fused-PCD XOR GIF against SAM3.1.",

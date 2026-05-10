@@ -118,6 +118,9 @@ PRESET_VISUAL_5FPS_STAGED = "visual-5fps-staged"
 PRESET_DEMO215_ASYNC_FILTER_5FPS = "demo2.1.5-async-filter-5fps"
 PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS = "demo2.1.5-compiled-parallel-edgetam-5fps"
 PRESET_DEMO215_STAGED_PARALLEL_5FPS = "demo2.1.5-staged-parallel-5fps"
+PRESET_DEMO215_LIVE_FAST_NATIVE = "demo2.1.5-live-fast-native"
+PRESET_DEMO215_LIVE_QUALITY_FFS = "demo2.1.5-live-quality-ffs"
+PRESET_DEMO215_MASK_ONLY_DEBUG = "demo2.1.5-mask-only-debug"
 PRESET_DEMO22_ASYNC_FILTER_5FPS = "demo2.2-async-filter-5fps"
 PRESET_DEMO22_STAGED_PARALLEL_5FPS = "demo2.2-staged-parallel-5fps"
 PRESET_CLIMB_5 = "climb-5"
@@ -137,6 +140,9 @@ PRESETS = (
     PRESET_DEMO215_ASYNC_FILTER_5FPS,
     PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS,
     PRESET_DEMO215_STAGED_PARALLEL_5FPS,
+    PRESET_DEMO215_LIVE_FAST_NATIVE,
+    PRESET_DEMO215_LIVE_QUALITY_FFS,
+    PRESET_DEMO215_MASK_ONLY_DEBUG,
     PRESET_DEMO22_ASYNC_FILTER_5FPS,
     PRESET_DEMO22_STAGED_PARALLEL_5FPS,
     PRESET_CLIMB_5,
@@ -149,14 +155,32 @@ PRESET_COMPAT_ALIASES = {
     PRESET_VISUAL_5FPS_NO_GATE: PRESET_PERF_5FPS,
     PRESET_VISUAL_5FPS_SINGLE_OWNER: PRESET_PERF_5FPS_SINGLE_OWNER,
     PRESET_VISUAL_5FPS_STAGED: PRESET_PERF_5FPS_STAGED,
+    "live-fast-native": PRESET_DEMO215_LIVE_FAST_NATIVE,
+    "live-quality-ffs": PRESET_DEMO215_LIVE_QUALITY_FFS,
+    "mask-only-debug": PRESET_DEMO215_MASK_ONLY_DEBUG,
 }
 DEFAULT_DEVICE = "cuda"
 DEFAULT_DTYPE = "bfloat16"
 COMPILE_MODE_VISION_REDUCE_OVERHEAD = "vision-reduce-overhead"
 COMPILE_MODE_VISION_DEFAULT = "vision-default"
+COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS = "vision-max-autotune-no-cudagraphs"
+COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD = "components-reduce-overhead"
+COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS = "components-max-autotune-no-cudagraphs"
 COMPILE_MODE_NONE = "none"
-COMPILE_MODES = (COMPILE_MODE_VISION_REDUCE_OVERHEAD, COMPILE_MODE_VISION_DEFAULT, COMPILE_MODE_NONE)
+COMPILE_MODES = (
+    COMPILE_MODE_VISION_REDUCE_OVERHEAD,
+    COMPILE_MODE_VISION_DEFAULT,
+    COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS,
+    COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD,
+    COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS,
+    COMPILE_MODE_NONE,
+)
 DEFAULT_COMPILE_MODE = COMPILE_MODE_VISION_REDUCE_OVERHEAD
+MASK_POSTPROCESS_HF = "hf"
+MASK_POSTPROCESS_CUDA_INLINE = "cuda-inline"
+MASK_POSTPROCESS_MODES = (MASK_POSTPROCESS_HF, MASK_POSTPROCESS_CUDA_INLINE)
+EDGETAM_INPUT_PATH_PIL = "pil"
+EDGETAM_INPUT_PATH_MODES = (EDGETAM_INPUT_PATH_PIL,)
 DEFAULT_DEMO22_CONTROLLER_LABEL = "towel"
 DEFAULT_DEMO22_DEPTH_MIN_M = 0.1
 DEFAULT_OUTPUT_ROOT = ROOT / "result" / "demo2_1_three_view_fused_pcd"
@@ -217,6 +241,91 @@ def mark_torch_cudagraph_step_begin(torch_module: Any) -> bool:
         return False
     marker()
     return True
+
+
+@contextmanager
+def torch_nvtx_range(torch_module: Any, enabled: bool, label: str) -> Any:
+    nvtx = getattr(getattr(torch_module, "cuda", None), "nvtx", None)
+    push = getattr(nvtx, "range_push", None) if nvtx is not None else None
+    pop = getattr(nvtx, "range_pop", None) if nvtx is not None else None
+    if not enabled or push is None or pop is None:
+        yield
+        return
+    push(str(label))
+    try:
+        yield
+    finally:
+        pop()
+
+
+def _coerce_hf_object_ids(value: Any) -> list[int]:
+    if hasattr(value, "detach"):
+        value = value.detach().cpu().tolist()
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if isinstance(value, (int, np.integer)):
+        return [int(value)]
+    return [int(item) for item in list(value)]
+
+
+def _normalize_hf_pred_masks_for_inline(torch_module: Any, masks: Any, object_count: int) -> Any:
+    if not hasattr(masks, "ndim"):
+        raise RuntimeError("HF output pred_masks is not a tensor-like object")
+    while int(masks.ndim) > 4 and int(masks.shape[0]) == 1:
+        masks = masks[0]
+    if int(masks.ndim) == 2:
+        masks = masks.unsqueeze(0).unsqueeze(0)
+    elif int(masks.ndim) == 3:
+        if int(masks.shape[0]) == int(object_count):
+            masks = masks.unsqueeze(1)
+        else:
+            masks = masks.unsqueeze(0)
+    elif int(masks.ndim) != 4:
+        raise RuntimeError(f"expected HF pred_masks rank 2-4 after squeeze, got shape {tuple(masks.shape)}")
+    if int(masks.shape[0]) != int(object_count):
+        if int(masks.shape[1]) == int(object_count):
+            masks = masks.transpose(0, 1)
+        else:
+            raise RuntimeError(
+                f"HF pred_masks object dimension mismatch: shape={tuple(masks.shape)} object_count={object_count}"
+            )
+    if int(masks.shape[1]) != 1:
+        masks = masks[:, :1, :, :]
+    return masks
+
+
+def extract_object_masks_from_hf_output_cuda_inline(
+    *,
+    torch_module: Any,
+    output: Any,
+    height: int,
+    width: int,
+) -> tuple[dict[int, np.ndarray], dict[str, float]]:
+    object_ids = _coerce_hf_object_ids(getattr(output, "object_ids"))
+    masks = _normalize_hf_pred_masks_for_inline(torch_module, getattr(output, "pred_masks"), len(object_ids))
+    resize_start_s = time.perf_counter()
+    resized = torch_module.nn.functional.interpolate(
+        masks.float(),
+        size=(int(height), int(width)),
+        mode="bilinear",
+        align_corners=False,
+    )
+    resize_ms = _elapsed_ms(resize_start_s, time.perf_counter())
+    threshold_start_s = time.perf_counter()
+    mask_bool_cuda = resized[:, 0, :, :] > 0.0
+    threshold_ms = _elapsed_ms(threshold_start_s, time.perf_counter())
+    cpu_start_s = time.perf_counter()
+    mask_np = mask_bool_cuda.detach().cpu().numpy()
+    mask_to_cpu_ms = _elapsed_ms(cpu_start_s, time.perf_counter())
+    masks_by_id = {
+        int(obj_id): np.ascontiguousarray(np.asarray(mask_np[idx], dtype=bool))
+        for idx, obj_id in enumerate(object_ids)
+    }
+    return masks_by_id, {
+        "mask_resize_ms": float(resize_ms),
+        "mask_threshold_ms": float(threshold_ms),
+        "mask_to_cpu_ms": float(mask_to_cpu_ms),
+    }
 
 
 def _clone_tensor_tree(torch_module: Any, value: Any) -> Any:
@@ -513,12 +622,16 @@ class FusedPcdPacket:
 
 
 PROFILE_FLAG_ATTRS = (
+    "profile_cuda_events",
     "profile_pipeline",
     "profile_filter",
     "profile_filter_detail",
     "profile_visualization",
     "profile_gpu_gate",
     "profile_h2d",
+    "profile_edgetam_stages",
+    "profile_sync",
+    "profile_nsys_markers",
     "gpu_sampling",
 )
 
@@ -1362,6 +1475,60 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--pin-memory-mode", attr="pin_memory_mode", value=PIN_MEMORY_MODE_EDGE)
             _set_if_not_explicit(args, explicit, flag="--pinned-ring-size", attr="pinned_ring_size", value=1)
             _set_if_not_explicit(args, explicit, flag="--h2d-stream-mode", attr="h2d_stream_mode", value=H2D_STREAM_MODE_DEFAULT)
+        elif preset == PRESET_DEMO215_LIVE_FAST_NATIVE:
+            _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
+            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=45.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+            _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
+            _set_if_not_explicit(args, explicit, flag="--single-owner-order", attr="single_owner_order", value=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_SHARED)
+            _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+            _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
+            _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
+            _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
+            _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
+            _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--pcd-max-points-per-camera", attr="pcd_max_points_per_camera", value=8000)
+            _set_if_not_explicit(args, explicit, flag="--pcd-color-mode", attr="pcd_color_mode", value="class")
+            _set_if_not_explicit(args, explicit, flag="--render-every-n", attr="render_every_n", value=2)
+            _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=False)
+            _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="none")
+            _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
+        elif preset == PRESET_DEMO215_LIVE_QUALITY_FFS:
+            _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_FFS)
+            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=25.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+            _set_if_not_explicit(args, explicit, flag="--ffs-trt-batch-size", attr="ffs_trt_batch_size", value=3)
+            _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
+            _set_if_not_explicit(args, explicit, flag="--single-owner-order", attr="single_owner_order", value=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_SHARED)
+            _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+            _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
+            _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
+            _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
+            _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
+            _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--pcd-max-points-per-camera", attr="pcd_max_points_per_camera", value=10000)
+            _set_if_not_explicit(args, explicit, flag="--pcd-color-mode", attr="pcd_color_mode", value="rgb")
+            _set_if_not_explicit(args, explicit, flag="--render-every-n", attr="render_every_n", value=2)
+            _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
+            _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
+            _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
+        elif preset == PRESET_DEMO215_MASK_ONLY_DEBUG:
+            _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_NONE)
+            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=60.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
+            _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SEPARATE_WORKERS)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
+            _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+            _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
+            _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
         elif preset in {PRESET_DEMO22_STAGED_PARALLEL_5FPS, PRESET_DEMO215_STAGED_PARALLEL_5FPS}:
             if preset == PRESET_DEMO215_STAGED_PARALLEL_5FPS:
                 _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
@@ -1403,6 +1570,9 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
                 PRESET_DEMO215_ASYNC_FILTER_5FPS,
                 PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS,
                 PRESET_DEMO215_STAGED_PARALLEL_5FPS,
+                PRESET_DEMO215_LIVE_FAST_NATIVE,
+                PRESET_DEMO215_LIVE_QUALITY_FFS,
+                PRESET_DEMO215_MASK_ONLY_DEBUG,
                 PRESET_DEMO22_ASYNC_FILTER_5FPS,
                 PRESET_DEMO22_STAGED_PARALLEL_5FPS,
             }
@@ -1696,6 +1866,9 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         PRESET_DEMO215_ASYNC_FILTER_5FPS,
         PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS,
         PRESET_DEMO215_STAGED_PARALLEL_5FPS,
+        PRESET_DEMO215_LIVE_FAST_NATIVE,
+        PRESET_DEMO215_LIVE_QUALITY_FFS,
+        PRESET_DEMO215_MASK_ONLY_DEBUG,
     }
     return {
         "demo": (
@@ -1716,6 +1889,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "edge_backend": "HF EdgeTAMVideo",
         "compile_mode": args.compile_mode,
         "dtype": args.dtype,
+        "input_path": args.edgetam_input_path,
+        "mask_postprocess": args.mask_postprocess,
         "depth_source": args.depth_source,
         "render_mode": args.render_mode,
         "fusion_target_fps": float(args.fusion_target_fps),
@@ -1757,6 +1932,13 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "backend": str(getattr(args, "gpu_sampling_backend", "nvml")),
             "device_index": int(getattr(args, "gpu_sampling_device_index", 0)),
         },
+        "profiling": {
+            "profile_cuda_events": bool(args.profile_cuda_events),
+            "profile_sync": bool(args.profile_sync),
+            "profile_edgetam_stages": bool(args.profile_edgetam_stages),
+            "profile_nsys_markers": bool(args.profile_nsys_markers),
+            "full_device_sync_only_when_profile_sync": True,
+        },
         "gpu_pipeline": {
             "mode": args.gpu_pipeline_mode,
             "internal_order": args.staged_order if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED else args.single_owner_order,
@@ -1794,6 +1976,19 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "h2d_stream_mode": args.h2d_stream_mode,
             "profile_h2d": bool(args.profile_h2d),
         },
+        "tracking_overlay": {
+            "enabled": bool(getattr(args, "show_tracking_overlay", False)),
+            "backend": str(getattr(args, "tracking_backend", "none")),
+            "source": str(getattr(args, "tracking_source", "cached")),
+            "num_points": int(getattr(args, "tracking_num_points", 256)),
+            "max_points": int(getattr(args, "tracking_overlay_max_points", 150)),
+            "trail_len": int(getattr(args, "tracking_trail_len", 8)),
+            "update_hz": float(getattr(args, "tracking_update_hz", 5.0)),
+            "depth_source": str(getattr(args, "tracking_depth_source", "displayed")),
+            "output_root": str(getattr(args, "tracking_output_root", "./data/experiments/demo3_live_tracking")),
+            "hot_path_enabled_by_default": False,
+            "blocking_render": False,
+        },
         "ffs_contract": {
             "checkpoint": DEFAULT_FFS_MODEL_NAME,
             "valid_iters": DEFAULT_FFS_VALID_ITERS,
@@ -1814,6 +2009,10 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "model_topology": args.edgetam_model_topology,
             "stream_mode": args.edgetam_stream_mode,
             "one_streaming_session_per_camera": True,
+            "input_path": args.edgetam_input_path,
+            "mask_postprocess": args.mask_postprocess,
+            "multi_object_single_session_per_camera": controller_tracking_enabled(args.track_mode),
+            "active_object_ids": active_object_ids(args),
             "serialize_first_compiled_forward": serialized_edgetam_first_compiled_forward_enabled(args),
             "prewarm_compile": bool(getattr(args, "edgetam_prewarm_compile", False)),
             "prewarm_runs": int(getattr(args, "edgetam_prewarm_runs", 0)),
@@ -2232,6 +2431,10 @@ class Demo21Runtime:
             raise RuntimeError(f"Demo 2.1 unsupported --staged-order {self.args.staged_order}")
         if self.args.edgetam_stream_mode not in EDGETAM_STREAM_MODES:
             raise RuntimeError(f"Demo 2.1 unsupported --edgetam-stream-mode {self.args.edgetam_stream_mode}")
+        if self.args.edgetam_input_path not in EDGETAM_INPUT_PATH_MODES:
+            raise RuntimeError(f"Demo 2.1 unsupported --edgetam-input-path {self.args.edgetam_input_path}")
+        if self.args.mask_postprocess not in MASK_POSTPROCESS_MODES:
+            raise RuntimeError(f"Demo 2.1 unsupported --mask-postprocess {self.args.mask_postprocess}")
         if (
             self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SINGLE_OWNER
             and self.args.single_owner_order == SINGLE_OWNER_ORDER_INTERLEAVED
@@ -2304,6 +2507,21 @@ class Demo21Runtime:
                 raise RuntimeError("Demo 2.1.5 staged parallel requires async latest-wins PCD filtering")
             if self.args.pin_memory_mode != PIN_MEMORY_MODE_ALL or not bool(self.args.pin_memory):
                 raise RuntimeError("Demo 2.1.5 staged parallel requires --pin-memory-mode all")
+        if preset_canonical == PRESET_DEMO215_LIVE_FAST_NATIVE:
+            if self.args.depth_source != DEPTH_SOURCE_REALSENSE:
+                raise RuntimeError("Demo 2.1.5 live-fast-native requires native RealSense depth")
+            if self.args.enable_pcd_filter or self.args.pcd_filter_mode != "none":
+                raise RuntimeError("Demo 2.1.5 live-fast-native keeps PCD filtering out of the hot path")
+        if preset_canonical == PRESET_DEMO215_LIVE_QUALITY_FFS:
+            if self.args.depth_source != DEPTH_SOURCE_FFS:
+                raise RuntimeError("Demo 2.1.5 live-quality-ffs requires local FFS depth")
+            if not async_fusion_filter_enabled(self.args):
+                raise RuntimeError("Demo 2.1.5 live-quality-ffs requires async latest-wins PCD filtering")
+        if preset_canonical == PRESET_DEMO215_MASK_ONLY_DEBUG:
+            if self.args.depth_source != DEPTH_SOURCE_NONE:
+                raise RuntimeError("Demo 2.1.5 mask-only-debug requires --depth-source none")
+            if self.args.render_mode != "none":
+                raise RuntimeError("Demo 2.1.5 mask-only-debug requires --render-mode none")
         if preset_canonical == PRESET_DEMO22_ASYNC_FILTER_5FPS:
             if self.args.depth_source != DEPTH_SOURCE_FFS:
                 raise RuntimeError("Demo 2.2 requires local FFS depth")
@@ -2517,6 +2735,33 @@ class Demo21Runtime:
             "edgetam_cam0_model_ms": ("edgetam", "cam0", "model_ms"),
             "edgetam_cam1_model_ms": ("edgetam", "cam1", "model_ms"),
             "edgetam_cam2_model_ms": ("edgetam", "cam2", "model_ms"),
+            "edgetam_cam0_preprocess_ms": ("edgetam", "cam0", "preprocess_ms"),
+            "edgetam_cam1_preprocess_ms": ("edgetam", "cam1", "preprocess_ms"),
+            "edgetam_cam2_preprocess_ms": ("edgetam", "cam2", "preprocess_ms"),
+            "edgetam_cam0_prompt_ms": ("edgetam", "cam0", "prompt_ms"),
+            "edgetam_cam1_prompt_ms": ("edgetam", "cam1", "prompt_ms"),
+            "edgetam_cam2_prompt_ms": ("edgetam", "cam2", "prompt_ms"),
+            "edgetam_cam0_postprocess_ms": ("edgetam", "cam0", "postprocess_ms"),
+            "edgetam_cam1_postprocess_ms": ("edgetam", "cam1", "postprocess_ms"),
+            "edgetam_cam2_postprocess_ms": ("edgetam", "cam2", "postprocess_ms"),
+            "edgetam_cam0_mask_resize_ms": ("edgetam", "cam0", "mask_resize_ms"),
+            "edgetam_cam1_mask_resize_ms": ("edgetam", "cam1", "mask_resize_ms"),
+            "edgetam_cam2_mask_resize_ms": ("edgetam", "cam2", "mask_resize_ms"),
+            "edgetam_cam0_mask_threshold_ms": ("edgetam", "cam0", "mask_threshold_ms"),
+            "edgetam_cam1_mask_threshold_ms": ("edgetam", "cam1", "mask_threshold_ms"),
+            "edgetam_cam2_mask_threshold_ms": ("edgetam", "cam2", "mask_threshold_ms"),
+            "edgetam_cam0_mask_to_cpu_ms": ("edgetam", "cam0", "mask_to_cpu_ms"),
+            "edgetam_cam1_mask_to_cpu_ms": ("edgetam", "cam1", "mask_to_cpu_ms"),
+            "edgetam_cam2_mask_to_cpu_ms": ("edgetam", "cam2", "mask_to_cpu_ms"),
+            "edgetam_cam0_total_ms": ("edgetam", "cam0", "total_ms"),
+            "edgetam_cam1_total_ms": ("edgetam", "cam1", "total_ms"),
+            "edgetam_cam2_total_ms": ("edgetam", "cam2", "total_ms"),
+            "edgetam_cam0_model_pre_sync_ms": ("edgetam", "cam0", "model_pre_sync_ms"),
+            "edgetam_cam1_model_pre_sync_ms": ("edgetam", "cam1", "model_pre_sync_ms"),
+            "edgetam_cam2_model_pre_sync_ms": ("edgetam", "cam2", "model_pre_sync_ms"),
+            "edgetam_cam0_model_post_sync_ms": ("edgetam", "cam0", "model_post_sync_ms"),
+            "edgetam_cam1_model_post_sync_ms": ("edgetam", "cam1", "model_post_sync_ms"),
+            "edgetam_cam2_model_post_sync_ms": ("edgetam", "cam2", "model_post_sync_ms"),
             "edgetam_batch_vision_model_ms": ("edgetam", "batch_vision", "model_ms"),
             "edgetam_batch_vision_total_ms": ("edgetam", "batch_vision", "total_ms"),
             "edgetam_batch_vision_preprocess_ms": ("edgetam", "batch_vision", "preprocess_ms"),
@@ -2567,6 +2812,46 @@ class Demo21Runtime:
             for name, path in metric_paths.items()
         }
         aggregate_metric_paths: dict[str, tuple[tuple[str, ...], ...]] = {
+            "edgetam_model_ms": (
+                ("edgetam", "cam0", "model_ms"),
+                ("edgetam", "cam1", "model_ms"),
+                ("edgetam", "cam2", "model_ms"),
+            ),
+            "edgetam_preprocess_ms": (
+                ("edgetam", "cam0", "preprocess_ms"),
+                ("edgetam", "cam1", "preprocess_ms"),
+                ("edgetam", "cam2", "preprocess_ms"),
+            ),
+            "edgetam_prompt_ms": (
+                ("edgetam", "cam0", "prompt_ms"),
+                ("edgetam", "cam1", "prompt_ms"),
+                ("edgetam", "cam2", "prompt_ms"),
+            ),
+            "edgetam_postprocess_ms": (
+                ("edgetam", "cam0", "postprocess_ms"),
+                ("edgetam", "cam1", "postprocess_ms"),
+                ("edgetam", "cam2", "postprocess_ms"),
+            ),
+            "edgetam_mask_resize_ms": (
+                ("edgetam", "cam0", "mask_resize_ms"),
+                ("edgetam", "cam1", "mask_resize_ms"),
+                ("edgetam", "cam2", "mask_resize_ms"),
+            ),
+            "edgetam_mask_threshold_ms": (
+                ("edgetam", "cam0", "mask_threshold_ms"),
+                ("edgetam", "cam1", "mask_threshold_ms"),
+                ("edgetam", "cam2", "mask_threshold_ms"),
+            ),
+            "edgetam_mask_to_cpu_ms": (
+                ("edgetam", "cam0", "mask_to_cpu_ms"),
+                ("edgetam", "cam1", "mask_to_cpu_ms"),
+                ("edgetam", "cam2", "mask_to_cpu_ms"),
+            ),
+            "edgetam_total_ms": (
+                ("edgetam", "cam0", "total_ms"),
+                ("edgetam", "cam1", "total_ms"),
+                ("edgetam", "cam2", "total_ms"),
+            ),
             "edge_pin_copy_ms": (
                 ("h2d", "cam0", "edge", "pin_copy_ms"),
                 ("h2d", "cam1", "edge", "pin_copy_ms"),
@@ -2637,6 +2922,10 @@ class Demo21Runtime:
             "demo22_pass_threshold_fps": float(self.args.fusion_target_fps) * DEMO22_PASS_THRESHOLD_RATIO,
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
+            "compile_mode": self.args.compile_mode,
+            "dtype": self.args.dtype,
+            "input_path": self.args.edgetam_input_path,
+            "mask_postprocess": self.args.mask_postprocess,
             "gpu_pipeline": contract["gpu_pipeline"],
             "gpu_sampling": gpu_sampling,
             "filter_scheduler": contract["filter_scheduler"],
@@ -2650,6 +2939,18 @@ class Demo21Runtime:
             "ffs_input_staging": self.args.ffs_input_staging,
             "h2d_stream_mode": self.args.h2d_stream_mode,
             "h2d_transfer": contract["h2d_transfer"],
+            "tracking_overlay": contract["tracking_overlay"],
+            "tracking_overlay_enabled": bool(getattr(self.args, "show_tracking_overlay", False)),
+            "tracking_backend": str(getattr(self.args, "tracking_backend", "none")),
+            "tracking_source": str(getattr(self.args, "tracking_source", "cached")),
+            "tracking_update_hz": float(getattr(self.args, "tracking_update_hz", 5.0)),
+            "tracking_model_ms_median": None,
+            "tracking_e2e_ms_median": None,
+            "track_overlay_ms_median": 0.0,
+            "visible_ratio_mean": 0.0,
+            "inside_mask_ratio_mean": 0.0,
+            "depth_valid_ratio_mean": 0.0,
+            "lifted_3d_count_mean": 0.0,
             "init_profile": self._init_profile_snapshot(),
             "warmup_exclude_s": warmup_s,
             "summary_full_run": self._profile_summary_for_records(records),
@@ -2686,6 +2987,10 @@ class Demo21Runtime:
             f"- canonical preset: `{payload.get('preset_canonical', payload['preset'])}`",
             f"- target FPS: `{payload['target_fps']:.2f}`",
             f"- capture group target FPS: `{payload.get('capture_group_target_fps', payload['target_fps']):.2f}`",
+            f"- compile mode: `{payload.get('compile_mode', 'unknown')}`",
+            f"- dtype: `{payload.get('dtype', 'unknown')}`",
+            f"- EdgeTAM input path: `{payload.get('input_path', 'pil')}`",
+            f"- mask postprocess: `{payload.get('mask_postprocess', 'hf')}`",
             f"- render FPS after warmup: `{warm.get('render_fps', 0.0):.2f}`",
             f"- raw fusion FPS after warmup: `{warm.get('raw_fusion_fps', 0.0):.2f}`",
             f"- filter output FPS after warmup: `{warm.get('filter_output_fps', 0.0):.2f}`",
@@ -2784,6 +3089,14 @@ class Demo21Runtime:
         ])
         for name in (
             "capture_temporal_skew_ms",
+            "edgetam_model_ms",
+            "edgetam_preprocess_ms",
+            "edgetam_prompt_ms",
+            "edgetam_postprocess_ms",
+            "edgetam_mask_resize_ms",
+            "edgetam_mask_threshold_ms",
+            "edgetam_mask_to_cpu_ms",
+            "edgetam_total_ms",
             "ffs_cycle_ms",
             "ffs_batch_ms",
             "ffs_gate_wait_ms",
@@ -3672,7 +3985,11 @@ class Demo21Runtime:
                 "compile_wrap_wall_ms": float(compile_wrap_ms),
                 "processor_load_ms": float(processor_load_ms),
                 "total_ms": float(_elapsed_ms(total_start_s, time.perf_counter())),
+                "compile_mode": str(self.args.compile_mode),
+                "compile_requested_targets": list(compile_metadata.get("requested_targets", [])),
                 "compile_targets": list(compile_metadata.get("applied_targets", [])),
+                "compile_missing_targets": list(compile_metadata.get("missing_targets", [])),
+                "compile_failed_targets": dict(compile_metadata.get("failed_targets", {}) or {}),
                 "topology": topology_label,
             },
         )
@@ -3727,6 +4044,64 @@ class Demo21Runtime:
             }
         if compile_mode == COMPILE_MODE_VISION_REDUCE_OVERHEAD:
             return hf_stream._apply_compile_mode(model, compile_mode)
+        component_compile_modes = {
+            COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS: (
+                "max-autotune-no-cudagraphs",
+                ["vision_encoder"],
+            ),
+            COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD: (
+                "reduce-overhead",
+                ["vision_encoder", "memory_attention", "memory_encoder", "mask_decoder"],
+            ),
+            COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS: (
+                "max-autotune-no-cudagraphs",
+                ["vision_encoder", "memory_attention", "memory_encoder", "mask_decoder"],
+            ),
+        }
+        if compile_mode in component_compile_modes:
+            torch_compile_mode, requested_targets = component_compile_modes[compile_mode]
+            metadata: dict[str, Any] = {
+                "compile_mode": compile_mode,
+                "enabled": True,
+                "torch_compile_available": bool(hasattr(torch_module, "compile")),
+                "torch_compile_mode": torch_compile_mode,
+                "fullgraph": False,
+                "dynamic": False,
+                "requested_targets": list(requested_targets),
+                "applied_targets": [],
+                "missing_targets": [],
+                "failed_targets": {},
+                "whole_model_compiled": False,
+                "wrap_ms": 0.0,
+            }
+            if not hasattr(torch_module, "compile"):
+                metadata["failed_targets"] = {
+                    target: "torch.compile is not available"
+                    for target in requested_targets
+                }
+                return model, metadata
+            started_s = time.perf_counter()
+            for target in requested_targets:
+                if not hasattr(model, target):
+                    metadata["missing_targets"].append(target)
+                    continue
+                try:
+                    setattr(
+                        model,
+                        target,
+                        torch_module.compile(
+                            getattr(model, target),
+                            mode=torch_compile_mode,
+                            fullgraph=False,
+                            dynamic=False,
+                        ),
+                    )
+                except Exception as exc:
+                    metadata["failed_targets"][target] = f"{type(exc).__name__}: {exc}"
+                    continue
+                metadata["applied_targets"].append(target)
+            metadata["wrap_ms"] = _elapsed_ms(started_s, time.perf_counter())
+            return model, metadata
         if compile_mode != COMPILE_MODE_VISION_DEFAULT:
             raise RuntimeError(f"Unsupported EdgeTAM compile mode: {compile_mode}")
         metadata: dict[str, Any] = {
@@ -3931,6 +4306,9 @@ class Demo21Runtime:
         prepared_frame: PreparedEdgeTamFrame | None = None,
     ) -> CameraMaskPacket:
         frame_started_s = time.perf_counter()
+        profile_sync = bool(getattr(self.args, "profile_sync", False))
+        nvtx_enabled = bool(getattr(self.args, "profile_nsys_markers", False))
+        mask_postprocess_mode = str(getattr(self.args, "mask_postprocess", MASK_POSTPROCESS_HF))
         if prepared_frame is not None:
             inputs_original_sizes = prepared_frame.original_sizes
             pixel_values = prepared_frame.pixel_values
@@ -3938,35 +4316,42 @@ class Demo21Runtime:
             edge_h2d_profile = dict(prepared_frame.edge_h2d_profile)
             frame_idx = int(prepared_frame.frame_idx)
         else:
-            image = _bgr_to_pil_rgb(frame.color_bgr)
+            with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_preprocess_cam{int(frame.camera_idx)}"):
+                image = _bgr_to_pil_rgb(frame.color_bgr)
             frame_idx = -1
             if pixel_stager is not None:
-                inputs, preprocess_ms, _, _ = _time_runtime_ms(
-                    torch_module,
-                    self.args.device,
-                    lambda: processor(images=image, return_tensors="pt"),
-                    sync_enabled=False,
-                )
-                pixel_values, edge_h2d_profile = pixel_stager.stage(
-                    inputs.pixel_values[0],
-                    dtype=dtype,
-                    consumer_stream=stream,
-                )
+                with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_processor_cam{int(frame.camera_idx)}"):
+                    inputs, preprocess_ms, _, _ = _time_runtime_ms(
+                        torch_module,
+                        self.args.device,
+                        lambda: processor(images=image, return_tensors="pt"),
+                        sync_enabled=profile_sync,
+                    )
+                with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_h2d_cam{int(frame.camera_idx)}"):
+                    pixel_values, edge_h2d_profile = pixel_stager.stage(
+                        inputs.pixel_values[0],
+                        dtype=dtype,
+                        consumer_stream=stream,
+                    )
             else:
-                inputs, preprocess_ms, _, _ = _time_runtime_ms(
-                    torch_module,
-                    self.args.device,
-                    lambda: processor(images=image, device=self.args.device, return_tensors="pt"),
-                    sync_enabled=False,
-                )
-                pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
+                with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_processor_cam{int(frame.camera_idx)}"):
+                    inputs, preprocess_ms, _, _ = _time_runtime_ms(
+                        torch_module,
+                        self.args.device,
+                        lambda: processor(images=image, device=self.args.device, return_tensors="pt"),
+                        sync_enabled=profile_sync,
+                    )
+                with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_h2d_cam{int(frame.camera_idx)}"):
+                    h2d_start_s = time.perf_counter()
+                    pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
+                    h2d_enqueue_ms = _elapsed_ms(h2d_start_s, time.perf_counter())
                 edge_h2d_profile = {
                     "pin_memory": False,
                     "processor_device": str(inputs.pixel_values.device),
                     "processor_is_pinned": bool(inputs.pixel_values.is_pinned()) if hasattr(inputs.pixel_values, "is_pinned") else False,
                     "pin_copy_ms": 0.0,
                     "slot_reuse_wait_ms": 0.0,
-                    "h2d_enqueue_ms": 0.0,
+                    "h2d_enqueue_ms": float(h2d_enqueue_ms),
                     "h2d_wait_ms": 0.0,
                     "h2d_stream_mode": H2D_STREAM_MODE_DEFAULT,
                 }
@@ -3998,17 +4383,18 @@ class Demo21Runtime:
                         prompt_obj_ids.append(OBJECT_ID)
                         prompt_masks.append(np.asarray(initial_object_mask, dtype=bool))
                         prompt_frame_idx = frame_idx if frame_idx >= 0 else 0
-                        _, prompt_ms, _, _ = _time_runtime_ms(
-                            torch_module,
-                            self.args.device,
-                            lambda: processor.add_inputs_to_inference_session(
-                                inference_session=session,
-                                frame_idx=prompt_frame_idx,
-                                obj_ids=prompt_obj_ids,
-                                input_masks=prompt_masks,
-                            ),
-                            sync_enabled=False,
-                        )
+                        with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_prompt_cam{int(frame.camera_idx)}"):
+                            _, prompt_ms, _, _ = _time_runtime_ms(
+                                torch_module,
+                                self.args.device,
+                                lambda: processor.add_inputs_to_inference_session(
+                                    inference_session=session,
+                                    frame_idx=prompt_frame_idx,
+                                    obj_ids=prompt_obj_ids,
+                                    input_masks=prompt_masks,
+                                ),
+                                sync_enabled=profile_sync,
+                            )
                     gate_key = f"edgetam_cam{int(frame.camera_idx)}"
                     with self.gpu_gate.acquire(stage="edgetam", camera_idx=frame.camera_idx, group_id=frame.group_id) as gate_wait_ms:
                         self._record_gpu_gate_wait(gate_key, gate_wait_ms)
@@ -4021,23 +4407,14 @@ class Demo21Runtime:
                         else:
                             forward = lambda: model(inference_session=session, frame=pixel_values)
                         mark_torch_cudagraph_step_begin(torch_module)
-                        output, wall_model_ms, cuda_event_model_ms, _, _ = _time_model_forward(
-                            torch_module=torch_module,
-                            device=self.args.device,
-                            profile_sync=False,
-                            profile_cuda_events=bool(self.args.profile_cuda_events),
-                            fn=forward,
-                        )
-                    post_masks, postprocess_ms, _, _ = _time_runtime_ms(
-                        torch_module,
-                        self.args.device,
-                        lambda: processor.post_process_masks(
-                            [output.pred_masks],
-                            original_sizes=inputs_original_sizes,
-                            binarize=False,
-                        )[0],
-                        sync_enabled=False,
-                    )
+                        with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_model_cam{int(frame.camera_idx)}"):
+                            output, wall_model_ms, cuda_event_model_ms, model_pre_sync_ms, model_post_sync_ms = _time_model_forward(
+                                torch_module=torch_module,
+                                device=self.args.device,
+                                profile_sync=profile_sync,
+                                profile_cuda_events=bool(self.args.profile_cuda_events),
+                                fn=forward,
+                            )
                     if serialized_capture_active and add_prompt:
                         self._edgetam_first_compiled_forward_done.add(int(frame.camera_idx))
             if stream is not None and str(self.args.device).startswith("cuda"):
@@ -4046,7 +4423,40 @@ class Demo21Runtime:
                 done_event.synchronize()
             if prepared_frame is None and pixel_stager is not None:
                 pixel_stager.mark_consumed(int(edge_h2d_profile.get("pinned_slot_idx", -1)), stream)
-        masks_by_id = extract_object_masks_from_hf_output(output, post_masks)
+        mask_resize_ms = 0.0
+        mask_threshold_ms = 0.0
+        mask_to_cpu_ms = 0.0
+        if mask_postprocess_mode == MASK_POSTPROCESS_CUDA_INLINE:
+            with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_mask_cuda_inline_cam{int(frame.camera_idx)}"):
+                masks_by_id, inline_profile = extract_object_masks_from_hf_output_cuda_inline(
+                    torch_module=torch_module,
+                    output=output,
+                    height=int(frame.color_bgr.shape[0]),
+                    width=int(frame.color_bgr.shape[1]),
+                )
+            mask_resize_ms = float(inline_profile.get("mask_resize_ms", 0.0))
+            mask_threshold_ms = float(inline_profile.get("mask_threshold_ms", 0.0))
+            mask_to_cpu_ms = float(inline_profile.get("mask_to_cpu_ms", 0.0))
+            postprocess_ms = float(mask_resize_ms + mask_threshold_ms)
+        else:
+            with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_mask_hf_postprocess_cam{int(frame.camera_idx)}"):
+                post_masks, postprocess_ms, _, _ = _time_runtime_ms(
+                    torch_module,
+                    self.args.device,
+                    lambda: processor.post_process_masks(
+                        [output.pred_masks],
+                        original_sizes=inputs_original_sizes,
+                        binarize=False,
+                    )[0],
+                    sync_enabled=profile_sync,
+                )
+            with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_mask_to_cpu_cam{int(frame.camera_idx)}"):
+                masks_by_id, mask_to_cpu_ms, _, _ = _time_runtime_ms(
+                    torch_module,
+                    self.args.device,
+                    lambda: extract_object_masks_from_hf_output(output, post_masks),
+                    sync_enabled=False,
+                )
         missing = [obj_id for obj_id in active_object_ids(self.args) if obj_id not in masks_by_id]
         if missing:
             raise RuntimeError(f"HF output missing tracked object ids for cam{frame.camera_idx}: {missing}")
@@ -4091,12 +4501,18 @@ class Demo21Runtime:
                     "model_ms": float(cuda_event_model_ms or wall_model_ms),
                     "wall_model_ms": float(wall_model_ms),
                     "cuda_event_model_ms": float(cuda_event_model_ms),
+                    "model_pre_sync_ms": float(model_pre_sync_ms),
+                    "model_post_sync_ms": float(model_post_sync_ms),
                     "preprocess_ms": float(preprocess_ms),
                     "h2d_pin_copy_ms": float(edge_h2d_profile.get("pin_copy_ms", 0.0)),
                     "h2d_enqueue_ms": float(edge_h2d_profile.get("h2d_enqueue_ms", 0.0)),
                     "h2d_wait_ms": float(edge_h2d_profile.get("h2d_wait_ms", 0.0)),
                     "prompt_ms": float(prompt_ms),
                     "postprocess_ms": float(postprocess_ms),
+                    "mask_resize_ms": float(mask_resize_ms),
+                    "mask_threshold_ms": float(mask_threshold_ms),
+                    "mask_to_cpu_ms": float(mask_to_cpu_ms),
+                    "mask_postprocess": mask_postprocess_mode,
                     "total_ms": float(total_ms),
                     "stream_mode": str(self.args.edgetam_stream_mode),
                     "batch_vision_encoder": prepared_frame is not None,
@@ -4124,7 +4540,7 @@ class Demo21Runtime:
             object_mask=object_mask,
             model_ms=wall_model_ms,
             cuda_event_model_ms=cuda_event_model_ms,
-            mask_ms=float(preprocess_ms + prompt_ms + wall_model_ms + postprocess_ms),
+            mask_ms=float(preprocess_ms + prompt_ms + wall_model_ms + postprocess_ms + mask_to_cpu_ms),
             gpu_gate_wait_ms=gate_wait_ms,
         )
 
@@ -5602,6 +6018,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--compile-mode", choices=COMPILE_MODES, default=DEFAULT_COMPILE_MODE)
+    parser.add_argument("--edgetam-input-path", choices=EDGETAM_INPUT_PATH_MODES, default=EDGETAM_INPUT_PATH_PIL)
+    parser.add_argument("--mask-postprocess", choices=MASK_POSTPROCESS_MODES, default=MASK_POSTPROCESS_HF)
     parser.add_argument(
         "--edgetam-prewarm-compile",
         action=argparse.BooleanOptionalAction,
@@ -5623,7 +6041,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "split the features into per-camera session caches, then keep video tracking state per camera."
         ),
     )
-    parser.add_argument("--dtype", choices=("bfloat16", "float16"), default="bfloat16")
+    parser.add_argument("--dtype", choices=("bfloat16", "float16", "float32"), default="bfloat16")
     parser.add_argument("--duration-s", type=float, default=0.0)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
@@ -5633,6 +6051,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Start camera, EdgeTAM load/prewarm, FFS runner init, and SAM3.1 model preload in parallel where possible.",
     )
     parser.add_argument("--profile-cuda-events", action="store_true")
+    parser.add_argument("--profile-sync", action="store_true")
+    parser.add_argument("--profile-edgetam-stages", action="store_true")
+    parser.add_argument("--profile-nsys-markers", action="store_true")
     parser.add_argument("--profile-pipeline", action="store_true")
     parser.add_argument("--profile-filter", action="store_true")
     parser.add_argument("--profile-filter-detail", action="store_true")
@@ -5727,6 +6148,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--render-every-n", type=int, default=1)
     parser.add_argument("--point-size", type=float, default=2.0)
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
+    parser.add_argument("--show-tracking-overlay", action="store_true")
+    parser.add_argument(
+        "--tracking-backend",
+        choices=("none", "cotracker3_online", "nvofa", "tapnext", "locotrack", "tapir", "vpi_lk"),
+        default="none",
+    )
+    parser.add_argument("--tracking-source", choices=("live", "cached", "offline_npz"), default="cached")
+    parser.add_argument("--tracking-num-points", type=int, default=256)
+    parser.add_argument("--tracking-overlay-max-points", type=int, default=150)
+    parser.add_argument("--tracking-trail-len", type=int, default=8)
+    parser.add_argument("--tracking-update-hz", type=float, default=5.0)
+    parser.add_argument("--tracking-depth-source", choices=("displayed", "native", "ffs"), default="displayed")
+    parser.add_argument("--tracking-output-root", default="./data/experiments/demo3_live_tracking")
     parser.add_argument("--object-postprocess", choices=POSTPROCESS_MODES, default=POSTPROCESS_ENHANCED_PT)
     parser.add_argument("--controller-postprocess", choices=POSTPROCESS_MODES, default=POSTPROCESS_PT_FILTER)
     parser.add_argument("--enable-pcd-filter", action="store_true")
