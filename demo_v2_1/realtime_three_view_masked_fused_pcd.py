@@ -168,10 +168,18 @@ PIN_MEMORY_MODES = (PIN_MEMORY_MODE_OFF, PIN_MEMORY_MODE_EDGE, PIN_MEMORY_MODE_F
 H2D_STREAM_MODE_DEFAULT = "default"
 H2D_STREAM_MODE_DEDICATED = "dedicated"
 H2D_STREAM_MODES = (H2D_STREAM_MODE_DEFAULT, H2D_STREAM_MODE_DEDICATED)
+DEMO22_PASS_THRESHOLD_RATIO = 0.96
 
 
 def canonical_preset_name(preset: str) -> str:
     return PRESET_COMPAT_ALIASES.get(str(preset), str(preset))
+
+
+def resolved_capture_group_target_fps(args: argparse.Namespace) -> float:
+    value = getattr(args, "capture_group_target_fps", None)
+    if value is None:
+        return float(args.fusion_target_fps)
+    return float(value)
 
 
 def async_fusion_filter_enabled(args: argparse.Namespace) -> bool:
@@ -1064,13 +1072,16 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
         elif preset == PRESET_DEMO22_ASYNC_FILTER_5FPS:
-            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=5)
-            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
             _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
             _set_if_not_explicit(args, explicit, flag="--single-owner-order", attr="single_owner_order", value=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_SHARED)
             _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
             _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
+            _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
+            _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
             _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
             _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
             _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
@@ -1078,8 +1089,8 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
         elif preset == PRESET_DEMO22_STAGED_PARALLEL_5FPS:
-            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=5)
-            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=5.0)
+            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
             _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_STAGED)
             _set_if_not_explicit(args, explicit, flag="--staged-order", attr="staged_order", value=STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM)
@@ -1106,6 +1117,11 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         elif preset == PRESET_DIAGNOSTICS:
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=2.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="none")
+        if (
+            preset in {PRESET_DEMO22_ASYNC_FILTER_5FPS, PRESET_DEMO22_STAGED_PARALLEL_5FPS}
+            and "--capture-group-target-fps" not in explicit
+        ):
+            setattr(args, "capture_group_target_fps", float(args.fps))
     _normalize_pin_memory_options(args, explicit)
     if getattr(args, "gpu_gate_mode", None) == GPU_GATE_MODE_OFF:
         setattr(args, "gpu_gate_max_concurrent", 0)
@@ -1375,6 +1391,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "depth_source": args.depth_source,
         "render_mode": args.render_mode,
         "fusion_target_fps": float(args.fusion_target_fps),
+        "capture_group_target_fps": resolved_capture_group_target_fps(args),
         "fusion_timeout_ms": float(args.fusion_timeout_ms),
         "temporal_grouping": {
             "policy": args.capture_group_policy,
@@ -1390,6 +1407,10 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "controller_init_mask_root": args.controller_init_mask_root,
             "sam31_retry_interval_s": float(args.sam31_init_retry_interval_s),
             "sam31_max_attempts": int(args.sam31_init_max_attempts),
+            "sam31_cache_init_model": bool(getattr(args, "sam31_cache_init_model", False)),
+            "sam31_keep_runtime_until_all_cameras_init": bool(
+                getattr(args, "sam31_keep_runtime_until_all_cameras_init", False)
+            ),
             "formal_demo_requires_live_sam31": True,
             "fallback_allowed": False,
         },
@@ -1526,6 +1547,15 @@ class Demo21Runtime:
         self._temporal_skews_ms: list[float] = []
         self._threads: list[threading.Thread] = []
         self._sam31_lock = threading.Lock()
+        self._sam31_runtime_released_after_init = False
+        self._init_profile_lock = threading.Lock()
+        self._init_profile: dict[str, Any] = {
+            "process_start_s": 0.0,
+            "first_complete_inference_group_s": None,
+            "first_complete_fused_group_s": None,
+            "first_render_s": None,
+        }
+        self._first_ffs_cycle_recorded = False
         self._summary: dict[str, Any] = {"contract": build_contract(args), "events": []}
         self._profile_enabled = bool(getattr(args, "profile_json_output", None)) or any(
             bool(getattr(args, attr, False)) for attr in PROFILE_FLAG_ATTRS
@@ -1586,6 +1616,57 @@ class Demo21Runtime:
     def _profile_rel_s(self, perf_s: float | None = None) -> float:
         return float((time.perf_counter() if perf_s is None else perf_s) - self._profile_started_perf_s)
 
+    def _init_profile_snapshot(self) -> dict[str, Any]:
+        with self._init_profile_lock:
+            return json.loads(json.dumps(self._init_profile, default=_json_default))
+
+    def _init_profile_set(self, path: Sequence[str], value: Any) -> None:
+        with self._init_profile_lock:
+            cursor = self._init_profile
+            for key in path[:-1]:
+                next_value = cursor.get(str(key))
+                if not isinstance(next_value, dict):
+                    next_value = {}
+                    cursor[str(key)] = next_value
+                cursor = next_value
+            cursor[str(path[-1])] = value
+
+    def _init_profile_set_once(self, path: Sequence[str], value: Any) -> None:
+        with self._init_profile_lock:
+            cursor = self._init_profile
+            for key in path[:-1]:
+                next_value = cursor.get(str(key))
+                if not isinstance(next_value, dict):
+                    next_value = {}
+                    cursor[str(key)] = next_value
+                cursor = next_value
+            final_key = str(path[-1])
+            if cursor.get(final_key) is None:
+                cursor[final_key] = value
+
+    def _init_profile_update(self, path: Sequence[str], values: dict[str, Any]) -> None:
+        with self._init_profile_lock:
+            cursor = self._init_profile
+            for key in path:
+                next_value = cursor.get(str(key))
+                if not isinstance(next_value, dict):
+                    next_value = {}
+                cursor[str(key)] = next_value
+                cursor = next_value
+            _deep_update_dict(cursor, values)
+
+    def _init_profile_add(self, path: Sequence[str], value: float) -> None:
+        with self._init_profile_lock:
+            cursor = self._init_profile
+            for key in path[:-1]:
+                next_value = cursor.get(str(key))
+                if not isinstance(next_value, dict):
+                    next_value = {}
+                    cursor[str(key)] = next_value
+                cursor = next_value
+            final_key = str(path[-1])
+            cursor[final_key] = float(cursor.get(final_key, 0.0) or 0.0) + float(value)
+
     def _profile_group_record(self, group_id: int) -> dict[str, Any]:
         record = self._profile_records.get(int(group_id))
         if record is None:
@@ -1617,10 +1698,12 @@ class Demo21Runtime:
             raise RuntimeError(
                 "Demo 2.1 live runtime currently supports --depth-source ffs for official output "
                 "and --depth-source none for capture/EdgeTAM isolation."
-            )
+        )
         apply_wslg_open3d_env_defaults()
         self._validate_live_contract()
+        camera_start_s = time.perf_counter()
         self._start_camera_system()
+        self._init_profile_set(("camera_startup_ms",), _elapsed_ms(camera_start_s, time.perf_counter()))
         try:
             if self.args.render_mode == "pointcloud":
                 self._run_open3d()
@@ -1832,6 +1915,7 @@ class Demo21Runtime:
             },
         }
         self._summary["temporal_grouping"] = self._temporal_grouping_summary()
+        self._summary["init_profile"] = self._init_profile_snapshot()
         summary_path.write_text(json.dumps(self._summary, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
         print(f"[demo2.1] summary={summary_path}", flush=True)
         if self._profile_enabled:
@@ -1971,7 +2055,8 @@ class Demo21Runtime:
             "preset": self.args.preset,
             "preset_canonical": getattr(self.args, "preset_canonical", canonical_preset_name(self.args.preset)),
             "target_fps": float(self.args.fusion_target_fps),
-            "demo22_pass_threshold_fps": 4.8,
+            "capture_group_target_fps": resolved_capture_group_target_fps(self.args),
+            "demo22_pass_threshold_fps": float(self.args.fusion_target_fps) * DEMO22_PASS_THRESHOLD_RATIO,
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
             "gpu_pipeline": contract["gpu_pipeline"],
@@ -1986,6 +2071,7 @@ class Demo21Runtime:
             "ffs_input_staging": self.args.ffs_input_staging,
             "h2d_stream_mode": self.args.h2d_stream_mode,
             "h2d_transfer": contract["h2d_transfer"],
+            "init_profile": self._init_profile_snapshot(),
             "warmup_exclude_s": warmup_s,
             "summary_full_run": self._profile_summary_for_records(records),
             "summary_after_warmup": self._profile_summary_for_records(after_warmup),
@@ -2000,6 +2086,7 @@ class Demo21Runtime:
         md_path = profile_path.with_suffix(".md")
         warm = payload["summary_after_warmup"]
         metrics = warm.get("metrics", {})
+        init_profile = payload.get("init_profile", {})
         is_demo22 = payload.get("preset_canonical") in {
             PRESET_DEMO22_ASYNC_FILTER_5FPS,
             PRESET_DEMO22_STAGED_PARALLEL_5FPS,
@@ -2019,6 +2106,7 @@ class Demo21Runtime:
             f"- preset: `{payload['preset']}`",
             f"- canonical preset: `{payload.get('preset_canonical', payload['preset'])}`",
             f"- target FPS: `{payload['target_fps']:.2f}`",
+            f"- capture group target FPS: `{payload.get('capture_group_target_fps', payload['target_fps']):.2f}`",
             f"- render FPS after warmup: `{warm.get('render_fps', 0.0):.2f}`",
             f"- raw fusion FPS after warmup: `{warm.get('raw_fusion_fps', 0.0):.2f}`",
             f"- filter output FPS after warmup: `{warm.get('filter_output_fps', 0.0):.2f}`",
@@ -2048,6 +2136,30 @@ class Demo21Runtime:
                     "",
                 ]
             )
+        startup_rows = (
+            ("camera startup ms", ("camera_startup_ms",)),
+            ("EdgeTAM model load ms", ("edgetam", "model_load_ms_total")),
+            ("EdgeTAM compile wrap ms", ("edgetam", "compile_wrap_ms_total")),
+            ("EdgeTAM warmup/first forward ms", ("edgetam", "first_forward_total_ms_sum")),
+            ("SAM3.1 model load ms", ("sam31", "model_load_ms_total")),
+            ("SAM3.1 cam0 segment ms", ("sam31", "cam0", "total_ms")),
+            ("SAM3.1 cam1 segment ms", ("sam31", "cam1", "total_ms")),
+            ("SAM3.1 cam2 segment ms", ("sam31", "cam2", "total_ms")),
+            ("FFS runner init ms", ("ffs", "runner_init_ms_total")),
+            ("FFS first run ms", ("ffs", "first_run_ms_sum")),
+            ("session init + prompt add ms", ("edgetam", "session_init_plus_prompt_ms_total")),
+            ("SAM3.1 release cleanup ms", ("sam31", "release_cleanup_ms")),
+            ("time to first complete group s", ("first_complete_fused_group_s",)),
+            ("time to first rendered group s", ("first_render_s",)),
+        )
+        lines.extend(["## Init Profile", "", "| Stage | value |", "| --- | ---: |"])
+        for label, path in startup_rows:
+            value = _nested_get(init_profile, path)
+            if value is None:
+                lines.append(f"| {label} | `n/a` |")
+            else:
+                lines.append(f"| {label} | `{float(value):.2f}` |")
+        lines.append("")
         lines.extend([
             "| Metric | median | p90 | p95 | max |",
             "| --- | ---: | ---: | ---: | ---: |",
@@ -2199,7 +2311,8 @@ class Demo21Runtime:
         assert self.camera_system is not None
         group_id = 0
         raw_capture_id = 0
-        interval_s = 1.0 / max(1e-6, float(self.args.fusion_target_fps))
+        capture_group_target_fps = resolved_capture_group_target_fps(self.args)
+        interval_s = 0.0 if capture_group_target_fps <= 0 else 1.0 / max(1e-6, capture_group_target_fps)
         next_tick_s = time.perf_counter()
         buffers: dict[int, deque[CameraFramePacket]] = {
             int(camera_idx): deque(maxlen=int(self.args.capture_buffer_size))
@@ -2207,10 +2320,10 @@ class Demo21Runtime:
         }
         while not self.stop_event.is_set():
             now_s = time.perf_counter()
-            if now_s < next_tick_s:
+            if interval_s > 0 and now_s < next_tick_s:
                 time.sleep(min(0.002, next_tick_s - now_s))
                 continue
-            next_tick_s = now_s + interval_s
+            next_tick_s = now_s + interval_s if interval_s > 0 else now_s
             build_start_s = time.perf_counter()
             try:
                 realsense_runtime = None if self.camera_system is None else getattr(self.camera_system, "realsense", None)
@@ -2529,14 +2642,21 @@ class Demo21Runtime:
         return torch_module.autocast("cuda", dtype=dtype)
 
     def _init_hf_model(self, camera_idx: int) -> tuple[Any, Any, Any, Any, Any]:
+        total_start_s = time.perf_counter()
+        runtime_start_s = time.perf_counter()
         hf_stream = _load_hf_streaming_runtime()
+        runtime_deps_ms = _elapsed_ms(runtime_start_s, time.perf_counter())
         torch_module = hf_stream.torch
         if str(self.args.device).startswith("cuda") and not torch_module.cuda.is_available():
             raise RuntimeError("CUDA device requested but torch.cuda.is_available() is false")
         dtype = hf_stream._dtype_from_name(self.args.dtype)
+        model_load_start_s = time.perf_counter()
         model = hf_stream.EdgeTamVideoModel.from_pretrained(self.args.model_id).to(self.args.device, dtype=dtype)
         model.eval()
+        model_load_ms = _elapsed_ms(model_load_start_s, time.perf_counter())
+        compile_start_s = time.perf_counter()
         model, compile_metadata = hf_stream._apply_compile_mode(model, self.args.compile_mode)
+        compile_wrap_ms = _elapsed_ms(compile_start_s, time.perf_counter())
         if (
             self.args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_SEPARATE_WORKERS, GPU_PIPELINE_MODE_STAGED}
             and self.args.gpu_gate_mode == GPU_GATE_MODE_OFF
@@ -2546,10 +2666,45 @@ class Demo21Runtime:
                 model,
                 torch_module,
             )
+        processor_start_s = time.perf_counter()
         processor = hf_stream.Sam2VideoProcessor.from_pretrained(self.args.model_id)
+        processor_load_ms = _elapsed_ms(processor_start_s, time.perf_counter())
+        topology_label = (
+            f"{self.args.edgetam_model_topology}:shared-loader"
+            if int(camera_idx) < 0
+            else str(self.args.edgetam_model_topology)
+        )
+        loader_key = "shared" if int(camera_idx) < 0 else f"cam{int(camera_idx)}"
+        self._init_profile_update(
+            ("edgetam", "loaders", loader_key),
+            {
+                "runtime_deps_ms": float(runtime_deps_ms),
+                "model_load_ms": float(model_load_ms),
+                "compile_wrap_ms": float(compile_metadata.get("wrap_ms", compile_wrap_ms)),
+                "compile_wrap_wall_ms": float(compile_wrap_ms),
+                "processor_load_ms": float(processor_load_ms),
+                "total_ms": float(_elapsed_ms(total_start_s, time.perf_counter())),
+                "compile_targets": list(compile_metadata.get("applied_targets", [])),
+                "topology": topology_label,
+            },
+        )
+        self._init_profile_set(
+            ("edgetam", "model_load_ms_total"),
+            float(_nested_get(self._init_profile_snapshot(), ("edgetam", "model_load_ms_total")) or 0.0) + float(model_load_ms),
+        )
+        self._init_profile_set(
+            ("edgetam", "compile_wrap_ms_total"),
+            float(_nested_get(self._init_profile_snapshot(), ("edgetam", "compile_wrap_ms_total")) or 0.0)
+            + float(compile_metadata.get("wrap_ms", compile_wrap_ms)),
+        )
+        self._init_profile_set(
+            ("edgetam", "processor_load_ms_total"),
+            float(_nested_get(self._init_profile_snapshot(), ("edgetam", "processor_load_ms_total")) or 0.0)
+            + float(processor_load_ms),
+        )
         print(
             "[demo2.1-edgetam] "
-            f"cam={camera_idx} topology=replicated model={self.args.model_id} "
+            f"cam={camera_idx} topology={topology_label} model={self.args.model_id} "
             f"compile={self.args.compile_mode} applied={compile_metadata.get('applied_targets', [])} "
             f"clone_wrap={compile_metadata.get('cudagraph_output_clone_wrapper', False)}",
             flush=True,
@@ -2955,6 +3110,14 @@ class Demo21Runtime:
             packets[idx] = packet
             self.mask_slots[idx].put(packet)
             self.edge_stats[idx].record()
+        if (
+            bool(getattr(self.args, "sam31_keep_runtime_until_all_cameras_init", False))
+            and not self._sam31_runtime_released_after_init
+            and all(bool(state["initialized"]) for state in states.values())
+        ):
+            release_sam31_runtime_resources(str(self.args.device))
+            self._sam31_runtime_released_after_init = True
+            self._summary["sam31_runtime_released_after_all_cameras_init"] = True
         return packets, _elapsed_ms(cycle_start_s, time.perf_counter())
 
     def _run_staged_edgetam_cycle_parallel(
@@ -4028,7 +4191,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=1,
         help="Maximum SAM3.1 live init attempts per camera. Default 1 is fail-fast for the formal demo.",
     )
+    parser.add_argument(
+        "--sam31-cache-init-model",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Reuse one SAM3.1 image model for live first-frame initialization within this process.",
+    )
+    parser.add_argument(
+        "--sam31-keep-runtime-until-all-cameras-init",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Keep cached SAM3.1 init resources until all camera EdgeTAM sessions are initialized.",
+    )
     parser.add_argument("--fusion-target-fps", type=float, default=10.0)
+    parser.add_argument(
+        "--capture-group-target-fps",
+        type=float,
+        default=None,
+        help=(
+            "Target cadence for capture-group construction. Defaults to fusion-target-fps; "
+            "Demo 2.2 presets default this to camera --fps. Use 0 for no explicit throttle."
+        ),
+    )
     parser.add_argument("--fusion-timeout-ms", type=float, default=150.0)
     parser.add_argument("--capture-group-policy", choices=CAPTURE_GROUP_POLICIES, default=CAPTURE_GROUP_POLICY_TIMESTAMP_NEAREST)
     parser.add_argument("--max-capture-skew-ms", type=float, default=DEFAULT_MAX_CAPTURE_SKEW_MS)

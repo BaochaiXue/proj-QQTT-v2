@@ -49,7 +49,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
     def test_demo22_wrapper_defaults_to_async_filter_preset(self) -> None:
         argv = demo22._with_default_preset(["--dry-run"])
 
-        self.assertEqual(argv[:3], ["--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS, "--dry-run"])
+        self.assertEqual(argv[:3], ["--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS, "--dry-run"])
 
     def test_demo22_preset_contract_is_filtered_only_single_owner(self) -> None:
         parser = demo.build_arg_parser()
@@ -59,12 +59,16 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
 
         self.assertEqual(contract["demo"], "demo_2_2_async_filtered_fused_pcd")
         self.assertEqual(contract["preset_canonical"], demo.PRESET_DEMO22_ASYNC_FILTER_5FPS)
-        self.assertEqual(contract["fps"], 5)
-        self.assertEqual(contract["fusion_target_fps"], 5.0)
+        self.assertEqual(contract["fps"], 15)
+        self.assertEqual(contract["fusion_target_fps"], 15.0)
+        self.assertEqual(contract["capture_group_target_fps"], 15.0)
         self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_FFS)
         self.assertEqual(contract["compile_mode"], demo.DEFAULT_COMPILE_MODE)
         self.assertEqual(contract["track_mode"], demo.TRACK_MODE_CONTROLLER_OBJECT)
         self.assertEqual(contract["init"]["mode"], "sam31-first-frame")
+        self.assertTrue(contract["init"]["sam31_cache_init_model"])
+        self.assertTrue(contract["init"]["sam31_keep_runtime_until_all_cameras_init"])
+        self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_SHARED)
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_SINGLE_OWNER)
         self.assertEqual(contract["gpu_pipeline"]["internal_order"], demo.SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
         self.assertEqual(contract["filter_scheduler"]["mode"], "async")
@@ -80,8 +84,9 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
 
         self.assertEqual(contract["demo"], "demo_2_2_async_filtered_fused_pcd")
         self.assertEqual(contract["preset_canonical"], demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS)
-        self.assertEqual(contract["fps"], 5)
-        self.assertEqual(contract["fusion_target_fps"], 5.0)
+        self.assertEqual(contract["fps"], 15)
+        self.assertEqual(contract["fusion_target_fps"], 15.0)
+        self.assertEqual(contract["capture_group_target_fps"], 15.0)
         self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_FFS)
         self.assertEqual(contract["compile_mode"], demo.DEFAULT_COMPILE_MODE)
         self.assertEqual(contract["track_mode"], demo.TRACK_MODE_CONTROLLER_OBJECT)

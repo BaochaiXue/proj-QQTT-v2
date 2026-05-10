@@ -7,6 +7,7 @@ import platform
 import re
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -19,6 +20,7 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp")
 BPE_VOCAB_NAME = "bpe_simple_vocab_16e6.txt.gz"
 PROMPT_SPLIT_PATTERN = re.compile(r"[,\n;]+|(?<!\d)\.(?!\d)")
 _CUDA_AUTOCAST_CONTEXT = None
+_IMAGE_PROCESSOR_CACHE: dict[tuple[str, str | None, bool, float, str], tuple[Any, Any]] = {}
 
 
 @dataclass(slots=True)
@@ -305,6 +307,88 @@ def build_sam31_video_predictor(
     return predictor, resolved_checkpoint
 
 
+def clear_sam31_image_processor_cache() -> None:
+    _IMAGE_PROCESSOR_CACHE.clear()
+
+
+def _build_sam31_image_processor(
+    *,
+    checkpoint_path: str | Path | None,
+    compile_model: bool,
+    confidence_threshold: float,
+    device: str,
+    reuse_model: bool,
+) -> tuple[Any, Any, str, str | None, dict[str, float | bool]]:
+    total_start_s = time.perf_counter()
+    runtime_start_s = time.perf_counter()
+    _, _, torch_module, _, _, _ = _load_runtime_deps()
+    runtime_deps_ms = float((time.perf_counter() - runtime_start_s) * 1000.0)
+    if not torch_module.cuda.is_available():
+        raise RuntimeError("The upstream SAM 3.1 image model currently requires CUDA.")
+
+    import_start_s = time.perf_counter()
+    from sam3.model.sam3_image_processor import Sam3Processor  # noqa: PLC0415
+    from sam3.model_builder import build_sam3_image_model  # noqa: PLC0415
+    import_ms = float((time.perf_counter() - import_start_s) * 1000.0)
+
+    configure_start_s = time.perf_counter()
+    _configure_torch_inference(torch_module)
+    configure_ms = float((time.perf_counter() - configure_start_s) * 1000.0)
+    resolve_start_s = time.perf_counter()
+    resolved_checkpoint = resolve_sam31_checkpoint_path(checkpoint_path)
+    resolved_bpe_path = resolve_sam31_bpe_path(resolved_checkpoint)
+    resolve_ms = float((time.perf_counter() - resolve_start_s) * 1000.0)
+    cache_key = (
+        resolved_checkpoint,
+        resolved_bpe_path,
+        bool(compile_model),
+        float(confidence_threshold),
+        str(device),
+    )
+    if reuse_model and cache_key in _IMAGE_PROCESSOR_CACHE:
+        model, processor = _IMAGE_PROCESSOR_CACHE[cache_key]
+        return model, processor, resolved_checkpoint, resolved_bpe_path, {
+            "cache_hit": True,
+            "runtime_deps_ms": runtime_deps_ms,
+            "import_ms": import_ms,
+            "configure_ms": configure_ms,
+            "resolve_paths_ms": resolve_ms,
+            "model_load_ms": 0.0,
+            "processor_init_ms": 0.0,
+            "total_ms": float((time.perf_counter() - total_start_s) * 1000.0),
+        }
+
+    model_start_s = time.perf_counter()
+    model = build_sam3_image_model(
+        bpe_path=resolved_bpe_path,
+        checkpoint_path=resolved_checkpoint,
+        load_from_HF=False,
+        device=device,
+        eval_mode=True,
+        compile=compile_model,
+    )
+    model_load_ms = float((time.perf_counter() - model_start_s) * 1000.0)
+    processor_start_s = time.perf_counter()
+    processor = Sam3Processor(
+        model,
+        device=device,
+        confidence_threshold=float(confidence_threshold),
+    )
+    processor_init_ms = float((time.perf_counter() - processor_start_s) * 1000.0)
+    if reuse_model:
+        _IMAGE_PROCESSOR_CACHE[cache_key] = (model, processor)
+    return model, processor, resolved_checkpoint, resolved_bpe_path, {
+        "cache_hit": False,
+        "runtime_deps_ms": runtime_deps_ms,
+        "import_ms": import_ms,
+        "configure_ms": configure_ms,
+        "resolve_paths_ms": resolve_ms,
+        "model_load_ms": model_load_ms,
+        "processor_init_ms": processor_init_ms,
+        "total_ms": float((time.perf_counter() - total_start_s) * 1000.0),
+    }
+
+
 def _prepare_session_frames(source: ColorSource, *, session_dir: Path) -> dict[int, str]:
     cv2, _, _, _, _, _ = _load_runtime_deps()
     if session_dir.exists():
@@ -455,6 +539,7 @@ def run_image_segmentation(
     max_num_objects: int = 16,
     confidence_threshold: float = 0.5,
     device: str = "cuda",
+    reuse_model: bool = False,
 ) -> dict[str, Any]:
     """Run SAM 3.1 text segmentation on a single image without video session plumbing."""
 
@@ -463,34 +548,24 @@ def run_image_segmentation(
         raise ValueError("text_prompt must contain at least one non-empty prompt.")
 
     _, _, torch_module, _, _, _ = _load_runtime_deps()
-    if not torch_module.cuda.is_available():
-        raise RuntimeError("The upstream SAM 3.1 image model currently requires CUDA.")
-
-    from sam3.model.sam3_image_processor import Sam3Processor  # noqa: PLC0415
-    from sam3.model_builder import build_sam3_image_model  # noqa: PLC0415
-
-    _configure_torch_inference(torch_module)
-    resolved_checkpoint = resolve_sam31_checkpoint_path(checkpoint_path)
-    resolved_bpe_path = resolve_sam31_bpe_path(resolved_checkpoint)
-    model = build_sam3_image_model(
-        bpe_path=resolved_bpe_path,
-        checkpoint_path=resolved_checkpoint,
-        load_from_HF=False,
-        device=device,
-        eval_mode=True,
-        compile=compile_model,
-    )
-    processor = Sam3Processor(
-        model,
-        device=device,
+    total_start_s = time.perf_counter()
+    model, processor, resolved_checkpoint, resolved_bpe_path, build_timing = _build_sam31_image_processor(
+        checkpoint_path=checkpoint_path,
+        compile_model=compile_model,
         confidence_threshold=float(confidence_threshold),
+        device=device,
+        reuse_model=bool(reuse_model),
     )
+    set_image_start_s = time.perf_counter()
     state = processor.set_image(image)
+    set_image_ms = float((time.perf_counter() - set_image_start_s) * 1000.0)
 
     masks_by_label: dict[str, list[np.ndarray]] = {prompt: [] for prompt in prompts}
     per_prompt_counts: dict[str, int] = {}
+    prompt_timing_ms: dict[str, float] = {}
     with torch_module.inference_mode():
         for prompt_idx, prompt in enumerate(prompts):
+            prompt_start_s = time.perf_counter()
             if prompt_idx > 0:
                 processor.reset_all_prompts(state)
             state = processor.set_text_prompt(prompt, state)
@@ -501,6 +576,7 @@ def run_image_segmentation(
             prompt_masks = _collect_image_prompt_masks(state, selected_indices=selected_indices)
             masks_by_label[prompt].extend(prompt_masks)
             per_prompt_counts[prompt] = int(len(prompt_masks))
+            prompt_timing_ms[prompt] = float((time.perf_counter() - prompt_start_s) * 1000.0)
 
     return {
         "checkpoint_path": resolved_checkpoint,
@@ -511,6 +587,13 @@ def run_image_segmentation(
         "per_prompt_counts": per_prompt_counts,
         "inference_mode": "sam31-image-one-frame",
         "max_num_objects": int(max_num_objects),
+        "timing_ms": {
+            **build_timing,
+            "set_image_ms": set_image_ms,
+            "prompt_total_ms": float(sum(prompt_timing_ms.values())),
+            "prompt_ms_by_label": prompt_timing_ms,
+            "total_ms": float((time.perf_counter() - total_start_s) * 1000.0),
+        },
     }
 
 

@@ -1,11 +1,13 @@
 # Demo 2.2 Async Filter 5 FPS Benchmark
 
-Status: implementation complete; hardware benchmark run completed; FPS target not reached.
+Status: historical hardware benchmark run completed; FPS target not reached.
+Demo 2.2 now defaults to `15 FPS` capture and a `15 FPS` formal target, so
+reproduce this old run with explicit `--fps 5 --fusion-target-fps 5`.
 
 ## Target
 
 - Pure RTX 5090 Laptop local path.
-- 3x RealSense RGB+IR at 5 FPS.
+- 3x RealSense RGB+IR at explicit `5 FPS`.
 - Local FFS TensorRT `20-30-48 / valid_iters=4 / 848x480->864x480 / builderOptimizationLevel=5`.
 - Compiled EdgeTAM with live SAM3.1 first-frame object/controller initialization.
 - Raw fused semantic PCD build is separate from async latest-wins filtering.
@@ -21,6 +23,8 @@ Status: implementation complete; hardware benchmark run completed; FPS target no
 ```bash
 conda run --no-capture-output -n demo_2_max python demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py \
   --preset demo2.2-async-filter-5fps \
+  --fps 5 \
+  --fusion-target-fps 5 \
   --duration-s 120 \
   --profile-warmup-exclude-s 40 \
   --profile-json-output docs/generated/demo2_2_async_filter_5fps_profile.json \

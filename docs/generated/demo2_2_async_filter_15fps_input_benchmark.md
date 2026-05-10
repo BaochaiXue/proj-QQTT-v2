@@ -1,7 +1,8 @@
 # Demo 2.2 Async Filter 15 FPS Camera Input Benchmark
 
-Status: hardware benchmark run completed; camera input increase helped, but the
-strict Demo 2.2 pass threshold was still not reached.
+Status: hardware benchmark run completed. `15 FPS` capture is now the Demo 2.2
+default, and the formal Demo 2.2 report target is now also `15 FPS` for the full
+3-camera object+controller tracking path.
 
 ## Target
 
@@ -9,8 +10,11 @@ strict Demo 2.2 pass threshold was still not reached.
   - `single-owner`
   - `FFS cam0 -> cam1 -> cam2`
   - `EdgeTAM cam0 -> cam1 -> cam2`
-- Raise RealSense input from `5 FPS` to `15 FPS`.
-- Keep fused/render target at `5 FPS`.
+- Use the Demo 2.2 default RealSense input rate: `15 FPS`.
+- Keep profile/pass target at `15 FPS`.
+- Build capture groups at the camera input cadence, `15 FPS`, so the async
+  pipeline can consume the newest coherent group instead of being throttled at
+  the pass target.
 - Keep local FFS TensorRT and compiled EdgeTAM.
 - Keep async latest-wins object/controller PCD filtering.
 - Render latest filtered fused PCD only.
@@ -20,14 +24,14 @@ strict Demo 2.2 pass threshold was still not reached.
 ```bash
 conda run --no-capture-output -n demo_2_max python demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py \
   --preset demo2.2-async-filter-5fps \
-  --fps 15 \
   --duration-s 120 \
   --profile-warmup-exclude-s 40 \
   --profile-json-output docs/generated/demo2_2_async_filter_15fps_input_profile.json \
   --debug
 ```
 
-The dry-run contract confirmed `fps=15`, `fusion_target_fps=5.0`, and
+The current dry-run contract confirms the preset default: `fps=15`,
+`capture_group_target_fps=15.0`, `fusion_target_fps=15.0`, and
 `gpu_pipeline=single-owner`.
 
 ## Result
@@ -42,10 +46,11 @@ The dry-run contract confirmed `fps=15`, `fusion_target_fps=5.0`, and
 | complete group ratio | `0.964` | `0.992` |
 | capture skew median | `43.00 ms` | `19.12 ms` |
 | capture skew p95 | `63.99 ms` | `52.26 ms` |
-| target deficit vs 5 FPS | `2.36 FPS` | `0.48 FPS` |
+| current target deficit vs 15 FPS | `12.36 FPS` | `10.48 FPS` |
 
-Result: **FAIL** against the Demo 2.2 `4.8 FPS` pass threshold, but the failure
-margin is now small: `4.52 FPS` measured vs `4.8 FPS` required.
+Result: **FAIL** against the current Demo 2.2 `15 FPS` target. With the standard
+96% pass threshold, the required filtered render rate is `14.4 FPS`; this run
+measured `4.52 FPS`.
 
 ## Latency Summary
 
@@ -69,18 +74,23 @@ This confirms the previous `2.64 FPS` Demo 2.2 result was mostly a camera
 coherent-group supply problem, not a lack of median GPU compute capacity.
 
 The median GPU owner time in the 15 FPS input run was `189.80 ms`, which is
-close to the `200 ms` budget for 5 FPS. Normal EdgeTAM latency remained stable at
-about `31 ms` per camera. The system now often runs at or near `5 FPS`, but
-periodic dips keep the full warmup-excluded average at `4.52 FPS`.
+close to a `5 FPS` processing budget but far above the `66.7 ms` budget required
+for a true `15 FPS` full pipeline. Normal EdgeTAM latency remained stable at
+about `31 ms` per camera, so three serialized EdgeTAM camera passes already take
+roughly `90-100 ms` before FFS, fusion, filtering, and rendering.
 
 ## Recommendation
 
-Use `15 FPS` camera input for the local pure-5090 Demo 2.2 path. Keep GPU
-execution single-owner and sequential. The next optimization should focus on
-reducing jitter:
+Use `15 FPS` camera input and `15 FPS` capture-group construction for the local
+pure-5090 Demo 2.2 path, but treat this as the formal target rather than an
+achieved result. The current implementation cannot reach full 15 FPS with
+serialized FFS plus serialized EdgeTAM plus filtered object/controller PCD.
 
-- smooth or decouple 15 FPS capture grouping down to a stable 5 FPS consumer;
-- reduce FFS p95/max spikes;
+The next optimization should focus on structural throughput, not only jitter:
+
+- reduce or batch the serialized three-camera EdgeTAM cost;
+- reduce FFS cycle time and p95/max spikes;
+- stabilize capture grouping and latest-wins scheduling at the full 15 FPS target;
 - reduce enhanced object filter spikes above `200 ms`;
 - consider enabling the reusable EdgeTAM CUDA pixel-value slots on the
   single-owner path without switching to three-way EdgeTAM parallelism.

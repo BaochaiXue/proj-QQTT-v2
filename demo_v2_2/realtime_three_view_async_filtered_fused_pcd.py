@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 from demo_v2_1 import realtime_three_view_masked_fused_pcd as demo21  # noqa: E402
 
 
-DEFAULT_PRESET = demo21.PRESET_DEMO22_STAGED_PARALLEL_5FPS
+DEFAULT_PRESET = demo21.PRESET_DEMO22_ASYNC_FILTER_5FPS
 
 
 def _with_default_preset(argv: Sequence[str] | None) -> list[str]:

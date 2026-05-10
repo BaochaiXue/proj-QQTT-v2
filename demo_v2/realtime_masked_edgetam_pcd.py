@@ -1123,8 +1123,12 @@ def _union_masks(masks: list[np.ndarray], *, label: str) -> np.ndarray:
     return np.ascontiguousarray(output)
 
 
-def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> None:
+def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> float:
+    started_s = time.perf_counter()
     helper = sys.modules.get("scripts.harness.sam31_mask_helper")
+    clear_cache = getattr(helper, "clear_sam31_image_processor_cache", None) if helper is not None else None
+    if clear_cache is not None:
+        clear_cache()
     autocast_context = getattr(helper, "_CUDA_AUTOCAST_CONTEXT", None) if helper is not None else None
     if autocast_context is not None:
         try:
@@ -1145,6 +1149,7 @@ def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> None:
                 torch.cuda.ipc_collect()
     except Exception as exc:
         print(f"[WARN] SAM3.1 CUDA cleanup failed: {type(exc).__name__}: {exc}", flush=True)
+    return _elapsed_ms(started_s, time.perf_counter())
 
 
 def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
@@ -1154,6 +1159,9 @@ def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace)
     if controller_tracking_enabled(args):
         prompt_labels.append(str(args.controller_prompt))
     text_prompt = ",".join(prompt_labels)
+    keep_runtime_until_all_cameras_init = bool(
+        getattr(args, "sam31_keep_runtime_until_all_cameras_init", False)
+    )
     try:
         result = run_image_segmentation(
             image=_bgr_to_pil_rgb(color_bgr),
@@ -1162,9 +1170,13 @@ def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace)
             compile_model=False,
             max_num_objects=16,
             device=str(args.device),
+            reuse_model=bool(getattr(args, "sam31_cache_init_model", False)),
         )
+        setattr(args, "_sam31_last_timing_ms", result.get("timing_ms", {}))
     finally:
-        release_sam31_runtime_resources(str(args.device))
+        if not keep_runtime_until_all_cameras_init:
+            release_ms = release_sam31_runtime_resources(str(args.device))
+            setattr(args, "_sam31_last_release_cleanup_ms", float(release_ms))
 
     masks_by_label = result["masks_by_label"]
     object_label = parse_text_prompts(str(args.object_prompt))[0]

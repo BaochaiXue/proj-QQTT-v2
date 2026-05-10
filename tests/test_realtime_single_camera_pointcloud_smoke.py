@@ -504,7 +504,57 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
 
         run_image.assert_called_once()
         release.assert_called_once_with("cuda")
+        self.assertFalse(captured.get("reuse_model", False))
         self.assertEqual(captured["text_prompt"], "stuffed animal")
+        self.assertFalse(np.any(controller_mask))
+        self.assertEqual(int(np.count_nonzero(object_mask)), 3)
+
+    def test_sam31_first_frame_can_keep_cached_runtime_for_multicamera_init(self) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_cached_run_image_segmentation(**kwargs):
+            captured.update(kwargs)
+            return {
+                "masks_by_label": {
+                    "stuffed animal": [
+                        np.asarray([[False, True, False], [True, True, False]], dtype=bool)
+                    ]
+                }
+            }
+
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--init-mode",
+                "sam31-first-frame",
+                "--track-mode",
+                "object-only",
+                "--object-prompt",
+                "stuffed animal",
+            ]
+        )
+        args.sam31_cache_init_model = True
+        args.sam31_keep_runtime_until_all_cameras_init = True
+        frame = masked_demo.FramePacket(
+            seq=0,
+            color_bgr=np.zeros((2, 3, 3), dtype=np.uint8),
+            depth_source="realsense",
+            intrinsics=masked_demo.CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0),
+            depth_scale_m_per_unit=0.001,
+            receive_perf_s=0.0,
+            timing=masked_demo.PipelineTiming(),
+        )
+
+        with mock.patch(
+            "scripts.harness.sam31_mask_helper.run_image_segmentation",
+            side_effect=_fake_cached_run_image_segmentation,
+        ) as run_image, mock.patch.object(masked_demo, "release_sam31_runtime_resources") as release:
+            controller_mask, object_mask = masked_demo.resolve_initial_masks(frame, args)
+
+        run_image.assert_called_once()
+        release.assert_not_called()
+        self.assertTrue(captured["reuse_model"])
         self.assertFalse(np.any(controller_mask))
         self.assertEqual(int(np.count_nonzero(object_mask)), 3)
 

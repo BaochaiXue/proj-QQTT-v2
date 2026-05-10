@@ -2,18 +2,19 @@
 
 - preset: `demo2.2-async-filter-5fps`
 - canonical preset: `demo2.2-async-filter-5fps`
-- target FPS: `5.00`
-- render FPS after warmup: `4.52`
-- raw fusion FPS after warmup: `4.52`
-- filter output FPS after warmup: `4.52`
-- fusion FPS after warmup: `4.52`
-- groups after warmup: `354`
-- complete fused groups after warmup: `351`
-- rendered groups after warmup: `350`
-- complete group ratio after warmup: `0.992`
-- target deficit: `0.48`
-- Demo 2.2 PASS threshold: `4.80 FPS`
+- target FPS: `15.00`
+- capture group target FPS: `15.00`
+- render FPS after warmup: `5.13`
+- raw fusion FPS after warmup: `5.12`
+- filter output FPS after warmup: `5.12`
+- fusion FPS after warmup: `5.12`
+- groups after warmup: `381`
+- complete fused groups after warmup: `78`
+- rendered groups after warmup: `78`
+- complete group ratio after warmup: `0.205`
+- Demo 2.2 PASS threshold: `14.40 FPS`
 - Demo 2.2 result: `FAIL`
+- target deficit: `9.87`
 - bottleneck class: `upstream_supply`
 - GPU pipeline: `single-owner`
 - single-owner order: `ffs-then-edgetam`
@@ -25,12 +26,12 @@
 
 | Metric | median | p90 | p95 | max |
 | --- | ---: | ---: | ---: | ---: |
-| `capture_temporal_skew_ms` | `19.12` | `42.47` | `52.26` | `62.58` |
-| `ffs_cycle_ms` | `87.09` | `95.91` | `98.91` | `278.01` |
+| `capture_temporal_skew_ms` | `12.43` | `48.65` | `58.16` | `105.55` |
+| `ffs_cycle_ms` | `89.26` | `95.71` | `101.34` | `926.76` |
 | `ffs_gate_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
-| `edgetam_cam0_model_ms` | `31.70` | `37.63` | `39.40` | `59.10` |
-| `edgetam_cam1_model_ms` | `30.63` | `36.03` | `37.40` | `49.32` |
-| `edgetam_cam2_model_ms` | `31.41` | `37.99` | `39.91` | `50.64` |
+| `edgetam_cam0_model_ms` | `30.78` | `38.05` | `38.77` | `96.11` |
+| `edgetam_cam1_model_ms` | `29.20` | `33.45` | `34.86` | `38.53` |
+| `edgetam_cam2_model_ms` | `29.43` | `32.86` | `34.52` | `49.77` |
 | `edgetam_cam0_gate_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `edgetam_cam1_gate_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `edgetam_cam2_gate_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
@@ -42,38 +43,38 @@
 | `edge_cam0_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `edge_cam1_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `edge_cam2_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
-| `ffs_stage_ms` | `0.92` | `7.39` | `8.09` | `12.92` |
+| `ffs_stage_ms` | `1.12` | `7.74` | `8.19` | `9.78` |
 | `ffs_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
-| `ffs_cam0_stage_ms` | `0.82` | `1.54` | `4.87` | `12.92` |
-| `ffs_cam1_stage_ms` | `1.11` | `8.27` | `8.62` | `9.96` |
-| `ffs_cam2_stage_ms` | `0.94` | `1.70` | `2.05` | `3.66` |
+| `ffs_cam0_stage_ms` | `0.94` | `1.52` | `1.76` | `2.09` |
+| `ffs_cam1_stage_ms` | `7.30` | `8.47` | `8.95` | `9.78` |
+| `ffs_cam2_stage_ms` | `1.05` | `1.86` | `2.07` | `2.54` |
 | `ffs_cam0_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `ffs_cam1_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
 | `ffs_cam2_h2d_wait_ms` | `0.00` | `0.00` | `0.00` | `0.00` |
-| `gpu_owner_total_ms` | `189.80` | `211.28` | `218.25` | `387.43` |
-| `gpu_owner_ffs_cycle_ms` | `87.09` | `95.91` | `98.91` | `278.01` |
-| `gpu_owner_edgetam_cycle_ms` | `104.79` | `117.42` | `121.64` | `157.73` |
-| `raw_fusion_total_ms` | `8.45` | `9.97` | `10.69` | `12.24` |
-| `fusion_total_ms` | `45.39` | `48.80` | `49.94` | `234.20` |
-| `filter_total_ms` | `36.59` | `39.49` | `40.60` | `226.83` |
-| `filter_input_age_ms` | `37.10` | `40.07` | `41.17` | `227.61` |
-| `object_enhanced_pt_ms` | `23.54` | `25.72` | `26.73` | `212.44` |
-| `controller_pt_filter_ms` | `12.97` | `14.10` | `14.66` | `17.69` |
-| `render_total_ms` | `0.39` | `0.66` | `1.47` | `4.29` |
-| `open3d_object_update_geometry_ms` | `0.02` | `0.03` | `0.05` | `3.80` |
-| `open3d_controller_update_geometry_ms` | `0.01` | `0.01` | `0.02` | `2.17` |
+| `gpu_owner_total_ms` | `188.88` | `208.28` | `218.07` | `9045.82` |
+| `gpu_owner_ffs_cycle_ms` | `89.26` | `95.71` | `101.34` | `926.76` |
+| `gpu_owner_edgetam_cycle_ms` | `99.71` | `108.49` | `116.22` | `8118.99` |
+| `raw_fusion_total_ms` | `8.80` | `10.34` | `10.64` | `15.70` |
+| `fusion_total_ms` | `45.28` | `47.74` | `50.81` | `217.13` |
+| `filter_total_ms` | `36.30` | `38.77` | `40.45` | `207.07` |
+| `filter_input_age_ms` | `36.77` | `39.54` | `41.38` | `207.24` |
+| `object_enhanced_pt_ms` | `22.95` | `25.63` | `26.06` | `193.60` |
+| `controller_pt_filter_ms` | `12.94` | `14.22` | `14.66` | `16.03` |
+| `render_total_ms` | `0.37` | `2.04` | `2.84` | `7.77` |
+| `open3d_object_update_geometry_ms` | `0.03` | `0.06` | `1.53` | `3.17` |
+| `open3d_controller_update_geometry_ms` | `0.01` | `0.02` | `0.17` | `3.51` |
 
 ## Top slowest object enhanced-PT groups
 
 | group | ms | input points | kept points |
 | ---: | ---: | ---: | ---: |
-| `205` | `212.44` | `45761` | `7944` |
-| `421` | `208.95` | `45745` | `7952` |
-| `277` | `208.44` | `45758` | `7918` |
-| `349` | `204.98` | `45753` | `7979` |
-| `313` | `204.79` | `45761` | `8004` |
-| `241` | `202.91` | `45792` | `7925` |
-| `385` | `202.20` | `45772` | `7898` |
-| `457` | `202.02` | `45760` | `7916` |
-| `169` | `192.32` | `45759` | `7946` |
-| `37` | `32.49` | `45232` | `7652` |
+| `353` | `193.60` | `45622` | `7905` |
+| `257` | `186.30` | `45643` | `7907` |
+| `49` | `33.08` | `45291` | `7721` |
+| `215` | `26.22` | `45640` | `7954` |
+| `350` | `26.04` | `45618` | `7930` |
+| `316` | `25.89` | `45628` | `7905` |
+| `376` | `25.70` | `45652` | `7870` |
+| `264` | `25.64` | `45643` | `7962` |
+| `367` | `25.63` | `45655` | `7934` |
+| `283` | `25.48` | `45621` | `7863` |
