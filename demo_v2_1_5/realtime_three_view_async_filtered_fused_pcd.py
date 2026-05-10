@@ -40,9 +40,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--parallel-edgetam",
         action="store_true",
         help=(
-            "Use the legacy compiled parallel EdgeTAM path: separate cam0/cam1/cam2 workers, "
-            "replicated models, GPU gate off."
+            "Use the parallel EdgeTAM worker path: separate cam0/cam1/cam2 workers, "
+            "replicated models, GPU gate off. Defaults to compiled unless --no-compile-edgetam is set."
         ),
+    )
+    run.add_argument(
+        "--no-compile-edgetam",
+        action="store_true",
+        help="Run EdgeTAM eager in the parallel worker path; maps to --compile-mode none.",
     )
     run.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 2.1.5 runtime contract and exit.")
     run.add_argument("--debug", action="store_true", help="Enable verbose runtime logs.")
@@ -100,12 +105,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     experiments.add_argument(
         "--experimental-staged-parallel",
         action="store_true",
-        help="Use the older staged depth-then-parallel-EdgeTAM probe instead of the default single-owner path.",
+        help="Use the staged depth-then-parallel-EdgeTAM probe instead of the default single-owner path.",
     )
     experiments.add_argument(
         "--advanced-help",
         action="store_true",
-        help="Show the full internal runtime help with legacy and experiment flags.",
+        help="Show the full internal runtime help with low-level and experiment flags.",
     )
 
     return parser
@@ -152,6 +157,8 @@ def _to_demo215_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--gpu-sampling-backend", parsed.gpu_sampling_backend)
     _append_option(translated, "--gpu-sampling-device-index", parsed.gpu_sampling_device_index)
     _append_option(translated, "--fps", parsed.fps)
+    if parsed.no_compile_edgetam and not _has_flag(passthrough, "--compile-mode"):
+        translated.extend(["--compile-mode", runtime.COMPILE_MODE_NONE])
     _append_many(translated, "--serials", parsed.serials)
     _append_option(translated, "--camera-ids", _format_camera_ids(parsed.camera_ids))
     _append_option(translated, "--calibrate-path", parsed.calibrate_path)

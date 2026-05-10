@@ -2,7 +2,7 @@
 
 ## Goal
 
-Restore the old compiled parallel EdgeTAM worker path as an explicit Demo 2.1.5 option.
+Add a Demo 2.1.5 compiled parallel EdgeTAM worker path as an explicit option.
 
 ## Required Runtime Shape
 
@@ -14,6 +14,10 @@ Restore the old compiled parallel EdgeTAM worker path as an explicit Demo 2.1.5 
 - `compile_mode=vision-reduce-overhead`.
 - `gpu_gate=off`.
 - Existing compiled vision encoder output clone wrapper remains active for this gate-off multi-worker path.
+- The wrapper marks the CUDAGraph step at the compiled vision encoder boundary before each wrapped forward.
+- No dummy compile prewarm is forced by this preset; the live camera workers own their model/session startup.
+- The first compiled forward is serialized across camera workers to avoid PyTorch Inductor CUDAGraph first-capture TLS races; steady-state forwards remain parallel.
+- EdgeTAM input tensors use a reusable pinned CPU + CUDA pixel slot per worker so compiled CUDAGraph inputs keep stable storage.
 
 ## Plan
 
@@ -30,4 +34,4 @@ Restore the old compiled parallel EdgeTAM worker path as an explicit Demo 2.1.5 
 - `conda run --no-capture-output -n demo_2_max python scripts/harness/check_all.py`
 - `git diff --check`
 
-Result: PASS. No hardware profiling was run for this change; this only restores the old compiled parallel EdgeTAM worker contract for Demo 2.1.5.
+Result: PASS for deterministic checks. Hardware profiling is required before treating this path as a performance result.

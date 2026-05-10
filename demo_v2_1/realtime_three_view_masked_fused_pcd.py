@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
 from itertools import product
 import json
 import os
@@ -153,7 +154,8 @@ DEFAULT_DEVICE = "cuda"
 DEFAULT_DTYPE = "bfloat16"
 COMPILE_MODE_VISION_REDUCE_OVERHEAD = "vision-reduce-overhead"
 COMPILE_MODE_VISION_DEFAULT = "vision-default"
-COMPILE_MODES = (COMPILE_MODE_VISION_REDUCE_OVERHEAD, COMPILE_MODE_VISION_DEFAULT)
+COMPILE_MODE_NONE = "none"
+COMPILE_MODES = (COMPILE_MODE_VISION_REDUCE_OVERHEAD, COMPILE_MODE_VISION_DEFAULT, COMPILE_MODE_NONE)
 DEFAULT_COMPILE_MODE = COMPILE_MODE_VISION_REDUCE_OVERHEAD
 DEFAULT_DEMO22_CONTROLLER_LABEL = "towel"
 DEFAULT_DEMO22_DEPTH_MIN_M = 0.1
@@ -199,6 +201,14 @@ def async_fusion_filter_enabled(args: argparse.Namespace) -> bool:
     return bool(getattr(args, "enable_pcd_filter", False)) and str(getattr(args, "pcd_filter_mode", "none")) == "async"
 
 
+def serialized_edgetam_first_compiled_forward_enabled(args: argparse.Namespace) -> bool:
+    return (
+        str(getattr(args, "gpu_pipeline_mode", "")) == GPU_PIPELINE_MODE_SEPARATE_WORKERS
+        and str(getattr(args, "compile_mode", "")) == COMPILE_MODE_VISION_REDUCE_OVERHEAD
+        and str(getattr(args, "gpu_gate_mode", "")) == GPU_GATE_MODE_OFF
+    )
+
+
 def mark_torch_cudagraph_step_begin(torch_module: Any) -> bool:
     """Mark a new compiled/CUDAGraph step when the installed torch exposes it."""
     compiler = getattr(torch_module, "compiler", None)
@@ -212,6 +222,17 @@ def mark_torch_cudagraph_step_begin(torch_module: Any) -> bool:
 def _clone_tensor_tree(torch_module: Any, value: Any) -> Any:
     def clone_if_tensor(item: Any) -> Any:
         return item.clone() if torch_module.is_tensor(item) else item
+
+    if is_dataclass(value) and not isinstance(value, type):
+        return type(value)(
+            **{
+                field.name: _clone_tensor_tree(torch_module, getattr(value, field.name))
+                for field in fields(value)
+                if field.init and hasattr(value, field.name)
+            }
+        )
+    if isinstance(value, Mapping):
+        return type(value)((key, _clone_tensor_tree(torch_module, item)) for key, item in value.items())
 
     pytree = getattr(getattr(torch_module, "utils", None), "_pytree", None)
     tree_map = getattr(pytree, "tree_map", None) if pytree is not None else None
@@ -243,6 +264,7 @@ def wrap_compiled_vision_encoder_outputs_for_parallel(model: Any, torch_module: 
             self._qqtt_cudagraph_output_clone_wrapper = True
 
         def forward(self, *args: Any, **kwargs: Any) -> Any:
+            mark_torch_cudagraph_step_begin(torch_module)
             return _clone_tensor_tree(torch_module, self.wrapped(*args, **kwargs))
 
     setattr(model, "vision_encoder", _OutputCloneWrapper(vision_encoder))
@@ -1229,7 +1251,8 @@ def _normalize_pin_memory_options(args: argparse.Namespace, explicit: set[str]) 
         setattr(args, "pin_memory", str(args.pin_memory_mode) != PIN_MEMORY_MODE_OFF)
         return
     if bool(getattr(args, "pin_memory", False)):
-        setattr(args, "pin_memory_mode", PIN_MEMORY_MODE_ALL)
+        current_mode = str(getattr(args, "pin_memory_mode", PIN_MEMORY_MODE_OFF))
+        setattr(args, "pin_memory_mode", current_mode if current_mode != PIN_MEMORY_MODE_OFF else PIN_MEMORY_MODE_ALL)
     else:
         setattr(args, "pin_memory_mode", PIN_MEMORY_MODE_OFF)
 
@@ -1323,8 +1346,6 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--edgetam-stream-mode", attr="edgetam_stream_mode", value=EDGETAM_STREAM_MODE_PER_CAMERA)
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
             _set_if_not_explicit(args, explicit, flag="--compile-mode", attr="compile_mode", value=COMPILE_MODE_VISION_REDUCE_OVERHEAD)
-            _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-compile", attr="edgetam_prewarm_compile", value=True)
-            _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-runs", attr="edgetam_prewarm_runs", value=1)
             _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
             _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
             _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
@@ -1337,6 +1358,10 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+            _set_if_not_explicit(args, explicit, flag="--pin-memory", attr="pin_memory", value=True)
+            _set_if_not_explicit(args, explicit, flag="--pin-memory-mode", attr="pin_memory_mode", value=PIN_MEMORY_MODE_EDGE)
+            _set_if_not_explicit(args, explicit, flag="--pinned-ring-size", attr="pinned_ring_size", value=1)
+            _set_if_not_explicit(args, explicit, flag="--h2d-stream-mode", attr="h2d_stream_mode", value=H2D_STREAM_MODE_DEFAULT)
         elif preset in {PRESET_DEMO22_STAGED_PARALLEL_5FPS, PRESET_DEMO215_STAGED_PARALLEL_5FPS}:
             if preset == PRESET_DEMO215_STAGED_PARALLEL_5FPS:
                 _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
@@ -1789,6 +1814,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "model_topology": args.edgetam_model_topology,
             "stream_mode": args.edgetam_stream_mode,
             "one_streaming_session_per_camera": True,
+            "serialize_first_compiled_forward": serialized_edgetam_first_compiled_forward_enabled(args),
             "prewarm_compile": bool(getattr(args, "edgetam_prewarm_compile", False)),
             "prewarm_runs": int(getattr(args, "edgetam_prewarm_runs", 0)),
             "batch_vision_encoder": bool(getattr(args, "edgetam_batch_vision_encoder", False)),
@@ -1874,6 +1900,8 @@ class Demo21Runtime:
         self._parallel_init_futures: dict[str, Any] = {}
         self._parallel_init_started_s: float | None = None
         self._init_profile_lock = threading.Lock()
+        self._edgetam_first_compiled_forward_lock = threading.Lock()
+        self._edgetam_first_compiled_forward_done: set[int] = set()
         self._init_profile: dict[str, Any] = {
             "process_start_s": 0.0,
             "first_complete_inference_group_s": None,
@@ -2250,17 +2278,19 @@ class Demo21Runtime:
                 raise RuntimeError("Demo 2.1.5 requires async latest-wins PCD filtering")
         if preset_canonical == PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS:
             if self.args.depth_source != DEPTH_SOURCE_REALSENSE:
-                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires native RealSense depth")
+                raise RuntimeError("Demo 2.1.5 parallel EdgeTAM requires native RealSense depth")
             if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_SEPARATE_WORKERS:
-                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires separate worker GPU pipeline")
+                raise RuntimeError("Demo 2.1.5 parallel EdgeTAM requires separate worker GPU pipeline")
             if self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_REPLICATED:
-                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires replicated EdgeTAM models")
-            if self.args.compile_mode != COMPILE_MODE_VISION_REDUCE_OVERHEAD:
-                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires vision-reduce-overhead compile mode")
+                raise RuntimeError("Demo 2.1.5 parallel EdgeTAM requires replicated EdgeTAM models")
+            if self.args.compile_mode not in {COMPILE_MODE_VISION_REDUCE_OVERHEAD, COMPILE_MODE_NONE}:
+                raise RuntimeError(
+                    "Demo 2.1.5 parallel EdgeTAM requires vision-reduce-overhead or none compile mode"
+                )
             if self.args.gpu_gate_mode != GPU_GATE_MODE_OFF:
-                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires --gpu-gate-mode off")
+                raise RuntimeError("Demo 2.1.5 parallel EdgeTAM requires --gpu-gate-mode off")
             if not async_fusion_filter_enabled(self.args):
-                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires async latest-wins PCD filtering")
+                raise RuntimeError("Demo 2.1.5 parallel EdgeTAM requires async latest-wins PCD filtering")
         if preset_canonical == PRESET_DEMO215_STAGED_PARALLEL_5FPS:
             if self.args.depth_source != DEPTH_SOURCE_REALSENSE:
                 raise RuntimeError("Demo 2.1.5 staged parallel requires native RealSense depth")
@@ -3681,6 +3711,20 @@ class Demo21Runtime:
 
     def _apply_edgetam_compile_mode(self, *, hf_stream: Any, torch_module: Any, model: Any) -> tuple[Any, dict[str, Any]]:
         compile_mode = str(self.args.compile_mode)
+        if compile_mode == COMPILE_MODE_NONE:
+            return model, {
+                "compile_mode": compile_mode,
+                "enabled": False,
+                "torch_compile_available": bool(hasattr(torch_module, "compile")),
+                "torch_compile_mode": None,
+                "fullgraph": False,
+                "dynamic": False,
+                "requested_targets": [],
+                "applied_targets": [],
+                "missing_targets": [],
+                "whole_model_compiled": False,
+                "wrap_ms": 0.0,
+            }
         if compile_mode == COMPILE_MODE_VISION_REDUCE_OVERHEAD:
             return hf_stream._apply_compile_mode(model, compile_mode)
         if compile_mode != COMPILE_MODE_VISION_DEFAULT:
@@ -3933,57 +3977,69 @@ class Demo21Runtime:
             if stream is not None and str(self.args.device).startswith("cuda")
             else nullcontext()
         )
-        with stream_context:
-            with self._autocast_context(torch_module):
-                if add_prompt:
-                    prompt_obj_ids: list[int] = []
-                    prompt_masks: list[np.ndarray] = []
-                    if controller_tracking_enabled(self.args.track_mode):
-                        prompt_obj_ids.append(CONTROLLER_ID)
-                        prompt_masks.append(np.asarray(initial_controller_mask, dtype=bool))
-                    prompt_obj_ids.append(OBJECT_ID)
-                    prompt_masks.append(np.asarray(initial_object_mask, dtype=bool))
-                    prompt_frame_idx = frame_idx if frame_idx >= 0 else 0
-                    _, prompt_ms, _, _ = _time_runtime_ms(
+        first_compiled_capture_pending = (
+            serialized_edgetam_first_compiled_forward_enabled(self.args)
+            and len(self._edgetam_first_compiled_forward_done) < len(tuple(self.args.camera_ids))
+        )
+        capture_context = self._edgetam_first_compiled_forward_lock if first_compiled_capture_pending else nullcontext()
+        with capture_context:
+            serialized_capture_active = (
+                serialized_edgetam_first_compiled_forward_enabled(self.args)
+                and len(self._edgetam_first_compiled_forward_done) < len(tuple(self.args.camera_ids))
+            )
+            with stream_context:
+                with self._autocast_context(torch_module):
+                    if add_prompt:
+                        prompt_obj_ids: list[int] = []
+                        prompt_masks: list[np.ndarray] = []
+                        if controller_tracking_enabled(self.args.track_mode):
+                            prompt_obj_ids.append(CONTROLLER_ID)
+                            prompt_masks.append(np.asarray(initial_controller_mask, dtype=bool))
+                        prompt_obj_ids.append(OBJECT_ID)
+                        prompt_masks.append(np.asarray(initial_object_mask, dtype=bool))
+                        prompt_frame_idx = frame_idx if frame_idx >= 0 else 0
+                        _, prompt_ms, _, _ = _time_runtime_ms(
+                            torch_module,
+                            self.args.device,
+                            lambda: processor.add_inputs_to_inference_session(
+                                inference_session=session,
+                                frame_idx=prompt_frame_idx,
+                                obj_ids=prompt_obj_ids,
+                                input_masks=prompt_masks,
+                            ),
+                            sync_enabled=False,
+                        )
+                    gate_key = f"edgetam_cam{int(frame.camera_idx)}"
+                    with self.gpu_gate.acquire(stage="edgetam", camera_idx=frame.camera_idx, group_id=frame.group_id) as gate_wait_ms:
+                        self._record_gpu_gate_wait(gate_key, gate_wait_ms)
+                        if prepared_frame is not None:
+                            forward = lambda: model(
+                                inference_session=session,
+                                frame_idx=frame_idx,
+                                frame=pixel_values,
+                            )
+                        else:
+                            forward = lambda: model(inference_session=session, frame=pixel_values)
+                        mark_torch_cudagraph_step_begin(torch_module)
+                        output, wall_model_ms, cuda_event_model_ms, _, _ = _time_model_forward(
+                            torch_module=torch_module,
+                            device=self.args.device,
+                            profile_sync=False,
+                            profile_cuda_events=bool(self.args.profile_cuda_events),
+                            fn=forward,
+                        )
+                    post_masks, postprocess_ms, _, _ = _time_runtime_ms(
                         torch_module,
                         self.args.device,
-                        lambda: processor.add_inputs_to_inference_session(
-                            inference_session=session,
-                            frame_idx=prompt_frame_idx,
-                            obj_ids=prompt_obj_ids,
-                            input_masks=prompt_masks,
-                        ),
+                        lambda: processor.post_process_masks(
+                            [output.pred_masks],
+                            original_sizes=inputs_original_sizes,
+                            binarize=False,
+                        )[0],
                         sync_enabled=False,
                     )
-                gate_key = f"edgetam_cam{int(frame.camera_idx)}"
-                with self.gpu_gate.acquire(stage="edgetam", camera_idx=frame.camera_idx, group_id=frame.group_id) as gate_wait_ms:
-                    self._record_gpu_gate_wait(gate_key, gate_wait_ms)
-                    mark_torch_cudagraph_step_begin(torch_module)
-                    if prepared_frame is not None:
-                        forward = lambda: model(
-                            inference_session=session,
-                            frame_idx=frame_idx,
-                            frame=pixel_values,
-                        )
-                    else:
-                        forward = lambda: model(inference_session=session, frame=pixel_values)
-                    output, wall_model_ms, cuda_event_model_ms, _, _ = _time_model_forward(
-                        torch_module=torch_module,
-                        device=self.args.device,
-                        profile_sync=False,
-                        profile_cuda_events=bool(self.args.profile_cuda_events),
-                        fn=forward,
-                    )
-                post_masks, postprocess_ms, _, _ = _time_runtime_ms(
-                    torch_module,
-                    self.args.device,
-                    lambda: processor.post_process_masks(
-                        [output.pred_masks],
-                        original_sizes=inputs_original_sizes,
-                        binarize=False,
-                    )[0],
-                    sync_enabled=False,
-                )
+                    if serialized_capture_active and add_prompt:
+                        self._edgetam_first_compiled_forward_done.add(int(frame.camera_idx))
             if stream is not None and str(self.args.device).startswith("cuda"):
                 done_event = torch_module.cuda.Event()
                 done_event.record(stream)

@@ -135,11 +135,18 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
 
         self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
 
-    def test_demo215_public_parallel_edgetam_selects_legacy_compiled_worker_preset(self) -> None:
+    def test_demo215_public_parallel_edgetam_selects_compiled_worker_preset(self) -> None:
         argv = demo215._to_demo215_argv(["--dry-run", "--parallel-edgetam"])
 
         self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS])
         self.assertIn("--dry-run", argv)
+
+    def test_demo215_public_parallel_edgetam_can_disable_compile(self) -> None:
+        argv = demo215._to_demo215_argv(["--dry-run", "--parallel-edgetam", "--no-compile-edgetam"])
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS])
+        compile_idx = argv.index("--compile-mode")
+        self.assertEqual(argv[compile_idx + 1], demo.COMPILE_MODE_NONE)
 
     def test_demo215_public_parallel_edgetam_preserves_explicit_runtime_preset(self) -> None:
         argv = demo215._to_demo215_argv(
@@ -192,7 +199,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertEqual(contract["edgetam"]["stream_mode"], demo.EDGETAM_STREAM_MODE_PER_CAMERA)
         self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])
 
-    def test_demo215_compiled_parallel_edgetam_contract_is_legacy_worker_path(self) -> None:
+    def test_demo215_compiled_parallel_edgetam_contract_is_worker_path(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(
             ["--dry-run", "--preset", demo.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS]
@@ -209,7 +216,35 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertEqual(contract["gpu_gate"]["mode"], "off")
         self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_REPLICATED)
         self.assertEqual(contract["edgetam"]["stream_mode"], demo.EDGETAM_STREAM_MODE_PER_CAMERA)
+        self.assertFalse(contract["edgetam"]["prewarm_compile"])
+        self.assertTrue(contract["edgetam"]["serialize_first_compiled_forward"])
         self.assertTrue(contract["memory_for_speed"]["models_loaded_once_per_worker"])
+        self.assertTrue(contract["h2d_transfer"]["edge_pin_enabled"])
+        self.assertEqual(contract["h2d_transfer"]["pin_memory_mode"], "edge")
+        self.assertEqual(contract["h2d_transfer"]["pinned_ring_size"], 1)
+        self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])
+
+    def test_demo215_parallel_edgetam_contract_accepts_eager_mode(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS,
+                "--compile-mode",
+                demo.COMPILE_MODE_NONE,
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--compile-mode"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["compile_mode"], demo.COMPILE_MODE_NONE)
+        self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_SEPARATE_WORKERS)
+        self.assertFalse(contract["edgetam"]["prewarm_compile"])
+        self.assertFalse(contract["edgetam"]["serialize_first_compiled_forward"])
         self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])
 
     def test_demo215_thread_specs_include_gpu_owner_and_filter(self) -> None:
@@ -246,7 +281,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
 
         self.assertEqual(names, ["capture-group", "staged-gpu", "fusion", "filter"])
 
-    def test_demo215_compiled_parallel_edgetam_thread_specs_are_legacy_workers(self) -> None:
+    def test_demo215_compiled_parallel_edgetam_thread_specs_are_parallel_workers(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(
             ["--dry-run", "--preset", demo.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS]

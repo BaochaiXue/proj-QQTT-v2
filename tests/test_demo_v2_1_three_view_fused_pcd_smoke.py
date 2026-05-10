@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -33,6 +34,58 @@ def _dummy_frame(camera_idx: int, *, seq: int, timestamp_ms: float) -> demo.Came
 
 
 class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
+    def test_clone_tensor_tree_clones_dataclass_model_outputs(self) -> None:
+        import torch
+
+        @dataclass
+        class DummyModelOutput:
+            hidden_states: list[object]
+            metadata: dict[str, object]
+            optional_value: object | None = None
+
+        source = torch.ones(2)
+        cloned = demo._clone_tensor_tree(
+            torch,
+            DummyModelOutput(hidden_states=[source], metadata={"same_tensor": source}),
+        )
+
+        self.assertIsInstance(cloned, DummyModelOutput)
+        self.assertIsNot(cloned.hidden_states[0], source)
+        self.assertIsNot(cloned.metadata["same_tensor"], source)
+        cloned.hidden_states[0].add_(1)
+        torch.testing.assert_close(source, torch.ones(2))
+
+    def test_compiled_vision_encoder_wrapper_marks_step_before_forward(self) -> None:
+        import torch
+
+        events: list[str] = []
+
+        class DummyCompiler:
+            def cudagraph_mark_step_begin(self) -> None:
+                events.append("mark")
+
+        class DummyVisionEncoder(torch.nn.Module):
+            def forward(self, tensor: object) -> object:
+                events.append("forward")
+                return tensor
+
+        torch_like = SimpleNamespace(
+            compiler=DummyCompiler(),
+            is_tensor=torch.is_tensor,
+            nn=torch.nn,
+            utils=torch.utils,
+        )
+        model = SimpleNamespace(vision_encoder=DummyVisionEncoder())
+        source = torch.ones(2)
+
+        self.assertTrue(demo.wrap_compiled_vision_encoder_outputs_for_parallel(model, torch_like))
+        cloned = model.vision_encoder(source)
+
+        self.assertEqual(events, ["mark", "forward"])
+        self.assertIsNot(cloned, source)
+        cloned.add_(1)
+        torch.testing.assert_close(source, torch.ones(2))
+
     def test_timestamp_nearest_grouping_selects_min_skew_triplet(self) -> None:
         buffers = {
             0: deque([_dummy_frame(0, seq=0, timestamp_ms=0), _dummy_frame(0, seq=1, timestamp_ms=33), _dummy_frame(0, seq=2, timestamp_ms=66)]),
