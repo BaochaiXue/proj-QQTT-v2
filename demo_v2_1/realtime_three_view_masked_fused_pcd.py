@@ -146,6 +146,7 @@ DEFAULT_DEVICE = "cuda"
 DEFAULT_DTYPE = "bfloat16"
 DEFAULT_COMPILE_MODE = "vision-reduce-overhead"
 DEFAULT_DEMO22_CONTROLLER_LABEL = "towel"
+DEFAULT_DEMO22_DEPTH_MIN_M = 0.1
 DEFAULT_OUTPUT_ROOT = ROOT / "result" / "demo2_1_three_view_fused_pcd"
 DEFAULT_OBJECT_FILTER_CAP = 20_000
 DEFAULT_CONTROLLER_FILTER_CAP = 20_000
@@ -388,6 +389,16 @@ class CameraMaskPacket:
     @property
     def seq(self) -> int:
         return int(self.group_id)
+
+
+@dataclass(frozen=True)
+class PreparedEdgeTamFrame:
+    pixel_values: Any
+    original_sizes: Any
+    frame_idx: int
+    preprocess_ms: float
+    edge_h2d_profile: dict[str, Any]
+    batch_vision_encoder_ms: float
 
 
 @dataclass(frozen=True)
@@ -1090,6 +1101,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
             _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
             _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--depth-min-m", attr="depth_min_m", value=DEFAULT_DEMO22_DEPTH_MIN_M)
             _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
@@ -1109,6 +1121,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
             _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
             _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--depth-min-m", attr="depth_min_m", value=DEFAULT_DEMO22_DEPTH_MIN_M)
             _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
@@ -1369,6 +1382,38 @@ def resolve_initial_masks_for_camera(
     raise ValueError(f"unsupported init mode: {args.init_mode}")
 
 
+def split_hf_vision_features_for_session(image_outputs: Any, batch_idx: int) -> dict[str, Any]:
+    """Return one-camera HF EdgeTAM vision feature cache from a batched encoder output."""
+    idx = int(batch_idx)
+    return {
+        "vision_feats": [
+            feature[:, idx : idx + 1, :].contiguous()
+            for feature in image_outputs.fpn_hidden_states
+        ],
+        "vision_pos_embeds": [
+            pos_embed[:, idx : idx + 1, :].contiguous()
+            for pos_embed in image_outputs.fpn_position_encoding
+        ],
+    }
+
+
+def slice_hf_original_sizes(original_sizes: Any, batch_idx: int) -> Any:
+    idx = int(batch_idx)
+    if hasattr(original_sizes, "dim"):
+        if int(original_sizes.dim()) == 1:
+            return original_sizes
+        return original_sizes[idx : idx + 1]
+    if isinstance(original_sizes, np.ndarray):
+        if original_sizes.ndim == 1:
+            return original_sizes
+        return original_sizes[idx : idx + 1]
+    if isinstance(original_sizes, (list, tuple)):
+        if not original_sizes:
+            return original_sizes
+        return type(original_sizes)([original_sizes[idx]])
+    return original_sizes
+
+
 def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     layers = semantic_layers_for_track_mode(
         args.track_mode,
@@ -1490,6 +1535,10 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "one_streaming_session_per_camera": True,
             "prewarm_compile": bool(getattr(args, "edgetam_prewarm_compile", False)),
             "prewarm_runs": int(getattr(args, "edgetam_prewarm_runs", 0)),
+            "batch_vision_encoder": bool(getattr(args, "edgetam_batch_vision_encoder", False)),
+            "batch_vision_batch_size": (
+                len(tuple(args.camera_ids)) if bool(getattr(args, "edgetam_batch_vision_encoder", False)) else 1
+            ),
         },
         "fusion": {
             "mode": "semantic_layers",
@@ -1839,6 +1888,16 @@ class Demo21Runtime:
                 "Demo 2.1 --single-owner-order interleaved is reserved for a later per-camera interleaving "
                 "implementation; use ffs-then-edgetam or edgetam-then-ffs for current profiling"
             )
+        if bool(getattr(self.args, "edgetam_batch_vision_encoder", False)):
+            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_SINGLE_OWNER:
+                raise RuntimeError("Demo 2.1 --edgetam-batch-vision-encoder requires single-owner GPU pipeline")
+            if self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_SHARED:
+                raise RuntimeError("Demo 2.1 --edgetam-batch-vision-encoder requires shared EdgeTAM model topology")
+            if edge_pin_memory_enabled(self.args):
+                raise RuntimeError(
+                    "Demo 2.1 --edgetam-batch-vision-encoder currently bypasses per-camera EdgeTAM pinned staging; "
+                    "disable EdgeTAM pinning or use --pin-memory-mode ffs"
+                )
         if (
             self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SEPARATE_WORKERS
             and self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_REPLICATED
@@ -2058,6 +2117,9 @@ class Demo21Runtime:
             "edgetam_cam0_model_ms": ("edgetam", "cam0", "model_ms"),
             "edgetam_cam1_model_ms": ("edgetam", "cam1", "model_ms"),
             "edgetam_cam2_model_ms": ("edgetam", "cam2", "model_ms"),
+            "edgetam_batch_vision_model_ms": ("edgetam", "batch_vision", "model_ms"),
+            "edgetam_batch_vision_total_ms": ("edgetam", "batch_vision", "total_ms"),
+            "edgetam_batch_vision_preprocess_ms": ("edgetam", "batch_vision", "preprocess_ms"),
             "edgetam_cam0_gate_wait_ms": ("edgetam", "cam0", "gate_wait_ms"),
             "edgetam_cam1_gate_wait_ms": ("edgetam", "cam1", "gate_wait_ms"),
             "edgetam_cam2_gate_wait_ms": ("edgetam", "cam2", "gate_wait_ms"),
@@ -2282,6 +2344,9 @@ class Demo21Runtime:
             "ffs_cycle_ms",
             "ffs_batch_ms",
             "ffs_gate_wait_ms",
+            "edgetam_batch_vision_model_ms",
+            "edgetam_batch_vision_total_ms",
+            "edgetam_batch_vision_preprocess_ms",
             "edgetam_cam0_model_ms",
             "edgetam_cam1_model_ms",
             "edgetam_cam2_model_ms",
@@ -3158,17 +3223,53 @@ class Demo21Runtime:
                             "total_ms": float(pre_sync_ms + wall_model_ms + post_sync_ms),
                         }
                     )
-        total_ms = _elapsed_ms(total_start_s, time.perf_counter())
         model_total_ms = float(sum(run["total_ms"] for run in model_runs))
+        batch_vision_profile: dict[str, Any] | None = None
+        if bool(getattr(self.args, "edgetam_batch_vision_encoder", False)):
+            batch_size = len(tuple(self.args.camera_ids))
+            batch_started_s = time.perf_counter()
+            batch_inputs, batch_preprocess_ms, batch_pre_sync_ms, batch_post_sync_ms = _time_runtime_ms(
+                torch_module,
+                self.args.device,
+                lambda: processor(images=[image] * batch_size, device=self.args.device, return_tensors="pt"),
+                sync_enabled=True,
+            )
+            batch_pixel_values = batch_inputs.pixel_values.to(device=self.args.device, dtype=dtype)
+            with torch_module.inference_mode():
+                with self._autocast_context(torch_module):
+                    mark_torch_cudagraph_step_begin(torch_module)
+                    _, batch_wall_ms, batch_cuda_event_ms, batch_model_pre_sync_ms, batch_model_post_sync_ms = (
+                        _time_model_forward(
+                            torch_module=torch_module,
+                            device=self.args.device,
+                            profile_sync=True,
+                            profile_cuda_events=bool(self.args.profile_cuda_events),
+                            fn=lambda: model.get_image_features(batch_pixel_values, return_dict=True),
+                        )
+                    )
+            batch_vision_profile = {
+                "enabled": True,
+                "batch_size": int(batch_size),
+                "preprocess_ms": float(batch_preprocess_ms),
+                "preprocess_pre_sync_ms": float(batch_pre_sync_ms),
+                "preprocess_post_sync_ms": float(batch_post_sync_ms),
+                "wall_model_ms": float(batch_wall_ms),
+                "cuda_event_model_ms": float(batch_cuda_event_ms),
+                "model_pre_sync_ms": float(batch_model_pre_sync_ms),
+                "model_post_sync_ms": float(batch_model_post_sync_ms),
+                "total_ms": float(_elapsed_ms(batch_started_s, time.perf_counter())),
+            }
+        total_ms = _elapsed_ms(total_start_s, time.perf_counter())
         if self.args.debug:
             first_run = model_runs[0]["total_ms"] if model_runs else 0.0
             print(
                 "[demo2.1-edgetam-prewarm] "
                 f"loader={loader_key} runs={runs} total_ms={total_ms:.2f} "
-                f"first_model_total_ms={first_run:.2f}",
+                f"first_model_total_ms={first_run:.2f} "
+                f"batch_vision_ms={(batch_vision_profile or {}).get('total_ms', 0.0):.2f}",
                 flush=True,
             )
-        return {
+        result = {
             "enabled": True,
             "runs": int(runs),
             "session_ms": float(session_ms),
@@ -3182,6 +3283,9 @@ class Demo21Runtime:
             "model_runs": model_runs,
             "total_ms": float(total_ms),
         }
+        if batch_vision_profile is not None:
+            result["batch_vision"] = batch_vision_profile
+        return result
 
     def _run_edgetam_frame(
         self,
@@ -3197,39 +3301,49 @@ class Demo21Runtime:
         initial_controller_mask: np.ndarray,
         initial_object_mask: np.ndarray,
         add_prompt: bool,
+        prepared_frame: PreparedEdgeTamFrame | None = None,
     ) -> CameraMaskPacket:
         frame_started_s = time.perf_counter()
-        image = _bgr_to_pil_rgb(frame.color_bgr)
-        if pixel_stager is not None:
-            inputs, preprocess_ms, _, _ = _time_runtime_ms(
-                torch_module,
-                self.args.device,
-                lambda: processor(images=image, return_tensors="pt"),
-                sync_enabled=False,
-            )
-            pixel_values, edge_h2d_profile = pixel_stager.stage(
-                inputs.pixel_values[0],
-                dtype=dtype,
-                consumer_stream=stream,
-            )
+        if prepared_frame is not None:
+            inputs_original_sizes = prepared_frame.original_sizes
+            pixel_values = prepared_frame.pixel_values
+            preprocess_ms = float(prepared_frame.preprocess_ms)
+            edge_h2d_profile = dict(prepared_frame.edge_h2d_profile)
+            frame_idx = int(prepared_frame.frame_idx)
         else:
-            inputs, preprocess_ms, _, _ = _time_runtime_ms(
-                torch_module,
-                self.args.device,
-                lambda: processor(images=image, device=self.args.device, return_tensors="pt"),
-                sync_enabled=False,
-            )
-            pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
-            edge_h2d_profile = {
-                "pin_memory": False,
-                "processor_device": str(inputs.pixel_values.device),
-                "processor_is_pinned": bool(inputs.pixel_values.is_pinned()) if hasattr(inputs.pixel_values, "is_pinned") else False,
-                "pin_copy_ms": 0.0,
-                "slot_reuse_wait_ms": 0.0,
-                "h2d_enqueue_ms": 0.0,
-                "h2d_wait_ms": 0.0,
-                "h2d_stream_mode": H2D_STREAM_MODE_DEFAULT,
-            }
+            image = _bgr_to_pil_rgb(frame.color_bgr)
+            frame_idx = -1
+            if pixel_stager is not None:
+                inputs, preprocess_ms, _, _ = _time_runtime_ms(
+                    torch_module,
+                    self.args.device,
+                    lambda: processor(images=image, return_tensors="pt"),
+                    sync_enabled=False,
+                )
+                pixel_values, edge_h2d_profile = pixel_stager.stage(
+                    inputs.pixel_values[0],
+                    dtype=dtype,
+                    consumer_stream=stream,
+                )
+            else:
+                inputs, preprocess_ms, _, _ = _time_runtime_ms(
+                    torch_module,
+                    self.args.device,
+                    lambda: processor(images=image, device=self.args.device, return_tensors="pt"),
+                    sync_enabled=False,
+                )
+                pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
+                edge_h2d_profile = {
+                    "pin_memory": False,
+                    "processor_device": str(inputs.pixel_values.device),
+                    "processor_is_pinned": bool(inputs.pixel_values.is_pinned()) if hasattr(inputs.pixel_values, "is_pinned") else False,
+                    "pin_copy_ms": 0.0,
+                    "slot_reuse_wait_ms": 0.0,
+                    "h2d_enqueue_ms": 0.0,
+                    "h2d_wait_ms": 0.0,
+                    "h2d_stream_mode": H2D_STREAM_MODE_DEFAULT,
+                }
+            inputs_original_sizes = inputs.original_sizes
         prompt_ms = 0.0
         stream_context = (
             torch_module.cuda.stream(stream)
@@ -3246,12 +3360,13 @@ class Demo21Runtime:
                         prompt_masks.append(np.asarray(initial_controller_mask, dtype=bool))
                     prompt_obj_ids.append(OBJECT_ID)
                     prompt_masks.append(np.asarray(initial_object_mask, dtype=bool))
+                    prompt_frame_idx = frame_idx if frame_idx >= 0 else 0
                     _, prompt_ms, _, _ = _time_runtime_ms(
                         torch_module,
                         self.args.device,
                         lambda: processor.add_inputs_to_inference_session(
                             inference_session=session,
-                            frame_idx=0,
+                            frame_idx=prompt_frame_idx,
                             obj_ids=prompt_obj_ids,
                             input_masks=prompt_masks,
                         ),
@@ -3261,19 +3376,27 @@ class Demo21Runtime:
                 with self.gpu_gate.acquire(stage="edgetam", camera_idx=frame.camera_idx, group_id=frame.group_id) as gate_wait_ms:
                     self._record_gpu_gate_wait(gate_key, gate_wait_ms)
                     mark_torch_cudagraph_step_begin(torch_module)
+                    if prepared_frame is not None:
+                        forward = lambda: model(
+                            inference_session=session,
+                            frame_idx=frame_idx,
+                            frame=pixel_values,
+                        )
+                    else:
+                        forward = lambda: model(inference_session=session, frame=pixel_values)
                     output, wall_model_ms, cuda_event_model_ms, _, _ = _time_model_forward(
                         torch_module=torch_module,
                         device=self.args.device,
                         profile_sync=False,
                         profile_cuda_events=bool(self.args.profile_cuda_events),
-                        fn=lambda: model(inference_session=session, frame=pixel_values),
+                        fn=forward,
                     )
                 post_masks, postprocess_ms, _, _ = _time_runtime_ms(
                     torch_module,
                     self.args.device,
                     lambda: processor.post_process_masks(
                         [output.pred_masks],
-                        original_sizes=inputs.original_sizes,
+                        original_sizes=inputs_original_sizes,
                         binarize=False,
                     )[0],
                     sync_enabled=False,
@@ -3282,7 +3405,7 @@ class Demo21Runtime:
                 done_event = torch_module.cuda.Event()
                 done_event.record(stream)
                 done_event.synchronize()
-            if pixel_stager is not None:
+            if prepared_frame is None and pixel_stager is not None:
                 pixel_stager.mark_consumed(int(edge_h2d_profile.get("pinned_slot_idx", -1)), stream)
         masks_by_id = extract_object_masks_from_hf_output(output, post_masks)
         missing = [obj_id for obj_id in active_object_ids(self.args) if obj_id not in masks_by_id]
@@ -3337,6 +3460,11 @@ class Demo21Runtime:
                     "postprocess_ms": float(postprocess_ms),
                     "total_ms": float(total_ms),
                     "stream_mode": str(self.args.edgetam_stream_mode),
+                    "batch_vision_encoder": prepared_frame is not None,
+                    "batch_vision_encoder_ms": (
+                        float(prepared_frame.batch_vision_encoder_ms) if prepared_frame is not None else 0.0
+                    ),
+                    "frame_idx": int(frame_idx),
                     "publish_s": self._profile_rel_s(),
                 }
             },
@@ -3613,6 +3741,91 @@ class Demo21Runtime:
         state["initialized"] = True
         return True
 
+    def _prepare_edgetam_batch_vision_frames(
+        self,
+        *,
+        states: dict[int, dict[str, Any]],
+        group: CaptureGroup,
+    ) -> dict[int, PreparedEdgeTamFrame]:
+        camera_ids = [int(camera_idx) for camera_idx in self.args.camera_ids]
+        first_state = states[camera_ids[0]]
+        torch_module = first_state["torch_module"]
+        dtype = first_state["dtype"]
+        model = first_state["model"]
+        processor = first_state["processor"]
+        started_s = time.perf_counter()
+        images = [_bgr_to_pil_rgb(group.frames[idx].color_bgr) for idx in camera_ids]
+        inputs, preprocess_ms, _, _ = _time_runtime_ms(
+            torch_module,
+            self.args.device,
+            lambda: processor(images=images, device=self.args.device, return_tensors="pt"),
+            sync_enabled=False,
+        )
+        pixel_values_batch = inputs.pixel_values.to(device=self.args.device, dtype=dtype)
+        frame_indices: dict[int, int] = {}
+        for pos, camera_idx in enumerate(camera_ids):
+            state = states[camera_idx]
+            session = state["session"]
+            frame_indices[camera_idx] = int(session.add_new_frame(pixel_values_batch[pos], frame_idx=None))
+
+        with torch_module.inference_mode():
+            with self._autocast_context(torch_module):
+                mark_torch_cudagraph_step_begin(torch_module)
+                image_outputs, wall_model_ms, cuda_event_model_ms, _, _ = _time_model_forward(
+                    torch_module=torch_module,
+                    device=self.args.device,
+                    profile_sync=False,
+                    profile_cuda_events=bool(self.args.profile_cuda_events),
+                    fn=lambda: model.get_image_features(pixel_values_batch, return_dict=True),
+                )
+
+        for pos, camera_idx in enumerate(camera_ids):
+            states[camera_idx]["session"].cache.cache_vision_features(
+                frame_indices[camera_idx],
+                split_hf_vision_features_for_session(image_outputs, pos),
+            )
+
+        total_ms = _elapsed_ms(started_s, time.perf_counter())
+        per_camera_preprocess_ms = float(preprocess_ms) / float(max(1, len(camera_ids)))
+        edge_h2d_profile = {
+            "pin_memory": False,
+            "processor_device": str(inputs.pixel_values.device),
+            "processor_is_pinned": bool(inputs.pixel_values.is_pinned()) if hasattr(inputs.pixel_values, "is_pinned") else False,
+            "pin_copy_ms": 0.0,
+            "slot_reuse_wait_ms": 0.0,
+            "h2d_enqueue_ms": 0.0,
+            "h2d_wait_ms": 0.0,
+            "h2d_stream_mode": H2D_STREAM_MODE_DEFAULT,
+            "batch_vision_encoder": True,
+            "batch_size": int(len(camera_ids)),
+        }
+        self._profile_update(
+            group.group_id,
+            edgetam={
+                "batch_vision": {
+                    "enabled": True,
+                    "batch_size": int(len(camera_ids)),
+                    "preprocess_ms": float(preprocess_ms),
+                    "wall_model_ms": float(wall_model_ms),
+                    "cuda_event_model_ms": float(cuda_event_model_ms),
+                    "model_ms": float(cuda_event_model_ms or wall_model_ms),
+                    "total_ms": float(total_ms),
+                    "publish_s": self._profile_rel_s(),
+                }
+            },
+        )
+        return {
+            camera_idx: PreparedEdgeTamFrame(
+                pixel_values=pixel_values_batch[pos],
+                original_sizes=slice_hf_original_sizes(inputs.original_sizes, pos),
+                frame_idx=frame_indices[camera_idx],
+                preprocess_ms=per_camera_preprocess_ms,
+                edge_h2d_profile=edge_h2d_profile,
+                batch_vision_encoder_ms=float(cuda_event_model_ms or wall_model_ms),
+            )
+            for pos, camera_idx in enumerate(camera_ids)
+        }
+
     def _run_gpu_owner_edgetam_cycle(
         self,
         *,
@@ -3621,13 +3834,29 @@ class Demo21Runtime:
     ) -> tuple[dict[int, CameraMaskPacket] | None, float]:
         cycle_start_s = time.perf_counter()
         packets: dict[int, CameraMaskPacket] = {}
+        initialized_before: dict[int, bool] = {}
+        prepared_frames: dict[int, PreparedEdgeTamFrame] = {}
+        if bool(getattr(self.args, "edgetam_batch_vision_encoder", False)):
+            for camera_idx in self.args.camera_ids:
+                idx = int(camera_idx)
+                frame = group.frames[idx]
+                state = states[idx]
+                initialized_before[idx] = bool(state["initialized"])
+                if not self._ensure_gpu_owner_edgetam_initialized(state=state, camera_idx=idx, frame=frame):
+                    return None, _elapsed_ms(cycle_start_s, time.perf_counter())
+            prepared_frames = self._prepare_edgetam_batch_vision_frames(states=states, group=group)
         for camera_idx in self.args.camera_ids:
             idx = int(camera_idx)
             frame = group.frames[idx]
             state = states[idx]
-            was_initialized = bool(state["initialized"])
-            if not self._ensure_gpu_owner_edgetam_initialized(state=state, camera_idx=idx, frame=frame):
-                return None, _elapsed_ms(cycle_start_s, time.perf_counter())
+            if bool(getattr(self.args, "edgetam_batch_vision_encoder", False)):
+                was_initialized = initialized_before[idx]
+                prepared_frame = prepared_frames[idx]
+            else:
+                was_initialized = bool(state["initialized"])
+                if not self._ensure_gpu_owner_edgetam_initialized(state=state, camera_idx=idx, frame=frame):
+                    return None, _elapsed_ms(cycle_start_s, time.perf_counter())
+                prepared_frame = None
             torch_module = state["torch_module"]
             with torch_module.inference_mode():
                 packet = self._run_edgetam_frame(
@@ -3642,6 +3871,7 @@ class Demo21Runtime:
                     initial_controller_mask=state["controller_mask"],
                     initial_object_mask=state["object_mask"],
                     add_prompt=not was_initialized,
+                    prepared_frame=prepared_frame,
                 )
             packets[idx] = packet
             self.mask_slots[idx].put(packet)
@@ -4732,6 +4962,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="Number of dummy EdgeTAM video forward passes for compile prewarm when enabled.",
+    )
+    parser.add_argument(
+        "--edgetam-batch-vision-encoder",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Experiment: batch the three camera RGB frames through HF EdgeTAM get_image_features(), "
+            "split the features into per-camera session caches, then keep video tracking state per camera."
+        ),
     )
     parser.add_argument("--dtype", choices=("bfloat16", "float16"), default="bfloat16")
     parser.add_argument("--duration-s", type=float, default=0.0)

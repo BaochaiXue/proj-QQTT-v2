@@ -66,6 +66,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_FFS)
         self.assertEqual(contract["compile_mode"], demo.DEFAULT_COMPILE_MODE)
         self.assertEqual(contract["track_mode"], demo.TRACK_MODE_CONTROLLER_OBJECT)
+        self.assertEqual(args.depth_min_m, demo.DEFAULT_DEMO22_DEPTH_MIN_M)
         self.assertEqual(contract["init"]["mode"], "sam31-first-frame")
         self.assertTrue(contract["init"]["parallel_init"])
         self.assertTrue(contract["init"]["sam31_cache_init_model"])
@@ -73,6 +74,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_SHARED)
         self.assertTrue(contract["edgetam"]["prewarm_compile"])
         self.assertEqual(contract["edgetam"]["prewarm_runs"], 1)
+        self.assertFalse(contract["edgetam"]["batch_vision_encoder"])
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_SINGLE_OWNER)
         self.assertEqual(contract["gpu_pipeline"]["internal_order"], demo.SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
         self.assertEqual(contract["ffs_contract"]["trt_batch_size"], 3)
@@ -110,6 +112,46 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
             demo.DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
         )
 
+    def test_demo22_batch_vision_option_is_explicit(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--edgetam-batch-vision-encoder",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--edgetam-batch-vision-encoder"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertTrue(contract["edgetam"]["batch_vision_encoder"])
+        self.assertEqual(contract["edgetam"]["batch_vision_batch_size"], 3)
+        self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_SHARED)
+        self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_SINGLE_OWNER)
+
+    def test_batch_vision_rejects_staged_parallel_contract(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+                "--edgetam-batch-vision-encoder",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--edgetam-batch-vision-encoder"},
+        )
+        runtime = demo.Demo21Runtime(args)
+
+        with self.assertRaisesRegex(RuntimeError, "batch-vision-encoder requires single-owner"):
+            runtime._validate_live_contract()
+
     def test_demo22_staged_parallel_preset_contract(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
@@ -124,6 +166,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_FFS)
         self.assertEqual(contract["compile_mode"], demo.DEFAULT_COMPILE_MODE)
         self.assertEqual(contract["track_mode"], demo.TRACK_MODE_CONTROLLER_OBJECT)
+        self.assertEqual(args.depth_min_m, demo.DEFAULT_DEMO22_DEPTH_MIN_M)
         self.assertTrue(contract["init"]["parallel_init"])
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_STAGED)
         self.assertEqual(contract["gpu_pipeline"]["internal_order"], demo.STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM)
@@ -141,6 +184,24 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertTrue(contract["memory_for_speed"]["ffs_reusable_cuda_input_buffers"])
         self.assertTrue(contract["memory_for_speed"]["edgetam_reusable_cuda_pixel_slots"])
         self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])
+
+    def test_demo22_depth_min_m_preserves_explicit_override(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--depth-min-m",
+                "0.25",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--depth-min-m"},
+        )
+
+        self.assertEqual(args.depth_min_m, 0.25)
 
     def test_demo22_thread_specs_include_filter_worker(self) -> None:
         parser = demo.build_arg_parser()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
 import numpy as np
@@ -381,6 +382,34 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
             Path(contract["ffs_contract"]["trt_model_dir"]),
             demo.DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR,
         )
+
+    def test_edgetam_batch_vision_feature_split_preserves_single_batch_axis(self) -> None:
+        import torch
+
+        hidden0 = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
+        hidden1 = torch.arange(2 * 3 * 5, dtype=torch.float32).reshape(2, 3, 5)
+        pos0 = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2) + 100
+        pos1 = torch.arange(2 * 3 * 5, dtype=torch.float32).reshape(2, 3, 5) + 200
+        outputs = SimpleNamespace(
+            fpn_hidden_states=[hidden0, hidden1],
+            fpn_position_encoding=[pos0, pos1],
+        )
+
+        split = demo.split_hf_vision_features_for_session(outputs, 1)
+
+        self.assertEqual([tuple(t.shape) for t in split["vision_feats"]], [(4, 1, 2), (2, 1, 5)])
+        self.assertTrue(torch.equal(split["vision_feats"][0], hidden0[:, 1:2, :]))
+        self.assertTrue(torch.equal(split["vision_pos_embeds"][1], pos1[:, 1:2, :]))
+        self.assertTrue(split["vision_feats"][0].is_contiguous())
+
+    def test_hf_original_sizes_slice_keeps_batch_dimension(self) -> None:
+        import torch
+
+        sizes = torch.tensor([[480, 848], [480, 848], [480, 848]])
+        sliced = demo.slice_hf_original_sizes(sizes, 2)
+
+        self.assertEqual(tuple(sliced.shape), (1, 2))
+        self.assertEqual(sliced.tolist(), [[480, 848]])
 
     def test_ffs_batch3_cycle_dispatches_one_runner_batch(self) -> None:
         class FakeRunner:
