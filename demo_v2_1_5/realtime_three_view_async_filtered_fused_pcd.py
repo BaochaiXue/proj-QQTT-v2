@@ -39,7 +39,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--parallel-edgetam",
         action="store_true",
-        help="Run cam0/cam1/cam2 EdgeTAM tracking in parallel instead of the default single-owner sequential path.",
+        help=(
+            "Use the legacy compiled parallel EdgeTAM path: separate cam0/cam1/cam2 workers, "
+            "replicated models, GPU gate off."
+        ),
     )
     run.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 2.1.5 runtime contract and exit.")
     run.add_argument("--debug", action="store_true", help="Enable verbose runtime logs.")
@@ -137,7 +140,9 @@ def _to_demo215_argv(argv: Sequence[str] | None) -> list[str]:
         return ["--help"]
 
     translated: list[str] = []
-    if (parsed.parallel_edgetam or parsed.experimental_staged_parallel) and not _has_flag(passthrough, "--preset"):
+    if parsed.parallel_edgetam and not _has_flag(passthrough, "--preset"):
+        translated.extend(["--preset", runtime.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS])
+    elif parsed.experimental_staged_parallel and not _has_flag(passthrough, "--preset"):
         translated.extend(["--preset", runtime.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
 
     _append_option(translated, "--duration-s", parsed.duration_s)

@@ -115,6 +115,7 @@ PRESET_VISUAL_5FPS_NO_GATE = "visual-5fps-no-gate"
 PRESET_VISUAL_5FPS_SINGLE_OWNER = "visual-5fps-single-owner"
 PRESET_VISUAL_5FPS_STAGED = "visual-5fps-staged"
 PRESET_DEMO215_ASYNC_FILTER_5FPS = "demo2.1.5-async-filter-5fps"
+PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS = "demo2.1.5-compiled-parallel-edgetam-5fps"
 PRESET_DEMO215_STAGED_PARALLEL_5FPS = "demo2.1.5-staged-parallel-5fps"
 PRESET_DEMO22_ASYNC_FILTER_5FPS = "demo2.2-async-filter-5fps"
 PRESET_DEMO22_STAGED_PARALLEL_5FPS = "demo2.2-staged-parallel-5fps"
@@ -133,6 +134,7 @@ PRESETS = (
     PRESET_VISUAL_5FPS_SINGLE_OWNER,
     PRESET_VISUAL_5FPS_STAGED,
     PRESET_DEMO215_ASYNC_FILTER_5FPS,
+    PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS,
     PRESET_DEMO215_STAGED_PARALLEL_5FPS,
     PRESET_DEMO22_ASYNC_FILTER_5FPS,
     PRESET_DEMO22_STAGED_PARALLEL_5FPS,
@@ -1312,6 +1314,29 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+        elif preset == PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS:
+            _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
+            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+            _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SEPARATE_WORKERS)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-stream-mode", attr="edgetam_stream_mode", value=EDGETAM_STREAM_MODE_PER_CAMERA)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
+            _set_if_not_explicit(args, explicit, flag="--compile-mode", attr="compile_mode", value=COMPILE_MODE_VISION_REDUCE_OVERHEAD)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-compile", attr="edgetam_prewarm_compile", value=True)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-runs", attr="edgetam_prewarm_runs", value=1)
+            _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
+            _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+            _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
+            _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
+            _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
+            _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
+            _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--depth-min-m", attr="depth_min_m", value=DEFAULT_DEMO22_DEPTH_MIN_M)
+            _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
+            _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
         elif preset in {PRESET_DEMO22_STAGED_PARALLEL_5FPS, PRESET_DEMO215_STAGED_PARALLEL_5FPS}:
             if preset == PRESET_DEMO215_STAGED_PARALLEL_5FPS:
                 _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
@@ -1351,6 +1376,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         if (
             preset in {
                 PRESET_DEMO215_ASYNC_FILTER_5FPS,
+                PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS,
                 PRESET_DEMO215_STAGED_PARALLEL_5FPS,
                 PRESET_DEMO22_ASYNC_FILTER_5FPS,
                 PRESET_DEMO22_STAGED_PARALLEL_5FPS,
@@ -1643,6 +1669,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     }
     is_demo215_preset = preset_canonical in {
         PRESET_DEMO215_ASYNC_FILTER_5FPS,
+        PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS,
         PRESET_DEMO215_STAGED_PARALLEL_5FPS,
     }
     return {
@@ -1727,6 +1754,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "ffs_reusable_cuda_input_buffers": args.depth_source == DEPTH_SOURCE_FFS and args.ffs_input_staging == FFS_INPUT_STAGING_PINNED,
             "edgetam_reusable_cuda_pixel_slots": edge_pin_memory_enabled(args),
             "models_loaded_once_per_worker": args.gpu_pipeline_mode in {
+                GPU_PIPELINE_MODE_SEPARATE_WORKERS,
                 GPU_PIPELINE_MODE_SINGLE_OWNER,
                 GPU_PIPELINE_MODE_STAGED,
             },
@@ -2220,6 +2248,19 @@ class Demo21Runtime:
                 raise RuntimeError("Demo 2.1.5 requires single-owner GPU pipeline")
             if not async_fusion_filter_enabled(self.args):
                 raise RuntimeError("Demo 2.1.5 requires async latest-wins PCD filtering")
+        if preset_canonical == PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS:
+            if self.args.depth_source != DEPTH_SOURCE_REALSENSE:
+                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires native RealSense depth")
+            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_SEPARATE_WORKERS:
+                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires separate worker GPU pipeline")
+            if self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_REPLICATED:
+                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires replicated EdgeTAM models")
+            if self.args.compile_mode != COMPILE_MODE_VISION_REDUCE_OVERHEAD:
+                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires vision-reduce-overhead compile mode")
+            if self.args.gpu_gate_mode != GPU_GATE_MODE_OFF:
+                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires --gpu-gate-mode off")
+            if not async_fusion_filter_enabled(self.args):
+                raise RuntimeError("Demo 2.1.5 compiled parallel EdgeTAM requires async latest-wins PCD filtering")
         if preset_canonical == PRESET_DEMO215_STAGED_PARALLEL_5FPS:
             if self.args.depth_source != DEPTH_SOURCE_REALSENSE:
                 raise RuntimeError("Demo 2.1.5 staged parallel requires native RealSense depth")

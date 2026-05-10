@@ -135,10 +135,10 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
 
         self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
 
-    def test_demo215_public_parallel_edgetam_selects_staged_parallel_preset(self) -> None:
+    def test_demo215_public_parallel_edgetam_selects_legacy_compiled_worker_preset(self) -> None:
         argv = demo215._to_demo215_argv(["--dry-run", "--parallel-edgetam"])
 
-        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS])
         self.assertIn("--dry-run", argv)
 
     def test_demo215_public_parallel_edgetam_preserves_explicit_runtime_preset(self) -> None:
@@ -153,6 +153,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
 
         preset_idx = argv.index("--preset")
         self.assertEqual(argv[preset_idx + 1], demo.PRESET_DEMO215_ASYNC_FILTER_5FPS)
+        self.assertNotIn(demo.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS, argv)
         self.assertNotIn(demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS, argv)
 
     def test_demo215_preset_contract_is_realsense_depth_single_owner(self) -> None:
@@ -191,6 +192,26 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertEqual(contract["edgetam"]["stream_mode"], demo.EDGETAM_STREAM_MODE_PER_CAMERA)
         self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])
 
+    def test_demo215_compiled_parallel_edgetam_contract_is_legacy_worker_path(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            ["--dry-run", "--preset", demo.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS]
+        )
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["demo"], "demo_2_1_5_realsense_async_filtered_fused_pcd")
+        self.assertEqual(contract["preset_canonical"], demo.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS)
+        self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_REALSENSE)
+        self.assertEqual(contract["compile_mode"], demo.DEFAULT_COMPILE_MODE)
+        self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_SEPARATE_WORKERS)
+        self.assertTrue(contract["gpu_pipeline"]["separate_ffs_and_edgetam_workers"])
+        self.assertEqual(contract["gpu_gate"]["mode"], "off")
+        self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_REPLICATED)
+        self.assertEqual(contract["edgetam"]["stream_mode"], demo.EDGETAM_STREAM_MODE_PER_CAMERA)
+        self.assertTrue(contract["memory_for_speed"]["models_loaded_once_per_worker"])
+        self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])
+
     def test_demo215_thread_specs_include_gpu_owner_and_filter(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO215_ASYNC_FILTER_5FPS])
@@ -224,6 +245,28 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         names = [name for name, _target in runtime._thread_specs()]
 
         self.assertEqual(names, ["capture-group", "staged-gpu", "fusion", "filter"])
+
+    def test_demo215_compiled_parallel_edgetam_thread_specs_are_legacy_workers(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            ["--dry-run", "--preset", demo.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS]
+        )
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
+        runtime = demo.Demo22Runtime(args)
+        names = [name for name, _target in runtime._thread_specs()]
+
+        self.assertEqual(
+            names,
+            [
+                "capture-group",
+                "realsense-depth",
+                "edgetam-cam0",
+                "edgetam-cam1",
+                "edgetam-cam2",
+                "fusion",
+                "filter",
+            ],
+        )
 
     def test_realsense_depth_cycle_converts_uint16_to_meter_depth_group(self) -> None:
         parser = demo.build_arg_parser()
