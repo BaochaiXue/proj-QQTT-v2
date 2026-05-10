@@ -36,6 +36,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run.add_argument("--gpu-sampling-backend", choices=runtime.GPU_SAMPLING_BACKENDS, default=None, help="GPU sampler backend; NVML only.")
     run.add_argument("--gpu-sampling-device-index", type=int, default=None, help="GPU index for the sampler.")
     run.add_argument("--fps", type=int, default=None, help="RealSense RGB-D capture target FPS.")
+    run.add_argument(
+        "--parallel-edgetam",
+        action="store_true",
+        help="Run cam0/cam1/cam2 EdgeTAM tracking in parallel instead of the default single-owner sequential path.",
+    )
     run.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 2.1.5 runtime contract and exit.")
     run.add_argument("--debug", action="store_true", help="Enable verbose runtime logs.")
 
@@ -132,7 +137,7 @@ def _to_demo215_argv(argv: Sequence[str] | None) -> list[str]:
         return ["--help"]
 
     translated: list[str] = []
-    if parsed.experimental_staged_parallel and not _has_flag(passthrough, "--preset"):
+    if (parsed.parallel_edgetam or parsed.experimental_staged_parallel) and not _has_flag(passthrough, "--preset"):
         translated.extend(["--preset", runtime.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
 
     _append_option(translated, "--duration-s", parsed.duration_s)

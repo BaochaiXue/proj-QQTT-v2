@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 import threading
 import time
+import traceback
 from typing import Any, Callable, Sequence
 
 import numpy as np
@@ -148,7 +149,10 @@ PRESET_COMPAT_ALIASES = {
 }
 DEFAULT_DEVICE = "cuda"
 DEFAULT_DTYPE = "bfloat16"
-DEFAULT_COMPILE_MODE = "vision-reduce-overhead"
+COMPILE_MODE_VISION_REDUCE_OVERHEAD = "vision-reduce-overhead"
+COMPILE_MODE_VISION_DEFAULT = "vision-default"
+COMPILE_MODES = (COMPILE_MODE_VISION_REDUCE_OVERHEAD, COMPILE_MODE_VISION_DEFAULT)
+DEFAULT_COMPILE_MODE = COMPILE_MODE_VISION_REDUCE_OVERHEAD
 DEFAULT_DEMO22_CONTROLLER_LABEL = "towel"
 DEFAULT_DEMO22_DEPTH_MIN_M = 0.1
 DEFAULT_OUTPUT_ROOT = ROOT / "result" / "demo2_1_three_view_fused_pcd"
@@ -1318,6 +1322,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--staged-order", attr="staged_order", value=STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM)
             _set_if_not_explicit(args, explicit, flag="--edgetam-stream-mode", attr="edgetam_stream_mode", value=EDGETAM_STREAM_MODE_PER_CAMERA)
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
+            _set_if_not_explicit(args, explicit, flag="--compile-mode", attr="compile_mode", value=COMPILE_MODE_VISION_DEFAULT)
             _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-compile", attr="edgetam_prewarm_compile", value=True)
             _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-runs", attr="edgetam_prewarm_runs", value=1)
             _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
@@ -1872,10 +1877,12 @@ class Demo21Runtime:
 
     def _mark_fatal_error(self, stage: str, exc: BaseException) -> None:
         message = f"{stage}: {type(exc).__name__}: {exc}"
+        trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         with self._fatal_error_lock:
             if self._fatal_error is None:
                 self._fatal_error = message
                 self._summary["fatal_error"] = message
+                self._summary["fatal_error_traceback"] = trace
 
     def _record_gpu_gate_wait(self, key: str, wait_ms: float) -> None:
         stats = self.gpu_gate_wait_stats.get(key)
@@ -2155,8 +2162,8 @@ class Demo21Runtime:
     def _validate_live_contract(self) -> None:
         if tuple(self.args.camera_ids) != DEFAULT_CAMERA_IDS:
             raise RuntimeError("Demo 2.1 first live slice expects --camera-ids 0,1,2")
-        if self.args.compile_mode != DEFAULT_COMPILE_MODE:
-            raise RuntimeError("Demo 2.1 requires --compile-mode vision-reduce-overhead")
+        if self.args.compile_mode not in COMPILE_MODES:
+            raise RuntimeError(f"Demo 2.1 unsupported --compile-mode {self.args.compile_mode}")
         if self.args.ffs_worker_mode != "shared":
             raise RuntimeError("Demo 2.1 requires --ffs-worker-mode shared")
         if self.args.edgetam_worker_mode != "per-camera":
@@ -3561,7 +3568,11 @@ class Demo21Runtime:
         model.eval()
         model_load_ms = _elapsed_ms(model_load_start_s, time.perf_counter())
         compile_start_s = time.perf_counter()
-        model, compile_metadata = hf_stream._apply_compile_mode(model, self.args.compile_mode)
+        model, compile_metadata = self._apply_edgetam_compile_mode(
+            hf_stream=hf_stream,
+            torch_module=torch_module,
+            model=model,
+        )
         compile_wrap_ms = _elapsed_ms(compile_start_s, time.perf_counter())
         if (
             self.args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_SEPARATE_WORKERS, GPU_PIPELINE_MODE_STAGED}
@@ -3626,6 +3637,39 @@ class Demo21Runtime:
             flush=True,
         )
         return hf_stream, torch_module, dtype, model, processor
+
+    def _apply_edgetam_compile_mode(self, *, hf_stream: Any, torch_module: Any, model: Any) -> tuple[Any, dict[str, Any]]:
+        compile_mode = str(self.args.compile_mode)
+        if compile_mode == COMPILE_MODE_VISION_REDUCE_OVERHEAD:
+            return hf_stream._apply_compile_mode(model, compile_mode)
+        if compile_mode != COMPILE_MODE_VISION_DEFAULT:
+            raise RuntimeError(f"Unsupported EdgeTAM compile mode: {compile_mode}")
+        metadata: dict[str, Any] = {
+            "compile_mode": compile_mode,
+            "enabled": True,
+            "torch_compile_available": bool(hasattr(torch_module, "compile")),
+            "torch_compile_mode": "default",
+            "fullgraph": False,
+            "dynamic": False,
+            "requested_targets": ["vision_encoder"],
+            "applied_targets": ["vision_encoder"] if hasattr(model, "vision_encoder") else [],
+            "missing_targets": [] if hasattr(model, "vision_encoder") else ["vision_encoder"],
+            "whole_model_compiled": False,
+            "wrap_ms": 0.0,
+        }
+        if not hasattr(torch_module, "compile"):
+            raise RuntimeError("Requested --compile-mode vision-default but torch.compile is not available.")
+        if not hasattr(model, "vision_encoder"):
+            raise RuntimeError("Requested --compile-mode vision-default, but model.vision_encoder was not found.")
+        started_s = time.perf_counter()
+        model.vision_encoder = torch_module.compile(
+            model.vision_encoder,
+            mode="default",
+            fullgraph=False,
+            dynamic=False,
+        )
+        metadata["wrap_ms"] = _elapsed_ms(started_s, time.perf_counter())
+        return model, metadata
 
     def _dummy_prewarm_prompt_masks(self) -> tuple[list[int], list[np.ndarray]]:
         height = int(self.height)
@@ -5460,7 +5504,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--render-mode", choices=RENDER_MODES, default="none")
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--device", default=DEFAULT_DEVICE)
-    parser.add_argument("--compile-mode", choices=("vision-reduce-overhead",), default="vision-reduce-overhead")
+    parser.add_argument("--compile-mode", choices=COMPILE_MODES, default=DEFAULT_COMPILE_MODE)
     parser.add_argument(
         "--edgetam-prewarm-compile",
         action=argparse.BooleanOptionalAction,

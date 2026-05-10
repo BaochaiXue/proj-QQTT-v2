@@ -38,6 +38,7 @@ manual; use the compressed harness index first.
 | Demo 2.2 staged-parallel async GPU observation | `demo2_2_staged_parallel_async_gpu_observation.md` |
 | Demo 2.1.5 RealSense-depth async filtered fused PCD | `demo2_1_5_realsense_depth_60s_profile.md` |
 | Demo 2.1.5 NVML GPU utilization profile | `demo2_1_5_gpu_nvml_profile.md` |
+| Demo 2.1.5 parallel EdgeTAM NVML GPU profile | `demo2_1_5_parallel_edgetam_gpu_nvml_profile.md` |
 | Demo 2.1.5 init cache warmup probe | `demo2_1_5_init_cache_warmup.md` |
 | Demo 2 GPU utilization sampling support | `demo2_gpu_sampling_profile_support.md` |
 | Demo 2 / 2.1 RTX 4090 `demo_2_max` environment | `demo_2_max_4090_env_validation.md` |

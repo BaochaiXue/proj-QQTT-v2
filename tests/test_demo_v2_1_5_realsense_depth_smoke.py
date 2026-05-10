@@ -49,6 +49,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertIn("--warmup-s", help_text)
         self.assertIn("--gpu-sampling", help_text)
         self.assertIn("--gpu-sampling-interval-s", help_text)
+        self.assertIn("--parallel-edgetam", help_text)
         self.assertIn("--min-depth-m", help_text)
         self.assertIn("--experimental-edgetam-batch-vision", help_text)
         self.assertIn("--advanced-help", help_text)
@@ -75,7 +76,9 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_ASYNC_FILTER_5FPS])
+        preset_idx = argv.index("--preset")
+        self.assertEqual(argv[preset_idx + 1], demo.PRESET_DEMO215_ASYNC_FILTER_5FPS)
+        self.assertNotIn(demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS, argv)
         self.assertNotIn("--warm-cache-only", argv)
         self.assertNotIn("--warm-cache-repeat", argv)
         self.assertNotIn("--warm-cache-json-output", argv)
@@ -106,7 +109,9 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_ASYNC_FILTER_5FPS])
+        preset_idx = argv.index("--preset")
+        self.assertEqual(argv[preset_idx + 1], demo.PRESET_DEMO215_ASYNC_FILTER_5FPS)
+        self.assertNotIn(demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS, argv)
         self.assertIn("--profile-warmup-exclude-s", argv)
         self.assertIn("--depth-min-m", argv)
         self.assertIn("--depth-max-m", argv)
@@ -129,6 +134,26 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         argv = demo215._to_demo215_argv(["--dry-run", "--experimental-staged-parallel"])
 
         self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
+
+    def test_demo215_public_parallel_edgetam_selects_staged_parallel_preset(self) -> None:
+        argv = demo215._to_demo215_argv(["--dry-run", "--parallel-edgetam"])
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
+        self.assertIn("--dry-run", argv)
+
+    def test_demo215_public_parallel_edgetam_preserves_explicit_runtime_preset(self) -> None:
+        argv = demo215._to_demo215_argv(
+            [
+                "--dry-run",
+                "--parallel-edgetam",
+                "--preset",
+                demo.PRESET_DEMO215_ASYNC_FILTER_5FPS,
+            ]
+        )
+
+        preset_idx = argv.index("--preset")
+        self.assertEqual(argv[preset_idx + 1], demo.PRESET_DEMO215_ASYNC_FILTER_5FPS)
+        self.assertNotIn(demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS, argv)
 
     def test_demo215_preset_contract_is_realsense_depth_single_owner(self) -> None:
         parser = demo.build_arg_parser()
@@ -161,6 +186,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertEqual(contract["demo"], "demo_2_1_5_realsense_async_filtered_fused_pcd")
         self.assertEqual(contract["preset_canonical"], demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS)
         self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_REALSENSE)
+        self.assertEqual(contract["compile_mode"], demo.COMPILE_MODE_VISION_DEFAULT)
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_STAGED)
         self.assertEqual(contract["edgetam"]["stream_mode"], demo.EDGETAM_STREAM_MODE_PER_CAMERA)
         self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])

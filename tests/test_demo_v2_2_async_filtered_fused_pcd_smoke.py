@@ -252,7 +252,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["fusion_target_fps"], 15.0)
         self.assertEqual(contract["capture_group_target_fps"], 15.0)
         self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_FFS)
-        self.assertEqual(contract["compile_mode"], demo.DEFAULT_COMPILE_MODE)
+        self.assertEqual(contract["compile_mode"], demo.COMPILE_MODE_VISION_DEFAULT)
         self.assertEqual(contract["track_mode"], demo.TRACK_MODE_CONTROLLER_OBJECT)
         self.assertEqual(args.depth_min_m, demo.DEFAULT_DEMO22_DEPTH_MIN_M)
         self.assertTrue(contract["init"]["parallel_init"])
