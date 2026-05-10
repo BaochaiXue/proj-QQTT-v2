@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 import numpy as np
 
-from demo_v2_1 import realtime_three_view_masked_fused_pcd as demo
+from demo_v2_2 import runtime as demo
 from demo_v2_1_5 import realtime_three_view_async_filtered_fused_pcd as demo215
 
 
@@ -55,8 +56,14 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertNotIn("--fusion-target-fps", help_text)
         self.assertNotIn("--gpu-pipeline-mode", help_text)
 
+    def test_demo215_wrapper_imports_dedicated_runtime_boundary(self) -> None:
+        source = Path(demo215.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("from demo_v2_2 import runtime", source)
+        self.assertNotIn("from demo_v2_1 import realtime_three_view_masked_fused_pcd", source)
+
     def test_demo215_warm_cache_flags_do_not_pass_to_runtime_parser(self) -> None:
-        argv = demo215._to_demo21_argv(
+        argv = demo215._to_demo215_argv(
             [
                 "--warm-cache-only",
                 "--warm-cache-repeat",
@@ -72,7 +79,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertNotIn("--warm-cache-json-output", argv)
 
     def test_demo215_public_cli_aliases_translate_to_runtime_flags(self) -> None:
-        argv = demo215._to_demo21_argv(
+        argv = demo215._to_demo215_argv(
             [
                 "--dry-run",
                 "--duration-s",
@@ -110,7 +117,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertIn("--gpu-sampling-device-index", argv)
 
     def test_demo215_public_experimental_staged_parallel_selects_probe_preset(self) -> None:
-        argv = demo215._to_demo21_argv(["--dry-run", "--experimental-staged-parallel"])
+        argv = demo215._to_demo215_argv(["--dry-run", "--experimental-staged-parallel"])
 
         self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
 
@@ -153,7 +160,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO215_ASYNC_FILTER_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
         names = [name for name, _target in runtime._thread_specs()]
 
         self.assertEqual(names, ["capture-group", "gpu-owner", "fusion", "filter"])
@@ -162,7 +169,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO215_ASYNC_FILTER_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
 
         result = runtime._run_parallel_init_task("unit", lambda: "ok")
         task_profile = runtime._init_profile_snapshot()["parallel_init"]["unit"]
@@ -178,7 +185,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
         names = [name for name, _target in runtime._thread_specs()]
 
         self.assertEqual(names, ["capture-group", "staged-gpu", "fusion", "filter"])
@@ -187,7 +194,7 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO215_ASYNC_FILTER_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
         group = demo.CaptureGroup(
             group_id=7,
             created_perf_s=1.0,

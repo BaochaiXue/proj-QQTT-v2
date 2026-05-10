@@ -12,10 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from demo_v2_1 import realtime_three_view_masked_fused_pcd as demo21  # noqa: E402
+from demo_v2_2 import runtime  # noqa: E402
 
 
-DEFAULT_PRESET = demo21.PRESET_DEMO215_ASYNC_FILTER_5FPS
+DEFAULT_PRESET = runtime.PRESET_DEMO215_ASYNC_FILTER_5FPS
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -33,7 +33,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run.add_argument("--profile-json-output", default=None, help="Write the full profile JSON to this path.")
     run.add_argument("--gpu-sampling", action="store_true", help="Record GPU utilization/memory/power samples in the profile.")
     run.add_argument("--gpu-sampling-interval-s", type=float, default=None, help="GPU sampling interval in seconds.")
-    run.add_argument("--gpu-sampling-backend", choices=demo21.GPU_SAMPLING_BACKENDS, default=None, help="GPU sampler backend.")
+    run.add_argument("--gpu-sampling-backend", choices=runtime.GPU_SAMPLING_BACKENDS, default=None, help="GPU sampler backend.")
     run.add_argument("--gpu-sampling-device-index", type=int, default=None, help="GPU index for the sampler.")
     run.add_argument("--fps", type=int, default=None, help="RealSense RGB-D capture target FPS.")
     run.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 2.1.5 runtime contract and exit.")
@@ -41,7 +41,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     cameras = parser.add_argument_group("Cameras")
     cameras.add_argument("--serials", nargs="*", default=None, help="Optional RealSense serial list.")
-    cameras.add_argument("--camera-ids", type=demo21.parse_camera_ids, default=None, help="Camera ids, e.g. 0,1,2.")
+    cameras.add_argument("--camera-ids", type=runtime.parse_camera_ids, default=None, help="Camera ids, e.g. 0,1,2.")
     cameras.add_argument("--calibrate-path", default=None, help="Calibration pickle path.")
     cameras.add_argument(
         "--calibration-reference-serials",
@@ -97,7 +97,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     experiments.add_argument(
         "--advanced-help",
         action="store_true",
-        help="Show the full underlying Demo 2.1 runtime help with legacy and experiment flags.",
+        help="Show the full internal runtime help with legacy and experiment flags.",
     )
 
     return parser
@@ -124,7 +124,7 @@ def _has_flag(args: Sequence[str], flag: str) -> bool:
     return flag in args or any(str(arg).startswith(f"{flag}=") for arg in args)
 
 
-def _to_demo21_argv(argv: Sequence[str] | None) -> list[str]:
+def _to_demo215_argv(argv: Sequence[str] | None) -> list[str]:
     raw = list(sys.argv[1:] if argv is None else argv)
     parser = build_arg_parser()
     parsed, passthrough = parser.parse_known_args(raw)
@@ -133,7 +133,7 @@ def _to_demo21_argv(argv: Sequence[str] | None) -> list[str]:
 
     translated: list[str] = []
     if parsed.experimental_staged_parallel and not _has_flag(passthrough, "--preset"):
-        translated.extend(["--preset", demo21.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
+        translated.extend(["--preset", runtime.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
 
     _append_option(translated, "--duration-s", parsed.duration_s)
     _append_option(translated, "--profile-warmup-exclude-s", parsed.warmup_s)
@@ -160,9 +160,9 @@ def _to_demo21_argv(argv: Sequence[str] | None) -> list[str]:
     if parsed.gpu_sampling:
         translated.append("--gpu-sampling")
     if parsed.object_only:
-        translated.extend(["--track-mode", demo21.TRACK_MODE_OBJECT_ONLY])
+        translated.extend(["--track-mode", runtime.TRACK_MODE_OBJECT_ONLY])
     if parsed.controller_object:
-        translated.extend(["--track-mode", demo21.TRACK_MODE_CONTROLLER_OBJECT])
+        translated.extend(["--track-mode", runtime.TRACK_MODE_CONTROLLER_OBJECT])
     if parsed.no_parallel_init:
         translated.append("--no-parallel-init")
     if parsed.no_compile_prewarm:
@@ -175,18 +175,18 @@ def _to_demo21_argv(argv: Sequence[str] | None) -> list[str]:
 
 def _run_warm_cache(argv: Sequence[str], *, repeat: int, json_output: str | Path) -> int:
     runtime_argv = [arg for arg in argv if arg != "--dry-run"]
-    parser = demo21.build_arg_parser()
+    parser = runtime.build_arg_parser()
     args = parser.parse_args(runtime_argv)
-    args = demo21.apply_preset_defaults(args, explicit_options=demo21._explicit_cli_options(runtime_argv))
+    args = runtime.apply_preset_defaults(args, explicit_options=runtime.explicit_cli_options(runtime_argv))
     args.parallel_init = False
     args.edgetam_prewarm_compile = True
     args.edgetam_prewarm_runs = max(1, int(getattr(args, "edgetam_prewarm_runs", 1) or 1))
     args.sam31_cache_init_model = True
-    runtime = demo21.Demo21Runtime(args)
-    started_s = demo21.time.perf_counter()
-    result = runtime.warm_init_caches(repeats=max(1, int(repeat)))
+    demo_runtime = runtime.Demo22Runtime(args)
+    started_s = runtime.time.perf_counter()
+    result = demo_runtime.warm_init_caches(repeats=max(1, int(repeat)))
     result["mode"] = "demo2.1.5-init-cache-warmup"
-    result["total_wall_ms"] = float(demo21._elapsed_ms(started_s, demo21.time.perf_counter()))
+    result["total_wall_ms"] = float(runtime.elapsed_ms(started_s, runtime.time.perf_counter()))
     output_path = Path(json_output).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
@@ -212,14 +212,14 @@ def _with_default_preset(argv: Sequence[str] | None) -> list[str]:
 def main(argv: Sequence[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     public_args, _passthrough = build_arg_parser().parse_known_args(raw)
-    runtime_argv = _to_demo21_argv(raw)
+    runtime_argv = _to_demo215_argv(raw)
     if public_args.warm_cache_only:
         return _run_warm_cache(
             runtime_argv,
             repeat=int(public_args.warm_cache_repeat),
             json_output=public_args.warm_cache_json_output,
         )
-    return demo21.main(runtime_argv)
+    return runtime.main(runtime_argv)
 
 
 if __name__ == "__main__":

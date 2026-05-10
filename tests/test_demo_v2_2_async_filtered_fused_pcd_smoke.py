@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from demo_v2_1 import realtime_three_view_masked_fused_pcd as demo
+from demo_v2_2 import runtime as demo
 from demo_v2_2 import realtime_three_view_async_filtered_fused_pcd as demo22
 
 
@@ -65,8 +65,14 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertNotIn("--gpu-pipeline-mode", help_text)
         self.assertNotIn("--single-owner-order", help_text)
 
+    def test_demo22_wrapper_imports_dedicated_runtime_boundary(self) -> None:
+        source = Path(demo22.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("from demo_v2_2 import runtime", source)
+        self.assertNotIn("from demo_v2_1 import realtime_three_view_masked_fused_pcd", source)
+
     def test_demo22_public_cli_aliases_translate_to_runtime_flags(self) -> None:
-        argv = demo22._to_demo21_argv(
+        argv = demo22._to_demo22_argv(
             [
                 "--dry-run",
                 "--duration-s",
@@ -113,14 +119,14 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("1", argv)
 
     def test_demo22_public_cli_still_passes_legacy_flags_through(self) -> None:
-        argv = demo22._to_demo21_argv(["--dry-run", "--gpu-pipeline-mode", demo.GPU_PIPELINE_MODE_SINGLE_OWNER])
+        argv = demo22._to_demo22_argv(["--dry-run", "--gpu-pipeline-mode", demo.GPU_PIPELINE_MODE_SINGLE_OWNER])
 
         self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
         self.assertIn("--gpu-pipeline-mode", argv)
         self.assertIn(demo.GPU_PIPELINE_MODE_SINGLE_OWNER, argv)
 
     def test_demo22_public_experimental_staged_parallel_selects_probe_preset(self) -> None:
-        argv = demo22._to_demo21_argv(["--dry-run", "--experimental-staged-parallel"])
+        argv = demo22._to_demo22_argv(["--dry-run", "--experimental-staged-parallel"])
 
         self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
 
@@ -220,7 +226,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
             args,
             explicit_options={"--dry-run", "--preset", "--edgetam-batch-vision-encoder"},
         )
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
 
         with self.assertRaisesRegex(RuntimeError, "batch-vision-encoder requires single-owner"):
             runtime._validate_live_contract()
@@ -280,7 +286,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
         names = [name for name, _target in runtime._thread_specs()]
 
         self.assertEqual(names, ["capture-group", "gpu-owner", "fusion", "filter"])
@@ -289,7 +295,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
         names = [name for name, _target in runtime._thread_specs()]
 
         self.assertEqual(names, ["capture-group", "staged-gpu", "fusion", "filter"])
@@ -298,7 +304,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
 
         runtime._publish_raw_fused_for_async_filter(_raw_packet(1))
 
@@ -309,7 +315,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
         raw = _raw_packet(2)
 
         packet = runtime._filter_raw_fused_packet(raw)
@@ -324,7 +330,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
 
         runtime.raw_fused_slot.put(_raw_packet(1))
         runtime.raw_fused_slot.put(_raw_packet(2))
@@ -336,7 +342,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
         worker = threading.Thread(target=runtime._async_filter_worker, daemon=True)
         worker.start()
         try:
@@ -355,7 +361,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS, "--profile-pipeline"])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--profile-pipeline"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
         records = [
             {
                 "group_id": 0,
@@ -387,7 +393,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS, "--profile-pipeline"])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--profile-pipeline"})
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
 
         runtime._init_profile_set(("camera_startup_ms",), 12.0)
         runtime._init_profile_update(("sam31", "cam0"), {"total_ms": 3.0})
@@ -446,7 +452,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
             args,
             explicit_options={"--dry-run", "--preset", "--gpu-sampling", "--profile-warmup-exclude-s"},
         )
-        runtime = demo.Demo21Runtime(args)
+        runtime = demo.Demo22Runtime(args)
         runtime._gpu_sampler = FakeSampler()  # type: ignore[assignment]
 
         payload = runtime._build_profile_payload()

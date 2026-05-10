@@ -11,10 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from demo_v2_1 import realtime_three_view_masked_fused_pcd as demo21  # noqa: E402
+from demo_v2_2 import runtime  # noqa: E402
 
 
-DEFAULT_PRESET = demo21.PRESET_DEMO22_ASYNC_FILTER_5FPS
+DEFAULT_PRESET = runtime.PRESET_DEMO22_ASYNC_FILTER_5FPS
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -32,7 +32,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run.add_argument("--profile-json-output", default=None, help="Write the full profile JSON to this path.")
     run.add_argument("--gpu-sampling", action="store_true", help="Record GPU utilization/memory/power samples in the profile.")
     run.add_argument("--gpu-sampling-interval-s", type=float, default=None, help="GPU sampling interval in seconds.")
-    run.add_argument("--gpu-sampling-backend", choices=demo21.GPU_SAMPLING_BACKENDS, default=None, help="GPU sampler backend.")
+    run.add_argument("--gpu-sampling-backend", choices=runtime.GPU_SAMPLING_BACKENDS, default=None, help="GPU sampler backend.")
     run.add_argument("--gpu-sampling-device-index", type=int, default=None, help="GPU index for the sampler.")
     run.add_argument("--fps", type=int, default=None, help="RealSense RGB+IR capture target FPS.")
     run.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 2.2 runtime contract and exit.")
@@ -40,7 +40,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     cameras = parser.add_argument_group("Cameras")
     cameras.add_argument("--serials", nargs="*", default=None, help="Optional RealSense serial list.")
-    cameras.add_argument("--camera-ids", type=demo21.parse_camera_ids, default=None, help="Camera ids, e.g. 0,1,2.")
+    cameras.add_argument("--camera-ids", type=runtime.parse_camera_ids, default=None, help="Camera ids, e.g. 0,1,2.")
     cameras.add_argument("--calibrate-path", default=None, help="Calibration pickle path.")
     cameras.add_argument(
         "--calibration-reference-serials",
@@ -80,14 +80,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     experiments.add_argument(
         "--ffs-batch-size",
         type=int,
-        choices=demo21.FFS_TRT_BATCH_SIZES,
+        choices=runtime.FFS_TRT_BATCH_SIZES,
         default=None,
         help="Override FFS TensorRT static batch size.",
     )
     experiments.add_argument(
         "--advanced-help",
         action="store_true",
-        help="Show the full underlying Demo 2.1 runtime help with legacy and experiment flags.",
+        help="Show the full internal runtime help with legacy and experiment flags.",
     )
 
     return parser
@@ -114,7 +114,7 @@ def _has_flag(args: Sequence[str], flag: str) -> bool:
     return flag in args or any(str(arg).startswith(f"{flag}=") for arg in args)
 
 
-def _to_demo21_argv(argv: Sequence[str] | None) -> list[str]:
+def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
     raw = list(sys.argv[1:] if argv is None else argv)
     parser = build_arg_parser()
     parsed, passthrough = parser.parse_known_args(raw)
@@ -123,7 +123,7 @@ def _to_demo21_argv(argv: Sequence[str] | None) -> list[str]:
 
     translated: list[str] = []
     if parsed.experimental_staged_parallel and not _has_flag(passthrough, "--preset"):
-        translated.extend(["--preset", demo21.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
+        translated.extend(["--preset", runtime.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
 
     _append_option(translated, "--duration-s", parsed.duration_s)
     _append_option(translated, "--profile-warmup-exclude-s", parsed.warmup_s)
@@ -151,9 +151,9 @@ def _to_demo21_argv(argv: Sequence[str] | None) -> list[str]:
     if parsed.gpu_sampling:
         translated.append("--gpu-sampling")
     if parsed.object_only:
-        translated.extend(["--track-mode", demo21.TRACK_MODE_OBJECT_ONLY])
+        translated.extend(["--track-mode", runtime.TRACK_MODE_OBJECT_ONLY])
     if parsed.controller_object:
-        translated.extend(["--track-mode", demo21.TRACK_MODE_CONTROLLER_OBJECT])
+        translated.extend(["--track-mode", runtime.TRACK_MODE_CONTROLLER_OBJECT])
     if parsed.no_parallel_init:
         translated.append("--no-parallel-init")
     if parsed.no_compile_prewarm:
@@ -172,7 +172,7 @@ def _with_default_preset(argv: Sequence[str] | None) -> list[str]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    return demo21.main(_to_demo21_argv(argv))
+    return runtime.main(_to_demo22_argv(argv))
 
 
 if __name__ == "__main__":

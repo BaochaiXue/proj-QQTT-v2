@@ -33,6 +33,7 @@ manual; use the compressed harness index first.
 | Demo 2.2 default FFS TensorRT batch=3 contract | `demo2_2_default_ffs_batch3.md` |
 | Demo 2.2 EdgeTAM batch vision encoder probe | `demo2_2_edgetam_batch_vision_profile.md` |
 | Demo 2.2 simplified public CLI | `demo2_2_cli_simplification.md` |
+| Demo 2.2 runtime split | `demo2_2_runtime_split.md` |
 | Demo 2.2 staged-parallel GPU-resident probe | `demo2_2_staged_parallel_5fps_benchmark.md` |
 | Demo 2.2 staged-parallel async GPU observation | `demo2_2_staged_parallel_async_gpu_observation.md` |
 | Demo 2.1.5 RealSense-depth async filtered fused PCD | `demo2_1_5_realsense_depth_60s_profile.md` |
