@@ -10,7 +10,6 @@ from itertools import product
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import threading
 import time
@@ -495,7 +494,7 @@ PROFILE_FLAG_ATTRS = (
     "gpu_sampling",
 )
 
-GPU_SAMPLING_BACKENDS = ("auto", "nvml", "nvidia-smi")
+GPU_SAMPLING_BACKENDS = ("nvml",)
 
 
 class StageStats:
@@ -994,16 +993,9 @@ class GpuUtilizationSampler:
         if requested not in GPU_SAMPLING_BACKENDS:
             self._append_error(f"unsupported backend {requested!r}")
             return None
-        if requested in {"auto", "nvml"}:
-            sampler = self._try_make_nvml_sampler()
-            if sampler is not None:
-                self._backend_used = "nvml"
-                return sampler
-            if requested == "nvml":
-                return None
-        sampler = self._try_make_nvidia_smi_sampler()
+        sampler = self._try_make_nvml_sampler()
         if sampler is not None:
-            self._backend_used = "nvidia-smi"
+            self._backend_used = "nvml"
             return sampler
         return None
 
@@ -1055,56 +1047,6 @@ class GpuUtilizationSampler:
                 nvml.nvmlShutdown()
             except Exception:
                 pass
-
-    def _try_make_nvidia_smi_sampler(self) -> Callable[[], dict[str, Any]] | None:
-        fields = (
-            "utilization.gpu",
-            "utilization.memory",
-            "memory.used",
-            "memory.total",
-            "power.draw",
-            "power.limit",
-            "clocks.sm",
-            "clocks.mem",
-            "temperature.gpu",
-        )
-        command = [
-            "nvidia-smi",
-            f"--query-gpu={','.join(fields)}",
-            "--format=csv,noheader,nounits",
-            "-i",
-            str(self.device_index),
-        ]
-        try:
-            subprocess.run(command, check=True, capture_output=True, text=True, timeout=2.0)
-        except Exception as exc:
-            self._append_error(f"nvidia-smi unavailable: {type(exc).__name__}: {exc}")
-            return None
-
-        def _sample() -> dict[str, Any]:
-            completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=2.0)
-            line = completed.stdout.strip().splitlines()[0]
-            parts = [part.strip() for part in line.split(",")]
-            values: dict[str, float] = {}
-            keys = (
-                "gpu_util_pct",
-                "memory_util_pct",
-                "memory_used_mb",
-                "memory_total_mb",
-                "power_w",
-                "power_limit_w",
-                "sm_clock_mhz",
-                "mem_clock_mhz",
-                "temperature_c",
-            )
-            for key, raw in zip(keys, parts):
-                try:
-                    values[key] = float(raw)
-                except ValueError:
-                    continue
-            return values
-
-        return _sample
 
 
 def fuse_semantic_camera_clouds(
@@ -1755,7 +1697,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "gpu_sampling": {
             "enabled": bool(getattr(args, "gpu_sampling", False)),
             "interval_s": float(getattr(args, "gpu_sampling_interval_s", 0.5)),
-            "backend": str(getattr(args, "gpu_sampling_backend", "auto")),
+            "backend": str(getattr(args, "gpu_sampling_backend", "nvml")),
             "device_index": int(getattr(args, "gpu_sampling_device_index", 0)),
         },
         "gpu_pipeline": {
@@ -5565,7 +5507,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Sample GPU utilization/memory/power/clocks in a background thread and include it in profile reports.",
     )
     parser.add_argument("--gpu-sampling-interval-s", type=float, default=0.5)
-    parser.add_argument("--gpu-sampling-backend", choices=GPU_SAMPLING_BACKENDS, default="auto")
+    parser.add_argument("--gpu-sampling-backend", choices=GPU_SAMPLING_BACKENDS, default="nvml")
     parser.add_argument("--gpu-sampling-device-index", type=int, default=0)
     parser.add_argument("--sam31-init-retry-interval-s", type=float, default=0.5)
     parser.add_argument(

@@ -135,6 +135,7 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - `tensorrt==10.16.1.11`
   - `triton==3.6.0`
   - `open3d==0.19.0`
+  - `nvidia-ml-py==13.595.45` for NVML-only Demo 2 GPU sampling
   - EdgeTAM `sam2._C` from `/home/zhangxinjie/EdgeTAM`
 - Current caveat:
   - `python -m pip check` reports the inherited `sam3` metadata requirement

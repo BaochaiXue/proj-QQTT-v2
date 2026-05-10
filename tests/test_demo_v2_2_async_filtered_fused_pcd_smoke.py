@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import threading
 import time
 import unittest
@@ -95,7 +97,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
                 "--gpu-sampling-interval-s",
                 "0.25",
                 "--gpu-sampling-backend",
-                "nvidia-smi",
+                "nvml",
                 "--ffs-batch-size",
                 "1",
             ]
@@ -114,9 +116,16 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--gpu-sampling-interval-s", argv)
         self.assertIn("0.25", argv)
         self.assertIn("--gpu-sampling-backend", argv)
-        self.assertIn("nvidia-smi", argv)
+        self.assertIn("nvml", argv)
         self.assertIn("--ffs-trt-batch-size", argv)
         self.assertIn("1", argv)
+
+    def test_demo22_gpu_sampling_rejects_nvidia_smi_backend(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            demo22._to_demo22_argv(["--gpu-sampling-backend", "nvidia-smi"])
+
+    def test_demo22_runtime_gpu_sampling_backend_is_nvml_only(self) -> None:
+        self.assertEqual(demo.GPU_SAMPLING_BACKENDS, ("nvml",))
 
     def test_demo22_public_cli_still_passes_legacy_flags_through(self) -> None:
         argv = demo22._to_demo22_argv(["--dry-run", "--gpu-pipeline-mode", demo.GPU_PIPELINE_MODE_SINGLE_OWNER])
@@ -429,7 +438,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
             def diagnostics(self) -> dict[str, object]:
                 return {
                     "enabled": True,
-                    "requested_backend": "auto",
+                    "requested_backend": "nvml",
                     "backend_used": "nvml",
                     "device_index": 0,
                     "interval_s": 0.5,

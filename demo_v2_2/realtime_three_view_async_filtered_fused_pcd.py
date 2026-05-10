@@ -32,7 +32,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run.add_argument("--profile-json-output", default=None, help="Write the full profile JSON to this path.")
     run.add_argument("--gpu-sampling", action="store_true", help="Record GPU utilization/memory/power samples in the profile.")
     run.add_argument("--gpu-sampling-interval-s", type=float, default=None, help="GPU sampling interval in seconds.")
-    run.add_argument("--gpu-sampling-backend", choices=runtime.GPU_SAMPLING_BACKENDS, default=None, help="GPU sampler backend.")
+    run.add_argument("--gpu-sampling-backend", choices=runtime.GPU_SAMPLING_BACKENDS, default=None, help="GPU sampler backend; NVML only.")
     run.add_argument("--gpu-sampling-device-index", type=int, default=None, help="GPU index for the sampler.")
     run.add_argument("--fps", type=int, default=None, help="RealSense RGB+IR capture target FPS.")
     run.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 2.2 runtime contract and exit.")

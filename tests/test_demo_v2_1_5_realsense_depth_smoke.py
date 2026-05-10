@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import unittest
 from pathlib import Path
 
@@ -115,6 +117,13 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertIn("--edgetam-batch-vision-encoder", argv)
         self.assertIn("--gpu-sampling", argv)
         self.assertIn("--gpu-sampling-device-index", argv)
+
+    def test_demo215_gpu_sampling_rejects_nvidia_smi_backend(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            demo215._to_demo215_argv(["--gpu-sampling-backend", "nvidia-smi"])
+
+    def test_demo215_runtime_gpu_sampling_backend_is_nvml_only(self) -> None:
+        self.assertEqual(demo.GPU_SAMPLING_BACKENDS, ("nvml",))
 
     def test_demo215_public_experimental_staged_parallel_selects_probe_preset(self) -> None:
         argv = demo215._to_demo215_argv(["--dry-run", "--experimental-staged-parallel"])

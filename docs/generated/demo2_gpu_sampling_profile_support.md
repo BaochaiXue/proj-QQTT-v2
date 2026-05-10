@@ -4,7 +4,9 @@ Date: 2026-05-10
 
 ## Scope
 
-Demo 2.2 and Demo 2.1.5 now expose optional GPU utilization sampling for live profiles. The sampler is off by default and does not change the runtime pipeline unless explicitly enabled.
+Demo 2.2 and Demo 2.1.5 expose optional GPU utilization sampling for live profiles. The sampler is off by default and does not change the runtime pipeline unless explicitly enabled.
+
+As of 2026-05-10, Demo 2 GPU sampling is NVML-only. The old `nvidia-smi` subprocess fallback is intentionally removed because subprocess sampling adds avoidable overhead and jitter.
 
 ## Commands
 
@@ -55,12 +57,22 @@ Each sample can include:
 
 The Markdown profile report adds a `GPU Sampling` section with warmup-excluded median / p90 / p95 / max values.
 
-## Local Probe
+## NVML Requirement
 
-In the current `demo_2_max` environment, `pynvml` is not installed, so `auto` falls back to `nvidia-smi`. The WSL `nvidia-smi` path works:
+The only accepted backend is:
 
 ```text
-/usr/lib/wsl/lib/nvidia-smi
+--gpu-sampling-backend nvml
 ```
 
-The fallback sampled GPU utilization, memory, power, SM clock, memory clock, and temperature successfully in a short standalone probe. Because `nvidia-smi` starts a subprocess for each sample, use `--gpu-sampling-interval-s 0.5` or slower unless NVML is installed.
+The `demo_2_max` environment must provide the NVML Python binding (`pynvml`, distributed by `nvidia-ml-py`). If NVML cannot initialize, the profile records a GPU sampling error and no fallback sampler is started.
+
+Local validation on 2026-05-10:
+
+```text
+conda env: demo_2_max
+installed package: nvidia-ml-py==13.595.45
+NVML probe: PASS
+GPU: NVIDIA GeForce RTX 5090 Laptop GPU
+sampler smoke: PASS, backend_used=nvml, sample_count=3 over a 1.2s probe
+```
