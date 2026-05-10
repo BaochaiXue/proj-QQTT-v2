@@ -25,3 +25,10 @@ DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR = (
     / "engines"
     / "model_20-30-48_iters_4_res_480x864"
 )
+DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR = (
+    REPO_ROOT
+    / "result"
+    / "ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_batch3"
+    / "engines"
+    / "model_20-30-48_iters_4_res_480x864_batch3"
+)

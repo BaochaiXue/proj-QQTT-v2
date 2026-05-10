@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
 from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_MAX_DISP,
     DEFAULT_FFS_MODEL_NAME,
+    DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR,
     DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL,
     DEFAULT_FFS_TRT_ENGINE_SIZE,
     DEFAULT_FFS_VALID_ITERS,
@@ -82,6 +83,7 @@ OFFICIAL_DEPTH_SOURCES = (DEPTH_SOURCE_FFS,)
 RENDER_MODES = ("pointcloud", "none")
 FFS_WORKER_MODES = ("shared",)
 FFS_SCHEDULES = ("strict3-latest",)
+FFS_TRT_BATCH_SIZES = (1, 3)
 EDGETAM_WORKER_MODES = ("per-camera",)
 EDGETAM_MODEL_TOPOLOGY_REPLICATED = "replicated"
 EDGETAM_MODEL_TOPOLOGY_SHARED = "shared-model"
@@ -1128,6 +1130,8 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             and "--capture-group-target-fps" not in explicit
         ):
             setattr(args, "capture_group_target_fps", float(args.fps))
+    if int(getattr(args, "ffs_trt_batch_size", 1)) == 3 and "--ffs-trt-model-dir" not in explicit:
+        setattr(args, "ffs_trt_model_dir", str(DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR))
     _normalize_pin_memory_options(args, explicit)
     if getattr(args, "gpu_gate_mode", None) == GPU_GATE_MODE_OFF:
         setattr(args, "gpu_gate_max_concurrent", 0)
@@ -1471,9 +1475,12 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "padding_policy": "pad_width_848_to_864",
             "builderOptimizationLevel": DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL,
             "max_disp": DEFAULT_FFS_MAX_DISP,
+            "trt_batch_size": int(args.ffs_trt_batch_size),
+            "trt_model_dir": str(args.ffs_trt_model_dir),
             "worker_mode": args.ffs_worker_mode,
             "schedule": args.ffs_schedule,
             "input_staging": args.ffs_input_staging,
+            "batch3_isolated_artifact": int(args.ffs_trt_batch_size) == 3,
         },
         "edgetam": {
             "worker_mode": args.edgetam_worker_mode,
@@ -1896,6 +1903,15 @@ class Demo21Runtime:
             raise RuntimeError(f"Demo 2.1 unsupported --h2d-stream-mode {self.args.h2d_stream_mode}")
         if self.args.ffs_input_staging not in FFS_INPUT_STAGING_MODES:
             raise RuntimeError(f"Demo 2.1 unsupported --ffs-input-staging {self.args.ffs_input_staging}")
+        if int(self.args.ffs_trt_batch_size) not in FFS_TRT_BATCH_SIZES:
+            raise RuntimeError(f"Demo 2.1 unsupported --ffs-trt-batch-size {self.args.ffs_trt_batch_size}")
+        if int(self.args.ffs_trt_batch_size) > 1:
+            if self.args.depth_source != DEPTH_SOURCE_FFS:
+                raise RuntimeError("Demo 2.1 batch FFS TensorRT requires --depth-source ffs")
+            if len(tuple(self.args.camera_ids)) != int(self.args.ffs_trt_batch_size):
+                raise RuntimeError(
+                    "Demo 2.1 batch FFS TensorRT requires camera count to match --ffs-trt-batch-size"
+                )
         if bool(self.args.pin_memory) and not str(self.args.device).startswith("cuda"):
             raise RuntimeError("Demo 2.1 pinned-memory ablation requires a CUDA device")
         if int(self.args.capture_buffer_size) < 1:
@@ -2052,6 +2068,7 @@ class Demo21Runtime:
             "edge_cam2_h2d_wait_ms": ("h2d", "cam2", "edge", "h2d_wait_ms"),
             "ffs_gate_wait_ms": ("ffs", "gate_wait_ms"),
             "ffs_cycle_ms": ("ffs", "cycle_ms"),
+            "ffs_batch_ms": ("ffs", "batch_ms"),
             "ffs_cam0_ms": ("ffs", "cam0_ffs_ms"),
             "ffs_cam1_ms": ("ffs", "cam1_ffs_ms"),
             "ffs_cam2_ms": ("ffs", "cam2_ffs_ms"),
@@ -2262,6 +2279,7 @@ class Demo21Runtime:
         for name in (
             "capture_temporal_skew_ms",
             "ffs_cycle_ms",
+            "ffs_batch_ms",
             "ffs_gate_wait_ms",
             "edgetam_cam0_model_ms",
             "edgetam_cam1_model_ms",
@@ -2518,9 +2536,23 @@ class Demo21Runtime:
             group_id += 1
 
     def _create_ffs_runner(self) -> object:
-        from data_process.depth_backends import FastFoundationStereoTensorRTRunner
+        from data_process.depth_backends import (
+            FastFoundationStereoTensorRTRunner,
+            resolve_tensorrt_engine_static_batch_size,
+        )
 
         start_s = time.perf_counter()
+        static_batch_size = resolve_tensorrt_engine_static_batch_size(
+            trt_mode="two_stage",
+            model_dir=Path(self.args.ffs_trt_model_dir),
+            trt_root=None if self.args.ffs_trt_root is None else Path(self.args.ffs_trt_root),
+        )
+        if int(static_batch_size) != int(self.args.ffs_trt_batch_size):
+            raise RuntimeError(
+                "FFS TensorRT engine static batch size does not match --ffs-trt-batch-size. "
+                f"engine={static_batch_size} requested={self.args.ffs_trt_batch_size} "
+                f"model_dir={self.args.ffs_trt_model_dir}"
+            )
         runner = FastFoundationStereoTensorRTRunner(
             ffs_repo=Path(self.args.ffs_repo),
             model_dir=Path(self.args.ffs_trt_model_dir),
@@ -2530,6 +2562,7 @@ class Demo21Runtime:
         init_ms = _elapsed_ms(start_s, time.perf_counter())
         self._init_profile_add(("ffs", "runner_init_ms_total"), init_ms)
         self._init_profile_set_once(("ffs", "first_runner_init_ms"), init_ms)
+        self._init_profile_set(("ffs", "static_batch_size"), int(static_batch_size))
         return runner
 
     def _prepare_ffs_runner(self) -> object:
@@ -2625,6 +2658,8 @@ class Demo21Runtime:
         group: CaptureGroup,
         aligners: dict[int, FfsIrToColorAligner],
     ) -> tuple[DepthGroup, dict[int, dict[str, Any]]]:
+        if int(self.args.ffs_trt_batch_size) > 1:
+            return self._run_ffs_batch_cycle_for_group(runner=runner, group=group, aligners=aligners)
         cycle_start_s = time.perf_counter()
         depths: dict[int, DepthPacket] = {}
         per_camera: dict[int, dict[str, float]] = {}
@@ -2714,6 +2749,140 @@ class Demo21Runtime:
                     }
                 }
                 for camera_idx in self.args.camera_ids
+            },
+        )
+        return packet, h2d_by_camera
+
+    def _run_ffs_batch_cycle_for_group(
+        self,
+        *,
+        runner: object,
+        group: CaptureGroup,
+        aligners: dict[int, FfsIrToColorAligner],
+    ) -> tuple[DepthGroup, dict[int, dict[str, Any]]]:
+        camera_ids = tuple(int(camera_idx) for camera_idx in self.args.camera_ids)
+        batch_size = int(self.args.ffs_trt_batch_size)
+        if len(camera_ids) != batch_size:
+            raise RuntimeError(
+                f"FFS batch cycle expected {batch_size} cameras, got {len(camera_ids)} camera_ids={camera_ids}"
+            )
+
+        samples: list[dict[str, Any]] = []
+        frames: list[CameraFramePacket] = []
+        for camera_idx in camera_ids:
+            frame = group.frames[int(camera_idx)]
+            if (
+                frame.ir_left_u8 is None
+                or frame.ir_right_u8 is None
+                or frame.k_ir_left is None
+                or frame.baseline_m <= 0
+            ):
+                raise RuntimeError(f"cam{frame.camera_idx} is missing FFS IR stereo data")
+            frames.append(frame)
+            samples.append(
+                {
+                    "left_image": frame.ir_left_u8,
+                    "right_image": frame.ir_right_u8,
+                    "K_ir_left": frame.k_ir_left,
+                    "baseline_m": float(frame.baseline_m),
+                }
+            )
+
+        cycle_start_s = time.perf_counter()
+        gate_camera_idx = -1
+        with self.gpu_gate.acquire(stage="ffs", camera_idx=gate_camera_idx, group_id=group.group_id) as gate_wait_ms:
+            self._record_gpu_gate_wait("ffs", gate_wait_ms)
+            ffs_start_s = time.perf_counter()
+            outputs = runner.run_batch(samples)
+            ffs_batch_ms = _elapsed_ms(ffs_start_s, time.perf_counter())
+        if len(outputs) != len(frames):
+            raise RuntimeError(
+                f"FFS batch output count mismatch for group {group.group_id}: {len(outputs)} vs {len(frames)}"
+            )
+
+        depths: dict[int, DepthPacket] = {}
+        per_camera: dict[int, dict[str, float]] = {}
+        h2d_by_camera: dict[int, dict[str, Any]] = {}
+        per_camera_ffs_ms = float(ffs_batch_ms / max(1, len(frames)))
+        for frame, output in zip(frames, outputs):
+            depth = self._align_ffs_depth_for_frame(
+                frame=frame,
+                aligners=aligners,
+                depth_ir_left_m=np.asarray(output["depth_ir_left_m"], dtype=np.float32),
+                k_ir_left_used=np.asarray(output.get("K_ir_left_used", frame.k_ir_left), dtype=np.float32),
+                ffs_ms=per_camera_ffs_ms,
+            )
+            camera_idx = int(frame.camera_idx)
+            depths[camera_idx] = depth
+            per_camera[camera_idx] = {
+                "ffs_ms": depth.ffs_ms,
+                "align_ms": depth.align_ms,
+                "gate_wait_ms": float(gate_wait_ms),
+            }
+            h2d_by_camera[camera_idx] = dict(output.get("h2d_profile", {}))
+
+        packet = DepthGroup(
+            group_id=group.group_id,
+            depths=depths,
+            total_ms=_elapsed_ms(cycle_start_s, time.perf_counter()),
+            per_camera_ms=per_camera,
+            gpu_gate_wait_ms=float(gate_wait_ms),
+            max_temporal_skew_ms=float(group.max_temporal_skew_ms),
+            per_camera_time_offset_ms=dict(group.per_camera_time_offset_ms),
+            per_camera_frame_seq=dict(group.per_camera_frame_seq),
+            timestamp_source=str(group.timestamp_source),
+        )
+        if not self._first_ffs_cycle_recorded:
+            self._first_ffs_cycle_recorded = True
+            first_align_by_camera = {
+                f"cam{int(camera_idx)}": float(per_camera[int(camera_idx)].get("align_ms", 0.0))
+                for camera_idx in camera_ids
+            }
+            self._init_profile_update(
+                ("ffs",),
+                {
+                    "first_group_id": int(group.group_id),
+                    "first_cycle_ms": float(packet.total_ms),
+                    "first_batch_run_ms": float(ffs_batch_ms),
+                    "first_batch_size": int(batch_size),
+                    "first_run_ms_by_camera": {
+                        f"cam{int(camera_idx)}": per_camera_ffs_ms for camera_idx in camera_ids
+                    },
+                    "first_align_ms_by_camera": first_align_by_camera,
+                    "first_run_ms_sum": float(ffs_batch_ms),
+                    "first_align_ms_sum": float(sum(first_align_by_camera.values())),
+                },
+            )
+        self._profile_update(
+            group.group_id,
+            ffs={
+                "gate_wait_ms": float(gate_wait_ms),
+                "cycle_ms": float(packet.total_ms),
+                "batch_ms": float(ffs_batch_ms),
+                "batch_size": int(batch_size),
+                "publish_s": self._profile_rel_s(),
+                "capture_temporal_skew_ms": float(group.max_temporal_skew_ms),
+                **{
+                    f"cam{int(camera_idx)}_ffs_ms": float(per_camera[int(camera_idx)].get("ffs_ms", 0.0))
+                    for camera_idx in camera_ids
+                },
+                **{
+                    f"cam{int(camera_idx)}_align_ms": float(per_camera[int(camera_idx)].get("align_ms", 0.0))
+                    for camera_idx in camera_ids
+                },
+                **{
+                    f"cam{int(camera_idx)}_gate_wait_ms": float(gate_wait_ms)
+                    for camera_idx in camera_ids
+                },
+            },
+            h2d={
+                f"cam{int(camera_idx)}": {
+                    "ffs": {
+                        **h2d_by_camera.get(int(camera_idx), {}),
+                        "profile_enabled": bool(self.args.profile_h2d),
+                    }
+                }
+                for camera_idx in camera_ids
             },
         )
         return packet, h2d_by_camera
@@ -4636,6 +4805,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--edgetam-model-topology", choices=EDGETAM_MODEL_TOPOLOGIES, default="replicated")
     parser.add_argument("--ffs-repo", default=str(DEFAULT_FFS_REPO))
     parser.add_argument("--ffs-trt-model-dir", default=str(DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR))
+    parser.add_argument(
+        "--ffs-trt-batch-size",
+        type=int,
+        choices=FFS_TRT_BATCH_SIZES,
+        default=1,
+        help=(
+            "Static TensorRT FFS batch size. Default batch=1 preserves the existing engine path. "
+            "Use 3 with the isolated batch3 engine path for one triplet enqueue."
+        ),
+    )
     parser.add_argument("--ffs-trt-root", default=None)
     parser.add_argument("--object-init-mask-root", default=None)
     parser.add_argument("--controller-init-mask-root", default=None)

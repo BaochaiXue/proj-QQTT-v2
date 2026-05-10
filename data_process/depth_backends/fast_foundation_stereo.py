@@ -501,6 +501,65 @@ class _PinnedSinglePairImageInputBuffers:
         return self.left_device, self.right_device
 
 
+class _PinnedBatchPairImageInputBuffers:
+    def __init__(self, *, torch_module: Any, batch_size: int, image_shape: tuple[int, int, int]) -> None:
+        self.torch = torch_module
+        self.batch_size = int(batch_size)
+        self.image_shape = tuple(int(item) for item in image_shape)
+        if self.batch_size <= 0:
+            raise ValueError(f"Expected positive batch size, got {batch_size}.")
+        if len(self.image_shape) != 3 or self.image_shape[2] != 3:
+            raise ValueError(f"Expected HxWx3 image shape, got {self.image_shape!r}.")
+        height, width, channels = self.image_shape
+        host_shape = (self.batch_size, height, width, channels)
+        device_shape = (self.batch_size, channels, height, width)
+        self.left_host = torch_module.empty(host_shape, dtype=torch_module.uint8, pin_memory=True)
+        self.right_host = torch_module.empty(host_shape, dtype=torch_module.uint8, pin_memory=True)
+        self.left_device = torch_module.empty(device_shape, device="cuda", dtype=torch_module.float32)
+        self.right_device = torch_module.empty(device_shape, device="cuda", dtype=torch_module.float32)
+        self.last_profile: dict[str, float | str | bool] = {
+            "input_staging": FFS_INPUT_STAGING_PINNED,
+            "stage_ms": 0.0,
+            "h2d_enqueue_ms": 0.0,
+            "h2d_wait_ms": 0.0,
+            "pin_memory": True,
+        }
+
+    def load(self, left_images: list[np.ndarray], right_images: list[np.ndarray]) -> tuple[Any, Any]:
+        if len(left_images) != self.batch_size or len(right_images) != self.batch_size:
+            raise ValueError(
+                "Pinned batch TensorRT input buffer batch mismatch. "
+                f"expected={self.batch_size} left={len(left_images)} right={len(right_images)}"
+            )
+        torch = self.torch
+        stage_start_s = time.perf_counter()
+        for idx, (left_image, right_image) in enumerate(zip(left_images, right_images)):
+            left = np.ascontiguousarray(left_image)
+            right = np.ascontiguousarray(right_image)
+            if tuple(left.shape) != self.image_shape or tuple(right.shape) != self.image_shape:
+                raise ValueError(
+                    "Pinned batch TensorRT input buffer shape mismatch. "
+                    f"expected={self.image_shape!r} left={left.shape!r} right={right.shape!r}"
+                )
+            if left.dtype != np.uint8 or right.dtype != np.uint8:
+                raise ValueError(f"Expected uint8 TensorRT inputs, got {left.dtype!r} and {right.dtype!r}.")
+            self.left_host[idx].copy_(torch.as_tensor(left, dtype=torch.uint8))
+            self.right_host[idx].copy_(torch.as_tensor(right, dtype=torch.uint8))
+        stage_ms = (time.perf_counter() - stage_start_s) * 1000.0
+        h2d_start_s = time.perf_counter()
+        self.left_device.copy_(self.left_host.permute(0, 3, 1, 2), non_blocking=True)
+        self.right_device.copy_(self.right_host.permute(0, 3, 1, 2), non_blocking=True)
+        h2d_enqueue_ms = (time.perf_counter() - h2d_start_s) * 1000.0
+        self.last_profile = {
+            "input_staging": FFS_INPUT_STAGING_PINNED,
+            "stage_ms": float(stage_ms),
+            "h2d_enqueue_ms": float(h2d_enqueue_ms),
+            "h2d_wait_ms": 0.0,
+            "pin_memory": True,
+        }
+        return self.left_device, self.right_device
+
+
 class _CachedTensorRTRun:
     def __init__(self, *, torch_module: Any, trt_module: Any, trt_runner: Any) -> None:
         self.torch = torch_module
@@ -701,7 +760,86 @@ def finalize_single_engine_tensorrt_output(
     return outputs[0]
 
 
-def _load_official_tensorrt_foundation_stereo(*, ffs_repo: Path) -> Any:
+def _patch_batch_safe_gwc_volume_triton(foundation_stereo: Any, submodule: Any) -> None:
+    import torch
+
+    triton = getattr(submodule, "triton", None)
+    if triton is None:
+        raise RuntimeError("Triton is required for the two-stage FFS TensorRT export/runtime path.")
+    kernel = getattr(submodule, "_gwc_triton_kernel")
+
+    @torch.no_grad()
+    def build_gwc_volume_triton_batch_safe(
+        refimg_fea: Any,
+        targetimg_fea: Any,
+        maxdisp: int,
+        num_groups: int,
+        normalize: bool = True,
+    ) -> Any:
+        if triton is None:
+            raise RuntimeError("Triton is not available. Please install triton to use build_gwc_volume_triton.")
+        batch, channels, height, width = refimg_fea.shape
+        assert maxdisp > 0 and channels % num_groups == 0
+        group_channels = channels // num_groups
+        in_dtype = refimg_fea.dtype if refimg_fea.dtype in (torch.float16, torch.bfloat16, torch.float32) else torch.float32
+
+        if normalize:
+            ref_norm = refimg_fea.float().reshape(batch, num_groups, group_channels, height, width).norm(dim=2)
+            tar_norm = targetimg_fea.float().reshape(batch, num_groups, group_channels, height, width).norm(dim=2)
+            ref_norm = ref_norm.permute(0, 2, 1, 3).reshape(batch * height, num_groups, width).to(in_dtype).contiguous()
+            tar_norm = tar_norm.permute(0, 2, 1, 3).reshape(batch * height, num_groups, width).to(in_dtype).contiguous()
+        else:
+            ref_norm = refimg_fea.new_empty((1, 1, 1), dtype=in_dtype)
+            tar_norm = refimg_fea.new_empty((1, 1, 1), dtype=in_dtype)
+
+        ref = refimg_fea.to(in_dtype)
+        tar = targetimg_fea.to(in_dtype)
+        ref_bhwc = ref.permute(0, 2, 3, 1).reshape(batch * height, width, channels).contiguous()
+        tar_bhwc = tar.permute(0, 2, 3, 1).reshape(batch * height, width, channels).contiguous()
+        out_bhw = torch.empty((batch * height, num_groups, maxdisp, width), device=ref.device, dtype=in_dtype)
+        batch_height = batch * height
+        d_eff = min(maxdisp, width)
+        grid = lambda meta: (
+            batch_height * num_groups,
+            triton.cdiv(d_eff, meta["BLOCK_D"]),
+            triton.cdiv(width, meta["BLOCK_W"]),
+        )
+        kernel[grid](
+            ref_bhwc,
+            tar_bhwc,
+            ref_norm,
+            tar_norm,
+            out_bhw,
+            batch_height,
+            channels,
+            width,
+            d_eff,
+            num_groups,
+            group_channels,
+            ref_bhwc.stride(0),
+            ref_bhwc.stride(1),
+            ref_bhwc.stride(2),
+            tar_bhwc.stride(0),
+            tar_bhwc.stride(1),
+            tar_bhwc.stride(2),
+            ref_norm.stride(0),
+            ref_norm.stride(1),
+            ref_norm.stride(2),
+            out_bhw.stride(0),
+            out_bhw.stride(1),
+            out_bhw.stride(2),
+            out_bhw.stride(3),
+            NORMALIZE=normalize,
+        )
+        if d_eff < maxdisp:
+            out_bhw[:, :, d_eff:, :] = 0
+        return out_bhw.reshape(batch, height, num_groups, maxdisp, width).permute(0, 2, 3, 1, 4).contiguous()
+
+    submodule.build_gwc_volume_triton = build_gwc_volume_triton_batch_safe
+    foundation_stereo.build_gwc_volume_triton = build_gwc_volume_triton_batch_safe
+
+
+def _load_official_tensorrt_foundation_stereo(*, ffs_repo: Path, batch_safe_gwc_volume: bool = False) -> Any:
     _ensure_ffs_repo_on_sys_path(ffs_repo)
     import core.foundation_stereo as foundation_stereo
     import core.submodule as submodule
@@ -712,7 +850,10 @@ def _load_official_tensorrt_foundation_stereo(*, ffs_repo: Path) -> Any:
             "intermediate GWC volume kernel. Install a compatible official FFS environment "
             "or use --ffs_trt_mode single_engine."
         )
-    foundation_stereo.build_gwc_volume_triton = submodule.build_gwc_volume_triton
+    if batch_safe_gwc_volume:
+        _patch_batch_safe_gwc_volume_triton(foundation_stereo, submodule)
+    else:
+        foundation_stereo.build_gwc_volume_triton = submodule.build_gwc_volume_triton
     return foundation_stereo
 
 
@@ -996,7 +1137,15 @@ class FastFoundationStereoTensorRTRunner:
             raise RuntimeError("FastFoundationStereoTensorRTRunner requires CUDA.")
 
         self._dll_handles = _configure_tensorrt_runtime_search_paths(self.trt_root)
-        foundation_stereo = _load_official_tensorrt_foundation_stereo(ffs_repo=self.ffs_repo)
+        self.static_batch_size = resolve_tensorrt_engine_static_batch_size(
+            trt_mode="two_stage",
+            model_dir=self.model_dir,
+            trt_root=self.trt_root,
+        )
+        foundation_stereo = _load_official_tensorrt_foundation_stereo(
+            ffs_repo=self.ffs_repo,
+            batch_safe_gwc_volume=int(self.static_batch_size) > 1,
+        )
         import tensorrt as trt
         from Utils import set_logging_format, set_seed
 
@@ -1017,6 +1166,7 @@ class FastFoundationStereoTensorRTRunner:
             str(self.post_engine_path),
         )
         self._input_buffers: _PinnedSinglePairImageInputBuffers | None = None
+        self._batch_input_buffers: _PinnedBatchPairImageInputBuffers | None = None
         self._disparity_host_buffer: Any | None = None
         self._last_h2d_profile: dict[str, float | str | bool] = {
             "input_staging": self.input_staging,
@@ -1070,6 +1220,32 @@ class FastFoundationStereoTensorRTRunner:
                 )
             left_tensor, right_tensor = self._input_buffers.load(prepared_left[0], prepared_right[0])
             self._last_h2d_profile = dict(self._input_buffers.last_profile)
+            return left_tensor, right_tensor
+        if (
+            self.input_staging == FFS_INPUT_STAGING_PINNED
+            and len(prepared_left) == len(prepared_right)
+            and len(prepared_left) > 1
+            and all(left.ndim == 3 for left in prepared_left)
+            and all(right.ndim == 3 for right in prepared_right)
+            and all(left.shape == prepared_left[0].shape for left in prepared_left)
+            and all(right.shape == prepared_left[0].shape for right in prepared_right)
+            and all(left.dtype == np.uint8 for left in prepared_left)
+            and all(right.dtype == np.uint8 for right in prepared_right)
+        ):
+            image_shape = tuple(int(item) for item in prepared_left[0].shape)
+            batch_size = int(len(prepared_left))
+            if (
+                self._batch_input_buffers is None
+                or self._batch_input_buffers.batch_size != batch_size
+                or self._batch_input_buffers.image_shape != image_shape
+            ):
+                self._batch_input_buffers = _PinnedBatchPairImageInputBuffers(
+                    torch_module=torch,
+                    batch_size=batch_size,
+                    image_shape=image_shape,
+                )
+            left_tensor, right_tensor = self._batch_input_buffers.load(prepared_left, prepared_right)
+            self._last_h2d_profile = dict(self._batch_input_buffers.last_profile)
             return left_tensor, right_tensor
 
         h2d_start_s = time.perf_counter()

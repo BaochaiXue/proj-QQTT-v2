@@ -21,6 +21,7 @@ _EXPORT_TO_MODULE = {
     "DEFAULT_FFS_REPO": ".ffs_defaults",
     "DEFAULT_FFS_SCALE": ".ffs_defaults",
     "DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL": ".ffs_defaults",
+    "DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR": ".ffs_defaults",
     "DEFAULT_FFS_TRT_ENGINE_SIZE": ".ffs_defaults",
     "DEFAULT_FFS_TRT_INPUT_SIZE": ".ffs_defaults",
     "DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR": ".ffs_defaults",

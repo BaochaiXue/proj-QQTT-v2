@@ -29,6 +29,7 @@ manual; use the compressed harness index first.
 | Demo 2.2 async filtered fused PCD with 15 FPS camera input | `demo2_2_async_filter_15fps_input_benchmark.md` |
 | Demo 2.2 async filtered fused PCD 20s warmup + 20s formal profile | `demo2_2_async_filter_20s_warmup_20s_formal_profile.md` |
 | Demo 2.2 async filtered fused PCD parallel-init 20s warmup + 20s formal profile | `demo2_2_async_filter_parallel_init_20s_warmup_20s_formal_profile.md` |
+| Demo 2.2 FFS TensorRT batch=3 build and profile | `demo2_2_ffs_batch3_trt_build_and_profile.md` |
 | Demo 2.2 staged-parallel GPU-resident probe | `demo2_2_staged_parallel_5fps_benchmark.md` |
 | Demo 2 / 2.1 RTX 4090 `demo_2_max` environment | `demo_2_max_4090_env_validation.md` |
 | Demo 2 single-camera local FFS path | `demo2_local_ffs_professor_speed_polish.md` |

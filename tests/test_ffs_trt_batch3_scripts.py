@@ -4,7 +4,8 @@ import unittest
 
 import numpy as np
 
-from scripts.ffs_trt import build_batch3_4090_engine
+from data_process.depth_backends.ffs_defaults import DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR
+from scripts.ffs_trt import build_batch3_4090_engine, build_batch3_5090_engine
 from scripts.ffs_trt.validate_batch3_4090_engine import (
     camera_order_diagonal_pass,
     measured_window_indices,
@@ -52,6 +53,12 @@ class FfsTrtBatch3ScriptsTest(unittest.TestCase):
     def test_build_script_parser_defaults_batch_size_3(self) -> None:
         args = build_batch3_4090_engine.build_parser().parse_args([])
         self.assertEqual(args.batch_size, 3)
+
+    def test_5090_build_script_uses_isolated_batch3_output_dir(self) -> None:
+        args = build_batch3_5090_engine.build_parser().parse_args([])
+        self.assertEqual(args.batch_size, 3)
+        self.assertEqual(args.out_dir, DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR)
+        self.assertTrue(str(args.out_dir).endswith("_batch3"))
 
     def test_existing_wsl_verify_script_default_batch_size_1(self) -> None:
         from pathlib import Path

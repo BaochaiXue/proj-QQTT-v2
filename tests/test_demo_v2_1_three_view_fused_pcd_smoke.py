@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from pathlib import Path
 import unittest
 
 import numpy as np
@@ -356,6 +357,87 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["ffs_contract"]["input_staging"], "pinned")
         self.assertEqual(contract["semantic_layers"][0]["postprocess"], "enhanced-pt")
         self.assertFalse(contract["fusion"]["object_controller_union_before_filter"])
+
+    def test_ffs_batch3_contract_uses_isolated_default_model_dir(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--ffs-trt-batch-size",
+                "3",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--ffs-trt-batch-size"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["ffs_contract"]["trt_batch_size"], 3)
+        self.assertTrue(contract["ffs_contract"]["batch3_isolated_artifact"])
+        self.assertEqual(
+            Path(contract["ffs_contract"]["trt_model_dir"]),
+            demo.DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR,
+        )
+
+    def test_ffs_batch3_cycle_dispatches_one_runner_batch(self) -> None:
+        class FakeRunner:
+            def __init__(self) -> None:
+                self.calls: list[list[dict[str, object]]] = []
+
+            def run_batch(self, samples: list[dict[str, object]]) -> list[dict[str, object]]:
+                self.calls.append(samples)
+                return [
+                    {
+                        "depth_ir_left_m": np.ones((2, 2), dtype=np.float32) * float(idx + 1),
+                        "K_ir_left_used": np.eye(3, dtype=np.float32),
+                        "h2d_profile": {"stage_ms": 1.0, "h2d_wait_ms": 0.0},
+                    }
+                    for idx, _sample in enumerate(samples)
+                ]
+
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--ffs-trt-batch-size", "3"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--ffs-trt-batch-size"})
+        runtime = demo.Demo21Runtime(args)
+        frames = {
+            0: _dummy_frame(0, seq=10, timestamp_ms=100.0),
+            1: _dummy_frame(1, seq=11, timestamp_ms=101.0),
+            2: _dummy_frame(2, seq=12, timestamp_ms=102.0),
+        }
+        group = demo.build_temporal_capture_group(
+            group_id=5,
+            created_perf_s=2.0,
+            selection=demo._temporal_selection_from_frames(frames, now_perf_ns=int(103_000_000)),
+        )
+
+        def fake_align(
+            *,
+            frame: demo.CameraFramePacket,
+            aligners: dict[int, demo.FfsIrToColorAligner],
+            depth_ir_left_m: np.ndarray,
+            k_ir_left_used: np.ndarray,
+            ffs_ms: float,
+        ) -> demo.DepthPacket:
+            return demo.DepthPacket(
+                group_id=frame.group_id,
+                camera_idx=frame.camera_idx,
+                depth_m=np.asarray(depth_ir_left_m, dtype=np.float32),
+                ffs_ms=float(ffs_ms),
+                align_ms=0.5,
+            )
+
+        runner = FakeRunner()
+        runtime._align_ffs_depth_for_frame = fake_align  # type: ignore[method-assign]
+        packet, h2d = runtime._run_ffs_cycle_for_group(runner=runner, group=group, aligners={})
+
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(len(runner.calls[0]), 3)
+        self.assertEqual(sorted(packet.depths), [0, 1, 2])
+        self.assertGreater(packet.total_ms, 0.0)
+        self.assertEqual(sorted(h2d), [0, 1, 2])
 
     def test_legacy_visual_5fps_staged_alias_maps_to_perf_staged(self) -> None:
         parser = demo.build_arg_parser()
