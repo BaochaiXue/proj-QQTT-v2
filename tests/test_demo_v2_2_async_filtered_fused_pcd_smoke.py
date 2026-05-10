@@ -52,6 +52,66 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
 
         self.assertEqual(argv[:3], ["--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS, "--dry-run"])
 
+    def test_demo22_public_help_hides_legacy_runtime_knobs(self) -> None:
+        help_text = demo22.build_arg_parser().format_help()
+
+        self.assertIn("--warmup-s", help_text)
+        self.assertIn("--min-depth-m", help_text)
+        self.assertIn("--experimental-edgetam-batch-vision", help_text)
+        self.assertIn("--advanced-help", help_text)
+        self.assertNotIn("--fusion-target-fps", help_text)
+        self.assertNotIn("--gpu-pipeline-mode", help_text)
+        self.assertNotIn("--single-owner-order", help_text)
+
+    def test_demo22_public_cli_aliases_translate_to_runtime_flags(self) -> None:
+        argv = demo22._to_demo21_argv(
+            [
+                "--dry-run",
+                "--duration-s",
+                "10",
+                "--warmup-s",
+                "4",
+                "--fps",
+                "15",
+                "--camera-ids",
+                "0,1,2",
+                "--object-only",
+                "--min-depth-m",
+                "0.12",
+                "--max-depth-m",
+                "1.25",
+                "--no-parallel-init",
+                "--no-compile-prewarm",
+                "--experimental-edgetam-batch-vision",
+                "--ffs-batch-size",
+                "1",
+            ]
+        )
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
+        self.assertIn("--profile-warmup-exclude-s", argv)
+        self.assertIn("--depth-min-m", argv)
+        self.assertIn("--depth-max-m", argv)
+        self.assertIn("--track-mode", argv)
+        self.assertIn(demo.TRACK_MODE_OBJECT_ONLY, argv)
+        self.assertIn("--no-parallel-init", argv)
+        self.assertIn("--no-edgetam-prewarm-compile", argv)
+        self.assertIn("--edgetam-batch-vision-encoder", argv)
+        self.assertIn("--ffs-trt-batch-size", argv)
+        self.assertIn("1", argv)
+
+    def test_demo22_public_cli_still_passes_legacy_flags_through(self) -> None:
+        argv = demo22._to_demo21_argv(["--dry-run", "--gpu-pipeline-mode", demo.GPU_PIPELINE_MODE_SINGLE_OWNER])
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
+        self.assertIn("--gpu-pipeline-mode", argv)
+        self.assertIn(demo.GPU_PIPELINE_MODE_SINGLE_OWNER, argv)
+
+    def test_demo22_public_experimental_staged_parallel_selects_probe_preset(self) -> None:
+        argv = demo22._to_demo21_argv(["--dry-run", "--experimental-staged-parallel"])
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
+
     def test_demo22_preset_contract_is_filtered_only_single_owner(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])

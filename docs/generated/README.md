@@ -32,6 +32,7 @@ manual; use the compressed harness index first.
 | Demo 2.2 FFS TensorRT batch=3 build and profile | `demo2_2_ffs_batch3_trt_build_and_profile.md` |
 | Demo 2.2 default FFS TensorRT batch=3 contract | `demo2_2_default_ffs_batch3.md` |
 | Demo 2.2 EdgeTAM batch vision encoder probe | `demo2_2_edgetam_batch_vision_profile.md` |
+| Demo 2.2 simplified public CLI | `demo2_2_cli_simplification.md` |
 | Demo 2.2 staged-parallel GPU-resident probe | `demo2_2_staged_parallel_5fps_benchmark.md` |
 | Demo 2 / 2.1 RTX 4090 `demo_2_max` environment | `demo_2_max_4090_env_validation.md` |
 | Demo 2 single-camera local FFS path | `demo2_local_ffs_professor_speed_polish.md` |
