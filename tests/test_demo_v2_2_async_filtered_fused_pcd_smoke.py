@@ -56,6 +56,8 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         help_text = demo22.build_arg_parser().format_help()
 
         self.assertIn("--warmup-s", help_text)
+        self.assertIn("--gpu-sampling", help_text)
+        self.assertIn("--gpu-sampling-interval-s", help_text)
         self.assertIn("--min-depth-m", help_text)
         self.assertIn("--experimental-edgetam-batch-vision", help_text)
         self.assertIn("--advanced-help", help_text)
@@ -83,6 +85,11 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
                 "--no-parallel-init",
                 "--no-compile-prewarm",
                 "--experimental-edgetam-batch-vision",
+                "--gpu-sampling",
+                "--gpu-sampling-interval-s",
+                "0.25",
+                "--gpu-sampling-backend",
+                "nvidia-smi",
                 "--ffs-batch-size",
                 "1",
             ]
@@ -97,6 +104,11 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--no-parallel-init", argv)
         self.assertIn("--no-edgetam-prewarm-compile", argv)
         self.assertIn("--edgetam-batch-vision-encoder", argv)
+        self.assertIn("--gpu-sampling", argv)
+        self.assertIn("--gpu-sampling-interval-s", argv)
+        self.assertIn("0.25", argv)
+        self.assertIn("--gpu-sampling-backend", argv)
+        self.assertIn("nvidia-smi", argv)
         self.assertIn("--ffs-trt-batch-size", argv)
         self.assertIn("1", argv)
 
@@ -123,6 +135,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["fps"], 15)
         self.assertEqual(contract["fusion_target_fps"], 15.0)
         self.assertEqual(contract["capture_group_target_fps"], 15.0)
+        self.assertFalse(contract["gpu_sampling"]["enabled"])
         self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_FFS)
         self.assertEqual(contract["compile_mode"], demo.DEFAULT_COMPILE_MODE)
         self.assertEqual(contract["track_mode"], demo.TRACK_MODE_CONTROLLER_OBJECT)
@@ -384,6 +397,66 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(payload["init_profile"]["camera_startup_ms"], 12.0)
         self.assertEqual(payload["init_profile"]["sam31"]["cam0"]["total_ms"], 3.0)
         self.assertEqual(payload["init_profile"]["edgetam"]["model_load_ms_total"], 4.0)
+
+    def test_gpu_sample_summary_filters_by_warmup(self) -> None:
+        samples = [
+            {"sample_s": 1.0, "gpu_util_pct": 10.0, "memory_used_mb": 100.0},
+            {"sample_s": 20.0, "gpu_util_pct": 40.0, "memory_used_mb": 200.0},
+            {"sample_s": 21.0, "gpu_util_pct": 80.0, "memory_used_mb": 300.0},
+        ]
+
+        summary = demo.summarize_gpu_samples(samples, start_s=20.0)
+
+        self.assertEqual(summary["sample_count"], 2)
+        self.assertEqual(summary["metrics"]["gpu_util_pct"]["median"], 60.0)
+        self.assertEqual(summary["metrics"]["gpu_util_pct"]["max"], 80.0)
+        self.assertEqual(summary["metrics"]["memory_used_mb"]["max"], 300.0)
+
+    def test_profile_payload_includes_gpu_sampling_summary(self) -> None:
+        class FakeSampler:
+            def samples_snapshot(self) -> list[dict[str, float]]:
+                return [
+                    {"sample_s": 1.0, "gpu_util_pct": 5.0, "power_w": 20.0},
+                    {"sample_s": 25.0, "gpu_util_pct": 75.0, "power_w": 180.0},
+                ]
+
+            def diagnostics(self) -> dict[str, object]:
+                return {
+                    "enabled": True,
+                    "requested_backend": "auto",
+                    "backend_used": "nvml",
+                    "device_index": 0,
+                    "interval_s": 0.5,
+                    "sample_count": 2,
+                    "errors": [],
+                }
+
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--gpu-sampling",
+                "--profile-warmup-exclude-s",
+                "20",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--gpu-sampling", "--profile-warmup-exclude-s"},
+        )
+        runtime = demo.Demo21Runtime(args)
+        runtime._gpu_sampler = FakeSampler()  # type: ignore[assignment]
+
+        payload = runtime._build_profile_payload()
+
+        self.assertTrue(payload["gpu_sampling"]["enabled"])
+        self.assertEqual(payload["gpu_sampling"]["summary_after_warmup"]["sample_count"], 1)
+        self.assertEqual(
+            payload["gpu_sampling"]["summary_after_warmup"]["metrics"]["gpu_util_pct"]["median"],
+            75.0,
+        )
 
 
 if __name__ == "__main__":

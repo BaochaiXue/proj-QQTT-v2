@@ -44,6 +44,8 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
 
         self.assertIn("native aligned RealSense", help_text)
         self.assertIn("--warmup-s", help_text)
+        self.assertIn("--gpu-sampling", help_text)
+        self.assertIn("--gpu-sampling-interval-s", help_text)
         self.assertIn("--min-depth-m", help_text)
         self.assertIn("--experimental-edgetam-batch-vision", help_text)
         self.assertIn("--advanced-help", help_text)
@@ -89,6 +91,9 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
                 "--no-parallel-init",
                 "--no-compile-prewarm",
                 "--experimental-edgetam-batch-vision",
+                "--gpu-sampling",
+                "--gpu-sampling-device-index",
+                "0",
             ]
         )
 
@@ -101,6 +106,8 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
         self.assertIn("--no-parallel-init", argv)
         self.assertIn("--no-edgetam-prewarm-compile", argv)
         self.assertIn("--edgetam-batch-vision-encoder", argv)
+        self.assertIn("--gpu-sampling", argv)
+        self.assertIn("--gpu-sampling-device-index", argv)
 
     def test_demo215_public_experimental_staged_parallel_selects_probe_preset(self) -> None:
         argv = demo215._to_demo21_argv(["--dry-run", "--experimental-staged-parallel"])

@@ -31,6 +31,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run.add_argument("--duration-s", type=float, default=None, help="Run duration. Use 0 for unlimited.")
     run.add_argument("--warmup-s", type=float, default=None, help="Seconds excluded from FPS/profile summaries.")
     run.add_argument("--profile-json-output", default=None, help="Write the full profile JSON to this path.")
+    run.add_argument("--gpu-sampling", action="store_true", help="Record GPU utilization/memory/power samples in the profile.")
+    run.add_argument("--gpu-sampling-interval-s", type=float, default=None, help="GPU sampling interval in seconds.")
+    run.add_argument("--gpu-sampling-backend", choices=demo21.GPU_SAMPLING_BACKENDS, default=None, help="GPU sampler backend.")
+    run.add_argument("--gpu-sampling-device-index", type=int, default=None, help="GPU index for the sampler.")
     run.add_argument("--fps", type=int, default=None, help="RealSense RGB-D capture target FPS.")
     run.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 2.1.5 runtime contract and exit.")
     run.add_argument("--debug", action="store_true", help="Enable verbose runtime logs.")
@@ -134,6 +138,9 @@ def _to_demo21_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--duration-s", parsed.duration_s)
     _append_option(translated, "--profile-warmup-exclude-s", parsed.warmup_s)
     _append_option(translated, "--profile-json-output", parsed.profile_json_output)
+    _append_option(translated, "--gpu-sampling-interval-s", parsed.gpu_sampling_interval_s)
+    _append_option(translated, "--gpu-sampling-backend", parsed.gpu_sampling_backend)
+    _append_option(translated, "--gpu-sampling-device-index", parsed.gpu_sampling_device_index)
     _append_option(translated, "--fps", parsed.fps)
     _append_many(translated, "--serials", parsed.serials)
     _append_option(translated, "--camera-ids", _format_camera_ids(parsed.camera_ids))
@@ -150,6 +157,8 @@ def _to_demo21_argv(argv: Sequence[str] | None) -> list[str]:
         translated.append("--dry-run")
     if parsed.debug:
         translated.append("--debug")
+    if parsed.gpu_sampling:
+        translated.append("--gpu-sampling")
     if parsed.object_only:
         translated.extend(["--track-mode", demo21.TRACK_MODE_OBJECT_ONLY])
     if parsed.controller_object:

@@ -10,6 +10,7 @@ from itertools import product
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import threading
 import time
@@ -491,7 +492,10 @@ PROFILE_FLAG_ATTRS = (
     "profile_visualization",
     "profile_gpu_gate",
     "profile_h2d",
+    "gpu_sampling",
 )
+
+GPU_SAMPLING_BACKENDS = ("auto", "nvml", "nvidia-smi")
 
 
 class StageStats:
@@ -854,6 +858,253 @@ def _event_fps(records: Sequence[dict[str, Any]], path: Sequence[str]) -> float:
     if elapsed <= 0:
         return 0.0
     return float((len(times) - 1) / elapsed)
+
+
+GPU_SAMPLE_METRIC_NAMES: tuple[str, ...] = (
+    "gpu_util_pct",
+    "memory_util_pct",
+    "memory_used_mb",
+    "memory_total_mb",
+    "power_w",
+    "power_limit_w",
+    "sm_clock_mhz",
+    "mem_clock_mhz",
+    "temperature_c",
+)
+
+
+def summarize_gpu_samples(samples: Sequence[dict[str, Any]], *, start_s: float = 0.0) -> dict[str, Any]:
+    selected = [
+        sample for sample in samples
+        if isinstance(sample, dict) and float(sample.get("sample_s", 0.0) or 0.0) >= float(start_s)
+    ]
+    summary: dict[str, Any] = {
+        "sample_count": int(len(selected)),
+        "start_s": float(start_s),
+        "first_sample_s": None,
+        "last_sample_s": None,
+        "duration_s": 0.0,
+        "metrics": {},
+    }
+    if selected:
+        first_s = float(selected[0].get("sample_s", 0.0) or 0.0)
+        last_s = float(selected[-1].get("sample_s", first_s) or first_s)
+        summary.update(
+            {
+                "first_sample_s": first_s,
+                "last_sample_s": last_s,
+                "duration_s": max(0.0, last_s - first_s),
+            }
+        )
+    for name in GPU_SAMPLE_METRIC_NAMES:
+        values = [
+            float(sample[name])
+            for sample in selected
+            if isinstance(sample.get(name), (int, float)) and np.isfinite(float(sample[name]))
+        ]
+        summary["metrics"][name] = _profile_stats(values)
+    return summary
+
+
+class GpuUtilizationSampler:
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        interval_s: float,
+        backend: str,
+        device_index: int,
+        rel_time_fn: Callable[[], float],
+    ) -> None:
+        self.enabled = bool(enabled)
+        self.interval_s = max(0.05, float(interval_s))
+        self.requested_backend = str(backend)
+        self.device_index = int(device_index)
+        self._rel_time_fn = rel_time_fn
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._samples: list[dict[str, Any]] = []
+        self._errors: list[str] = []
+        self._backend_used: str | None = None
+        self._nvml: Any | None = None
+        self._nvml_handle: Any | None = None
+
+    def start(self) -> None:
+        if not self.enabled or self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, name="demo2-gpu-sampler", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=max(3.0, self.interval_s * 2.0 + 2.0))
+        self._shutdown_nvml()
+
+    def samples_snapshot(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(sample) for sample in self._samples]
+
+    def diagnostics(self) -> dict[str, Any]:
+        with self._lock:
+            errors = list(self._errors)
+            sample_count = len(self._samples)
+        return {
+            "enabled": self.enabled,
+            "requested_backend": self.requested_backend,
+            "backend_used": self._backend_used,
+            "device_index": self.device_index,
+            "interval_s": self.interval_s,
+            "sample_count": int(sample_count),
+            "errors": errors[:10],
+        }
+
+    def _append_error(self, message: str) -> None:
+        with self._lock:
+            if len(self._errors) < 20:
+                self._errors.append(str(message))
+
+    def _append_sample(self, sample: dict[str, Any]) -> None:
+        sample = dict(sample)
+        if "sample_s" not in sample:
+            sample["sample_s"] = float(self._rel_time_fn())
+        sample.setdefault("device_index", self.device_index)
+        with self._lock:
+            self._samples.append(sample)
+
+    def _run(self) -> None:
+        sampler = self._make_sampler()
+        if sampler is None:
+            return
+        while not self._stop_event.is_set():
+            try:
+                sample = sampler()
+                sample["sample_s"] = float(self._rel_time_fn())
+                sample["device_index"] = self.device_index
+                sample["source"] = self._backend_used
+                self._append_sample(sample)
+            except Exception as exc:
+                self._append_error(f"{self._backend_used or self.requested_backend}: {type(exc).__name__}: {exc}")
+            self._stop_event.wait(self.interval_s)
+
+    def _make_sampler(self) -> Callable[[], dict[str, Any]] | None:
+        requested = self.requested_backend
+        if requested not in GPU_SAMPLING_BACKENDS:
+            self._append_error(f"unsupported backend {requested!r}")
+            return None
+        if requested in {"auto", "nvml"}:
+            sampler = self._try_make_nvml_sampler()
+            if sampler is not None:
+                self._backend_used = "nvml"
+                return sampler
+            if requested == "nvml":
+                return None
+        sampler = self._try_make_nvidia_smi_sampler()
+        if sampler is not None:
+            self._backend_used = "nvidia-smi"
+            return sampler
+        return None
+
+    def _try_make_nvml_sampler(self) -> Callable[[], dict[str, Any]] | None:
+        try:
+            import pynvml  # type: ignore
+
+            pynvml.nvmlInit()
+            self._nvml = pynvml
+            self._nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(self.device_index)
+        except Exception as exc:
+            self._append_error(f"nvml unavailable: {type(exc).__name__}: {exc}")
+            self._shutdown_nvml()
+            return None
+
+        def _sample() -> dict[str, Any]:
+            nvml = self._nvml
+            handle = self._nvml_handle
+            util = nvml.nvmlDeviceGetUtilizationRates(handle)
+            memory = nvml.nvmlDeviceGetMemoryInfo(handle)
+            sample = {
+                "gpu_util_pct": float(util.gpu),
+                "memory_util_pct": float(util.memory),
+                "memory_used_mb": float(memory.used) / (1024.0 * 1024.0),
+                "memory_total_mb": float(memory.total) / (1024.0 * 1024.0),
+            }
+            optional_calls: tuple[tuple[str, Callable[[], float]], ...] = (
+                ("power_w", lambda: float(nvml.nvmlDeviceGetPowerUsage(handle)) / 1000.0),
+                ("power_limit_w", lambda: float(nvml.nvmlDeviceGetEnforcedPowerLimit(handle)) / 1000.0),
+                ("sm_clock_mhz", lambda: float(nvml.nvmlDeviceGetClockInfo(handle, nvml.NVML_CLOCK_SM))),
+                ("mem_clock_mhz", lambda: float(nvml.nvmlDeviceGetClockInfo(handle, nvml.NVML_CLOCK_MEM))),
+                ("temperature_c", lambda: float(nvml.nvmlDeviceGetTemperature(handle, nvml.NVML_TEMPERATURE_GPU))),
+            )
+            for name, call in optional_calls:
+                try:
+                    sample[name] = call()
+                except Exception:
+                    pass
+            return sample
+
+        return _sample
+
+    def _shutdown_nvml(self) -> None:
+        nvml = self._nvml
+        self._nvml = None
+        self._nvml_handle = None
+        if nvml is not None:
+            try:
+                nvml.nvmlShutdown()
+            except Exception:
+                pass
+
+    def _try_make_nvidia_smi_sampler(self) -> Callable[[], dict[str, Any]] | None:
+        fields = (
+            "utilization.gpu",
+            "utilization.memory",
+            "memory.used",
+            "memory.total",
+            "power.draw",
+            "power.limit",
+            "clocks.sm",
+            "clocks.mem",
+            "temperature.gpu",
+        )
+        command = [
+            "nvidia-smi",
+            f"--query-gpu={','.join(fields)}",
+            "--format=csv,noheader,nounits",
+            "-i",
+            str(self.device_index),
+        ]
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True, timeout=2.0)
+        except Exception as exc:
+            self._append_error(f"nvidia-smi unavailable: {type(exc).__name__}: {exc}")
+            return None
+
+        def _sample() -> dict[str, Any]:
+            completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=2.0)
+            line = completed.stdout.strip().splitlines()[0]
+            parts = [part.strip() for part in line.split(",")]
+            values: dict[str, float] = {}
+            keys = (
+                "gpu_util_pct",
+                "memory_util_pct",
+                "memory_used_mb",
+                "memory_total_mb",
+                "power_w",
+                "power_limit_w",
+                "sm_clock_mhz",
+                "mem_clock_mhz",
+                "temperature_c",
+            )
+            for key, raw in zip(keys, parts):
+                try:
+                    values[key] = float(raw)
+                except ValueError:
+                    continue
+            return values
+
+        return _sample
 
 
 def fuse_semantic_camera_clouds(
@@ -1501,6 +1752,12 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "mode": args.gpu_gate_mode,
             "max_concurrent": int(args.gpu_gate_max_concurrent),
         },
+        "gpu_sampling": {
+            "enabled": bool(getattr(args, "gpu_sampling", False)),
+            "interval_s": float(getattr(args, "gpu_sampling_interval_s", 0.5)),
+            "backend": str(getattr(args, "gpu_sampling_backend", "auto")),
+            "device_index": int(getattr(args, "gpu_sampling_device_index", 0)),
+        },
         "gpu_pipeline": {
             "mode": args.gpu_pipeline_mode,
             "internal_order": args.staged_order if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED else args.single_owner_order,
@@ -1656,6 +1913,13 @@ class Demo21Runtime:
         self._profile_lock = threading.Lock()
         self._profile_started_perf_s = time.perf_counter()
         self._profile_records: dict[int, dict[str, Any]] = {}
+        self._gpu_sampler = GpuUtilizationSampler(
+            enabled=bool(getattr(args, "gpu_sampling", False)),
+            interval_s=float(getattr(args, "gpu_sampling_interval_s", 0.5)),
+            backend=str(getattr(args, "gpu_sampling_backend", "auto")),
+            device_index=int(getattr(args, "gpu_sampling_device_index", 0)),
+            rel_time_fn=self._profile_rel_s,
+        )
         self._latest_depth_group: DepthGroup | None = None
         self._latest_raw_fused: RawFusedPcdPacket | None = None
         self._latest_fused: FusedPcdPacket | None = None
@@ -1794,6 +2058,7 @@ class Demo21Runtime:
         )
         apply_wslg_open3d_env_defaults()
         self._validate_live_contract()
+        self._gpu_sampler.start()
         self._start_parallel_init()
         try:
             camera_start_s = time.perf_counter()
@@ -1805,6 +2070,7 @@ class Demo21Runtime:
                 self._run_headless()
         finally:
             self.stop()
+            self._gpu_sampler.stop()
             self._write_summary()
         return 1 if self._fatal_error is not None else 0
 
@@ -2052,6 +2318,12 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --filter-budget-ms must be >= 0")
         if float(self.args.profile_warmup_exclude_s) < 0:
             raise RuntimeError("Demo 2.1 --profile-warmup-exclude-s must be >= 0")
+        if float(self.args.gpu_sampling_interval_s) <= 0:
+            raise RuntimeError("Demo 2.1 --gpu-sampling-interval-s must be > 0")
+        if int(self.args.gpu_sampling_device_index) < 0:
+            raise RuntimeError("Demo 2.1 --gpu-sampling-device-index must be >= 0")
+        if self.args.gpu_sampling_backend not in GPU_SAMPLING_BACKENDS:
+            raise RuntimeError(f"Demo 2.1 unsupported --gpu-sampling-backend {self.args.gpu_sampling_backend}")
         if float(self.args.sam31_init_retry_interval_s) < 0:
             raise RuntimeError("Demo 2.1 --sam31-init-retry-interval-s must be >= 0")
         if int(self.args.sam31_init_max_attempts) < 0:
@@ -2192,6 +2464,7 @@ class Demo21Runtime:
         }
         self._summary["temporal_grouping"] = self._temporal_grouping_summary()
         self._summary["init_profile"] = self._init_profile_snapshot()
+        self._summary["gpu_sampling"] = self._gpu_sampler.diagnostics()
         summary_path.write_text(json.dumps(self._summary, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
         print(f"[demo2.1] summary={summary_path}", flush=True)
         if self._profile_enabled:
@@ -2331,6 +2604,11 @@ class Demo21Runtime:
             key=lambda item: item["total_enhanced_pt_ms"],
             reverse=True,
         )[:10]
+        gpu_samples = self._gpu_sampler.samples_snapshot()
+        gpu_sampling = self._gpu_sampler.diagnostics()
+        gpu_sampling["summary_full_run"] = summarize_gpu_samples(gpu_samples, start_s=0.0)
+        gpu_sampling["summary_after_warmup"] = summarize_gpu_samples(gpu_samples, start_s=warmup_s)
+        gpu_sampling["samples"] = gpu_samples
         return {
             "preset": self.args.preset,
             "preset_canonical": getattr(self.args, "preset_canonical", canonical_preset_name(self.args.preset)),
@@ -2340,6 +2618,7 @@ class Demo21Runtime:
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
             "gpu_pipeline": contract["gpu_pipeline"],
+            "gpu_sampling": gpu_sampling,
             "filter_scheduler": contract["filter_scheduler"],
             "gpu_gate_max_concurrent": int(self.args.gpu_gate_max_concurrent),
             "object_filter": self.args.object_postprocess,
@@ -2441,6 +2720,43 @@ class Demo21Runtime:
                 lines.append(f"| {label} | `n/a` |")
             else:
                 lines.append(f"| {label} | `{float(value):.2f}` |")
+        lines.append("")
+        gpu_sampling = payload.get("gpu_sampling", {}) or {}
+        gpu_summary = gpu_sampling.get("summary_after_warmup", {}) or {}
+        gpu_metrics = gpu_summary.get("metrics", {}) or {}
+        lines.extend(["## GPU Sampling", ""])
+        if gpu_sampling.get("enabled"):
+            lines.extend(
+                [
+                    f"- backend requested: `{gpu_sampling.get('requested_backend', 'auto')}`",
+                    f"- backend used: `{gpu_sampling.get('backend_used') or 'unavailable'}`",
+                    f"- device index: `{gpu_sampling.get('device_index', 0)}`",
+                    f"- interval s: `{float(gpu_sampling.get('interval_s', 0.0) or 0.0):.3f}`",
+                    f"- samples after warmup: `{gpu_summary.get('sample_count', 0)}`",
+                    "",
+                    "| Metric | median | p90 | p95 | max |",
+                    "| --- | ---: | ---: | ---: | ---: |",
+                ]
+            )
+            for name in (
+                "gpu_util_pct",
+                "memory_util_pct",
+                "memory_used_mb",
+                "power_w",
+                "sm_clock_mhz",
+                "mem_clock_mhz",
+                "temperature_c",
+            ):
+                stat = gpu_metrics.get(name, {})
+                lines.append(
+                    f"| `{name}` | `{stat.get('median', 0.0):.2f}` | `{stat.get('p90', 0.0):.2f}` | "
+                    f"`{stat.get('p95', 0.0):.2f}` | `{stat.get('max', 0.0):.2f}` |"
+                )
+            errors = gpu_sampling.get("errors") or []
+            if errors:
+                lines.extend(["", f"- sampler errors: `{'; '.join(str(error) for error in errors[:3])}`"])
+        else:
+            lines.append("GPU sampling disabled for this run.")
         lines.append("")
         lines.extend([
             "| Metric | median | p90 | p95 | max |",
@@ -5242,6 +5558,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile-h2d", action="store_true")
     parser.add_argument("--profile-json-output", default=None)
     parser.add_argument("--profile-warmup-exclude-s", type=float, default=20.0)
+    parser.add_argument(
+        "--gpu-sampling",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Sample GPU utilization/memory/power/clocks in a background thread and include it in profile reports.",
+    )
+    parser.add_argument("--gpu-sampling-interval-s", type=float, default=0.5)
+    parser.add_argument("--gpu-sampling-backend", choices=GPU_SAMPLING_BACKENDS, default="auto")
+    parser.add_argument("--gpu-sampling-device-index", type=int, default=0)
     parser.add_argument("--sam31-init-retry-interval-s", type=float, default=0.5)
     parser.add_argument(
         "--sam31-init-max-attempts",

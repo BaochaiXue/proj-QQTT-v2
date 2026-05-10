@@ -29,3 +29,15 @@ conda run -n demo_2_max --no-capture-output \
 ```
 
 This does not open RealSense cameras. It is meant to pay the cold-start cost before the formal live demo, so the later first-camera group is less likely to also carry EdgeTAM compile and SAM3.1 model-load work.
+
+Add GPU utilization sampling to a live profile:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v2_1_5/realtime_three_view_async_filtered_fused_pcd.py \
+  --duration-s 60 \
+  --warmup-s 20 \
+  --gpu-sampling \
+  --gpu-sampling-interval-s 0.5 \
+  --profile-json-output docs/generated/demo2_1_5_gpu_sampled_profile.json
+```
