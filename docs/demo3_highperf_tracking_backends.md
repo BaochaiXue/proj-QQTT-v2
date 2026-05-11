@@ -141,20 +141,20 @@ Profile summary:
 
 | Points | Three-camera serial FPS | Median camera E2E ms | p95 camera E2E ms |
 | ---: | ---: | ---: | ---: |
-| 100 | 1.853 | 388.160 | 824.270 |
-| 256 | 1.959 | 514.239 | 515.883 |
-| 512 | 1.365 | 734.804 | 736.198 |
-| 1024 | 0.859 | 1164.977 | 1170.442 |
+| 100 | 1.211 | 586.150 | 1247.001 |
+| 256 | 1.402 | 713.287 | 719.718 |
+| 512 | 0.996 | 1012.185 | 1033.870 |
+| 1024 | 0.652 | 1539.325 | 1548.438 |
 
 Run-level profile:
 
 ```text
-total_wall_ms: 11143.320
-frame_load_ms_total: 598.344
-mask_load_ms_total: 96.329
-max_rss_mb: 1764.199
+total_wall_ms: 15239.101
+frame_load_ms_total: 657.400
+mask_load_ms_total: 93.028
+max_rss_mb: 1763.617
 torch_cuda_peak_mb: 2605.316
-backend_load_ms: 976.407
+backend_load_ms: 1492.178
 ```
 
 This is a valid PhysTwin-compatible baseline result, not a high-performance
