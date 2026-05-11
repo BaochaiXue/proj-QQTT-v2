@@ -247,7 +247,7 @@ def _compute_lift_metrics(
 def _write_outputs(output_dir: Path, rows: list[dict[str, Any]], availability: dict[str, dict[str, Any]]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "results.csv").open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=RESULT_COLUMNS)
+        writer = csv.DictWriter(f, fieldnames=RESULT_COLUMNS, lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow({key: row.get(key, "") for key in RESULT_COLUMNS})

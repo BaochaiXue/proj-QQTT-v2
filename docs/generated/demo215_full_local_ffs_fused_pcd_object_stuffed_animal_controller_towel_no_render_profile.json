@@ -1,0 +1,2141 @@
+{
+  "capture_group_target_fps": 15.0,
+  "compile_mode": "none",
+  "controller_filter": "pt-filter",
+  "demo22_pass_threshold_fps": 24.0,
+  "depth_source": "ffs",
+  "depth_valid_ratio_mean": 0.0,
+  "dtype": "bfloat16",
+  "ffs_input_staging": "pinned",
+  "filter_scheduler": {
+    "controller": {
+      "cap": 20000,
+      "postprocess": "pt-filter",
+      "voxel_size_m": 0.003
+    },
+    "enabled": true,
+    "filter_budget_ms": 12.0,
+    "filter_every_n": 3,
+    "filtered_path": "latest_wins_async_filtered_packet",
+    "hot_path": "raw_fused_semantic_pcd",
+    "mode": "async",
+    "object": {
+      "cap": 20000,
+      "postprocess": "enhanced-pt",
+      "voxel_size_m": 0.004
+    },
+    "render_accepts_raw_fused_pcd": false,
+    "render_blocks_on_filter": false,
+    "render_filtered_only": true
+  },
+  "gpu_gate_max_concurrent": 0,
+  "gpu_pipeline": {
+    "depth_and_masks_published_together": true,
+    "edgetam_stage": null,
+    "ffs_stage": null,
+    "internal_order": "ffs-then-edgetam",
+    "mode": "single-owner",
+    "separate_ffs_and_edgetam_workers": false,
+    "staged_order": "ffs-then-parallel-edgetam"
+  },
+  "gpu_sampling": {
+    "backend_used": "nvml",
+    "device_index": 0,
+    "enabled": true,
+    "errors": [],
+    "interval_s": 0.2,
+    "requested_backend": "nvml",
+    "sample_count": 34,
+    "samples": [
+      {
+        "device_index": 0,
+        "gpu_util_pct": 1.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 168.996,
+        "power_w": 26.111,
+        "sample_s": 2.558071439008927,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 2.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 611.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 167.276,
+        "power_w": 24.758,
+        "sample_s": 2.8121630660025403,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 1.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 167.782,
+        "power_w": 24.927,
+        "sample_s": 3.096580665995134,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 163.767,
+        "power_w": 25.003,
+        "sample_s": 3.356890316004865,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 157.836,
+        "power_w": 25.115,
+        "sample_s": 3.642502105998574,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 151.715,
+        "power_w": 24.044,
+        "sample_s": 3.88086428999668,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 144.979,
+        "power_w": 25.43,
+        "sample_s": 4.086266391008394,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 146.091,
+        "power_w": 23.947,
+        "sample_s": 4.303057304001413,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 141.712,
+        "power_w": 24.101,
+        "sample_s": 4.51186572300503,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 142.508,
+        "power_w": 24.23,
+        "sample_s": 4.725614572002087,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 140.724,
+        "power_w": 24.053,
+        "sample_s": 4.933169611991616,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 140.323,
+        "power_w": 24.334,
+        "sample_s": 5.187588978005806,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 140.323,
+        "power_w": 24.088,
+        "sample_s": 5.394762535986956,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 140.323,
+        "power_w": 24.045,
+        "sample_s": 5.603237247996731,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 144.858,
+        "power_w": 24.161,
+        "sample_s": 5.874212025984889,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 0.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 579.09765625,
+        "memory_util_pct": 0.0,
+        "power_limit_w": 144.858,
+        "power_w": 24.041,
+        "sample_s": 6.334303587995237,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 12.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 1672.1953125,
+        "memory_util_pct": 1.0,
+        "power_limit_w": 141.522,
+        "power_w": 26.211,
+        "sample_s": 6.538926128007006,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 40.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 21.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 4190.1953125,
+        "memory_util_pct": 10.0,
+        "power_limit_w": 142.532,
+        "power_w": 100.478,
+        "sample_s": 6.769596603000537,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 44.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 23.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 4204.1953125,
+        "memory_util_pct": 9.0,
+        "power_limit_w": 142.532,
+        "power_w": 34.265,
+        "sample_s": 6.974469525011955,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 44.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 90.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 4204.1953125,
+        "memory_util_pct": 36.0,
+        "power_limit_w": 140.249,
+        "power_w": 147.101,
+        "sample_s": 7.1857056920125615,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 44.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 55.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 4204.1953125,
+        "memory_util_pct": 19.0,
+        "power_limit_w": 141.477,
+        "power_w": 126.795,
+        "sample_s": 7.393272930989042,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 44.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 90.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 4204.1953125,
+        "memory_util_pct": 35.0,
+        "power_limit_w": 141.574,
+        "power_w": 156.685,
+        "sample_s": 7.599913506011944,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 50.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 56.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 4408.1953125,
+        "memory_util_pct": 21.0,
+        "power_limit_w": 142.066,
+        "power_w": 151.533,
+        "sample_s": 7.809838291985216,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 50.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 90.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 4410.1953125,
+        "memory_util_pct": 25.0,
+        "power_limit_w": 142.066,
+        "power_w": 147.225,
+        "sample_s": 8.011881115991855,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 52.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 69.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 5162.1953125,
+        "memory_util_pct": 21.0,
+        "power_limit_w": 141.65,
+        "power_w": 120.135,
+        "sample_s": 8.21373255000799,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 52.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 82.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 5162.1953125,
+        "memory_util_pct": 28.0,
+        "power_limit_w": 141.65,
+        "power_w": 154.168,
+        "sample_s": 8.446878473012475,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 48.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 59.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 5162.1953125,
+        "memory_util_pct": 15.0,
+        "power_limit_w": 142.648,
+        "power_w": 59.83,
+        "sample_s": 8.651384361000964,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 48.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 73.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 5162.1953125,
+        "memory_util_pct": 27.0,
+        "power_limit_w": 140.2,
+        "power_w": 116.778,
+        "sample_s": 8.853992279997328,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 53.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 88.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 5162.1953125,
+        "memory_util_pct": 31.0,
+        "power_limit_w": 140.2,
+        "power_w": 144.709,
+        "sample_s": 9.055392774986103,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 53.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 73.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 5162.1953125,
+        "memory_util_pct": 24.0,
+        "power_limit_w": 140.2,
+        "power_w": 129.047,
+        "sample_s": 9.257173202000558,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 53.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 68.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 5162.1953125,
+        "memory_util_pct": 26.0,
+        "power_limit_w": 140.0,
+        "power_w": 152.294,
+        "sample_s": 9.470639119012048,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 53.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 89.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 5162.1953125,
+        "memory_util_pct": 30.0,
+        "power_limit_w": 140.0,
+        "power_w": 144.118,
+        "sample_s": 9.704780088999541,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 53.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 65.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 5162.1953125,
+        "memory_util_pct": 28.0,
+        "power_limit_w": 140.0,
+        "power_w": 133.418,
+        "sample_s": 9.911131834989646,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 53.0
+      },
+      {
+        "device_index": 0,
+        "gpu_util_pct": 96.0,
+        "mem_clock_mhz": 14001.0,
+        "memory_total_mb": 24463.0,
+        "memory_used_mb": 5162.1953125,
+        "memory_util_pct": 35.0,
+        "power_limit_w": 140.0,
+        "power_w": 136.781,
+        "sample_s": 10.113289578992408,
+        "sm_clock_mhz": 1597.0,
+        "source": "nvml",
+        "temperature_c": 53.0
+      }
+    ],
+    "summary_after_warmup": {
+      "duration_s": 0.0,
+      "first_sample_s": null,
+      "last_sample_s": null,
+      "metrics": {
+        "gpu_util_pct": {
+          "max": 0.0,
+          "median": 0.0,
+          "p90": 0.0,
+          "p95": 0.0
+        },
+        "mem_clock_mhz": {
+          "max": 0.0,
+          "median": 0.0,
+          "p90": 0.0,
+          "p95": 0.0
+        },
+        "memory_total_mb": {
+          "max": 0.0,
+          "median": 0.0,
+          "p90": 0.0,
+          "p95": 0.0
+        },
+        "memory_used_mb": {
+          "max": 0.0,
+          "median": 0.0,
+          "p90": 0.0,
+          "p95": 0.0
+        },
+        "memory_util_pct": {
+          "max": 0.0,
+          "median": 0.0,
+          "p90": 0.0,
+          "p95": 0.0
+        },
+        "power_limit_w": {
+          "max": 0.0,
+          "median": 0.0,
+          "p90": 0.0,
+          "p95": 0.0
+        },
+        "power_w": {
+          "max": 0.0,
+          "median": 0.0,
+          "p90": 0.0,
+          "p95": 0.0
+        },
+        "sm_clock_mhz": {
+          "max": 0.0,
+          "median": 0.0,
+          "p90": 0.0,
+          "p95": 0.0
+        },
+        "temperature_c": {
+          "max": 0.0,
+          "median": 0.0,
+          "p90": 0.0,
+          "p95": 0.0
+        }
+      },
+      "sample_count": 0,
+      "start_s": 45.0
+    },
+    "summary_full_run": {
+      "duration_s": 7.555218139983481,
+      "first_sample_s": 2.558071439008927,
+      "last_sample_s": 10.113289578992408,
+      "metrics": {
+        "gpu_util_pct": {
+          "max": 96.0,
+          "median": 16.5,
+          "p90": 89.7,
+          "p95": 90.0
+        },
+        "mem_clock_mhz": {
+          "max": 14001.0,
+          "median": 14001.0,
+          "p90": 14001.0,
+          "p95": 14001.0
+        },
+        "memory_total_mb": {
+          "max": 24463.0,
+          "median": 24463.0,
+          "p90": 24463.0,
+          "p95": 24463.0
+        },
+        "memory_used_mb": {
+          "max": 5162.1953125,
+          "median": 2931.1953125,
+          "p90": 5162.1953125,
+          "p95": 5162.1953125
+        },
+        "memory_util_pct": {
+          "max": 36.0,
+          "median": 5.0,
+          "p90": 30.7,
+          "p95": 35.0
+        },
+        "power_limit_w": {
+          "max": 168.996,
+          "median": 141.68099999999998,
+          "p90": 161.9877,
+          "p95": 167.4531
+        },
+        "power_w": {
+          "max": 156.685,
+          "median": 30.238,
+          "p90": 150.24059999999997,
+          "p95": 152.9499
+        },
+        "sm_clock_mhz": {
+          "max": 1597.0,
+          "median": 1597.0,
+          "p90": 1597.0,
+          "p95": 1597.0
+        },
+        "temperature_c": {
+          "max": 53.0,
+          "median": 42.0,
+          "p90": 53.0,
+          "p95": 53.0
+        }
+      },
+      "sample_count": 34,
+      "start_s": 0.0
+    }
+  },
+  "h2d_stream_mode": "default",
+  "h2d_transfer": {
+    "edge_pin_enabled": false,
+    "ffs_input_staging": "pinned",
+    "ffs_pin_requested": false,
+    "h2d_stream_mode": "default",
+    "pin_memory": false,
+    "pin_memory_mode": "off",
+    "pinned_ring_size": 3,
+    "profile_h2d": false
+  },
+  "init_profile": {
+    "camera_startup_ms": 7293.690394988516,
+    "ffs": {
+      "first_runner_init_ms": 8139.3450340256095,
+      "numba_warmup_ms": 0.0010659859981387854,
+      "runner_init_ms_total": 8139.3450340256095,
+      "static_batch_size": 3
+    },
+    "first_complete_fused_group_s": null,
+    "first_complete_inference_group_s": null,
+    "first_render_s": null,
+    "parallel_init": {
+      "edgetam_states": {
+        "duration_ms": 7582.990935014095,
+        "error": "ModuleNotFoundError: Could not import module 'EdgeTamVideoInferenceSession'. Are this object's requirements defined correctly?",
+        "failed": true,
+        "finished_s": 7.588293381006224,
+        "started_s": 0.005304318998241797,
+        "wait_ms": 0.015700003132224083
+      },
+      "enabled": true,
+      "ffs_runner": {
+        "consumed_s": 8.14152324499446,
+        "duration_ms": 8139.378085004864,
+        "failed": false,
+        "finished_s": 8.141468727000756,
+        "started_s": 0.002092167007504031,
+        "wait_ms": 833.6157130252104
+      },
+      "max_consume_wait_ms": 833.6157130252104,
+      "sam31_preload": {
+        "started_s": 0.008129771013045684
+      },
+      "tasks": [
+        "edgetam_states",
+        "ffs_runner",
+        "sam31_preload"
+      ]
+    },
+    "process_start_s": 0.0
+  },
+  "input_path": "pil",
+  "inside_mask_ratio_mean": 0.0,
+  "lifted_3d_count_mean": 0.0,
+  "mask_postprocess": "cuda-inline",
+  "object_controller_union_before_filter": false,
+  "object_filter": "enhanced-pt",
+  "per_group": [
+    {
+      "capture": {
+        "age_ms": 20.268882,
+        "frame_seq_cam0": 59,
+        "frame_seq_cam1": 59,
+        "frame_seq_cam2": 59,
+        "group_build_ms": 48.890294012380764,
+        "group_timestamp_ns": 1778460841044062464,
+        "max_temporal_skew_ms": 10.801152,
+        "offset_cam0_ms": -9.598208,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 1.202944,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 0,
+      "t_group_created": 7.351028686010977
+    },
+    {
+      "capture": {
+        "age_ms": 5.252473,
+        "frame_seq_cam0": 59,
+        "frame_seq_cam1": 59,
+        "frame_seq_cam2": 59,
+        "group_build_ms": 24.89923598477617,
+        "group_timestamp_ns": 1778460841044062464,
+        "max_temporal_skew_ms": 10.801152,
+        "offset_cam0_ms": -9.598208,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 1.202944,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 1,
+      "t_group_created": 7.394760908995522
+    },
+    {
+      "capture": {
+        "age_ms": 8.072058,
+        "frame_seq_cam0": 59,
+        "frame_seq_cam1": 59,
+        "frame_seq_cam2": 59,
+        "group_build_ms": 18.612209998536855,
+        "group_timestamp_ns": 1778460841044062464,
+        "max_temporal_skew_ms": 10.801152,
+        "offset_cam0_ms": -9.598208,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 1.202944,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 2,
+      "t_group_created": 7.456371456006309
+    },
+    {
+      "capture": {
+        "age_ms": 2.362472,
+        "frame_seq_cam0": 63,
+        "frame_seq_cam1": 60,
+        "frame_seq_cam2": 60,
+        "group_build_ms": 18.388384982245043,
+        "group_timestamp_ns": 1778460841319175168,
+        "max_temporal_skew_ms": 50.610176,
+        "offset_cam0_ms": -49.637376,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 0.9728,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 3,
+      "t_group_created": 7.524540371989133
+    },
+    {
+      "capture": {
+        "age_ms": 4.134468,
+        "frame_seq_cam0": 64,
+        "frame_seq_cam1": 64,
+        "frame_seq_cam2": 64,
+        "group_build_ms": 13.468194985762239,
+        "group_timestamp_ns": 1778460841379272704,
+        "max_temporal_skew_ms": 20.514304,
+        "offset_cam0_ms": -19.494912,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 1.019392,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 4,
+      "t_group_created": 7.587023478990886
+    },
+    {
+      "capture": {
+        "age_ms": 2.400859,
+        "frame_seq_cam0": 65,
+        "frame_seq_cam1": 65,
+        "frame_seq_cam2": 65,
+        "group_build_ms": 10.414788994239643,
+        "group_timestamp_ns": 1778460841439329536,
+        "max_temporal_skew_ms": 26.064384,
+        "offset_cam0_ms": -25.20832,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 0.856064,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 5,
+      "t_group_created": 7.651139736000914
+    },
+    {
+      "capture": {
+        "age_ms": 0.746784,
+        "frame_seq_cam0": 66,
+        "frame_seq_cam1": 66,
+        "frame_seq_cam2": 66,
+        "group_build_ms": 19.822278001811355,
+        "group_timestamp_ns": 1778460841532603392,
+        "max_temporal_skew_ms": 10.49472,
+        "offset_cam0_ms": -9.499136,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 0.995584,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 6,
+      "t_group_created": 7.727438330010045
+    },
+    {
+      "capture": {
+        "age_ms": 0.677878,
+        "frame_seq_cam0": 66,
+        "frame_seq_cam1": 66,
+        "frame_seq_cam2": 66,
+        "group_build_ms": 3.7536059971898794,
+        "group_timestamp_ns": 1778460841532603392,
+        "max_temporal_skew_ms": 10.49472,
+        "offset_cam0_ms": -9.499136,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 0.995584,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 7,
+      "t_group_created": 7.778095115994802
+    },
+    {
+      "capture": {
+        "age_ms": 0.670388,
+        "frame_seq_cam0": 66,
+        "frame_seq_cam1": 66,
+        "frame_seq_cam2": 66,
+        "group_build_ms": 3.756274003535509,
+        "group_timestamp_ns": 1778460841532603392,
+        "max_temporal_skew_ms": 10.49472,
+        "offset_cam0_ms": -9.499136,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 0.995584,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 8,
+      "t_group_created": 7.844827319000615
+    },
+    {
+      "capture": {
+        "age_ms": 0.697306,
+        "frame_seq_cam0": 66,
+        "frame_seq_cam1": 66,
+        "frame_seq_cam2": 66,
+        "group_build_ms": 5.686196003807709,
+        "group_timestamp_ns": 1778460841532603392,
+        "max_temporal_skew_ms": 10.49472,
+        "offset_cam0_ms": -9.499136,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 0.995584,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 9,
+      "t_group_created": 7.913508883008035
+    },
+    {
+      "capture": {
+        "age_ms": 0.699396,
+        "frame_seq_cam0": 66,
+        "frame_seq_cam1": 67,
+        "frame_seq_cam2": 67,
+        "group_build_ms": 4.115844989428297,
+        "group_timestamp_ns": 1778460841532603392,
+        "max_temporal_skew_ms": 10.49472,
+        "offset_cam0_ms": -9.499136,
+        "offset_cam1_ms": 0.0,
+        "offset_cam2_ms": 0.995584,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 10,
+      "t_group_created": 7.978619308996713
+    },
+    {
+      "capture": {
+        "age_ms": 0.697148,
+        "frame_seq_cam0": 68,
+        "frame_seq_cam1": 70,
+        "frame_seq_cam2": 70,
+        "group_build_ms": 8.113165007671341,
+        "group_timestamp_ns": 1778460841750761984,
+        "max_temporal_skew_ms": 60.100096,
+        "offset_cam0_ms": 59.008256,
+        "offset_cam1_ms": -1.09184,
+        "offset_cam2_ms": 0.0,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": null,
+      "group_id": 11,
+      "t_group_created": 8.049295692006126
+    },
+    {
+      "capture": {
+        "age_ms": 0.657802,
+        "group_build_ms": 3.8454410096164793,
+        "max_temporal_skew_ms": 109.288704,
+        "skew_drop": true,
+        "timestamp_source": "host_receive_timestamp"
+      },
+      "complete": false,
+      "drop_reason": "capture_temporal_skew",
+      "group_id": 12,
+      "t_group_created": 8.111751819989877
+    }
+  ],
+  "pin_memory_enabled": false,
+  "pin_memory_mode": "off",
+  "preset": "demo2.1.5-live-quality-ffs",
+  "preset_canonical": "demo2.1.5-live-quality-ffs",
+  "summary_after_warmup": {
+    "bottleneck_class": "upstream_supply",
+    "capture_group_fps": 0.0,
+    "complete_fusion_groups": 0,
+    "complete_group_ratio": 0.0,
+    "filter_output_fps": 0.0,
+    "fusion_fps": 0.0,
+    "fusion_timeout_groups": 0,
+    "group_count": 0,
+    "metrics": {
+      "capture_temporal_skew_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "controller_pt_filter_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam0_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam0_pin_copy_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam1_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam1_pin_copy_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam2_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam2_pin_copy_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_pin_copy_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_batch_vision_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_batch_vision_preprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_batch_vision_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_mask_resize_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_mask_threshold_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_mask_to_cpu_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_model_post_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_model_pre_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_postprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_preprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_prompt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_mask_resize_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_mask_threshold_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_mask_to_cpu_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_model_post_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_model_pre_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_postprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_preprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_prompt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_mask_resize_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_mask_threshold_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_mask_to_cpu_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_model_post_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_model_pre_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_postprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_preprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_prompt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_mask_resize_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_mask_threshold_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_mask_to_cpu_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_postprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_preprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_prompt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam0_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam1_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam2_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_batch_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam0_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam0_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam0_stage_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam1_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam1_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam1_stage_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam2_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam2_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam2_stage_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cycle_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_stage_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "filter_input_age_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "filter_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "fusion_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "gpu_owner_edgetam_cycle_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "gpu_owner_ffs_cycle_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "gpu_owner_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "object_enhanced_pt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "open3d_controller_update_geometry_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "open3d_object_update_geometry_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "raw_fusion_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "render_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "staged_edgetam_parallel_efficiency": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "staged_edgetam_stage_sum_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "staged_edgetam_stage_wall_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "staged_ffs_stage_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "staged_stage_barrier_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      }
+    },
+    "raw_fusion_fps": 0.0,
+    "render_fps": 0.0,
+    "rendered_groups": 0,
+    "target_fps_deficit": 25.0,
+    "target_fps_deficit_ratio": 1.0
+  },
+  "summary_full_run": {
+    "bottleneck_class": "upstream_supply",
+    "capture_group_fps": 15.774464406301133,
+    "complete_fusion_groups": 0,
+    "complete_group_ratio": 0.0,
+    "filter_output_fps": 0.0,
+    "fusion_fps": 0.0,
+    "fusion_timeout_groups": 1,
+    "group_count": 13,
+    "metrics": {
+      "capture_temporal_skew_ms": {
+        "max": 109.288704,
+        "median": 10.801152,
+        "p90": 58.20211200000001,
+        "p95": 79.77553919999993
+      },
+      "controller_pt_filter_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam0_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam0_pin_copy_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam1_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam1_pin_copy_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam2_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_cam2_pin_copy_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edge_pin_copy_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_batch_vision_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_batch_vision_preprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_batch_vision_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_mask_resize_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_mask_threshold_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_mask_to_cpu_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_model_post_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_model_pre_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_postprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_preprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_prompt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam0_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_mask_resize_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_mask_threshold_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_mask_to_cpu_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_model_post_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_model_pre_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_postprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_preprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_prompt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam1_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_mask_resize_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_mask_threshold_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_mask_to_cpu_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_model_post_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_model_pre_sync_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_postprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_preprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_prompt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_cam2_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_mask_resize_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_mask_threshold_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_mask_to_cpu_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_postprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_preprocess_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_prompt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "edgetam_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam0_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam1_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_align_cam2_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_batch_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam0_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam0_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam0_stage_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam1_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam1_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam1_stage_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam2_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam2_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cam2_stage_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_cycle_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_gate_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_h2d_wait_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "ffs_stage_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "filter_input_age_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "filter_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "fusion_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "gpu_owner_edgetam_cycle_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "gpu_owner_ffs_cycle_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "gpu_owner_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "object_enhanced_pt_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "open3d_controller_update_geometry_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "open3d_object_update_geometry_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "raw_fusion_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "render_total_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "staged_edgetam_parallel_efficiency": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "staged_edgetam_stage_sum_model_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "staged_edgetam_stage_wall_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "staged_ffs_stage_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "staged_stage_barrier_ms": {
+        "max": 0.0,
+        "median": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      }
+    },
+    "raw_fusion_fps": 0.0,
+    "render_fps": 0.0,
+    "rendered_groups": 0,
+    "target_fps_deficit": 25.0,
+    "target_fps_deficit_ratio": 1.0
+  },
+  "target_fps": 25.0,
+  "temporal_grouping": {
+    "capture_buffer_size": 4,
+    "drop_skewed_groups": true,
+    "max_capture_skew_ms": 66.7,
+    "max_frame_age_ms": 150.0,
+    "no_temporal_coherent_group_no_ffs": true,
+    "policy": "timestamp-nearest"
+  },
+  "top_slowest_object_filter_groups": [
+    {
+      "detail": {},
+      "group_id": 0,
+      "input_points": 0,
+      "kept_points": 0,
+      "total_enhanced_pt_ms": 0.0
+    },
+    {
+      "detail": {},
+      "group_id": 1,
+      "input_points": 0,
+      "kept_points": 0,
+      "total_enhanced_pt_ms": 0.0
+    },
+    {
+      "detail": {},
+      "group_id": 2,
+      "input_points": 0,
+      "kept_points": 0,
+      "total_enhanced_pt_ms": 0.0
+    },
+    {
+      "detail": {},
+      "group_id": 3,
+      "input_points": 0,
+      "kept_points": 0,
+      "total_enhanced_pt_ms": 0.0
+    },
+    {
+      "detail": {},
+      "group_id": 4,
+      "input_points": 0,
+      "kept_points": 0,
+      "total_enhanced_pt_ms": 0.0
+    },
+    {
+      "detail": {},
+      "group_id": 5,
+      "input_points": 0,
+      "kept_points": 0,
+      "total_enhanced_pt_ms": 0.0
+    },
+    {
+      "detail": {},
+      "group_id": 6,
+      "input_points": 0,
+      "kept_points": 0,
+      "total_enhanced_pt_ms": 0.0
+    },
+    {
+      "detail": {},
+      "group_id": 7,
+      "input_points": 0,
+      "kept_points": 0,
+      "total_enhanced_pt_ms": 0.0
+    },
+    {
+      "detail": {},
+      "group_id": 8,
+      "input_points": 0,
+      "kept_points": 0,
+      "total_enhanced_pt_ms": 0.0
+    },
+    {
+      "detail": {},
+      "group_id": 9,
+      "input_points": 0,
+      "kept_points": 0,
+      "total_enhanced_pt_ms": 0.0
+    }
+  ],
+  "track_mode": "controller-object",
+  "track_overlay_ms_median": 0.0,
+  "tracking_backend": "none",
+  "tracking_e2e_ms_median": null,
+  "tracking_model_ms_median": null,
+  "tracking_overlay": {
+    "backend": "none",
+    "blocking_render": false,
+    "depth_source": "displayed",
+    "enabled": false,
+    "hot_path_enabled_by_default": false,
+    "max_points": 150,
+    "num_points": 256,
+    "output_root": "./data/experiments/demo3_live_tracking",
+    "source": "cached",
+    "trail_len": 8,
+    "update_hz": 5.0
+  },
+  "tracking_overlay_enabled": false,
+  "tracking_source": "cached",
+  "tracking_update_hz": 5.0,
+  "visible_ratio_mean": 0.0,
+  "warmup_exclude_s": 45.0
+}
