@@ -4,6 +4,12 @@
 
 This repository handles 3-camera RealSense preview, calibration, synchronized recording, aligned case generation, and native-vs-FFS comparison visualization for aligned cases.
 
+## Current Experiment Convention
+
+- For the current experiment/demo artifacts, the object is `stuffed animal` and the controller is `towel`.
+- All current experiment commands, generated artifact names, profiling summaries, tracking overlays, and demo notes should use this convention unless the user explicitly switches to a different case.
+- The formal live demo default remains `controller = hand`; `towel` is the current non-operator surrogate controller because no hand operator is present during these experiments.
+
 ## File Map
 
 - `cameras_viewer.py`: live preview / debug entrypoint
