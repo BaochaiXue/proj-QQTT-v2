@@ -42,6 +42,36 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "Visualization layering and file-size guard.",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/check_demo3_tracking_backends.py",
+        "experiments",
+        "Report Demo 3 tracking backend availability without requiring optional dependencies.",
+        "quick",
+    ),
+    HarnessEntry(
+        "scripts/harness/experiments/check_demo3_tracking_backend_stack.py",
+        "experiments",
+        "Probe Demo 3 high-performance tracking backend stack and optional dependencies.",
+        "quick",
+    ),
+    HarnessEntry(
+        "scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py",
+        "experiments",
+        "Offline Demo 3 tracking backend benchmark with PhysTwin-compatible track outputs.",
+        "quick",
+    ),
+    HarnessEntry(
+        "scripts/harness/experiments/run_demo3_onnx_trt_probe.py",
+        "experiments",
+        "Non-fatal ONNX Runtime CUDA/TensorRT EP probe for exportable tracking models.",
+        "quick",
+    ),
+    HarnessEntry(
+        "scripts/harness/visualize_demo3_tracking_pcd_overlay.py",
+        "focused_diagnostics",
+        "Offline Demo 3 fused PCD overlay export for lifted tracking anchors and trails.",
+        "quick",
+    ),
+    HarnessEntry(
         "scripts/harness/benchmark_ffs_configs.py",
         "hardware_external",
         "Saved-pair PyTorch FFS config screening; not live 3-camera realtime.",

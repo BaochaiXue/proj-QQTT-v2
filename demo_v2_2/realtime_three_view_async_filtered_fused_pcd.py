@@ -62,6 +62,32 @@ def build_arg_parser() -> argparse.ArgumentParser:
     view.add_argument("--point-size", type=float, default=None, help="Open3D point size.")
     view.add_argument("--output-root", default=None, help="Output root for runtime artifacts.")
 
+    overlay = parser.add_argument_group("Tracking Overlay")
+    overlay.add_argument("--show-tracking-overlay", action="store_true", help="Enable optional Demo 3 tracking anchor overlay.")
+    overlay.add_argument(
+        "--tracking-backend",
+        choices=("none", "cotracker3_online", "nvofa", "tapnext", "locotrack", "tapir", "vpi_lk", "offline_npz", "cached"),
+        default=None,
+        help="Tracking backend for optional Demo 3 overlay.",
+    )
+    overlay.add_argument(
+        "--tracking-source",
+        choices=("live", "cached", "offline_npz"),
+        default=None,
+        help="Source for optional Demo 3 overlay tracks.",
+    )
+    overlay.add_argument("--tracking-num-points", type=int, default=None, help="Sparse tracking query point count.")
+    overlay.add_argument("--tracking-overlay-max-points", type=int, default=None, help="Maximum anchors shown in overlay.")
+    overlay.add_argument("--tracking-trail-len", type=int, default=None, help="Short 3D trail length in frames.")
+    overlay.add_argument("--tracking-update-hz", type=float, default=None, help="Tracking worker update rate cap.")
+    overlay.add_argument(
+        "--tracking-depth-source",
+        choices=("displayed", "native", "ffs"),
+        default=None,
+        help="Depth source used to lift tracks for overlay.",
+    )
+    overlay.add_argument("--tracking-output-root", default=None, help="Output root for Demo 3 live tracking artifacts.")
+
     startup = parser.add_argument_group("Startup")
     startup.add_argument("--no-parallel-init", action="store_true", help="Disable parallel camera/model startup.")
     startup.add_argument("--no-compile-prewarm", action="store_true", help="Skip EdgeTAM compile prewarm during init.")
@@ -142,6 +168,14 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--depth-max-m", parsed.max_depth_m)
     _append_option(translated, "--point-size", parsed.point_size)
     _append_option(translated, "--output-root", parsed.output_root)
+    _append_option(translated, "--tracking-backend", parsed.tracking_backend)
+    _append_option(translated, "--tracking-source", parsed.tracking_source)
+    _append_option(translated, "--tracking-num-points", parsed.tracking_num_points)
+    _append_option(translated, "--tracking-overlay-max-points", parsed.tracking_overlay_max_points)
+    _append_option(translated, "--tracking-trail-len", parsed.tracking_trail_len)
+    _append_option(translated, "--tracking-update-hz", parsed.tracking_update_hz)
+    _append_option(translated, "--tracking-depth-source", parsed.tracking_depth_source)
+    _append_option(translated, "--tracking-output-root", parsed.tracking_output_root)
     _append_option(translated, "--ffs-trt-batch-size", parsed.ffs_batch_size)
 
     if parsed.dry_run:
@@ -160,6 +194,8 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
         translated.append("--no-edgetam-prewarm-compile")
     if parsed.experimental_edgetam_batch_vision:
         translated.append("--edgetam-batch-vision-encoder")
+    if parsed.show_tracking_overlay:
+        translated.append("--show-tracking-overlay")
 
     return _with_default_preset([*translated, *passthrough])
 

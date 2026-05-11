@@ -17,13 +17,18 @@ class CheckAllSmokeTest(unittest.TestCase):
 
     def test_quick_profile_uses_curated_batched_commands(self) -> None:
         commands = check_all.build_commands(python="python", profile="quick")
-        self.assertEqual(len(commands), 13)
+        self.assertEqual(len(commands), 18)
         self.assertIn(["python", "cameras_viewer.py", "--help"], commands)
         self.assertIn(["python", "record_data_realtime_align.py", "--help"], commands)
         self.assertIn(["python", "data_process/record_data_align.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visual_compare_depth_panels.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visual_compare_reprojection.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visual_compare_turntable.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/experiments/check_demo3_tracking_backends.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/experiments/check_demo3_tracking_backend_stack.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/experiments/run_demo3_onnx_trt_probe.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/visualize_demo3_tracking_pcd_overlay.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/check_harness_catalog.py"], commands)
         self.assertIn(["python", "scripts/harness/check_experiment_boundaries.py"], commands)
         self.assertIn(["python", "scripts/harness/check_visual_architecture.py"], commands)
@@ -55,12 +60,22 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_demo_v2_1_three_view_fused_pcd_smoke",
                 "tests.test_demo_v2_1_5_realsense_depth_smoke",
                 "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
+                "tests.test_demo3_tracking_contract_smoke",
+                "tests.test_demo3_tracking_sampling_smoke",
+                "tests.test_demo3_tracking_io_smoke",
+                "tests.test_demo3_tracking_lift_smoke",
+                "tests.test_demo3_tracking_registry_smoke",
+                "tests.test_demo3_tracking_harness_smoke",
+                "tests.test_demo3_tracking_backend_availability_smoke",
+                "tests.test_demo3_tracking_onnx_trt_config_smoke",
+                "tests.test_demo3_tracking_nvofa_stub_smoke",
+                "tests.test_demo3_tracking_vpi_stub_smoke",
+                "tests.test_demo3_tracking_backend_benchmark_fake_smoke",
                 "tests.test_check_all_smoke",
             ],
             commands,
         )
         flat_items = [item for command in commands for item in command]
-        self.assertFalse(any(item.startswith("scripts/harness/experiments/") for item in flat_items))
         self.assertFalse(any(cmd[:3] == ["python", "-m", "pytest"] for cmd in commands))
         self.assertNotIn("tests.test_visual_compare_depth_panels_smoke", flat_items)
         self.assertNotIn("tests.test_visual_compare_reprojection_smoke", flat_items)

@@ -6151,7 +6151,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-tracking-overlay", action="store_true")
     parser.add_argument(
         "--tracking-backend",
-        choices=("none", "cotracker3_online", "nvofa", "tapnext", "locotrack", "tapir", "vpi_lk"),
+        choices=("none", "cotracker3_online", "nvofa", "tapnext", "locotrack", "tapir", "vpi_lk", "offline_npz", "cached"),
         default="none",
     )
     parser.add_argument("--tracking-source", choices=("live", "cached", "offline_npz"), default="cached")

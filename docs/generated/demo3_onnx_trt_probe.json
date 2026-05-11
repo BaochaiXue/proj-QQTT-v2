@@ -1,0 +1,86 @@
+{
+  "fixed_shape": true,
+  "height": 360,
+  "num_query_points": 256,
+  "results": [
+    {
+      "cached_session_create_ms": 0.0,
+      "export_onnx": "fail",
+      "first_session_create_ms": 0.0,
+      "max_abs_diff": 0.0,
+      "model": "locotrack",
+      "onnxruntime_cuda": "unavailable",
+      "onnxruntime_tensorrt": "unavailable",
+      "ort_cuda_ms": 0.0,
+      "ort_trt_ms": 0.0,
+      "providers_requested": [
+        [
+          "TensorrtExecutionProvider",
+          {
+            "trt_engine_cache_enable": true,
+            "trt_engine_cache_path": "data/cache/demo3_tracking_trt",
+            "trt_fp16_enable": true,
+            "trt_timing_cache_enable": true
+          }
+        ],
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "pytorch_ms": 0.0,
+      "quality_notes": "No exportable model wrapper or ONNX path was provided.",
+      "stack": {
+        "onnxruntime_cuda": true,
+        "onnxruntime_import_error": "",
+        "onnxruntime_importable": true,
+        "onnxruntime_providers": [
+          "TensorrtExecutionProvider",
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ],
+        "onnxruntime_tensorrt": true
+      },
+      "trt_engine_cache_created": false
+    },
+    {
+      "cached_session_create_ms": 0.0,
+      "export_onnx": "fail",
+      "first_session_create_ms": 0.0,
+      "max_abs_diff": 0.0,
+      "model": "tapnext",
+      "onnxruntime_cuda": "unavailable",
+      "onnxruntime_tensorrt": "unavailable",
+      "ort_cuda_ms": 0.0,
+      "ort_trt_ms": 0.0,
+      "providers_requested": [
+        [
+          "TensorrtExecutionProvider",
+          {
+            "trt_engine_cache_enable": true,
+            "trt_engine_cache_path": "data/cache/demo3_tracking_trt",
+            "trt_fp16_enable": true,
+            "trt_timing_cache_enable": true
+          }
+        ],
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "pytorch_ms": 0.0,
+      "quality_notes": "No exportable model wrapper or ONNX path was provided.",
+      "stack": {
+        "onnxruntime_cuda": true,
+        "onnxruntime_import_error": "",
+        "onnxruntime_importable": true,
+        "onnxruntime_providers": [
+          "TensorrtExecutionProvider",
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ],
+        "onnxruntime_tensorrt": true
+      },
+      "trt_engine_cache_created": false
+    }
+  ],
+  "trt_engine_cache": "data/cache/demo3_tracking_trt",
+  "trt_fp16": true,
+  "width": 480
+}

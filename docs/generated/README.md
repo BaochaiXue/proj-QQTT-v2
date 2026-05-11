@@ -36,6 +36,8 @@ manual; use the compressed harness index first.
 | Demo 2.2 runtime split | `demo2_2_runtime_split.md` |
 | Demo 2.2 staged-parallel GPU-resident probe | `demo2_2_staged_parallel_5fps_benchmark.md` |
 | Demo 2.2 staged-parallel async GPU observation | `demo2_2_staged_parallel_async_gpu_observation.md` |
+| Demo 3 tracking backend stack | `demo3_tracking_backend_stack.md`, `demo3_tracking_backend_stack.json` |
+| Demo 3 ONNX/TensorRT tracking probe | `demo3_onnx_trt_probe.md`, `demo3_onnx_trt_probe.json` |
 | Demo 2.1.5 RealSense-depth async filtered fused PCD | `demo2_1_5_realsense_depth_60s_profile.md` |
 | Demo 2.1.5 NVML GPU utilization profile | `demo2_1_5_gpu_nvml_profile.md` |
 | Demo 2.1.5 parallel EdgeTAM NVML GPU profile | `demo2_1_5_parallel_edgetam_gpu_nvml_profile.md` |
