@@ -176,6 +176,28 @@ COMPILE_MODES = (
     COMPILE_MODE_NONE,
 )
 DEFAULT_COMPILE_MODE = COMPILE_MODE_VISION_REDUCE_OVERHEAD
+EDGETAM_COMPILE_SCOPE_AUTO = "auto"
+EDGETAM_COMPILE_SCOPE_VISION = "vision"
+EDGETAM_COMPILE_SCOPE_COMPONENTS = "components"
+EDGETAM_COMPILE_SCOPE_COMPONENTS_NO_CUDAGRAPHS = "components-no-cudagraphs"
+EDGETAM_COMPILE_SCOPE_COMPONENTS_REDUCE_OVERHEAD = "components-reduce-overhead"
+EDGETAM_COMPILE_SCOPES = (
+    EDGETAM_COMPILE_SCOPE_AUTO,
+    EDGETAM_COMPILE_SCOPE_VISION,
+    EDGETAM_COMPILE_SCOPE_COMPONENTS,
+    EDGETAM_COMPILE_SCOPE_COMPONENTS_NO_CUDAGRAPHS,
+    EDGETAM_COMPILE_SCOPE_COMPONENTS_REDUCE_OVERHEAD,
+)
+EDGETAM_GRAPH_OUTPUT_POLICY_AUTO = "auto"
+EDGETAM_GRAPH_OUTPUT_POLICY_NONE = "none"
+EDGETAM_GRAPH_OUTPUT_POLICY_CLONE = "clone"
+EDGETAM_GRAPH_OUTPUT_POLICY_RING_BUFFER = "ring-buffer"
+EDGETAM_GRAPH_OUTPUT_POLICIES = (
+    EDGETAM_GRAPH_OUTPUT_POLICY_AUTO,
+    EDGETAM_GRAPH_OUTPUT_POLICY_NONE,
+    EDGETAM_GRAPH_OUTPUT_POLICY_CLONE,
+    EDGETAM_GRAPH_OUTPUT_POLICY_RING_BUFFER,
+)
 MASK_POSTPROCESS_HF = "hf"
 MASK_POSTPROCESS_CUDA_INLINE = "cuda-inline"
 MASK_POSTPROCESS_MODES = (MASK_POSTPROCESS_HF, MASK_POSTPROCESS_CUDA_INLINE)
@@ -231,6 +253,42 @@ def serialized_edgetam_first_compiled_forward_enabled(args: argparse.Namespace) 
         and str(getattr(args, "compile_mode", "")) == COMPILE_MODE_VISION_REDUCE_OVERHEAD
         and str(getattr(args, "gpu_gate_mode", "")) == GPU_GATE_MODE_OFF
     )
+
+
+def edgetam_compile_mode_uses_cudagraphs(compile_mode: str) -> bool:
+    return str(compile_mode) in {
+        COMPILE_MODE_VISION_REDUCE_OVERHEAD,
+        COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD,
+    }
+
+
+def resolved_edgetam_graph_output_policy(args: argparse.Namespace) -> str:
+    requested = str(getattr(args, "edgetam_graph_output_policy", EDGETAM_GRAPH_OUTPUT_POLICY_AUTO))
+    if requested == EDGETAM_GRAPH_OUTPUT_POLICY_AUTO:
+        return (
+            EDGETAM_GRAPH_OUTPUT_POLICY_CLONE
+            if edgetam_compile_mode_uses_cudagraphs(str(getattr(args, "compile_mode", "")))
+            else EDGETAM_GRAPH_OUTPUT_POLICY_NONE
+        )
+    if requested == EDGETAM_GRAPH_OUTPUT_POLICY_RING_BUFFER:
+        # Ring-buffer publication is a future optimization; the current safe policy is clone.
+        return EDGETAM_GRAPH_OUTPUT_POLICY_CLONE
+    return requested
+
+
+def compile_mode_for_edgetam_scope(scope: str, fallback: str) -> str:
+    scope = str(scope)
+    if scope in {EDGETAM_COMPILE_SCOPE_AUTO, ""}:
+        return str(fallback)
+    if scope == EDGETAM_COMPILE_SCOPE_VISION:
+        return COMPILE_MODE_VISION_REDUCE_OVERHEAD
+    if scope == EDGETAM_COMPILE_SCOPE_COMPONENTS:
+        return COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS
+    if scope == EDGETAM_COMPILE_SCOPE_COMPONENTS_NO_CUDAGRAPHS:
+        return COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS
+    if scope == EDGETAM_COMPILE_SCOPE_COMPONENTS_REDUCE_OVERHEAD:
+        return COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD
+    raise RuntimeError(f"Unsupported EdgeTAM compile scope: {scope}")
 
 
 def mark_torch_cudagraph_step_begin(torch_module: Any) -> bool:
@@ -358,12 +416,46 @@ def _clone_tensor_tree(torch_module: Any, value: Any) -> Any:
     return value
 
 
-def wrap_compiled_vision_encoder_outputs_for_parallel(model: Any, torch_module: Any) -> bool:
-    """Clone compiled vision-encoder outputs before the next concurrent CUDAGraph replay."""
-    if not hasattr(model, "vision_encoder"):
+def _module_is_compiled(module: Any) -> bool:
+    if hasattr(module, "_orig_mod"):
+        return True
+    wrapped = getattr(module, "wrapped", None)
+    if wrapped is not None and hasattr(wrapped, "_orig_mod"):
+        return True
+    return "OptimizedModule" in type(module).__name__
+
+
+def compiled_module_info(model: Any, target: str) -> dict[str, Any]:
+    if not hasattr(model, target):
+        return {
+            "target": str(target),
+            "present": False,
+            "compiled": False,
+            "module_type": None,
+            "module_id": None,
+            "output_clone_wrapper": False,
+        }
+    module = getattr(model, target)
+    wrapped = getattr(module, "wrapped", None)
+    inspected = wrapped if wrapped is not None else module
+    return {
+        "target": str(target),
+        "present": True,
+        "compiled": bool(_module_is_compiled(module)),
+        "module_type": type(inspected).__name__,
+        "module_id": int(id(inspected)),
+        "wrapper_type": type(module).__name__ if wrapped is not None else None,
+        "wrapper_id": int(id(module)) if wrapped is not None else None,
+        "output_clone_wrapper": bool(getattr(module, "_qqtt_cudagraph_output_clone_wrapper", False)),
+    }
+
+
+def wrap_compiled_module_outputs_for_parallel(model: Any, torch_module: Any, target: str) -> bool:
+    """Clone compiled module outputs before the next concurrent CUDAGraph replay."""
+    if not hasattr(model, target):
         return False
-    vision_encoder = getattr(model, "vision_encoder")
-    if bool(getattr(vision_encoder, "_qqtt_cudagraph_output_clone_wrapper", False)):
+    module = getattr(model, target)
+    if bool(getattr(module, "_qqtt_cudagraph_output_clone_wrapper", False)):
         return False
 
     class _OutputCloneWrapper(torch_module.nn.Module):
@@ -371,13 +463,29 @@ def wrap_compiled_vision_encoder_outputs_for_parallel(model: Any, torch_module: 
             super().__init__()
             self.wrapped = wrapped
             self._qqtt_cudagraph_output_clone_wrapper = True
+            self._qqtt_wrapped_compile_target = str(target)
+
+        def __getattr__(self, name: str) -> Any:
+            try:
+                return super().__getattr__(name)
+            except AttributeError as exc:
+                wrapped = super().__getattr__("wrapped")
+                try:
+                    return getattr(wrapped, name)
+                except AttributeError:
+                    raise exc
 
         def forward(self, *args: Any, **kwargs: Any) -> Any:
             mark_torch_cudagraph_step_begin(torch_module)
             return _clone_tensor_tree(torch_module, self.wrapped(*args, **kwargs))
 
-    setattr(model, "vision_encoder", _OutputCloneWrapper(vision_encoder))
+    setattr(model, target, _OutputCloneWrapper(module))
     return True
+
+
+def wrap_compiled_vision_encoder_outputs_for_parallel(model: Any, torch_module: Any) -> bool:
+    """Backward-compatible wrapper for the vision-only EdgeTAM compile path."""
+    return wrap_compiled_module_outputs_for_parallel(model, torch_module, "vision_encoder")
 GPU_PIPELINE_MODE_SEPARATE_WORKERS = "separate-workers"
 GPU_PIPELINE_MODE_SINGLE_OWNER = "single-owner"
 GPU_PIPELINE_MODE_STAGED = "staged"
@@ -945,11 +1053,12 @@ def _as_colors(colors: np.ndarray) -> np.ndarray:
 def _profile_stats(values: Sequence[float]) -> dict[str, float]:
     arr = np.asarray([float(value) for value in values if np.isfinite(float(value))], dtype=np.float64)
     if arr.size == 0:
-        return {"median": 0.0, "p90": 0.0, "p95": 0.0, "max": 0.0}
+        return {"median": 0.0, "p90": 0.0, "p95": 0.0, "p99": 0.0, "max": 0.0}
     return {
         "median": float(np.median(arr)),
         "p90": float(np.percentile(arr, 90)),
         "p95": float(np.percentile(arr, 95)),
+        "p99": float(np.percentile(arr, 99)),
         "max": float(np.max(arr)),
     }
 
@@ -992,6 +1101,10 @@ def _json_default(value: Any) -> Any:
 
 def _event_fps(records: Sequence[dict[str, Any]], path: Sequence[str]) -> float:
     times = _series_for_path(records, path)
+    return _event_fps_from_times(times)
+
+
+def _event_fps_from_times(times: Sequence[float]) -> float:
     if len(times) < 2:
         return 0.0
     elapsed = max(times) - min(times)
@@ -1581,6 +1694,8 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             setattr(args, "capture_group_target_fps", float(args.fps))
     if int(getattr(args, "ffs_trt_batch_size", 1)) == 3 and "--ffs-trt-model-dir" not in explicit:
         setattr(args, "ffs_trt_model_dir", str(DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR))
+    if "--edgetam-compile-scope" in explicit and "--compile-mode" not in explicit:
+        setattr(args, "compile_mode", compile_mode_for_edgetam_scope(args.edgetam_compile_scope, args.compile_mode))
     _normalize_pin_memory_options(args, explicit)
     if getattr(args, "gpu_gate_mode", None) == GPU_GATE_MODE_OFF:
         setattr(args, "gpu_gate_max_concurrent", 0)
@@ -1888,6 +2003,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "offline_video_input_used": False,
         "edge_backend": "HF EdgeTAMVideo",
         "compile_mode": args.compile_mode,
+        "edgetam_compile_scope": args.edgetam_compile_scope,
         "dtype": args.dtype,
         "input_path": args.edgetam_input_path,
         "mask_postprocess": args.mask_postprocess,
@@ -2008,12 +2124,17 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "worker_mode": args.edgetam_worker_mode,
             "model_topology": args.edgetam_model_topology,
             "stream_mode": args.edgetam_stream_mode,
+            "per_camera_cuda_streams": args.edgetam_stream_mode == EDGETAM_STREAM_MODE_PER_CAMERA,
             "one_streaming_session_per_camera": True,
             "input_path": args.edgetam_input_path,
             "mask_postprocess": args.mask_postprocess,
             "multi_object_single_session_per_camera": controller_tracking_enabled(args.track_mode),
             "active_object_ids": active_object_ids(args),
             "serialize_first_compiled_forward": serialized_edgetam_first_compiled_forward_enabled(args),
+            "graph_output_policy_requested": args.edgetam_graph_output_policy,
+            "graph_output_policy_effective": resolved_edgetam_graph_output_policy(args),
+            "stage_wall_target_ms": float(getattr(args, "edgetam_stage_wall_target_ms", 80.0)),
+            "fail_if_stage_wall_p50_over_ms": float(getattr(args, "fail_if_edgetam_stage_wall_p50_over", 0.0)),
             "prewarm_compile": bool(getattr(args, "edgetam_prewarm_compile", False)),
             "prewarm_runs": int(getattr(args, "edgetam_prewarm_runs", 0)),
             "batch_vision_encoder": bool(getattr(args, "edgetam_batch_vision_encoder", False)),
@@ -2292,16 +2413,32 @@ class Demo21Runtime:
             entry: dict[str, Any] = {"repeat_idx": int(repeat_idx)}
             if include_edgetam and self.args.track_mode != TRACK_MODE_NONE:
                 edge_start_s = time.perf_counter()
-                hf_stream, torch_module, _dtype, model, processor = self._init_hf_model(camera_idx=-1)
+                camera_keys = (
+                    [int(camera_idx) for camera_idx in self.args.camera_ids]
+                    if self.args.edgetam_model_topology == EDGETAM_MODEL_TOPOLOGY_REPLICATED
+                    else [-1]
+                )
+                bundles = [
+                    self._init_hf_model(camera_idx=int(camera_idx))
+                    for camera_idx in camera_keys
+                ]
                 entry["edgetam_total_ms"] = float(_elapsed_ms(edge_start_s, time.perf_counter()))
-                entry["edgetam_loader_profile"] = self._init_profile_snapshot().get("edgetam", {}).get("loaders", {}).get("shared", {})
+                loaders = self._init_profile_snapshot().get("edgetam", {}).get("loaders", {})
+                entry["edgetam_loader_profile"] = loaders.get("shared", loaders)
+                entry["edgetam_loader_profiles"] = loaders
+                entry["compiled_module_count"] = int(
+                    sum(int(profile.get("compiled_module_count", 0) or 0) for profile in loaders.values() if isinstance(profile, dict))
+                )
                 try:
-                    del processor
-                    del model
-                    if str(self.args.device).startswith("cuda") and hasattr(torch_module, "cuda"):
+                    torch_module = bundles[0][1] if bundles else None
+                    for hf_stream, _torch_module, _dtype, model, processor in bundles:
+                        del processor
+                        del model
+                        del hf_stream
+                    if torch_module is not None and str(self.args.device).startswith("cuda") and hasattr(torch_module, "cuda"):
                         torch_module.cuda.empty_cache()
                 finally:
-                    del hf_stream
+                    bundles.clear()
             if include_sam31 and self.args.init_mode == "sam31-first-frame":
                 sam_start_s = time.perf_counter()
                 sam31_result = self._preload_sam31_init_model()
@@ -2419,6 +2556,12 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 first live slice expects --camera-ids 0,1,2")
         if self.args.compile_mode not in COMPILE_MODES:
             raise RuntimeError(f"Demo 2.1 unsupported --compile-mode {self.args.compile_mode}")
+        if self.args.edgetam_compile_scope not in EDGETAM_COMPILE_SCOPES:
+            raise RuntimeError(f"Demo 2.1 unsupported --edgetam-compile-scope {self.args.edgetam_compile_scope}")
+        if self.args.edgetam_graph_output_policy not in EDGETAM_GRAPH_OUTPUT_POLICIES:
+            raise RuntimeError(
+                f"Demo 2.1 unsupported --edgetam-graph-output-policy {self.args.edgetam_graph_output_policy}"
+            )
         if self.args.ffs_worker_mode != "shared":
             raise RuntimeError("Demo 2.1 requires --ffs-worker-mode shared")
         if self.args.edgetam_worker_mode != "per-camera":
@@ -2470,7 +2613,12 @@ class Demo21Runtime:
             self.args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_SINGLE_OWNER, GPU_PIPELINE_MODE_STAGED}
             and self.args.depth_source not in depth_pipeline_sources
         ):
-            raise RuntimeError("Demo 2.1 single-owner/staged modes require --depth-source ffs or realsense")
+            if not (
+                self.args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_SINGLE_OWNER, GPU_PIPELINE_MODE_STAGED}
+                and self.args.depth_source == DEPTH_SOURCE_NONE
+                and self.args.render_mode == "none"
+            ):
+                raise RuntimeError("Demo 2.1 single-owner/staged modes require --depth-source ffs or realsense")
         preset_canonical = canonical_preset_name(self.args.preset)
         if preset_canonical == PRESET_DEMO215_ASYNC_FILTER_5FPS:
             if self.args.depth_source != DEPTH_SOURCE_REALSENSE:
@@ -2556,6 +2704,10 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --filter-budget-ms must be >= 0")
         if float(self.args.profile_warmup_exclude_s) < 0:
             raise RuntimeError("Demo 2.1 --profile-warmup-exclude-s must be >= 0")
+        if float(getattr(self.args, "edgetam_stage_wall_target_ms", 0.0)) <= 0:
+            raise RuntimeError("Demo 2.1 --edgetam-stage-wall-target-ms must be > 0")
+        if float(getattr(self.args, "fail_if_edgetam_stage_wall_p50_over", 0.0)) < 0:
+            raise RuntimeError("Demo 2.1 --fail-if-edgetam-stage-wall-p50-over must be >= 0")
         if float(self.args.gpu_sampling_interval_s) <= 0:
             raise RuntimeError("Demo 2.1 --gpu-sampling-interval-s must be > 0")
         if int(self.args.gpu_sampling_device_index) < 0:
@@ -2811,6 +2963,40 @@ class Demo21Runtime:
             name: _profile_stats(_series_for_path(records, path))
             for name, path in metric_paths.items()
         }
+        edgetam_stage_wall_values: list[float] = []
+        edgetam_stage_sum_model_values: list[float] = []
+        edgetam_parallel_efficiency_values: list[float] = []
+        edgetam_stage_publish_times: list[float] = []
+        camera_ids = [int(camera_idx) for camera_idx in self.args.camera_ids]
+        for record in records:
+            gpu_owner_stage_wall = _nested_get(record, ("gpu_owner", "edgetam_stage_wall_ms"))
+            if gpu_owner_stage_wall is not None:
+                wall_ms = float(gpu_owner_stage_wall)
+                sum_model_ms = float(_nested_get(record, ("gpu_owner", "edgetam_stage_sum_model_ms")) or 0.0)
+                publish_s = float(_nested_get(record, ("gpu_owner", "publish_s")) or record.get("t_group_created", 0.0) or 0.0)
+            else:
+                cam_records = [
+                    _nested_get(record, ("edgetam", f"cam{camera_idx}"))
+                    for camera_idx in camera_ids
+                ]
+                if not all(isinstance(item, dict) for item in cam_records):
+                    continue
+                starts = [float(item.get("job_start_s", item.get("publish_s", 0.0)) or 0.0) for item in cam_records]
+                publishes = [float(item.get("publish_s", 0.0) or 0.0) for item in cam_records]
+                if not starts or not publishes or min(starts) <= 0.0 or max(publishes) <= 0.0:
+                    continue
+                wall_ms = float((max(publishes) - min(starts)) * 1000.0)
+                sum_model_ms = float(sum(float(item.get("model_ms", 0.0) or 0.0) for item in cam_records))
+                publish_s = float(max(publishes))
+            edgetam_stage_wall_values.append(wall_ms)
+            edgetam_stage_sum_model_values.append(sum_model_ms)
+            edgetam_parallel_efficiency_values.append(float(sum_model_ms / wall_ms) if wall_ms > 0.0 else 0.0)
+            edgetam_stage_publish_times.append(publish_s)
+        summary["complete_mask_groups"] = int(len(edgetam_stage_wall_values))
+        summary["complete_mask_group_fps"] = _event_fps_from_times(edgetam_stage_publish_times)
+        summary["metrics"]["edgetam_stage_wall_ms"] = _profile_stats(edgetam_stage_wall_values)
+        summary["metrics"]["edgetam_stage_sum_model_ms"] = _profile_stats(edgetam_stage_sum_model_values)
+        summary["metrics"]["edgetam_parallel_efficiency"] = _profile_stats(edgetam_parallel_efficiency_values)
         aggregate_metric_paths: dict[str, tuple[tuple[str, ...], ...]] = {
             "edgetam_model_ms": (
                 ("edgetam", "cam0", "model_ms"),
@@ -2914,6 +3100,19 @@ class Demo21Runtime:
         gpu_sampling["summary_full_run"] = summarize_gpu_samples(gpu_samples, start_s=0.0)
         gpu_sampling["summary_after_warmup"] = summarize_gpu_samples(gpu_samples, start_s=warmup_s)
         gpu_sampling["samples"] = gpu_samples
+        summary_full = self._profile_summary_for_records(records)
+        summary_warm = self._profile_summary_for_records(after_warmup)
+        target_ms = float(getattr(self.args, "edgetam_stage_wall_target_ms", 80.0))
+        p50_ms = float(summary_warm.get("metrics", {}).get("edgetam_stage_wall_ms", {}).get("median", 0.0) or 0.0)
+        fail_threshold_ms = float(getattr(self.args, "fail_if_edgetam_stage_wall_p50_over", 0.0) or 0.0)
+        stage_gate = {
+            "target_stage_wall_p50_ms": float(target_ms),
+            "observed_stage_wall_p50_ms": float(p50_ms),
+            "pass": bool(p50_ms > 0.0 and p50_ms < target_ms),
+            "fail_threshold_ms": float(fail_threshold_ms),
+            "fail_enabled": bool(fail_threshold_ms > 0.0),
+            "fail": bool(fail_threshold_ms > 0.0 and (p50_ms <= 0.0 or p50_ms >= fail_threshold_ms)),
+        }
         return {
             "preset": self.args.preset,
             "preset_canonical": getattr(self.args, "preset_canonical", canonical_preset_name(self.args.preset)),
@@ -2923,6 +3122,11 @@ class Demo21Runtime:
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
             "compile_mode": self.args.compile_mode,
+            "edgetam_compile_scope": self.args.edgetam_compile_scope,
+            "edgetam_graph_output_policy": {
+                "requested": self.args.edgetam_graph_output_policy,
+                "effective": resolved_edgetam_graph_output_policy(self.args),
+            },
             "dtype": self.args.dtype,
             "input_path": self.args.edgetam_input_path,
             "mask_postprocess": self.args.mask_postprocess,
@@ -2953,8 +3157,9 @@ class Demo21Runtime:
             "lifted_3d_count_mean": 0.0,
             "init_profile": self._init_profile_snapshot(),
             "warmup_exclude_s": warmup_s,
-            "summary_full_run": self._profile_summary_for_records(records),
-            "summary_after_warmup": self._profile_summary_for_records(after_warmup),
+            "summary_full_run": summary_full,
+            "summary_after_warmup": summary_warm,
+            "edgetam_stage_wall_gate": stage_gate,
             "top_slowest_object_filter_groups": slow_filter_groups,
             "per_group": records,
         }
@@ -2962,7 +3167,17 @@ class Demo21Runtime:
     def _write_profile_report(self, profile_path: Path) -> None:
         profile_path.parent.mkdir(parents=True, exist_ok=True)
         payload = self._build_profile_payload()
+        gate = payload.get("edgetam_stage_wall_gate", {}) or {}
         profile_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
+        if bool(gate.get("fail", False)):
+            self._mark_fatal_error(
+                "edgetam-stage-wall-gate",
+                RuntimeError(
+                    "EdgeTAM stage wall p50 "
+                    f"{float(gate.get('observed_stage_wall_p50_ms', 0.0)):.2f} ms "
+                    f">= {float(gate.get('fail_threshold_ms', 0.0)):.2f} ms"
+                ),
+            )
         md_path = profile_path.with_suffix(".md")
         warm = payload["summary_after_warmup"]
         metrics = warm.get("metrics", {})
@@ -2997,6 +3212,8 @@ class Demo21Runtime:
             f"- fusion FPS after warmup: `{warm.get('fusion_fps', 0.0):.2f}`",
             f"- groups after warmup: `{warm.get('group_count', 0)}`",
             f"- complete fused groups after warmup: `{warm.get('complete_fusion_groups', 0)}`",
+            f"- complete mask groups after warmup: `{warm.get('complete_mask_groups', 0)}`",
+            f"- complete mask group FPS after warmup: `{warm.get('complete_mask_group_fps', 0.0):.2f}`",
             f"- rendered groups after warmup: `{warm.get('rendered_groups', 0)}`",
             f"- complete group ratio after warmup: `{warm.get('complete_group_ratio', 0.0):.3f}`",
             f"- target deficit: `{warm.get('target_fps_deficit', 0.0):.2f}`",
@@ -3097,6 +3314,9 @@ class Demo21Runtime:
             "edgetam_mask_threshold_ms",
             "edgetam_mask_to_cpu_ms",
             "edgetam_total_ms",
+            "edgetam_stage_wall_ms",
+            "edgetam_stage_sum_model_ms",
+            "edgetam_parallel_efficiency",
             "ffs_cycle_ms",
             "ffs_batch_ms",
             "ffs_gate_wait_ms",
@@ -3159,12 +3379,16 @@ class Demo21Runtime:
         ]
         depth_for_pcd = self.args.depth_source in {DEPTH_SOURCE_FFS, DEPTH_SOURCE_REALSENSE}
         if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SINGLE_OWNER:
-            if self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
+            if self.args.track_mode != TRACK_MODE_NONE and (
+                depth_for_pcd or self.args.depth_source == DEPTH_SOURCE_NONE
+            ):
                 specs.append(("gpu-owner", self._gpu_owner_pipeline_worker))
+            if self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
                 specs.append(("fusion", self._fusion_worker_single_owner))
         elif self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED:
-            if self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
+            if self.args.track_mode != TRACK_MODE_NONE and (depth_for_pcd or self.args.depth_source == DEPTH_SOURCE_NONE):
                 specs.append(("staged-gpu", self._staged_gpu_pipeline_worker))
+            if self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
                 specs.append(("fusion", self._fusion_worker_single_owner))
         else:
             if self.args.depth_source == DEPTH_SOURCE_FFS:
@@ -3958,15 +4182,6 @@ class Demo21Runtime:
             model=model,
         )
         compile_wrap_ms = _elapsed_ms(compile_start_s, time.perf_counter())
-        if (
-            self.args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_SEPARATE_WORKERS, GPU_PIPELINE_MODE_STAGED}
-            and self.args.gpu_gate_mode == GPU_GATE_MODE_OFF
-            and "vision_encoder" in set(compile_metadata.get("applied_targets", []))
-        ):
-            compile_metadata["cudagraph_output_clone_wrapper"] = wrap_compiled_vision_encoder_outputs_for_parallel(
-                model,
-                torch_module,
-            )
         processor_start_s = time.perf_counter()
         processor = hf_stream.Sam2VideoProcessor.from_pretrained(self.args.model_id)
         processor_load_ms = _elapsed_ms(processor_start_s, time.perf_counter())
@@ -3990,6 +4205,19 @@ class Demo21Runtime:
                 "compile_targets": list(compile_metadata.get("applied_targets", [])),
                 "compile_missing_targets": list(compile_metadata.get("missing_targets", [])),
                 "compile_failed_targets": dict(compile_metadata.get("failed_targets", {}) or {}),
+                "compiled_module_count": int(compile_metadata.get("compiled_module_count", 0)),
+                "compiled_module_names": list(compile_metadata.get("compiled_module_names", [])),
+                "compiled_module_types": dict(compile_metadata.get("compiled_module_types", {}) or {}),
+                "compiled_modules": list(compile_metadata.get("compiled_modules", [])),
+                "graph_output_policy_requested": str(
+                    compile_metadata.get("graph_output_policy_requested", self.args.edgetam_graph_output_policy)
+                ),
+                "graph_output_policy_effective": str(
+                    compile_metadata.get("graph_output_policy_effective", resolved_edgetam_graph_output_policy(self.args))
+                ),
+                "graph_output_clone_targets": list(compile_metadata.get("graph_output_clone_targets", [])),
+                "model_python_id": int(id(model)),
+                "processor_python_id": int(id(processor)),
                 "topology": topology_label,
             },
         )
@@ -4021,15 +4249,56 @@ class Demo21Runtime:
             "[demo2.1-edgetam] "
             f"cam={camera_idx} topology={topology_label} model={self.args.model_id} "
             f"compile={self.args.compile_mode} applied={compile_metadata.get('applied_targets', [])} "
-            f"clone_wrap={compile_metadata.get('cudagraph_output_clone_wrapper', False)}",
+            f"compiled={compile_metadata.get('compiled_module_names', [])} "
+            f"graph_policy={compile_metadata.get('graph_output_policy_effective')} "
+            f"clone_targets={compile_metadata.get('graph_output_clone_targets', [])}",
             flush=True,
         )
         return hf_stream, torch_module, dtype, model, processor
 
+    def _finalize_edgetam_compile_metadata(self, *, torch_module: Any, model: Any, metadata: dict[str, Any]) -> dict[str, Any]:
+        requested_targets = list(metadata.get("requested_targets", []) or [])
+        applied_targets = list(metadata.get("applied_targets", []) or [])
+        policy_requested = str(getattr(self.args, "edgetam_graph_output_policy", EDGETAM_GRAPH_OUTPUT_POLICY_AUTO))
+        policy_effective = resolved_edgetam_graph_output_policy(self.args)
+        metadata["graph_output_policy_requested"] = policy_requested
+        metadata["graph_output_policy_effective"] = policy_effective
+        metadata["graph_output_policy_note"] = (
+            "ring-buffer requested; clone is the current safe publication policy"
+            if policy_requested == EDGETAM_GRAPH_OUTPUT_POLICY_RING_BUFFER
+            else ""
+        )
+        clone_targets: list[str] = []
+        if policy_effective == EDGETAM_GRAPH_OUTPUT_POLICY_CLONE:
+            for target in applied_targets:
+                if wrap_compiled_module_outputs_for_parallel(model, torch_module, str(target)):
+                    clone_targets.append(str(target))
+        compiled_modules = [
+            compiled_module_info(model, str(target))
+            for target in sorted(set(requested_targets) | set(applied_targets))
+        ]
+        metadata["compiled_modules"] = compiled_modules
+        metadata["compiled_module_names"] = [
+            str(item["target"]) for item in compiled_modules if bool(item.get("compiled"))
+        ]
+        metadata["compiled_module_types"] = {
+            str(item["target"]): str(item.get("module_type"))
+            for item in compiled_modules
+            if bool(item.get("compiled"))
+        }
+        metadata["compiled_module_count"] = int(sum(1 for item in compiled_modules if bool(item.get("compiled"))))
+        metadata["graph_output_clone_targets"] = [
+            str(item["target"])
+            for item in compiled_modules
+            if bool(item.get("output_clone_wrapper"))
+        ]
+        metadata["cudagraph_output_clone_wrapper"] = bool(metadata["graph_output_clone_targets"])
+        return metadata
+
     def _apply_edgetam_compile_mode(self, *, hf_stream: Any, torch_module: Any, model: Any) -> tuple[Any, dict[str, Any]]:
         compile_mode = str(self.args.compile_mode)
         if compile_mode == COMPILE_MODE_NONE:
-            return model, {
+            metadata = {
                 "compile_mode": compile_mode,
                 "enabled": False,
                 "torch_compile_available": bool(hasattr(torch_module, "compile")),
@@ -4042,8 +4311,15 @@ class Demo21Runtime:
                 "whole_model_compiled": False,
                 "wrap_ms": 0.0,
             }
+            return model, self._finalize_edgetam_compile_metadata(torch_module=torch_module, model=model, metadata=metadata)
         if compile_mode == COMPILE_MODE_VISION_REDUCE_OVERHEAD:
-            return hf_stream._apply_compile_mode(model, compile_mode)
+            model, metadata = hf_stream._apply_compile_mode(model, compile_mode)
+            metadata.setdefault("compile_mode", compile_mode)
+            metadata.setdefault("requested_targets", ["vision_encoder"])
+            metadata.setdefault("applied_targets", ["vision_encoder"] if hasattr(model, "vision_encoder") else [])
+            metadata.setdefault("missing_targets", [] if hasattr(model, "vision_encoder") else ["vision_encoder"])
+            metadata.setdefault("failed_targets", {})
+            return model, self._finalize_edgetam_compile_metadata(torch_module=torch_module, model=model, metadata=metadata)
         component_compile_modes = {
             COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS: (
                 "max-autotune-no-cudagraphs",
@@ -4079,7 +4355,7 @@ class Demo21Runtime:
                     target: "torch.compile is not available"
                     for target in requested_targets
                 }
-                return model, metadata
+                return model, self._finalize_edgetam_compile_metadata(torch_module=torch_module, model=model, metadata=metadata)
             started_s = time.perf_counter()
             for target in requested_targets:
                 if not hasattr(model, target):
@@ -4101,7 +4377,7 @@ class Demo21Runtime:
                     continue
                 metadata["applied_targets"].append(target)
             metadata["wrap_ms"] = _elapsed_ms(started_s, time.perf_counter())
-            return model, metadata
+            return model, self._finalize_edgetam_compile_metadata(torch_module=torch_module, model=model, metadata=metadata)
         if compile_mode != COMPILE_MODE_VISION_DEFAULT:
             raise RuntimeError(f"Unsupported EdgeTAM compile mode: {compile_mode}")
         metadata: dict[str, Any] = {
@@ -4129,7 +4405,7 @@ class Demo21Runtime:
             dynamic=False,
         )
         metadata["wrap_ms"] = _elapsed_ms(started_s, time.perf_counter())
-        return model, metadata
+        return model, self._finalize_edgetam_compile_metadata(torch_module=torch_module, model=model, metadata=metadata)
 
     def _dummy_prewarm_prompt_masks(self) -> tuple[list[int], list[np.ndarray]]:
         height = int(self.height)
@@ -4306,6 +4582,7 @@ class Demo21Runtime:
         prepared_frame: PreparedEdgeTamFrame | None = None,
     ) -> CameraMaskPacket:
         frame_started_s = time.perf_counter()
+        job_start_s = self._profile_rel_s(frame_started_s)
         profile_sync = bool(getattr(self.args, "profile_sync", False))
         nvtx_enabled = bool(getattr(self.args, "profile_nsys_markers", False))
         mask_postprocess_mode = str(getattr(self.args, "mask_postprocess", MASK_POSTPROCESS_HF))
@@ -4362,6 +4639,8 @@ class Demo21Runtime:
             if stream is not None and str(self.args.device).startswith("cuda")
             else nullcontext()
         )
+        if stream is not None and hasattr(pixel_values, "record_stream"):
+            pixel_values.record_stream(stream)
         first_compiled_capture_pending = (
             serialized_edgetam_first_compiled_forward_enabled(self.args)
             and len(self._edgetam_first_compiled_forward_done) < len(tuple(self.args.camera_ids))
@@ -4427,13 +4706,14 @@ class Demo21Runtime:
         mask_threshold_ms = 0.0
         mask_to_cpu_ms = 0.0
         if mask_postprocess_mode == MASK_POSTPROCESS_CUDA_INLINE:
-            with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_mask_cuda_inline_cam{int(frame.camera_idx)}"):
-                masks_by_id, inline_profile = extract_object_masks_from_hf_output_cuda_inline(
-                    torch_module=torch_module,
-                    output=output,
-                    height=int(frame.color_bgr.shape[0]),
-                    width=int(frame.color_bgr.shape[1]),
-                )
+            with stream_context:
+                with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_mask_cuda_inline_cam{int(frame.camera_idx)}"):
+                    masks_by_id, inline_profile = extract_object_masks_from_hf_output_cuda_inline(
+                        torch_module=torch_module,
+                        output=output,
+                        height=int(frame.color_bgr.shape[0]),
+                        width=int(frame.color_bgr.shape[1]),
+                    )
             mask_resize_ms = float(inline_profile.get("mask_resize_ms", 0.0))
             mask_threshold_ms = float(inline_profile.get("mask_threshold_ms", 0.0))
             mask_to_cpu_ms = float(inline_profile.get("mask_to_cpu_ms", 0.0))
@@ -4515,6 +4795,7 @@ class Demo21Runtime:
                     "mask_postprocess": mask_postprocess_mode,
                     "total_ms": float(total_ms),
                     "stream_mode": str(self.args.edgetam_stream_mode),
+                    "job_start_s": float(job_start_s),
                     "batch_vision_encoder": prepared_frame is not None,
                     "batch_vision_encoder_ms": (
                         float(prepared_frame.batch_vision_encoder_ms) if prepared_frame is not None else 0.0
@@ -4565,6 +4846,13 @@ class Demo21Runtime:
             controller_mask: np.ndarray | None = None
             object_mask: np.ndarray | None = None
             session = None
+            stream = (
+                torch_module.cuda.Stream()
+                if str(self.args.edgetam_stream_mode) == EDGETAM_STREAM_MODE_PER_CAMERA
+                and str(self.args.device).startswith("cuda")
+                and torch_module.cuda.is_available()
+                else None
+            )
             with torch_module.inference_mode():
                 while not self.stop_event.is_set():
                     group = self.capture_group_slot.get_latest_after(last_group_id)
@@ -4627,6 +4915,14 @@ class Demo21Runtime:
                             video_storage_device=self.args.device,
                             dtype=dtype,
                         )
+                        self._init_profile_update(
+                            ("edgetam", "sessions", f"cam{int(camera_idx)}"),
+                            {
+                                "session_python_id": int(id(session)),
+                                "stream_mode": str(self.args.edgetam_stream_mode),
+                                "cuda_stream_id": int(id(stream)) if stream is not None else None,
+                            },
+                        )
                         initialized = True
                         add_prompt = True
                     else:
@@ -4639,7 +4935,7 @@ class Demo21Runtime:
                         processor=processor,
                         session=session,
                         pixel_stager=pixel_stager,
-                        stream=None,
+                        stream=stream,
                         frame=frame,
                         initial_controller_mask=controller_mask,
                         initial_object_mask=object_mask,
@@ -4790,6 +5086,10 @@ class Demo21Runtime:
             {
                 "session_init_ms": float(session_init_ms),
                 "init_group_id": int(frame.group_id),
+                "session_python_id": int(id(state["session"])),
+                "model_python_id": int(id(state["model"])),
+                "stream_mode": str(self.args.edgetam_stream_mode),
+                "cuda_stream_id": int(id(state.get("stream"))) if state.get("stream") is not None else None,
             },
         )
         self._init_profile_add(("edgetam", "session_init_ms_total"), float(session_init_ms))
@@ -5022,7 +5322,14 @@ class Demo21Runtime:
                 ffs_cycle_ms = 0.0
                 edgetam_cycle_ms = 0.0
                 order = str(self.args.single_owner_order)
-                if order == SINGLE_OWNER_ORDER_EDGETAM_THEN_FFS:
+                if self.args.depth_source == DEPTH_SOURCE_NONE:
+                    mask_packets, edgetam_cycle_ms = self._run_gpu_owner_edgetam_cycle(
+                        states=edgetam_states,
+                        group=group,
+                    )
+                    if mask_packets is None:
+                        continue
+                elif order == SINGLE_OWNER_ORDER_EDGETAM_THEN_FFS:
                     mask_packets, edgetam_cycle_ms = self._run_gpu_owner_edgetam_cycle(
                         states=edgetam_states,
                         group=group,
@@ -5118,20 +5425,25 @@ class Demo21Runtime:
                         continue
 
                     owner_start_s = time.perf_counter()
-                    depth_group, _ = self._run_depth_cycle_for_group(
-                        group=group,
-                        runner=runner,
-                        aligners=aligners,
-                    )
-                    ffs_cycle_ms = depth_group.total_ms
+                    depth_group: DepthGroup | None = None
+                    if self.args.depth_source == DEPTH_SOURCE_NONE:
+                        ffs_cycle_ms = 0.0
+                        stage_barrier_ms = 0.0
+                    else:
+                        depth_group, _ = self._run_depth_cycle_for_group(
+                            group=group,
+                            runner=runner,
+                            aligners=aligners,
+                        )
+                        ffs_cycle_ms = depth_group.total_ms
 
-                    barrier_start_s = time.perf_counter()
-                    first_state = next(iter(edgetam_states.values()), None)
-                    if self.args.depth_source == DEPTH_SOURCE_FFS and first_state is not None:
-                        torch_module = first_state["torch_module"]
-                        if str(self.args.device).startswith("cuda") and torch_module.cuda.is_available():
-                            torch_module.cuda.synchronize()
-                    stage_barrier_ms = _elapsed_ms(barrier_start_s, time.perf_counter())
+                        barrier_start_s = time.perf_counter()
+                        first_state = next(iter(edgetam_states.values()), None)
+                        if self.args.depth_source == DEPTH_SOURCE_FFS and first_state is not None:
+                            torch_module = first_state["torch_module"]
+                            if str(self.args.device).startswith("cuda") and torch_module.cuda.is_available():
+                                torch_module.cuda.synchronize()
+                        stage_barrier_ms = _elapsed_ms(barrier_start_s, time.perf_counter())
 
                     mask_packets, edgetam_wall_ms, edgetam_sum_model_ms = self._run_staged_edgetam_cycle_parallel(
                         states=edgetam_states,
@@ -5142,6 +5454,33 @@ class Demo21Runtime:
                         continue
 
                     total_ms = _elapsed_ms(owner_start_s, time.perf_counter())
+                    parallel_efficiency = (
+                        float(edgetam_sum_model_ms) / float(edgetam_wall_ms)
+                        if float(edgetam_wall_ms) > 0.0
+                        else 0.0
+                    )
+                    if depth_group is None:
+                        self.gpu_owner_stats.record()
+                        self._profile_update(
+                            group.group_id,
+                            gpu_owner={
+                                "mode": GPU_PIPELINE_MODE_STAGED,
+                                "internal_order": str(self.args.staged_order),
+                                "staged_order": str(self.args.staged_order),
+                                "ffs_stage": "none",
+                                "edgetam_stage": "parallel_cam0_cam1_cam2",
+                                "ffs_stage_ms": 0.0,
+                                "edgetam_stage_wall_ms": float(edgetam_wall_ms),
+                                "edgetam_stage_sum_model_ms": float(edgetam_sum_model_ms),
+                                "edgetam_parallel_efficiency": float(parallel_efficiency),
+                                "stage_barrier_ms": 0.0,
+                                "total_ms": float(total_ms),
+                                "publish_s": self._profile_rel_s(),
+                                "complete_group_published": True,
+                                "mask_only": True,
+                            },
+                        )
+                        continue
                     packet = CompleteInferenceGroup(
                         group_id=group.group_id,
                         capture_group=group,
@@ -5162,11 +5501,6 @@ class Demo21Runtime:
                     self._latest_depth_group = depth_group
                     self.ffs_stats.record()
                     self.gpu_owner_stats.record()
-                    parallel_efficiency = (
-                        float(edgetam_sum_model_ms) / float(edgetam_wall_ms)
-                        if float(edgetam_wall_ms) > 0.0
-                        else 0.0
-                    )
                     self._profile_update(
                         group.group_id,
                         gpu_owner={
@@ -6018,6 +6352,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--compile-mode", choices=COMPILE_MODES, default=DEFAULT_COMPILE_MODE)
+    parser.add_argument("--edgetam-compile-scope", choices=EDGETAM_COMPILE_SCOPES, default=EDGETAM_COMPILE_SCOPE_AUTO)
+    parser.add_argument(
+        "--edgetam-graph-output-policy",
+        choices=EDGETAM_GRAPH_OUTPUT_POLICIES,
+        default=EDGETAM_GRAPH_OUTPUT_POLICY_AUTO,
+        help="How compiled EdgeTAM module outputs are published across concurrent camera workers.",
+    )
     parser.add_argument("--edgetam-input-path", choices=EDGETAM_INPUT_PATH_MODES, default=EDGETAM_INPUT_PATH_PIL)
     parser.add_argument("--mask-postprocess", choices=MASK_POSTPROCESS_MODES, default=MASK_POSTPROCESS_HF)
     parser.add_argument(
@@ -6062,6 +6403,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile-h2d", action="store_true")
     parser.add_argument("--profile-json-output", default=None)
     parser.add_argument("--profile-warmup-exclude-s", type=float, default=20.0)
+    parser.add_argument("--edgetam-stage-wall-target-ms", type=float, default=80.0)
+    parser.add_argument("--fail-if-edgetam-stage-wall-p50-over", type=float, default=0.0)
     parser.add_argument(
         "--gpu-sampling",
         action=argparse.BooleanOptionalAction,
