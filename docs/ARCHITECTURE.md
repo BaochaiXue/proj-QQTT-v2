@@ -2,7 +2,10 @@
 
 ## Kept Runtime Surface
 
-The repo is intentionally small.
+The core recording/alignment surface is intentionally small. Sanctioned demo,
+remote FFS proxy, and tracking-diagnostic layers are kept as explicit
+boundaries around that core instead of becoming part of the formal aligned-case
+data product.
 
 ### Entry Points
 
@@ -74,6 +77,20 @@ The repo is intentionally small.
 - `scripts/harness/visual_compare_rerun.py`
 - `scripts/harness/visual_compare_stereo_order_pcd.py`
 - `scripts/harness/visual_compare_turntable.py`
+
+### Sanctioned Demo / Proxy / Tracking Diagnostics
+
+- `demo_v0_2/**`
+- `demo_v0_3/**`
+- `demo_v1/**`
+- `demo_v2/**`
+- `demo_v2_1/**`
+- `demo_v2_1_5/**`
+- `demo_v2_2/**`
+- `services/ffs_remote/**`
+- `qqtt/tracking/**`
+- `docs/demo3_highperf_tracking_backends.md`
+- `docs/demo3_tracking_backend_overlay_contract.md`
 
 ### Tooling / Harness
 
@@ -155,6 +172,12 @@ Aligned exports written directly under `data/different_types/<case_name>/` auto-
 Those formal exports also rewrite `calibrate.pkl` into case camera order so old downstream code that indexes `c2ws[cam_idx]` remains compatible.
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
+
+Demo and proxy entrypoints depend on the core camera/runtime pieces in one
+direction only. They may consume `CameraSystem`, calibration loaders, FFS
+geometry/runners, and aligned-case visualization helpers; the core recording
+and alignment entrypoints must not import `demo_v*`, `services/ffs_remote`,
+`qqtt/tracking`, or `data_process/visualization/experiments`.
 
 `cameras_viewer_FFS.py` keeps per-camera capture threads and per-camera latest-only request/result queues, but now supports two explicit FFS worker topologies:
 

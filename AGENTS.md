@@ -2,7 +2,7 @@
 
 ## Repo Charter
 
-This repository handles 3-camera RealSense preview, calibration, synchronized recording, aligned case generation, and native-vs-FFS comparison visualization for aligned cases.
+This repository handles 3-camera RealSense preview, calibration, synchronized recording, aligned case generation, native-vs-FFS comparison visualization for aligned cases, and sanctioned realtime demo/proxy/tracking diagnostics built on those camera streams.
 
 ## Current Experiment Convention
 
@@ -20,8 +20,13 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `data_process/depth_backends/`: shared FFS geometry + runner used by production alignment and harness scripts
 - `data_process/visualization/`: aligned-case comparison visualization package
 - `data_process/visualization/experiments/`: experiment-only visualization workflows; formal recording/alignment code must not import this package
+- `demo_v0_2/`, `demo_v0_3/`: remote FFS replay / proxy experiments
+- `demo_v1/`, `demo_v2/`: single-camera realtime point-cloud demo lineage
+- `demo_v2_1/`, `demo_v2_1_5/`, `demo_v2_2/`: three-camera semantic fused-PCD demo lineage
+- `services/ffs_remote/`: remote FFS request/response and staged proxy services for demo/profiling use
 - `qqtt/env/camera/`: shared RealSense camera runtime
 - `qqtt/env/camera/preflight.py`: record-time probe/preflight decision table
+- `qqtt/tracking/`: demo-oriented tracking backend contracts, probes, lifting, and metrics
 - `env_install/env_install.sh`: camera-only environment setup
 - `docs/SCOPE.md`: exact in-scope vs out-of-scope boundary
 - `docs/WORKFLOWS.md`: canonical operator workflows
@@ -63,7 +68,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 
 1. Before modifying files, run `git pull --ff-only origin main` and confirm the local branch is up to date with GitHub.
 2. Start with an exec plan under `docs/exec-plans/active/` for any non-trivial change.
-3. Keep changes inside camera preview / calibration / recording / alignment scope.
+3. Keep changes inside the documented camera preview / calibration / recording / alignment core or the sanctioned demo / proxy / tracking diagnostic scope.
 4. Update docs and tests in the same change when behavior changes.
 5. Run deterministic checks before finishing:
    - `python scripts/harness/check_all.py`
@@ -76,13 +81,14 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 ## Invariants
 
 - The repo's primary data product stops at `data_process/record_data_align.py`; aligned native-vs-FFS comparison visualization remains an in-scope diagnostic utility built on aligned cases.
-- Do not reintroduce segmentation, tracking, shape prior, inverse physics, Gaussian Splatting, evaluation, or teleop code.
+- Demo-only segmentation/mask and tracking code may exist only in the sanctioned demo, proxy, visualization, and tracking-diagnostic layers; formal recording/alignment code must not depend on those layers or make their artifacts part of the aligned-case compatibility contract.
+- Do not reintroduce shape prior, inverse physics, Gaussian Splatting, reconstruction/rendering evaluation, robot control, manipulation policy, or teleop code.
 - `qqtt/__init__.py` exports only `CameraSystem`.
 - `env_install/env_install.sh` stays camera-only.
 - Hardware checks remain manual and documented; do not fake them in CI.
 - External repos and weights stay outside this repo and are referenced by path.
 - `depth/` must remain the canonical compatibility output for aligned cases.
-- Comparison visualization is allowed only for aligned native-vs-FFS depth inspection.
+- Comparison visualization is allowed for aligned native-vs-FFS depth inspection and explicitly documented demo/diagnostic artifacts.
 
 ## Do Not Change Without Updating Docs / Tests
 

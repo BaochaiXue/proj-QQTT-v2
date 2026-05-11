@@ -1,10 +1,11 @@
 # proj-QQTT-v2
 
-This repository handles 3-camera RealSense preview, calibration, synchronized raw capture, aligned case generation, and native-vs-FFS comparison visualization for aligned cases.
+This repository handles 3-camera RealSense preview, calibration, synchronized raw capture, aligned case generation, native-vs-FFS comparison visualization for aligned cases, and sanctioned realtime demo/proxy diagnostics built on those camera streams.
 
 ## Scope
 
-This repo is intentionally narrow. It supports only:
+This repo has a narrow core data-product boundary plus a sanctioned demo and
+diagnostic layer. It supports:
 
 1. RealSense camera preview / debugging
 2. multi-camera calibration
@@ -14,20 +15,21 @@ This repo is intentionally narrow. It supports only:
 4. raw recording alignment and trimming
 5. optional Fast-FoundationStereo depth generation during alignment
 6. native-vs-FFS aligned depth comparison visualization
+7. live FFS preview and remote FFS proxy/replay diagnostics
+8. realtime point-cloud demos that consume RealSense, FFS, SAM/EdgeTAM masks, and the shared tracking diagnostics
+9. demo-oriented tracking backend probes, benchmarks, and overlay artifacts
 
 This repo does **not** include:
 
-- segmentation
-- dense tracking
 - shape-prior generation
-- downstream point-cloud processing beyond alignment packaging
 - inverse physics
 - Warp training / inference
 - Gaussian Splatting
 - rendering evaluation
-- teleoperation or interaction demos
+- teleoperation, robot control, or manipulation policy demos
+- vendored external model repositories, checkpoints, or generated artifact archives
 
-See [docs/SCOPE.md](/c:/Users/zhang/proj-QQTT/docs/SCOPE.md) for the exact boundary.
+See [docs/SCOPE.md](docs/SCOPE.md) for the exact boundary.
 
 ## Hardware Assumptions
 
