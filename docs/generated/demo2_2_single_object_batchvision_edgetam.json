@@ -1,0 +1,107 @@
+{
+  "status": "integration_contract_implemented_hardware_profile_completed_no_render",
+  "external_validation": {
+    "fork_path": "/home/zhangxinjie/EdgeTAM-HF-batched",
+    "draft_pr": "https://github.com/BaochaiXue/transformers/pull/1",
+    "dataset": "data/different_types/sloth_set_2_motion_ffs",
+    "object_prompt": "stuffed animal",
+    "backend": "hf_batch_vision_seq_session",
+    "compile_mode": "reduce-overhead",
+    "correctness_pass": true,
+    "stage_wall_p50_ms": 31.30548,
+    "stage_wall_p90_ms": 32.98849,
+    "stage_wall_p95_ms": 33.75403,
+    "p50_group_fps": 31.94
+  },
+  "qqtt_contract": {
+    "preset": "demo2.2-single-object-batchvision-edgetam",
+    "backend": "hf_batch_vision_seq_session",
+    "true_batched_multisession_runtime": false,
+    "track_mode": "object-only",
+    "object_prompt": "stuffed animal",
+    "compile_mode": "vision-reduce-overhead",
+    "mask_postprocess": "cuda-inline",
+    "depth_source": "ffs",
+    "ffs_trt_batch_size": 3,
+    "gpu_pipeline_mode": "single-owner",
+    "edgetam_model_topology": "shared-model",
+    "edgetam_batch_vision_encoder": true
+  },
+  "hardware_profile": {
+    "status": "completed",
+    "mode": "no-render",
+    "parallel_init": false,
+    "parallel_init_caveat": "parallel-init attempt hit SAM3.1/torchvision StochasticDepth import race; repeated with --no-parallel-init",
+    "profile_json": "docs/generated/demo22_single_object_batchvision_stuffed_animal_no_render_profile.json",
+    "profile_md": "docs/generated/demo22_single_object_batchvision_stuffed_animal_no_render_profile.md",
+    "capture_group_fps": 13.799948011825265,
+    "raw_fusion_fps": 8.326131595191875,
+    "filter_output_fps": 8.325996176909097,
+    "fusion_fps": 8.325996190522359,
+    "render_fps": 0.0,
+    "complete_fused_groups": 785,
+    "complete_group_ratio": 0.602455871066769,
+    "bottleneck_class": "upstream_supply",
+    "edgetam_batch_vision_total_ms": {
+      "p50": 22.73641451029107,
+      "p90": 24.735410028370097,
+      "p95": 25.52358026150614,
+      "max": 33.48005801672116
+    },
+    "edgetam_batch_vision_model_ms": {
+      "p50": 18.435264587402344,
+      "p90": 20.33140754699707,
+      "p95": 21.341856479644775,
+      "max": 29.342975616455078
+    },
+    "gpu_owner_total_ms": {
+      "p50": 112.9464585101232,
+      "p90": 126.04830448981375,
+      "p95": 135.91753803484607,
+      "max": 322.95502501074225
+    },
+    "ffs_cycle_ms": {
+      "p50": 56.818219512933865,
+      "p90": 61.80731899803504,
+      "p95": 71.2440152419731,
+      "max": 243.76715096877888
+    },
+    "raw_fusion_total_ms": {
+      "p50": 5.34243299625814,
+      "p90": 6.0562784085050225,
+      "p95": 6.492220575455576,
+      "max": 8.642150030937046
+    },
+    "filter_total_ms": {
+      "p50": 22.691624995786697,
+      "p90": 25.45091217616573,
+      "p95": 27.009415801148855,
+      "max": 215.61566495802253
+    },
+    "init_profile": {
+      "camera_startup_ms": 4359.350563026965,
+      "sam31_model_load_ms": 7970.52704798989,
+      "sam31_cam0_segment_ms": 8227.90742199868,
+      "sam31_cam1_segment_ms": 122.95606901263818,
+      "sam31_cam2_segment_ms": 124.79913898231462,
+      "ffs_runner_init_ms": 6052.572142973077,
+      "ffs_first_batch_run_ms": 954.5620189746842,
+      "edgetam_model_load_ms": 811.1717330175452,
+      "edgetam_compile_prewarm_ms": 1108.9659399585798,
+      "time_to_first_complete_fused_group_s": 23.40345054602949
+    },
+    "decision": "live path works for single-object local FFS no-render, but fused PCD output is about 8.33 FPS rather than 15 FPS"
+  },
+  "unsupported_in_this_slice": {
+    "controller_hand_default": "compiled hand tracking has low-IoU outliers",
+    "hf_batched_multisession": "not integrated",
+    "demo22_remote_ffs": "current Demo 2.2 runtime is local FFS only"
+  },
+  "verification": {
+    "unit_test": "conda run --no-capture-output -n demo_2_max python -m unittest -v tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
+    "unit_test_pass": true,
+    "dry_run_preset_pass": true,
+    "dry_run_alias_pass": true,
+    "hardware_no_render_profile_pass": true
+  }
+}

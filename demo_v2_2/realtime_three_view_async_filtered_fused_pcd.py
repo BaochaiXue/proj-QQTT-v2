@@ -35,6 +35,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run.add_argument("--gpu-sampling-backend", choices=runtime.GPU_SAMPLING_BACKENDS, default=None, help="GPU sampler backend; NVML only.")
     run.add_argument("--gpu-sampling-device-index", type=int, default=None, help="GPU index for the sampler.")
     run.add_argument("--fps", type=int, default=None, help="RealSense RGB+IR capture target FPS.")
+    run.add_argument("--depth-source", choices=runtime.DEPTH_SOURCES, default=None, help="Depth source for the fused PCD pipeline.")
+    run.add_argument("--compile-mode", default=None, help="EdgeTAM compile mode passed to the internal runtime.")
+    run.add_argument("--mask-postprocess", choices=runtime.MASK_POSTPROCESS_MODES, default=None, help="EdgeTAM mask postprocess path.")
+    run.add_argument("--render-mode", choices=("none", "pointcloud"), default=None, help="Render mode.")
     run.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 2.2 runtime contract and exit.")
     run.add_argument("--debug", action="store_true", help="Enable verbose runtime logs.")
 
@@ -52,6 +56,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
     tracking = parser.add_argument_group("Tracking")
     tracking.add_argument("--object-prompt", default=None, help="SAM3.1 first-frame object prompt.")
     tracking.add_argument("--controller-prompt", default=None, help="SAM3.1 first-frame controller prompt.")
+    tracking.add_argument(
+        "--edgetam-backend",
+        choices=runtime.EDGETAM_BACKENDS,
+        default=None,
+        help=(
+            "EdgeTAM backend contract. The validated Demo 2.2 research path is "
+            "hf_batch_vision_seq_session, not hf_batched_multisession."
+        ),
+    )
+    tracking.add_argument(
+        "--edgetam-external-path",
+        default=None,
+        help="Optional external EdgeTAM-HF-batched fork path recorded for provenance.",
+    )
+    tracking.add_argument(
+        "--parallel-edgetam",
+        action="store_true",
+        help=(
+            "Compatibility alias for the validated batch-vision EdgeTAM backend in Demo 2.2. "
+            "This keeps the single-owner pipeline and does not enable true batched multisession."
+        ),
+    )
     mode = tracking.add_mutually_exclusive_group()
     mode.add_argument("--object-only", action="store_true", help="Track only the object layer.")
     mode.add_argument("--controller-object", action="store_true", help="Track controller and object layers.")
@@ -61,6 +87,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     view.add_argument("--max-depth-m", type=float, default=None, help="Maximum depth kept in fused PCD.")
     view.add_argument("--point-size", type=float, default=None, help="Open3D point size.")
     view.add_argument("--output-root", default=None, help="Output root for runtime artifacts.")
+    view.add_argument("--pcd-mode", choices=("masked",), default=None, help="Compatibility alias; Demo 2.2 fused PCD is masked semantic PCD.")
+    view.add_argument("--filter-mode", choices=("none", "sync", "async"), default=None, help="Alias for --pcd-filter-mode.")
+
+    remote = parser.add_argument_group("Remote FFS Compatibility")
+    remote.add_argument("--ffs-remote-endpoint", default=None, help="Accepted for CLI compatibility; Demo 2.2 local runtime does not consume it.")
+    remote.add_argument("--ffs-remote-return", default=None, help="Accepted for CLI compatibility; Demo 2.2 local runtime does not consume it.")
+    remote.add_argument("--ffs-remote-compress", default=None, help="Accepted for CLI compatibility; Demo 2.2 local runtime does not consume it.")
+    remote.add_argument("--ffs-remote-max-inflight", type=int, default=None, help="Accepted for CLI compatibility; Demo 2.2 local runtime does not consume it.")
+    remote.add_argument("--ffs-remote-timeout-ms", type=int, default=None, help="Accepted for CLI compatibility; Demo 2.2 local runtime does not consume it.")
 
     overlay = parser.add_argument_group("Tracking Overlay")
     overlay.add_argument("--show-tracking-overlay", action="store_true", help="Enable optional Demo 3 tracking anchor overlay.")
@@ -97,6 +132,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--experimental-edgetam-batch-vision",
         action="store_true",
         help="Batch 3 RGB frames through EdgeTAM image features, then keep per-camera video sessions.",
+    )
+    experiments.add_argument(
+        "--single-object-batchvision-edgetam",
+        action="store_true",
+        help="Select the validated single-object stuffed-animal batch-vision preset.",
     )
     experiments.add_argument(
         "--experimental-staged-parallel",
@@ -148,6 +188,8 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
         return ["--help"]
 
     translated: list[str] = []
+    if parsed.single_object_batchvision_edgetam and not _has_flag(passthrough, "--preset"):
+        translated.extend(["--preset", runtime.PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM])
     if parsed.experimental_staged_parallel and not _has_flag(passthrough, "--preset"):
         translated.extend(["--preset", runtime.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
 
@@ -158,16 +200,23 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--gpu-sampling-backend", parsed.gpu_sampling_backend)
     _append_option(translated, "--gpu-sampling-device-index", parsed.gpu_sampling_device_index)
     _append_option(translated, "--fps", parsed.fps)
+    _append_option(translated, "--depth-source", parsed.depth_source)
+    _append_option(translated, "--compile-mode", parsed.compile_mode)
+    _append_option(translated, "--mask-postprocess", parsed.mask_postprocess)
+    _append_option(translated, "--render-mode", parsed.render_mode)
     _append_many(translated, "--serials", parsed.serials)
     _append_option(translated, "--camera-ids", _format_camera_ids(parsed.camera_ids))
     _append_option(translated, "--calibrate-path", parsed.calibrate_path)
     _append_many(translated, "--calibration-reference-serials", parsed.calibration_reference_serials)
     _append_option(translated, "--object-prompt", parsed.object_prompt)
     _append_option(translated, "--controller-prompt", parsed.controller_prompt)
+    _append_option(translated, "--edgetam-backend", parsed.edgetam_backend)
+    _append_option(translated, "--edgetam-external-path", parsed.edgetam_external_path)
     _append_option(translated, "--depth-min-m", parsed.min_depth_m)
     _append_option(translated, "--depth-max-m", parsed.max_depth_m)
     _append_option(translated, "--point-size", parsed.point_size)
     _append_option(translated, "--output-root", parsed.output_root)
+    _append_option(translated, "--pcd-filter-mode", parsed.filter_mode)
     _append_option(translated, "--tracking-backend", parsed.tracking_backend)
     _append_option(translated, "--tracking-source", parsed.tracking_source)
     _append_option(translated, "--tracking-num-points", parsed.tracking_num_points)
@@ -192,6 +241,10 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
         translated.append("--no-parallel-init")
     if parsed.no_compile_prewarm:
         translated.append("--no-edgetam-prewarm-compile")
+    if parsed.parallel_edgetam:
+        if "--edgetam-backend" not in translated:
+            translated.extend(["--edgetam-backend", runtime.EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION])
+        translated.append("--edgetam-batch-vision-encoder")
     if parsed.experimental_edgetam_batch_vision:
         translated.append("--edgetam-batch-vision-encoder")
     if parsed.show_tracking_overlay:

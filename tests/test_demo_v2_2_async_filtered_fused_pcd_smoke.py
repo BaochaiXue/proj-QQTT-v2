@@ -62,6 +62,8 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--gpu-sampling-interval-s", help_text)
         self.assertIn("--min-depth-m", help_text)
         self.assertIn("--experimental-edgetam-batch-vision", help_text)
+        self.assertIn("--single-object-batchvision-edgetam", help_text)
+        self.assertIn("--edgetam-backend", help_text)
         self.assertIn("--advanced-help", help_text)
         self.assertNotIn("--fusion-target-fps", help_text)
         self.assertNotIn("--gpu-pipeline-mode", help_text)
@@ -93,6 +95,16 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
                 "--no-parallel-init",
                 "--no-compile-prewarm",
                 "--experimental-edgetam-batch-vision",
+                "--edgetam-backend",
+                demo.EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION,
+                "--edgetam-external-path",
+                "/home/zhangxinjie/EdgeTAM-HF-batched",
+                "--mask-postprocess",
+                demo.MASK_POSTPROCESS_CUDA_INLINE,
+                "--compile-mode",
+                demo.COMPILE_MODE_VISION_REDUCE_OVERHEAD,
+                "--filter-mode",
+                "async",
                 "--gpu-sampling",
                 "--gpu-sampling-interval-s",
                 "0.25",
@@ -112,6 +124,16 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--no-parallel-init", argv)
         self.assertIn("--no-edgetam-prewarm-compile", argv)
         self.assertIn("--edgetam-batch-vision-encoder", argv)
+        self.assertIn("--edgetam-backend", argv)
+        self.assertIn(demo.EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION, argv)
+        self.assertIn("--edgetam-external-path", argv)
+        self.assertIn("/home/zhangxinjie/EdgeTAM-HF-batched", argv)
+        self.assertIn("--mask-postprocess", argv)
+        self.assertIn(demo.MASK_POSTPROCESS_CUDA_INLINE, argv)
+        self.assertIn("--compile-mode", argv)
+        self.assertIn(demo.COMPILE_MODE_VISION_REDUCE_OVERHEAD, argv)
+        self.assertIn("--pcd-filter-mode", argv)
+        self.assertIn("async", argv)
         self.assertIn("--gpu-sampling", argv)
         self.assertIn("--gpu-sampling-interval-s", argv)
         self.assertIn("0.25", argv)
@@ -220,6 +242,67 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["edgetam"]["batch_vision_batch_size"], 3)
         self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_SHARED)
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_SINGLE_OWNER)
+
+    def test_demo22_single_object_batchvision_preset_contract(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM])
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["demo"], "demo_2_2_async_filtered_fused_pcd")
+        self.assertEqual(contract["preset_canonical"], demo.PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM)
+        self.assertEqual(contract["track_mode"], demo.TRACK_MODE_OBJECT_ONLY)
+        self.assertEqual(contract["compile_mode"], demo.COMPILE_MODE_VISION_REDUCE_OVERHEAD)
+        self.assertEqual(contract["mask_postprocess"], demo.MASK_POSTPROCESS_CUDA_INLINE)
+        self.assertEqual(contract["edgetam"]["backend"], demo.EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION)
+        self.assertTrue(contract["edgetam"]["hf_batch_vision_seq_session"])
+        self.assertFalse(contract["edgetam"]["true_batched_multisession_runtime"])
+        self.assertTrue(contract["edgetam"]["batch_vision_encoder"])
+        self.assertEqual(contract["edgetam"]["batch_vision_batch_size"], 3)
+        self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_SHARED)
+        self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_SINGLE_OWNER)
+        self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_FFS)
+        self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["stuffed animal"])
+
+    def test_demo22_single_object_batchvision_public_alias(self) -> None:
+        argv = demo22._to_demo22_argv(
+            [
+                "--dry-run",
+                "--single-object-batchvision-edgetam",
+                "--edgetam-external-path",
+                "/home/zhangxinjie/EdgeTAM-HF-batched",
+            ]
+        )
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM])
+        self.assertIn("--edgetam-external-path", argv)
+        self.assertIn("/home/zhangxinjie/EdgeTAM-HF-batched", argv)
+
+    def test_demo22_parallel_edgetam_alias_selects_batchvision_backend(self) -> None:
+        argv = demo22._to_demo22_argv(["--dry-run", "--parallel-edgetam"])
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
+        self.assertIn("--edgetam-backend", argv)
+        self.assertIn(demo.EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION, argv)
+        self.assertIn("--edgetam-batch-vision-encoder", argv)
+
+    def test_explicit_batchvision_backend_resolves_contract_batch_encoder(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--edgetam-backend",
+                demo.EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION,
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--edgetam-backend"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["edgetam"]["backend"], demo.EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION)
+        self.assertTrue(contract["edgetam"]["batch_vision_encoder"])
 
     def test_batch_vision_rejects_staged_parallel_contract(self) -> None:
         parser = demo.build_arg_parser()

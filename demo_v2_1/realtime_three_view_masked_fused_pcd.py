@@ -102,6 +102,15 @@ DEFAULT_CAMERA_IDS = (0, 1, 2)
 DEFAULT_OBJECT_LABEL = "object"
 DEFAULT_CONTROLLER_LABEL = "hand"
 DEFAULT_MODEL_ID = "yonigozlan/EdgeTAM-hf"
+EDGETAM_BACKEND_HF_SEQ_SESSION = "hf_seq_session"
+EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION = "hf_batch_vision_seq_session"
+EDGETAM_BACKEND_HF_BATCHED_MULTISESSION = "hf_batched_multisession"
+EDGETAM_BACKENDS = (
+    EDGETAM_BACKEND_HF_SEQ_SESSION,
+    EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION,
+    EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
+)
+DEFAULT_EDGETAM_BACKEND = EDGETAM_BACKEND_HF_SEQ_SESSION
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
 DEFAULT_PRESET_CAPTURE_FPS = 15
@@ -123,6 +132,7 @@ PRESET_DEMO215_LIVE_QUALITY_FFS = "demo2.1.5-live-quality-ffs"
 PRESET_DEMO215_MASK_ONLY_DEBUG = "demo2.1.5-mask-only-debug"
 PRESET_DEMO22_ASYNC_FILTER_5FPS = "demo2.2-async-filter-5fps"
 PRESET_DEMO22_STAGED_PARALLEL_5FPS = "demo2.2-staged-parallel-5fps"
+PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM = "demo2.2-single-object-batchvision-edgetam"
 PRESET_CLIMB_5 = "climb-5"
 PRESET_CLIMB_10 = "climb-10"
 PRESET_DIAGNOSTICS = "diagnostics"
@@ -145,6 +155,7 @@ PRESETS = (
     PRESET_DEMO215_MASK_ONLY_DEBUG,
     PRESET_DEMO22_ASYNC_FILTER_5FPS,
     PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+    PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM,
     PRESET_CLIMB_5,
     PRESET_CLIMB_10,
     PRESET_DIAGNOSTICS,
@@ -230,6 +241,19 @@ def serialized_edgetam_first_compiled_forward_enabled(args: argparse.Namespace) 
         str(getattr(args, "gpu_pipeline_mode", "")) == GPU_PIPELINE_MODE_SEPARATE_WORKERS
         and str(getattr(args, "compile_mode", "")) == COMPILE_MODE_VISION_REDUCE_OVERHEAD
         and str(getattr(args, "gpu_gate_mode", "")) == GPU_GATE_MODE_OFF
+    )
+
+
+def resolved_edgetam_backend(args: argparse.Namespace) -> str:
+    backend = str(getattr(args, "edgetam_backend", DEFAULT_EDGETAM_BACKEND))
+    if backend == EDGETAM_BACKEND_HF_SEQ_SESSION and bool(getattr(args, "edgetam_batch_vision_encoder", False)):
+        return EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION
+    return backend
+
+
+def edgetam_batch_vision_enabled(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "edgetam_batch_vision_encoder", False)) or (
+        resolved_edgetam_backend(args) == EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION
     )
 
 
@@ -1425,13 +1449,17 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
-        elif preset in {PRESET_DEMO22_ASYNC_FILTER_5FPS, PRESET_DEMO215_ASYNC_FILTER_5FPS}:
+        elif preset in {
+            PRESET_DEMO22_ASYNC_FILTER_5FPS,
+            PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM,
+            PRESET_DEMO215_ASYNC_FILTER_5FPS,
+        }:
             if preset == PRESET_DEMO215_ASYNC_FILTER_5FPS:
                 _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
-            if preset == PRESET_DEMO22_ASYNC_FILTER_5FPS:
+            if preset in {PRESET_DEMO22_ASYNC_FILTER_5FPS, PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM}:
                 _set_if_not_explicit(args, explicit, flag="--ffs-trt-batch-size", attr="ffs_trt_batch_size", value=3)
             _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
             _set_if_not_explicit(args, explicit, flag="--single-owner-order", attr="single_owner_order", value=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
@@ -1439,7 +1467,17 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-compile", attr="edgetam_prewarm_compile", value=True)
             _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-runs", attr="edgetam_prewarm_runs", value=1)
             _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
-            _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--track-mode",
+                attr="track_mode",
+                value=(
+                    TRACK_MODE_OBJECT_ONLY
+                    if preset == PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM
+                    else TRACK_MODE_CONTROLLER_OBJECT
+                ),
+            )
             _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
             _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
             _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
@@ -1450,6 +1488,35 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+            if preset == PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM:
+                _set_if_not_explicit(
+                    args,
+                    explicit,
+                    flag="--edgetam-backend",
+                    attr="edgetam_backend",
+                    value=EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION,
+                )
+                _set_if_not_explicit(
+                    args,
+                    explicit,
+                    flag="--edgetam-batch-vision-encoder",
+                    attr="edgetam_batch_vision_encoder",
+                    value=True,
+                )
+                _set_if_not_explicit(
+                    args,
+                    explicit,
+                    flag="--compile-mode",
+                    attr="compile_mode",
+                    value=COMPILE_MODE_VISION_REDUCE_OVERHEAD,
+                )
+                _set_if_not_explicit(
+                    args,
+                    explicit,
+                    flag="--mask-postprocess",
+                    attr="mask_postprocess",
+                    value=MASK_POSTPROCESS_CUDA_INLINE,
+                )
         elif preset == PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS:
             _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
@@ -1575,6 +1642,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
                 PRESET_DEMO215_MASK_ONLY_DEBUG,
                 PRESET_DEMO22_ASYNC_FILTER_5FPS,
                 PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+                PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM,
             }
             and "--capture-group-target-fps" not in explicit
         ):
@@ -1861,6 +1929,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     is_demo22_preset = preset_canonical in {
         PRESET_DEMO22_ASYNC_FILTER_5FPS,
         PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+        PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM,
     }
     is_demo215_preset = preset_canonical in {
         PRESET_DEMO215_ASYNC_FILTER_5FPS,
@@ -1887,6 +1956,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "frame_by_frame_streaming": True,
         "offline_video_input_used": False,
         "edge_backend": "HF EdgeTAMVideo",
+        "edgetam_backend": resolved_edgetam_backend(args),
+        "edgetam_external_path": str(getattr(args, "edgetam_external_path", "") or ""),
         "compile_mode": args.compile_mode,
         "dtype": args.dtype,
         "input_path": args.edgetam_input_path,
@@ -2005,6 +2076,12 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "batch3_isolated_artifact": int(args.ffs_trt_batch_size) == 3,
         },
         "edgetam": {
+            "backend": resolved_edgetam_backend(args),
+            "external_path": str(getattr(args, "edgetam_external_path", "") or ""),
+            "true_batched_multisession_runtime": resolved_edgetam_backend(args)
+            == EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
+            "hf_batch_vision_seq_session": resolved_edgetam_backend(args)
+            == EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION,
             "worker_mode": args.edgetam_worker_mode,
             "model_topology": args.edgetam_model_topology,
             "stream_mode": args.edgetam_stream_mode,
@@ -2016,9 +2093,9 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "serialize_first_compiled_forward": serialized_edgetam_first_compiled_forward_enabled(args),
             "prewarm_compile": bool(getattr(args, "edgetam_prewarm_compile", False)),
             "prewarm_runs": int(getattr(args, "edgetam_prewarm_runs", 0)),
-            "batch_vision_encoder": bool(getattr(args, "edgetam_batch_vision_encoder", False)),
+            "batch_vision_encoder": edgetam_batch_vision_enabled(args),
             "batch_vision_batch_size": (
-                len(tuple(args.camera_ids)) if bool(getattr(args, "edgetam_batch_vision_encoder", False)) else 1
+                len(tuple(args.camera_ids)) if edgetam_batch_vision_enabled(args) else 1
             ),
         },
         "fusion": {
@@ -2423,6 +2500,15 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 requires --ffs-worker-mode shared")
         if self.args.edgetam_worker_mode != "per-camera":
             raise RuntimeError("Demo 2.1 requires --edgetam-worker-mode per-camera")
+        if self.args.edgetam_backend not in EDGETAM_BACKENDS:
+            raise RuntimeError(f"Demo 2.1 unsupported --edgetam-backend {self.args.edgetam_backend}")
+        if self.args.edgetam_backend == EDGETAM_BACKEND_HF_BATCHED_MULTISESSION:
+            raise RuntimeError(
+                "Demo 2.1 true hf_batched_multisession is not integrated; "
+                "use hf_batch_vision_seq_session for the validated batch-vision backend"
+            )
+        if self.args.edgetam_backend == EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION:
+            setattr(self.args, "edgetam_batch_vision_encoder", True)
         if self.args.gpu_pipeline_mode not in GPU_PIPELINE_MODES:
             raise RuntimeError(f"Demo 2.1 unsupported --gpu-pipeline-mode {self.args.gpu_pipeline_mode}")
         if self.args.single_owner_order not in SINGLE_OWNER_ORDERS:
@@ -2529,6 +2615,27 @@ class Demo21Runtime:
                 raise RuntimeError("Demo 2.2 requires single-owner GPU pipeline")
             if not async_fusion_filter_enabled(self.args):
                 raise RuntimeError("Demo 2.2 requires async latest-wins PCD filtering")
+        if preset_canonical == PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM:
+            if self.args.depth_source != DEPTH_SOURCE_FFS:
+                raise RuntimeError("Demo 2.2 single-object batch-vision requires local FFS depth")
+            if self.args.track_mode != TRACK_MODE_OBJECT_ONLY:
+                raise RuntimeError("Demo 2.2 single-object batch-vision requires --track-mode object-only")
+            if resolved_edgetam_backend(self.args) != EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION:
+                raise RuntimeError(
+                    "Demo 2.2 single-object batch-vision requires --edgetam-backend hf_batch_vision_seq_session"
+                )
+            if self.args.compile_mode != COMPILE_MODE_VISION_REDUCE_OVERHEAD:
+                raise RuntimeError("Demo 2.2 single-object batch-vision uses vision-reduce-overhead")
+            if not bool(getattr(self.args, "edgetam_batch_vision_encoder", False)):
+                raise RuntimeError("Demo 2.2 single-object batch-vision requires --edgetam-batch-vision-encoder")
+            if self.args.mask_postprocess != MASK_POSTPROCESS_CUDA_INLINE:
+                raise RuntimeError("Demo 2.2 single-object batch-vision requires --mask-postprocess cuda-inline")
+            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_SINGLE_OWNER:
+                raise RuntimeError("Demo 2.2 single-object batch-vision requires single-owner GPU pipeline")
+            if self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_SHARED:
+                raise RuntimeError("Demo 2.2 single-object batch-vision requires shared EdgeTAM model topology")
+            if not async_fusion_filter_enabled(self.args):
+                raise RuntimeError("Demo 2.2 single-object batch-vision requires async latest-wins PCD filtering")
         if preset_canonical == PRESET_DEMO22_STAGED_PARALLEL_5FPS:
             if self.args.depth_source != DEPTH_SOURCE_FFS:
                 raise RuntimeError("Demo 2.2 staged parallel requires local FFS depth")
@@ -6016,6 +6123,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--depth-source", choices=DEPTH_SOURCES, default=DEPTH_SOURCE_FFS)
     parser.add_argument("--render-mode", choices=RENDER_MODES, default="none")
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
+    parser.add_argument(
+        "--edgetam-backend",
+        choices=EDGETAM_BACKENDS,
+        default=DEFAULT_EDGETAM_BACKEND,
+        help=(
+            "EdgeTAM runtime backend contract. hf_batch_vision_seq_session means batch=3 vision encoder "
+            "plus independent per-camera HF video sessions; hf_batched_multisession is reserved and rejected."
+        ),
+    )
+    parser.add_argument(
+        "--edgetam-external-path",
+        default=None,
+        help=(
+            "Optional external EdgeTAM-HF-batched fork path recorded in the contract for provenance. "
+            "The current QQTT runtime still executes the local HF batch-vision path."
+        ),
+    )
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--compile-mode", choices=COMPILE_MODES, default=DEFAULT_COMPILE_MODE)
     parser.add_argument("--edgetam-input-path", choices=EDGETAM_INPUT_PATH_MODES, default=EDGETAM_INPUT_PATH_PIL)
