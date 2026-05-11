@@ -1,30 +1,28 @@
 # Harness Engineering Map
 
-`scripts/harness/` is the operator-facing edge of the repo: CLIs, probes, deterministic guards, and bounded diagnostics. Reusable calibration, geometry, point-cloud, layout, and render logic belongs under `data_process/`.
+`scripts/harness/` is the operator-facing edge of the repo: CLI wrappers, probes, deterministic guards, and bounded diagnostics. Reusable calibration, geometry, point-cloud, layout, render, and depth logic belongs under `data_process/`.
 
-## Filesystem Contract
+## Maintenance Contract
 
 - Keep stable public CLIs at their existing paths unless docs and tests move with them.
-- Put one-off visualization experiments under `scripts/harness/experiments/`.
+- Add every new public harness Python file to `scripts/harness/_catalog.py`.
+- Keep one-off visualization experiments under `scripts/harness/experiments/`.
 - Keep formal recording/alignment code free of `scripts.harness.experiments` and `data_process.visualization.experiments` imports.
-- Keep external repos, checkpoints, TensorRT engines, SAM assets, and generated proof outputs outside harness code.
-- Add every new harness Python file to `scripts/harness/_catalog.py`.
+- Keep external repos, checkpoints, TensorRT engines, SAM assets, generated proof outputs, and local replay datasets outside harness code.
+- Remove local cache artifacts such as `__pycache__/`.
 
-## Catalog And Checks
+## Source Of Truth
 
-`_catalog.py` is the compact source of truth for harness categories and help-surface coverage. `check_harness_catalog.py` verifies that every public harness Python file is categorized, and `check_all.py` reads its harness help commands from the same catalog.
+| File | Role |
+| --- | --- |
+| `_catalog.py` | Compact catalog of every public harness Python entrypoint, category, summary, and help-check profile. |
+| `check_harness_catalog.py` | Verifies every public harness Python file is cataloged and categorized correctly. |
+| `check_all.py` | Runs the quick/full deterministic validation profiles; help-surface coverage comes from `_catalog.py`. |
+| `docs/generated/harness_engineering_compact_index.md` | Compressed index for current generated harness engineering results and claims. |
+| `docs/envs.md` | CUDA/toolkit and validated environment policy. |
+| `docs/WORKFLOWS.md` | Operator workflows and FFS live-vs-proxy reporting boundary. |
 
-Current catalog summary:
-
-| Category | Count | Meaning |
-| --- | ---: | --- |
-| `checks` | 5 | Deterministic repo, scope, architecture, experiment-boundary, and catalog guards. |
-| `hardware_external` | 13 | RealSense probes, SAM/FFS/TensorRT proof tools, WSLg/Open3D helper, and static replay benchmarks. |
-| `mask_support` | 4 | SAM 3.1 mask generation, mask helper, object-case registry, and single-pair reprojection. |
-| `formal_cleanup` | 1 | Downstream-facing cleanup for `data/different_types/`. |
-| `current_compare` | 12 | In-scope aligned native-vs-FFS comparison visualizations. |
-| `experiments` | 25 | Experiment-only visualization workflows under `scripts/harness/experiments/`. |
-| `focused_diagnostics` | 3 | Narrow audits and quality diagnostics. |
+Run:
 
 ```bash
 python scripts/harness/check_harness_catalog.py
@@ -32,105 +30,46 @@ python scripts/harness/check_all.py
 python scripts/harness/check_all.py --full
 ```
 
-`check_all.py` defaults to the quick profile: help-surface checks, deterministic
-guards, and non-rendering core smoke tests. Render-heavy visualization smoke
-tests that create temporary image/video outputs run in `check_all.py --full`.
+## Catalog Summary
 
-## CUDA 13 Toolkit Policy
+Current `_catalog.py` entries: `70`.
 
-- Shared CUDA 13 toolkit is `/usr/local/cuda`, currently resolved through alternatives to `/usr/local/cuda-13.2`.
-- Future CUDA 13-family extension builds from harness or external proof workflows should reuse this shared toolkit instead of installing another env-local CUDA toolkit.
-- Standard build exports:
+| Category | Count | Meaning |
+| --- | ---: | --- |
+| `checks` | 5 | Repo, scope, architecture, experiment-boundary, and catalog guards. |
+| `hardware_external` | 13 | RealSense probes, FFS/SAM/TensorRT proofs, WSLg/Open3D helpers, and static replay benchmarks. |
+| `mask_support` | 4 | SAM 3.1 mask generation, helper code, object-case registry, and single-pair reprojection support. |
+| `formal_cleanup` | 1 | Downstream cleanup for `data/different_types/`. |
+| `current_compare` | 12 | In-scope aligned RealSense/native-vs-FFS comparison visualizations. |
+| `experiments` | 31 | Experiment-only workflows under `scripts/harness/experiments/`. |
+| `focused_diagnostics` | 4 | Narrow audits, overlays, and source diagnostics. |
 
-```bash
-export CUDA_HOME=/usr/local/cuda
-export PATH="$CUDA_HOME/bin:$PATH"
-export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
-export TORCH_CUDA_ARCH_LIST=12.0
-```
+Help profile coverage:
 
-- Do not install duplicate `cuda-toolkit`, `cuda-nvcc`, or similar compiler stacks into new conda environments just to build CUDA 13 extensions.
-- Do not install `cuda`, `cuda-drivers`, or Linux NVIDIA driver packages inside WSL.
-- Existing validated environments may keep their current env-local CUDA paths until they are intentionally rebuilt; new CUDA 13 build work should start from the shared toolkit policy above.
+| Profile | Entries | Use |
+| --- | ---: | --- |
+| `quick` | 8 | Fast help checks used by default `check_all.py`. |
+| `full` | 52 | Broader help checks used by `check_all.py --full`. |
+| none | 10 | Helpers or shell scripts without direct argparse help coverage. |
 
-## FFS Defaults
+## Current Boundaries
 
-- Environment: `FFS-SAM-RS`.
-- Checkpoint/config: `20-30-48`, `valid_iters=4`, `max_disp=192`, two-stage ONNX/TensorRT.
-- TensorRT artifact: `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`.
-- Local performance claims should use real RealSense `848x480` `ir_left` / `ir_right` inputs unless explicitly labeled synthetic or control.
-- Models requiring multiples of `32` pad `848x480` to `864x480` and unpad outputs afterward.
-- `640x480` runs are official-table reproduction/control benchmarks only.
+- FFS defaults and current performance claims are summarized in `docs/generated/harness_engineering_compact_index.md`; use `docs/generated/ffs_live_vs_proxy_boundary.md` for live-vs-proxy wording.
+- Shared CUDA 13 toolkit policy lives in `docs/envs.md`; do not duplicate CUDA install guidance here.
+- Demo v0.3 remote FFS work is tracked by `docs/exec-plans/active/2026-05-08-demo-v0-3-100kit-staged-remote-ffs.md` and the generated Demo v0.3 validation notes.
+- Object/controller PCD filtering caveats are summarized in `docs/generated/harness_engineering_compact_index.md`.
+- Object capture lookup should use `scripts.harness.object_case_registry` by `(object_set, round_id)`.
 
-## FFS Performance Boundary
+## Adding A Harness File
 
-- Live PyTorch 3-camera FFS is not realtime on the RTX 5090 laptop. The best recorded `20-30-48 / valid_iters=4 / scale=0.5` live run reached about `22.6` aggregate FFS FPS, or about `7.5` FPS per camera. Source: `docs/generated/ffs_live_3cam_benchmark_validation.md`.
-- Static replay / TensorRT proxy is a separate result family. The current proxy target is `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5`, and it has basically reached the target. Source: `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/report.md`.
-- Do not label saved-pair, static replay, or TensorRT proxy numbers as "live PyTorch 3-camera realtime".
-- `benchmark_ffs_configs.py` is for saved-pair PyTorch screening; `run_ffs_static_replay_matrix.py` is for offline static replay / TensorRT proxy measurement; `cameras_viewer_FFS.py --ffs_backend pytorch` is the authoritative live PyTorch path.
-
-## Hand / Controller PCD Warning
-
-- PhysTwin-style controller visualizations intentionally merge all `hand` instances into one `controller` mask/PCD. Do not interpret local per-camera hand mask ids as cross-view global hand ids unless a separate 3D association step has been run and recorded.
-- Enhanced PhysTwin-like PCD cleanup is useful for object display rows, but it can be risky for hands/controller rows: the component filter may remove sparse fingertips, contact patches, or fast-moving partial hand points that matter for manipulation. Use `enhanced-pt` for object rows and the simpler PhysTwin-like radius `pt-filter` for controller/hand rows. The Sloth Set 2 object/controller/hand GIF renderer applies this semantic default when the global mode is `enhanced-pt`; treat any explicit controller/hand enhanced-PT output as qualitative unless the removed-points trace has been reviewed.
-- If a workflow needs per-hand identity, create and store an explicit `local camera mask id -> global hand id` mapping from frame-0 world-coordinate PCDs before fusing camera clouds. Do not use image-left/image-right as a cross-camera identity rule.
-
-## Primary Entrypoints
-
-- Checks: `check_all.py`, `check_harness_catalog.py`, `check_scope.py`, `check_experiment_boundaries.py`, `check_visual_architecture.py`.
-- Hardware and external proofs: `probe_d455_*`, `verify_ffs_*`, `benchmark_ffs_configs.py`, `benchmark_sam31_still_object_views.py`, `run_ffs_static_replay_matrix.py`, `realtime_single_camera_pointcloud.py`, `run_wslg_open3d.sh`.
-- Mask support: `generate_sam31_masks.py`, `sam31_mask_helper.py`, `object_case_registry.py`, `reproject_ffs_to_color.py`.
-- Formal cleanup: `cleanup_different_types_cases.py`.
-- Current compare CLIs: `visual_compare_depth_panels.py`, `visual_compare_reprojection.py`, `visual_compare_depth_video.py`, `visual_compare_depth_triplet_*`, `visual_compare_masked_*`, `visual_compare_turntable.py`, `visual_compare_rerun.py`, `visual_make_*`, `visual_compare_stereo_order_pcd.py`.
-- Experiment CLIs: everything under `scripts/harness/experiments/`; these call experiment implementation modules and stay out of formal runtime imports.
-- Focused diagnostics: `audit_ffs_left_right.py`, `compare_face_smoothness.py`, `diagnose_floating_point_sources.py`.
-
-## Object Cases
-
-- Use `scripts.harness.object_case_registry` for raw object-case lookup by `(object_set, round_id)`.
-- Keep old `static_object` captures separate from 2026-04-28 `still_object` captures.
-- Current still-object raw captures are `both_30_still_object_round1_20260428`, `round2`, `round3`, `round4`, `round7`, and `round8`; the round5-6 skip is intentional.
-- Aligned still-object outputs should use a distinct namespace such as `data/still_object/`.
+1. Put reusable implementation outside harness first, usually under `data_process/`.
+2. Add the thin CLI/probe/check file under the right harness folder.
+3. Add a `HarnessEntry` in `_catalog.py` with the right category and `help_profile`.
+4. Run `python scripts/harness/check_harness_catalog.py`.
+5. Run `python scripts/harness/check_all.py`; use `--full` for broad changes.
 
 ## Retention Policy
 
-Keep current user-facing CLIs, deterministic checks, hardware probes, and bounded diagnostics. Remove ignored cache directories, keep reusable implementation out of harness, and record durable external-dependency proof results under `docs/generated/`.
-
-For generated harness engineering results, start from
-`docs/generated/harness_engineering_compact_index.md` instead of scanning every
-individual profile, log, and validation note. The compact index points to the
-current source-of-truth reports and
-`docs/generated/harness_engineering_artifact_inventory.json` contains the full
-machine-readable artifact list.
-
-Result retention policy:
-
-- Delete local smoke, preview, interrupted, and debug-only result roots once the corresponding full result exists.
-- Keep obsolete-but-useful artifacts under `result/_archived_obsolete/`.
-- Keep invalid-for-QQTT controls under `result/_archived_invalid_for_qqtt/`.
-- Keep saved-pair offline FFS screening under `data/ffs_benchmarks/_archived_saved_pair_offline/`.
-- Prefer the top-level `builderopt5`, `concurrent3view`, `stable_throughput`, and `live_3cam_scale*.log` results for current reporting.
-
-## Demo v0.3 Remote FFS Track
-
-- Current remote FFS work is Demo v0.3, not Demo v0.2.
-- Demo v0.3 uses a fixed 100-kit IR triplet replay dataset, not live camera capture, for the next profiling pass.
-- A kit means synchronized `cam0/cam1/cam2` IR pairs: each camera has left/right IR.
-- Use 20 warmup kits plus 100 measured kits; all official latency and throughput summaries exclude warmup and report avg/min/max/p50/p90/p95/p99 over the measured window.
-- The 100-kit folder is local binary data under `result/demo_v0_3_ir_triplet_100kits_848x480/`; it must not be committed.
-- `demo_v0_2` is legacy. It may be used only as a source replay folder or historical reference.
-- Active plan: `docs/exec-plans/active/2026-05-08-demo-v0-3-100kit-staged-remote-ffs.md`.
-- Data-prep CLI:
-
-```bash
-python scripts/demo_v0_3/prepare_ir_triplet_100kits.py \
-  --src-replay-dir result/demo_v0_2_data_ir_triplet_replay_848x480_still_object_round8 \
-  --out-replay-dir result/demo_v0_3_ir_triplet_100kits_848x480 \
-  --num-kits 100 \
-  --camera-count 3 \
-  --width 848 \
-  --height 480 \
-  --capture-kit-fps 15 \
-  --allow-cycle-if-needed \
-  --write-manifest
-```
+- Keep current user-facing CLIs, deterministic checks, hardware probes, and bounded diagnostics.
+- Archive or delete obsolete generated results through documented cleanup passes, not from harness scripts.
+- Prefer extending `docs/generated/harness_engineering_compact_index.md` over adding more long-form README sections.
