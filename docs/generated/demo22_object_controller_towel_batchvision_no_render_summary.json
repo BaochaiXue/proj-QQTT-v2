@@ -1,0 +1,111 @@
+{
+  "status": "completed",
+  "profile_json": "docs/generated/demo22_object_controller_towel_batchvision_no_render_profile.json",
+  "profile_md": "docs/generated/demo22_object_controller_towel_batchvision_no_render_profile.md",
+  "backend": "hf_batch_vision_seq_session",
+  "track_mode": "controller-object",
+  "object_prompt": "stuffed animal",
+  "controller_prompt": "towel",
+  "compile_mode": "vision-reduce-overhead",
+  "mask_postprocess": "cuda-inline",
+  "depth_source": "ffs",
+  "render_mode": "none",
+  "parallel_init": false,
+  "sam31_init": {
+    "cam0": {
+      "object_pixels": 50458,
+      "controller_pixels": 37731
+    },
+    "cam1": {
+      "object_pixels": 14982,
+      "controller_pixels": 18793
+    },
+    "cam2": {
+      "object_pixels": 11328,
+      "controller_pixels": 20026
+    },
+    "object_nonempty_all_cameras": true,
+    "controller_nonempty_all_cameras": true
+  },
+  "summary_after_warmup": {
+    "capture_group_fps": 13.013980744845378,
+    "raw_fusion_fps": 6.370757446704415,
+    "filter_output_fps": 6.370031973438299,
+    "fusion_fps": 6.370032523467049,
+    "render_fps": 0.0,
+    "complete_fusion_groups": 264,
+    "group_count": 580,
+    "complete_group_ratio": 0.45517241379310347,
+    "bottleneck_class": "upstream_supply",
+    "demo22_14_4_fps_gate": "fail"
+  },
+  "timing_after_warmup_ms": {
+    "edgetam_batch_vision_total": {
+      "p50": 22.782928019296378,
+      "p90": 25.538340001367033,
+      "p95": 27.035255404189225,
+      "max": 34.325057989917696
+    },
+    "edgetam_batch_vision_model": {
+      "p50": 18.43827247619629,
+      "p90": 21.015219116210936,
+      "p95": 22.387065505981443,
+      "max": 29.803295135498047
+    },
+    "edgetam_per_camera_model": {
+      "p50": 22.261600494384766,
+      "p90": 29.52586250305176,
+      "p95": 32.79632110595703,
+      "max": 51.15078353881836
+    },
+    "gpu_owner_total": {
+      "p50": 147.1088160178624,
+      "p90": 172.50926318811253,
+      "p95": 188.13259942689896,
+      "max": 369.3943549878895
+    },
+    "ffs_cycle": {
+      "p50": 62.14383104816079,
+      "p90": 67.7535425988026,
+      "p95": 70.73233278933911,
+      "max": 251.9950330024585
+    },
+    "gpu_owner_edgetam_cycle": {
+      "p50": 84.8690010025166,
+      "p90": 104.10883980803192,
+      "p95": 108.97282800870016,
+      "max": 137.6119509804994
+    },
+    "raw_fusion": {
+      "p50": 9.873419010546058,
+      "p90": 11.50273761013523,
+      "p95": 12.045686080818996,
+      "max": 14.234205009415746
+    },
+    "filter_total": {
+      "p50": 34.33375351596624,
+      "p90": 37.880388903431594,
+      "p95": 39.40797629475128,
+      "max": 227.5234740227461
+    },
+    "object_enhanced_filter": {
+      "p50": 22.183039516676217,
+      "p90": 25.35005920217373,
+      "p95": 26.1269830778474,
+      "max": 215.15084704151377
+    },
+    "controller_pt_filter": {
+      "p50": 11.96788001107052,
+      "p90": 13.181317318230867,
+      "p95": 13.56190012593288,
+      "max": 14.37876996351406
+    }
+  },
+  "decision": {
+    "sam31_towel_init": "pass",
+    "live_object_controller_path": "pass",
+    "fused_pcd_nonempty": "pass",
+    "fifteen_fps_target": "fail",
+    "needs_sam31_replay_iou_correctness": true
+  }
+}
