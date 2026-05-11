@@ -34,7 +34,10 @@ class Demo3TrackingBackendBenchmarkFakeSmokeTest(unittest.TestCase):
             summary = run_benchmark(args)
             output_dir = Path(summary["output_dir"])
             self.assertTrue((output_dir / "results.csv").is_file())
+            self.assertTrue((output_dir / "profile.json").is_file())
+            self.assertTrue((output_dir / "profile.md").is_file())
             self.assertTrue((output_dir / "fake" / "points_3" / "cam0.npz").is_file())
+            self.assertIn("total_wall_ms", summary["profile"])
 
     def test_explicit_unavailable_backend_can_be_required(self) -> None:
         from scripts.harness.experiments.run_demo3_tracking_backend_benchmark import parse_args, run_benchmark

@@ -11,10 +11,10 @@
 ## Backends
 
 - cotracker3_online: available - torch is importable; CoTracker3 model loads lazily through torch.hub or injected model
-- locotrack: unavailable - /home/zhangxinjie/external_tracking_backends/locotrack exists but runtime module/checkpoint is not configured; module locotrack import failed: No module named 'locotrack'
+- locotrack: unavailable - module locotrack_pytorch importable from repo path /home/zhangxinjie/external_tracking_backends/locotrack; checkpoint not configured; DEMO3_LOCOTRACK_CHECKPOINT=<unset>, LOCOTRACK_CHECKPOINT=<unset>; PyTorch runtime wrapper is not implemented in this dependency-gated probe
 - nvofa: unavailable - NVIDIA Optical Flow SDK repo found but helper/binding is not built
 - onnxruntime_cuda: available - CUDAExecutionProvider found
 - onnxruntime_tensorrt: available - TensorrtExecutionProvider found
 - tapir: unavailable - module tapnet importable; checkpoint not configured; DEMO3_TAPIR_CHECKPOINT=<unset>, TAPIR_CHECKPOINT=<unset>; PyTorch runtime wrapper is not implemented in this dependency-gated probe
-- tapnext: unavailable - module tapnet importable; checkpoint not configured; DEMO3_TAPNEXT_CHECKPOINT=<unset>, TAPNEXT_CHECKPOINT=<unset>; PyTorch runtime wrapper is not implemented in this dependency-gated probe
+- tapnext: unavailable - module tapnet.tapnext.tapnext_torch importable; checkpoint not configured; DEMO3_TAPNEXT_CHECKPOINT=<unset>, TAPNEXT_CHECKPOINT=<unset>; PyTorch runtime wrapper is not implemented in this dependency-gated probe
 - vpi_lk: unavailable - import vpi failed: No module named 'vpi'

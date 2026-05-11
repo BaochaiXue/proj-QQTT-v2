@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 from pathlib import Path
+import resource
 import sys
 import time
 from typing import Any
@@ -138,6 +139,10 @@ def _find_mask_path(mask_root: Path, camera_idx: int, frame_idx: int) -> Path | 
         mask_root / str(camera_idx) / f"{frame_idx:06d}.png",
         mask_root / str(camera_idx) / f"{frame_idx}.npy",
         mask_root / str(camera_idx) / f"{frame_idx:06d}.npy",
+        mask_root / str(camera_idx) / "0" / f"{frame_idx}.png",
+        mask_root / str(camera_idx) / "0" / f"{frame_idx:06d}.png",
+        mask_root / str(camera_idx) / "0" / f"{frame_idx}.npy",
+        mask_root / str(camera_idx) / "0" / f"{frame_idx:06d}.npy",
         mask_root / f"{camera_idx}_{frame_idx}.png",
         mask_root / f"{camera_idx}_{frame_idx}.npy",
     )
@@ -256,11 +261,97 @@ def _write_outputs(output_dir: Path, rows: list[dict[str, Any]], availability: d
     (output_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _max_rss_mb() -> float:
+    # Linux reports ru_maxrss in KiB.
+    return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
+
+
+def _torch_cuda_peak_mb() -> float:
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return 0.0
+        return float(torch.cuda.max_memory_allocated()) / (1024.0 * 1024.0)
+    except Exception:
+        return 0.0
+
+
+def _write_profile_report(output_dir: Path, profile: dict[str, Any]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "profile.json").write_text(json.dumps(profile, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    lines = [
+        "# Demo 3 Tracking Benchmark Profile",
+        "",
+        f"- case: {profile.get('case_name', '')}",
+        f"- backends: {', '.join(profile.get('backends', []))}",
+        f"- cameras: {', '.join(str(item) for item in profile.get('cameras', []))}",
+        f"- query_points: {', '.join(str(item) for item in profile.get('query_counts', []))}",
+        f"- frames_requested: {profile.get('frames_requested', 0)}",
+        f"- total_wall_ms: {profile.get('total_wall_ms', 0.0):.3f}",
+        f"- frame_load_ms_total: {profile.get('frame_load_ms_total', 0.0):.3f}",
+        f"- mask_load_ms_total: {profile.get('mask_load_ms_total', 0.0):.3f}",
+        f"- max_rss_mb: {profile.get('max_rss_mb', 0.0):.3f}",
+        f"- torch_cuda_peak_mb: {profile.get('torch_cuda_peak_mb', 0.0):.3f}",
+        "",
+        "## Serial Group FPS",
+        "",
+    ]
+    group_rows = [row for row in profile.get("row_profiles", []) if row.get("camera_idx") == "all"]
+    if group_rows:
+        lines.append("| Backend | Points | Group FPS | E2E p50 ms | E2E p95 ms | Notes |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | --- |")
+        for row in group_rows:
+            lines.append(
+                "| {backend} | {points} | {fps:.3f} | {p50:.3f} | {p95:.3f} | {notes} |".format(
+                    backend=row.get("backend", ""),
+                    points=row.get("num_query_points", 0),
+                    fps=float(row.get("three_camera_group_fps_serial", 0.0) or 0.0),
+                    p50=float(row.get("e2e_ms_median", 0.0) or 0.0),
+                    p95=float(row.get("e2e_ms_p95", 0.0) or 0.0),
+                    notes=str(row.get("notes", "")),
+                )
+            )
+    else:
+        lines.append("No serial group rows were produced.")
+    lines.extend(["", "## Per-Camera Rows", ""])
+    camera_rows = [row for row in profile.get("row_profiles", []) if row.get("camera_idx") != "all"]
+    if camera_rows:
+        lines.append("| Backend | Camera | Points | Frames | E2E ms | Visible | Inside Mask | Depth Valid | Lifted | Notes |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+        for row in camera_rows:
+            lines.append(
+                "| {backend} | {camera} | {points} | {frames} | {e2e:.3f} | {visible:.3f} | {inside:.3f} | {depth:.3f} | {lifted:.3f} | {notes} |".format(
+                    backend=row.get("backend", ""),
+                    camera=row.get("camera_idx", ""),
+                    points=row.get("num_query_points", 0),
+                    frames=row.get("num_frames", 0),
+                    e2e=float(row.get("e2e_ms_median", 0.0) or 0.0),
+                    visible=float(row.get("visible_ratio_mean", 0.0) or 0.0),
+                    inside=float(row.get("inside_mask_ratio_mean", 0.0) or 0.0),
+                    depth=float(row.get("depth_valid_ratio_mean", 0.0) or 0.0),
+                    lifted=float(row.get("lifted_3d_count_mean", 0.0) or 0.0),
+                    notes=str(row.get("notes", "")),
+                )
+            )
+    else:
+        lines.append("No per-camera rows were produced.")
+    (output_dir / "profile.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     from qqtt.tracking.io import save_cotracker_like_npz
     from qqtt.tracking.metrics import compute_2d_track_metrics
     from qqtt.tracking.registry import check_backend_availability, create_backend
     from qqtt.tracking.sampling import sample_query_points_from_mask
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:
+        pass
 
     case_root = Path(args.case_root).resolve()
     output_dir = Path(args.output_root).resolve() / case_root.name
@@ -283,20 +374,44 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         _write_outputs(output_dir, [], availability)
         return {"output_dir": str(output_dir), "rows": [], "availability": availability}
 
+    benchmark_start = time.perf_counter()
     rows: list[dict[str, Any]] = []
+    frame_load_ms_total = 0.0
+    mask_load_ms_total = 0.0
     frame_cache: dict[int, list[np.ndarray]] = {}
     mask_cache: dict[int, list[np.ndarray]] = {}
     for camera_idx in camera_indices:
+        load_start = time.perf_counter()
         frames = _read_png_sequence(case_root, camera_idx, int(args.frames))
+        frame_load_ms_total += (time.perf_counter() - load_start) * 1000.0
         frame_cache[camera_idx] = frames
         shape_hw = frames[0].shape[:2]
+        mask_start = time.perf_counter()
         mask_cache[camera_idx] = [_load_mask(mask_root, camera_idx, frame_idx, shape_hw) for frame_idx in range(len(frames))]
+        mask_load_ms_total += (time.perf_counter() - mask_start) * 1000.0
 
     lift_context = _load_lift_context(case_root)
     normalized_mode = "object_dense" if str(args.query_mode) == "phystwin_dense" else str(args.query_mode)
 
     for backend_name in backends:
         backend_available = bool(availability[backend_name]["available"])
+        backend = None
+        backend_warmup_error = ""
+        backend_load_ms = 0.0
+        if backend_available:
+            try:
+                backend = create_backend(backend_name, device=str(args.device))
+                warmup_camera = camera_indices[0]
+                warmup_start = time.perf_counter()
+                backend.initialize(
+                    frame_cache[warmup_camera][:1],
+                    np.zeros((1, 2), dtype=np.float32),
+                    masks=mask_cache[warmup_camera][:1],
+                )
+                backend_load_ms = (time.perf_counter() - warmup_start) * 1000.0
+            except Exception as exc:
+                backend_available = False
+                backend_warmup_error = f"{type(exc).__name__}: {exc}"
         for requested_points in query_counts:
             group_row_indices: list[int] = []
             camera_e2e_ms: list[float] = []
@@ -332,16 +447,17 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     "lifted_3d_count_mean": 0.0,
                     "tracking_quality_notes": "",
                     "output_npz_path": "",
-                    "notes": "" if backend_available else availability[backend_name]["reason"],
+                    "notes": "" if backend_available else (backend_warmup_error or availability[backend_name]["reason"]),
                 }
                 if not backend_available or len(query_points) == 0:
                     rows.append(row)
                     group_row_indices.append(len(rows) - 1)
                     continue
 
-                backend = create_backend(backend_name, device=str(args.device))
                 start = time.perf_counter()
                 try:
+                    if backend is None:
+                        raise RuntimeError("Backend was not initialized.")
                     result = backend.track_sequence(
                         frames_rgb=frames,
                         query_points_yx=query_points,
@@ -358,6 +474,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 elapsed_ms = (time.perf_counter() - start) * 1000.0
                 camera_e2e_ms.append(elapsed_ms)
                 row.update(_latency_summary(float(result.stats.get("model_run_ms", elapsed_ms))))
+                row["gpu_memory_peak_mb"] = _torch_cuda_peak_mb()
+                if backend_load_ms:
+                    row["notes"] = f"backend_load_ms={backend_load_ms:.3f}"
                 e2e = _latency_summary(elapsed_ms)
                 row["e2e_ms_median"] = e2e["e2e_ms_median"]
                 row["e2e_ms_p95"] = e2e["e2e_ms_p95"]
@@ -372,6 +491,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     result=result,
                     masks=masks,
                 )
+                existing_notes = str(row.get("notes", ""))
+                lift_notes = str(metrics_3d.get("lift_notes", ""))
+                combined_notes = "; ".join(item for item in (existing_notes, lift_notes) if item)
                 row.update(
                     {
                         "visible_ratio_mean": metrics_2d["visible_ratio_mean"],
@@ -379,7 +501,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                         "depth_valid_ratio_mean": metrics_3d["depth_valid_ratio_mean"],
                         "lifted_3d_count_mean": metrics_3d["lifted_3d_count_mean"],
                         "tracking_quality_notes": "NVOFA/VPI are propagation baselines, not long-term TAP" if backend_name in {"nvofa", "vpi_lk"} else "",
-                        "notes": metrics_3d.get("lift_notes", ""),
+                        "notes": combined_notes,
                     }
                 )
 
@@ -440,7 +562,23 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             )
 
     _write_outputs(output_dir, rows, availability)
-    return {"output_dir": str(output_dir), "rows": rows, "availability": availability}
+    profile = {
+        "case_name": case_root.name,
+        "case_root": str(case_root),
+        "output_dir": str(output_dir),
+        "backends": backends,
+        "cameras": camera_indices,
+        "query_counts": query_counts,
+        "frames_requested": int(args.frames),
+        "frame_load_ms_total": float(frame_load_ms_total),
+        "mask_load_ms_total": float(mask_load_ms_total),
+        "total_wall_ms": float((time.perf_counter() - benchmark_start) * 1000.0),
+        "max_rss_mb": _max_rss_mb(),
+        "torch_cuda_peak_mb": _torch_cuda_peak_mb(),
+        "row_profiles": rows,
+    }
+    _write_profile_report(output_dir, profile)
+    return {"output_dir": str(output_dir), "rows": rows, "availability": availability, "profile": profile}
 
 
 def main(argv: list[str] | None = None) -> int:

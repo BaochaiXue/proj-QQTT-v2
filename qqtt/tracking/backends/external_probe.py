@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 from typing import Sequence
 
 import numpy as np
@@ -17,6 +18,7 @@ class ExternalRepoProbeBackend:
     repo_dir_name = ""
     module_names: tuple[str, ...] = ()
     checkpoint_env_vars: tuple[str, ...] = ()
+    repo_env_vars: tuple[str, ...] = ()
     install_hint = ""
     integration_ready = False
 
@@ -25,6 +27,10 @@ class ExternalRepoProbeBackend:
         self.device = str(device)
 
     def _repo_path(self) -> Path:
+        for env_var in self.repo_env_vars:
+            raw_path = os.environ.get(env_var, "")
+            if raw_path:
+                return Path(raw_path).expanduser()
         return self.external_root / self.repo_dir_name
 
     def _module_available(self) -> tuple[bool, str]:
@@ -35,6 +41,21 @@ class ExternalRepoProbeBackend:
                 return True, f"module {module_name} importable"
             except Exception as exc:
                 last = f"module {module_name} import failed: {exc}"
+        repo_path = self._repo_path()
+        if repo_path.exists():
+            sys.path.insert(0, str(repo_path))
+            try:
+                for module_name in self.module_names:
+                    try:
+                        __import__(module_name)
+                        return True, f"module {module_name} importable from repo path {repo_path}"
+                    except Exception as exc:
+                        last = f"repo-path module {module_name} import failed: {exc}"
+            finally:
+                try:
+                    sys.path.remove(str(repo_path))
+                except ValueError:
+                    pass
         return False, last
 
     def _checkpoint_available(self) -> tuple[bool, str]:
@@ -99,16 +120,18 @@ class ExternalRepoProbeBackend:
 class LocoTrackBackend(ExternalRepoProbeBackend):
     name = "locotrack"
     repo_dir_name = "locotrack"
-    module_names = ("locotrack",)
+    module_names = ("locotrack_pytorch", "locotrack")
     checkpoint_env_vars = ("DEMO3_LOCOTRACK_CHECKPOINT", "LOCOTRACK_CHECKPOINT")
+    repo_env_vars = ("DEMO3_LOCOTRACK_REPO", "LOCOTRACK_REPO")
     install_hint = "Clone https://github.com/cvlab-kaist/locotrack and configure weights."
 
 
 class TapNextBackend(ExternalRepoProbeBackend):
     name = "tapnext"
     repo_dir_name = "tapnet"
-    module_names = ("tapnet",)
+    module_names = ("tapnet.tapnext.tapnext_torch", "tapnet")
     checkpoint_env_vars = ("DEMO3_TAPNEXT_CHECKPOINT", "TAPNEXT_CHECKPOINT")
+    repo_env_vars = ("DEMO3_TAPNET_REPO", "TAPNET_REPO")
     install_hint = "Clone https://github.com/google-deepmind/tapnet and configure TAPNext/TAPNext++ checkpoints."
 
 
@@ -117,4 +140,5 @@ class TapirBackend(ExternalRepoProbeBackend):
     repo_dir_name = "tapnet"
     module_names = ("tapnet",)
     checkpoint_env_vars = ("DEMO3_TAPIR_CHECKPOINT", "TAPIR_CHECKPOINT")
+    repo_env_vars = ("DEMO3_TAPNET_REPO", "TAPNET_REPO")
     install_hint = "Clone https://github.com/google-deepmind/tapnet and configure TAPIR/BootsTAPIR checkpoints."

@@ -38,6 +38,9 @@ manual; use the compressed harness index first.
 | Demo 2.2 staged-parallel async GPU observation | `demo2_2_staged_parallel_async_gpu_observation.md` |
 | Demo 3 tracking backend stack | `demo3_tracking_backend_stack.md`, `demo3_tracking_backend_stack.json` |
 | Demo 3 ONNX/TensorRT tracking probe | `demo3_onnx_trt_probe.md`, `demo3_onnx_trt_probe.json` |
+| Demo 3 fake tracking benchmark/profile artifact | `demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/profile.md` |
+| Demo 3 CoTracker3 baseline benchmark/profile artifact | `demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/profile.md` |
+| Demo 3 CoTracker3 lifted PCD overlay artifact | `demo3_cotracker3_tracking_overlay/both_30_still_object_round1_20260428/cotracker3_points_256/both_30_still_object_round1_20260428/points_256/overlay_summary.md` |
 | Demo 2.1.5 RealSense-depth async filtered fused PCD | `demo2_1_5_realsense_depth_60s_profile.md` |
 | Demo 2.1.5 NVML GPU utilization profile | `demo2_1_5_gpu_nvml_profile.md` |
 | Demo 2.1.5 parallel EdgeTAM NVML GPU profile | `demo2_1_5_parallel_edgetam_gpu_nvml_profile.md` |

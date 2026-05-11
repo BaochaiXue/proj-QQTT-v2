@@ -38,9 +38,19 @@ def _parse_models(spec: str) -> list[str]:
 
 
 def _write_markdown(path: Path, results: list[dict]) -> None:
-    lines = ["# Demo 3 ONNX/TensorRT Probe", ""]
+    lines = [
+        "# Demo 3 ONNX/TensorRT Probe",
+        "",
+        "This probe checks whether an already exportable tracking model can be loaded through ONNX Runtime CUDA/TensorRT execution providers.",
+        "It does not claim TAPNext or LocoTrack are exportable until a concrete model wrapper or ONNX path is provided.",
+        "",
+        "| Model | Export ONNX | ORT CUDA | ORT TensorRT | Notes |",
+        "| --- | --- | --- | --- | --- |",
+    ]
     for item in results:
-        lines.append(f"- {item['model']}: export={item['export_onnx']} cuda={item['onnxruntime_cuda']} trt={item['onnxruntime_tensorrt']} notes={item['quality_notes']}")
+        lines.append(
+            f"| {item['model']} | {item['export_onnx']} | {item['onnxruntime_cuda']} | {item['onnxruntime_tensorrt']} | {item['quality_notes']} |"
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

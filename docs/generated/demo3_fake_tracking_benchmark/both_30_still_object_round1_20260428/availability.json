@@ -1,0 +1,7 @@
+{
+  "fake": {
+    "available": true,
+    "backend": "fake",
+    "reason": "deterministic in-repo fake backend for CI"
+  }
+}

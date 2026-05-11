@@ -1,0 +1,7 @@
+{
+  "cotracker3_online": {
+    "available": true,
+    "backend": "cotracker3_online",
+    "reason": "torch is importable; CoTracker3 model loads lazily through torch.hub or injected model"
+  }
+}

@@ -42,6 +42,8 @@ class Demo3TrackingHarnessSmokeTest(unittest.TestCase):
 
             self.assertTrue((output_dir / "results.csv").is_file())
             self.assertTrue((output_dir / "summary.json").is_file())
+            self.assertTrue((output_dir / "profile.json").is_file())
+            self.assertTrue((output_dir / "profile.md").is_file())
             self.assertTrue((output_dir / "fake" / "points_3" / "cam0.npz").is_file())
             self.assertTrue((output_dir / "fake" / "points_3" / "benchmark_cam0.json").is_file())
             self.assertTrue((output_dir / "cotracker" / "0.npz").is_file())

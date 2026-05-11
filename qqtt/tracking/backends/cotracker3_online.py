@@ -91,6 +91,31 @@ class CoTracker3OnlineBackend:
             return output[0], output[1]
         raise ValueError(f"Unsupported CoTracker output type: {type(output).__name__}")
 
+    @staticmethod
+    def _run_online_model(model: Any, video: Any, queries: Any) -> tuple[Any, Any]:
+        """Run CoTrackerOnlinePredictor with its required init/step protocol."""
+        step = int(getattr(model, "step", 0) or 0)
+        if step <= 0:
+            raise AttributeError("CoTracker online predictor does not expose a positive step size.")
+        model(video_chunk=video, is_first_step=True, queries=queries, grid_size=0, add_support_grid=False)
+        pred_tracks = pred_visibility = None
+        total_frames = int(video.shape[1])
+        for ind in range(0, max(total_frames - step, 0), step):
+            pred_tracks, pred_visibility = model(
+                video_chunk=video[:, ind : ind + step * 2],
+                is_first_step=False,
+                grid_size=0,
+                add_support_grid=False,
+            )
+        if pred_tracks is None or pred_visibility is None:
+            pred_tracks, pred_visibility = model(
+                video_chunk=video,
+                is_first_step=False,
+                grid_size=0,
+                add_support_grid=False,
+            )
+        return pred_tracks, pred_visibility
+
     def track_sequence(
         self,
         frames: Sequence[np.ndarray] | None = None,
@@ -113,12 +138,15 @@ class CoTracker3OnlineBackend:
         queries = self._queries_yx_to_torch(query_points_yx, device=self.device)
         run_start = time.perf_counter()
         with torch.no_grad():
-            try:
-                output = model(video, queries=queries, is_online=False)
-            except TypeError:
-                output = model(video, queries=queries)
+            if hasattr(model, "step"):
+                tracks_xy, visibility = self._run_online_model(model, video, queries)
+            else:
+                try:
+                    output = model(video, queries=queries, is_online=False)
+                except TypeError:
+                    output = model(video, queries=queries)
+                tracks_xy, visibility = self._extract_prediction(output)
         run_ms = (time.perf_counter() - run_start) * 1000.0
-        tracks_xy, visibility = self._extract_prediction(output)
         tracks_yx = tracks_xy.detach().cpu().numpy()[0].astype(np.float32)[:, :, ::-1]
         visibility_np = visibility.detach().cpu().numpy()[0].astype(np.float32)
         return TrackingResult(

@@ -10,7 +10,7 @@
       "available": false,
       "backend": "locotrack",
       "install_hint": "Clone cvlab-kaist/locotrack and configure weights.",
-      "reason": "/home/zhangxinjie/external_tracking_backends/locotrack exists but runtime module/checkpoint is not configured; module locotrack import failed: No module named 'locotrack'"
+      "reason": "module locotrack_pytorch importable from repo path /home/zhangxinjie/external_tracking_backends/locotrack; checkpoint not configured; DEMO3_LOCOTRACK_CHECKPOINT=<unset>, LOCOTRACK_CHECKPOINT=<unset>; PyTorch runtime wrapper is not implemented in this dependency-gated probe"
     },
     "nvofa": {
       "available": false,
@@ -40,7 +40,7 @@
       "available": false,
       "backend": "tapnext",
       "install_hint": "Clone google-deepmind/tapnet and configure TAPNext/TAPNext++ checkpoints.",
-      "reason": "module tapnet importable; checkpoint not configured; DEMO3_TAPNEXT_CHECKPOINT=<unset>, TAPNEXT_CHECKPOINT=<unset>; PyTorch runtime wrapper is not implemented in this dependency-gated probe"
+      "reason": "module tapnet.tapnext.tapnext_torch importable; checkpoint not configured; DEMO3_TAPNEXT_CHECKPOINT=<unset>, TAPNEXT_CHECKPOINT=<unset>; PyTorch runtime wrapper is not implemented in this dependency-gated probe"
     },
     "vpi_lk": {
       "available": false,
