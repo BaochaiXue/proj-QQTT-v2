@@ -1,55 +1,63 @@
 {
   "categories": {
+    "demo2_1_5_runtime": {
+      "bytes": 28155365,
+      "files": 34
+    },
     "demo2_1_three_view_runtime": {
-      "bytes": 10528337,
-      "files": 25
+      "bytes": 41663346,
+      "files": 108
+    },
+    "demo2_2_runtime": {
+      "bytes": 11519206,
+      "files": 27
     },
     "demo2_single_camera_runtime": {
-      "bytes": 1909888,
-      "files": 18
+      "bytes": 2497393,
+      "files": 25
+    },
+    "demo3_tracking": {
+      "bytes": 552140,
+      "files": 50
     },
     "edgetam_integration": {
       "bytes": 13949837,
       "files": 16
     },
     "ffs_validation": {
-      "bytes": 93557,
-      "files": 19
+      "bytes": 87924,
+      "files": 17
     },
     "hardware_capture_wsl": {
       "bytes": 434063,
       "files": 7
     },
     "index": {
-      "bytes": 51368,
+      "bytes": 119161,
       "files": 3
+    },
+    "remote_ffs_demo_runtime": {
+      "bytes": 326352,
+      "files": 25
     },
     "repo_contract_retention": {
-      "bytes": 18731,
-      "files": 6
+      "bytes": 27328,
+      "files": 7
     },
-    "sam_family_benchmarks": {
-      "bytes": 47787380,
-      "files": 17
-    },
-    "sloth_base_visual_experiments": {
-      "bytes": 1819106,
-      "files": 4
-    },
-    "sloth_set_2_edgetam_sam31_experiments": {
-      "bytes": 11505853,
-      "files": 44
+    "sam_edgetam_mask_benchmarks": {
+      "bytes": 61089907,
+      "files": 62
     },
     "supporting_assets_and_raw_outputs": {
-      "bytes": 608,
-      "files": 3
+      "bytes": 17953,
+      "files": 6
     },
     "visualization_stack": {
-      "bytes": 28201,
+      "bytes": 17926,
       "files": 3
     }
   },
-  "generated_at_utc": "2026-05-06T12:05:10.112387+00:00",
+  "generated_at_utc": "2026-05-11T20:59:40.202373+00:00",
   "items": [
     {
       "bytes": 2349,
@@ -59,7 +67,7 @@
       "suffix": ".md"
     },
     {
-      "bytes": 2534,
+      "bytes": 7757,
       "category": "index",
       "name": "README.md",
       "path": "docs/generated/README.md",
@@ -108,6 +116,244 @@
       "suffix": ".md"
     },
     {
+      "bytes": 52300,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_profile.json",
+      "path": "docs/generated/demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5864,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_profile.md",
+      "path": "docs/generated/demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4829815,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_replicated_profile.json",
+      "path": "docs/generated/demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_replicated_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 6017,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_replicated_profile.md",
+      "path": "docs/generated/demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_replicated_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4821727,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_pointcloud_replicated_profile.json",
+      "path": "docs/generated/demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_pointcloud_replicated_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 6016,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_pointcloud_replicated_profile.md",
+      "path": "docs/generated/demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_pointcloud_replicated_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 11036,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_hf_edgetam_gpu_underutilization_mitigation.json",
+      "path": "docs/generated/demo215_hf_edgetam_gpu_underutilization_mitigation.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 6212,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_hf_edgetam_gpu_underutilization_mitigation.md",
+      "path": "docs/generated/demo215_hf_edgetam_gpu_underutilization_mitigation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 166763,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_object_controller_rag_eager_bf16_cuda_inline_profile.json",
+      "path": "docs/generated/demo215_mask_only_object_controller_rag_eager_bf16_cuda_inline_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5873,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_object_controller_rag_eager_bf16_cuda_inline_profile.md",
+      "path": "docs/generated/demo215_mask_only_object_controller_rag_eager_bf16_cuda_inline_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2823388,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_object_controller_towel_eager_bf16_cuda_inline_profile.json",
+      "path": "docs/generated/demo215_mask_only_object_controller_towel_eager_bf16_cuda_inline_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5982,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_object_controller_towel_eager_bf16_cuda_inline_profile.md",
+      "path": "docs/generated/demo215_mask_only_object_controller_towel_eager_bf16_cuda_inline_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3985332,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_object_only_eager_bf16_cuda_inline_profile.json",
+      "path": "docs/generated/demo215_mask_only_object_only_eager_bf16_cuda_inline_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5983,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_object_only_eager_bf16_cuda_inline_profile.md",
+      "path": "docs/generated/demo215_mask_only_object_only_eager_bf16_cuda_inline_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 651412,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_object_only_vision_max_no_cudagraphs_bf16_cuda_inline_profile.json",
+      "path": "docs/generated/demo215_mask_only_object_only_vision_max_no_cudagraphs_bf16_cuda_inline_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5971,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_object_only_vision_max_no_cudagraphs_bf16_cuda_inline_profile.md",
+      "path": "docs/generated/demo215_mask_only_object_only_vision_max_no_cudagraphs_bf16_cuda_inline_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 198861,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_object_only_vision_reduce_bf16_cuda_inline_profile.json",
+      "path": "docs/generated/demo215_mask_only_object_only_vision_reduce_bf16_cuda_inline_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5900,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_object_only_vision_reduce_bf16_cuda_inline_profile.md",
+      "path": "docs/generated/demo215_mask_only_object_only_vision_reduce_bf16_cuda_inline_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 201963,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_vision_reduce_bf16_cuda_inline_profile.json",
+      "path": "docs/generated/demo215_mask_only_vision_reduce_bf16_cuda_inline_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 6026,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_vision_reduce_bf16_cuda_inline_profile.md",
+      "path": "docs/generated/demo215_mask_only_vision_reduce_bf16_cuda_inline_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 232662,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_vision_reduce_bf16_cuda_inline_retry_profile.json",
+      "path": "docs/generated/demo215_mask_only_vision_reduce_bf16_cuda_inline_retry_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5900,
+      "category": "demo2_1_5_runtime",
+      "name": "demo215_mask_only_vision_reduce_bf16_cuda_inline_retry_profile.md",
+      "path": "docs/generated/demo215_mask_only_vision_reduce_bf16_cuda_inline_retry_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2436180,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_gpu_nvml_profile.json",
+      "path": "docs/generated/demo2_1_5_gpu_nvml_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5359,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_gpu_nvml_profile.md",
+      "path": "docs/generated/demo2_1_5_gpu_nvml_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1528,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_init_cache_warmup.md",
+      "path": "docs/generated/demo2_1_5_init_cache_warmup.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 8832,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_init_cache_warmup_probe.json",
+      "path": "docs/generated/demo2_1_5_init_cache_warmup_probe.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 2920948,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_parallel_edgetam_eager_probe_profile.json",
+      "path": "docs/generated/demo2_1_5_parallel_edgetam_eager_probe_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 5397,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_parallel_edgetam_eager_probe_profile.md",
+      "path": "docs/generated/demo2_1_5_parallel_edgetam_eager_probe_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3005600,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_parallel_edgetam_gpu_nvml_profile.json",
+      "path": "docs/generated/demo2_1_5_parallel_edgetam_gpu_nvml_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 6099,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_parallel_edgetam_gpu_nvml_profile.md",
+      "path": "docs/generated/demo2_1_5_parallel_edgetam_gpu_nvml_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 246009,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_realsense_depth_30s_profile.json",
+      "path": "docs/generated/demo2_1_5_realsense_depth_30s_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 4660,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_realsense_depth_30s_profile.md",
+      "path": "docs/generated/demo2_1_5_realsense_depth_30s_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1469044,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_realsense_depth_60s_profile.json",
+      "path": "docs/generated/demo2_1_5_realsense_depth_60s_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 4706,
+      "category": "demo2_1_5_runtime",
+      "name": "demo2_1_5_realsense_depth_60s_profile.md",
+      "path": "docs/generated/demo2_1_5_realsense_depth_60s_profile.md",
+      "suffix": ".md"
+    },
+    {
       "bytes": 315589,
       "category": "demo2_1_three_view_runtime",
       "name": "demo2_1_cam0_live_rgb_20260506_071723.png",
@@ -136,10 +382,619 @@
       "suffix": ".png"
     },
     {
-      "bytes": 24751,
+      "bytes": 283074,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_cloth_visual5fps_sanity_30s.json",
+      "path": "docs/generated/demo2_1_controller_cloth_visual5fps_sanity_30s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3345,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_cloth_visual5fps_sanity_30s.md",
+      "path": "docs/generated/demo2_1_controller_cloth_visual5fps_sanity_30s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1165286,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_object_hand_record_20260506_092328.json",
+      "path": "docs/generated/demo2_1_controller_object_hand_record_20260506_092328.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1979,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_object_hand_record_20260506_092328.md",
+      "path": "docs/generated/demo2_1_controller_object_hand_record_20260506_092328.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2022,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_prompt_probe.md",
+      "path": "docs/generated/demo2_1_controller_prompt_probe.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1849135,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_separate_workers_visual5fps_120s.json",
+      "path": "docs/generated/demo2_1_controller_towel_separate_workers_visual5fps_120s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3363,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_separate_workers_visual5fps_120s.md",
+      "path": "docs/generated/demo2_1_controller_towel_separate_workers_visual5fps_120s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4327,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_single_owner_benchmark.md",
+      "path": "docs/generated/demo2_1_controller_towel_single_owner_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3075,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_single_owner_dry_run.txt",
+      "path": "docs/generated/demo2_1_controller_towel_single_owner_dry_run.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 2123974,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_single_owner_edge_first_120s.json",
+      "path": "docs/generated/demo2_1_controller_towel_single_owner_edge_first_120s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3360,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_single_owner_edge_first_120s.md",
+      "path": "docs/generated/demo2_1_controller_towel_single_owner_edge_first_120s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2117968,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_single_owner_no_pin_120s.json",
+      "path": "docs/generated/demo2_1_controller_towel_single_owner_no_pin_120s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3363,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_single_owner_no_pin_120s.md",
+      "path": "docs/generated/demo2_1_controller_towel_single_owner_no_pin_120s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2302229,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_single_owner_no_pin_repeat_120s.json",
+      "path": "docs/generated/demo2_1_controller_towel_single_owner_no_pin_repeat_120s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3392,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_single_owner_no_pin_repeat_120s.md",
+      "path": "docs/generated/demo2_1_controller_towel_single_owner_no_pin_repeat_120s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2068398,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_single_owner_pin_ffs_120s.json",
+      "path": "docs/generated/demo2_1_controller_towel_single_owner_pin_ffs_120s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3369,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_single_owner_pin_ffs_120s.md",
+      "path": "docs/generated/demo2_1_controller_towel_single_owner_pin_ffs_120s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 232244,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_visual5fps_sanity_30s.json",
+      "path": "docs/generated/demo2_1_controller_towel_visual5fps_sanity_30s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3359,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_visual5fps_sanity_30s.md",
+      "path": "docs/generated/demo2_1_controller_towel_visual5fps_sanity_30s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 760885,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_visual5fps_sanity_60s.json",
+      "path": "docs/generated/demo2_1_controller_towel_visual5fps_sanity_60s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3360,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_controller_towel_visual5fps_sanity_60s.md",
+      "path": "docs/generated/demo2_1_controller_towel_visual5fps_sanity_60s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 360,
+      "category": "demo2_1_three_view_runtime",
+      "name": "idle_gpu_10s.csv",
+      "path": "docs/generated/demo2_1_edgetam_gpu_saturation_probe/idle_gpu_10s.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 1833,
+      "category": "demo2_1_three_view_runtime",
+      "name": "single_edgetam_corrected_object_only_60fps_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_edgetam_gpu_saturation_probe/single_edgetam_corrected_object_only_60fps_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 591434,
+      "category": "demo2_1_three_view_runtime",
+      "name": "single_edgetam_corrected_probe_rgb_239222300412.png",
+      "path": "docs/generated/demo2_1_edgetam_gpu_saturation_probe/single_edgetam_corrected_probe_rgb_239222300412.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 361,
+      "category": "demo2_1_three_view_runtime",
+      "name": "single_edgetam_corrected_prompt_probe.json",
+      "path": "docs/generated/demo2_1_edgetam_gpu_saturation_probe/single_edgetam_corrected_prompt_probe.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1265,
+      "category": "demo2_1_three_view_runtime",
+      "name": "single_edgetam_corrected_toy_object_only_60fps_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_edgetam_gpu_saturation_probe/single_edgetam_corrected_toy_object_only_60fps_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 644,
+      "category": "demo2_1_three_view_runtime",
+      "name": "single_edgetam_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_edgetam_gpu_saturation_probe/single_edgetam_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 2265,
+      "category": "demo2_1_three_view_runtime",
+      "name": "single_edgetam_towel_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_edgetam_gpu_saturation_probe/single_edgetam_towel_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 2280,
+      "category": "demo2_1_three_view_runtime",
+      "name": "single_edgetam_towel_stuffed_controller_object_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_edgetam_gpu_saturation_probe/single_edgetam_towel_stuffed_controller_object_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 2254,
+      "category": "demo2_1_three_view_runtime",
+      "name": "summary.json",
+      "path": "docs/generated/demo2_1_edgetam_gpu_saturation_probe/summary.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 90245,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_perf5fps_staged_controller_hand_sanity_30s.json",
+      "path": "docs/generated/demo2_1_perf5fps_staged_controller_hand_sanity_30s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3376,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_perf5fps_staged_controller_hand_sanity_30s.md",
+      "path": "docs/generated/demo2_1_perf5fps_staged_controller_hand_sanity_30s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2204243,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_perf5fps_staged_controller_towel_120s.json",
+      "path": "docs/generated/demo2_1_perf5fps_staged_controller_towel_120s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3384,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_perf5fps_staged_controller_towel_120s.md",
+      "path": "docs/generated/demo2_1_perf5fps_staged_controller_towel_120s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 94584,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_perf5fps_staged_controller_towel_sanity_30s.json",
+      "path": "docs/generated/demo2_1_perf5fps_staged_controller_towel_sanity_30s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3384,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_perf5fps_staged_controller_towel_sanity_30s.md",
+      "path": "docs/generated/demo2_1_perf5fps_staged_controller_towel_sanity_30s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1886,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_pin_memory_ablation.json",
+      "path": "docs/generated/demo2_1_pin_memory_ablation.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 2690,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_pin_memory_ablation.md",
+      "path": "docs/generated/demo2_1_pin_memory_ablation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 591945,
+      "category": "demo2_1_three_view_runtime",
+      "name": "cam0_239222300412_rgb.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_239222300412_rgb.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 586914,
+      "category": "demo2_1_three_view_runtime",
+      "name": "blue_cloth.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/blue_cloth.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 586912,
+      "category": "demo2_1_three_view_runtime",
+      "name": "blue_rag.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/blue_rag.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 586912,
+      "category": "demo2_1_three_view_runtime",
+      "name": "blue_towel.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/blue_towel.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 586374,
+      "category": "demo2_1_three_view_runtime",
+      "name": "cloth.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/cloth.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 581090,
+      "category": "demo2_1_three_view_runtime",
+      "name": "fabric.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/fabric.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 581117,
+      "category": "demo2_1_three_view_runtime",
+      "name": "folded_cloth.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/folded_cloth.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 586379,
+      "category": "demo2_1_three_view_runtime",
+      "name": "green_cloth.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/green_cloth.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 581071,
+      "category": "demo2_1_three_view_runtime",
+      "name": "green_rag.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/green_rag.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 581117,
+      "category": "demo2_1_three_view_runtime",
+      "name": "green_towel.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/green_towel.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 581115,
+      "category": "demo2_1_three_view_runtime",
+      "name": "microfiber_cloth.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/microfiber_cloth.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 2379,
+      "category": "demo2_1_three_view_runtime",
+      "name": "summary.json",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/summary.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 581115,
+      "category": "demo2_1_three_view_runtime",
+      "name": "towel.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/towel.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 581124,
+      "category": "demo2_1_three_view_runtime",
+      "name": "towel_on_table.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/towel_on_table.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 581138,
+      "category": "demo2_1_three_view_runtime",
+      "name": "two_towels.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/two_towels.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 581128,
+      "category": "demo2_1_three_view_runtime",
+      "name": "washcloth.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam0_sam31_prompt_probe/washcloth.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 676291,
+      "category": "demo2_1_three_view_runtime",
+      "name": "cam1_239222300781_rgb.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam1_239222300781_rgb.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 647969,
+      "category": "demo2_1_three_view_runtime",
+      "name": "cam2_239222303506_rgb.png",
+      "path": "docs/generated/demo2_1_prompt_probe/cam2_239222303506_rgb.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 1195,
+      "category": "demo2_1_three_view_runtime",
+      "name": "stuffed_animal_towel_all_cams_summary.json",
+      "path": "docs/generated/demo2_1_prompt_probe/stuffed_animal_towel_all_cams_summary.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 41273,
       "category": "demo2_1_three_view_runtime",
       "name": "demo2_1_shared_ffs_per_camera_edgetam_validation.md",
       "path": "docs/generated/demo2_1_shared_ffs_per_camera_edgetam_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3827,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_single_edgetam_gpu_saturation_probe.md",
+      "path": "docs/generated/demo2_1_single_edgetam_gpu_saturation_probe.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 777,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_single_gpu_owner_pipeline.json",
+      "path": "docs/generated/demo2_1_single_gpu_owner_pipeline.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 7037,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_single_gpu_owner_pipeline.md",
+      "path": "docs/generated/demo2_1_single_gpu_owner_pipeline.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 6251,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_three_edgetam_gpu_probe.md",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1981861,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gate1_target15_90s.json",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gate1_target15_90s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3364,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gate1_target15_90s.md",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gate1_target15_90s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 5701,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gate1_target15_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gate1_target15_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 317005,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gate2_target15_90s.json",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gate2_target15_90s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3339,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gate2_target15_90s.md",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gate2_target15_90s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 5226,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gate2_target15_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gate2_target15_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 1739496,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gateoff_clonewrap_target15_90s.json",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gateoff_clonewrap_target15_90s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3357,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gateoff_clonewrap_target15_90s.md",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gateoff_clonewrap_target15_90s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 5240,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gateoff_clonewrap_target15_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gateoff_clonewrap_target15_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 312022,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gateoff_markstep_target15_90s.json",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gateoff_markstep_target15_90s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3339,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gateoff_markstep_target15_90s.md",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gateoff_markstep_target15_90s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3530,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gateoff_markstep_target15_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gateoff_markstep_target15_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 524406,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gateoff_target15_90s.json",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gateoff_target15_90s.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3348,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gateoff_target15_90s.md",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gateoff_target15_90s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2854,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_controller_object_towel_stuffed_gateoff_target15_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_controller_object_towel_stuffed_gateoff_target15_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 1270,
+      "category": "demo2_1_three_view_runtime",
+      "name": "three_edgetam_object_only_gateoff_target15_gpu_1hz.csv",
+      "path": "docs/generated/demo2_1_three_edgetam_gpu_probe/three_edgetam_object_only_gateoff_target15_gpu_1hz.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 6454,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_100615.json",
+      "path": "docs/generated/demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_100615.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1651,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_100615.md",
+      "path": "docs/generated/demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_100615.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 6454,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_101029.json",
+      "path": "docs/generated/demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_101029.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1651,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_101029.md",
+      "path": "docs/generated/demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_101029.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 914864,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_103105.json",
+      "path": "docs/generated/demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_103105.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1978,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_103105.md",
+      "path": "docs/generated/demo2_1_visual5fps_controller_cloth_gate2_profile_20260506_103105.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1186048,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_controller_cloth_no_gate_profile_20260506_103346.json",
+      "path": "docs/generated/demo2_1_visual5fps_controller_cloth_no_gate_profile_20260506_103346.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1954,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_controller_cloth_no_gate_profile_20260506_103346.md",
+      "path": "docs/generated/demo2_1_visual5fps_controller_cloth_no_gate_profile_20260506_103346.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1098729,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_controller_cloth_profile_20260506_092908.json",
+      "path": "docs/generated/demo2_1_visual5fps_controller_cloth_profile_20260506_092908.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1978,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_controller_cloth_profile_20260506_092908.md",
+      "path": "docs/generated/demo2_1_visual5fps_controller_cloth_profile_20260506_092908.md",
       "suffix": ".md"
     },
     {
@@ -150,17 +1005,24 @@
       "suffix": ".json"
     },
     {
-      "bytes": 916650,
-      "category": "demo2_1_three_view_runtime",
-      "name": "demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.log",
-      "path": "docs/generated/demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.log",
-      "suffix": ".log"
-    },
-    {
       "bytes": 1831,
       "category": "demo2_1_three_view_runtime",
       "name": "demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.md",
       "path": "docs/generated/demo2_1_visual5fps_gate2_narrow_gate_profile_object_only_60s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1277231,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_gate3_profile_20260506_095730.json",
+      "path": "docs/generated/demo2_1_visual5fps_gate3_profile_20260506_095730.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1966,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_gate3_profile_20260506_095730.md",
+      "path": "docs/generated/demo2_1_visual5fps_gate3_profile_20260506_095730.md",
       "suffix": ".md"
     },
     {
@@ -169,13 +1031,6 @@
       "name": "demo2_1_visual5fps_image_sam31_profile_object_only_120s.json",
       "path": "docs/generated/demo2_1_visual5fps_image_sam31_profile_object_only_120s.json",
       "suffix": ".json"
-    },
-    {
-      "bytes": 495400,
-      "category": "demo2_1_three_view_runtime",
-      "name": "demo2_1_visual5fps_image_sam31_profile_object_only_120s.log",
-      "path": "docs/generated/demo2_1_visual5fps_image_sam31_profile_object_only_120s.log",
-      "suffix": ".log"
     },
     {
       "bytes": 1833,
@@ -192,17 +1047,38 @@
       "suffix": ".json"
     },
     {
-      "bytes": 917297,
-      "category": "demo2_1_three_view_runtime",
-      "name": "demo2_1_visual5fps_live_sam31_profile_object_only_120s.log",
-      "path": "docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.log",
-      "suffix": ".log"
-    },
-    {
       "bytes": 1815,
       "category": "demo2_1_three_view_runtime",
       "name": "demo2_1_visual5fps_live_sam31_profile_object_only_120s.md",
       "path": "docs/generated/demo2_1_visual5fps_live_sam31_profile_object_only_120s.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1438185,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_no_gate_profile_20260506_095416.json",
+      "path": "docs/generated/demo2_1_visual5fps_no_gate_profile_20260506_095416.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1961,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_no_gate_profile_20260506_095416.md",
+      "path": "docs/generated/demo2_1_visual5fps_no_gate_profile_20260506_095416.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1434985,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_object_only_latest_run.json",
+      "path": "docs/generated/demo2_1_visual5fps_object_only_latest_run.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1975,
+      "category": "demo2_1_three_view_runtime",
+      "name": "demo2_1_visual5fps_object_only_latest_run.md",
+      "path": "docs/generated/demo2_1_visual5fps_object_only_latest_run.md",
       "suffix": ".md"
     },
     {
@@ -211,13 +1087,6 @@
       "name": "demo2_1_visual5fps_profile_object_only.json",
       "path": "docs/generated/demo2_1_visual5fps_profile_object_only.json",
       "suffix": ".json"
-    },
-    {
-      "bytes": 928374,
-      "category": "demo2_1_three_view_runtime",
-      "name": "demo2_1_visual5fps_profile_object_only.log",
-      "path": "docs/generated/demo2_1_visual5fps_profile_object_only.log",
-      "suffix": ".log"
     },
     {
       "bytes": 1710,
@@ -234,13 +1103,6 @@
       "suffix": ".json"
     },
     {
-      "bytes": 916894,
-      "category": "demo2_1_three_view_runtime",
-      "name": "demo2_1_visual5fps_profile_object_only_120s.log",
-      "path": "docs/generated/demo2_1_visual5fps_profile_object_only_120s.log",
-      "suffix": ".log"
-    },
-    {
       "bytes": 1849,
       "category": "demo2_1_three_view_runtime",
       "name": "demo2_1_visual5fps_profile_object_only_120s.md",
@@ -248,39 +1110,186 @@
       "suffix": ".md"
     },
     {
-      "bytes": 554746,
-      "category": "demo2_1_three_view_runtime",
-      "name": "demo2_1_visual_climb5_headless_baseline.log",
-      "path": "docs/generated/demo2_1_visual_climb5_headless_baseline.log",
-      "suffix": ".log"
+      "bytes": 4110,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_15fps_input_benchmark.md",
+      "path": "docs/generated/demo2_2_async_filter_15fps_input_benchmark.md",
+      "suffix": ".md"
     },
     {
-      "bytes": 564230,
-      "category": "demo2_1_three_view_runtime",
-      "name": "demo2_1_visual_climb5_headless_gate2.log",
-      "path": "docs/generated/demo2_1_visual_climb5_headless_gate2.log",
-      "suffix": ".log"
+      "bytes": 696302,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_15fps_input_profile.json",
+      "path": "docs/generated/demo2_2_async_filter_15fps_input_profile.json",
+      "suffix": ".json"
     },
     {
-      "bytes": 2296,
-      "category": "demo2_1_three_view_runtime",
-      "name": "demo2_1_visual_climb5_headless_no_object_postprocess.log",
-      "path": "docs/generated/demo2_1_visual_climb5_headless_no_object_postprocess.log",
-      "suffix": ".log"
+      "bytes": 4456,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_15fps_input_profile.md",
+      "path": "docs/generated/demo2_2_async_filter_15fps_input_profile.md",
+      "suffix": ".md"
     },
     {
-      "bytes": 985940,
-      "category": "demo2_1_three_view_runtime",
-      "name": "demo2_1_visual_climb5_render_gate2.log",
-      "path": "docs/generated/demo2_1_visual_climb5_render_gate2.log",
-      "suffix": ".log"
+      "bytes": 839619,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_20s_warmup_20s_formal_profile.json",
+      "path": "docs/generated/demo2_2_async_filter_20s_warmup_20s_formal_profile.json",
+      "suffix": ".json"
     },
     {
-      "bytes": 942280,
-      "category": "demo2_1_three_view_runtime",
-      "name": "demo2_1_visual_climb5_render_smoke.log",
-      "path": "docs/generated/demo2_1_visual_climb5_render_smoke.log",
-      "suffix": ".log"
+      "bytes": 4452,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_20s_warmup_20s_formal_profile.md",
+      "path": "docs/generated/demo2_2_async_filter_20s_warmup_20s_formal_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2905,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_5fps_benchmark.md",
+      "path": "docs/generated/demo2_2_async_filter_5fps_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1641541,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_5fps_profile.json",
+      "path": "docs/generated/demo2_2_async_filter_5fps_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3778,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_5fps_profile.md",
+      "path": "docs/generated/demo2_2_async_filter_5fps_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1322253,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_batch3_ffs_20s_warmup_20s_formal_profile.json",
+      "path": "docs/generated/demo2_2_async_filter_batch3_ffs_20s_warmup_20s_formal_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 4557,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_batch3_ffs_20s_warmup_20s_formal_profile.md",
+      "path": "docs/generated/demo2_2_async_filter_batch3_ffs_20s_warmup_20s_formal_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2010088,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_batchvision_40s_warmup_20s_formal_profile.json",
+      "path": "docs/generated/demo2_2_async_filter_batchvision_40s_warmup_20s_formal_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 4785,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_batchvision_40s_warmup_20s_formal_profile.md",
+      "path": "docs/generated/demo2_2_async_filter_batchvision_40s_warmup_20s_formal_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1305934,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_parallel_init_20s_warmup_20s_formal_profile.json",
+      "path": "docs/generated/demo2_2_async_filter_parallel_init_20s_warmup_20s_formal_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 4497,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_async_filter_parallel_init_20s_warmup_20s_formal_profile.md",
+      "path": "docs/generated/demo2_2_async_filter_parallel_init_20s_warmup_20s_formal_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2156,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_cli_simplification.md",
+      "path": "docs/generated/demo2_2_cli_simplification.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1255,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_default_ffs_batch3.md",
+      "path": "docs/generated/demo2_2_default_ffs_batch3.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2535,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_edgetam_batch_vision_profile.md",
+      "path": "docs/generated/demo2_2_edgetam_batch_vision_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2300,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_ffs_batch3_trt_build_and_profile.md",
+      "path": "docs/generated/demo2_2_ffs_batch3_trt_build_and_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1460,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_runtime_split.md",
+      "path": "docs/generated/demo2_2_runtime_split.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4386,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_staged_parallel_5fps_benchmark.md",
+      "path": "docs/generated/demo2_2_staged_parallel_5fps_benchmark.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1884166,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_staged_parallel_5fps_profile.json",
+      "path": "docs/generated/demo2_2_staged_parallel_5fps_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3788,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_staged_parallel_5fps_profile.md",
+      "path": "docs/generated/demo2_2_staged_parallel_5fps_profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 32249,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_staged_parallel_async_gpu_observation.json",
+      "path": "docs/generated/demo2_2_staged_parallel_async_gpu_observation.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 3756,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_staged_parallel_async_gpu_observation.md",
+      "path": "docs/generated/demo2_2_staged_parallel_async_gpu_observation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1702012,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_staged_parallel_async_gpu_profile.json",
+      "path": "docs/generated/demo2_2_staged_parallel_async_gpu_profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 4788,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_staged_parallel_async_gpu_profile.md",
+      "path": "docs/generated/demo2_2_staged_parallel_async_gpu_profile.md",
+      "suffix": ".md"
     },
     {
       "bytes": 218563,
@@ -301,6 +1310,13 @@
       "category": "demo2_single_camera_runtime",
       "name": "demo2_depth_source_fps_comparison.md",
       "path": "docs/generated/demo2_depth_source_fps_comparison.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2148,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_gpu_sampling_profile_support.md",
+      "path": "docs/generated/demo2_gpu_sampling_profile_support.md",
       "suffix": ".md"
     },
     {
@@ -367,6 +1383,69 @@
       "suffix": ".txt"
     },
     {
+      "bytes": 66746,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_real_ir_remote_depth_20260507_134437_frame000000_depth_preview.png",
+      "path": "docs/generated/demo2_real_ir_remote_depth_20260507_134437_frame000000_depth_preview.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 68035,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_real_ir_remote_depth_20260507_134511_frame000000_depth_preview.png",
+      "path": "docs/generated/demo2_real_ir_remote_depth_20260507_134511_frame000000_depth_preview.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 67485,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_real_ir_remote_depth_20260507_150051_frame000000_depth_preview.png",
+      "path": "docs/generated/demo2_real_ir_remote_depth_20260507_150051_frame000000_depth_preview.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 68104,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_real_ir_remote_depth_20260507_150130_frame000000_depth_preview.png",
+      "path": "docs/generated/demo2_real_ir_remote_depth_20260507_150130_frame000000_depth_preview.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 68180,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_real_ir_remote_depth_20260507_150207_frame000000_depth_preview.png",
+      "path": "docs/generated/demo2_real_ir_remote_depth_20260507_150207_frame000000_depth_preview.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 67357,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_real_ir_remote_depth_20260507_152437_frame000000_depth_preview.png",
+      "path": "docs/generated/demo2_real_ir_remote_depth_20260507_152437_frame000000_depth_preview.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 66840,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_real_ir_remote_depth_20260507_152514_frame000000_depth_preview.png",
+      "path": "docs/generated/demo2_real_ir_remote_depth_20260507_152514_frame000000_depth_preview.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 66936,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_real_ir_remote_depth_20260507_152552_frame000000_depth_preview.png",
+      "path": "docs/generated/demo2_real_ir_remote_depth_20260507_152552_frame000000_depth_preview.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 66678,
+      "category": "demo2_single_camera_runtime",
+      "name": "demo2_real_ir_remote_depth_20260507_152629_frame000004_depth_preview.png",
+      "path": "docs/generated/demo2_real_ir_remote_depth_20260507_152629_frame000004_depth_preview.png",
+      "suffix": ".png"
+    },
+    {
       "bytes": 3498,
       "category": "demo2_single_camera_runtime",
       "name": "demo2_realtime_masked_edgetam_pcd_profile_isolation.md",
@@ -381,31 +1460,549 @@
       "suffix": ".txt"
     },
     {
+      "bytes": 12249,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo2_remote_ffs_4090_real_depth_server.md",
+      "path": "docs/generated/demo2_remote_ffs_4090_real_depth_server.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4917,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo2_remote_ffs_4090_server_5090_client_validation.md",
+      "path": "docs/generated/demo2_remote_ffs_4090_server_5090_client_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2222,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo2_remote_ffs_echo_tailscale_current_20260507.txt",
+      "path": "docs/generated/demo2_remote_ffs_echo_tailscale_current_20260507.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 32301,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo2_remote_ffs_echo_tailscale_current_masked_uv_depth_006_20260507.txt",
+      "path": "docs/generated/demo2_remote_ffs_echo_tailscale_current_masked_uv_depth_006_20260507.txt",
+      "suffix": ".txt"
+    },
+    {
       "bytes": 252,
-      "category": "demo2_single_camera_runtime",
+      "category": "remote_ffs_demo_runtime",
       "name": "demo2_remote_ffs_echo_tailscale_direct_20260505.txt",
       "path": "docs/generated/demo2_remote_ffs_echo_tailscale_direct_20260505.txt",
       "suffix": ".txt"
     },
     {
       "bytes": 263,
-      "category": "demo2_single_camera_runtime",
+      "category": "remote_ffs_demo_runtime",
       "name": "demo2_remote_ffs_echo_tailscale_direct_timeout5000_20260505.txt",
       "path": "docs/generated/demo2_remote_ffs_echo_tailscale_direct_timeout5000_20260505.txt",
       "suffix": ".txt"
     },
     {
+      "bytes": 3607,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo2_remote_ffs_echo_wsl5090_client.md",
+      "path": "docs/generated/demo2_remote_ffs_echo_wsl5090_client.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4121,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo2_remote_ffs_masked_uv_depth_realtime_matrix_wsl5090.md",
+      "path": "docs/generated/demo2_remote_ffs_masked_uv_depth_realtime_matrix_wsl5090.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1616,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo2_remote_ffs_network_iperf_wsl5090_to_4090.md",
+      "path": "docs/generated/demo2_remote_ffs_network_iperf_wsl5090_to_4090.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3181,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo2_remote_ffs_real_ir_compression_matrix_wsl5090.md",
+      "path": "docs/generated/demo2_remote_ffs_real_ir_compression_matrix_wsl5090.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4896,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo2_remote_ffs_real_ir_depth_benchmark_wsl5090.md",
+      "path": "docs/generated/demo2_remote_ffs_real_ir_depth_benchmark_wsl5090.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2763,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo2_remote_ffs_real_ir_inflight_matrix_wsl5090.md",
+      "path": "docs/generated/demo2_remote_ffs_real_ir_inflight_matrix_wsl5090.md",
+      "suffix": ".md"
+    },
+    {
       "bytes": 18302,
-      "category": "demo2_single_camera_runtime",
+      "category": "remote_ffs_demo_runtime",
       "name": "demo2_remote_ffs_service_validation.md",
       "path": "docs/generated/demo2_remote_ffs_service_validation.md",
       "suffix": ".md"
     },
     {
-      "bytes": 4326,
+      "bytes": 2139,
       "category": "demo2_single_camera_runtime",
+      "name": "demo2_sam31_current_scene_prompt_preflight_wsl5090.md",
+      "path": "docs/generated/demo2_sam31_current_scene_prompt_preflight_wsl5090.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 195,
+      "category": "demo3_tracking",
+      "name": "availability.json",
+      "path": "docs/generated/demo3_cotracker3_smoke_benchmark/both_30_still_object_round1_20260428/availability.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 964,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam0.json",
+      "path": "docs/generated/demo3_cotracker3_smoke_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_10/benchmark_cam0.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 2638,
+      "category": "demo3_tracking",
+      "name": "profile.json",
+      "path": "docs/generated/demo3_cotracker3_smoke_benchmark/both_30_still_object_round1_20260428/profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 808,
+      "category": "demo3_tracking",
+      "name": "profile.md",
+      "path": "docs/generated/demo3_cotracker3_smoke_benchmark/both_30_still_object_round1_20260428/profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 1136,
+      "category": "demo3_tracking",
+      "name": "results.csv",
+      "path": "docs/generated/demo3_cotracker3_smoke_benchmark/both_30_still_object_round1_20260428/results.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 395,
+      "category": "demo3_tracking",
+      "name": "summary.json",
+      "path": "docs/generated/demo3_cotracker3_smoke_benchmark/both_30_still_object_round1_20260428/summary.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 167,
+      "category": "demo3_tracking",
+      "name": "summary.md",
+      "path": "docs/generated/demo3_cotracker3_smoke_benchmark/both_30_still_object_round1_20260428/summary.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 195,
+      "category": "demo3_tracking",
+      "name": "availability.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/availability.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1033,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam0.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_100/benchmark_cam0.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1001,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam1.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_100/benchmark_cam1.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1016,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam2.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_100/benchmark_cam2.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1014,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam0.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_1024/benchmark_cam0.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1012,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam1.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_1024/benchmark_cam1.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1019,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam2.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_1024/benchmark_cam2.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1032,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam0.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_256/benchmark_cam0.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1014,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam1.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_256/benchmark_cam1.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 987,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam2.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_256/benchmark_cam2.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1031,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam0.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_512/benchmark_cam0.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1018,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam1.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_512/benchmark_cam1.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1010,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam2.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/cotracker3_online/points_512/benchmark_cam2.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 17803,
+      "category": "demo3_tracking",
+      "name": "profile.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 2264,
+      "category": "demo3_tracking",
+      "name": "profile.md",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 8088,
+      "category": "demo3_tracking",
+      "name": "results.csv",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/results.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 399,
+      "category": "demo3_tracking",
+      "name": "summary.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/summary.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 168,
+      "category": "demo3_tracking",
+      "name": "summary.md",
+      "path": "docs/generated/demo3_cotracker3_tracking_benchmark/both_30_still_object_round1_20260428/summary.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 454441,
+      "category": "demo3_tracking",
+      "name": "frame_000000.png",
+      "path": "docs/generated/demo3_cotracker3_tracking_overlay/both_30_still_object_round1_20260428/cotracker3_points_256/both_30_still_object_round1_20260428/points_256/frames/frame_000000.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 6983,
+      "category": "demo3_tracking",
+      "name": "overlay_stats.json",
+      "path": "docs/generated/demo3_cotracker3_tracking_overlay/both_30_still_object_round1_20260428/cotracker3_points_256/both_30_still_object_round1_20260428/points_256/overlay_stats.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 350,
+      "category": "demo3_tracking",
+      "name": "overlay_summary.md",
+      "path": "docs/generated/demo3_cotracker3_tracking_overlay/both_30_still_object_round1_20260428/cotracker3_points_256/both_30_still_object_round1_20260428/points_256/overlay_summary.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 124,
+      "category": "demo3_tracking",
+      "name": "availability.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/availability.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 885,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam0.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_100/benchmark_cam0.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 870,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam1.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_100/benchmark_cam1.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 883,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam2.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_100/benchmark_cam2.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 861,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam0.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_1024/benchmark_cam0.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 888,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam1.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_1024/benchmark_cam1.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 883,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam2.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_1024/benchmark_cam2.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 865,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam0.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_256/benchmark_cam0.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 884,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam1.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_256/benchmark_cam1.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 864,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam2.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_256/benchmark_cam2.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 885,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam0.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_512/benchmark_cam0.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 879,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam1.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_512/benchmark_cam1.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 887,
+      "category": "demo3_tracking",
+      "name": "benchmark_cam2.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/fake/points_512/benchmark_cam2.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 15914,
+      "category": "demo3_tracking",
+      "name": "profile.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/profile.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1968,
+      "category": "demo3_tracking",
+      "name": "profile.md",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/profile.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 6227,
+      "category": "demo3_tracking",
+      "name": "results.csv",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/results.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 322,
+      "category": "demo3_tracking",
+      "name": "summary.json",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/summary.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 110,
+      "category": "demo3_tracking",
+      "name": "summary.md",
+      "path": "docs/generated/demo3_fake_tracking_benchmark/both_30_still_object_round1_20260428/summary.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 2520,
+      "category": "demo3_tracking",
+      "name": "demo3_onnx_trt_probe.json",
+      "path": "docs/generated/demo3_onnx_trt_probe.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 575,
+      "category": "demo3_tracking",
+      "name": "demo3_onnx_trt_probe.md",
+      "path": "docs/generated/demo3_onnx_trt_probe.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3208,
+      "category": "demo3_tracking",
+      "name": "demo3_tracking_backend_stack.json",
+      "path": "docs/generated/demo3_tracking_backend_stack.json",
+      "suffix": ".json"
+    },
+    {
+      "bytes": 1457,
+      "category": "demo3_tracking",
+      "name": "demo3_tracking_backend_stack.md",
+      "path": "docs/generated/demo3_tracking_backend_stack.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 5708,
+      "category": "supporting_assets_and_raw_outputs",
+      "name": "demo_2_max_4090_env_validation.md",
+      "path": "docs/generated/demo_2_max_4090_env_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 4326,
+      "category": "supporting_assets_and_raw_outputs",
       "name": "demo_2_max_env_validation.md",
       "path": "docs/generated/demo_2_max_env_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3082,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v02_100kit_replay_profile_wsl5090.md",
+      "path": "docs/generated/demo_v02_100kit_replay_profile_wsl5090.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 5757,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v02_async_remote_ffs_4090_server.md",
+      "path": "docs/generated/demo_v02_async_remote_ffs_4090_server.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3181,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v02_async_remote_ffs_wsl5090_implementation.md",
+      "path": "docs/generated/demo_v02_async_remote_ffs_wsl5090_implementation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 59981,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v02_single-00000000_cam0.png",
+      "path": "docs/generated/demo_v02_single-00000000_cam0.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 1619,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v02_single_replay_async_matrix_wsl5090.md",
+      "path": "docs/generated/demo_v02_single_replay_async_matrix_wsl5090.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 59981,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v02_triplet-00000000_cam0.png",
+      "path": "docs/generated/demo_v02_triplet-00000000_cam0.png",
+      "suffix": ".png"
+    },
+    {
+      "bytes": 2233,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v02_triplet_replay_async_matrix_wsl5090.md",
+      "path": "docs/generated/demo_v02_triplet_replay_async_matrix_wsl5090.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 3783,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v03_100kit_replay_validation.md",
+      "path": "docs/generated/demo_v03_100kit_replay_validation.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 6172,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v03_batch3_compile_inspection_4090.md",
+      "path": "docs/generated/demo_v03_batch3_compile_inspection_4090.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 6340,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v03_batch3_compile_validate_profile_4090.md",
+      "path": "docs/generated/demo_v03_batch3_compile_validate_profile_4090.md",
+      "suffix": ".md"
+    },
+    {
+      "bytes": 79281,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v03_ir_triplet_100kits_sha256_5090.txt",
+      "path": "docs/generated/demo_v03_ir_triplet_100kits_sha256_5090.txt",
+      "suffix": ".txt"
+    },
+    {
+      "bytes": 4252,
+      "category": "remote_ffs_demo_runtime",
+      "name": "demo_v0_1_three_camera_remote_ffs_throughput.md",
+      "path": "docs/generated/demo_v0_1_three_camera_remote_ffs_throughput.md",
       "suffix": ".md"
     },
     {
@@ -480,14 +2077,14 @@
     },
     {
       "bytes": 2325,
-      "category": "ffs_validation",
+      "category": "supporting_assets_and_raw_outputs",
       "name": "ffs-max-sam31-rs-pre-numba-20260429-explicit.txt",
       "path": "docs/generated/ffs-max-sam31-rs-pre-numba-20260429-explicit.txt",
       "suffix": ".txt"
     },
     {
       "bytes": 3308,
-      "category": "ffs_validation",
+      "category": "supporting_assets_and_raw_outputs",
       "name": "ffs-max-sam31-rs-pre-numba-20260429-pip-freeze.txt",
       "path": "docs/generated/ffs-max-sam31-rs-pre-numba-20260429-pip-freeze.txt",
       "suffix": ".txt"
@@ -612,14 +2209,21 @@
       "suffix": ".md"
     },
     {
-      "bytes": 44001,
+      "bytes": 25078,
+      "category": "demo2_2_runtime",
+      "name": "demo2_2_staged_parallel_gpu_util_samples.csv",
+      "path": "docs/generated/gpu_samples/demo2_2_staged_parallel_gpu_util_samples.csv",
+      "suffix": ".csv"
+    },
+    {
+      "bytes": 103401,
       "category": "index",
       "name": "harness_engineering_artifact_inventory.json",
       "path": "docs/generated/harness_engineering_artifact_inventory.json",
       "suffix": ".json"
     },
     {
-      "bytes": 4833,
+      "bytes": 8003,
       "category": "index",
       "name": "harness_engineering_compact_index.md",
       "path": "docs/generated/harness_engineering_compact_index.md",
@@ -683,14 +2287,14 @@
     },
     {
       "bytes": 89,
-      "category": "supporting_assets_and_raw_outputs",
+      "category": "visualization_stack",
       "name": "object_only_manual_image_roi_fullhead_native_30_static_frame_0000.json",
       "path": "docs/generated/object_only_manual_image_roi_fullhead_native_30_static_frame_0000.json",
       "suffix": ".json"
     },
     {
       "bytes": 89,
-      "category": "supporting_assets_and_raw_outputs",
+      "category": "visualization_stack",
       "name": "object_only_manual_image_roi_native_30_static_frame_0000.json",
       "path": "docs/generated/object_only_manual_image_roi_native_30_static_frame_0000.json",
       "suffix": ".json"
@@ -711,7 +2315,7 @@
     },
     {
       "bytes": 1856,
-      "category": "repo_contract_retention",
+      "category": "supporting_assets_and_raw_outputs",
       "name": "result_root_unification_20260501.md",
       "path": "docs/generated/result_root_unification_20260501.md",
       "suffix": ".md"
@@ -725,469 +2329,448 @@
     },
     {
       "bytes": 3424,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_dynamics_checkpoint_ladder_benchmark.md",
       "path": "docs/generated/sam21_dynamics_checkpoint_ladder_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 1095359,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_dynamics_checkpoint_ladder_mask_quality.json",
       "path": "docs/generated/sam21_dynamics_checkpoint_ladder_mask_quality.json",
       "suffix": ".json"
     },
     {
       "bytes": 24329614,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_dynamics_checkpoint_ladder_results.json",
       "path": "docs/generated/sam21_dynamics_checkpoint_ladder_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 1186,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_edgetam_mask_overlay_3x3_benchmark.md",
       "path": "docs/generated/sam21_edgetam_mask_overlay_3x3_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 329816,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_edgetam_mask_overlay_3x3_results.json",
       "path": "docs/generated/sam21_edgetam_mask_overlay_3x3_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 6916,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_max_env_validation.md",
       "path": "docs/generated/sam21_max_env_validation.md",
       "suffix": ".md"
     },
     {
       "bytes": 7192,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_max_round2_benchmark.md",
       "path": "docs/generated/sam21_max_round2_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 20801958,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_max_round2_benchmark_results.json",
       "path": "docs/generated/sam21_max_round2_benchmark_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 1160952,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_max_round2_mask_quality.json",
       "path": "docs/generated/sam21_max_round2_mask_quality.json",
       "suffix": ".json"
     },
     {
       "bytes": 9024,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_max_still_object_video_benchmark.py",
       "path": "docs/generated/sam21_max_still_object_video_benchmark.py",
       "suffix": ".py"
     },
     {
       "bytes": 2577,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_max_still_object_video_benchmark_cold_results.json",
       "path": "docs/generated/sam21_max_still_object_video_benchmark_cold_results.json",
       "suffix": ".json"
     },
     {
-      "bytes": 7083,
-      "category": "sam_family_benchmarks",
-      "name": "sam21_max_still_object_video_benchmark_hot_run.log",
-      "path": "docs/generated/sam21_max_still_object_video_benchmark_hot_run.log",
-      "suffix": ".log"
-    },
-    {
       "bytes": 2763,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_max_still_object_video_benchmark_no_warmup_results.json",
       "path": "docs/generated/sam21_max_still_object_video_benchmark_no_warmup_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 3356,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam21_max_still_object_video_benchmark_results.json",
       "path": "docs/generated/sam21_max_still_object_video_benchmark_results.json",
       "suffix": ".json"
     },
     {
-      "bytes": 6979,
-      "category": "sam_family_benchmarks",
-      "name": "sam21_max_still_object_video_benchmark_run.log",
-      "path": "docs/generated/sam21_max_still_object_video_benchmark_run.log",
-      "suffix": ".log"
-    },
-    {
-      "bytes": 8370,
-      "category": "sam_family_benchmarks",
-      "name": "sam21_max_still_object_video_benchmark_warm_run.log",
-      "path": "docs/generated/sam21_max_still_object_video_benchmark_warm_run.log",
-      "suffix": ".log"
-    },
-    {
       "bytes": 10811,
-      "category": "sam_family_benchmarks",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sam31_env_validation.md",
       "path": "docs/generated/sam31_env_validation.md",
       "suffix": ".md"
     },
     {
       "bytes": 1276,
-      "category": "sloth_base_visual_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_base_motion_ffs_fused_pcd_overlay_2x3_benchmark.md",
       "path": "docs/generated/sloth_base_motion_ffs_fused_pcd_overlay_2x3_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 1370854,
-      "category": "sloth_base_visual_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_base_motion_ffs_fused_pcd_overlay_2x3_results.json",
       "path": "docs/generated/sloth_base_motion_ffs_fused_pcd_overlay_2x3_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 1565,
-      "category": "sloth_base_visual_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_base_motion_ffs_mask_overlay_3x3_benchmark.md",
       "path": "docs/generated/sloth_base_motion_ffs_mask_overlay_3x3_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 445411,
-      "category": "sloth_base_visual_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_base_motion_ffs_mask_overlay_3x3_results.json",
       "path": "docs/generated/sloth_base_motion_ffs_mask_overlay_3x3_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 2494,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 2573,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 1335845,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_enhanced_pt_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 266077,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_hand_object_pcd_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 126450,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_hand_object_streaming_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_hand_object_streaming_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 3065,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 1336673,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_controller_pcd_enhanced_pt_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 126521,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_controller_streaming_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_controller_streaming_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 3298,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 776981,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_enhanced_controller_pt_filter_pcd_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 2679,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 2000187,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_pcd_enhanced_pt_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 134268,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_streaming_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_hand_ab_streaming_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 2600,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 2672,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 2000995,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_enhanced_pt_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 401382,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_pcd_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 134357,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_streaming_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_object_two_hands_streaming_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 1517,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 2326,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.json",
       "suffix": ".json"
     },
     {
       "bytes": 3780,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_ablation.md",
       "suffix": ".md"
     },
     {
       "bytes": 2707,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 1036,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_quality.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_quality.json",
       "suffix": ".json"
     },
     {
       "bytes": 24727,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_components_reduce_overhead_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 1688,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 169111,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_quality.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_quality.json",
       "suffix": ".json"
     },
     {
       "bytes": 278461,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_eager_none_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 3049,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 843,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_quality.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_quality.json",
       "suffix": ".json"
     },
     {
       "bytes": 18994,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_default_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 3073,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 868,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_quality.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_quality.json",
       "suffix": ".json"
     },
     {
       "bytes": 19429,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_model_reduce_overhead_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 1744,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 169220,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_quality.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_quality.json",
       "suffix": ".json"
     },
     {
       "bytes": 278551,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 604,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_vs_eager_quality.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_vs_eager_quality.json",
       "suffix": ".json"
     },
     {
       "bytes": 657,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_vs_same_run_eager_quality.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_compile_vision_reduce_overhead_vs_same_run_eager_quality.json",
       "suffix": ".json"
     },
     {
       "bytes": 1395,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 793497,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_pcd_xor_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 168760,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_quality.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_quality.json",
       "suffix": ".json"
     },
     {
       "bytes": 276048,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_hf_edgetam_streaming_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_hf_edgetam_streaming_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 2770,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_sam31_object_controller_pcd_benchmark.md",
       "path": "docs/generated/sloth_set_2_motion_ffs_sam31_object_controller_pcd_benchmark.md",
       "suffix": ".md"
     },
     {
       "bytes": 621881,
-      "category": "sloth_set_2_edgetam_sam31_experiments",
+      "category": "sam_edgetam_mask_benchmarks",
       "name": "sloth_set_2_motion_ffs_sam31_object_controller_pcd_results.json",
       "path": "docs/generated/sloth_set_2_motion_ffs_sam31_object_controller_pcd_results.json",
       "suffix": ".json"
     },
     {
       "bytes": 7448,
-      "category": "visualization_stack",
+      "category": "repo_contract_retention",
       "name": "visual_stack_cleanup_inventory.md",
       "path": "docs/generated/visual_stack_cleanup_inventory.md",
       "suffix": ".md"
     },
     {
       "bytes": 3005,
-      "category": "visualization_stack",
+      "category": "repo_contract_retention",
       "name": "visual_stack_cleanup_validation.md",
       "path": "docs/generated/visual_stack_cleanup_validation.md",
       "suffix": ".md"
@@ -1208,6 +2791,7 @@
     }
   ],
   "root": "docs/generated",
-  "total_bytes": 88126929,
-  "total_files": 165
+  "scope": "tracked git files only; local ignored scratch artifacts are excluded",
+  "total_bytes": 160457901,
+  "total_files": 390
 }

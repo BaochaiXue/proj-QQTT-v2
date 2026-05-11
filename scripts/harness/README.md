@@ -25,10 +25,14 @@
 Run:
 
 ```bash
-python scripts/harness/check_harness_catalog.py
-python scripts/harness/check_all.py
-python scripts/harness/check_all.py --full
+conda run -n demo_2_max --no-capture-output python scripts/harness/check_harness_catalog.py
+conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
+conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full
 ```
+
+Use the documented default `demo_2_max` environment for these checks. A bare
+base-Python run can fail before reaching harness logic if optional runtime
+packages such as OpenCV are absent.
 
 ## Catalog Summary
 
@@ -65,8 +69,8 @@ Help profile coverage:
 1. Put reusable implementation outside harness first, usually under `data_process/`.
 2. Add the thin CLI/probe/check file under the right harness folder.
 3. Add a `HarnessEntry` in `_catalog.py` with the right category and `help_profile`.
-4. Run `python scripts/harness/check_harness_catalog.py`.
-5. Run `python scripts/harness/check_all.py`; use `--full` for broad changes.
+4. Run `conda run -n demo_2_max --no-capture-output python scripts/harness/check_harness_catalog.py`.
+5. Run `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`; use `--full` for broad changes.
 
 ## Retention Policy
 

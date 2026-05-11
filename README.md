@@ -63,7 +63,7 @@ python cameras_viewer.py --help
 python cameras_viewer.py
 ```
 
-Default preview settings come from the shared camera defaults in [defaults.py](/c:/Users/zhang/proj-QQTT/qqtt/env/camera/defaults.py).
+Default preview settings come from the shared camera defaults in [defaults.py](qqtt/env/camera/defaults.py).
 
 The preview depth panel now uses the same `TURBO` metric-depth colorization path as the repo's aligned-case depth diagnostics. You can keep the display range explicit:
 
@@ -746,30 +746,31 @@ data/<case_name>/
 Deterministic checks:
 
 ```bash
-python scripts/harness/check_all.py
+conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
 ```
 
 This default path is the fast deterministic profile and is intended to finish in
-under one minute on a healthy repo environment.
+under one minute on the documented `demo_2_max` environment.
 
 When you need the broader legacy validation surface, run:
 
 ```bash
-python scripts/harness/check_all.py --full
+conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full
 ```
 
 Manual hardware validation checklist:
 
-- [docs/HARDWARE_VALIDATION.md](/c:/Users/zhang/proj-QQTT/docs/HARDWARE_VALIDATION.md)
-- [docs/generated/ffs_depth_backend_integration_validation.md](/c:/Users/zhang/proj-QQTT/docs/generated/ffs_depth_backend_integration_validation.md)
-- [docs/generated/ffs_comparison_workflow_validation.md](/c:/Users/zhang/proj-QQTT/docs/generated/ffs_comparison_workflow_validation.md)
+- [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md)
+- [docs/generated/ffs_depth_backend_integration_validation.md](docs/generated/ffs_depth_backend_integration_validation.md)
+- [docs/generated/ffs_comparison_workflow_validation.md](docs/generated/ffs_comparison_workflow_validation.md)
 
 ## Future Changes
 
 This repo uses lightweight harness engineering:
 
-- short map in [AGENTS.md](/c:/Users/zhang/proj-QQTT/AGENTS.md)
-- versioned plans under [docs/exec-plans](/c:/Users/zhang/proj-QQTT/docs/exec-plans)
-- deterministic scope guard in [check_scope.py](/c:/Users/zhang/proj-QQTT/scripts/harness/check_scope.py)
+- short map in [AGENTS.md](AGENTS.md)
+- versioned plans under [docs/exec-plans](docs/exec-plans)
+- deterministic scope guard in [check_scope.py](scripts/harness/check_scope.py)
 
-Any future change must preserve the camera-only charter.
+Any future change must preserve the documented core data-product boundary and
+keep demo/proxy/tracking diagnostics out of formal recording/alignment outputs.

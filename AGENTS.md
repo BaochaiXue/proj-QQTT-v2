@@ -71,8 +71,8 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 3. Keep changes inside the documented camera preview / calibration / recording / alignment core or the sanctioned demo / proxy / tracking diagnostic scope.
 4. Update docs and tests in the same change when behavior changes.
 5. Run deterministic checks before finishing:
-   - `python scripts/harness/check_all.py`
-   - use `python scripts/harness/check_all.py --full` when the change is broad enough that the default quick profile is not sufficient
+   - `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
+   - use `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full` when the change is broad enough that the default quick profile is not sufficient
 6. For external dependency proof-of-life work, record exact commands and outcomes under `docs/generated/`.
 7. For FFS changes, keep weights external and validate both deterministic tests and manual hardware outcomes.
 8. For comparison visualization changes, validate the calibration loader and non-interactive render path.

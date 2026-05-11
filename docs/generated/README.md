@@ -9,7 +9,8 @@ manual; use the compressed harness index first.
 - `harness_engineering_compact_index.md`: concise human-facing summary of the
   current harness engineering state.
 - `harness_engineering_artifact_inventory.json`: machine-readable inventory of
-  generated artifacts by category.
+  tracked generated artifacts by category. Local ignored scratch artifacts may
+  exist but are not part of this source-controlled inventory.
 - `../SCOPE.md`, `../WORKFLOWS.md`, and `../ARCHITECTURE.md`: stable repo
   contracts outside generated outputs.
 
@@ -23,7 +24,7 @@ manual; use the compressed harness index first.
 | Demo 2.1 towel-controller single-owner benchmark | `demo2_1_controller_towel_single_owner_benchmark.md` |
 | Demo 2.1 single EdgeTAM GPU saturation probe | `demo2_1_single_edgetam_gpu_saturation_probe.md` |
 | Demo 2.1 three EdgeTAM GPU probe | `demo2_1_three_edgetam_gpu_probe.md` |
-| Latest Demo 2.1 visual profile | `demo2_1_visual5fps_image_sam31_profile_object_only_120s.md` |
+| Older Demo 2.1 object-only visual profile | `demo2_1_visual5fps_image_sam31_profile_object_only_120s.md` |
 | Demo 2.1 pin-memory H2D ablation | `demo2_1_pin_memory_ablation.md` |
 | Demo 2.2 async filtered fused PCD | `demo2_2_async_filter_5fps_benchmark.md` |
 | Demo 2.2 async filtered fused PCD with 15 FPS camera input | `demo2_2_async_filter_15fps_input_benchmark.md` |
@@ -46,6 +47,8 @@ manual; use the compressed harness index first.
 | Demo 2.1.5 parallel EdgeTAM NVML GPU profile | `demo2_1_5_parallel_edgetam_gpu_nvml_profile.md` |
 | Demo 2.1.5 parallel EdgeTAM eager probe | `demo2_1_5_parallel_edgetam_eager_probe_profile.md` |
 | Demo 2.1.5 HF EdgeTAM mitigation matrix | `demo215_hf_edgetam_gpu_underutilization_mitigation.md` |
+| Demo 2.1.5 full local FFS fused PCD replicated profile | `demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_pointcloud_replicated_profile.md` |
+| Demo 2.1.5 full local FFS fused PCD no-render replicated profile | `demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_replicated_profile.md` |
 | Demo 2.1.5 init cache warmup probe | `demo2_1_5_init_cache_warmup.md` |
 | Demo 2 GPU utilization sampling support | `demo2_gpu_sampling_profile_support.md` |
 | Demo 2 / 2.1 RTX 4090 `demo_2_max` environment | `demo_2_max_4090_env_validation.md` |
@@ -69,7 +72,8 @@ manual; use the compressed harness index first.
 - FFS validation and runtime profiles: `ffs_*`, `demo2_*`.
 - SAM / EdgeTAM benchmarks: `sam21_*`, `sam31_*`, `edgetam_*`,
   `hf_edgetam_*`, `sloth_*`.
-- Demo 2.1 live runtime profiles: `demo2_1_*`.
+- Demo 2.1 / 2.1.5 / 2.2 / 3 runtime profiles: `demo2_1_*`,
+  `demo2_1_5_*`, `demo215_*`, `demo2_2_*`, and `demo3_*`.
 - Repo and retention hardening: `repo_*`, `contract_*`,
   `*_cleanup_*`, `*_retention_*`.
 - Reusable helper assets: small `.json`, `.png`, `.txt`, and `.log`
@@ -83,10 +87,12 @@ manual; use the compressed harness index first.
   why they matter.
 - Do not remove historical artifacts without a recorded cleanup pass.
 - Put newly superseding claims into `harness_engineering_compact_index.md`.
+- Treat older generated reports as historical unless the compact index links
+  them as current source-of-truth reports.
 
 ## Checks
 
 ```bash
-python scripts/harness/check_all.py
-python scripts/harness/check_all.py --full
+conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
+conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full
 ```
