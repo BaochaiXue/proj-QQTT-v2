@@ -210,6 +210,26 @@ DEFAULT_FULL_BATCHED_REPORT = (
     / "docs/generated/edgetam_batched_multisession_final_report.json"
 )
 DEFAULT_FULL_BATCHED_COMPILE_SCOPE = "memory_path_all"
+EXTERNAL_BATCHTAM_TRT_BACKEND = "hf_batched_multisession_trt_components"
+EDGETAM_COMPONENT_RUNTIME_TORCH = "torch"
+EDGETAM_COMPONENT_RUNTIME_TRT = "trt"
+EDGETAM_COMPONENT_RUNTIMES = (EDGETAM_COMPONENT_RUNTIME_TORCH, EDGETAM_COMPONENT_RUNTIME_TRT)
+EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL = "memory_path_all"
+EDGETAM_TRT_SCOPES = (
+    "memory_attention",
+    "mask_decoder",
+    "memory_encoder",
+    "memory_attention_mask_decoder",
+    EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL,
+)
+DEFAULT_BATCHTAM_TRT_ENGINE_DIR = (
+    Path("/home/zhangxinjie/EdgeTAM-HF-batched")
+    / "artifacts/edgetam_trt_b3_memory_path_fp32/engines"
+)
+DEFAULT_BATCHTAM_TRT_REPORT = (
+    Path("/home/zhangxinjie/EdgeTAM-HF-batched")
+    / "docs/generated/edgetam_trt_component_export_report.json"
+)
 MASK_POSTPROCESS_HF = "hf"
 MASK_POSTPROCESS_CUDA_INLINE = "cuda-inline"
 MASK_POSTPROCESS_MODES = (MASK_POSTPROCESS_HF, MASK_POSTPROCESS_CUDA_INLINE)
@@ -284,6 +304,14 @@ def full_batched_edgetam_enabled(args: argparse.Namespace) -> bool:
     return resolved_edgetam_backend(args) == EDGETAM_BACKEND_HF_BATCHED_MULTISESSION
 
 
+def batchtam_trt_enabled(args: argparse.Namespace) -> bool:
+    return (
+        full_batched_edgetam_enabled(args)
+        and str(getattr(args, "edgetam_component_runtime", EDGETAM_COMPONENT_RUNTIME_TORCH))
+        == EDGETAM_COMPONENT_RUNTIME_TRT
+    )
+
+
 def load_full_batched_edgetam_report(path: str | os.PathLike[str] | None) -> dict[str, Any]:
     if not path:
         raise RuntimeError("--edgetam-batched-report is required for hf_batched_multisession")
@@ -294,6 +322,20 @@ def load_full_batched_edgetam_report(path: str | os.PathLike[str] | None) -> dic
         report = json.loads(report_path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise RuntimeError(f"failed to load EdgeTAM full-batched report {report_path}: {exc}") from exc
+    report["_path"] = str(report_path)
+    return report
+
+
+def load_batchtam_trt_report(path: str | os.PathLike[str] | None) -> dict[str, Any]:
+    if not path:
+        raise RuntimeError("--edgetam-trt-report is required when --edgetam-component-runtime trt")
+    report_path = Path(path)
+    if not report_path.is_file():
+        raise RuntimeError(f"BatchTam TRT report not found: {report_path}")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"failed to load BatchTam TRT report {report_path}: {exc}") from exc
     report["_path"] = str(report_path)
     return report
 
@@ -391,6 +433,61 @@ def validate_full_batched_edgetam_report(
     }
 
 
+def validate_batchtam_trt_report(
+    report: Mapping[str, Any],
+    *,
+    expected_scope: str = EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL,
+) -> dict[str, Any]:
+    decision = report.get("decision") if isinstance(report.get("decision"), Mapping) else {}
+
+    def value(key: str) -> Any:
+        if key in report:
+            return report.get(key)
+        return decision.get(key)
+
+    required_true = (
+        "batchtam_component_engines_usable",
+        "batchtam_closed_loop_usable",
+        "demo22_trt_integration_allowed",
+    )
+    missing = [key for key in required_true if value(key) is not True]
+    if missing:
+        raise RuntimeError(f"BatchTam TRT report missing true integration fields: {missing}")
+    if value("recommended_trt_scope") != expected_scope:
+        raise RuntimeError(
+            "BatchTam TRT report recommended_trt_scope mismatch: "
+            f"expected {expected_scope}, got {value('recommended_trt_scope')}"
+        )
+    if expected_scope == EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL:
+        scope_true = (
+            "memory_attention_bucketed_closed_loop_pass",
+            "mask_decoder_trt_closed_loop_pass",
+            "memory_encoder_trt_closed_loop_pass",
+            "memory_path_all_trt_closed_loop_pass",
+        )
+        missing_scope = [key for key in scope_true if value(key) is not True]
+        if missing_scope:
+            raise RuntimeError(f"BatchTam TRT memory_path_all gate failed fields: {missing_scope}")
+    return {
+        "report_path": str(report.get("_path") or ""),
+        "batchtam_component_engines_usable": True,
+        "batchtam_closed_loop_usable": True,
+        "demo22_trt_integration_allowed": True,
+        "recommended_trt_scope": expected_scope,
+        "memory_attention_shape_strategy": value("memory_attention_shape_strategy"),
+        "memory_attention_bucket_count": int(value("memory_attention_bucket_count") or 0),
+        "memory_attention_buckets_exported": int(value("memory_attention_buckets_exported") or 0),
+        "memory_attention_buckets_built": int(value("memory_attention_buckets_built") or 0),
+        "memory_attention_buckets_validated": int(value("memory_attention_buckets_validated") or 0),
+        "memory_attention_bucketed_closed_loop_pass": bool(
+            value("memory_attention_bucketed_closed_loop_pass")
+        ),
+        "mask_decoder_trt_closed_loop_pass": bool(value("mask_decoder_trt_closed_loop_pass")),
+        "memory_encoder_trt_closed_loop_pass": bool(value("memory_encoder_trt_closed_loop_pass")),
+        "memory_path_all_trt_closed_loop_pass": bool(value("memory_path_all_trt_closed_loop_pass")),
+    }
+
+
 def external_git_commit(path: str | os.PathLike[str] | None) -> str | None:
     if not path:
         return None
@@ -457,6 +554,44 @@ def attach_full_batched_report_validation(args: argparse.Namespace) -> dict[str,
     )
     setattr(args, "_edgetam_batched_report_validation", validation)
     return validation
+
+
+def attach_batchtam_trt_report_validation(args: argparse.Namespace) -> dict[str, Any] | None:
+    if not batchtam_trt_enabled(args):
+        return None
+    existing = getattr(args, "_batchtam_trt_report_validation", None)
+    if existing:
+        return dict(existing)
+    report = load_batchtam_trt_report(getattr(args, "edgetam_trt_report", None))
+    validation = validate_batchtam_trt_report(
+        report,
+        expected_scope=str(getattr(args, "edgetam_trt_scope", EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL)),
+    )
+    setattr(args, "_batchtam_trt_report_validation", validation)
+    return validation
+
+
+def resolved_trt_memory_attention_bucket_dir(args: argparse.Namespace) -> str:
+    explicit = str(getattr(args, "edgetam_trt_memory_attention_bucket_dir", "") or "")
+    if explicit:
+        return explicit
+    engine_dir = Path(str(getattr(args, "edgetam_trt_engine_dir", DEFAULT_BATCHTAM_TRT_ENGINE_DIR)))
+    return str(engine_dir / "memory_attention_buckets")
+
+
+def validate_batchtam_trt_artifacts(args: argparse.Namespace) -> None:
+    if not batchtam_trt_enabled(args):
+        return
+    engine_dir = Path(str(getattr(args, "edgetam_trt_engine_dir", "") or ""))
+    if not engine_dir.is_dir():
+        raise RuntimeError(f"BatchTam TRT engine dir not found: {engine_dir}")
+    required = [engine_dir / "mask_decoder_b3.engine", engine_dir / "memory_encoder_b3.engine"]
+    missing = [str(path) for path in required if not path.is_file()]
+    bucket_dir = Path(resolved_trt_memory_attention_bucket_dir(args))
+    if not bucket_dir.is_dir() or not any(bucket_dir.glob("*.engine")):
+        missing.append(str(bucket_dir))
+    if missing:
+        raise RuntimeError("missing BatchTam TensorRT engine artifacts: " + ", ".join(missing))
 
 
 def mark_torch_cudagraph_step_begin(torch_module: Any) -> bool:
@@ -1867,6 +2002,20 @@ def _camera_intrinsics_from_k(k_color: np.ndarray, *, width: int, height: int) -
     )
 
 
+def _first_scalar(value: Any, default: Any) -> Any:
+    if value is None:
+        return default
+    try:
+        arr = np.asarray(value)
+        if arr.shape == ():
+            return arr.item()
+        if arr.size:
+            return arr.reshape(-1)[0].item()
+    except Exception:
+        pass
+    return default
+
+
 def _as_timestamp_ns(value: Any) -> int:
     try:
         scalar = float(value)
@@ -2142,6 +2291,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         PRESET_DEMO215_MASK_ONLY_DEBUG,
     }
     full_batched_validation = getattr(args, "_edgetam_batched_report_validation", None) or {}
+    batchtam_trt_validation = getattr(args, "_batchtam_trt_report_validation", None) or {}
     return {
         "demo": (
             "demo_2_2_async_filtered_fused_pcd"
@@ -2163,8 +2313,16 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "edgetam_external_path": str(getattr(args, "edgetam_external_path", "") or ""),
         "edgetam_batched_report": str(getattr(args, "edgetam_batched_report", "") or ""),
         "edgetam_precision_mode": str(getattr(args, "edgetam_precision_mode", EDGETAM_PRECISION_MODE_ALL_BF16)),
+        "edgetam_component_runtime": str(
+            getattr(args, "edgetam_component_runtime", EDGETAM_COMPONENT_RUNTIME_TORCH)
+        ),
+        "edgetam_trt_engine_dir": str(getattr(args, "edgetam_trt_engine_dir", "") or ""),
+        "edgetam_trt_report": str(getattr(args, "edgetam_trt_report", "") or ""),
+        "edgetam_trt_scope": str(getattr(args, "edgetam_trt_scope", "") or ""),
+        "batchtam_trt_report_validation": dict(batchtam_trt_validation),
         "strict_full_batched_edgetam": bool(getattr(args, "strict_full_batched_edgetam", False)),
         "edgetam_backend_fallback_used": False,
+        "torch_component_fallback_used": False,
         "compile_mode": args.compile_mode,
         "dtype": args.dtype,
         "input_path": args.edgetam_input_path,
@@ -2305,6 +2463,19 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                 len(tuple(args.camera_ids)) if edgetam_batch_vision_enabled(args) else 1
             ),
             "precision_mode": str(getattr(args, "edgetam_precision_mode", EDGETAM_PRECISION_MODE_ALL_BF16)),
+            "component_runtime": str(
+                getattr(args, "edgetam_component_runtime", EDGETAM_COMPONENT_RUNTIME_TORCH)
+            ),
+            "trt_engine_dir": str(getattr(args, "edgetam_trt_engine_dir", "") or ""),
+            "trt_report": str(getattr(args, "edgetam_trt_report", "") or ""),
+            "trt_scope": str(getattr(args, "edgetam_trt_scope", "") or ""),
+            "batchtam_closed_loop_usable": bool(
+                batchtam_trt_validation.get("batchtam_closed_loop_usable", False)
+            ),
+            "batchtam_trt_integration_allowed": bool(
+                batchtam_trt_validation.get("demo22_trt_integration_allowed", False)
+            ),
+            "torch_component_fallback_used": False,
             "batched_report": str(getattr(args, "edgetam_batched_report", "") or ""),
             "strict_full_batched": bool(getattr(args, "strict_full_batched_edgetam", False)),
             "fail_if_backend_fallback": bool(getattr(args, "fail_if_edgetam_backend_fallback", False)),
@@ -2751,6 +2922,13 @@ class Demo21Runtime:
             if not str(getattr(self.args, "edgetam_external_path", "") or ""):
                 raise RuntimeError("hf_batched_multisession requires --edgetam-external-path")
             validation = attach_full_batched_report_validation(self.args) or {}
+            if batchtam_trt_enabled(self.args):
+                trt_validation = attach_batchtam_trt_report_validation(self.args) or {}
+                validate_batchtam_trt_artifacts(self.args)
+                if self.args.edgetam_trt_scope != EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL:
+                    raise RuntimeError("BatchTam TRT Demo 2.2 integration requires --edgetam-trt-scope memory_path_all")
+                if not trt_validation.get("demo22_trt_integration_allowed"):
+                    raise RuntimeError("BatchTam TRT report does not allow Demo 2.2 integration")
             if self.args.track_mode != TRACK_MODE_OBJECT_ONLY:
                 raise RuntimeError("hf_batched_multisession V1 Demo 2.2 integration requires --track-mode object-only")
             if self.args.depth_source != DEPTH_SOURCE_FFS:
@@ -3279,7 +3457,12 @@ class Demo21Runtime:
         gpu_sampling["summary_full_run"] = summarize_gpu_samples(gpu_samples, start_s=0.0)
         gpu_sampling["summary_after_warmup"] = summarize_gpu_samples(gpu_samples, start_s=warmup_s)
         gpu_sampling["samples"] = gpu_samples
+        batchtam_trt_validation = getattr(self.args, "_batchtam_trt_report_validation", None) or {}
         return {
+            "profile_kind": "demo2.2-full-pipeline",
+            "final_fps_source": "demo2.2-full-pipeline",
+            "fatal_error": self._summary.get("fatal_error"),
+            "fatal_error_traceback": self._summary.get("fatal_error_traceback"),
             "preset": self.args.preset,
             "preset_canonical": getattr(self.args, "preset_canonical", canonical_preset_name(self.args.preset)),
             "target_fps": float(self.args.fusion_target_fps),
@@ -3299,8 +3482,21 @@ class Demo21Runtime:
             "edgetam_precision_mode": str(
                 getattr(self.args, "edgetam_precision_mode", EDGETAM_PRECISION_MODE_ALL_BF16)
             ),
+            "edgetam_component_runtime": str(
+                getattr(self.args, "edgetam_component_runtime", EDGETAM_COMPONENT_RUNTIME_TORCH)
+            ),
+            "edgetam_trt_engine_dir": str(getattr(self.args, "edgetam_trt_engine_dir", "") or ""),
+            "edgetam_trt_report": str(getattr(self.args, "edgetam_trt_report", "") or ""),
+            "edgetam_trt_scope": str(getattr(self.args, "edgetam_trt_scope", "") or ""),
+            "batchtam_closed_loop_usable": bool(batchtam_trt_validation.get("batchtam_closed_loop_usable", False)),
+            "batchtam_trt_integration_allowed": bool(
+                batchtam_trt_validation.get("demo22_trt_integration_allowed", False)
+            ),
+            "batchtam_trt_report_validation": dict(batchtam_trt_validation),
             "strict_full_batched_edgetam": bool(getattr(self.args, "strict_full_batched_edgetam", False)),
             "edgetam_backend_fallback_used": False,
+            "torch_component_fallback_used": False,
+            "native_depth_fallback_used": False,
             "compile_mode": self.args.compile_mode,
             "dtype": self.args.dtype,
             "input_path": self.args.edgetam_input_path,
@@ -3630,23 +3826,23 @@ class Demo21Runtime:
         metadata = self._stream_metadata[int(camera_idx)]
         k_color = np.asarray(metadata["K_color"], dtype=np.float32).reshape(3, 3)
         intrinsics = _camera_intrinsics_from_k(k_color, width=self.width, height=self.height)
-        host_timestamp_s = float(obs.get("timestamp", time.time()))
+        host_timestamp_s = float(_first_scalar(obs.get("timestamp"), time.time()))
         realsense_timestamp_ms: float | None = None
         if "camera_capture_timestamp" in obs:
             try:
-                realsense_timestamp_ms = float(obs["camera_capture_timestamp"]) * 1000.0
+                realsense_timestamp_ms = float(_first_scalar(obs["camera_capture_timestamp"], None)) * 1000.0
             except Exception:
                 realsense_timestamp_ms = None
         realsense_frame_number: int | None = None
         if "realsense_frame_number" in obs:
             try:
-                realsense_frame_number = int(obs["realsense_frame_number"])
+                realsense_frame_number = int(_first_scalar(obs["realsense_frame_number"], None))
             except Exception:
                 realsense_frame_number = None
         return CameraFramePacket(
             group_id=int(group_id),
             camera_idx=int(camera_idx),
-            frame_seq=int(obs.get("step_idx", group_id)),
+            frame_seq=int(_first_scalar(obs.get("step_idx"), group_id)),
             timestamp_ns=_as_timestamp_ns(host_timestamp_s),
             realsense_timestamp_ms=realsense_timestamp_ms,
             realsense_frame_number=realsense_frame_number,
@@ -5348,10 +5544,14 @@ class Demo21Runtime:
 
         runtime_cls = load_external_batched_runtime_class(self.args.edgetam_external_path)
         runtime_start_s = time.perf_counter()
+        component_runtime = str(getattr(self.args, "edgetam_component_runtime", EDGETAM_COMPONENT_RUNTIME_TORCH))
+        use_trt_components = component_runtime == EDGETAM_COMPONENT_RUNTIME_TRT
+        external_backend = EXTERNAL_BATCHTAM_TRT_BACKEND if use_trt_components else EDGETAM_BACKEND_HF_BATCHED_MULTISESSION
+        compile_scope = "vision_encoder" if use_trt_components else DEFAULT_FULL_BATCHED_COMPILE_SCOPE
         runtime = runtime_cls(
             model,
             processor,
-            backend=EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
+            backend=external_backend,
             batch_size=len(camera_ids),
             object_count=1,
             dtype=dtype,
@@ -5361,7 +5561,15 @@ class Demo21Runtime:
             strict_full_batched=True,
             disallow_partial_backend_success=True,
             precision_mode=str(self.args.edgetam_precision_mode),
-            compile_scope=DEFAULT_FULL_BATCHED_COMPILE_SCOPE,
+            compile_scope=compile_scope,
+            component_runtime=component_runtime,
+            trt_engine_dir=str(getattr(self.args, "edgetam_trt_engine_dir", "") or "")
+            if use_trt_components
+            else None,
+            trt_scope=str(getattr(self.args, "edgetam_trt_scope", EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL)),
+            trt_memory_attention_bucket_dir=resolved_trt_memory_attention_bucket_dir(self.args)
+            if use_trt_components
+            else None,
         )
         runtime.init_from_reference_sessions(sessions)
         runtime.prepare_compile(torch_module)
@@ -5370,6 +5578,7 @@ class Demo21Runtime:
         self._full_batched_edgetam_frame_idx = 0
         self._full_batched_edgetam_validation = getattr(self.args, "_edgetam_batched_report_validation", None) or {}
         self._summary["edgetam_backend_fallback_used"] = False
+        self._summary["torch_component_fallback_used"] = False
         self._init_profile_update(
             ("edgetam", "full_batched_multisession"),
             {
@@ -5378,18 +5587,26 @@ class Demo21Runtime:
                 "report": str(self.args.edgetam_batched_report),
                 "backend": EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
                 "precision_mode": str(self.args.edgetam_precision_mode),
+                "component_runtime": component_runtime,
+                "trt_engine_dir": str(getattr(self.args, "edgetam_trt_engine_dir", "") or ""),
+                "trt_scope": str(getattr(self.args, "edgetam_trt_scope", "") or ""),
+                "trt_report": str(getattr(self.args, "edgetam_trt_report", "") or ""),
                 "compile_mode": str(self.args.compile_mode),
-                "compile_scope": DEFAULT_FULL_BATCHED_COMPILE_SCOPE,
+                "compile_scope": compile_scope,
                 "prompt_add_ms": float(prompt_ms),
                 "runtime_init_ms": float(runtime_init_ms),
                 "report_validation": dict(self._full_batched_edgetam_validation),
+                "batchtam_trt_report_validation": dict(
+                    getattr(self.args, "_batchtam_trt_report_validation", None) or {}
+                ),
             },
         )
         if self.args.debug:
             print(
                 "[demo2.2-edgetam-full] "
                 f"runtime initialized backend={EDGETAM_BACKEND_HF_BATCHED_MULTISESSION} "
-                f"precision={self.args.edgetam_precision_mode} compile={self.args.compile_mode} "
+                f"precision={self.args.edgetam_precision_mode} component_runtime={component_runtime} "
+                f"compile={self.args.compile_mode} "
                 f"prompt_ms={prompt_ms:.2f} runtime_init_ms={runtime_init_ms:.2f}",
                 flush=True,
             )
@@ -5460,6 +5677,7 @@ class Demo21Runtime:
             contract.get("contract_pass") is not True
             or contract.get("used_public_session_step_in_hot_path")
             or contract.get("partial_fallback_used")
+            or contract.get("torch_fallback_used")
         ):
             raise RuntimeError(f"external hf_batched_multisession contract failed at runtime: {contract}")
 
@@ -5520,9 +5738,16 @@ class Demo21Runtime:
                 "full_batched_multisession": {
                     "backend": EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
                     "precision_mode": str(self.args.edgetam_precision_mode),
+                    "component_runtime": str(
+                        getattr(self.args, "edgetam_component_runtime", EDGETAM_COMPONENT_RUNTIME_TORCH)
+                    ),
+                    "trt_scope": str(getattr(self.args, "edgetam_trt_scope", "") or ""),
                     "compile_mode": str(self.args.compile_mode),
-                    "compile_scope": DEFAULT_FULL_BATCHED_COMPILE_SCOPE,
+                    "compile_scope": "vision_encoder"
+                    if batchtam_trt_enabled(self.args)
+                    else DEFAULT_FULL_BATCHED_COMPILE_SCOPE,
                     "fallback_used": False,
+                    "torch_component_fallback_used": False,
                     "backend_contract": contract,
                     "timings_ms": timings,
                     "publish_s": self._profile_rel_s(),
@@ -6698,6 +6923,33 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Precision policy passed to the external full hf_batched_multisession runtime.",
     )
     parser.add_argument(
+        "--edgetam-component-runtime",
+        choices=EDGETAM_COMPONENT_RUNTIMES,
+        default=EDGETAM_COMPONENT_RUNTIME_TORCH,
+        help="Component runtime for full hf_batched_multisession; 'trt' enables BatchTam memory-path engines.",
+    )
+    parser.add_argument(
+        "--edgetam-trt-engine-dir",
+        default=str(DEFAULT_BATCHTAM_TRT_ENGINE_DIR),
+        help="BatchTam TensorRT engine directory for memory_path_all.",
+    )
+    parser.add_argument(
+        "--edgetam-trt-report",
+        default=str(DEFAULT_BATCHTAM_TRT_REPORT),
+        help="BatchTam TRT report JSON required when --edgetam-component-runtime trt.",
+    )
+    parser.add_argument(
+        "--edgetam-trt-scope",
+        choices=EDGETAM_TRT_SCOPES,
+        default=EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL,
+        help="BatchTam TensorRT scope. Demo 2.2 requires memory_path_all.",
+    )
+    parser.add_argument(
+        "--edgetam-trt-memory-attention-bucket-dir",
+        default=None,
+        help="Optional memory_attention bucket engine dir; defaults to <engine-dir>/memory_attention_buckets.",
+    )
+    parser.add_argument(
         "--strict-full-batched-edgetam",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -6881,6 +7133,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     args = apply_preset_defaults(args, explicit_options=_explicit_cli_options(argv))
     attach_full_batched_report_validation(args)
+    attach_batchtam_trt_report_validation(args)
     contract = build_contract(args)
     if args.dry_run:
         print(json.dumps(contract, indent=2, sort_keys=True))

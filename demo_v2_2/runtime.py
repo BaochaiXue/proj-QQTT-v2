@@ -59,6 +59,13 @@ MASK_POSTPROCESS_CUDA_INLINE = _legacy.MASK_POSTPROCESS_CUDA_INLINE
 MASK_POSTPROCESS_MODES = _legacy.MASK_POSTPROCESS_MODES
 EDGETAM_PRECISION_MODES = _legacy.EDGETAM_PRECISION_MODES
 EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32 = _legacy.EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32
+EDGETAM_COMPONENT_RUNTIME_TORCH = _legacy.EDGETAM_COMPONENT_RUNTIME_TORCH
+EDGETAM_COMPONENT_RUNTIME_TRT = _legacy.EDGETAM_COMPONENT_RUNTIME_TRT
+EDGETAM_COMPONENT_RUNTIMES = _legacy.EDGETAM_COMPONENT_RUNTIMES
+EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL = _legacy.EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL
+EDGETAM_TRT_SCOPES = _legacy.EDGETAM_TRT_SCOPES
+DEFAULT_BATCHTAM_TRT_ENGINE_DIR = _legacy.DEFAULT_BATCHTAM_TRT_ENGINE_DIR
+DEFAULT_BATCHTAM_TRT_REPORT = _legacy.DEFAULT_BATCHTAM_TRT_REPORT
 DEFAULT_DEMO22_DEPTH_MIN_M = _legacy.DEFAULT_DEMO22_DEPTH_MIN_M
 DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR = _legacy.DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
 DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR = _legacy.DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR
@@ -78,10 +85,14 @@ elapsed_ms = _legacy._elapsed_ms
 explicit_cli_options = _legacy._explicit_cli_options
 summarize_gpu_samples = _legacy.summarize_gpu_samples
 load_full_batched_edgetam_report = _legacy.load_full_batched_edgetam_report
+load_batchtam_trt_report = _legacy.load_batchtam_trt_report
 validate_full_batched_edgetam_report = _legacy.validate_full_batched_edgetam_report
+validate_batchtam_trt_report = _legacy.validate_batchtam_trt_report
+validate_batchtam_trt_artifacts = _legacy.validate_batchtam_trt_artifacts
 final_fps_from_demo22_profile = _legacy.final_fps_from_demo22_profile
 external_git_commit = _legacy.external_git_commit
 attach_full_batched_report_validation = _legacy.attach_full_batched_report_validation
+attach_batchtam_trt_report_validation = _legacy.attach_batchtam_trt_report_validation
 
 
 def parse_camera_ids(value: str) -> tuple[int, ...]:
@@ -131,6 +142,11 @@ __all__ = [
     "EDGETAM_STREAM_MODE_PER_CAMERA",
     "EDGETAM_PRECISION_MODES",
     "EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32",
+    "EDGETAM_COMPONENT_RUNTIME_TORCH",
+    "EDGETAM_COMPONENT_RUNTIME_TRT",
+    "EDGETAM_COMPONENT_RUNTIMES",
+    "EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL",
+    "EDGETAM_TRT_SCOPES",
     "EDGETAM_BACKEND_HF_BATCHED_MULTISESSION",
     "EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION",
     "EDGETAM_BACKEND_HF_SEQ_SESSION",
@@ -145,6 +161,8 @@ __all__ = [
     "MASK_POSTPROCESS_CUDA_INLINE",
     "MASK_POSTPROCESS_HF",
     "MASK_POSTPROCESS_MODES",
+    "DEFAULT_BATCHTAM_TRT_ENGINE_DIR",
+    "DEFAULT_BATCHTAM_TRT_REPORT",
     "PIN_MEMORY_MODE_ALL",
     "POSTPROCESS_NONE",
     "PRESET_DEMO215_ASYNC_FILTER_5FPS",
@@ -163,6 +181,7 @@ __all__ = [
     "TRACK_MODE_OBJECT_ONLY",
     "apply_preset_defaults",
     "attach_full_batched_report_validation",
+    "attach_batchtam_trt_report_validation",
     "build_arg_parser",
     "build_contract",
     "elapsed_ms",
@@ -170,9 +189,12 @@ __all__ = [
     "external_git_commit",
     "final_fps_from_demo22_profile",
     "load_full_batched_edgetam_report",
+    "load_batchtam_trt_report",
     "main",
     "parse_camera_ids",
     "summarize_gpu_samples",
     "validate_full_batched_edgetam_report",
+    "validate_batchtam_trt_report",
+    "validate_batchtam_trt_artifacts",
     "time",
 ]
