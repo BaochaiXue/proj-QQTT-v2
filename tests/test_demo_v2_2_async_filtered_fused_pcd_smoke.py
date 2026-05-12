@@ -64,6 +64,8 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--experimental-edgetam-batch-vision", help_text)
         self.assertIn("--single-object-batchvision-edgetam", help_text)
         self.assertIn("--edgetam-backend", help_text)
+        self.assertIn("--edgetam-batched-report", help_text)
+        self.assertIn("--strict-full-batched-edgetam", help_text)
         self.assertIn("--advanced-help", help_text)
         self.assertNotIn("--fusion-target-fps", help_text)
         self.assertNotIn("--gpu-pipeline-mode", help_text)
@@ -141,6 +143,45 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("nvml", argv)
         self.assertIn("--ffs-trt-batch-size", argv)
         self.assertIn("1", argv)
+
+    def test_demo22_full_batched_aliases_translate_to_runtime_flags(self) -> None:
+        argv = demo22._to_demo22_argv(
+            [
+                "--dry-run",
+                "--parallel-edgetam",
+                "--edgetam-backend",
+                demo.EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
+                "--edgetam-external-path",
+                "/home/zhangxinjie/EdgeTAM-HF-batched",
+                "--edgetam-batched-report",
+                "/home/zhangxinjie/EdgeTAM-HF-batched/docs/generated/edgetam_batched_multisession_final_report.json",
+                "--edgetam-precision-mode",
+                demo.EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32,
+                "--strict-full-batched-edgetam",
+                "--fail-if-edgetam-backend-fallback",
+                "--depth-source",
+                "ffs_local_batch3",
+                "--compile-mode",
+                demo.COMPILE_MODE_REDUCE_OVERHEAD,
+                "--track-mode",
+                demo.TRACK_MODE_OBJECT_ONLY,
+            ]
+        )
+
+        self.assertIn("--edgetam-backend", argv)
+        self.assertIn(demo.EDGETAM_BACKEND_HF_BATCHED_MULTISESSION, argv)
+        self.assertIn("--edgetam-batched-report", argv)
+        self.assertIn("--edgetam-precision-mode", argv)
+        self.assertIn(demo.EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32, argv)
+        self.assertIn("--strict-full-batched-edgetam", argv)
+        self.assertIn("--fail-if-edgetam-backend-fallback", argv)
+        self.assertIn("--depth-source", argv)
+        self.assertIn(demo.DEPTH_SOURCE_FFS, argv)
+        self.assertIn("--ffs-trt-batch-size", argv)
+        self.assertIn("3", argv)
+        self.assertIn("--compile-mode", argv)
+        self.assertIn(demo.COMPILE_MODE_REDUCE_OVERHEAD, argv)
+        self.assertNotIn("--edgetam-batch-vision-encoder", argv)
 
     def test_demo22_gpu_sampling_rejects_nvidia_smi_backend(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

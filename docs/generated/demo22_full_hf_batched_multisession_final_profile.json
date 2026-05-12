@@ -1,0 +1,232 @@
+{
+  "external_backend": {
+    "backend": "hf_batched_multisession",
+    "compile_mode": "reduce-overhead",
+    "contract_pass": true,
+    "external_branch": "feat/edgetam-batched-multisession-runtime",
+    "external_commit": "4a41c4a45fa6f0541f3d62aff95867de06d90c92",
+    "external_github_repo": "https://github.com/BaochaiXue/transformers/tree/feat/edgetam-batched-multisession-runtime",
+    "external_repo": "/home/zhangxinjie/EdgeTAM-HF-batched",
+    "external_report": "/home/zhangxinjie/EdgeTAM-HF-batched/docs/generated/edgetam_batched_multisession_final_report.json",
+    "external_report_source_commit": "5a2a86567e6a42ddf1178b6660dc51c1f9509972",
+    "hf_batched_multisession_usable": true,
+    "precision_mode": "memory_path_fp32"
+  },
+  "final_decision": {
+    "15_fps_target_pass": false,
+    "bottleneck": "single-owner GPU critical path: FFS cycle + full batched EdgeTAM + fusion/filter; gpu_owner_total p50 is about 118.39 ms",
+    "final_fps": 8.10159583591791,
+    "final_fps_metric": "filter_fps",
+    "final_fps_source": "docs/generated/demo22_full_hf_batched_multisession_stuffed_animal_pointcloud_profile.json",
+    "integration_ready_but_perf_below_15fps": true,
+    "merge_ready": false,
+    "target_fps": 15.0
+  },
+  "generated_at": "2026-05-12T00:57:40.322002+00:00",
+  "no_render_profile": {
+    "capture_group_fps": 13.814268404503535,
+    "complete_fusion_groups": 779,
+    "complete_group_ratio": 0.5964777947932619,
+    "contract": {
+      "batch_mask_decoder": true,
+      "batch_memory_attention": true,
+      "batch_memory_encoder": true,
+      "batched_state_scatter": true,
+      "edgetam_backend_fallback_used": false,
+      "partial_fallback_used": false,
+      "used_public_session_step_in_hot_path": false
+    },
+    "depth_backend": "local FFS batch=3",
+    "edgetam_backend": "hf_batched_multisession",
+    "edgetam_component_total_ms": {
+      "max": 25.894767333132524,
+      "median": 18.118584499461576,
+      "p90": 20.00243382838865,
+      "p95": 20.863181251722075
+    },
+    "edgetam_stage_wall_ms": {
+      "max": 81.66877302573994,
+      "median": 58.465350506594405,
+      "p90": 64.29366057855077,
+      "p95": 66.6485716792522
+    },
+    "fallback_used": false,
+    "ffs_cycle_ms": {
+      "max": 240.08034099824727,
+      "median": 56.85738651663996,
+      "p90": 61.01671438082121,
+      "p95": 64.47191748011392
+    },
+    "filter_fps": 8.253150500896302,
+    "filter_total_ms": {
+      "max": 215.1896659634076,
+      "median": 20.65643999958411,
+      "p90": 23.05377976736054,
+      "p95": 24.459260114235803
+    },
+    "fusion_total_ms": {
+      "max": 222.00868092477322,
+      "median": 28.25206599663943,
+      "p90": 30.93711780384183,
+      "p95": 32.537556800525635
+    },
+    "gpu_owner_total_ms": {
+      "max": 296.62876401562244,
+      "median": 115.96806402667426,
+      "p90": 124.10384389804676,
+      "p95": 129.34196404239628
+    },
+    "group_count": 1306,
+    "pass": true,
+    "points": {
+      "controller_filtered": {
+        "median": 0,
+        "min": 0,
+        "p90": 0
+      },
+      "controller_raw": {
+        "median": 0,
+        "min": 0,
+        "p90": 0
+      },
+      "object_filtered": {
+        "median": 10922,
+        "min": 10800,
+        "p90": 10976
+      },
+      "object_raw": {
+        "median": 44919,
+        "min": 44809,
+        "p90": 44966
+      }
+    },
+    "profile_file": "docs/generated/demo22_full_hf_batched_multisession_stuffed_animal_no_render_profile.json",
+    "raw_fusion_fps": 8.253320178814764,
+    "raw_fusion_total_ms": {
+      "max": 10.500403004698455,
+      "median": 7.463359972462058,
+      "p90": 8.609311783220619,
+      "p95": 9.043127886252476
+    },
+    "reason": "pass",
+    "render_fps": 0.0,
+    "render_total_ms": {
+      "max": 0.0,
+      "median": 0.0,
+      "p90": 0.0,
+      "p95": 0.0
+    },
+    "strict_full_batched_edgetam": true
+  },
+  "notes": [
+    "Final FPS is taken from the Demo 2.2 full pointcloud pipeline profile, not from external replay/component benchmarks.",
+    "SAM3.1 parallel preload was disabled for these hardware runs to avoid concurrent torchvision import initialization with EdgeTAM/Inductor."
+  ],
+  "pointcloud_profile": {
+    "capture_group_fps": 14.129327643880153,
+    "complete_fusion_groups": 706,
+    "complete_group_ratio": 0.5721231766612642,
+    "contract": {
+      "batch_mask_decoder": true,
+      "batch_memory_attention": true,
+      "batch_memory_encoder": true,
+      "batched_state_scatter": true,
+      "edgetam_backend_fallback_used": false,
+      "partial_fallback_used": false,
+      "used_public_session_step_in_hot_path": false
+    },
+    "depth_backend": "local FFS batch=3",
+    "edgetam_backend": "hf_batched_multisession",
+    "edgetam_component_total_ms": {
+      "max": 44.34739400555069,
+      "median": 18.470496327305835,
+      "p90": 20.76810699266692,
+      "p95": 21.659003337845206
+    },
+    "edgetam_stage_wall_ms": {
+      "max": 137.60006695520133,
+      "median": 59.665622015018016,
+      "p90": 66.47919960087165,
+      "p95": 70.02721197204664
+    },
+    "fallback_used": false,
+    "ffs_cycle_ms": {
+      "max": 242.25547997048125,
+      "median": 57.982398953754455,
+      "p90": 63.000821822788566,
+      "p95": 69.27750519826071
+    },
+    "filter_fps": 8.10159583591791,
+    "filter_total_ms": {
+      "max": 213.74630002537742,
+      "median": 21.049704460892826,
+      "p90": 24.085978540824726,
+      "p95": 25.501747251837514
+    },
+    "fusion_total_ms": {
+      "max": 223.98843202972785,
+      "median": 28.947070997674018,
+      "p90": 32.39088604459539,
+      "p95": 34.05185324663762
+    },
+    "gpu_owner_total_ms": {
+      "max": 311.31681601982564,
+      "median": 118.39037894969806,
+      "p90": 127.47095801169053,
+      "p95": 133.43700553523374
+    },
+    "group_count": 1234,
+    "pass": true,
+    "points": {
+      "controller_filtered": {
+        "median": 0,
+        "min": 0,
+        "p90": 0
+      },
+      "controller_raw": {
+        "median": 0,
+        "min": 0,
+        "p90": 0
+      },
+      "object_filtered": {
+        "median": 10958,
+        "min": 10775,
+        "p90": 11017
+      },
+      "object_raw": {
+        "median": 44929,
+        "min": 44799,
+        "p90": 44975
+      }
+    },
+    "profile_file": "docs/generated/demo22_full_hf_batched_multisession_stuffed_animal_pointcloud_profile.json",
+    "raw_fusion_fps": 8.10184205782713,
+    "raw_fusion_total_ms": {
+      "max": 11.850047041662037,
+      "median": 7.676364009967074,
+      "p90": 9.179708489682525,
+      "p95": 9.738501990796067
+    },
+    "reason": "pass",
+    "render_fps": 4.1140331136208665,
+    "render_total_ms": {
+      "max": 1.529738015960902,
+      "median": 0.3569999826140702,
+      "p90": 0.5123530165292326,
+      "p95": 0.6316225975751876
+    },
+    "strict_full_batched_edgetam": true
+  },
+  "qqtt_branch": "feat/demo22-full-hf-batched-multisession",
+  "qqtt_commit_before_report_commit": "3a61239988937fb3e24873cce7657fd2af19ef6c",
+  "qqtt_repo": "/home/zhangxinjie/proj-QQTT-v2-demo22-single-object-batchvision-edgetam",
+  "strict_backend_contract": {
+    "batch_mask_decoder": true,
+    "batch_memory_attention": true,
+    "batch_memory_encoder": true,
+    "batched_state_scatter": true,
+    "edgetam_backend_fallback_used": false,
+    "partial_fallback_used": false,
+    "used_public_session_step_in_hot_path": false
+  }
+}

@@ -111,6 +111,10 @@ wandb/
 *.glb
 *.mp4
 
+# Large Demo 2.2 full-backend run payloads; keep compact final summaries instead.
+docs/generated/demo22_full_hf_batched_multisession_stuffed_animal_*_profile.json
+docs/generated/demo22_full_hf_batched_multisession_stuffed_animal_*_profile.md
+
 # Temp / scratch
 quick_test/
 deprecated/

@@ -33,6 +33,7 @@ manual; use the compressed harness index first.
 | Demo 2.2 default FFS TensorRT batch=3 contract | `demo2_2_default_ffs_batch3.md` |
 | Demo 2.2 EdgeTAM batch vision encoder probe | `demo2_2_edgetam_batch_vision_profile.md` |
 | Demo 2.2 single-object batch-vision EdgeTAM contract and no-render hardware profile | `demo2_2_single_object_batchvision_edgetam.md` |
+| Demo 2.2 full `hf_batched_multisession` EdgeTAM backend final profile | `demo22_full_hf_batched_multisession_final_profile.md`, `demo22_full_hf_batched_multisession_final_profile.json` |
 | Demo 2.2 object + controller towel batch-vision no-render retry | `demo22_object_controller_towel_batchvision_no_render_summary.md` |
 | Demo 2.2 simplified public CLI | `demo2_2_cli_simplification.md` |
 | Demo 2.2 runtime split | `demo2_2_runtime_split.md` |

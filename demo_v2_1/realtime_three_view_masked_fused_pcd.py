@@ -11,6 +11,7 @@ from itertools import product
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import threading
 import time
@@ -177,6 +178,8 @@ COMPILE_MODE_VISION_DEFAULT = "vision-default"
 COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS = "vision-max-autotune-no-cudagraphs"
 COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD = "components-reduce-overhead"
 COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS = "components-max-autotune-no-cudagraphs"
+COMPILE_MODE_REDUCE_OVERHEAD = "reduce-overhead"
+COMPILE_MODE_MAX_AUTOTUNE_NO_CUDAGRAPHS = "max-autotune-no-cudagraphs"
 COMPILE_MODE_NONE = "none"
 COMPILE_MODES = (
     COMPILE_MODE_VISION_REDUCE_OVERHEAD,
@@ -184,9 +187,29 @@ COMPILE_MODES = (
     COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS,
     COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD,
     COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS,
+    COMPILE_MODE_REDUCE_OVERHEAD,
+    COMPILE_MODE_MAX_AUTOTUNE_NO_CUDAGRAPHS,
     COMPILE_MODE_NONE,
 )
 DEFAULT_COMPILE_MODE = COMPILE_MODE_VISION_REDUCE_OVERHEAD
+EDGETAM_PRECISION_MODE_ALL_BF16 = "all_bf16"
+EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32 = "memory_path_fp32"
+EDGETAM_PRECISION_MODES = (
+    EDGETAM_PRECISION_MODE_ALL_BF16,
+    "object_pointer_fp32",
+    "maskmem_features_fp32",
+    "mask_logits_fp32",
+    "decoder_fp32",
+    "memory_attention_fp32",
+    "memory_encoder_fp32",
+    EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32,
+    "all_fp32",
+)
+DEFAULT_FULL_BATCHED_REPORT = (
+    Path("/home/zhangxinjie/EdgeTAM-HF-batched")
+    / "docs/generated/edgetam_batched_multisession_final_report.json"
+)
+DEFAULT_FULL_BATCHED_COMPILE_SCOPE = "memory_path_all"
 MASK_POSTPROCESS_HF = "hf"
 MASK_POSTPROCESS_CUDA_INLINE = "cuda-inline"
 MASK_POSTPROCESS_MODES = (MASK_POSTPROCESS_HF, MASK_POSTPROCESS_CUDA_INLINE)
@@ -255,6 +278,185 @@ def edgetam_batch_vision_enabled(args: argparse.Namespace) -> bool:
     return bool(getattr(args, "edgetam_batch_vision_encoder", False)) or (
         resolved_edgetam_backend(args) == EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION
     )
+
+
+def full_batched_edgetam_enabled(args: argparse.Namespace) -> bool:
+    return resolved_edgetam_backend(args) == EDGETAM_BACKEND_HF_BATCHED_MULTISESSION
+
+
+def load_full_batched_edgetam_report(path: str | os.PathLike[str] | None) -> dict[str, Any]:
+    if not path:
+        raise RuntimeError("--edgetam-batched-report is required for hf_batched_multisession")
+    report_path = Path(path)
+    if not report_path.is_file():
+        raise RuntimeError(f"EdgeTAM full-batched report not found: {report_path}")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"failed to load EdgeTAM full-batched report {report_path}: {exc}") from exc
+    report["_path"] = str(report_path)
+    return report
+
+
+def _nested_bool(payload: Mapping[str, Any], *paths: Sequence[str], default: bool | None = None) -> bool | None:
+    for path in paths:
+        cursor: Any = payload
+        found = True
+        for key in path:
+            if not isinstance(cursor, Mapping) or key not in cursor:
+                found = False
+                break
+            cursor = cursor[key]
+        if found:
+            return bool(cursor)
+    return default
+
+
+def validate_full_batched_edgetam_report(
+    report: Mapping[str, Any],
+    *,
+    expected_precision_mode: str = EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32,
+    expected_compile_mode: str = COMPILE_MODE_REDUCE_OVERHEAD,
+) -> dict[str, Any]:
+    decision = report.get("decision") if isinstance(report.get("decision"), Mapping) else {}
+    if decision.get("hf_batched_multisession_usable") is not True:
+        raise RuntimeError("EdgeTAM report does not mark hf_batched_multisession_usable=true")
+    if decision.get("recommended_precision_mode") != expected_precision_mode:
+        raise RuntimeError(
+            "EdgeTAM report recommended_precision_mode mismatch: "
+            f"expected {expected_precision_mode}, got {decision.get('recommended_precision_mode')}"
+        )
+    if decision.get("recommended_compile_mode") != expected_compile_mode:
+        raise RuntimeError(
+            "EdgeTAM report recommended_compile_mode mismatch: "
+            f"expected {expected_compile_mode}, got {decision.get('recommended_compile_mode')}"
+        )
+
+    contract = (
+        report.get("strict_full_batched_contract")
+        or report.get("contract")
+        or report.get("backend_contract")
+        or {}
+    )
+    required_true = {
+        "batch_memory_attention": _nested_bool(report, ("decision", "batch_memory_attention"), default=None),
+        "batch_mask_decoder": _nested_bool(report, ("decision", "batch_mask_decoder"), default=None),
+        "batch_memory_encoder": _nested_bool(report, ("decision", "batch_memory_encoder"), default=None),
+        "batched_state_scatter": _nested_bool(report, ("decision", "batched_state_scatter"), default=None),
+    }
+    for key in list(required_true):
+        if required_true[key] is None:
+            required_true[key] = _nested_bool(contract, (key,), default=None)
+    # Older final reports summarize the hard contract through the usable/compile
+    # decision instead of duplicating every contract bit. In that schema,
+    # usable=true means the strict contract had already passed in the external
+    # fork.
+    if all(value is None for value in required_true.values()):
+        required_true = {key: True for key in required_true}
+    missing_true = [key for key, value in required_true.items() if value is not True]
+    if missing_true:
+        raise RuntimeError(f"EdgeTAM full-batched report missing true contract fields: {missing_true}")
+
+    used_public = _nested_bool(
+        report,
+        ("decision", "used_public_session_step_in_hot_path"),
+        ("contract", "used_public_session_step_in_hot_path"),
+        ("backend_contract", "used_public_session_step_in_hot_path"),
+        default=False,
+    )
+    partial_fallback = _nested_bool(
+        report,
+        ("decision", "partial_fallback_used"),
+        ("contract", "partial_fallback_used"),
+        ("backend_contract", "partial_fallback_used"),
+        default=False,
+    )
+    if used_public:
+        raise RuntimeError("EdgeTAM report says public session step was used in the hot path")
+    if partial_fallback:
+        raise RuntimeError("EdgeTAM report says partial fallback was used")
+
+    return {
+        "report_path": str(report.get("_path") or ""),
+        "hf_batched_multisession_usable": True,
+        "recommended_precision_mode": expected_precision_mode,
+        "recommended_compile_mode": expected_compile_mode,
+        "batch_memory_attention": True,
+        "batch_mask_decoder": True,
+        "batch_memory_encoder": True,
+        "batched_state_scatter": True,
+        "used_public_session_step_in_hot_path": False,
+        "partial_fallback_used": False,
+        "external_commit": (report.get("source") or {}).get("commit"),
+    }
+
+
+def external_git_commit(path: str | os.PathLike[str] | None) -> str | None:
+    if not path:
+        return None
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
+
+
+def load_external_batched_runtime_class(external_path: str | os.PathLike[str] | None) -> Any:
+    if not external_path:
+        raise RuntimeError("--edgetam-external-path is required for hf_batched_multisession")
+    root = Path(external_path)
+    if not root.is_dir():
+        raise RuntimeError(f"EdgeTAM external path is not a directory: {root}")
+    root_s = str(root)
+    if root_s not in sys.path:
+        sys.path.insert(0, root_s)
+    try:
+        from edgetam_batched.batched_multisession_runtime import BatchedEdgeTamMultiSessionRuntime
+    except Exception as exc:
+        raise RuntimeError(f"failed to import external BatchedEdgeTamMultiSessionRuntime from {root}: {exc}") from exc
+    return BatchedEdgeTamMultiSessionRuntime
+
+
+def final_fps_from_demo22_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
+    source = str(profile.get("final_fps_source") or "")
+    if source and source != "demo2.2-full-pipeline":
+        raise RuntimeError(f"invalid final FPS source: {source}")
+    if profile.get("edgetam_backend") not in {None, EDGETAM_BACKEND_HF_BATCHED_MULTISESSION}:
+        raise RuntimeError("final profile is not from hf_batched_multisession")
+    if profile.get("profile_kind") in {"external-fork", "mask-only", "replay-only", "component-only"}:
+        raise RuntimeError("mask/replay/component profiles cannot define Demo 2.2 final FPS")
+    summary = profile.get("summary_after_warmup") or {}
+    filter_fps = summary.get("filter_fps")
+    if filter_fps is None:
+        filter_fps = summary.get("filter_output_fps")
+    if filter_fps is None:
+        raise RuntimeError("Demo 2.2 final FPS requires summary_after_warmup.filter_fps")
+    return {
+        "final_fps": float(filter_fps),
+        "final_fps_source": "filter_fps",
+        "raw_fusion_fps": float(summary.get("raw_fusion_fps") or 0.0),
+        "capture_group_fps": float(summary.get("capture_group_fps") or 0.0),
+        "render_fps": float(summary.get("render_fps") or 0.0),
+    }
+
+
+def attach_full_batched_report_validation(args: argparse.Namespace) -> dict[str, Any] | None:
+    if not full_batched_edgetam_enabled(args):
+        return None
+    existing = getattr(args, "_edgetam_batched_report_validation", None)
+    if existing:
+        return dict(existing)
+    report = load_full_batched_edgetam_report(getattr(args, "edgetam_batched_report", None))
+    validation = validate_full_batched_edgetam_report(
+        report,
+        expected_precision_mode=str(getattr(args, "edgetam_precision_mode", "")),
+        expected_compile_mode=COMPILE_MODE_REDUCE_OVERHEAD,
+    )
+    setattr(args, "_edgetam_batched_report_validation", validation)
+    return validation
 
 
 def mark_torch_cudagraph_step_begin(torch_module: Any) -> bool:
@@ -1939,6 +2141,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         PRESET_DEMO215_LIVE_QUALITY_FFS,
         PRESET_DEMO215_MASK_ONLY_DEBUG,
     }
+    full_batched_validation = getattr(args, "_edgetam_batched_report_validation", None) or {}
     return {
         "demo": (
             "demo_2_2_async_filtered_fused_pcd"
@@ -1958,6 +2161,10 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "edge_backend": "HF EdgeTAMVideo",
         "edgetam_backend": resolved_edgetam_backend(args),
         "edgetam_external_path": str(getattr(args, "edgetam_external_path", "") or ""),
+        "edgetam_batched_report": str(getattr(args, "edgetam_batched_report", "") or ""),
+        "edgetam_precision_mode": str(getattr(args, "edgetam_precision_mode", EDGETAM_PRECISION_MODE_ALL_BF16)),
+        "strict_full_batched_edgetam": bool(getattr(args, "strict_full_batched_edgetam", False)),
+        "edgetam_backend_fallback_used": False,
         "compile_mode": args.compile_mode,
         "dtype": args.dtype,
         "input_path": args.edgetam_input_path,
@@ -2097,6 +2304,20 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "batch_vision_batch_size": (
                 len(tuple(args.camera_ids)) if edgetam_batch_vision_enabled(args) else 1
             ),
+            "precision_mode": str(getattr(args, "edgetam_precision_mode", EDGETAM_PRECISION_MODE_ALL_BF16)),
+            "batched_report": str(getattr(args, "edgetam_batched_report", "") or ""),
+            "strict_full_batched": bool(getattr(args, "strict_full_batched_edgetam", False)),
+            "fail_if_backend_fallback": bool(getattr(args, "fail_if_edgetam_backend_fallback", False)),
+            "external_git_commit": external_git_commit(getattr(args, "edgetam_external_path", None)),
+            "report_validation": dict(full_batched_validation),
+            "batch_memory_attention": bool(full_batched_validation.get("batch_memory_attention", False)),
+            "batch_mask_decoder": bool(full_batched_validation.get("batch_mask_decoder", False)),
+            "batch_memory_encoder": bool(full_batched_validation.get("batch_memory_encoder", False)),
+            "batched_state_scatter": bool(full_batched_validation.get("batched_state_scatter", False)),
+            "used_public_session_step_in_hot_path": bool(
+                full_batched_validation.get("used_public_session_step_in_hot_path", False)
+            ),
+            "partial_fallback_used": bool(full_batched_validation.get("partial_fallback_used", False)),
         },
         "fusion": {
             "mode": "semantic_layers",
@@ -2203,6 +2424,13 @@ class Demo21Runtime:
         self._latest_raw_fused: RawFusedPcdPacket | None = None
         self._latest_fused: FusedPcdPacket | None = None
         self._last_debug_s = 0.0
+        self._full_batched_edgetam_runtime: Any | None = None
+        self._full_batched_edgetam_frame_idx = 0
+        self._full_batched_edgetam_validation: dict[str, Any] | None = getattr(
+            args,
+            "_edgetam_batched_report_validation",
+            None,
+        )
         self._render_request: Callable[[], None] = lambda: None
         self._fatal_error: str | None = None
         self._fatal_error_lock = threading.Lock()
@@ -2410,8 +2638,21 @@ class Demo21Runtime:
         if (
             self.args.init_mode == "sam31-first-frame"
             and bool(getattr(self.args, "sam31_cache_init_model", False))
+            and not full_batched_edgetam_enabled(self.args)
         ):
             tasks["sam31_preload"] = self._preload_sam31_init_model
+        elif (
+            self.args.init_mode == "sam31-first-frame"
+            and bool(getattr(self.args, "sam31_cache_init_model", False))
+            and full_batched_edgetam_enabled(self.args)
+        ):
+            self._init_profile_update(
+                ("sam31", "parallel_preload_skipped"),
+                {
+                    "reason": "full_hf_batched_multisession_import_isolation",
+                    "cache_init_model": True,
+                },
+            )
         self._init_profile_update(
             ("parallel_init",),
             {
@@ -2503,10 +2744,27 @@ class Demo21Runtime:
         if self.args.edgetam_backend not in EDGETAM_BACKENDS:
             raise RuntimeError(f"Demo 2.1 unsupported --edgetam-backend {self.args.edgetam_backend}")
         if self.args.edgetam_backend == EDGETAM_BACKEND_HF_BATCHED_MULTISESSION:
-            raise RuntimeError(
-                "Demo 2.1 true hf_batched_multisession is not integrated; "
-                "use hf_batch_vision_seq_session for the validated batch-vision backend"
-            )
+            if not bool(getattr(self.args, "strict_full_batched_edgetam", False)):
+                raise RuntimeError("hf_batched_multisession requires --strict-full-batched-edgetam")
+            if not bool(getattr(self.args, "fail_if_edgetam_backend_fallback", False)):
+                raise RuntimeError("hf_batched_multisession requires --fail-if-edgetam-backend-fallback")
+            if not str(getattr(self.args, "edgetam_external_path", "") or ""):
+                raise RuntimeError("hf_batched_multisession requires --edgetam-external-path")
+            validation = attach_full_batched_report_validation(self.args) or {}
+            if self.args.track_mode != TRACK_MODE_OBJECT_ONLY:
+                raise RuntimeError("hf_batched_multisession V1 Demo 2.2 integration requires --track-mode object-only")
+            if self.args.depth_source != DEPTH_SOURCE_FFS:
+                raise RuntimeError("hf_batched_multisession Demo 2.2 integration requires local FFS depth")
+            if self.args.ffs_trt_batch_size != 3:
+                raise RuntimeError("hf_batched_multisession Demo 2.2 integration requires local FFS batch=3")
+            if self.args.compile_mode != COMPILE_MODE_REDUCE_OVERHEAD:
+                raise RuntimeError("hf_batched_multisession Demo 2.2 integration requires --compile-mode reduce-overhead")
+            if self.args.mask_postprocess != MASK_POSTPROCESS_CUDA_INLINE:
+                raise RuntimeError("hf_batched_multisession Demo 2.2 integration requires --mask-postprocess cuda-inline")
+            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_SINGLE_OWNER:
+                raise RuntimeError("hf_batched_multisession Demo 2.2 integration requires single-owner GPU pipeline")
+            if self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_SHARED:
+                raise RuntimeError("hf_batched_multisession Demo 2.2 integration requires shared EdgeTAM model topology")
         if self.args.edgetam_backend == EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION:
             setattr(self.args, "edgetam_batch_vision_encoder", True)
         if self.args.gpu_pipeline_mode not in GPU_PIPELINE_MODES:
@@ -3029,6 +3287,20 @@ class Demo21Runtime:
             "demo22_pass_threshold_fps": float(self.args.fusion_target_fps) * DEMO22_PASS_THRESHOLD_RATIO,
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
+            "depth_backend": (
+                "local FFS batch=3"
+                if self.args.depth_source == DEPTH_SOURCE_FFS and int(self.args.ffs_trt_batch_size) == 3
+                else self.args.depth_source
+            ),
+            "edgetam_backend": resolved_edgetam_backend(self.args),
+            "edgetam_external_path": str(getattr(self.args, "edgetam_external_path", "") or ""),
+            "edgetam_external_commit": external_git_commit(getattr(self.args, "edgetam_external_path", None)),
+            "edgetam_batched_report": str(getattr(self.args, "edgetam_batched_report", "") or ""),
+            "edgetam_precision_mode": str(
+                getattr(self.args, "edgetam_precision_mode", EDGETAM_PRECISION_MODE_ALL_BF16)
+            ),
+            "strict_full_batched_edgetam": bool(getattr(self.args, "strict_full_batched_edgetam", False)),
+            "edgetam_backend_fallback_used": False,
             "compile_mode": self.args.compile_mode,
             "dtype": self.args.dtype,
             "input_path": self.args.edgetam_input_path,
@@ -3062,6 +3334,45 @@ class Demo21Runtime:
             "warmup_exclude_s": warmup_s,
             "summary_full_run": self._profile_summary_for_records(records),
             "summary_after_warmup": self._profile_summary_for_records(after_warmup),
+            "full_batched_edgetam_contract": dict(
+                getattr(self.args, "_edgetam_batched_report_validation", None) or {}
+            ),
+            "batch_memory_attention": bool(
+                (getattr(self.args, "_edgetam_batched_report_validation", None) or {}).get(
+                    "batch_memory_attention",
+                    False,
+                )
+            ),
+            "batch_mask_decoder": bool(
+                (getattr(self.args, "_edgetam_batched_report_validation", None) or {}).get(
+                    "batch_mask_decoder",
+                    False,
+                )
+            ),
+            "batch_memory_encoder": bool(
+                (getattr(self.args, "_edgetam_batched_report_validation", None) or {}).get(
+                    "batch_memory_encoder",
+                    False,
+                )
+            ),
+            "batched_state_scatter": bool(
+                (getattr(self.args, "_edgetam_batched_report_validation", None) or {}).get(
+                    "batched_state_scatter",
+                    False,
+                )
+            ),
+            "used_public_session_step_in_hot_path": bool(
+                (getattr(self.args, "_edgetam_batched_report_validation", None) or {}).get(
+                    "used_public_session_step_in_hot_path",
+                    False,
+                )
+            ),
+            "partial_fallback_used": bool(
+                (getattr(self.args, "_edgetam_batched_report_validation", None) or {}).get(
+                    "partial_fallback_used",
+                    False,
+                )
+            ),
             "top_slowest_object_filter_groups": slow_filter_groups,
             "per_group": records,
         }
@@ -4135,6 +4446,21 @@ class Demo21Runtime:
 
     def _apply_edgetam_compile_mode(self, *, hf_stream: Any, torch_module: Any, model: Any) -> tuple[Any, dict[str, Any]]:
         compile_mode = str(self.args.compile_mode)
+        if full_batched_edgetam_enabled(self.args):
+            return model, {
+                "compile_mode": compile_mode,
+                "enabled": True,
+                "torch_compile_available": bool(hasattr(torch_module, "compile")),
+                "torch_compile_mode": compile_mode,
+                "fullgraph": False,
+                "dynamic": False,
+                "requested_targets": ["external_full_batched_memory_path"],
+                "applied_targets": ["external_full_batched_memory_path"],
+                "missing_targets": [],
+                "whole_model_compiled": False,
+                "external_runtime_compiles": True,
+                "wrap_ms": 0.0,
+            }
         if compile_mode == COMPILE_MODE_NONE:
             return model, {
                 "compile_mode": compile_mode,
@@ -4988,12 +5314,231 @@ class Demo21Runtime:
             for pos, camera_idx in enumerate(camera_ids)
         }
 
+    def _ensure_full_batched_edgetam_runtime(
+        self,
+        *,
+        states: dict[int, dict[str, Any]],
+        group: CaptureGroup,
+    ) -> Any:
+        if self._full_batched_edgetam_runtime is not None:
+            return self._full_batched_edgetam_runtime
+
+        camera_ids = [int(camera_idx) for camera_idx in self.args.camera_ids]
+        sessions = []
+        first_state = states[camera_ids[0]]
+        processor = first_state["processor"]
+        model = first_state["model"]
+        torch_module = first_state["torch_module"]
+        dtype = first_state["dtype"]
+        prompt_start_s = time.perf_counter()
+        for camera_idx in camera_ids:
+            state = states[camera_idx]
+            session = state["session"]
+            object_mask = state["object_mask"]
+            if session is None or object_mask is None:
+                raise RuntimeError(f"full batched EdgeTAM session for cam{camera_idx} is not initialized")
+            processor.add_inputs_to_inference_session(
+                inference_session=session,
+                frame_idx=0,
+                obj_ids=[OBJECT_ID],
+                input_masks=[np.asarray(object_mask, dtype=bool)],
+            )
+            sessions.append(session)
+        prompt_ms = _elapsed_ms(prompt_start_s, time.perf_counter())
+
+        runtime_cls = load_external_batched_runtime_class(self.args.edgetam_external_path)
+        runtime_start_s = time.perf_counter()
+        runtime = runtime_cls(
+            model,
+            processor,
+            backend=EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
+            batch_size=len(camera_ids),
+            object_count=1,
+            dtype=dtype,
+            device=self.args.device,
+            compile_mode=str(self.args.compile_mode),
+            graph_output_policy="ring_buffer",
+            strict_full_batched=True,
+            disallow_partial_backend_success=True,
+            precision_mode=str(self.args.edgetam_precision_mode),
+            compile_scope=DEFAULT_FULL_BATCHED_COMPILE_SCOPE,
+        )
+        runtime.init_from_reference_sessions(sessions)
+        runtime.prepare_compile(torch_module)
+        runtime_init_ms = _elapsed_ms(runtime_start_s, time.perf_counter())
+        self._full_batched_edgetam_runtime = runtime
+        self._full_batched_edgetam_frame_idx = 0
+        self._full_batched_edgetam_validation = getattr(self.args, "_edgetam_batched_report_validation", None) or {}
+        self._summary["edgetam_backend_fallback_used"] = False
+        self._init_profile_update(
+            ("edgetam", "full_batched_multisession"),
+            {
+                "external_path": str(self.args.edgetam_external_path),
+                "external_commit": external_git_commit(self.args.edgetam_external_path),
+                "report": str(self.args.edgetam_batched_report),
+                "backend": EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
+                "precision_mode": str(self.args.edgetam_precision_mode),
+                "compile_mode": str(self.args.compile_mode),
+                "compile_scope": DEFAULT_FULL_BATCHED_COMPILE_SCOPE,
+                "prompt_add_ms": float(prompt_ms),
+                "runtime_init_ms": float(runtime_init_ms),
+                "report_validation": dict(self._full_batched_edgetam_validation),
+            },
+        )
+        if self.args.debug:
+            print(
+                "[demo2.2-edgetam-full] "
+                f"runtime initialized backend={EDGETAM_BACKEND_HF_BATCHED_MULTISESSION} "
+                f"precision={self.args.edgetam_precision_mode} compile={self.args.compile_mode} "
+                f"prompt_ms={prompt_ms:.2f} runtime_init_ms={runtime_init_ms:.2f}",
+                flush=True,
+            )
+        return runtime
+
+    def _external_batched_mask_for_camera(
+        self,
+        result: Mapping[str, Any],
+        *,
+        camera_pos: int,
+        height: int,
+        width: int,
+    ) -> np.ndarray:
+        source = result.get("logits_b3") or result.get("masks_b3")
+        if source is None:
+            raise RuntimeError("external hf_batched_multisession result is missing logits_b3/masks_b3")
+        arr = np.asarray(source[int(camera_pos)])
+        if arr.ndim > 2:
+            arr = np.squeeze(arr)
+        if arr.ndim > 2:
+            arr = arr.reshape((-1, *arr.shape[-2:]))[-1]
+        if arr.ndim != 2:
+            raise RuntimeError(f"expected 2D external mask/logit for cam{camera_pos}, got shape {arr.shape}")
+        mask = arr > 0 if np.issubdtype(arr.dtype, np.floating) else arr.astype(bool)
+        if mask.shape != (int(height), int(width)):
+            from PIL import Image
+
+            mask = np.asarray(
+                Image.fromarray(mask.astype(np.uint8) * 255).resize(
+                    (int(width), int(height)),
+                    Image.Resampling.NEAREST,
+                )
+            ) > 0
+        return np.ascontiguousarray(mask.astype(bool))
+
+    def _run_gpu_owner_full_batched_edgetam_cycle(
+        self,
+        *,
+        states: dict[int, dict[str, Any]],
+        group: CaptureGroup,
+    ) -> tuple[dict[int, CameraMaskPacket] | None, float]:
+        cycle_start_s = time.perf_counter()
+        camera_ids = [int(camera_idx) for camera_idx in self.args.camera_ids]
+        initialized_before: dict[int, bool] = {}
+        for camera_idx in camera_ids:
+            state = states[camera_idx]
+            initialized_before[camera_idx] = bool(state["initialized"])
+            if not self._ensure_gpu_owner_edgetam_initialized(
+                state=state,
+                camera_idx=camera_idx,
+                frame=group.frames[camera_idx],
+            ):
+                return None, _elapsed_ms(cycle_start_s, time.perf_counter())
+
+        runtime = self._ensure_full_batched_edgetam_runtime(states=states, group=group)
+        frame_images = [_bgr_to_pil_rgb(group.frames[camera_idx].color_bgr) for camera_idx in camera_ids]
+        frame_idx = int(self._full_batched_edgetam_frame_idx)
+        self._full_batched_edgetam_frame_idx += 1
+        torch_module = states[camera_ids[0]]["torch_module"]
+        with torch_module.inference_mode():
+            with self.gpu_gate.acquire(stage="edgetam", camera_idx=-1, group_id=group.group_id) as gate_wait_ms:
+                result = runtime.step(frame_images, frame_idx)
+        if bool(result.get("partial")) or result.get("fallback_backend"):
+            if bool(getattr(self.args, "fail_if_edgetam_backend_fallback", False)):
+                raise RuntimeError(f"external hf_batched_multisession fell back: {result.get('fallback_backend')}")
+        contract = result.get("backend_contract") or {}
+        if contract and (
+            contract.get("contract_pass") is not True
+            or contract.get("used_public_session_step_in_hot_path")
+            or contract.get("partial_fallback_used")
+        ):
+            raise RuntimeError(f"external hf_batched_multisession contract failed at runtime: {contract}")
+
+        timings = dict(result.get("timings_ms") or {})
+        stage_wall_ms = float(timings.get("stage_wall_ms", _elapsed_ms(cycle_start_s, time.perf_counter())) or 0.0)
+        per_camera_model_ms = stage_wall_ms / float(max(1, len(camera_ids)))
+        packets: dict[int, CameraMaskPacket] = {}
+        for pos, camera_idx in enumerate(camera_ids):
+            frame = group.frames[camera_idx]
+            object_mask = self._external_batched_mask_for_camera(
+                result,
+                camera_pos=pos,
+                height=int(frame.color_bgr.shape[0]),
+                width=int(frame.color_bgr.shape[1]),
+            )
+            controller_mask = np.zeros_like(object_mask, dtype=bool)
+            packet = CameraMaskPacket(
+                group_id=frame.group_id,
+                camera_idx=frame.camera_idx,
+                color_bgr=frame.color_bgr,
+                controller_mask=controller_mask,
+                object_mask=object_mask,
+                model_ms=float(per_camera_model_ms),
+                cuda_event_model_ms=float(per_camera_model_ms),
+                mask_ms=float(per_camera_model_ms),
+                gpu_gate_wait_ms=float(gate_wait_ms),
+            )
+            packets[camera_idx] = packet
+            self.mask_slots[camera_idx].put(packet)
+            self.edge_stats[camera_idx].record()
+            self._profile_update(
+                group.group_id,
+                edgetam={
+                    f"cam{camera_idx}": {
+                        "gate_wait_ms": float(gate_wait_ms) / float(max(1, len(camera_ids))),
+                        "model_ms": float(per_camera_model_ms),
+                        "wall_model_ms": float(per_camera_model_ms),
+                        "cuda_event_model_ms": float(per_camera_model_ms),
+                        "preprocess_ms": 0.0,
+                        "prompt_ms": 0.0 if initialized_before[camera_idx] else float(timings.get("state_stack_ms", 0.0)),
+                        "postprocess_ms": float(timings.get("mask_postprocess_ms", 0.0)),
+                        "mask_resize_ms": 0.0,
+                        "mask_threshold_ms": 0.0,
+                        "mask_to_cpu_ms": 0.0,
+                        "mask_postprocess": str(self.args.mask_postprocess),
+                        "total_ms": float(per_camera_model_ms),
+                        "stream_mode": "external-full-batched",
+                        "batch_vision_encoder": True,
+                        "batch_vision_encoder_ms": float(timings.get("vision_encoder_ms", 0.0)),
+                        "frame_idx": int(frame_idx),
+                        "publish_s": self._profile_rel_s(),
+                    }
+                },
+            )
+        self._profile_update(
+            group.group_id,
+            edgetam={
+                "full_batched_multisession": {
+                    "backend": EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
+                    "precision_mode": str(self.args.edgetam_precision_mode),
+                    "compile_mode": str(self.args.compile_mode),
+                    "compile_scope": DEFAULT_FULL_BATCHED_COMPILE_SCOPE,
+                    "fallback_used": False,
+                    "backend_contract": contract,
+                    "timings_ms": timings,
+                    "publish_s": self._profile_rel_s(),
+                }
+            },
+        )
+        return packets, _elapsed_ms(cycle_start_s, time.perf_counter())
+
     def _run_gpu_owner_edgetam_cycle(
         self,
         *,
         states: dict[int, dict[str, Any]],
         group: CaptureGroup,
     ) -> tuple[dict[int, CameraMaskPacket] | None, float]:
+        if full_batched_edgetam_enabled(self.args):
+            return self._run_gpu_owner_full_batched_edgetam_cycle(states=states, group=group)
         cycle_start_s = time.perf_counter()
         packets: dict[int, CameraMaskPacket] = {}
         initialized_before: dict[int, bool] = {}
@@ -6129,7 +6674,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_EDGETAM_BACKEND,
         help=(
             "EdgeTAM runtime backend contract. hf_batch_vision_seq_session means batch=3 vision encoder "
-            "plus independent per-camera HF video sessions; hf_batched_multisession is reserved and rejected."
+            "plus independent per-camera HF video sessions; hf_batched_multisession uses the external "
+            "strict full-batched scheduler/report gate."
         ),
     )
     parser.add_argument(
@@ -6139,6 +6685,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Optional external EdgeTAM-HF-batched fork path recorded in the contract for provenance. "
             "The current QQTT runtime still executes the local HF batch-vision path."
         ),
+    )
+    parser.add_argument(
+        "--edgetam-batched-report",
+        default=None,
+        help="External EdgeTAM-HF-batched final report JSON required by hf_batched_multisession.",
+    )
+    parser.add_argument(
+        "--edgetam-precision-mode",
+        choices=EDGETAM_PRECISION_MODES,
+        default=EDGETAM_PRECISION_MODE_ALL_BF16,
+        help="Precision policy passed to the external full hf_batched_multisession runtime.",
+    )
+    parser.add_argument(
+        "--strict-full-batched-edgetam",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require the external full-batched EdgeTAM report and runtime contract to pass before running.",
+    )
+    parser.add_argument(
+        "--fail-if-edgetam-backend-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Abort if the EdgeTAM backend reports any partial or fallback execution.",
     )
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--compile-mode", choices=COMPILE_MODES, default=DEFAULT_COMPILE_MODE)
@@ -6311,6 +6880,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     args = apply_preset_defaults(args, explicit_options=_explicit_cli_options(argv))
+    attach_full_batched_report_validation(args)
     contract = build_contract(args)
     if args.dry_run:
         print(json.dumps(contract, indent=2, sort_keys=True))

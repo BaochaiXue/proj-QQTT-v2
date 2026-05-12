@@ -52,9 +52,13 @@ COMPILE_MODE_VISION_REDUCE_OVERHEAD = _legacy.COMPILE_MODE_VISION_REDUCE_OVERHEA
 COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS = _legacy.COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS
 COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD = _legacy.COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD
 COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS = _legacy.COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS
+COMPILE_MODE_REDUCE_OVERHEAD = _legacy.COMPILE_MODE_REDUCE_OVERHEAD
+COMPILE_MODE_MAX_AUTOTUNE_NO_CUDAGRAPHS = _legacy.COMPILE_MODE_MAX_AUTOTUNE_NO_CUDAGRAPHS
 MASK_POSTPROCESS_HF = _legacy.MASK_POSTPROCESS_HF
 MASK_POSTPROCESS_CUDA_INLINE = _legacy.MASK_POSTPROCESS_CUDA_INLINE
 MASK_POSTPROCESS_MODES = _legacy.MASK_POSTPROCESS_MODES
+EDGETAM_PRECISION_MODES = _legacy.EDGETAM_PRECISION_MODES
+EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32 = _legacy.EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32
 DEFAULT_DEMO22_DEPTH_MIN_M = _legacy.DEFAULT_DEMO22_DEPTH_MIN_M
 DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR = _legacy.DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
 DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR = _legacy.DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR
@@ -73,6 +77,11 @@ Demo22Runtime = _legacy.Demo21Runtime
 elapsed_ms = _legacy._elapsed_ms
 explicit_cli_options = _legacy._explicit_cli_options
 summarize_gpu_samples = _legacy.summarize_gpu_samples
+load_full_batched_edgetam_report = _legacy.load_full_batched_edgetam_report
+validate_full_batched_edgetam_report = _legacy.validate_full_batched_edgetam_report
+final_fps_from_demo22_profile = _legacy.final_fps_from_demo22_profile
+external_git_commit = _legacy.external_git_commit
+attach_full_batched_report_validation = _legacy.attach_full_batched_report_validation
 
 
 def parse_camera_ids(value: str) -> tuple[int, ...]:
@@ -104,6 +113,8 @@ __all__ = [
     "COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS",
     "COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD",
     "COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS",
+    "COMPILE_MODE_REDUCE_OVERHEAD",
+    "COMPILE_MODE_MAX_AUTOTUNE_NO_CUDAGRAPHS",
     "COMPILE_MODE_NONE",
     "DEFAULT_COMPILE_MODE",
     "DEFAULT_DEMO22_DEPTH_MIN_M",
@@ -118,6 +129,8 @@ __all__ = [
     "EDGETAM_MODEL_TOPOLOGY_REPLICATED",
     "EDGETAM_MODEL_TOPOLOGY_SHARED",
     "EDGETAM_STREAM_MODE_PER_CAMERA",
+    "EDGETAM_PRECISION_MODES",
+    "EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32",
     "EDGETAM_BACKEND_HF_BATCHED_MULTISESSION",
     "EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION",
     "EDGETAM_BACKEND_HF_SEQ_SESSION",
@@ -149,12 +162,17 @@ __all__ = [
     "TRACK_MODE_CONTROLLER_OBJECT",
     "TRACK_MODE_OBJECT_ONLY",
     "apply_preset_defaults",
+    "attach_full_batched_report_validation",
     "build_arg_parser",
     "build_contract",
     "elapsed_ms",
     "explicit_cli_options",
+    "external_git_commit",
+    "final_fps_from_demo22_profile",
+    "load_full_batched_edgetam_report",
     "main",
     "parse_camera_ids",
     "summarize_gpu_samples",
+    "validate_full_batched_edgetam_report",
     "time",
 ]
