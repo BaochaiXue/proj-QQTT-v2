@@ -49,6 +49,7 @@ from demo_v2.realtime_masked_edgetam_pcd import (  # noqa: E402
     extract_object_masks_from_hf_output,
     load_binary_mask,
     make_solid_colors,
+    object_tracking_enabled,
     release_sam31_runtime_resources,
     resolve_initial_masks,
 )
@@ -69,12 +70,28 @@ from demo_v2.realtime_single_camera_pointcloud import (  # noqa: E402
     validate_ffs_paths,
     warm_up_numba_ffs_align,
 )
+from demo_v2_2.render_fastpath import (  # noqa: E402
+    DEFAULT_RENDER_BACKEND,
+    DEFAULT_RENDER_COPY_MODE,
+    DEFAULT_RENDER_LAYER_MODE,
+    RENDER_BACKENDS,
+    RENDER_COPY_MODES,
+    RENDER_LAYER_MODES,
+    RENDER_LAYER_MODE_COMBINED,
+    CoalescedRenderPostGate,
+    LatestOnlyRenderBuffer,
+    RenderLayerCombiner,
+    Open3DSceneTensorLayer,
+    RenderMicroProfileRecord,
+    summarize_render_records,
+)
 
 
 TRACK_MODE_OBJECT_ONLY = "object-only"
+TRACK_MODE_CONTROLLER_ONLY = "controller-only"
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_MODE_NONE = "none"
-TRACK_MODES = (TRACK_MODE_OBJECT_ONLY, TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_NONE)
+TRACK_MODES = (TRACK_MODE_OBJECT_ONLY, TRACK_MODE_CONTROLLER_ONLY, TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_NONE)
 
 DEPTH_SOURCE_FFS = "ffs"
 DEPTH_SOURCE_FFS_REMOTE = "ffs_remote"
@@ -906,7 +923,7 @@ def semantic_layers_for_track_mode(
     if track_mode == TRACK_MODE_NONE:
         return ()
     layers: list[SemanticLayerSpec] = []
-    if track_mode == TRACK_MODE_CONTROLLER_OBJECT:
+    if controller_tracking_enabled(track_mode):
         layers.append(
             SemanticLayerSpec(
                 obj_id=CONTROLLER_ID,
@@ -914,17 +931,18 @@ def semantic_layers_for_track_mode(
                 default_postprocess=controller_postprocess,
             )
         )
-    layers.append(
-        SemanticLayerSpec(
-            obj_id=OBJECT_ID,
-            label=str(object_label),
-            default_postprocess=resolve_postprocess_mode(
-                object_label,
-                object_postprocess=object_postprocess,
-                controller_postprocess=controller_postprocess,
-            ),
+    if object_tracking_enabled(track_mode):
+        layers.append(
+            SemanticLayerSpec(
+                obj_id=OBJECT_ID,
+                label=str(object_label),
+                default_postprocess=resolve_postprocess_mode(
+                    object_label,
+                    object_postprocess=object_postprocess,
+                    controller_postprocess=controller_postprocess,
+                ),
+            )
         )
-    )
     return tuple(layers)
 
 
@@ -1796,18 +1814,31 @@ def resolve_initial_masks_for_camera(
 ) -> tuple[np.ndarray, np.ndarray]:
     expected_shape = tuple(frame.color_bgr.shape[:2])
     if args.init_mode == "saved-masks":
-        object_mask = _load_saved_mask_from_root(
-            args.object_init_mask_root,
-            camera_idx=frame.camera_idx,
-            expected_shape=expected_shape,
+        object_mask = (
+            _load_saved_mask_from_root(
+                args.object_init_mask_root,
+                camera_idx=frame.camera_idx,
+                expected_shape=expected_shape,
+            )
+            if object_tracking_enabled(args.track_mode)
+            else None
         )
-        if not controller_tracking_enabled(args.track_mode):
-            return np.zeros_like(object_mask, dtype=bool), object_mask
-        controller_mask = _load_saved_mask_from_root(
-            args.controller_init_mask_root,
-            camera_idx=frame.camera_idx,
-            expected_shape=expected_shape,
+        controller_mask = (
+            _load_saved_mask_from_root(
+                args.controller_init_mask_root,
+                camera_idx=frame.camera_idx,
+                expected_shape=expected_shape,
+            )
+            if controller_tracking_enabled(args.track_mode)
+            else None
         )
+        if object_mask is None and controller_mask is None:
+            empty = np.zeros(expected_shape, dtype=bool)
+            return empty, empty
+        if object_mask is None:
+            object_mask = np.zeros_like(controller_mask, dtype=bool)
+        if controller_mask is None:
+            controller_mask = np.zeros_like(object_mask, dtype=bool)
         return controller_mask, object_mask
     if args.init_mode == "sam31-first-frame":
         # SAM3.1 initialization is intentionally serialized across cameras to
@@ -1893,6 +1924,15 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "mask_postprocess": args.mask_postprocess,
         "depth_source": args.depth_source,
         "render_mode": args.render_mode,
+        "renderer": {
+            "backend": str(getattr(args, "render_backend", DEFAULT_RENDER_BACKEND)),
+            "layer_mode": str(getattr(args, "render_layer_mode", DEFAULT_RENDER_LAYER_MODE)),
+            "async_latest_only": bool(getattr(args, "render_async_latest_only", True)),
+            "copy_mode": str(getattr(args, "render_copy_mode", DEFAULT_RENDER_COPY_MODE)),
+            "micro_profile": bool(getattr(args, "render_micro_profile", False)),
+            "display_lod": "off",
+            "quality_loss_default": False,
+        },
         "fusion_target_fps": float(args.fusion_target_fps),
         "capture_group_target_fps": resolved_capture_group_target_fps(args),
         "fusion_timeout_ms": float(args.fusion_timeout_ms),
@@ -2011,7 +2051,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "one_streaming_session_per_camera": True,
             "input_path": args.edgetam_input_path,
             "mask_postprocess": args.mask_postprocess,
-            "multi_object_single_session_per_camera": controller_tracking_enabled(args.track_mode),
+            "multi_object_single_session_per_camera": len(active_object_ids(args)) > 1,
             "active_object_ids": active_object_ids(args),
             "serialize_first_compiled_forward": serialized_edgetam_first_compiled_forward_enabled(args),
             "prewarm_compile": bool(getattr(args, "edgetam_prewarm_compile", False)),
@@ -2073,7 +2113,8 @@ class Demo21Runtime:
             int(camera_idx): LatestSlot() for camera_idx in args.camera_ids
         }
         self.raw_fused_slot: LatestSlot[RawFusedPcdPacket] = LatestSlot()
-        self.render_slot: LatestSlot[FusedPcdPacket] = LatestSlot()
+        self.render_buffer: LatestOnlyRenderBuffer[FusedPcdPacket] = LatestOnlyRenderBuffer()
+        self.render_post_gate = CoalescedRenderPostGate()
         self.gpu_gate = GpuInferenceGate(
             mode=str(args.gpu_gate_mode),
             max_concurrent=int(args.gpu_gate_max_concurrent),
@@ -2600,15 +2641,16 @@ class Demo21Runtime:
         if self.args.depth_source == DEPTH_SOURCE_FFS:
             validate_ffs_paths(ffs_repo=Path(self.args.ffs_repo), model_dir=Path(self.args.ffs_trt_model_dir))
         if self.args.init_mode == "saved-masks":
-            if not self.args.object_init_mask_root:
-                raise RuntimeError("Demo 2.1 saved-masks mode requires --object-init-mask-root")
-            object_root = Path(self.args.object_init_mask_root)
-            if not object_root.is_dir():
-                raise FileNotFoundError(f"Demo 2.1 object init mask root does not exist: {object_root}")
+            if object_tracking_enabled(self.args.track_mode):
+                if not self.args.object_init_mask_root:
+                    raise RuntimeError("Demo 2.1 saved-masks object tracking requires --object-init-mask-root")
+                object_root = Path(self.args.object_init_mask_root)
+                if not object_root.is_dir():
+                    raise FileNotFoundError(f"Demo 2.1 object init mask root does not exist: {object_root}")
             if controller_tracking_enabled(self.args.track_mode):
                 if not self.args.controller_init_mask_root:
                     raise RuntimeError(
-                        "Demo 2.1 controller-object saved-masks mode requires --controller-init-mask-root"
+                        "Demo 2.1 saved-masks controller tracking requires --controller-init-mask-root"
                     )
                 controller_root = Path(self.args.controller_init_mask_root)
                 if not controller_root.is_dir():
@@ -2696,6 +2738,8 @@ class Demo21Runtime:
             "controller_points": None if latest is None else latest.controller_point_count,
             "raw_fused_pending_replacements": self.raw_fused_slot.dropped_count,
             "raw_fused_pending_replacements_total": self.raw_fused_slot.total_dropped_count,
+            "render_buffer": self.render_buffer.snapshot(),
+            "render_post_gate": self.render_post_gate.snapshot(),
             "gpu_gate_wait_ms_median": {
                 key: stats.median for key, stats in sorted(self.gpu_gate_wait_stats.items())
             },
@@ -2804,6 +2848,15 @@ class Demo21Runtime:
             "object_enhanced_pt_ms": ("fusion", "object_enhanced_pt_ms"),
             "controller_pt_filter_ms": ("fusion", "controller_pt_filter_ms"),
             "render_total_ms": ("render", "total_ms"),
+            "render_queue_wait_ms": ("render", "queue_wait_ms"),
+            "render_gpu_to_cpu_copy_ms": ("render", "gpu_to_cpu_copy_ms"),
+            "render_combine_ms": ("render", "combine_ms"),
+            "render_cpu_format_ms": ("render", "cpu_format_ms"),
+            "render_open3d_points_update_ms": ("render", "open3d_points_update_ms"),
+            "render_open3d_colors_update_ms": ("render", "open3d_colors_update_ms"),
+            "render_open3d_update_geometry_ms": ("render", "update_geometry_ms"),
+            "render_poll_events_ms": ("render", "poll_events_ms"),
+            "render_update_renderer_ms": ("render", "update_renderer_ms"),
             "open3d_object_update_geometry_ms": ("render", "object_update_geometry_ms"),
             "open3d_controller_update_geometry_ms": ("render", "controller_update_geometry_ms"),
         }
@@ -2878,6 +2931,13 @@ class Demo21Runtime:
             for path in paths:
                 values.extend(_series_for_path(records, path))
             summary["metrics"][name] = _profile_stats(values)
+        render_micro_records = [
+            record["render"]["micro_profile"]
+            for record in rendered
+            if isinstance(record.get("render"), dict) and isinstance(record["render"].get("micro_profile"), dict)
+        ]
+        summary["render_micro_profile"] = summarize_render_records(render_micro_records)
+        summary["render_backpressure_count"] = int(summary["render_micro_profile"].get("render_backpressure_count", 0))
         if summary["fusion_fps"] < target_fps:
             summary["bottleneck_class"] = "upstream_supply"
         elif summary["render_fps"] < target_fps:
@@ -2929,6 +2989,9 @@ class Demo21Runtime:
             "gpu_pipeline": contract["gpu_pipeline"],
             "gpu_sampling": gpu_sampling,
             "filter_scheduler": contract["filter_scheduler"],
+            "renderer": contract["renderer"],
+            "render_buffer": self.render_buffer.snapshot(),
+            "render_post_gate": self.render_post_gate.snapshot(),
             "gpu_gate_max_concurrent": int(self.args.gpu_gate_max_concurrent),
             "object_filter": self.args.object_postprocess,
             "controller_filter": self.args.controller_postprocess,
@@ -2991,6 +3054,9 @@ class Demo21Runtime:
             f"- dtype: `{payload.get('dtype', 'unknown')}`",
             f"- EdgeTAM input path: `{payload.get('input_path', 'pil')}`",
             f"- mask postprocess: `{payload.get('mask_postprocess', 'hf')}`",
+            f"- render backend: `{payload.get('renderer', {}).get('backend', 'legacy-inplace')}`",
+            f"- render latest-only: `{payload.get('renderer', {}).get('async_latest_only', True)}`",
+            f"- render copy mode: `{payload.get('renderer', {}).get('copy_mode', 'sync-cpu')}`",
             f"- render FPS after warmup: `{warm.get('render_fps', 0.0):.2f}`",
             f"- raw fusion FPS after warmup: `{warm.get('raw_fusion_fps', 0.0):.2f}`",
             f"- filter output FPS after warmup: `{warm.get('filter_output_fps', 0.0):.2f}`",
@@ -3135,6 +3201,15 @@ class Demo21Runtime:
             "object_enhanced_pt_ms",
             "controller_pt_filter_ms",
             "render_total_ms",
+            "render_queue_wait_ms",
+            "render_gpu_to_cpu_copy_ms",
+            "render_combine_ms",
+            "render_cpu_format_ms",
+            "render_open3d_points_update_ms",
+            "render_open3d_colors_update_ms",
+            "render_open3d_update_geometry_ms",
+            "render_poll_events_ms",
+            "render_update_renderer_ms",
             "open3d_object_update_geometry_ms",
             "open3d_controller_update_geometry_ms",
         ):
@@ -4151,8 +4226,9 @@ class Demo21Runtime:
             controller_mask[cy0:cy1, cx0:cx1] = True
             obj_ids.append(CONTROLLER_ID)
             masks.append(controller_mask)
-        obj_ids.append(OBJECT_ID)
-        masks.append(object_mask)
+        if object_tracking_enabled(self.args.track_mode):
+            obj_ids.append(OBJECT_ID)
+            masks.append(object_mask)
         return obj_ids, masks
 
     def _prewarm_edgetam_compile(
@@ -4380,8 +4456,9 @@ class Demo21Runtime:
                         if controller_tracking_enabled(self.args.track_mode):
                             prompt_obj_ids.append(CONTROLLER_ID)
                             prompt_masks.append(np.asarray(initial_controller_mask, dtype=bool))
-                        prompt_obj_ids.append(OBJECT_ID)
-                        prompt_masks.append(np.asarray(initial_object_mask, dtype=bool))
+                        if object_tracking_enabled(self.args.track_mode):
+                            prompt_obj_ids.append(OBJECT_ID)
+                            prompt_masks.append(np.asarray(initial_object_mask, dtype=bool))
                         prompt_frame_idx = frame_idx if frame_idx >= 0 else 0
                         with torch_nvtx_range(torch_module, nvtx_enabled, f"edgetam_prompt_cam{int(frame.camera_idx)}"):
                             _, prompt_ms, _, _ = _time_runtime_ms(
@@ -4460,10 +4537,13 @@ class Demo21Runtime:
         missing = [obj_id for obj_id in active_object_ids(self.args) if obj_id not in masks_by_id]
         if missing:
             raise RuntimeError(f"HF output missing tracked object ids for cam{frame.camera_idx}: {missing}")
-        object_mask = masks_by_id[OBJECT_ID]
+        reference_mask = next(iter(masks_by_id.values()))
+        object_mask = masks_by_id.get(OBJECT_ID)
+        if object_mask is None:
+            object_mask = np.zeros_like(reference_mask, dtype=bool)
         controller_mask = masks_by_id.get(CONTROLLER_ID)
         if controller_mask is None:
-            controller_mask = np.zeros_like(object_mask, dtype=bool)
+            controller_mask = np.zeros_like(reference_mask, dtype=bool)
         total_ms = _elapsed_ms(frame_started_s, time.perf_counter())
         if add_prompt:
             cam_key = f"cam{int(frame.camera_idx)}"
@@ -5261,12 +5341,10 @@ class Demo21Runtime:
                 if not self.stop_event.is_set():
                     print(f"[WARN] Demo 2.1 fusion group {depth_group.group_id} failed: {type(exc).__name__}: {exc}", flush=True)
                 continue
-            self.render_slot.put(packet)
             self._latest_fused = packet
             self.fusion_stats.record()
             self._summary["fusion_complete_groups"] = int(self._summary.get("fusion_complete_groups", 0)) + 1
-            if packet.group_id % int(self.args.render_every_n) == 0:
-                self._render_request()
+            self._publish_render_packet(packet)
             if incomplete:
                 self._summary["dropped_incomplete_fusion_groups"] = incomplete
 
@@ -5317,12 +5395,10 @@ class Demo21Runtime:
                 if not self.stop_event.is_set():
                     print(f"[WARN] Demo 2.1 single-owner fusion group {depth_group.group_id} failed: {type(exc).__name__}: {exc}", flush=True)
                 continue
-            self.render_slot.put(packet)
             self._latest_fused = packet
             self.fusion_stats.record()
             self._summary["fusion_complete_groups"] = int(self._summary.get("fusion_complete_groups", 0)) + 1
-            if packet.group_id % int(self.args.render_every_n) == 0:
-                self._render_request()
+            self._publish_render_packet(packet)
 
     def _build_raw_fused_packet(
         self,
@@ -5357,19 +5433,23 @@ class Demo21Runtime:
             ray_x, ray_y = ray_cache[int(camera_idx)]
             depth_m = depth.depth_m
             object_build_start_s = time.perf_counter()
-            object_pts_cam, object_cols, _ = backproject_masked_rgbd_profiled(
-                color_bgr=mask.color_bgr,
-                depth_m=depth_m,
-                mask=mask.object_mask,
-                ray_x=ray_x,
-                ray_y=ray_y,
-                depth_min_m=float(self.args.depth_min_m),
-                depth_max_m=float(self.args.depth_max_m),
-                max_points=int(self.args.pcd_max_points_per_camera),
-                color_mode=str(self.args.pcd_color_mode),
-                class_rgb=tuple(self.args.object_color),
-                rng=rng,
-            )
+            if object_tracking_enabled(self.args.track_mode):
+                object_pts_cam, object_cols, _ = backproject_masked_rgbd_profiled(
+                    color_bgr=mask.color_bgr,
+                    depth_m=depth_m,
+                    mask=mask.object_mask,
+                    ray_x=ray_x,
+                    ray_y=ray_y,
+                    depth_min_m=float(self.args.depth_min_m),
+                    depth_max_m=float(self.args.depth_max_m),
+                    max_points=int(self.args.pcd_max_points_per_camera),
+                    color_mode=str(self.args.pcd_color_mode),
+                    class_rgb=tuple(self.args.object_color),
+                    rng=rng,
+                )
+            else:
+                object_pts_cam = np.empty((0, 3), dtype=np.float32)
+                object_cols = np.empty((0, 3), dtype=np.uint8)
             build_object_raw_ms += _elapsed_ms(object_build_start_s, time.perf_counter())
             object_clouds.append(
                 CameraLayerCloud(
@@ -5560,6 +5640,12 @@ class Demo21Runtime:
         self.raw_fusion_stats.record(raw.created_perf_s)
         self._summary["raw_fusion_groups"] = int(self._summary.get("raw_fusion_groups", 0)) + 1
 
+    def _publish_render_packet(self, packet: FusedPcdPacket) -> None:
+        if packet.group_id % int(self.args.render_every_n) != 0:
+            return
+        self.render_buffer.publish(packet)
+        self._render_request()
+
     def _async_filter_worker(self) -> None:
         last_raw_group = -1
         while not self.stop_event.is_set():
@@ -5575,14 +5661,12 @@ class Demo21Runtime:
                     print(f"[WARN] Demo 2.1 async filter group {raw.group_id} failed: {type(exc).__name__}: {exc}", flush=True)
                 self._profile_mark_drop(raw.group_id, "async_filter_failed")
                 continue
-            self.render_slot.put(packet)
             self._latest_fused = packet
             self.filter_output_stats.record(packet.created_perf_s)
             self.fusion_stats.record(packet.created_perf_s)
             self._summary["filter_output_groups"] = int(self._summary.get("filter_output_groups", 0)) + 1
             self._summary["fusion_complete_groups"] = int(self._summary.get("fusion_complete_groups", 0)) + 1
-            if packet.group_id % int(self.args.render_every_n) == 0:
-                self._render_request()
+            self._publish_render_packet(packet)
 
     def _build_fused_packet(
         self,
@@ -5617,19 +5701,23 @@ class Demo21Runtime:
             ray_x, ray_y = ray_cache[int(camera_idx)]
             depth_m = depth.depth_m
             object_build_start_s = time.perf_counter()
-            object_pts_cam, object_cols, _ = backproject_masked_rgbd_profiled(
-                color_bgr=mask.color_bgr,
-                depth_m=depth_m,
-                mask=mask.object_mask,
-                ray_x=ray_x,
-                ray_y=ray_y,
-                depth_min_m=float(self.args.depth_min_m),
-                depth_max_m=float(self.args.depth_max_m),
-                max_points=int(self.args.pcd_max_points_per_camera),
-                color_mode=str(self.args.pcd_color_mode),
-                class_rgb=tuple(self.args.object_color),
-                rng=rng,
-            )
+            if object_tracking_enabled(self.args.track_mode):
+                object_pts_cam, object_cols, _ = backproject_masked_rgbd_profiled(
+                    color_bgr=mask.color_bgr,
+                    depth_m=depth_m,
+                    mask=mask.object_mask,
+                    ray_x=ray_x,
+                    ray_y=ray_y,
+                    depth_min_m=float(self.args.depth_min_m),
+                    depth_max_m=float(self.args.depth_max_m),
+                    max_points=int(self.args.pcd_max_points_per_camera),
+                    color_mode=str(self.args.pcd_color_mode),
+                    class_rgb=tuple(self.args.object_color),
+                    rng=rng,
+                )
+            else:
+                object_pts_cam = np.empty((0, 3), dtype=np.float32)
+                object_cols = np.empty((0, 3), dtype=np.uint8)
             build_object_raw_ms += _elapsed_ms(object_build_start_s, time.perf_counter())
             object_clouds.append(
                 CameraLayerCloud(
@@ -5843,56 +5931,37 @@ class Demo21Runtime:
         material.shader = "defaultUnlit"
         material.point_size = float(self.args.point_size)
 
-        class GeometryState:
-            def __init__(self, name: str) -> None:
-                self.name = name
-                self.pcd = o3d.t.geometry.PointCloud(device)
-                self.color_buffer = ColorFloat32Buffer()
-                self.refs: dict[str, np.ndarray | None] = {"points": None, "colors": None}
-                self.added = False
-                self.capacity = 0
-
-            def update(self, points_xyz_m: np.ndarray, colors_rgb_u8: np.ndarray) -> tuple[float, float]:
-                convert_start_s = time.perf_counter()
-                points = ensure_float32_c_contiguous(points_xyz_m)
-                colors = self.color_buffer.convert(colors_rgb_u8)
-                self.refs["points"] = points
-                self.refs["colors"] = colors
-                self.pcd.point.positions = o3c.Tensor.from_numpy(points)
-                self.pcd.point.colors = o3c.Tensor.from_numpy(colors)
-                convert_ms = _elapsed_ms(convert_start_s, time.perf_counter())
-                update_start_s = time.perf_counter()
-                if points.shape[0] == 0:
-                    if self.added:
-                        try:
-                            scene_widget.scene.remove_geometry(self.name)
-                        except Exception:
-                            pass
-                    self.added = False
-                    self.capacity = 0
-                    return convert_ms, _elapsed_ms(update_start_s, time.perf_counter())
-                if pointcloud_update_requires_readd(
-                    geometry_added=self.added,
-                    current_capacity=self.capacity,
-                    point_count=int(points.shape[0]),
-                ):
-                    if self.added:
-                        try:
-                            scene_widget.scene.remove_geometry(self.name)
-                        except Exception:
-                            pass
-                    scene_widget.scene.add_geometry(self.name, self.pcd, material)
-                    self.added = True
-                    self.capacity = int(points.shape[0])
-                else:
-                    flags = rendering.Scene.UPDATE_POINTS_FLAG | rendering.Scene.UPDATE_COLORS_FLAG
-                    scene_widget.scene.scene.update_geometry(self.name, self.pcd, flags)
-                    self.capacity = max(self.capacity, int(points.shape[0]))
-                return convert_ms, _elapsed_ms(update_start_s, time.perf_counter())
-
-        object_state = GeometryState("demo2_1_object_fused")
-        controller_state = GeometryState("demo2_1_controller_fused")
-        last_render_group = {"value": -1}
+        combined_state = Open3DSceneTensorLayer(
+            name="demo2_1_combined_fused",
+            o3d_module=o3d,
+            o3c_module=o3c,
+            rendering_module=rendering,
+            scene=scene_widget.scene,
+            material=material,
+            device=device,
+            backend=str(self.args.render_backend),
+        )
+        object_state = Open3DSceneTensorLayer(
+            name="demo2_1_object_fused",
+            o3d_module=o3d,
+            o3c_module=o3c,
+            rendering_module=rendering,
+            scene=scene_widget.scene,
+            material=material,
+            device=device,
+            backend=str(self.args.render_backend),
+        )
+        controller_state = Open3DSceneTensorLayer(
+            name="demo2_1_controller_fused",
+            o3d_module=o3d,
+            o3c_module=o3c,
+            rendering_module=rendering,
+            scene=scene_widget.scene,
+            material=material,
+            device=device,
+            backend=str(self.args.render_backend),
+        )
+        render_combiner = RenderLayerCombiner()
         camera_ready = {"value": False}
 
         def reset_camera(packet: FusedPcdPacket) -> None:
@@ -5907,65 +5976,154 @@ class Demo21Runtime:
 
         def render_latest() -> None:
             render_started_s = time.perf_counter()
-            packet = self.render_slot.get_latest_after(last_render_group["value"])
-            if packet is None:
-                return
-            last_render_group["value"] = packet.group_id
-            wait_packet_ms = _elapsed_ms(packet.created_perf_s, render_started_s)
-            object_convert_ms, object_update_ms = object_state.update(packet.object_points_m, packet.object_colors_rgb)
-            controller_convert_ms, controller_update_ms = controller_state.update(packet.controller_points_m, packet.controller_colors_rgb)
-            reset_camera_ms = 0.0
-            if not camera_ready["value"] and (packet.object_point_count + packet.controller_point_count) > 0:
-                reset_start_s = time.perf_counter()
-                reset_camera(packet)
-                reset_camera_ms = _elapsed_ms(reset_start_s, time.perf_counter())
-                camera_ready["value"] = True
-            now = time.perf_counter()
-            self.render_stats.record_render(render_time_s=now, latency_ms=_elapsed_ms(packet.created_perf_s, now))
-            hud_label.text = (
-                f"Demo 2.1 fused PCD | group={packet.group_id} | "
-                f"object={packet.object_point_count} pts | controller={packet.controller_point_count} pts | "
-                f"skew={packet.capture_temporal_skew_ms:.1f} ms | "
-                f"fusion={packet.fusion_ms:.1f} ms | filter={packet.filter_ms:.1f} ms | "
-                f"render_fps={self.render_stats.render_fps:.1f}"
-            )
-            if self.args.debug:
-                self._print_debug()
-            post_redraw_ms = 0.0
-            if hasattr(window, "post_redraw"):
-                try:
-                    post_redraw_start_s = time.perf_counter()
-                    window.post_redraw()
-                    post_redraw_ms = _elapsed_ms(post_redraw_start_s, time.perf_counter())
-                except Exception:
-                    pass
-            self._profile_update(
-                packet.group_id,
-                render={
-                    "wait_packet_ms": float(wait_packet_ms),
-                    "set_object_points_ms": float(object_convert_ms),
-                    "set_object_colors_ms": 0.0,
-                    "set_controller_points_ms": float(controller_convert_ms),
-                    "set_controller_colors_ms": 0.0,
-                    "object_update_geometry_ms": float(object_update_ms),
-                    "controller_update_geometry_ms": float(controller_update_ms),
-                    "update_geometry_ms": float(object_update_ms + controller_update_ms),
-                    "poll_events_ms": 0.0,
-                    "update_renderer_ms": float(post_redraw_ms),
-                    "reset_camera_ms": float(reset_camera_ms),
-                    "total_ms": float(_elapsed_ms(render_started_s, time.perf_counter())),
-                    "render_s": self._profile_rel_s(),
-                },
-            )
-            self._init_profile_set_once(("first_render_s",), self._profile_rel_s())
-            self._init_profile_set_once(("first_render_group_id",), int(packet.group_id))
+            try:
+                packet = self.render_buffer.take_latest()
+                if packet is None:
+                    return
+                wait_packet_ms = _elapsed_ms(packet.created_perf_s, render_started_s)
+                combine_ms = 0.0
+                if str(getattr(self.args, "render_layer_mode", DEFAULT_RENDER_LAYER_MODE)) == RENDER_LAYER_MODE_COMBINED:
+                    combined_points, combined_colors, combine_ms = render_combiner.combine(
+                        (
+                            (packet.object_points_m, packet.object_colors_rgb),
+                            (packet.controller_points_m, packet.controller_colors_rgb),
+                        )
+                    )
+                    combined_update = combined_state.update(combined_points, combined_colors)
+                    object_update = controller_update = combined_update
+                    object_update_geometry_ms = 0.0
+                    controller_update_geometry_ms = 0.0
+                    points_update_ms = combined_update.open3d_points_update_ms
+                    colors_update_ms = combined_update.open3d_colors_update_ms
+                    update_geometry_ms = combined_update.open3d_update_geometry_ms
+                    cpu_format_ms = combine_ms + combined_update.cpu_format_ms
+                    geometry_recreated = bool(combined_update.geometry_recreated)
+                    tensor_rebound = bool(combined_update.tensor_rebound)
+                    set_object_points_ms = 0.0
+                    set_object_colors_ms = 0.0
+                    set_controller_points_ms = 0.0
+                    set_controller_colors_ms = 0.0
+                    object_cpu_format_ms = 0.0
+                    controller_cpu_format_ms = 0.0
+                else:
+                    object_update = object_state.update(packet.object_points_m, packet.object_colors_rgb)
+                    controller_update = controller_state.update(packet.controller_points_m, packet.controller_colors_rgb)
+                    object_update_geometry_ms = object_update.open3d_update_geometry_ms
+                    controller_update_geometry_ms = controller_update.open3d_update_geometry_ms
+                    points_update_ms = object_update.open3d_points_update_ms + controller_update.open3d_points_update_ms
+                    colors_update_ms = object_update.open3d_colors_update_ms + controller_update.open3d_colors_update_ms
+                    update_geometry_ms = object_update.open3d_update_geometry_ms + controller_update.open3d_update_geometry_ms
+                    cpu_format_ms = object_update.cpu_format_ms + controller_update.cpu_format_ms
+                    geometry_recreated = bool(object_update.geometry_recreated or controller_update.geometry_recreated)
+                    tensor_rebound = bool(object_update.tensor_rebound or controller_update.tensor_rebound)
+                    set_object_points_ms = object_update.open3d_points_update_ms
+                    set_object_colors_ms = object_update.open3d_colors_update_ms
+                    set_controller_points_ms = controller_update.open3d_points_update_ms
+                    set_controller_colors_ms = controller_update.open3d_colors_update_ms
+                    object_cpu_format_ms = object_update.cpu_format_ms
+                    controller_cpu_format_ms = controller_update.cpu_format_ms
+                reset_camera_ms = 0.0
+                if not camera_ready["value"] and (packet.object_point_count + packet.controller_point_count) > 0:
+                    reset_start_s = time.perf_counter()
+                    reset_camera(packet)
+                    reset_camera_ms = _elapsed_ms(reset_start_s, time.perf_counter())
+                    camera_ready["value"] = True
+                now = time.perf_counter()
+                self.render_stats.record_render(render_time_s=now, latency_ms=_elapsed_ms(packet.created_perf_s, now))
+                hud_label.text = (
+                    f"Demo 2.1 fused PCD | group={packet.group_id} | "
+                    f"object={packet.object_point_count} pts | controller={packet.controller_point_count} pts | "
+                    f"skew={packet.capture_temporal_skew_ms:.1f} ms | "
+                    f"fusion={packet.fusion_ms:.1f} ms | filter={packet.filter_ms:.1f} ms | "
+                    f"render_fps={self.render_stats.render_fps:.1f}"
+                )
+                if self.args.debug:
+                    self._print_debug()
+                post_redraw_ms = 0.0
+                if hasattr(window, "post_redraw"):
+                    try:
+                        post_redraw_start_s = time.perf_counter()
+                        window.post_redraw()
+                        post_redraw_ms = _elapsed_ms(post_redraw_start_s, time.perf_counter())
+                    except Exception:
+                        pass
+                total_ms = _elapsed_ms(render_started_s, time.perf_counter())
+                points_count = packet.object_point_count + packet.controller_point_count
+                colors_count = int(packet.object_colors_rgb.shape[0] + packet.controller_colors_rgb.shape[0])
+                render_profile = RenderMicroProfileRecord(
+                    render_packet_id=int(packet.group_id),
+                    points_count=int(points_count),
+                    colors_count=int(colors_count),
+                    queue_wait_ms=float(wait_packet_ms),
+                    gpu_to_cpu_copy_ms=0.0,
+                    cpu_format_ms=float(cpu_format_ms),
+                    open3d_points_update_ms=float(points_update_ms),
+                    open3d_colors_update_ms=float(colors_update_ms),
+                    open3d_update_geometry_ms=float(update_geometry_ms),
+                    open3d_poll_events_ms=0.0,
+                    open3d_update_renderer_ms=float(post_redraw_ms),
+                    render_total_ms=float(total_ms),
+                    backpressure=False,
+                    backend=str(self.args.render_backend),
+                    backend_effective=str(self.args.render_backend),
+                    geometry_recreated=geometry_recreated,
+                    tensor_rebound=tensor_rebound,
+                    extra={
+                        "render_layer_mode": str(getattr(self.args, "render_layer_mode", DEFAULT_RENDER_LAYER_MODE)),
+                        "object_points_count": int(packet.object_point_count),
+                        "controller_points_count": int(packet.controller_point_count),
+                        "combine_ms": float(combine_ms),
+                        "object_cpu_format_ms": float(object_cpu_format_ms),
+                        "controller_cpu_format_ms": float(controller_cpu_format_ms),
+                        "object_update_geometry_ms": float(object_update_geometry_ms),
+                        "controller_update_geometry_ms": float(controller_update_geometry_ms),
+                        "render_buffer": self.render_buffer.snapshot(),
+                        "render_post_gate": self.render_post_gate.snapshot(),
+                    },
+                ).to_dict()
+                self._profile_update(
+                    packet.group_id,
+                    render={
+                        "wait_packet_ms": float(wait_packet_ms),
+                        "queue_wait_ms": float(wait_packet_ms),
+                        "gpu_to_cpu_copy_ms": 0.0,
+                        "cpu_format_ms": float(cpu_format_ms),
+                        "combine_ms": float(combine_ms),
+                        "set_object_points_ms": float(set_object_points_ms),
+                        "set_object_colors_ms": float(set_object_colors_ms),
+                        "set_controller_points_ms": float(set_controller_points_ms),
+                        "set_controller_colors_ms": float(set_controller_colors_ms),
+                        "object_update_geometry_ms": float(object_update_geometry_ms),
+                        "controller_update_geometry_ms": float(controller_update_geometry_ms),
+                        "open3d_points_update_ms": float(points_update_ms),
+                        "open3d_colors_update_ms": float(colors_update_ms),
+                        "update_geometry_ms": float(update_geometry_ms),
+                        "poll_events_ms": 0.0,
+                        "update_renderer_ms": float(post_redraw_ms),
+                        "reset_camera_ms": float(reset_camera_ms),
+                        "total_ms": float(total_ms),
+                        "render_s": self._profile_rel_s(),
+                        "micro_profile": render_profile,
+                    },
+                )
+                self._init_profile_set_once(("first_render_s",), self._profile_rel_s())
+                self._init_profile_set_once(("first_render_group_id",), int(packet.group_id))
+            finally:
+                self.render_post_gate.mark_done()
+                if not self.stop_event.is_set() and self.render_buffer.snapshot()["pending"]:
+                    request_render()
 
         def request_render() -> None:
             if self.stop_event.is_set():
                 return
             try:
+                if bool(getattr(self.args, "render_async_latest_only", True)) and not self.render_post_gate.try_mark_pending():
+                    return
+                if not bool(getattr(self.args, "render_async_latest_only", True)):
+                    self.render_post_gate.try_mark_pending()
                 app.post_to_main_thread(window, render_latest)
             except Exception:
+                self.render_post_gate.mark_done()
                 pass
 
         self._render_request = request_render
@@ -6146,6 +6304,42 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--object-color", nargs=3, type=int, default=list(OBJECT_COLOR_RGB))
     parser.add_argument("--controller-color", nargs=3, type=int, default=list(CONTROLLER_COLOR_RGB))
     parser.add_argument("--render-every-n", type=int, default=1)
+    parser.add_argument(
+        "--render-backend",
+        choices=RENDER_BACKENDS,
+        default=DEFAULT_RENDER_BACKEND,
+        help=(
+            "Pointcloud renderer path. legacy-inplace keeps Open3D geometry alive and updates the latest packet; "
+            "tensor-o3d-dlpack is experimental and falls back to the tensor scene path when packets are CPU arrays."
+        ),
+    )
+    parser.add_argument(
+        "--render-layer-mode",
+        choices=RENDER_LAYER_MODES,
+        default=DEFAULT_RENDER_LAYER_MODE,
+        help=(
+            "Display object/controller as one combined point cloud or separate Open3D geometries. "
+            "Combined preserves points/colors and halves Open3D geometry update calls for the formal object+controller demo."
+        ),
+    )
+    parser.add_argument(
+        "--render-async-latest-only",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use a latest-only render buffer and coalesced GUI posts so rendering cannot queue stale frames.",
+    )
+    parser.add_argument(
+        "--render-copy-mode",
+        choices=RENDER_COPY_MODES,
+        default=DEFAULT_RENDER_COPY_MODE,
+        help="Render copy policy. Current Demo 2.2 fused PCD packets are CPU arrays, so this is recorded for profile comparison.",
+    )
+    parser.add_argument(
+        "--render-micro-profile",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Emit render copy/update/post-redraw timing breakdown in profile records.",
+    )
     parser.add_argument("--point-size", type=float, default=2.0)
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--show-tracking-overlay", action="store_true")

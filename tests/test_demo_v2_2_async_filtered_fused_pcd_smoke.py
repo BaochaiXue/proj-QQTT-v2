@@ -61,6 +61,10 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--gpu-sampling", help_text)
         self.assertIn("--gpu-sampling-interval-s", help_text)
         self.assertIn("--min-depth-m", help_text)
+        self.assertIn("--render-backend", help_text)
+        self.assertIn("--render-layer-mode", help_text)
+        self.assertIn("--render-every-n", help_text)
+        self.assertIn("--render-copy-mode", help_text)
         self.assertIn("--experimental-edgetam-batch-vision", help_text)
         self.assertIn("--advanced-help", help_text)
         self.assertNotIn("--fusion-target-fps", help_text)
@@ -100,6 +104,15 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
                 "nvml",
                 "--ffs-batch-size",
                 "1",
+                "--render-backend",
+                demo.DEFAULT_RENDER_BACKEND,
+                "--render-layer-mode",
+                demo.DEFAULT_RENDER_LAYER_MODE,
+                "--render-copy-mode",
+                demo.DEFAULT_RENDER_COPY_MODE,
+                "--render-every-n",
+                "1",
+                "--render-micro-profile",
             ]
         )
 
@@ -119,6 +132,23 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("nvml", argv)
         self.assertIn("--ffs-trt-batch-size", argv)
         self.assertIn("1", argv)
+        self.assertIn("--render-backend", argv)
+        self.assertIn(demo.DEFAULT_RENDER_BACKEND, argv)
+        self.assertIn("--render-layer-mode", argv)
+        self.assertIn(demo.DEFAULT_RENDER_LAYER_MODE, argv)
+        self.assertIn("--render-copy-mode", argv)
+        self.assertIn(demo.DEFAULT_RENDER_COPY_MODE, argv)
+        self.assertIn("--render-every-n", argv)
+        self.assertIn("--render-micro-profile", argv)
+
+    def test_demo22_public_cli_controller_only_alias_translates_to_runtime_flag(self) -> None:
+        argv = demo22._to_demo22_argv(["--dry-run", "--controller-only", "--controller-prompt", "towel"])
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
+        self.assertIn("--track-mode", argv)
+        self.assertIn(demo.TRACK_MODE_CONTROLLER_ONLY, argv)
+        self.assertIn("--controller-prompt", argv)
+        self.assertIn("towel", argv)
 
     def test_demo22_gpu_sampling_rejects_nvidia_smi_backend(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
@@ -174,7 +204,37 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["filter_scheduler"]["mode"], "async")
         self.assertTrue(contract["filter_scheduler"]["render_filtered_only"])
         self.assertFalse(contract["filter_scheduler"]["render_accepts_raw_fused_pcd"])
+        self.assertEqual(contract["renderer"]["backend"], demo.DEFAULT_RENDER_BACKEND)
+        self.assertEqual(contract["renderer"]["layer_mode"], demo.DEFAULT_RENDER_LAYER_MODE)
+        self.assertTrue(contract["renderer"]["async_latest_only"])
+        self.assertFalse(contract["renderer"]["quality_loss_default"])
         self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["towel", "stuffed animal"])
+
+    def test_demo22_controller_only_contract_tracks_controller_layer(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--track-mode",
+                demo.TRACK_MODE_CONTROLLER_ONLY,
+                "--controller-prompt",
+                "towel",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--track-mode", "--controller-prompt"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["demo"], "demo_2_2_async_filtered_fused_pcd")
+        self.assertEqual(contract["track_mode"], demo.TRACK_MODE_CONTROLLER_ONLY)
+        self.assertEqual(contract["edgetam"]["active_object_ids"], [demo.CONTROLLER_ID])
+        self.assertFalse(contract["edgetam"]["multi_object_single_session_per_camera"])
+        self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["towel"])
+        self.assertEqual(contract["semantic_layers"][0]["postprocess"], demo.POSTPROCESS_PT_FILTER)
 
     def test_demo22_preset_allows_explicit_batch1_rollback(self) -> None:
         parser = demo.build_arg_parser()
@@ -309,7 +369,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
 
         self.assertEqual(names, ["capture-group", "staged-gpu", "fusion", "filter"])
 
-    def test_raw_fused_packet_is_not_published_to_render_slot(self) -> None:
+    def test_raw_fused_packet_is_not_published_to_render_buffer(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
         args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
@@ -318,19 +378,20 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         runtime._publish_raw_fused_for_async_filter(_raw_packet(1))
 
         self.assertEqual(runtime.raw_fused_slot.latest_seq(), 1)
-        self.assertEqual(runtime.render_slot.latest_seq(), -1)
+        self.assertEqual(runtime.render_buffer.snapshot()["pending"], 0)
+        self.assertEqual(runtime.render_buffer.snapshot()["published"], 0)
 
     def test_filter_output_is_the_only_render_packet(self) -> None:
         parser = demo.build_arg_parser()
-        args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
-        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
+        args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS, "--render-every-n", "1"])
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--render-every-n"})
         runtime = demo.Demo22Runtime(args)
         raw = _raw_packet(2)
 
         packet = runtime._filter_raw_fused_packet(raw)
-        runtime.render_slot.put(packet)
+        runtime._publish_render_packet(packet)
 
-        self.assertEqual(runtime.render_slot.get_latest_after(-1).seq, 2)  # type: ignore[union-attr]
+        self.assertEqual(runtime.render_buffer.take_latest().seq, 2)  # type: ignore[union-attr]
         self.assertEqual(raw.object_raw_points, 3)
         self.assertEqual(packet.object_point_count, 3)
         self.assertEqual(packet.controller_point_count, 1)
@@ -357,13 +418,13 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         try:
             runtime._publish_raw_fused_for_async_filter(_raw_packet(3))
             deadline_s = time.perf_counter() + 1.0
-            while runtime.render_slot.latest_seq() < 3 and time.perf_counter() < deadline_s:
+            while runtime.render_buffer.snapshot()["published"] < 1 and time.perf_counter() < deadline_s:
                 time.sleep(0.001)
         finally:
             runtime.stop_event.set()
             worker.join(timeout=1.0)
 
-        self.assertEqual(runtime.render_slot.latest_seq(), 3)
+        self.assertEqual(runtime.render_buffer.take_latest().seq, 3)  # type: ignore[union-attr]
         self.assertEqual(runtime.filter_output_stats.fps, 0.0)
 
     def test_profile_summary_separates_raw_filter_and_render_fps(self) -> None:

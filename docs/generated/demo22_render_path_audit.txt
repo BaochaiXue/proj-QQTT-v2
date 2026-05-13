@@ -1,0 +1,15 @@
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:2824:            "open3d_object_update_geometry_ms": ("render", "object_update_geometry_ms"),
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:2825:            "open3d_controller_update_geometry_ms": ("render", "controller_update_geometry_ms"),
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:3155:            "open3d_object_update_geometry_ms",
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:3156:            "open3d_controller_update_geometry_ms",
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5855:        scene_widget.scene = rendering.Open3DScene(window.renderer)
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5879:                self.pcd = o3d.t.geometry.PointCloud(device)
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5898:                            scene_widget.scene.remove_geometry(self.name)
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5911:                            scene_widget.scene.remove_geometry(self.name)
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5914:                    scene_widget.scene.add_geometry(self.name, self.pcd, material)
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5919:                    scene_widget.scene.scene.update_geometry(self.name, self.pcd, flags)
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5980:                    "object_update_geometry_ms": float(object_update_ms),
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5981:                    "controller_update_geometry_ms": float(controller_update_ms),
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5982:                    "update_geometry_ms": float(object_update_ms + controller_update_ms),
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5983:                    "poll_events_ms": 0.0,
+demo_v2_1/realtime_three_view_masked_fused_pcd.py:5984:                    "update_renderer_ms": float(post_redraw_ms),

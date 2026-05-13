@@ -54,12 +54,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     tracking.add_argument("--controller-prompt", default=None, help="SAM3.1 first-frame controller prompt.")
     mode = tracking.add_mutually_exclusive_group()
     mode.add_argument("--object-only", action="store_true", help="Track only the object layer.")
+    mode.add_argument("--controller-only", action="store_true", help="Track only the controller layer.")
     mode.add_argument("--controller-object", action="store_true", help="Track controller and object layers.")
 
     view = parser.add_argument_group("Point Cloud")
     view.add_argument("--min-depth-m", type=float, default=None, help="Minimum depth kept in fused PCD.")
     view.add_argument("--max-depth-m", type=float, default=None, help="Maximum depth kept in fused PCD.")
     view.add_argument("--point-size", type=float, default=None, help="Open3D point size.")
+    view.add_argument("--render-every-n", type=int, default=None, help="Publish every Nth filtered packet to the renderer.")
+    view.add_argument("--render-backend", choices=runtime.RENDER_BACKENDS, default=None, help="Pointcloud renderer backend.")
+    view.add_argument("--render-layer-mode", choices=runtime.RENDER_LAYER_MODES, default=None, help="Pointcloud renderer layer mode.")
+    view.add_argument("--render-copy-mode", choices=runtime.RENDER_COPY_MODES, default=None, help="Renderer copy/profile mode.")
+    view.add_argument("--no-render-async-latest-only", action="store_true", help="Disable coalesced latest-only render posts.")
+    view.add_argument("--render-micro-profile", action="store_true", help="Record detailed renderer copy/update timing.")
     view.add_argument("--output-root", default=None, help="Output root for runtime artifacts.")
 
     overlay = parser.add_argument_group("Tracking Overlay")
@@ -167,6 +174,10 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--depth-min-m", parsed.min_depth_m)
     _append_option(translated, "--depth-max-m", parsed.max_depth_m)
     _append_option(translated, "--point-size", parsed.point_size)
+    _append_option(translated, "--render-every-n", parsed.render_every_n)
+    _append_option(translated, "--render-backend", parsed.render_backend)
+    _append_option(translated, "--render-layer-mode", parsed.render_layer_mode)
+    _append_option(translated, "--render-copy-mode", parsed.render_copy_mode)
     _append_option(translated, "--output-root", parsed.output_root)
     _append_option(translated, "--tracking-backend", parsed.tracking_backend)
     _append_option(translated, "--tracking-source", parsed.tracking_source)
@@ -184,8 +195,14 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
         translated.append("--debug")
     if parsed.gpu_sampling:
         translated.append("--gpu-sampling")
+    if parsed.no_render_async_latest_only:
+        translated.append("--no-render-async-latest-only")
+    if parsed.render_micro_profile:
+        translated.append("--render-micro-profile")
     if parsed.object_only:
         translated.extend(["--track-mode", runtime.TRACK_MODE_OBJECT_ONLY])
+    if parsed.controller_only:
+        translated.extend(["--track-mode", runtime.TRACK_MODE_CONTROLLER_ONLY])
     if parsed.controller_object:
         translated.extend(["--track-mode", runtime.TRACK_MODE_CONTROLLER_OBJECT])
     if parsed.no_parallel_init:

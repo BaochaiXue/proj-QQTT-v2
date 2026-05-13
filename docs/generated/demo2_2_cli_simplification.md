@@ -50,7 +50,14 @@ conda run --no-capture-output -n demo_2_max \
 | `--min-depth-m` | `--depth-min-m` |
 | `--max-depth-m` | `--depth-max-m` |
 | `--object-only` | `--track-mode object-only` |
+| `--controller-only` | `--track-mode controller-only` |
 | `--controller-object` | `--track-mode controller-object` |
+| `--render-every-n` | `--render-every-n` |
+| `--render-backend` | `--render-backend` |
+| `--render-layer-mode` | `--render-layer-mode` |
+| `--render-copy-mode` | `--render-copy-mode` |
+| `--no-render-async-latest-only` | `--no-render-async-latest-only` |
+| `--render-micro-profile` | `--render-micro-profile` |
 | `--experimental-edgetam-batch-vision` | `--edgetam-batch-vision-encoder` |
 | `--experimental-staged-parallel` | `--preset demo2.2-staged-parallel-5fps` |
 | `--ffs-batch-size` | `--ffs-trt-batch-size` |
@@ -78,4 +85,6 @@ single-owner GPU path: FFS then EdgeTAM
 SAM3.1 first-frame object/controller initialization
 async latest-wins filter
 filtered fused PCD render only
+latest-only coalesced pointcloud renderer
+combined object/controller render geometry by default
 ```

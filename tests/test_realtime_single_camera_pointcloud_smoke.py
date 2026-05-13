@@ -141,7 +141,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--enable-remote-ffs-quality", result.stdout)
         self.assertIn("--remote-ffs-quality-return {depth_u16,depth_float_m,masked_uv_depth,masked_xyz}", result.stdout)
         self.assertIn("--init-mode {sam31-first-frame,saved-masks}", result.stdout)
-        self.assertIn("--track-mode {controller-object,object-only,none}", result.stdout)
+        self.assertIn("--track-mode {controller-object,object-only,controller-only,none}", result.stdout)
         self.assertIn("--pcd-mode {masked,none}", result.stdout)
         self.assertIn("--render-mode {pointcloud,none}", result.stdout)
         self.assertIn("--demo-preset {none,local-ffs-professor}", result.stdout)
@@ -186,9 +186,12 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertEqual(args.demo_preset, "none")
         self.assertEqual(masked_demo.object_id_labels(), {1: "controller", 2: "object"})
         self.assertEqual(masked_demo.object_id_labels("object-only"), {2: "object"})
+        self.assertEqual(masked_demo.object_id_labels("controller-only"), {1: "controller"})
         self.assertEqual(masked_demo.object_id_labels("none"), {})
         object_only_args = masked_demo.build_parser().parse_args(["--track-mode", "object-only"])
         self.assertEqual(masked_demo.active_object_ids(object_only_args), [2])
+        controller_only_args = masked_demo.build_parser().parse_args(["--track-mode", "controller-only"])
+        self.assertEqual(masked_demo.active_object_ids(controller_only_args), [1])
         capture_only_args = masked_demo.build_parser().parse_args(
             ["--depth-source", "none", "--track-mode", "none", "--pcd-mode", "none", "--render-mode", "none"]
         )

@@ -94,7 +94,11 @@ DEFAULT_COMPILE_MODE = "vision-reduce-overhead"
 COMPILE_MODES = ("vision-reduce-overhead",)
 INIT_MODES = ("sam31-first-frame", "saved-masks")
 DEFAULT_INIT_MODE = "sam31-first-frame"
-TRACK_MODES = ("controller-object", "object-only", "none")
+TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
+TRACK_MODE_OBJECT_ONLY = "object-only"
+TRACK_MODE_CONTROLLER_ONLY = "controller-only"
+TRACK_MODE_NONE = "none"
+TRACK_MODES = (TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY, TRACK_MODE_CONTROLLER_ONLY, TRACK_MODE_NONE)
 DEFAULT_TRACK_MODE = "controller-object"
 DEPTH_SOURCES = ("ffs", "ffs_remote", "realsense", "none")
 DEFAULT_DEPTH_SOURCE = "ffs"
@@ -676,7 +680,10 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--ffs-remote-timeout-ms must be positive")
         if args.ffs_remote_return in SPARSE_RETURN_TYPES:
             if args.track_mode == "none":
-                raise ValueError("sparse --depth-source ffs_remote requires EdgeTAM masks; use --track-mode object-only or controller-object")
+                raise ValueError(
+                    "sparse --depth-source ffs_remote requires EdgeTAM masks; "
+                    "use --track-mode object-only, controller-only, or controller-object"
+                )
             if args.pcd_mode != "masked":
                 raise ValueError("sparse --depth-source ffs_remote requires --pcd-mode masked")
     if args.enable_remote_ffs_quality:
@@ -689,15 +696,20 @@ def validate_args(args: argparse.Namespace) -> None:
         if float(args.remote_ffs_quality_interval_ms) <= 0:
             raise ValueError("--remote-ffs-quality-interval-ms must be positive")
         if args.remote_ffs_quality_return in SPARSE_RETURN_TYPES and args.track_mode == "none":
-            raise ValueError("sparse remote quality returns require EdgeTAM masks; use --track-mode object-only or controller-object")
+            raise ValueError(
+                "sparse remote quality returns require EdgeTAM masks; "
+                "use --track-mode object-only, controller-only, or controller-object"
+            )
     if args.track_mode not in TRACK_MODES:
         raise ValueError(f"--track-mode must be one of {', '.join(TRACK_MODES)}")
     if args.init_mode == "saved-masks":
-        if not args.object_init_mask:
-            raise ValueError("saved-masks mode requires --object-init-mask")
+        if object_tracking_enabled(args) and not args.object_init_mask:
+            raise ValueError("saved-masks object tracking requires --object-init-mask")
         if controller_tracking_enabled(args) and not args.controller_init_mask:
-            raise ValueError("saved-masks controller-object mode requires --controller-init-mask")
-        required_masks = [("--object-init-mask", args.object_init_mask)]
+            raise ValueError("saved-masks controller tracking requires --controller-init-mask")
+        required_masks = []
+        if object_tracking_enabled(args):
+            required_masks.append(("--object-init-mask", args.object_init_mask))
         if controller_tracking_enabled(args):
             required_masks.append(("--controller-init-mask", args.controller_init_mask))
         for flag, value in required_masks:
@@ -987,15 +999,22 @@ def make_solid_colors(point_count: int, rgb: tuple[int, int, int]) -> np.ndarray
 
 def controller_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> bool:
     track_mode = args_or_track_mode if isinstance(args_or_track_mode, str) else args_or_track_mode.track_mode
-    return str(track_mode) == "controller-object"
+    return str(track_mode) in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_CONTROLLER_ONLY}
+
+
+def object_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> bool:
+    track_mode = args_or_track_mode if isinstance(args_or_track_mode, str) else args_or_track_mode.track_mode
+    return str(track_mode) in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY}
 
 
 def object_id_labels(track_mode: str = DEFAULT_TRACK_MODE) -> dict[int, str]:
-    if track_mode == "none":
+    if track_mode == TRACK_MODE_NONE:
         return {}
-    if track_mode == "object-only":
+    if track_mode == TRACK_MODE_OBJECT_ONLY:
         return {OBJECT_ID: OBJECT_LABELS[OBJECT_ID]}
-    if track_mode == "controller-object":
+    if track_mode == TRACK_MODE_CONTROLLER_ONLY:
+        return {CONTROLLER_ID: OBJECT_LABELS[CONTROLLER_ID]}
+    if track_mode == TRACK_MODE_CONTROLLER_OBJECT:
         return dict(OBJECT_LABELS)
     raise ValueError(f"unsupported track mode: {track_mode}")
 
@@ -1158,9 +1177,14 @@ def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> float:
 def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
     from scripts.harness.sam31_mask_helper import parse_text_prompts, run_image_segmentation
 
-    prompt_labels = [str(args.object_prompt)]
+    prompt_labels = []
+    if object_tracking_enabled(args):
+        prompt_labels.append(str(args.object_prompt))
     if controller_tracking_enabled(args):
         prompt_labels.append(str(args.controller_prompt))
+    if not prompt_labels:
+        empty = np.zeros(tuple(color_bgr.shape[:2]), dtype=bool)
+        return empty, empty
     text_prompt = ",".join(prompt_labels)
     keep_runtime_until_all_cameras_init = bool(
         getattr(args, "sam31_keep_runtime_until_all_cameras_init", False)
@@ -1182,25 +1206,48 @@ def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace)
             setattr(args, "_sam31_last_release_cleanup_ms", float(release_ms))
 
     masks_by_label = result["masks_by_label"]
-    object_label = parse_text_prompts(str(args.object_prompt))[0]
-    object_mask = _union_masks(
-        list(masks_by_label.get(object_label, [])),
-        label=args.object_prompt,
-    )
-    if not controller_tracking_enabled(args):
+    object_mask: np.ndarray | None = None
+    controller_mask: np.ndarray | None = None
+    if object_tracking_enabled(args):
+        object_label = parse_text_prompts(str(args.object_prompt))[0]
+        object_mask = _union_masks(
+            list(masks_by_label.get(object_label, [])),
+            label=args.object_prompt,
+        )
+    if controller_tracking_enabled(args):
+        controller_label = parse_text_prompts(str(args.controller_prompt))[0]
+        controller_masks = list(masks_by_label.get(controller_label, []))
+        controller_mask = _union_masks(controller_masks, label=args.controller_prompt)
+    if object_mask is None and controller_mask is None:
+        empty = np.zeros(tuple(color_bgr.shape[:2]), dtype=bool)
+        return empty, empty
+    if object_mask is None:
+        object_mask = np.zeros_like(controller_mask, dtype=bool)
+    if controller_mask is None:
         return np.zeros_like(object_mask, dtype=bool), object_mask
-    controller_label = parse_text_prompts(str(args.controller_prompt))[0]
-    controller_masks = list(masks_by_label.get(controller_label, []))
-    return _union_masks(controller_masks, label=args.controller_prompt), object_mask
+    return controller_mask, object_mask
 
 
 def resolve_initial_masks(frame: FramePacket, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
     expected_shape = tuple(frame.color_bgr.shape[:2])
     if args.init_mode == "saved-masks":
-        object_mask = load_binary_mask(args.object_init_mask, expected_shape=expected_shape)
-        if not controller_tracking_enabled(args):
-            return np.zeros_like(object_mask, dtype=bool), object_mask
-        controller_mask = load_binary_mask(args.controller_init_mask, expected_shape=expected_shape)
+        object_mask = (
+            load_binary_mask(args.object_init_mask, expected_shape=expected_shape)
+            if object_tracking_enabled(args)
+            else None
+        )
+        controller_mask = (
+            load_binary_mask(args.controller_init_mask, expected_shape=expected_shape)
+            if controller_tracking_enabled(args)
+            else None
+        )
+        if object_mask is None and controller_mask is None:
+            empty = np.zeros(expected_shape, dtype=bool)
+            return empty, empty
+        if object_mask is None:
+            object_mask = np.zeros_like(controller_mask, dtype=bool)
+        if controller_mask is None:
+            controller_mask = np.zeros_like(object_mask, dtype=bool)
         return controller_mask, object_mask
     if args.init_mode == "sam31-first-frame":
         controller_mask, object_mask = run_sam31_first_frame_masks(frame.color_bgr, args)
@@ -1673,8 +1720,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 if controller_tracking_enabled(self.args):
                     prompt_obj_ids.append(CONTROLLER_ID)
                     prompt_masks.append(np.asarray(initial_controller_mask, dtype=bool))
-                prompt_obj_ids.append(OBJECT_ID)
-                prompt_masks.append(np.asarray(initial_object_mask, dtype=bool))
+                if object_tracking_enabled(self.args):
+                    prompt_obj_ids.append(OBJECT_ID)
+                    prompt_masks.append(np.asarray(initial_object_mask, dtype=bool))
                 _unused, prompt_ms, prompt_pre_sync_ms, prompt_post_sync_ms = _time_runtime_ms(
                     torch_module,
                     self.args.device,
@@ -1710,10 +1758,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
         missing = [obj_id for obj_id in active_object_ids(self.args) if obj_id not in masks_by_id]
         if missing:
             raise RuntimeError(f"HF output missing tracked object ids: {missing}")
-        object_mask = masks_by_id[OBJECT_ID]
+        reference_mask = next(iter(masks_by_id.values()))
+        object_mask = masks_by_id.get(OBJECT_ID)
+        if object_mask is None:
+            object_mask = np.zeros_like(reference_mask, dtype=bool)
         controller_mask = masks_by_id.get(CONTROLLER_ID)
         if controller_mask is None:
-            controller_mask = np.zeros_like(object_mask, dtype=bool)
+            controller_mask = np.zeros_like(reference_mask, dtype=bool)
         process_done_s = time.perf_counter()
         timing = replace(
             frame.timing,
@@ -2039,6 +2090,15 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 object_mask = mask_packet.object_mask
                 ray_x_for_pcd = ray_x
                 ray_y_for_pcd = ray_y
+            empty_pcd_timing = {
+                "pcd_mask_intersection_ms": 0.0,
+                "pcd_select_ms": 0.0,
+                "pcd_point_cap_ms": 0.0,
+                "pcd_backproject_ms": 0.0,
+                "pcd_color_gather_ms": 0.0,
+                "pcd_raw_points": 0.0,
+                "pcd_cap_points": 0.0,
+            }
             if controller_tracking_enabled(self.args):
                 controller_xyz, controller_colors, controller_pcd_timing = backproject_masked_rgbd_profiled(
                     color_bgr=color_bgr,
@@ -2056,28 +2116,25 @@ class RealtimeMaskedEdgeTamPcdDemo:
             else:
                 controller_xyz = np.empty((0, 3), dtype=np.float32)
                 controller_colors = np.empty((0, 3), dtype=np.uint8)
-                controller_pcd_timing = {
-                    "pcd_mask_intersection_ms": 0.0,
-                    "pcd_select_ms": 0.0,
-                    "pcd_point_cap_ms": 0.0,
-                    "pcd_backproject_ms": 0.0,
-                    "pcd_color_gather_ms": 0.0,
-                    "pcd_raw_points": 0.0,
-                    "pcd_cap_points": 0.0,
-                }
-            object_xyz, object_colors, object_pcd_timing = backproject_masked_rgbd_profiled(
-                color_bgr=color_bgr,
-                depth_m=depth_for_pcd,
-                mask=object_mask,
-                ray_x=ray_x_for_pcd,
-                ray_y=ray_y_for_pcd,
-                depth_min_m=float(self.args.depth_min_m),
-                depth_max_m=float(self.args.depth_max_m),
-                max_points=int(self.args.pcd_max_points),
-                color_mode=str(self.args.pcd_color_mode),
-                class_rgb=tuple(self.args.object_color),
-                rng=rng,
-            )
+                controller_pcd_timing = dict(empty_pcd_timing)
+            if object_tracking_enabled(self.args):
+                object_xyz, object_colors, object_pcd_timing = backproject_masked_rgbd_profiled(
+                    color_bgr=color_bgr,
+                    depth_m=depth_for_pcd,
+                    mask=object_mask,
+                    ray_x=ray_x_for_pcd,
+                    ray_y=ray_y_for_pcd,
+                    depth_min_m=float(self.args.depth_min_m),
+                    depth_max_m=float(self.args.depth_max_m),
+                    max_points=int(self.args.pcd_max_points),
+                    color_mode=str(self.args.pcd_color_mode),
+                    class_rgb=tuple(self.args.object_color),
+                    rng=rng,
+                )
+            else:
+                object_xyz = np.empty((0, 3), dtype=np.float32)
+                object_colors = np.empty((0, 3), dtype=np.uint8)
+                object_pcd_timing = dict(empty_pcd_timing)
             controller_raw_points = int(controller_pcd_timing.get("pcd_raw_points", len(controller_xyz)))
             controller_cap_points = int(controller_pcd_timing.get("pcd_cap_points", len(controller_xyz)))
             object_raw_points = int(object_pcd_timing.get("pcd_raw_points", len(object_xyz)))
@@ -2567,7 +2624,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         mask = np.zeros(tuple(packet.object_mask.shape), dtype=np.uint8)
         if controller_tracking_enabled(self.args):
             mask[np.asarray(packet.controller_mask, dtype=bool)] = CONTROLLER_ID
-        mask[np.asarray(packet.object_mask, dtype=bool)] = OBJECT_ID
+        if object_tracking_enabled(self.args):
+            mask[np.asarray(packet.object_mask, dtype=bool)] = OBJECT_ID
         return np.ascontiguousarray(mask)
 
     def _request_remote_quality(self, packet: MaskPacket | FramePacket, *, mask_u8: np.ndarray | None) -> RemoteFfsQualityPacket:

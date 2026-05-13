@@ -235,6 +235,16 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         )
         self.assertEqual([layer.label for layer in layers], ["stuffed animal"])
 
+    def test_controller_only_has_no_object_layer(self) -> None:
+        layers = demo.semantic_layers_for_track_mode(
+            demo.TRACK_MODE_CONTROLLER_ONLY,
+            object_label="stuffed animal",
+            controller_label="towel",
+        )
+        self.assertEqual([layer.label for layer in layers], ["towel"])
+        self.assertEqual(layers[0].obj_id, demo.CONTROLLER_ID)
+        self.assertEqual(layers[0].default_postprocess, demo.POSTPROCESS_PT_FILTER)
+
     def test_fusion_keeps_object_and_controller_separate(self) -> None:
         layers = demo.semantic_layers_for_track_mode(
             demo.TRACK_MODE_CONTROLLER_OBJECT,
@@ -838,7 +848,7 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
     def test_preset_keeps_explicit_track_and_render_overrides(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(
-            ["--dry-run", "--preset", "professor-safe", "--track-mode", "object-only", "--render-mode", "none"]
+            ["--dry-run", "--preset", "professor-safe", "--track-mode", "controller-only", "--render-mode", "none"]
         )
         args = demo.apply_preset_defaults(
             args,
@@ -846,9 +856,11 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         )
         contract = demo.build_contract(args)
 
-        self.assertEqual(contract["track_mode"], "object-only")
+        self.assertEqual(contract["track_mode"], "controller-only")
         self.assertEqual(contract["render_mode"], "none")
-        self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["stuffed animal"])
+        self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["hand"])
+        self.assertEqual(contract["edgetam"]["active_object_ids"], [demo.CONTROLLER_ID])
+        self.assertFalse(contract["edgetam"]["multi_object_single_session_per_camera"])
 
     def test_capture_only_isolation_contract_is_not_official_depth(self) -> None:
         parser = demo.build_arg_parser()

@@ -30,6 +30,7 @@ Supported tracking modes:
 
 ```text
 object-only
+controller-only
 controller-object
 ```
 
@@ -91,7 +92,7 @@ Presets:
 official-lowfps:
   848x480@15
   fusion-target-fps=2
-  controller-object by default; pass --track-mode object-only when no hand/controller is visible
+  controller-object by default; pass --track-mode object-only or controller-only to isolate one semantic layer
   render-mode=pointcloud by default
   GPU gate off by default
   temporal grouping uses timestamp-nearest, max skew 66.7 ms
@@ -99,7 +100,7 @@ official-lowfps:
 perf-5fps:
   848x480@15
   fusion-target-fps=5
-  controller-object by default; pass --track-mode object-only when no hand/controller is visible
+  controller-object by default; pass --track-mode object-only or controller-only to isolate one semantic layer
   render-mode=pointcloud by default
   GPU gate off by default
   quality path unchanged: FFS depth + object enhanced-pt
@@ -281,10 +282,10 @@ Formal Demo 2.1 initialization requirement:
 The professor-facing demo uses --init-mode sam31-first-frame.
 SAM3.1 must segment the live first frame in the room, then HF EdgeTAM tracks from that mask.
 The live path uses SAM3.1 image one-frame segmentation (`Sam3Processor.set_image` + text prompt), not video propagation.
-The default mode is controller-object; current no-hand lab runs must explicitly pass --track-mode object-only.
+The default mode is controller-object; current single-layer lab runs must explicitly pass --track-mode object-only or --track-mode controller-only.
 ```
 
-If SAM3.1 object-only initialization fails in a no-hand run, Demo 2.1 fails fast. That is intentional: there is no saved-mask or native-depth fallback in the formal path.
+If SAM3.1 single-layer initialization fails in a lab run, Demo 2.1 fails fast. That is intentional: there is no saved-mask or native-depth fallback in the formal path.
 
 The default controller prompt remains `hand`. Non-hand controller prompts are
 allowed only as explicit experimental overrides. In the current no-hand lab

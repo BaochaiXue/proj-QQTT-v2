@@ -1,0 +1,40 @@
+{
+  "compute_filter_pcd_quality_changed": false,
+  "current_render_backend": "Open3D GUI Open3DScene + open3d.t.geometry.PointCloud",
+  "default_display_lod": "off",
+  "implemented": {
+    "async_pinned_copy_cli_profile_hook": true,
+    "coalesced_gui_render_posts": true,
+    "combined_object_controller_display_geometry": true,
+    "legacy_inplace_backend": true,
+    "latest_only_render_buffer": true,
+    "tensor_o3d_dlpack_hook": true
+  },
+  "live_same_quality_profile_required": true,
+  "render_path_audit": {
+    "Vector3dVector_per_frame": false,
+    "add_geometry_per_frame": "only first add or growth beyond capacity",
+    "clear_geometries_per_frame": false,
+    "new_PointCloud_per_frame": false,
+    "remove_geometry_per_frame": "only empty layer or legacy-current growth",
+    "render_thread_blocks_compute": false,
+    "Tensor_from_numpy_per_frame_before_change": true,
+    "update_geometry": true
+  },
+  "render_profile_fields": [
+    "queue_wait_ms",
+    "gpu_to_cpu_copy_ms",
+    "combine_ms",
+    "cpu_format_ms",
+    "open3d_points_update_ms",
+    "open3d_colors_update_ms",
+    "open3d_update_geometry_ms",
+    "open3d_poll_events_ms",
+    "open3d_update_renderer_ms",
+    "render_total_ms",
+    "render_backpressure_count",
+    "render_packets_received",
+    "render_packets_displayed",
+    "render_packets_dropped"
+  ]
+}
