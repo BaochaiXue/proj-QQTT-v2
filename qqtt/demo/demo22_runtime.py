@@ -41,6 +41,10 @@ GPU_PIPELINE_MODE_SEPARATE_WORKERS = _shared_runtime.GPU_PIPELINE_MODE_SEPARATE_
 GPU_PIPELINE_MODE_SINGLE_OWNER = _shared_runtime.GPU_PIPELINE_MODE_SINGLE_OWNER
 GPU_PIPELINE_MODE_STAGED = _shared_runtime.GPU_PIPELINE_MODE_STAGED
 GPU_PIPELINE_MODE_OVERLAPPED_STAGES = _shared_runtime.GPU_PIPELINE_MODE_OVERLAPPED_STAGES
+STAGE_SCHEDULER_MODE_MASK_GATED = _shared_runtime.STAGE_SCHEDULER_MODE_MASK_GATED
+STAGE_SCHEDULER_MODE_EDGE_START = _shared_runtime.STAGE_SCHEDULER_MODE_EDGE_START
+STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD = _shared_runtime.STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD
+STAGE_SCHEDULER_MODES = _shared_runtime.STAGE_SCHEDULER_MODES
 SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM = _shared_runtime.SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM
 STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM = _shared_runtime.STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM
 
@@ -87,6 +91,8 @@ FusedLayerCloud = _shared_runtime.FusedLayerCloud
 MaskGroup = _shared_runtime.MaskGroup
 RawFusedPcdPacket = _shared_runtime.RawFusedPcdPacket
 SameGroupJoinBuffer = _shared_runtime.SameGroupJoinBuffer
+StageTask = _shared_runtime.StageTask
+StageWindowScheduler = _shared_runtime.StageWindowScheduler
 
 class Demo22Runtime(_shared_runtime.Demo21Runtime):
     """Demo 2.2 named facade over the shared three-view runtime."""
@@ -175,6 +181,8 @@ __all__ = [
     "RawFusedPcdPacket",
     "MaskGroup",
     "SameGroupJoinBuffer",
+    "StageTask",
+    "StageWindowScheduler",
     "DEFAULT_RENDER_BACKEND",
     "DEFAULT_RENDER_COPY_MODE",
     "DEFAULT_RENDER_LAYER_MODE",
@@ -182,6 +190,10 @@ __all__ = [
     "RENDER_COPY_MODES",
     "RENDER_LAYER_MODES",
     "SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM",
+    "STAGE_SCHEDULER_MODE_MASK_GATED",
+    "STAGE_SCHEDULER_MODE_EDGE_START",
+    "STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD",
+    "STAGE_SCHEDULER_MODES",
     "STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM",
     "TRACK_MODE_CONTROLLER_OBJECT",
     "TRACK_MODE_CONTROLLER_ONLY",

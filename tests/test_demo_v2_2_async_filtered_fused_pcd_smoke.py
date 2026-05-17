@@ -234,6 +234,23 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--gpu-pipeline-mode", argv)
         self.assertIn(demo.GPU_PIPELINE_MODE_OVERLAPPED_STAGES, argv)
 
+    def test_demo22_public_overlapped_stage_scheduler_flags_pass_through(self) -> None:
+        argv = demo22._to_demo22_argv(
+            [
+                "--dry-run",
+                "--experimental-overlapped-stages",
+                "--stage-scheduler-mode",
+                demo.STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD,
+                "--stage-lookahead",
+                "2",
+            ]
+        )
+
+        self.assertIn("--stage-scheduler-mode", argv)
+        self.assertIn(demo.STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD, argv)
+        self.assertIn("--stage-lookahead", argv)
+        self.assertIn("2", argv)
+
     def test_demo22_public_experiment_mode_flag_is_forwarded(self) -> None:
         argv = demo22._to_demo22_argv(["--dry-run", "--experiment-mode", demo.EXPERIMENT_MODE_DEMO])
 
@@ -429,10 +446,33 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_OVERLAPPED_STAGES)
         self.assertTrue(contract["gpu_pipeline"]["same_group_join_required"])
         self.assertTrue(contract["gpu_pipeline"]["overlap_across_groups"])
+        self.assertEqual(contract["gpu_pipeline"]["stage_scheduler_mode"], demo.STAGE_SCHEDULER_MODE_MASK_GATED)
         self.assertEqual(contract["gpu_pipeline"]["depth_dispatch_policy"], "after_mask_stage")
         self.assertEqual(contract["gpu_pipeline"]["edgetam_stage"], "batch_vision_stateful_decode")
         self.assertTrue(contract["edgetam"]["batch_vision_encoder"])
         self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_SHARED)
+
+    def test_demo22_overlapped_stages_edge_start_contract(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--gpu-pipeline-mode",
+                demo.GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+                "--stage-scheduler-mode",
+                demo.STAGE_SCHEDULER_MODE_EDGE_START,
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--gpu-pipeline-mode", "--stage-scheduler-mode"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["gpu_pipeline"]["stage_scheduler_mode"], demo.STAGE_SCHEDULER_MODE_EDGE_START)
+        self.assertEqual(contract["gpu_pipeline"]["depth_dispatch_policy"], "edge_start_reservation")
 
     def test_demo22_staged_parallel_preset_contract(self) -> None:
         parser = demo.build_arg_parser()
@@ -552,6 +592,34 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(snapshot["capture_stale_drops"], 1)
         self.assertEqual(snapshot["depth_stale_drops"], 1)
         self.assertEqual(snapshot["mask_stale_drops"], 1)
+
+    def test_stage_window_scheduler_reserves_edge_current_before_lookahead(self) -> None:
+        scheduler = demo.StageWindowScheduler(max_groups=8, lookahead=1)
+        scheduler.put_capture(_capture_group(1))
+        scheduler.put_capture(_capture_group(2))
+
+        self.assertIsNone(
+            scheduler.reserve_next_depth_task(mode=demo.STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD)
+        )
+
+        edge_task = scheduler.reserve_next_edge_task()
+        self.assertIsNotNone(edge_task)
+        self.assertEqual(edge_task.group_id, 2)  # type: ignore[union-attr]
+        self.assertEqual(edge_task.reason, "edge-current")  # type: ignore[union-attr]
+
+        depth_task = scheduler.reserve_next_depth_task(mode=demo.STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD)
+        self.assertIsNotNone(depth_task)
+        self.assertEqual(depth_task.group_id, 2)  # type: ignore[union-attr]
+        self.assertEqual(depth_task.reason, "edge-current")  # type: ignore[union-attr]
+
+        scheduler.mark_depth_done(2)
+        scheduler.mark_mask_done(2)
+        scheduler.put_capture(_capture_group(3))
+
+        lookahead_task = scheduler.reserve_next_depth_task(mode=demo.STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD)
+        self.assertIsNotNone(lookahead_task)
+        self.assertEqual(lookahead_task.group_id, 3)  # type: ignore[union-attr]
+        self.assertEqual(lookahead_task.reason, "lookahead")  # type: ignore[union-attr]
 
     def test_raw_fused_packet_is_not_published_to_render_buffer(self) -> None:
         parser = demo.build_arg_parser()
@@ -674,7 +742,15 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
                 "complete": True,
                 "ffs_stage": {"publish_s": 0.0, "wall_ms": 70.0},
                 "edgetam_stage": {"publish_s": 0.05, "wall_ms": 90.0, "sum_model_ms": 86.0},
-                "stage_join": {"publish_s": 0.09, "wall_ms": 2.0, "depth_mask_group_id_match": True},
+                "stage_join": {
+                    "publish_s": 0.09,
+                    "wall_ms": 2.0,
+                    "depth_mask_group_id_match": True,
+                    "depth_ready_before_mask": True,
+                    "depth_wait_after_mask_ms": 0.0,
+                    "mask_wait_after_depth_ms": 50.0,
+                    "same_group_join_latency_ms": 40.0,
+                },
                 "raw_fusion": {"publish_s": 0.10, "total_ms": 2.0},
                 "filter": {"publish_s": 0.15, "total_ms": 5.0},
                 "fusion": {"publish_s": 0.15, "total_ms": 7.0},
@@ -687,7 +763,15 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
                 "complete": True,
                 "ffs_stage": {"publish_s": 0.2, "wall_ms": 72.0},
                 "edgetam_stage": {"publish_s": 0.25, "wall_ms": 92.0, "sum_model_ms": 88.0},
-                "stage_join": {"publish_s": 0.29, "wall_ms": 3.0, "depth_mask_group_id_match": True},
+                "stage_join": {
+                    "publish_s": 0.29,
+                    "wall_ms": 3.0,
+                    "depth_mask_group_id_match": True,
+                    "depth_ready_before_mask": True,
+                    "depth_wait_after_mask_ms": 0.0,
+                    "mask_wait_after_depth_ms": 50.0,
+                    "same_group_join_latency_ms": 40.0,
+                },
                 "raw_fusion": {"publish_s": 0.30, "total_ms": 2.0},
                 "filter": {"publish_s": 0.35, "total_ms": 5.0},
                 "fusion": {"publish_s": 0.35, "total_ms": 7.0},
@@ -704,6 +788,10 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertAlmostEqual(summary["metrics"]["ffs_stage_wall_ms"]["median"], 71.0)
         self.assertAlmostEqual(summary["metrics"]["edgetam_stage_wall_ms"]["median"], 91.0)
         self.assertAlmostEqual(summary["metrics"]["stage_join_wall_ms"]["median"], 2.5)
+        self.assertAlmostEqual(summary["stage_pipeline"]["depth_ready_before_mask_ratio"], 1.0)
+        self.assertAlmostEqual(summary["stage_pipeline"]["mean_depth_wait_after_mask_ms"], 0.0)
+        self.assertAlmostEqual(summary["stage_pipeline"]["mean_mask_wait_after_depth_ms"], 50.0)
+        self.assertAlmostEqual(summary["metrics"]["stage_join_same_group_join_latency_ms"]["median"], 40.0)
 
     def test_profile_payload_includes_init_profile_breakdown(self) -> None:
         parser = demo.build_arg_parser()

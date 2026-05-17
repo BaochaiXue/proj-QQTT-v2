@@ -422,6 +422,14 @@ SINGLE_OWNER_ORDERS = (
 )
 STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM = "ffs-then-parallel-edgetam"
 STAGED_ORDERS = (STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM,)
+STAGE_SCHEDULER_MODE_MASK_GATED = "mask-gated"
+STAGE_SCHEDULER_MODE_EDGE_START = "edge-start"
+STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD = "bounded-lookahead"
+STAGE_SCHEDULER_MODES = (
+    STAGE_SCHEDULER_MODE_MASK_GATED,
+    STAGE_SCHEDULER_MODE_EDGE_START,
+    STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD,
+)
 EDGETAM_STREAM_MODE_DEFAULT = "default"
 EDGETAM_STREAM_MODE_PER_CAMERA = "per-camera"
 EDGETAM_STREAM_MODES = (EDGETAM_STREAM_MODE_DEFAULT, EDGETAM_STREAM_MODE_PER_CAMERA)
@@ -575,6 +583,141 @@ class MaskGroup:
     @property
     def seq(self) -> int:
         return int(self.group_id)
+
+
+@dataclass(frozen=True)
+class StageTask:
+    group_id: int
+    group: CaptureGroup
+    reason: str
+
+    @property
+    def seq(self) -> int:
+        return int(self.group_id)
+
+
+class StageWindowScheduler:
+    """Bounded reservation scheduler for exact group_id stage joins."""
+
+    def __init__(self, *, max_groups: int = 8, lookahead: int = 1) -> None:
+        if int(max_groups) < 1:
+            raise ValueError("max_groups must be >= 1")
+        self.max_groups = int(max_groups)
+        self.lookahead = max(0, int(lookahead))
+        self._lock = threading.Lock()
+        self._captures: dict[int, CaptureGroup] = {}
+        self._depth_requested: set[int] = set()
+        self._mask_requested: set[int] = set()
+        self._depth_done: set[int] = set()
+        self._mask_done: set[int] = set()
+        self._last_edge_group_id = -1
+        self.capture_stale_drops = 0
+        self.depth_request_count = 0
+        self.mask_request_count = 0
+        self.depth_lookahead_request_count = 0
+
+    def put_capture(self, group: CaptureGroup) -> None:
+        with self._lock:
+            self._captures[int(group.group_id)] = group
+            self._prune_locked()
+
+    def reserve_next_edge_task(self) -> StageTask | None:
+        with self._lock:
+            candidates = [
+                group_id
+                for group_id in self._captures
+                if group_id > self._last_edge_group_id and group_id not in self._mask_requested
+            ]
+            if not candidates:
+                return None
+            group_id = max(candidates)
+            group = self._captures[group_id]
+            self._last_edge_group_id = int(group_id)
+            self._mask_requested.add(int(group_id))
+            self.mask_request_count += 1
+            return StageTask(group_id=int(group_id), group=group, reason="edge-current")
+
+    def reserve_next_depth_task(self, *, mode: str) -> StageTask | None:
+        with self._lock:
+            current_edge_groups = sorted(
+                group_id
+                for group_id in self._mask_requested
+                if group_id in self._captures
+                and group_id not in self._depth_requested
+                and group_id not in self._depth_done
+            )
+            if current_edge_groups:
+                group_id = int(current_edge_groups[0])
+                self._depth_requested.add(group_id)
+                self.depth_request_count += 1
+                return StageTask(group_id=group_id, group=self._captures[group_id], reason="edge-current")
+
+            if mode != STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD or self.lookahead <= 0:
+                return None
+            if self._last_edge_group_id < 0:
+                return None
+
+            outstanding_future = [
+                group_id
+                for group_id in self._depth_requested
+                if group_id > self._last_edge_group_id and group_id not in self._depth_done
+            ]
+            if len(outstanding_future) >= self.lookahead:
+                return None
+
+            future_groups = [
+                group_id
+                for group_id in sorted(self._captures)
+                if group_id > self._last_edge_group_id
+                and group_id not in self._depth_requested
+                and group_id not in self._depth_done
+            ]
+            if not future_groups:
+                return None
+
+            group_id = int(future_groups[0])
+            self._depth_requested.add(group_id)
+            self.depth_request_count += 1
+            self.depth_lookahead_request_count += 1
+            return StageTask(group_id=group_id, group=self._captures[group_id], reason="lookahead")
+
+    def mark_depth_done(self, group_id: int) -> None:
+        with self._lock:
+            self._depth_done.add(int(group_id))
+
+    def mark_mask_done(self, group_id: int) -> None:
+        with self._lock:
+            self._mask_done.add(int(group_id))
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "window_max_groups": int(self.max_groups),
+                "window_lookahead": int(self.lookahead),
+                "window_capture_pending": int(len(self._captures)),
+                "window_capture_stale_drops": int(self.capture_stale_drops),
+                "depth_requested": int(len(self._depth_requested)),
+                "mask_requested": int(len(self._mask_requested)),
+                "depth_done": int(len(self._depth_done)),
+                "mask_done": int(len(self._mask_done)),
+                "last_edge_group_id": int(self._last_edge_group_id),
+                "depth_request_count": int(self.depth_request_count),
+                "mask_request_count": int(self.mask_request_count),
+                "depth_lookahead_request_count": int(self.depth_lookahead_request_count),
+            }
+
+    def _prune_locked(self) -> None:
+        while len(self._captures) > self.max_groups:
+            oldest = min(self._captures)
+            self._captures.pop(oldest, None)
+            self.capture_stale_drops += 1
+            for table in (
+                self._depth_requested,
+                self._mask_requested,
+                self._depth_done,
+                self._mask_done,
+            ):
+                table.discard(oldest)
 
 
 class SameGroupJoinBuffer:
@@ -2083,6 +2226,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     }
     experiment_mode = resolved_experiment_mode(args)
     expected_controller_prompt = controller_prompt_for_experiment_mode(experiment_mode)
+    stage_scheduler_mode = str(getattr(args, "stage_scheduler_mode", STAGE_SCHEDULER_MODE_MASK_GATED))
     return {
         "demo": (
             "demo_2_2_async_filtered_fused_pcd"
@@ -2199,9 +2343,18 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             },
             "same_group_join_required": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
             "overlap_across_groups": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+            "stage_scheduler_mode": stage_scheduler_mode,
+            "stage_lookahead": int(getattr(args, "stage_lookahead", 1)),
             "depth_dispatch_policy": (
                 "after_mask_stage"
                 if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES
+                and stage_scheduler_mode == STAGE_SCHEDULER_MODE_MASK_GATED
+                else "edge_start_reservation"
+                if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES
+                and stage_scheduler_mode == STAGE_SCHEDULER_MODE_EDGE_START
+                else "bounded_lookahead_reservation"
+                if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES
+                and stage_scheduler_mode == STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD
                 else "capture_dispatch"
             ),
             "separate_ffs_and_edgetam_workers": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SEPARATE_WORKERS,
@@ -2327,6 +2480,10 @@ class Demo21Runtime:
             int(camera_idx): LatestSlot() for camera_idx in args.camera_ids
         }
         self.stage_join_buffer = SameGroupJoinBuffer(max_groups=8)
+        self.stage_window_scheduler = StageWindowScheduler(
+            max_groups=8,
+            lookahead=int(getattr(args, "stage_lookahead", 1)),
+        )
         self.raw_fused_slot: LatestSlot[RawFusedPcdPacket] = LatestSlot()
         self.render_buffer: LatestOnlyRenderBuffer[FusedPcdPacket] = LatestOnlyRenderBuffer()
         self.render_post_gate = CoalescedRenderPostGate()
@@ -2722,6 +2879,10 @@ class Demo21Runtime:
             raise RuntimeError(f"Demo 2.1 unsupported --single-owner-order {self.args.single_owner_order}")
         if self.args.staged_order not in STAGED_ORDERS:
             raise RuntimeError(f"Demo 2.1 unsupported --staged-order {self.args.staged_order}")
+        if self.args.stage_scheduler_mode not in STAGE_SCHEDULER_MODES:
+            raise RuntimeError(f"Demo 2.1 unsupported --stage-scheduler-mode {self.args.stage_scheduler_mode}")
+        if int(self.args.stage_lookahead) < 0:
+            raise RuntimeError("Demo 2.1 --stage-lookahead must be >= 0")
         if self.args.edgetam_stream_mode not in EDGETAM_STREAM_MODES:
             raise RuntimeError(f"Demo 2.1 unsupported --edgetam-stream-mode {self.args.edgetam_stream_mode}")
         if self.args.edgetam_input_path not in EDGETAM_INPUT_PATH_MODES:
@@ -3060,9 +3221,31 @@ class Demo21Runtime:
         summary["stage_pipeline"] = {
             "mode": str(self.args.gpu_pipeline_mode),
             "overlap_attempted": bool(self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES),
+            "scheduler_mode": str(getattr(self.args, "stage_scheduler_mode", STAGE_SCHEDULER_MODE_MASK_GATED)),
+            "stage_lookahead": int(getattr(self.args, "stage_lookahead", 1)),
             "effective_period_ms": summary["stage_period_ms"],
             **self.stage_join_buffer.snapshot(),
+            **self.stage_window_scheduler.snapshot(),
         }
+        depth_ready_flags = [
+            bool(record.get("stage_join", {}).get("depth_ready_before_mask"))
+            for record in complete
+            if isinstance(record.get("stage_join"), dict)
+            and "depth_ready_before_mask" in record.get("stage_join", {})
+        ]
+        summary["stage_pipeline"]["depth_ready_before_mask_ratio"] = (
+            float(sum(1 for flag in depth_ready_flags if flag) / len(depth_ready_flags))
+            if depth_ready_flags
+            else 0.0
+        )
+        depth_wait_values = _series_for_path(complete, ("stage_join", "depth_wait_after_mask_ms"))
+        summary["stage_pipeline"]["mean_depth_wait_after_mask_ms"] = (
+            float(sum(depth_wait_values) / len(depth_wait_values)) if depth_wait_values else 0.0
+        )
+        mask_wait_values = _series_for_path(complete, ("stage_join", "mask_wait_after_depth_ms"))
+        summary["stage_pipeline"]["mean_mask_wait_after_depth_ms"] = (
+            float(sum(mask_wait_values) / len(mask_wait_values)) if mask_wait_values else 0.0
+        )
         summary["raw_fused_pending_replacements_total"] = int(self.raw_fused_slot.total_dropped_count)
         summary["render_buffer_dropped_total"] = int(self.render_buffer.snapshot().get("dropped", 0))
         target_fps = float(self.args.fusion_target_fps)
@@ -3136,9 +3319,15 @@ class Demo21Runtime:
             "staged_edgetam_parallel_efficiency": ("gpu_owner", "edgetam_parallel_efficiency"),
             "staged_stage_barrier_ms": ("gpu_owner", "stage_barrier_ms"),
             "ffs_stage_wall_ms": ("ffs_stage", "wall_ms"),
+            "ffs_stage_request_to_start_ms": ("ffs_stage", "request_to_start_ms"),
+            "ffs_stage_input_age_ms": ("ffs_stage", "input_age_ms"),
             "edgetam_stage_wall_ms": ("edgetam_stage", "wall_ms"),
+            "edgetam_stage_request_to_start_ms": ("edgetam_stage", "request_to_start_ms"),
             "edgetam_stage_sum_model_ms": ("edgetam_stage", "sum_model_ms"),
             "stage_join_wall_ms": ("stage_join", "wall_ms"),
+            "stage_join_depth_wait_after_mask_ms": ("stage_join", "depth_wait_after_mask_ms"),
+            "stage_join_mask_wait_after_depth_ms": ("stage_join", "mask_wait_after_depth_ms"),
+            "stage_join_same_group_join_latency_ms": ("stage_join", "same_group_join_latency_ms"),
             "raw_fusion_total_ms": ("raw_fusion", "total_ms"),
             "fusion_total_ms": ("fusion", "total_ms"),
             "filter_total_ms": ("filter", "total_ms"),
@@ -5613,15 +5802,29 @@ class Demo21Runtime:
                     self._profile_mark_drop(group.group_id, "overlapped_stage_drop_skewed_capture_group")
                     continue
                 dispatch_s = self._profile_rel_s()
-                self.edgetam_stage_input_slot.put(group)
+                scheduler_mode = str(getattr(self.args, "stage_scheduler_mode", STAGE_SCHEDULER_MODE_MASK_GATED))
+                if scheduler_mode == STAGE_SCHEDULER_MODE_MASK_GATED:
+                    self.edgetam_stage_input_slot.put(group)
+                    depth_dispatch_policy = "after_mask_stage"
+                    ffs_dispatched = False
+                else:
+                    self.stage_window_scheduler.put_capture(group)
+                    self.stage_join_buffer.put_capture(group)
+                    depth_dispatch_policy = (
+                        "edge_start_reservation"
+                        if scheduler_mode == STAGE_SCHEDULER_MODE_EDGE_START
+                        else "bounded_lookahead_reservation"
+                    )
+                    ffs_dispatched = True
                 self._profile_update(
                     group.group_id,
                     stage_dispatch={
                         "group_id": int(group.group_id),
                         "capture_dispatch_s": float(dispatch_s),
-                        "edgetam_dispatched": True,
-                        "ffs_dispatched": False,
-                        "depth_dispatch_policy": "after_mask_stage",
+                        "edgetam_dispatched": scheduler_mode == STAGE_SCHEDULER_MODE_MASK_GATED,
+                        "ffs_dispatched": bool(ffs_dispatched),
+                        "scheduler_mode": scheduler_mode,
+                        "depth_dispatch_policy": depth_dispatch_policy,
                     },
                 )
         except Exception as exc:
@@ -5636,13 +5839,25 @@ class Demo21Runtime:
             aligners: dict[int, FfsIrToColorAligner] = {}
             last_group_id = -1
             while not self.stop_event.is_set():
-                group = self.ffs_stage_input_slot.get_latest_after(last_group_id)
-                if group is None:
-                    time.sleep(0.001)
-                    continue
-                if int(group.group_id) <= int(last_group_id):
-                    continue
-                last_group_id = int(group.group_id)
+                scheduler_mode = str(getattr(self.args, "stage_scheduler_mode", STAGE_SCHEDULER_MODE_MASK_GATED))
+                request_s = self._profile_rel_s()
+                if scheduler_mode == STAGE_SCHEDULER_MODE_MASK_GATED:
+                    group = self.ffs_stage_input_slot.get_latest_after(last_group_id)
+                    if group is None:
+                        time.sleep(0.001)
+                        continue
+                    if int(group.group_id) <= int(last_group_id):
+                        continue
+                    task = StageTask(group_id=int(group.group_id), group=group, reason="after-mask")
+                else:
+                    task = self.stage_window_scheduler.reserve_next_depth_task(mode=scheduler_mode)
+                    if task is None:
+                        time.sleep(0.001)
+                        continue
+                    group = task.group
+                if scheduler_mode == STAGE_SCHEDULER_MODE_MASK_GATED:
+                    last_group_id = int(group.group_id)
+                start_rel_s = self._profile_rel_s()
                 start_s = time.perf_counter()
                 depth_group, _ = self._run_depth_cycle_for_group(
                     group=group,
@@ -5650,13 +5865,20 @@ class Demo21Runtime:
                     aligners=aligners,
                 )
                 wall_ms = _elapsed_ms(start_s, time.perf_counter())
+                if scheduler_mode != STAGE_SCHEDULER_MODE_MASK_GATED:
+                    self.stage_window_scheduler.mark_depth_done(group.group_id)
                 self.stage_join_buffer.put_depth(depth_group)
                 self._latest_depth_group = depth_group
                 self.ffs_stats.record()
                 self._profile_update(
                     group.group_id,
                     ffs_stage={
+                        "request_s": float(request_s),
+                        "start_s": float(start_rel_s),
                         "publish_s": self._profile_rel_s(),
+                        "reason": task.reason,
+                        "scheduler_mode": scheduler_mode,
+                        "request_to_start_ms": float(max(0.0, (start_rel_s - request_s) * 1000.0)),
                         "wall_ms": float(wall_ms),
                         "depth_total_ms": float(depth_group.total_ms),
                         "input_age_ms": float((time.perf_counter() - group.created_perf_s) * 1000.0),
@@ -5673,13 +5895,26 @@ class Demo21Runtime:
             edgetam_states = self._get_or_init_gpu_owner_edgetam_states()
             last_group_id = -1
             while not self.stop_event.is_set():
-                group = self.edgetam_stage_input_slot.get_latest_after(last_group_id)
-                if group is None:
-                    time.sleep(0.001)
-                    continue
-                if int(group.group_id) <= int(last_group_id):
-                    continue
+                scheduler_mode = str(getattr(self.args, "stage_scheduler_mode", STAGE_SCHEDULER_MODE_MASK_GATED))
+                request_s = self._profile_rel_s()
+                if scheduler_mode == STAGE_SCHEDULER_MODE_MASK_GATED:
+                    group = self.edgetam_stage_input_slot.get_latest_after(last_group_id)
+                    if group is None:
+                        time.sleep(0.001)
+                        continue
+                    if int(group.group_id) <= int(last_group_id):
+                        continue
+                    task = StageTask(group_id=int(group.group_id), group=group, reason="mask-gated")
+                else:
+                    task = self.stage_window_scheduler.reserve_next_edge_task()
+                    if task is None:
+                        time.sleep(0.001)
+                        continue
+                    group = task.group
+                    if int(group.group_id) <= int(last_group_id):
+                        continue
                 last_group_id = int(group.group_id)
+                start_rel_s = self._profile_rel_s()
                 start_s = time.perf_counter()
                 mask_packets, edgetam_cycle_ms = self._run_gpu_owner_edgetam_cycle(
                     states=edgetam_states,
@@ -5699,20 +5934,30 @@ class Demo21Runtime:
                     edgetam_stage_sum_model_ms=float(sum_model_ms),
                     edgetam_stage_mode="batch-vision" if bool(getattr(self.args, "edgetam_batch_vision_encoder", False)) else "sequential",
                 )
-                self.stage_join_buffer.put_capture(group)
+                if scheduler_mode == STAGE_SCHEDULER_MODE_MASK_GATED:
+                    self.stage_join_buffer.put_capture(group)
+                else:
+                    self.stage_window_scheduler.mark_mask_done(group.group_id)
                 self.stage_join_buffer.put_mask(mask_group)
-                self.ffs_stage_input_slot.put(group)
+                if scheduler_mode == STAGE_SCHEDULER_MODE_MASK_GATED:
+                    self.ffs_stage_input_slot.put(group)
+                publish_s = self._profile_rel_s()
                 self._profile_update(
                     group.group_id,
                     edgetam_stage={
-                        "publish_s": self._profile_rel_s(),
-                        "depth_dispatch_s": self._profile_rel_s(),
+                        "request_s": float(request_s),
+                        "start_s": float(start_rel_s),
+                        "publish_s": float(publish_s),
+                        "depth_dispatch_s": float(publish_s) if scheduler_mode == STAGE_SCHEDULER_MODE_MASK_GATED else None,
+                        "reason": task.reason,
+                        "scheduler_mode": scheduler_mode,
+                        "request_to_start_ms": float(max(0.0, (start_rel_s - request_s) * 1000.0)),
                         "wall_ms": float(wall_ms),
                         "cycle_ms": float(edgetam_cycle_ms),
                         "sum_model_ms": float(sum_model_ms),
                         "mode": mask_group.edgetam_stage_mode,
                         "stateful_monotonic": True,
-                        "depth_dispatched_after_mask": True,
+                        "depth_dispatched_after_mask": scheduler_mode == STAGE_SCHEDULER_MODE_MASK_GATED,
                     },
                 )
         except Exception as exc:
@@ -5816,6 +6061,29 @@ class Demo21Runtime:
                 )
                 join_ms = _elapsed_ms(start_s, time.perf_counter())
                 counters = self.stage_join_buffer.snapshot()
+                ffs_publish_s: float | None = None
+                mask_publish_s: float | None = None
+                with self._profile_lock:
+                    record = self._profile_records.get(int(capture_group.group_id), {})
+                    if isinstance(record.get("ffs_stage"), dict):
+                        value = record["ffs_stage"].get("publish_s")
+                        if isinstance(value, (int, float)):
+                            ffs_publish_s = float(value)
+                    if isinstance(record.get("edgetam_stage"), dict):
+                        value = record["edgetam_stage"].get("publish_s")
+                        if isinstance(value, (int, float)):
+                            mask_publish_s = float(value)
+                join_publish_s = self._profile_rel_s()
+                if ffs_publish_s is not None and mask_publish_s is not None:
+                    depth_ready_before_mask = bool(ffs_publish_s <= mask_publish_s)
+                    depth_wait_after_mask_ms = max(0.0, (ffs_publish_s - mask_publish_s) * 1000.0)
+                    mask_wait_after_depth_ms = max(0.0, (mask_publish_s - ffs_publish_s) * 1000.0)
+                    same_group_join_latency_ms = max(0.0, (join_publish_s - max(ffs_publish_s, mask_publish_s)) * 1000.0)
+                else:
+                    depth_ready_before_mask = False
+                    depth_wait_after_mask_ms = 0.0
+                    mask_wait_after_depth_ms = 0.0
+                    same_group_join_latency_ms = 0.0
                 self._profile_update(
                     capture_group.group_id,
                     gpu_owner={
@@ -5831,9 +6099,13 @@ class Demo21Runtime:
                         "complete_group_published": bool(published),
                     },
                     stage_join={
-                        "publish_s": self._profile_rel_s(),
+                        "publish_s": float(join_publish_s),
                         "wall_ms": float(join_ms),
                         "depth_mask_group_id_match": True,
+                        "depth_ready_before_mask": depth_ready_before_mask,
+                        "depth_wait_after_mask_ms": float(depth_wait_after_mask_ms),
+                        "mask_wait_after_depth_ms": float(mask_wait_after_depth_ms),
+                        "same_group_join_latency_ms": float(same_group_join_latency_ms),
                         "capture_group_id": int(capture_group.group_id),
                         "depth_group_id": int(depth_group.group_id),
                         "mask_group_id": int(mask_group.group_id),
@@ -6860,6 +7132,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-pipeline-mode", choices=GPU_PIPELINE_MODES, default=GPU_PIPELINE_MODE_SEPARATE_WORKERS)
     parser.add_argument("--single-owner-order", choices=SINGLE_OWNER_ORDERS, default=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
     parser.add_argument("--staged-order", choices=STAGED_ORDERS, default=STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM)
+    parser.add_argument("--stage-scheduler-mode", choices=STAGE_SCHEDULER_MODES, default=STAGE_SCHEDULER_MODE_MASK_GATED)
+    parser.add_argument("--stage-lookahead", type=int, default=1)
     parser.add_argument("--edgetam-stream-mode", choices=EDGETAM_STREAM_MODES, default=EDGETAM_STREAM_MODE_DEFAULT)
     parser.add_argument("--static-device-buffers", action="store_true")
     parser.add_argument("--preallocate-pcd-buffers", action="store_true")

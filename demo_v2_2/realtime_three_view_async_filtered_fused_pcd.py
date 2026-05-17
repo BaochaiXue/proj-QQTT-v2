@@ -136,6 +136,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Use the cross-group FFS/EdgeTAM/join stage-overlap throughput mode.",
     )
     experiments.add_argument(
+        "--stage-scheduler-mode",
+        choices=runtime.STAGE_SCHEDULER_MODES,
+        default=None,
+        help="Scheduler policy for --experimental-overlapped-stages profiling.",
+    )
+    experiments.add_argument(
+        "--stage-lookahead",
+        type=int,
+        default=None,
+        help="Number of future groups FFS may reserve in bounded-lookahead mode.",
+    )
+    experiments.add_argument(
         "--ffs-batch-size",
         type=int,
         choices=runtime.FFS_TRT_BATCH_SIZES,
@@ -214,6 +226,8 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--tracking-depth-source", parsed.tracking_depth_source)
     _append_option(translated, "--tracking-output-root", parsed.tracking_output_root)
     _append_option(translated, "--ffs-trt-batch-size", parsed.ffs_batch_size)
+    _append_option(translated, "--stage-scheduler-mode", parsed.stage_scheduler_mode)
+    _append_option(translated, "--stage-lookahead", parsed.stage_lookahead)
 
     if parsed.dry_run:
         translated.append("--dry-run")
