@@ -77,6 +77,12 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("from demo_v2_2 import runtime", source)
         self.assertNotIn("from demo_v2_1 import realtime_three_view_masked_fused_pcd", source)
 
+    def test_demo22_runtime_boundary_uses_shared_runtime_not_demo21(self) -> None:
+        source = Path(demo.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("from qqtt.demo import three_view_masked_fused_pcd_runtime", source)
+        self.assertNotIn("from demo_v2_1 import", source)
+
     def test_demo22_public_cli_aliases_translate_to_runtime_flags(self) -> None:
         argv = demo22._to_demo22_argv(
             [

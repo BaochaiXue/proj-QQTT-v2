@@ -44,7 +44,11 @@ class NativeFfsFusedPcdCompareSmokeTest(unittest.TestCase):
         self.assertEqual([item["round_id"] for item in specs], ["round1", "round2", "round3"])
         self.assertTrue(str(specs[0]["native_case_ref"]).startswith("static/native_30_static_round1"))
         self.assertTrue(str(specs[0]["ffs_case_ref"]).startswith("static/ffs_30_static_round1"))
-        self.assertTrue(str(specs[0]["mask_root"]).endswith("masked_pointcloud_compare_round1_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks"))
+        self.assertTrue(
+            specs[0]["mask_root"]
+            .as_posix()
+            .endswith("masked_pointcloud_compare_round1_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks")
+        )
 
     def test_fuse_native_ffs_depth_only_uses_ffs_for_missing_native(self) -> None:
         native = np.array([[0.9, 0.0, 0.5], [0.6, 0.59, np.nan]], dtype=np.float32)

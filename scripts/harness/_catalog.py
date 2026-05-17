@@ -415,6 +415,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/benchmark_demo22_render_replay.py",
+        "focused_diagnostics",
+        "Headless Demo 2.2 render packet replay microbenchmark.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/compare_face_smoothness.py",
         "focused_diagnostics",
         "Fixed face-patch smoothness/noise comparison.",

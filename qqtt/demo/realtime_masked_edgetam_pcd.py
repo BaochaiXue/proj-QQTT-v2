@@ -22,19 +22,19 @@ def _resolve_repo_root() -> Path:
     env_root = os.environ.get("QQTT_REPO_ROOT")
     if env_root:
         candidates.append(Path(env_root))
-    candidates.extend([Path(__file__).resolve().parents[1], Path.cwd()])
+    candidates.extend([Path(__file__).resolve().parents[2], Path(__file__).resolve().parents[1], Path.cwd()])
     for candidate in candidates:
         root = candidate.expanduser().resolve()
         if (root / "data_process").is_dir() and (root / "demo_v2").is_dir():
             return root
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 REPO_ROOT = _resolve_repo_root()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from demo_v2.realtime_single_camera_pointcloud import (  # noqa: E402
+from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     CameraIntrinsics,
     CoalescedPostGate,
     ColorFloat32Buffer,
@@ -62,7 +62,7 @@ from demo_v2.realtime_single_camera_pointcloud import (  # noqa: E402
     validate_ffs_paths,
     warm_up_numba_ffs_align,
 )
-from demo_v2.pcd_filter_fast import (  # noqa: E402
+from qqtt.demo.pcd_filter_fast import (  # noqa: E402
     AsyncPcdFilterWorker,
     FilterBudgetController,
     FilterInput,

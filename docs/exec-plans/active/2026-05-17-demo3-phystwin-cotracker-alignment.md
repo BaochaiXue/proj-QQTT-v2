@@ -1,0 +1,32 @@
+# Demo 3 PhysTwin CoTracker Alignment
+
+## Goal
+
+Align Demo 3's CoTracker-compatible benchmark/export path with the
+FuturePhysTwin dense tracking convention while preserving the existing sparse
+3D anchor/trail visualization behavior.
+
+## Scope
+
+- Add a PhysTwin dense query mode that uses first-frame union masks and selects
+  10000 query points when available, otherwise 5000, with strict failure below
+  5000 mask pixels.
+- Support PhysTwin-style nested mask layouts such as `mask/{camera}/*/{frame}.png`
+  for benchmark query generation and metrics.
+- Make the PhysTwin-compatible benchmark path write `cotracker/{camera}.npz`
+  artifacts without changing the existing Demo 3 overlay reader.
+- Update docs and tests to distinguish dense PhysTwin export artifacts from
+  sparse realtime/overlay visualization.
+
+## Non-Goals
+
+- Do not put 5000/10000 dense CoTracker calls into the live Demo 2.2 render hot
+  path by default.
+- Do not change the Demo 3 overlay board layout or its default sparse display
+  point cap.
+- Do not import FuturePhysTwin code or add a runtime dependency on that repo.
+
+## Validation
+
+- Targeted Demo 3 tracking sampling and harness tests.
+- `python scripts/harness/check_all.py` in the default environment if feasible.

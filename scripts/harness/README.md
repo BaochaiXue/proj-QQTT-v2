@@ -1,6 +1,6 @@
 # Harness Engineering Map
 
-`scripts/harness/` is the operator-facing edge of the repo: CLI wrappers, probes, deterministic guards, and bounded diagnostics. Reusable calibration, geometry, point-cloud, layout, render, and depth logic belongs under `data_process/`.
+`scripts/harness/` is the operator-facing edge of the repo: CLI wrappers, probes, deterministic guards, and bounded diagnostics. Reusable calibration, geometry, point-cloud, layout, render, depth, and demo runtime logic belongs under `data_process/` or `qqtt/demo/`.
 
 ## Maintenance Contract
 
@@ -8,6 +8,7 @@
 - Add every new public harness Python file to `scripts/harness/_catalog.py`.
 - Keep one-off visualization experiments under `scripts/harness/experiments/`.
 - Keep formal recording/alignment code free of `scripts.harness.experiments` and `data_process.visualization.experiments` imports.
+- Treat `qqtt/demo/` as sanctioned demo runtime, not formal recording/alignment code.
 - Keep external repos, checkpoints, TensorRT engines, SAM assets, generated proof outputs, and local replay datasets outside harness code.
 - Remove local cache artifacts such as `__pycache__/`.
 
@@ -36,7 +37,7 @@ packages such as OpenCV are absent.
 
 ## Catalog Summary
 
-Current `_catalog.py` entries: `70`.
+Current `_catalog.py` entries: `71`.
 
 | Category | Count | Meaning |
 | --- | ---: | --- |
@@ -46,14 +47,14 @@ Current `_catalog.py` entries: `70`.
 | `formal_cleanup` | 1 | Downstream cleanup for `data/different_types/`. |
 | `current_compare` | 12 | In-scope aligned RealSense/native-vs-FFS comparison visualizations. |
 | `experiments` | 31 | Experiment-only workflows under `scripts/harness/experiments/`. |
-| `focused_diagnostics` | 4 | Narrow audits, overlays, and source diagnostics. |
+| `focused_diagnostics` | 5 | Narrow audits, overlays, render probes, and source diagnostics. |
 
 Help profile coverage:
 
 | Profile | Entries | Use |
 | --- | ---: | --- |
 | `quick` | 8 | Fast help checks used by default `check_all.py`. |
-| `full` | 52 | Broader help checks used by `check_all.py --full`. |
+| `full` | 61 | Broader help checks used by `check_all.py --full`. |
 | none | 10 | Helpers or shell scripts without direct argparse help coverage. |
 
 ## Current Boundaries
@@ -66,7 +67,7 @@ Help profile coverage:
 
 ## Adding A Harness File
 
-1. Put reusable implementation outside harness first, usually under `data_process/`.
+1. Put reusable implementation outside harness first, usually under `data_process/` or `qqtt/demo/`.
 2. Add the thin CLI/probe/check file under the right harness folder.
 3. Add a `HarnessEntry` in `_catalog.py` with the right category and `help_profile`.
 4. Run `conda run -n demo_2_max --no-capture-output python scripts/harness/check_harness_catalog.py`.

@@ -87,7 +87,11 @@ class FfsConfidenceFilterPcdCompareSmokeTest(unittest.TestCase):
         self.assertEqual([item["round_id"] for item in specs], ["round1", "round2", "round3"])
         self.assertTrue(str(specs[0]["native_case_ref"]).startswith("static/native_30_static_round1"))
         self.assertTrue(str(specs[0]["ffs_case_ref"]).startswith("static/ffs_30_static_round1"))
-        self.assertTrue(str(specs[0]["mask_root"]).endswith("masked_pointcloud_compare_round1_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks"))
+        self.assertTrue(
+            specs[0]["mask_root"]
+            .as_posix()
+            .endswith("masked_pointcloud_compare_round1_frame_0000_stuffed_animal/_generated_masks/ffs/sam31_masks")
+        )
 
     def test_build_confidence_filter_pcd_board_returns_6x3_matrix(self) -> None:
         rendered_rows = [[np.full((40, 60, 3), 90, dtype=np.uint8) for _ in range(3)] for _ in range(6)]

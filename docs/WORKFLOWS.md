@@ -112,11 +112,13 @@ the draw path is less dominated by point rasterization; pass explicit values
 when you want denser or larger splats for inspection.
 
 The single-camera coordinate contract above applies only to
-`demo_v2/realtime_single_camera_pointcloud.py`. Demo 2.1.5 / Demo 2.2 fused PCD
-uses the three-camera entrypoint in `demo_v2_1/`: it requires `calibrate.pkl`
-when world fusion is enabled, loads camera-to-world transforms after
-`CameraSystem` startup, transforms each camera's backprojected masked RGB-D
-points into the shared world frame, then fuses object/controller semantic PCDs.
+`demo_v2/realtime_single_camera_pointcloud.py`. Demo 2.1, Demo 2.1.5, and Demo
+2.2 keep their public entrypoints under their versioned folders, but shared
+three-camera fused-PCD runtime code lives under `qqtt/demo/`. These demos
+require `calibrate.pkl` when world fusion is enabled, load camera-to-world
+transforms after `CameraSystem` startup, transform each camera's backprojected
+masked RGB-D points into the shared world frame, then fuse object/controller
+semantic PCDs.
 
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:

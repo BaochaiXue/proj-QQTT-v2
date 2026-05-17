@@ -62,7 +62,8 @@ class DemoV215RealSenseDepthSmoke(unittest.TestCase):
     def test_demo215_wrapper_imports_dedicated_runtime_boundary(self) -> None:
         source = Path(demo215.__file__).read_text(encoding="utf-8")
 
-        self.assertIn("from demo_v2_2 import runtime", source)
+        self.assertIn("from qqtt.demo import three_view_masked_fused_pcd_runtime as runtime", source)
+        self.assertNotIn("from demo_v2_2 import runtime", source)
         self.assertNotIn("from demo_v2_1 import realtime_three_view_masked_fused_pcd", source)
 
     def test_demo215_warm_cache_flags_do_not_pass_to_runtime_parser(self) -> None:

@@ -26,6 +26,10 @@ FORMAL_CODE_ROOTS = (
     ROOT / "data_process" / "depth_backends",
 )
 
+FORMAL_CODE_EXCLUDED_ROOTS = (
+    ROOT / "qqtt" / "demo",
+)
+
 FORMAL_CODE_FILES = {
     ROOT / "cameras_viewer.py",
     ROOT / "cameras_viewer_FFS.py",
@@ -90,7 +94,11 @@ def _formal_paths() -> list[Path]:
     paths = [path for path in FORMAL_CODE_FILES if path.exists()]
     for root in FORMAL_CODE_ROOTS:
         if root.exists():
-            paths.extend(root.rglob("*.py"))
+            paths.extend(
+                path
+                for path in root.rglob("*.py")
+                if not any(_is_under(path, excluded_root) for excluded_root in FORMAL_CODE_EXCLUDED_ROOTS)
+            )
     return sorted(set(paths))
 
 

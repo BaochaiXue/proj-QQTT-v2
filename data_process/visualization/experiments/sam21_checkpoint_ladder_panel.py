@@ -154,7 +154,7 @@ def default_ladder_case_specs(*, root: Path) -> list[LadderCaseSpec]:
 
 
 def default_dynamics_ladder_case_specs(*, root: Path) -> list[LadderCaseSpec]:
-    repo_root = Path(root).resolve()
+    repo_root = Path(root).expanduser()
     return [
         LadderCaseSpec(
             key="ffs_dynamics_round1",
@@ -686,7 +686,7 @@ def build_stable_job_manifest(
     bbox_padding_px: int = 0,
 ) -> dict[str, Any]:
     init_mode = normalize_sam21_init_mode(sam21_init_mode)
-    resolved_sam31_mask_root = None if sam31_mask_root is None else str(Path(sam31_mask_root).resolve())
+    resolved_sam31_mask_root = None if sam31_mask_root is None else Path(sam31_mask_root).expanduser().as_posix()
     return {
         "checkpoint_key": checkpoint_spec.key,
         "checkpoint_label": checkpoint_spec.label,

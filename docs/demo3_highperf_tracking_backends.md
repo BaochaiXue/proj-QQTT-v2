@@ -23,6 +23,23 @@ dependency-gated probes for high-performance candidates.
 - CoTracker3 remains the reference backend for PhysTwin-compatible
   `tracks_yx + visibility`.
 
+## PhysTwin-Compatible CoTracker Export
+
+Use the dense export mode when the goal is to reproduce FuturePhysTwin-style
+CoTracker artifacts rather than a sparse visualization overlay:
+
+```bash
+python scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py \
+  --case-root data/<case> \
+  --query-mode phystwin_dense \
+  --backends cotracker3_online
+```
+
+`phystwin_dense` uses nested first-frame union masks, samples 10000 query
+points when available or 5000 otherwise, and writes `cotracker/{camera}.npz`.
+The existing Demo 3 overlay remains sparse by default and should consume dense
+tracks only as an offline/cached artifact.
+
 ## Installation
 
 Optional dependencies are installed manually through:

@@ -5,13 +5,17 @@ import argparse
 import csv
 import json
 from pathlib import Path
-import resource
 import sys
 import time
 from typing import Any
 
 import cv2
 import numpy as np
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - Windows fallback for help/check paths
+    resource = None
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -20,6 +24,10 @@ if str(ROOT) not in sys.path:
 
 
 DEFAULT_OUTPUT_ROOT = ROOT / "data" / "experiments" / "demo3_tracking_backend_benchmark"
+DEFAULT_NUM_QUERY_POINTS = "100,256,512,1024"
+AUTO_QUERY_POINTS = -1
+MASK_SOURCE_DEFAULT = "mask_dir"
+MASK_SOURCE_PHYSTWIN_UNION = "phystwin_union"
 RESULT_COLUMNS = [
     "case_name",
     "backend",
@@ -52,7 +60,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--backends", type=str, default="cotracker3_online")
     parser.add_argument("--cameras", type=str, default="0,1,2")
-    parser.add_argument("--num-query-points", type=str, default="100,256,512,1024")
+    parser.add_argument("--num-query-points", type=str, default=DEFAULT_NUM_QUERY_POINTS)
     parser.add_argument("--frames", type=int, default=120)
     parser.add_argument(
         "--query-mode",
@@ -61,9 +69,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("object_sparse", "object_dense", "controller_sparse", "phystwin_dense"),
         default="object_sparse",
     )
-    parser.add_argument("--sampling-strategy", choices=("random", "grid", "uniform_grid", "farthest"), default="grid")
+    parser.add_argument("--sampling-strategy", choices=("random", "grid", "uniform_grid", "farthest", "phystwin_random"), default="grid")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--mask-source", type=str, default="mask_dir")
+    parser.add_argument(
+        "--mask-source",
+        choices=(MASK_SOURCE_DEFAULT, MASK_SOURCE_PHYSTWIN_UNION),
+        default=MASK_SOURCE_DEFAULT,
+        help="Mask layout used for query sampling/metrics. phystwin_union unions mask/{camera}/*/{frame}.png.",
+    )
     parser.add_argument("--mask-dir", type=Path, default=None)
     parser.add_argument("--depth-source", choices=("native", "ffs"), default="native")
     parser.add_argument("--device", default="cuda")
@@ -71,11 +84,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--backend-availability-json", type=Path, default=None)
     parser.add_argument("--require-available", action="store_true", help="Fail if a requested backend is unavailable.")
     parser.add_argument("--write-phystwin-cotracker-dir", action="store_true")
+    parser.add_argument(
+        "--phystwin-compatible-export",
+        action="store_true",
+        help="Write root-level cotracker/{camera}.npz outputs and PhysTwin dense metadata.",
+    )
     return parser.parse_args(argv)
 
 
 def _parse_csv_ints(spec: str) -> list[int]:
     return [int(item.strip()) for item in str(spec).split(",") if item.strip()]
+
+
+def _parse_query_point_requests(spec: str, query_mode: str) -> list[int]:
+    normalized_spec = str(spec).strip().lower()
+    normalized_mode = str(query_mode).strip().lower()
+    if normalized_spec in {"auto", "phystwin", "phystwin_auto"}:
+        return [AUTO_QUERY_POINTS]
+    if normalized_mode == "phystwin_dense" and normalized_spec == DEFAULT_NUM_QUERY_POINTS:
+        return [AUTO_QUERY_POINTS]
+    return _parse_csv_ints(spec)
+
+
+def _format_query_requests(query_requests: list[int]) -> list[int | str]:
+    return ["phystwin_auto" if int(item) == AUTO_QUERY_POINTS else int(item) for item in query_requests]
 
 
 def _parse_csv_strings(spec: str) -> list[str]:
@@ -152,19 +184,59 @@ def _find_mask_path(mask_root: Path, camera_idx: int, frame_idx: int) -> Path | 
     return None
 
 
-def _load_mask(mask_root: Path | None, camera_idx: int, frame_idx: int, shape_hw: tuple[int, int]) -> np.ndarray:
+def _load_single_mask_file(path: Path) -> np.ndarray:
+    if path.suffix == ".npy":
+        return np.asarray(np.load(path)) > 0
+    mask = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if mask is None:
+        raise FileNotFoundError(f"Failed to read mask: {path}")
+    return np.asarray(mask) > 0
+
+
+def _phystwin_union_mask_paths(mask_root: Path, camera_idx: int, frame_idx: int) -> list[Path]:
+    frame_tokens = (str(frame_idx), f"{frame_idx:06d}")
+    paths: list[Path] = []
+    camera_root = mask_root / str(camera_idx)
+    for token in frame_tokens:
+        paths.extend(sorted(camera_root.glob(f"*/{token}.png")))
+        paths.extend(sorted(camera_root.glob(f"*/{token}.npy")))
+    return paths
+
+
+def _load_phystwin_union_mask(mask_root: Path, camera_idx: int, frame_idx: int, shape_hw: tuple[int, int]) -> np.ndarray:
+    paths = _phystwin_union_mask_paths(mask_root, camera_idx, frame_idx)
+    if not paths and frame_idx != 0:
+        paths = _phystwin_union_mask_paths(mask_root, camera_idx, 0)
+    if not paths:
+        raise FileNotFoundError(f"No PhysTwin-style masks found under {mask_root / str(camera_idx)} for frame {frame_idx}.")
+    union = np.zeros(shape_hw, dtype=bool)
+    for path in paths:
+        mask = _load_single_mask_file(path)
+        if mask.shape != shape_hw:
+            raise ValueError(f"Mask shape {mask.shape} from {path} does not match frame shape {shape_hw}.")
+        union = np.logical_or(union, mask)
+    return union
+
+
+def _load_mask(
+    mask_root: Path | None,
+    camera_idx: int,
+    frame_idx: int,
+    shape_hw: tuple[int, int],
+    *,
+    mask_source: str,
+) -> np.ndarray:
     if mask_root is None:
         return np.ones(shape_hw, dtype=bool)
+    if str(mask_source) == MASK_SOURCE_PHYSTWIN_UNION:
+        return _load_phystwin_union_mask(mask_root, camera_idx, frame_idx, shape_hw)
     path = _find_mask_path(mask_root, camera_idx, frame_idx)
     if path is None:
         return np.ones(shape_hw, dtype=bool)
-    if path.suffix == ".npy":
-        mask = np.load(path)
-    else:
-        mask = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-        if mask is None:
-            raise FileNotFoundError(f"Failed to read mask: {path}")
-    return np.asarray(mask) > 0
+    mask = _load_single_mask_file(path)
+    if mask.shape != shape_hw:
+        raise ValueError(f"Mask shape {mask.shape} from {path} does not match frame shape {shape_hw}.")
+    return mask
 
 
 def _latency_summary(ms: float) -> dict[str, float]:
@@ -244,6 +316,47 @@ def _compute_lift_metrics(
         return {"depth_valid_ratio_mean": 0.0, "lifted_3d_count_mean": 0.0, "lift_notes": f"{type(exc).__name__}: {exc}"}
 
 
+def _effective_mask_source(query_mode: str, mask_source: str) -> str:
+    if str(query_mode).strip().lower() == "phystwin_dense" and str(mask_source) == MASK_SOURCE_DEFAULT:
+        return MASK_SOURCE_PHYSTWIN_UNION
+    return str(mask_source)
+
+
+def _effective_mask_root(*, case_root: Path, mask_dir: Path | None, mask_source: str) -> Path | None:
+    if mask_dir is not None:
+        return mask_dir.resolve()
+    if str(mask_source) == MASK_SOURCE_PHYSTWIN_UNION:
+        return case_root / "mask"
+    return None
+
+
+def _sample_query_points_for_request(
+    mask: np.ndarray,
+    *,
+    requested_points: int,
+    query_mode: str,
+    sampling_strategy: str,
+    seed: int,
+) -> np.ndarray:
+    from qqtt.tracking.sampling import sample_phystwin_dense, sample_query_points_from_mask
+
+    normalized_mode = str(query_mode).strip().lower()
+    if normalized_mode == "phystwin_dense" and int(requested_points) == AUTO_QUERY_POINTS:
+        return sample_phystwin_dense(mask, seed=seed)
+    if int(requested_points) == AUTO_QUERY_POINTS:
+        raise ValueError("auto query count is only supported with --query-mode phystwin_dense.")
+    strategy = str(sampling_strategy)
+    if normalized_mode == "phystwin_dense" and strategy == "grid":
+        strategy = "phystwin_random"
+    return sample_query_points_from_mask(
+        mask,
+        num_points=int(requested_points),
+        strategy=strategy,
+        seed=seed,
+        strict=normalized_mode == "phystwin_dense",
+    )
+
+
 def _write_outputs(output_dir: Path, rows: list[dict[str, Any]], availability: dict[str, dict[str, Any]]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "results.csv").open("w", newline="", encoding="utf-8") as f:
@@ -262,6 +375,8 @@ def _write_outputs(output_dir: Path, rows: list[dict[str, Any]], availability: d
 
 
 def _max_rss_mb() -> float:
+    if resource is None:
+        return 0.0
     # Linux reports ru_maxrss in KiB.
     return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
 
@@ -343,7 +458,6 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     from qqtt.tracking.io import save_cotracker_like_npz
     from qqtt.tracking.metrics import compute_2d_track_metrics
     from qqtt.tracking.registry import check_backend_availability, create_backend
-    from qqtt.tracking.sampling import sample_query_points_from_mask
 
     try:
         import torch
@@ -358,8 +472,11 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     preloaded_availability = _read_backend_availability_json(args.backend_availability_json.resolve()) if args.backend_availability_json else None
     backends = _resolve_backend_names(str(args.backends), preloaded_availability)
     camera_indices = _parse_csv_ints(args.cameras)
-    query_counts = _parse_csv_ints(args.num_query_points)
-    mask_root = Path(args.mask_dir).resolve() if args.mask_dir is not None else None
+    query_requests = _parse_query_point_requests(str(args.num_query_points), str(args.query_mode))
+    mask_source = _effective_mask_source(str(args.query_mode), str(args.mask_source))
+    mask_root = _effective_mask_root(case_root=case_root, mask_dir=args.mask_dir, mask_source=mask_source)
+    phystwin_mode = str(args.query_mode).strip().lower() == "phystwin_dense"
+    phystwin_export = bool(args.write_phystwin_cotracker_dir or args.phystwin_compatible_export or phystwin_mode)
     availability = {name: item.to_dict() for name, item in check_backend_availability(backends).items()}
     if preloaded_availability:
         for name in backends:
@@ -387,11 +504,14 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         frame_cache[camera_idx] = frames
         shape_hw = frames[0].shape[:2]
         mask_start = time.perf_counter()
-        mask_cache[camera_idx] = [_load_mask(mask_root, camera_idx, frame_idx, shape_hw) for frame_idx in range(len(frames))]
+        mask_cache[camera_idx] = [
+            _load_mask(mask_root, camera_idx, frame_idx, shape_hw, mask_source=mask_source)
+            for frame_idx in range(len(frames))
+        ]
         mask_load_ms_total += (time.perf_counter() - mask_start) * 1000.0
 
     lift_context = _load_lift_context(case_root)
-    normalized_mode = "object_dense" if str(args.query_mode) == "phystwin_dense" else str(args.query_mode)
+    normalized_mode = str(args.query_mode)
 
     for backend_name in backends:
         backend_available = bool(availability[backend_name]["available"])
@@ -412,19 +532,21 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             except Exception as exc:
                 backend_available = False
                 backend_warmup_error = f"{type(exc).__name__}: {exc}"
-        for requested_points in query_counts:
+        for requested_points in query_requests:
             group_row_indices: list[int] = []
             camera_e2e_ms: list[float] = []
+            camera_query_counts: list[int] = []
             for camera_idx in camera_indices:
                 frames = frame_cache[camera_idx]
                 masks = mask_cache[camera_idx]
-                query_points = sample_query_points_from_mask(
+                query_points = _sample_query_points_for_request(
                     masks[0],
-                    num_points=int(requested_points),
-                    strategy=str(args.sampling_strategy),
+                    requested_points=int(requested_points),
+                    query_mode=str(args.query_mode),
+                    sampling_strategy=str(args.sampling_strategy),
                     seed=int(args.seed),
-                    strict=False,
                 )
+                camera_query_counts.append(int(len(query_points)))
                 row: dict[str, Any] = {
                     "case_name": case_root.name,
                     "backend": backend_name,
@@ -512,15 +634,17 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     "image_size": [int(frames[0].shape[0]), int(frames[0].shape[1])],
                     "query_mode": normalized_mode,
                     "depth_source": str(args.depth_source),
+                    "mask_source": mask_source,
+                    "phystwin_compatible": bool(phystwin_mode),
                 }
                 save_cotracker_like_npz(result, npz_path, camera_idx=camera_idx, metadata=metadata)
                 save_cotracker_like_npz(result, backend_dir / "cotracker_like" / f"{camera_idx}.npz", camera_idx=camera_idx, metadata=metadata)
-                if bool(args.write_phystwin_cotracker_dir):
+                if phystwin_export:
                     save_cotracker_like_npz(
                         result,
                         output_dir / "cotracker" / f"{camera_idx}.npz",
                         camera_idx=camera_idx,
-                        metadata={"backend": backend_name, "query_mode": normalized_mode},
+                        metadata=metadata,
                     )
                 row["output_npz_path"] = str(npz_path)
                 (backend_dir / f"benchmark_cam{camera_idx}.json").write_text(
@@ -541,7 +665,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     "available": backend_available,
                     "availability_reason": availability[backend_name]["reason"],
                     "camera_idx": "all",
-                    "num_query_points": int(requested_points),
+                    "num_query_points": int(np.median(camera_query_counts)) if camera_query_counts else 0,
                     "num_frames": min(len(frame_cache[idx]) for idx in camera_indices),
                     "model_ms_median": 0.0,
                     "model_ms_p95": 0.0,
@@ -568,7 +692,11 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "output_dir": str(output_dir),
         "backends": backends,
         "cameras": camera_indices,
-        "query_counts": query_counts,
+        "query_counts": _format_query_requests(query_requests),
+        "query_mode": str(args.query_mode),
+        "mask_source": mask_source,
+        "mask_root": None if mask_root is None else str(mask_root),
+        "phystwin_compatible_export": phystwin_export,
         "frames_requested": int(args.frames),
         "frame_load_ms_total": float(frame_load_ms_total),
         "mask_load_ms_total": float(mask_load_ms_total),

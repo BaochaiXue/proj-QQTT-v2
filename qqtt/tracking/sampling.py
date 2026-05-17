@@ -5,7 +5,10 @@ import warnings
 
 import numpy as np
 
-SamplingStrategy = Literal["random", "grid", "uniform_grid", "farthest"]
+SamplingStrategy = Literal["random", "grid", "uniform_grid", "farthest", "phystwin_random"]
+
+PHYSTWIN_DENSE_MIN_QUERY_POINTS = 5000
+PHYSTWIN_DENSE_HIGH_QUERY_POINTS = 10000
 
 
 def _mask_coordinates_yx(mask: np.ndarray) -> np.ndarray:
@@ -20,7 +23,7 @@ def sample_query_points_from_mask(
     *,
     num_points: int,
     strategy: SamplingStrategy = "grid",
-    seed: int = 0,
+    seed: int | None = 0,
     strict: bool = False,
 ) -> np.ndarray:
     coords = _mask_coordinates_yx(mask)
@@ -41,9 +44,13 @@ def sample_query_points_from_mask(
         return coords.copy()
     normalized_strategy = "uniform_grid" if strategy == "grid" else strategy
     if normalized_strategy == "random":
-        rng = np.random.default_rng(int(seed))
+        rng = np.random.default_rng(None if seed is None or int(seed) < 0 else int(seed))
         idx = rng.choice(len(coords), size=count, replace=False)
         return coords[np.sort(idx)].astype(np.float32)
+    if normalized_strategy == "phystwin_random":
+        rng = np.random.default_rng(None if seed is None or int(seed) < 0 else int(seed))
+        idx = rng.permutation(len(coords))[:count]
+        return coords[idx].astype(np.float32)
     if normalized_strategy in {"uniform_grid", "farthest"}:
         order = np.lexsort((coords[:, 1], coords[:, 0]))
         sorted_coords = coords[order]
@@ -62,6 +69,25 @@ def sample_object_dense(mask: np.ndarray, num_points: int = 5000, *, strategy: S
 
 def sample_controller_sparse(mask: np.ndarray, num_points: int = 30, *, strategy: SamplingStrategy = "grid", seed: int = 0) -> np.ndarray:
     return sample_query_points_from_mask(mask, num_points=num_points, strategy=strategy, seed=seed)
+
+
+def phystwin_dense_query_count(mask: np.ndarray) -> int:
+    count = int(len(_mask_coordinates_yx(mask)))
+    if count >= PHYSTWIN_DENSE_HIGH_QUERY_POINTS:
+        return PHYSTWIN_DENSE_HIGH_QUERY_POINTS
+    if count >= PHYSTWIN_DENSE_MIN_QUERY_POINTS:
+        return PHYSTWIN_DENSE_MIN_QUERY_POINTS
+    raise ValueError(f"PhysTwin dense CoTracker requires at least {PHYSTWIN_DENSE_MIN_QUERY_POINTS} mask pixels; got {count}.")
+
+
+def sample_phystwin_dense(mask: np.ndarray, *, seed: int | None = 0) -> np.ndarray:
+    return sample_query_points_from_mask(
+        mask,
+        num_points=phystwin_dense_query_count(mask),
+        strategy="phystwin_random",
+        seed=seed,
+        strict=True,
+    )
 
 
 def query_counts_for_mode(mode: str) -> tuple[int, ...]:

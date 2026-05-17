@@ -87,6 +87,7 @@ data product.
 - `demo_v2_1/**`
 - `demo_v2_1_5/**`
 - `demo_v2_2/**`
+- `qqtt/demo/**`
 - `services/ffs_remote/**`
 - `qqtt/tracking/**`
 - `docs/demo3_highperf_tracking_backends.md`
@@ -100,6 +101,7 @@ data product.
 - `scripts/harness/check_scope.py`
 - `scripts/harness/check_all.py`
 - `scripts/harness/check_experiment_boundaries.py`
+- `scripts/harness/benchmark_demo22_render_replay.py`
 - `scripts/harness/benchmark_ffs_configs.py`
 - `scripts/harness/run_ffs_static_replay_matrix.py`
 - `scripts/harness/experiments/**`

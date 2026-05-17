@@ -19,7 +19,7 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -37,7 +37,7 @@ from data_process.depth_backends.fast_foundation_stereo import (  # noqa: E402
     FFS_INPUT_STAGING_PAGEABLE,
     FFS_INPUT_STAGING_PINNED,
 )
-from demo_v2.realtime_masked_edgetam_pcd import (  # noqa: E402
+from qqtt.demo.realtime_masked_edgetam_pcd import (  # noqa: E402
     _bgr_to_pil_rgb,
     _elapsed_ms,
     _load_hf_streaming_runtime,
@@ -53,8 +53,8 @@ from demo_v2.realtime_masked_edgetam_pcd import (  # noqa: E402
     release_sam31_runtime_resources,
     resolve_initial_masks,
 )
-from demo_v2.pcd_filter_fast import voxel_cap_points  # noqa: E402
-from demo_v2.realtime_single_camera_pointcloud import (  # noqa: E402
+from qqtt.demo.pcd_filter_fast import voxel_cap_points  # noqa: E402
+from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     CameraIntrinsics,
     ColorFloat32Buffer,
     DEFAULT_FFS_REPO,
@@ -70,7 +70,7 @@ from demo_v2.realtime_single_camera_pointcloud import (  # noqa: E402
     validate_ffs_paths,
     warm_up_numba_ffs_align,
 )
-from demo_v2_2.render_fastpath import (  # noqa: E402
+from qqtt.demo.render_fastpath import (  # noqa: E402
     DEFAULT_RENDER_BACKEND,
     DEFAULT_RENDER_COPY_MODE,
     DEFAULT_RENDER_LAYER_MODE,

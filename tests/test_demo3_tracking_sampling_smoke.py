@@ -4,7 +4,14 @@ import unittest
 
 import numpy as np
 
-from qqtt.tracking.sampling import sample_controller_sparse, sample_object_dense, sample_object_sparse, sample_query_points_from_mask
+from qqtt.tracking.sampling import (
+    phystwin_dense_query_count,
+    sample_controller_sparse,
+    sample_object_dense,
+    sample_object_sparse,
+    sample_phystwin_dense,
+    sample_query_points_from_mask,
+)
 
 
 class Demo3TrackingSamplingSmokeTest(unittest.TestCase):
@@ -36,6 +43,25 @@ class Demo3TrackingSamplingSmokeTest(unittest.TestCase):
         self.assertEqual(sample_object_sparse(mask, 3).shape, (3, 2))
         self.assertEqual(sample_object_dense(mask, 5).shape, (5, 2))
         self.assertEqual(sample_controller_sparse(mask, 2).shape, (2, 2))
+
+    def test_phystwin_dense_query_count_matches_thresholds(self) -> None:
+        mask_5000 = np.ones((80, 80), dtype=np.uint8)
+        self.assertEqual(phystwin_dense_query_count(mask_5000), 5000)
+        mask_10000 = np.ones((120, 120), dtype=np.uint8)
+        self.assertEqual(phystwin_dense_query_count(mask_10000), 10000)
+        with self.assertRaises(ValueError):
+            phystwin_dense_query_count(np.ones((10, 10), dtype=np.uint8))
+
+    def test_phystwin_dense_sampling_is_seeded_random_yx(self) -> None:
+        mask = np.ones((80, 80), dtype=np.uint8)
+        points_a = sample_phystwin_dense(mask, seed=7)
+        points_b = sample_phystwin_dense(mask, seed=7)
+        points_c = sample_phystwin_dense(mask, seed=8)
+
+        self.assertEqual(points_a.shape, (5000, 2))
+        np.testing.assert_array_equal(points_a, points_b)
+        self.assertFalse(np.array_equal(points_a, points_c))
+        self.assertTrue(np.all(mask[points_a[:, 0].astype(int), points_a[:, 1].astype(int)] > 0))
 
 
 if __name__ == "__main__":

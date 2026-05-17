@@ -21,6 +21,7 @@ def _resolve_repo_root() -> Path:
         candidates.append(Path(env_root))
     candidates.extend(
         [
+            Path(__file__).resolve().parents[2],
             Path(__file__).resolve().parents[1],
             Path.cwd(),
         ]
@@ -29,7 +30,7 @@ def _resolve_repo_root() -> Path:
         root = candidate.expanduser().resolve()
         if (root / "data_process" / "depth_backends").is_dir():
             return root
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 REPO_ROOT = _resolve_repo_root()

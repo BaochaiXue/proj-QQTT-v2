@@ -4,10 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from qqtt.tracking.base import TrackingResult
-from qqtt.tracking.io import save_cotracker_like_npz
+from qqtt.tracking.io import load_cotracker_like_npz, save_cotracker_like_npz
 from tests.visualization_test_utils import make_visualization_case
 
 
@@ -49,6 +50,52 @@ class Demo3TrackingHarnessSmokeTest(unittest.TestCase):
             self.assertTrue((output_dir / "cotracker" / "0.npz").is_file())
             header = (output_dir / "results.csv").read_text(encoding="utf-8").splitlines()[0].split(",")
             self.assertEqual(header, RESULT_COLUMNS)
+
+    def test_phystwin_dense_mode_uses_nested_union_masks_and_writes_cotracker_dir(self) -> None:
+        from scripts.harness.experiments.run_demo3_tracking_backend_benchmark import parse_args, run_benchmark
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_root = root / "case"
+            (case_root / "color" / "0").mkdir(parents=True, exist_ok=True)
+            (case_root / "mask" / "0" / "1").mkdir(parents=True, exist_ok=True)
+            (case_root / "mask" / "0" / "2").mkdir(parents=True, exist_ok=True)
+            frame = np.zeros((120, 120, 3), dtype=np.uint8)
+            cv2.imwrite(str(case_root / "color" / "0" / "0.png"), frame)
+            mask_a = np.zeros((120, 120), dtype=np.uint8)
+            mask_b = np.zeros((120, 120), dtype=np.uint8)
+            mask_a[:80, :] = 255
+            mask_b[40:, :] = 255
+            cv2.imwrite(str(case_root / "mask" / "0" / "1" / "0.png"), mask_a)
+            cv2.imwrite(str(case_root / "mask" / "0" / "2" / "0.png"), mask_b)
+            args = parse_args(
+                [
+                    "--case-root",
+                    str(case_root),
+                    "--output-root",
+                    str(root / "out"),
+                    "--backends",
+                    "fake",
+                    "--cameras",
+                    "0",
+                    "--frames",
+                    "1",
+                    "--query-mode",
+                    "phystwin_dense",
+                ]
+            )
+
+            summary = run_benchmark(args)
+            output_dir = Path(summary["output_dir"])
+            tracking_npz = output_dir / "cotracker" / "0.npz"
+
+            self.assertTrue((output_dir / "fake" / "points_10000" / "cam0.npz").is_file())
+            self.assertTrue(tracking_npz.is_file())
+            loaded, metadata = load_cotracker_like_npz(tracking_npz)
+            self.assertEqual(loaded.tracks_yx.shape[1], 10000)
+            self.assertEqual(metadata["query_mode"], "phystwin_dense")
+            self.assertEqual(metadata["mask_source"], "phystwin_union")
+            self.assertTrue(metadata["phystwin_compatible"])
 
     def test_overlay_export_writes_ply_frame_video_and_stats(self) -> None:
         from scripts.harness.visualize_demo3_tracking_pcd_overlay import parse_args, run_overlay_export

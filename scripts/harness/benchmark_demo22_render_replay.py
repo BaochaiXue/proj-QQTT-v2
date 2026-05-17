@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from demo_v2_2.render_fastpath import (
+from qqtt.demo.render_fastpath import (
     RENDER_BACKENDS,
     RenderMicroProfileRecord,
     RenderMicroProfiler,

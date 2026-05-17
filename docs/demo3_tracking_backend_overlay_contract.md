@@ -29,6 +29,31 @@ visibility: (T, N) or (T, N, 1)
 The y,x convention is mandatory because downstream mask/depth indexing uses
 row,column order.
 
+## PhysTwin Dense Export Contract
+
+The offline benchmark supports a PhysTwin-compatible dense CoTracker mode:
+
+```bash
+python scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py \
+  --case-root data/<case> \
+  --query-mode phystwin_dense \
+  --backends cotracker3_online
+```
+
+In this mode the harness:
+
+- reads first-frame nested masks from `mask/{camera}/*/0.png` unless
+  `--mask-dir` points to another equivalent root
+- unions all first-frame masks per camera before query sampling
+- samples 10000 query points when the union mask has at least 10000 pixels,
+  otherwise samples 5000 points when at least 5000 pixels are available
+- fails below 5000 mask pixels instead of silently tracking the full frame
+- writes PhysTwin-style root artifacts under `cotracker/{camera}.npz` in
+  addition to the Demo 3 benchmark output tree
+
+This dense export path is for compatibility and offline diagnostics. It does
+not change the sparse overlay defaults.
+
 ## Overlay Contract
 
 Demo overlay displays sparse lifted 3D anchors/trails, with 50-200 points by
