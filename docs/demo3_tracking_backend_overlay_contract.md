@@ -54,11 +54,11 @@ In this mode the harness:
 - reads first-frame nested masks from `mask/{camera}/*/0.png` unless
   `--mask-dir` points to another equivalent root
 - unions all first-frame masks per camera before query sampling
-- samples exactly 5000 query points per camera, matching FuturePhysTwin's
-  dense CoTracker convention
+- samples up to 5000 query points per camera, matching PhysTwin/FuturePhysTwin's
+  dense CoTracker convention: masks with at least 5000 pixels use 5000 random
+  points, while smaller masks use all available mask pixels
 - uses FuturePhysTwin-style torch `randperm` sampling with default seed `42`
   and a per-camera offset (`seed + camera_idx`)
-- fails below 5000 mask pixels instead of silently tracking the full frame
 - writes PhysTwin-style root artifacts under `cotracker/{camera}.npz` in
   addition to the Demo 3 benchmark output tree
 
@@ -70,8 +70,8 @@ not change the sparse overlay defaults.
 Demo overlay displays sparse lifted 3D anchors/trails, with a default cap of
 30 points per camera.
 
-Dense 5000-point tracks are benchmark artifacts and must not be shown in the
-realtime demo by default.
+Dense up-to-5000-point tracks are benchmark artifacts and must not be shown in
+the realtime demo by default.
 
 Tracks are lifted to 3D using:
 

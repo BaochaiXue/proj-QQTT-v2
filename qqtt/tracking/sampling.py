@@ -72,9 +72,7 @@ def sample_controller_sparse(mask: np.ndarray, num_points: int = 30, *, strategy
 
 def phystwin_dense_query_count(mask: np.ndarray) -> int:
     count = int(len(_mask_coordinates_yx(mask)))
-    if count >= PHYSTWIN_DENSE_QUERY_POINTS:
-        return PHYSTWIN_DENSE_QUERY_POINTS
-    raise ValueError(f"PhysTwin dense CoTracker requires at least {PHYSTWIN_DENSE_QUERY_POINTS} mask pixels; got {count}.")
+    return min(count, PHYSTWIN_DENSE_QUERY_POINTS)
 
 
 def _torch_randperm_indices(length: int, count: int, *, seed: int | None, camera_idx: int, device: str) -> np.ndarray:
@@ -100,8 +98,6 @@ def sample_phystwin_dense(
 ) -> np.ndarray:
     coords = _mask_coordinates_yx(mask)
     count = phystwin_dense_query_count(mask)
-    if len(coords) < count:
-        raise ValueError(f"Mask has only {len(coords)} pixels, fewer than requested {count}.")
     idx = _torch_randperm_indices(len(coords), count, seed=seed, camera_idx=camera_idx, device=torch_device)
     return coords[idx].astype(np.float32)
 

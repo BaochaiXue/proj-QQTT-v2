@@ -9,8 +9,8 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
 ## Scope
 
 - Add a PhysTwin dense query mode that uses first-frame union masks and selects
-  exactly 5000 query points per camera, with strict failure below 5000 mask
-  pixels.
+  up to 5000 query points per camera: 5000 when enough mask pixels exist, or
+  all available mask pixels when fewer than 5000 exist.
 - Match FuturePhysTwin's deterministic dense query sampling: torch `randperm`,
   default seed `42`, and `seed + camera_idx`.
 - Support PhysTwin-style nested mask layouts such as `mask/{camera}/*/{frame}.png`
@@ -44,3 +44,6 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
 - Completed: `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
 - Completed after online replay change: `conda run -n demo_2_max --no-capture-output python -m unittest -v tests.test_demo3_tracking_registry_smoke tests.test_demo3_tracking_harness_smoke tests.test_demo3_tracking_sampling_smoke`
 - Completed after online replay change: `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
+- Completed after up-to-5000 query cap change: `python -m py_compile qqtt/tracking/sampling.py scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py tests/test_demo3_tracking_sampling_smoke.py tests/test_demo3_tracking_harness_smoke.py`
+- Completed after up-to-5000 query cap change: `conda run -n demo_2_max --no-capture-output python -m unittest -v tests.test_demo3_tracking_sampling_smoke tests.test_demo3_tracking_harness_smoke tests.test_demo3_tracking_registry_smoke`
+- Completed after up-to-5000 query cap change: `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`

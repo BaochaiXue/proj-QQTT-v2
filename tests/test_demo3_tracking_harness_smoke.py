@@ -116,8 +116,46 @@ class Demo3TrackingHarnessSmokeTest(unittest.TestCase):
                     "10000",
                 ]
             )
-            with self.assertRaisesRegex(ValueError, "fixed at 5000"):
+            with self.assertRaisesRegex(ValueError, "capped at 5000"):
                 run_benchmark(args)
+
+    def test_phystwin_dense_mode_uses_all_mask_pixels_below_5000(self) -> None:
+        from scripts.harness.experiments.run_demo3_tracking_backend_benchmark import parse_args, run_benchmark
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_root = root / "case"
+            (case_root / "color" / "0").mkdir(parents=True, exist_ok=True)
+            (case_root / "mask" / "0" / "1").mkdir(parents=True, exist_ok=True)
+            frame = np.zeros((20, 20, 3), dtype=np.uint8)
+            mask = np.full((20, 20), 255, dtype=np.uint8)
+            cv2.imwrite(str(case_root / "color" / "0" / "0.png"), frame)
+            cv2.imwrite(str(case_root / "mask" / "0" / "1" / "0.png"), mask)
+            args = parse_args(
+                [
+                    "--case-root",
+                    str(case_root),
+                    "--output-root",
+                    str(root / "out"),
+                    "--backends",
+                    "fake",
+                    "--cameras",
+                    "0",
+                    "--frames",
+                    "1",
+                    "--query-mode",
+                    "phystwin_dense",
+                ]
+            )
+
+            summary = run_benchmark(args)
+            output_dir = Path(summary["output_dir"])
+            tracking_npz = output_dir / "cotracker" / "0.npz"
+
+            self.assertTrue((output_dir / "fake" / "points_400" / "cam0.npz").is_file())
+            loaded, metadata = load_cotracker_like_npz(tracking_npz)
+            self.assertEqual(loaded.tracks_yx.shape[1], 400)
+            self.assertEqual(metadata["query_mode"], "phystwin_dense")
 
     def test_overlay_export_writes_ply_frame_video_and_stats(self) -> None:
         from scripts.harness.visualize_demo3_tracking_pcd_overlay import parse_args, run_overlay_export

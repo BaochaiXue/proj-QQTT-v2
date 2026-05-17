@@ -105,7 +105,7 @@ def _parse_query_point_requests(spec: str, query_mode: str) -> list[int]:
         return [AUTO_QUERY_POINTS]
     requests = _parse_csv_ints(spec)
     if normalized_mode == "phystwin_dense" and any(int(item) != 5000 for item in requests):
-        raise ValueError("PhysTwin dense query mode is fixed at 5000 query points per camera.")
+        raise ValueError("PhysTwin dense query mode is capped at 5000 query points per camera.")
     if normalized_mode == "phystwin_dense":
         return [5000]
     return requests
@@ -350,7 +350,7 @@ def _sample_query_points_for_request(
     normalized_mode = str(query_mode).strip().lower()
     if normalized_mode == "phystwin_dense":
         if int(requested_points) not in {AUTO_QUERY_POINTS, 5000}:
-            raise ValueError("PhysTwin dense query mode is fixed at 5000 query points per camera.")
+            raise ValueError("PhysTwin dense query mode is capped at 5000 query points per camera.")
         return sample_phystwin_dense(mask, seed=seed, camera_idx=camera_idx, torch_device=sampling_device)
     if int(requested_points) == AUTO_QUERY_POINTS:
         raise ValueError("auto query count is only supported with --query-mode phystwin_dense.")

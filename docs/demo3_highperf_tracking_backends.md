@@ -26,8 +26,8 @@ dependency-gated probes for high-performance candidates.
   buffer contract: `window_len=16`, `step=8`, first publish at 16 frames, then
   one publish every 8 new frames. The saved-case replay benchmark uses the same
   frame-by-frame `update(frame)` path for this backend. PhysTwin dense
-  5000-point runs remain cached or offline artifacts unless explicitly enabled
-  outside the render hot path.
+  up-to-5000-point runs remain cached or offline artifacts unless explicitly
+  enabled outside the render hot path.
 
 ## PhysTwin-Compatible CoTracker Export
 
@@ -41,9 +41,10 @@ python scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py \
   --backends cotracker3_online
 ```
 
-`phystwin_dense` uses nested first-frame union masks, samples exactly 5000
+`phystwin_dense` uses nested first-frame union masks, samples up to 5000
 query points per camera with FuturePhysTwin-style torch `randperm`
 (`seed + camera_idx`, default seed `42`), and writes `cotracker/{camera}.npz`.
+Masks with fewer than 5000 pixels use all available mask pixels.
 The existing Demo 3 overlay remains sparse by default and should consume dense
 tracks only as an offline/cached artifact.
 

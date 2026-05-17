@@ -44,13 +44,13 @@ class Demo3TrackingSamplingSmokeTest(unittest.TestCase):
         self.assertEqual(sample_object_dense(mask, 5).shape, (5, 2))
         self.assertEqual(sample_controller_sparse(mask, 2).shape, (2, 2))
 
-    def test_phystwin_dense_query_count_is_fixed_at_5000(self) -> None:
+    def test_phystwin_dense_query_count_is_capped_at_5000(self) -> None:
         mask_5000 = np.ones((80, 80), dtype=np.uint8)
         self.assertEqual(phystwin_dense_query_count(mask_5000), 5000)
         mask_10000 = np.ones((120, 120), dtype=np.uint8)
         self.assertEqual(phystwin_dense_query_count(mask_10000), 5000)
-        with self.assertRaises(ValueError):
-            phystwin_dense_query_count(np.ones((10, 10), dtype=np.uint8))
+        self.assertEqual(phystwin_dense_query_count(np.ones((10, 10), dtype=np.uint8)), 100)
+        self.assertEqual(phystwin_dense_query_count(np.zeros((10, 10), dtype=np.uint8)), 0)
 
     def test_phystwin_dense_sampling_matches_futurephystwin_torch_randperm(self) -> None:
         try:
@@ -72,6 +72,15 @@ class Demo3TrackingSamplingSmokeTest(unittest.TestCase):
         np.testing.assert_array_equal(points_a, points_b)
         self.assertFalse(np.array_equal(points_a, points_c))
         self.assertTrue(np.all(mask[points_a[:, 0].astype(int), points_a[:, 1].astype(int)] > 0))
+
+        small_mask = np.ones((10, 10), dtype=np.uint8)
+        small_coords = np.argwhere(small_mask).astype(np.float32)
+        small_generator = torch.Generator(device="cpu")
+        small_generator.manual_seed(43)
+        small_expected_idx = torch.randperm(len(small_coords), generator=small_generator).numpy()
+        small_points = sample_phystwin_dense(small_mask, seed=42, camera_idx=1, torch_device="cpu")
+        self.assertEqual(small_points.shape, (100, 2))
+        np.testing.assert_array_equal(small_points, small_coords[small_expected_idx])
 
 
 if __name__ == "__main__":
