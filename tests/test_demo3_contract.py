@@ -211,8 +211,10 @@ class Demo3RuntimeContractTest(unittest.TestCase):
             self.assertTrue(profile["summary"]["edgetam_batch_vision_encoder"])
             self.assertEqual(_FakeSharedRuntime.last_args.depth_source, "realsense")
             self.assertTrue(_FakeSharedRuntime.last_args.edgetam_batch_vision_encoder)
-            self.assertEqual(_FakeSharedRuntime.last_args.tracking_backend, "cotracker3_online")
-            self.assertTrue(_FakeSharedRuntime.last_args.show_tracking_overlay)
+            self.assertEqual(_FakeSharedRuntime.last_args.tracking_backend, "none")
+            self.assertEqual(_FakeSharedRuntime.last_args.tracking_source, "cached")
+            self.assertFalse(_FakeSharedRuntime.last_args.show_tracking_overlay)
+            self.assertTrue(profile["contract"]["cotracker_enabled"])
 
 
 if __name__ == "__main__":

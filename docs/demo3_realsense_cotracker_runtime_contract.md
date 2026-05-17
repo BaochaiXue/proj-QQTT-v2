@@ -45,8 +45,10 @@ The hot path forbids:
 Non-dry-run execution delegates camera capture, timestamp grouping, HF EdgeTAM
 masking, RealSense-depth fusion, and Open3D rendering to the shared three-view
 runtime used by Demo 2.x. Demo 3 forces that runtime to use RealSense depth and
-starts its own sidecar CoTracker3 overlay stage. Demo 2.2 behavior stays
-unchanged because the Demo 3 hooks live in the Demo 3 adapter.
+starts its own sidecar CoTracker3 overlay stage. The shared runtime tracking
+backend is forced to `none` from Demo 3 so CoTracker3 has a single owner: the
+Demo 3 sidecar. Demo 2.2 behavior stays unchanged because the Demo 3 hooks live
+in the Demo 3 adapter.
 
 ## CLI Contract
 
@@ -111,6 +113,10 @@ directly.
 The live overlay worker uses a latest-only slot. The renderer reads the latest
 overlay packet if one exists and proceeds without it when CoTracker is still
 warming up, slow, stale, or disabled.
+
+Overlay freshness is measured from the overlay publish time, not the source
+capture timestamp, so a slow CoTracker update is not discarded immediately
+after it finishes. The source timestamp remains diagnostic metadata.
 
 Default live visualization caps the overlay at 30 visible points per camera.
 Dense 5000-point CoTracker artifacts remain a benchmark/export diagnostic path,

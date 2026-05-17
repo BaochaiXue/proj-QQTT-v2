@@ -42,6 +42,7 @@ class TrackingOverlayPacket:
     camera_visibility: dict[int, np.ndarray]
     camera_tracks_world: dict[int, np.ndarray] = field(default_factory=dict)
     query_points_yx: dict[int, np.ndarray] = field(default_factory=dict)
+    source_timestamp_s: float | None = None
     publish_range: tuple[int, int] = (0, 0)
     model_ms: float = 0.0
     e2e_ms: float = 0.0
@@ -329,14 +330,16 @@ class CoTracker3OverlayWorker:
         if not camera_tracks_yx:
             return None
         e2e_ms = (time.perf_counter() - started_s) * 1000.0
+        published_s = time.perf_counter()
         overlay = TrackingOverlayPacket(
             group_id=int(packet.group_id),
             frame_idx=int(packet.frame_idx),
-            timestamp_s=float(packet.timestamp_s),
+            timestamp_s=float(published_s),
             camera_tracks_yx=camera_tracks_yx,
             camera_visibility=camera_visibility,
             camera_tracks_world=camera_tracks_world,
             query_points_yx=query_points_yx,
+            source_timestamp_s=float(packet.timestamp_s),
             publish_range=(min(publish_starts), max(publish_ends)),
             model_ms=float(model_ms),
             e2e_ms=float(e2e_ms),
@@ -346,7 +349,7 @@ class CoTracker3OverlayWorker:
         self._published_packets += 1
         self._model_ms_samples.append(float(model_ms))
         self._e2e_ms_samples.append(float(e2e_ms))
-        self._publish_times_s.append(float(time.perf_counter()))
+        self._publish_times_s.append(float(published_s))
         return overlay
 
     def latest_overlay(self) -> TrackingOverlayPacket | None:

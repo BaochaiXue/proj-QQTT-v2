@@ -15,7 +15,8 @@ Non-dry-run execution now adapts the shared three-view runtime: it opens the
 three RealSense cameras, uses HF EdgeTAM masks, fuses RealSense-depth semantic
 PCD, forces the HF EdgeTAM batch vision encoder, and starts CoTracker3 as a
 sidecar latest-wins overlay stage. Rendering does not wait for CoTracker; stale
-or missing overlays are skipped.
+or missing overlays are skipped. The shared runtime tracking backend is disabled
+from Demo 3, so the sidecar is the only CoTracker owner.
 
 Dry-run contract check:
 

@@ -420,9 +420,9 @@ def build_shared_runtime_argv(
         "--profile-visualization",
         "--render-micro-profile",
         "--tracking-backend",
-        COTRACKER3_ONLINE if not bool(args.disable_cotracker) else "none",
+        "none",
         "--tracking-source",
-        "live" if not bool(args.disable_cotracker) else "cached",
+        "cached",
         "--tracking-num-points",
         str(int(args.cotracker_query_count)),
         "--tracking-overlay-max-points",
@@ -438,8 +438,6 @@ def build_shared_runtime_argv(
         argv.extend(["--profile-json-output", str(shared_profile_path)])
     if bool(args.debug):
         argv.append("--debug")
-    if not bool(args.disable_cotracker):
-        argv.append("--show-tracking-overlay")
     return argv
 
 

@@ -100,11 +100,16 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
         self.assertEqual(backend.update_calls, 15)
         self.assertIsNone(worker.latest_overlay())
 
+        before_publish_s = time.perf_counter()
         overlay = worker.process_group(self._packet(15))
+        after_publish_s = time.perf_counter()
         self.assertIsNotNone(overlay)
         self.assertEqual(backend.update_calls, 16)
         self.assertEqual(overlay.publish_range, (0, 15))  # type: ignore[union-attr]
         self.assertEqual(overlay.camera_tracks_yx[0].shape, (5, 2))  # type: ignore[union-attr]
+        self.assertGreaterEqual(overlay.timestamp_s, before_publish_s)  # type: ignore[union-attr]
+        self.assertLessEqual(overlay.timestamp_s, after_publish_s)  # type: ignore[union-attr]
+        self.assertEqual(overlay.source_timestamp_s, 15.0 / 30.0)  # type: ignore[union-attr]
         self.assertEqual(worker.latest_overlay().seq, 15)  # type: ignore[union-attr]
 
     def test_later_publish_occurs_every_step_frames(self) -> None:
