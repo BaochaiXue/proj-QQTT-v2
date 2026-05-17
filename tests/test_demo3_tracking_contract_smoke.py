@@ -37,6 +37,7 @@ class Demo3TrackingContractSmokeTest(unittest.TestCase):
         contract = json.loads(result.stdout)
         self.assertTrue(contract["tracking_overlay"]["enabled"])
         self.assertEqual(contract["tracking_overlay"]["backend"], "cotracker3_online")
+        self.assertEqual(contract["tracking_overlay"]["max_points"], 30)
         self.assertFalse(contract["tracking_overlay"]["blocking_render"])
 
 

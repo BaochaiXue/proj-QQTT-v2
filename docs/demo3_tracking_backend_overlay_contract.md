@@ -64,8 +64,8 @@ not change the sparse overlay defaults.
 
 ## Overlay Contract
 
-Demo overlay displays sparse lifted 3D anchors/trails, with 50-200 points by
-default.
+Demo overlay displays sparse lifted 3D anchors/trails, with a default cap of
+30 points per camera.
 
 Dense 5000-point tracks are benchmark artifacts and must not be shown in the
 realtime demo by default.

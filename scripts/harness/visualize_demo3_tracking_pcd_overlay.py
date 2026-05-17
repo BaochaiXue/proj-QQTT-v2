@@ -26,7 +26,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--frame-idx", type=int, default=0)
     parser.add_argument("--trail-len", type=int, default=8)
-    parser.add_argument("--max-overlay-points", type=int, default=150)
+    parser.add_argument("--max-overlay-points", type=int, default=30)
     parser.add_argument("--cameras", type=str, default="0,1,2")
     parser.add_argument("--viewpoints", type=str, default="cam0,cam1,cam2")
     parser.add_argument("--depth-source", choices=("native", "ffs"), default="native")

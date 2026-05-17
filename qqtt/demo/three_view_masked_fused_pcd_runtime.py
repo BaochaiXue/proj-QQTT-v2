@@ -2021,7 +2021,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "backend": str(getattr(args, "tracking_backend", "none")),
             "source": str(getattr(args, "tracking_source", "cached")),
             "num_points": int(getattr(args, "tracking_num_points", 256)),
-            "max_points": int(getattr(args, "tracking_overlay_max_points", 150)),
+            "max_points": int(getattr(args, "tracking_overlay_max_points", 30)),
             "trail_len": int(getattr(args, "tracking_trail_len", 8)),
             "update_hz": float(getattr(args, "tracking_update_hz", 5.0)),
             "depth_source": str(getattr(args, "tracking_depth_source", "displayed")),
@@ -6350,7 +6350,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--tracking-source", choices=("live", "cached", "offline_npz"), default="cached")
     parser.add_argument("--tracking-num-points", type=int, default=256)
-    parser.add_argument("--tracking-overlay-max-points", type=int, default=150)
+    parser.add_argument("--tracking-overlay-max-points", type=int, default=30)
     parser.add_argument("--tracking-trail-len", type=int, default=8)
     parser.add_argument("--tracking-update-hz", type=float, default=5.0)
     parser.add_argument("--tracking-depth-source", choices=("displayed", "native", "ffs"), default="displayed")
