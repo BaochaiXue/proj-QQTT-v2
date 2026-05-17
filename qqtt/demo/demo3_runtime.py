@@ -63,6 +63,7 @@ DEFAULT_OVERLAY_STALE_TIMEOUT_MS = 500.0
 DEFAULT_COTRACKER_WINDOW_LEN = 16
 DEFAULT_COTRACKER_PUBLISH_STEP = 8
 DEFAULT_OUTPUT_ROOT = Path("result/demo3_realsense_cotracker")
+EDGETAM_BATCH_VISION_ENCODER_REQUIRED = True
 OVERLAY_COLOR_RGB = np.array([255, 230, 32], dtype=np.uint8)
 
 
@@ -187,6 +188,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "depth_source": DEPTH_SOURCE_REALSENSE,
         "uses_ffs": False,
         "mask_source": MASK_SOURCE_HF_EDGETAM,
+        "edgetam_batch_vision_encoder": EDGETAM_BATCH_VISION_ENCODER_REQUIRED,
         "edgetam_sessions_per_camera": 1,
         "track_mode": str(args.track_mode),
         "object_prompt": str(args.object_prompt),
@@ -241,6 +243,7 @@ def build_empty_profile_summary(contract: dict[str, Any]) -> dict[str, Any]:
         "uses_ffs": False,
         "depth_source": DEPTH_SOURCE_REALSENSE,
         "mask_source": MASK_SOURCE_HF_EDGETAM,
+        "edgetam_batch_vision_encoder": EDGETAM_BATCH_VISION_ENCODER_REQUIRED,
         "num_realsense_cameras": int(contract.get("num_realsense_cameras", 3)),
         "calibrate_pkl_loaded": bool(contract.get("calibrate_pkl_loaded", False)),
         "cotracker_backend": COTRACKER3_ONLINE,
@@ -257,6 +260,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "depth_source",
         "uses_ffs",
         "mask_source",
+        "edgetam_batch_vision_encoder",
         "cotracker_backend",
         "cotracker_async",
         "render_latest_wins",
@@ -397,6 +401,7 @@ def build_shared_runtime_argv(
         *[str(serial) for serial in active_serials],
         "--depth-source",
         DEPTH_SOURCE_REALSENSE,
+        "--edgetam-batch-vision-encoder",
         "--render-mode",
         render_mode,
         "--track-mode",

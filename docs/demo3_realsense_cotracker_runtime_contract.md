@@ -3,8 +3,8 @@
 Demo 3 is a realtime visualization demo built on the Demo 2.2 asynchronous
 three-camera runtime pattern. It requires exactly three RealSense cameras, uses
 RealSense RGB-D as the only depth source, uses HF EdgeTAM masks for semantic
-object/controller masks, and runs CoTracker3 online as a separate async
-tracking overlay stage.
+object/controller masks through the shared batch vision encoder path, and runs
+CoTracker3 online as a separate async tracking overlay stage.
 
 CoTracker output is used for visualization only. FuturePhysTwin post-processing
 artifacts such as `track_process_data.pkl`, inverse-physics data generation,
@@ -12,9 +12,9 @@ and final controller point selection are out of scope for Demo 3.
 
 Demo 3 是实时可视化 demo，不是 FuturePhysTwin 数据处理 pipeline。它必须使用三台
 RealSense，相机分组和渲染架构学习 Demo 2.2；depth 只用 RealSense，不使用 FFS；mask
-来自 HF EdgeTAM；CoTracker3 online 作为独立异步 tracking stage 生成可视化 tracking
-points。CoTracker 慢或未发布时，主 PCD rendering 继续使用最新 fused PCD，不等待
-tracking overlay。
+来自 HF EdgeTAM，并强制使用 batch vision encoder；CoTracker3 online 作为独立异步
+tracking stage 生成可视化 tracking points。CoTracker 慢或未发布时，主 PCD rendering
+继续使用最新 fused PCD，不等待 tracking overlay。
 
 ## Runtime Shape
 
@@ -67,6 +67,7 @@ num_cameras = 3
 depth_source = realsense
 uses_ffs = false
 mask_source = hf_edgetam
+edgetam_batch_vision_encoder = true
 cotracker_backend = cotracker3_online
 cotracker_async = true
 render_latest_wins = true
@@ -89,6 +90,7 @@ The second fails because Demo 3 does not support FFS.
 - `--camera-ids 0,1,2`
 - `--depth-source realsense`
 - `--mask-source hf-edgetam`
+- HF EdgeTAM batch vision encoder enabled
 - `--track-mode object-only`
 - `--object-prompt "stuffed animal"`
 - `--controller-prompt "towel"`
@@ -146,6 +148,7 @@ render_waited_for_cotracker = false
 uses_ffs = false
 depth_source = realsense
 mask_source = hf_edgetam
+edgetam_batch_vision_encoder = true
 num_realsense_cameras = 3
 calibrate_pkl_loaded = true
 cotracker_backend = cotracker3_online
