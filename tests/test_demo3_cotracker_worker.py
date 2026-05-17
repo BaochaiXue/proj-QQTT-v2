@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import time
 import unittest
 
 import numpy as np
 
 from qqtt.demo.cotracker3_overlay_worker import (
+    CoTracker3OverlayThread,
     CoTracker3OverlayWorker,
+    LatestTrackingInputSlot,
     LatestTrackingOverlaySlot,
     TrackingOverlayInputPacket,
     TrackingOverlayPacket,
@@ -71,6 +74,10 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
     def _packet(self, frame_idx: int) -> TrackingOverlayInputPacket:
         rgb = np.zeros((8, 8, 3), dtype=np.uint8)
         mask = np.ones((8, 8), dtype=np.uint8)
+        return self._packet_with_mask(frame_idx, mask)
+
+    def _packet_with_mask(self, frame_idx: int, mask: np.ndarray) -> TrackingOverlayInputPacket:
+        rgb = np.zeros((8, 8, 3), dtype=np.uint8)
         return TrackingOverlayInputPacket(
             group_id=frame_idx,
             frame_idx=frame_idx,
@@ -153,6 +160,69 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
 
         self.assertTrue(render_tick())
         self.assertIsNone(slot.get_optional())
+
+    def test_empty_first_mask_is_not_cached_forever(self) -> None:
+        backend = _FakeOnlineBackend(window_len=2, step=1)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0,),
+            backend_factory=lambda _camera_idx: backend,
+            query_count=4,
+            overlay_max_points_per_camera=4,
+        )
+        empty = np.zeros((8, 8), dtype=np.uint8)
+        nonempty = np.ones((8, 8), dtype=np.uint8)
+
+        self.assertIsNone(worker.process_group(self._packet_with_mask(0, empty)))
+        self.assertEqual(backend.update_calls, 0)
+        self.assertIsNone(worker.process_group(self._packet_with_mask(1, nonempty)))
+        overlay = worker.process_group(self._packet_with_mask(2, nonempty))
+
+        self.assertIsNotNone(overlay)
+        self.assertEqual(backend.update_calls, 2)
+        self.assertEqual(overlay.camera_tracks_yx[0].shape, (4, 2))  # type: ignore[union-attr]
+
+    def test_overlay_slot_marks_stale_packets(self) -> None:
+        slot = LatestTrackingOverlaySlot()
+        slot.publish(
+            TrackingOverlayPacket(
+                group_id=1,
+                frame_idx=1,
+                timestamp_s=10.0,
+                camera_tracks_yx={},
+                camera_visibility={},
+            )
+        )
+
+        self.assertFalse(slot.get_optional(now_s=10.1, stale_timeout_s=0.5).stale)  # type: ignore[union-attr]
+        self.assertTrue(slot.get_optional(now_s=11.0, stale_timeout_s=0.5).stale)  # type: ignore[union-attr]
+        self.assertIsNone(slot.get_fresh(now_s=11.0, stale_timeout_s=0.5))
+
+    def test_overlay_thread_processes_latest_input_without_blocking_producer(self) -> None:
+        backend = _FakeOnlineBackend(window_len=2, step=1)
+        input_slot = LatestTrackingInputSlot()
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0,),
+            backend_factory=lambda _camera_idx: backend,
+            query_count=4,
+            overlay_max_points_per_camera=4,
+        )
+        thread = CoTracker3OverlayThread(worker=worker, input_slot=input_slot, poll_interval_s=0.0001)
+        thread.start()
+        try:
+            input_slot.publish(self._packet(0))
+            for _ in range(200):
+                if thread.processed_packets >= 1:
+                    break
+                time.sleep(0.001)
+            input_slot.publish(self._packet(1))
+            for _ in range(200):
+                if worker.latest_overlay() is not None:
+                    break
+                time.sleep(0.001)
+            self.assertIsNotNone(worker.latest_overlay())
+        finally:
+            thread.stop(timeout_s=1.0)
+        self.assertGreaterEqual(thread.snapshot()["processed_packets"], 2)
 
 
 if __name__ == "__main__":

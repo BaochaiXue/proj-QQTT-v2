@@ -1,10 +1,23 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
+import pickle
 import sys
-from typing import Any, Sequence
+import time
+from typing import Any, Callable, Sequence
+
+import numpy as np
+
+from qqtt.demo.cotracker3_overlay_worker import (
+    CoTracker3OverlayThread,
+    CoTracker3OverlayWorker,
+    LatestTrackingInputSlot,
+    LatestTrackingOverlaySlot,
+    TrackingOverlayInputPacket,
+)
 
 
 PRESET_DEMO3_REALSENSE_COTRACKER_HIGHFPS = "demo3-realsense-cotracker-highfps"
@@ -49,6 +62,12 @@ DEFAULT_OVERLAY_TRAIL_LEN = 16
 DEFAULT_OVERLAY_STALE_TIMEOUT_MS = 500.0
 DEFAULT_COTRACKER_WINDOW_LEN = 16
 DEFAULT_COTRACKER_PUBLISH_STEP = 8
+DEFAULT_OUTPUT_ROOT = Path("result/demo3_realsense_cotracker")
+OVERLAY_COLOR_RGB = np.array([255, 230, 32], dtype=np.uint8)
+
+
+ConnectedSerialsProvider = Callable[[], Sequence[str]]
+BackendFactory = Callable[[int], Any]
 
 
 def parse_camera_ids(value: str | Sequence[int]) -> tuple[int, ...]:
@@ -88,6 +107,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration-s", type=float, default=120.0)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--profile-json-output", type=Path, default=None)
+    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--camera-ids", type=parse_camera_ids, default=DEFAULT_CAMERA_IDS)
     parser.add_argument("--serials", nargs="*", default=None)
     parser.add_argument("--calibrate-path", type=Path, default=Path("calibrate.pkl"))
@@ -187,6 +207,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "width": int(args.width),
         "height": int(args.height),
         "fps": int(args.fps),
+        "output_root": str(args.output_root),
         "hot_path_forbids": [
             "ffs",
             "ffs_tensorrt",
@@ -260,6 +281,401 @@ def _write_profile(path: Path | None, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _load_shared_runtime_module():
+    from qqtt.demo import three_view_masked_fused_pcd_runtime as shared_runtime
+
+    return shared_runtime
+
+
+def _get_connected_realsense_serials() -> list[str]:
+    from qqtt.env.camera.realsense.single_realsense import SingleRealsense
+
+    return list(SingleRealsense.get_connected_devices_serial())
+
+
+def validate_live_realsense_contract(
+    args: argparse.Namespace,
+    *,
+    connected_serials_provider: ConnectedSerialsProvider | None = None,
+) -> dict[str, Any]:
+    validate_args(args, require_calibration=True)
+    provider = connected_serials_provider or _get_connected_realsense_serials
+    connected_serials = list(provider())
+    requested_serials = list(args.serials or [])
+    if requested_serials:
+        if len(requested_serials) != 3:
+            raise RuntimeError("Demo 3 requires exactly three requested RealSense serials when --serials is used.")
+        missing = [serial for serial in requested_serials if serial not in connected_serials]
+        if missing:
+            raise RuntimeError(f"Demo 3 requested RealSense serials are not connected: {missing}")
+        active_serials = requested_serials
+    else:
+        if len(connected_serials) != 3:
+            raise RuntimeError(
+                "Demo 3 requires exactly three connected RealSense cameras when --serials is not provided. "
+                f"connected={len(connected_serials)}"
+            )
+        active_serials = connected_serials
+
+    from qqtt.env.camera.calibration_metadata import load_calibration_reference_serials
+
+    calibration_reference_serials = load_calibration_reference_serials(args.calibrate_path)
+    if calibration_reference_serials is not None:
+        if len(calibration_reference_serials) != 3:
+            raise RuntimeError(
+                "Demo 3 requires calibrate.pkl metadata for exactly three cameras. "
+                f"calibration_reference_serials={len(calibration_reference_serials)}"
+            )
+        missing_from_calibration = [serial for serial in active_serials if serial not in calibration_reference_serials]
+        if missing_from_calibration:
+            raise RuntimeError(
+                "Demo 3 active RealSense serials are not covered by calibrate.pkl metadata. "
+                f"missing={missing_from_calibration}"
+            )
+    try:
+        calibration_transform_count = _calibration_transform_count(args.calibrate_path)
+    except Exception as exc:
+        raise RuntimeError(f"Demo 3 calibration validation failed: {exc}") from exc
+    if calibration_transform_count != 3:
+        raise RuntimeError(
+            "Demo 3 requires calibrate.pkl to contain exactly three camera-to-world transforms. "
+            f"transform_count={calibration_transform_count}"
+        )
+    return {
+        "connected_serials": connected_serials,
+        "active_serials": active_serials,
+        "calibration_reference_serials": calibration_reference_serials,
+        "calibration_transform_count": int(calibration_transform_count),
+    }
+
+
+def _calibration_transform_count(calibrate_path: str | Path) -> int:
+    with Path(calibrate_path).open("rb") as handle:
+        raw = pickle.load(handle)
+    arr = np.asarray(raw, dtype=np.float32)
+    if arr.ndim != 3 or arr.shape[1:] != (4, 4):
+        raise ValueError(f"Unsupported calibrate.pkl transform shape: {arr.shape}")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("calibrate.pkl contains non-finite transform values.")
+    expected_bottom = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+    if not np.allclose(arr[:, 3, :], expected_bottom[None, :], atol=1e-4):
+        raise ValueError("calibrate.pkl contains an invalid homogeneous bottom row.")
+    return int(arr.shape[0])
+
+
+def _shared_profile_path(args: argparse.Namespace) -> Path | None:
+    if args.profile_json_output is None:
+        return Path(args.output_root) / "demo3_shared_runtime_profile.json"
+    path = Path(args.profile_json_output)
+    return path.with_name(f"{path.stem}_shared_runtime{path.suffix or '.json'}")
+
+
+def build_shared_runtime_argv(
+    args: argparse.Namespace,
+    *,
+    active_serials: Sequence[str],
+    calibration_reference_serials: Sequence[str] | None,
+    shared_profile_path: Path | None,
+) -> list[str]:
+    render_mode = RENDER_MODE_NONE if str(args.render_mode) == RENDER_MODE_NONE else RENDER_MODE_POINTCLOUD
+    argv = [
+        "--preset",
+        "demo2.1.5-live-fast-native",
+        "--profile",
+        f"{int(args.width)}x{int(args.height)}",
+        "--fps",
+        str(int(args.fps)),
+        "--fusion-target-fps",
+        str(float(args.fps)),
+        "--capture-group-target-fps",
+        str(float(args.fps)),
+        "--camera-ids",
+        ",".join(str(item) for item in parse_camera_ids(args.camera_ids)),
+        "--calibrate-path",
+        str(args.calibrate_path),
+        "--serials",
+        *[str(serial) for serial in active_serials],
+        "--depth-source",
+        DEPTH_SOURCE_REALSENSE,
+        "--render-mode",
+        render_mode,
+        "--track-mode",
+        str(args.track_mode),
+        "--object-prompt",
+        str(args.object_prompt),
+        "--controller-prompt",
+        str(args.controller_prompt),
+        "--experiment-mode",
+        "controller-object-exp",
+        "--duration-s",
+        str(float(args.duration_s)),
+        "--output-root",
+        str(args.output_root),
+        "--profile-pipeline",
+        "--profile-visualization",
+        "--render-micro-profile",
+        "--tracking-backend",
+        COTRACKER3_ONLINE if not bool(args.disable_cotracker) else "none",
+        "--tracking-source",
+        "live" if not bool(args.disable_cotracker) else "cached",
+        "--tracking-num-points",
+        str(int(args.cotracker_query_count)),
+        "--tracking-overlay-max-points",
+        str(int(args.overlay_max_points_per_camera)),
+        "--tracking-trail-len",
+        str(int(args.overlay_trail_len)),
+        "--tracking-depth-source",
+        "native",
+    ]
+    if calibration_reference_serials:
+        argv.extend(["--calibration-reference-serials", *[str(serial) for serial in calibration_reference_serials]])
+    if shared_profile_path is not None:
+        argv.extend(["--profile-json-output", str(shared_profile_path)])
+    if bool(args.debug):
+        argv.append("--debug")
+    if not bool(args.disable_cotracker):
+        argv.append("--show-tracking-overlay")
+    return argv
+
+
+def build_shared_runtime_args(
+    args: argparse.Namespace,
+    *,
+    shared_runtime_module: Any | None = None,
+    live_validation: dict[str, Any],
+    shared_profile_path: Path | None,
+) -> argparse.Namespace:
+    shared = shared_runtime_module or _load_shared_runtime_module()
+    parser = shared.build_arg_parser()
+    shared_argv = build_shared_runtime_argv(
+        args,
+        active_serials=live_validation["active_serials"],
+        calibration_reference_serials=live_validation.get("calibration_reference_serials"),
+        shared_profile_path=shared_profile_path,
+    )
+    shared_args = parser.parse_args(shared_argv)
+    return shared.apply_preset_defaults(shared_args, explicit_options=shared._explicit_cli_options(shared_argv))
+
+
+def _semantic_tracking_mask(mask_packet: Any, track_mode: str) -> np.ndarray:
+    mode = str(track_mode)
+    object_mask = np.asarray(mask_packet.object_mask, dtype=bool)
+    controller_mask = np.asarray(mask_packet.controller_mask, dtype=bool)
+    if mode == TRACK_MODE_OBJECT_ONLY:
+        return object_mask
+    if mode == TRACK_MODE_CONTROLLER_ONLY:
+        return controller_mask
+    if mode == TRACK_MODE_NONE:
+        return np.zeros_like(object_mask, dtype=bool)
+    return object_mask | controller_mask
+
+
+def _runtime_stat_fps(runtime: Any, attr: str) -> float:
+    return float(getattr(getattr(runtime, attr, None), "fps", 0.0) or 0.0)
+
+
+def _stats(values: Sequence[float]) -> tuple[float, float]:
+    arr = np.asarray([float(value) for value in values], dtype=np.float32)
+    if arr.size == 0:
+        return 0.0, 0.0
+    return float(np.median(arr)), float(np.percentile(arr, 95))
+
+
+def _nested_get(payload: dict[str, Any], path: Sequence[str], default: Any = None) -> Any:
+    cursor: Any = payload
+    for key in path:
+        if not isinstance(cursor, dict) or key not in cursor:
+            return default
+        cursor = cursor[key]
+    return cursor
+
+
+def _load_json_if_exists(path: Path | None) -> dict[str, Any] | None:
+    if path is None or not Path(path).is_file():
+        return None
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _build_demo3_live_summary(
+    *,
+    contract: dict[str, Any],
+    runtime: Any,
+    exit_code: int,
+    tracking_snapshot: dict[str, Any] | None,
+    overlay_ms_samples: Sequence[float],
+    shared_profile: dict[str, Any] | None,
+) -> dict[str, Any]:
+    summary = build_empty_profile_summary(contract)
+    final = getattr(runtime, "_summary", {}).get("final", {}) if hasattr(runtime, "_summary") else {}
+    warm = (shared_profile or {}).get("summary_after_warmup", {})
+    metrics = warm.get("metrics", {}) if isinstance(warm, dict) else {}
+    edge_fps_values = [
+        float(getattr(stat, "fps", 0.0) or 0.0)
+        for stat in getattr(runtime, "edge_stats", {}).values()
+    ] if isinstance(getattr(runtime, "edge_stats", None), dict) else []
+    overlay_median, overlay_p95 = _stats(overlay_ms_samples)
+    tracking_worker = (tracking_snapshot or {}).get("worker", {}) if isinstance(tracking_snapshot, dict) else {}
+    summary.update(
+        {
+            "exit_code": int(exit_code),
+            "rendered_fps": float(final.get("render_fps", warm.get("render_fps", _runtime_stat_fps(runtime, "render_stats"))) or 0.0),
+            "render_loop_fps": float(final.get("render_fps", warm.get("render_fps", _runtime_stat_fps(runtime, "render_stats"))) or 0.0),
+            "capture_group_fps": float(final.get("capture_group_fps", warm.get("capture_group_fps", _runtime_stat_fps(runtime, "capture_group_stats"))) or 0.0),
+            "edgetam_mask_fps": float(np.mean(edge_fps_values)) if edge_fps_values else 0.0,
+            "fusion_fps": float(final.get("fusion_fps", warm.get("fusion_fps", _runtime_stat_fps(runtime, "fusion_stats"))) or 0.0),
+            "cotracker_publish_fps": float(tracking_worker.get("publish_fps", 0.0) or 0.0),
+            "cotracker_model_ms_median": float(tracking_worker.get("model_ms_median", 0.0) or 0.0),
+            "cotracker_model_ms_p95": float(tracking_worker.get("model_ms_p95", 0.0) or 0.0),
+            "cotracker_e2e_ms_median": float(tracking_worker.get("e2e_ms_median", 0.0) or 0.0),
+            "cotracker_e2e_ms_p95": float(tracking_worker.get("e2e_ms_p95", 0.0) or 0.0),
+            "overlay_ms_median": float(overlay_median),
+            "overlay_ms_p95": float(overlay_p95),
+            "pcd_fusion_ms_median": float(_nested_get(metrics, ("fusion_total_ms", "median"), 0.0) or 0.0),
+            "pcd_render_ms_median": float(_nested_get(metrics, ("render_total_ms", "median"), 0.0) or 0.0),
+            "render_waited_for_cotracker": False,
+            "uses_ffs": False,
+            "depth_source": DEPTH_SOURCE_REALSENSE,
+            "mask_source": MASK_SOURCE_HF_EDGETAM,
+            "num_realsense_cameras": 3,
+            "calibrate_pkl_loaded": True,
+            "cotracker_backend": COTRACKER3_ONLINE,
+            "cotracker_window_len": DEFAULT_COTRACKER_WINDOW_LEN,
+            "cotracker_publish_step": DEFAULT_COTRACKER_PUBLISH_STEP,
+        }
+    )
+    return summary
+
+
+def make_demo3_live_runtime_class(shared_runtime_module: Any):
+    base_cls = shared_runtime_module.Demo21Runtime
+
+    class Demo3LiveRuntime(base_cls):
+        def __init__(
+            self,
+            args: argparse.Namespace,
+            *,
+            demo3_contract: dict[str, Any],
+            backend_factory: BackendFactory | None = None,
+            cotracker_enabled: bool = True,
+            stale_timeout_s: float = 0.5,
+        ) -> None:
+            super().__init__(args)
+            self.demo3_contract = dict(demo3_contract)
+            self.demo3_cotracker_enabled = bool(cotracker_enabled)
+            self.demo3_stale_timeout_s = float(stale_timeout_s)
+            self.demo3_overlay_ms_samples: list[float] = []
+            self.demo3_tracking_input_slot: LatestTrackingInputSlot | None = None
+            self.demo3_tracking_output_slot: LatestTrackingOverlaySlot | None = None
+            self.demo3_cotracker_worker: CoTracker3OverlayWorker | None = None
+            self.demo3_cotracker_thread: CoTracker3OverlayThread | None = None
+            if self.demo3_cotracker_enabled:
+                self.demo3_tracking_input_slot = LatestTrackingInputSlot()
+                self.demo3_tracking_output_slot = LatestTrackingOverlaySlot()
+                self.demo3_cotracker_worker = CoTracker3OverlayWorker(
+                    camera_ids=tuple(int(item) for item in args.camera_ids),
+                    backend_factory=backend_factory,
+                    output_slot=self.demo3_tracking_output_slot,
+                    query_count=int(getattr(args, "tracking_num_points", DEFAULT_COTRACKER_QUERY_COUNT)),
+                    overlay_max_points_per_camera=int(
+                        getattr(args, "tracking_overlay_max_points", DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
+                    ),
+                    device=str(getattr(args, "device", "cuda")),
+                )
+                self.demo3_cotracker_thread = CoTracker3OverlayThread(
+                    worker=self.demo3_cotracker_worker,
+                    input_slot=self.demo3_tracking_input_slot,
+                    stop_event=self.stop_event,
+                )
+
+        def _start_threads(self) -> None:
+            if self.demo3_cotracker_thread is not None:
+                self.demo3_cotracker_thread.start()
+            super()._start_threads()
+
+        def stop(self) -> None:
+            if self.demo3_cotracker_thread is not None:
+                self.demo3_cotracker_thread.stop(timeout_s=1.0)
+            super().stop()
+
+        def _build_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
+            if self.demo3_tracking_input_slot is not None:
+                rgb_by_camera: dict[int, np.ndarray] = {}
+                mask_by_camera: dict[int, np.ndarray] = {}
+                depth_by_camera: dict[int, np.ndarray] = {}
+                intrinsics_by_camera: dict[int, np.ndarray] = {}
+                c2w_by_camera: dict[int, np.ndarray] = {}
+                for camera_idx in self.args.camera_ids:
+                    idx = int(camera_idx)
+                    if idx not in masks or idx not in depth_group.depths:
+                        continue
+                    mask_packet = masks[idx]
+                    rgb_by_camera[idx] = np.ascontiguousarray(np.asarray(mask_packet.color_bgr)[..., ::-1])
+                    mask_by_camera[idx] = _semantic_tracking_mask(mask_packet, str(self.args.track_mode))
+                    depth_by_camera[idx] = np.asarray(depth_group.depths[idx].depth_m, dtype=np.float32)
+                    if getattr(self, "_stream_metadata", None) and idx < len(self._stream_metadata):
+                        intrinsics_by_camera[idx] = np.asarray(self._stream_metadata[idx]["K_color"], dtype=np.float32).reshape(3, 3)
+                    if idx in getattr(self, "_c2w_by_camera", {}):
+                        c2w_by_camera[idx] = np.asarray(self._c2w_by_camera[idx], dtype=np.float32).reshape(4, 4)
+                if rgb_by_camera and mask_by_camera:
+                    self.demo3_tracking_input_slot.publish(
+                        TrackingOverlayInputPacket(
+                            group_id=int(depth_group.group_id),
+                            frame_idx=int(max(depth_group.per_camera_frame_seq.values()) if depth_group.per_camera_frame_seq else depth_group.group_id),
+                            timestamp_s=float(time.perf_counter()),
+                            rgb_by_camera=rgb_by_camera,
+                            mask_by_camera=mask_by_camera,
+                            depth_by_camera=depth_by_camera,
+                            intrinsics_by_camera=intrinsics_by_camera,
+                            c2w_by_camera=c2w_by_camera,
+                            depth_scale_m_per_unit=1.0,
+                        )
+                    )
+            return super()._build_fused_packet(depth_group=depth_group, masks=masks, ray_cache=ray_cache, rng=rng)
+
+        def _publish_render_packet(self, packet: Any) -> None:
+            overlay_start_s = time.perf_counter()
+            overlay = None
+            overlay_points = np.empty((0, 3), dtype=np.float32)
+            if self.demo3_tracking_output_slot is not None:
+                overlay = self.demo3_tracking_output_slot.get_fresh(
+                    now_s=float(time.perf_counter()),
+                    stale_timeout_s=self.demo3_stale_timeout_s,
+                )
+                if overlay is not None and overlay.camera_tracks_world:
+                    nonempty = [
+                        np.asarray(points, dtype=np.float32).reshape(-1, 3)
+                        for points in overlay.camera_tracks_world.values()
+                        if np.asarray(points).size > 0
+                    ]
+                    if nonempty:
+                        overlay_points = np.concatenate(nonempty, axis=0).astype(np.float32)
+                        overlay_colors = np.repeat(OVERLAY_COLOR_RGB[None, :], len(overlay_points), axis=0)
+                        packet = replace(
+                            packet,
+                            controller_points_m=np.concatenate([packet.controller_points_m, overlay_points], axis=0),
+                            controller_colors_rgb=np.concatenate([packet.controller_colors_rgb, overlay_colors], axis=0),
+                        )
+            overlay_ms = float((time.perf_counter() - overlay_start_s) * 1000.0)
+            self.demo3_overlay_ms_samples.append(overlay_ms)
+            self._profile_update(
+                packet.group_id,
+                demo3_tracking_overlay={
+                    "overlay_available": bool(overlay is not None),
+                    "overlay_points": int(len(overlay_points)),
+                    "overlay_ms": overlay_ms,
+                    "render_waited_for_cotracker": False,
+                },
+            )
+            super()._publish_render_packet(packet)
+
+        def demo3_tracking_snapshot(self) -> dict[str, Any] | None:
+            if self.demo3_cotracker_thread is None:
+                return None
+            return self.demo3_cotracker_thread.snapshot()
+
+    return Demo3LiveRuntime
+
+
 class Demo3Runtime:
     """Runtime facade for the Demo 3 realtime visualization contract.
 
@@ -268,16 +684,67 @@ class Demo3Runtime:
     the contract without RealSense hardware or CoTracker weights.
     """
 
-    def __init__(self, args: argparse.Namespace) -> None:
+    def __init__(
+        self,
+        args: argparse.Namespace,
+        *,
+        shared_runtime_module: Any | None = None,
+        shared_runtime_cls: type | None = None,
+        connected_serials_provider: ConnectedSerialsProvider | None = None,
+        backend_factory: BackendFactory | None = None,
+    ) -> None:
         self.args = args
         self.contract = build_contract(args)
+        self.shared_runtime_module = shared_runtime_module
+        self.shared_runtime_cls = shared_runtime_cls
+        self.connected_serials_provider = connected_serials_provider
+        self.backend_factory = backend_factory
 
     def run(self) -> dict[str, Any]:
-        validate_args(self.args, require_calibration=True)
+        live_validation = validate_live_realsense_contract(
+            self.args,
+            connected_serials_provider=self.connected_serials_provider,
+        )
+        shared = self.shared_runtime_module or _load_shared_runtime_module()
+        shared_profile = _shared_profile_path(self.args)
+        shared_args = build_shared_runtime_args(
+            self.args,
+            shared_runtime_module=shared,
+            live_validation=live_validation,
+            shared_profile_path=shared_profile,
+        )
+        runtime_cls = self.shared_runtime_cls or make_demo3_live_runtime_class(shared)
+        if self.shared_runtime_cls is None:
+            runtime = runtime_cls(
+                shared_args,
+                demo3_contract=self.contract,
+                backend_factory=self.backend_factory,
+                cotracker_enabled=not bool(self.args.disable_cotracker),
+                stale_timeout_s=float(self.args.overlay_stale_timeout_ms) / 1000.0,
+            )
+        else:
+            runtime = runtime_cls(shared_args)
+        exit_code = int(runtime.run())
+        shared_payload = _load_json_if_exists(shared_profile)
+        tracking_snapshot = runtime.demo3_tracking_snapshot() if hasattr(runtime, "demo3_tracking_snapshot") else None
+        overlay_samples = getattr(runtime, "demo3_overlay_ms_samples", [])
+        summary = _build_demo3_live_summary(
+            contract=self.contract,
+            runtime=runtime,
+            exit_code=exit_code,
+            tracking_snapshot=tracking_snapshot,
+            overlay_ms_samples=overlay_samples,
+            shared_profile=shared_payload,
+        )
         profile = {
             "contract": self.contract,
-            "summary": build_empty_profile_summary(self.contract),
-            "runtime_note": "Demo 3 hardware loop composes RealSense capture, HF EdgeTAM, fused PCD render, and async CoTracker overlay.",
+            "summary": summary,
+            "live_validation": live_validation,
+            "shared_runtime_profile": None if shared_profile is None else str(shared_profile),
+            "shared_runtime_profile_payload": shared_payload,
+            "tracking_snapshot": tracking_snapshot,
+            "runtime_note": "Demo 3 non-dry-run delegates capture/mask/fusion/render to the shared three-view runtime and runs CoTracker as an async latest-wins overlay stage.",
+            "exit_code": exit_code,
         }
         _write_profile(self.args.profile_json_output, profile)
         return profile
@@ -296,8 +763,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         profile = Demo3Runtime(args).run()
         print(json.dumps(profile["summary"], indent=2, sort_keys=True))
-        return 0
-    except (FileNotFoundError, ValueError) as exc:
+        return int(profile.get("exit_code", 0))
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
@@ -315,8 +782,12 @@ __all__ = [
     "apply_preset_defaults",
     "build_arg_parser",
     "build_contract",
+    "build_shared_runtime_args",
+    "build_shared_runtime_argv",
     "format_contract",
     "main",
+    "make_demo3_live_runtime_class",
     "parse_camera_ids",
+    "validate_live_realsense_contract",
     "validate_args",
 ]

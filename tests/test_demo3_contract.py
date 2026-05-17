@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
+from pathlib import Path
+import pickle
+import tempfile
 import unittest
 
 from qqtt.demo import demo3_runtime
+from qqtt.env.camera.calibration_metadata import build_calibration_metadata, write_calibration_metadata
 
 
 class Demo3RuntimeContractTest(unittest.TestCase):
@@ -62,6 +67,147 @@ class Demo3RuntimeContractTest(unittest.TestCase):
         contract = demo3_runtime.build_contract(args)
         self.assertFalse(contract["cotracker_enabled"])
         self.assertFalse(contract["uses_ffs"])
+
+    def test_live_realsense_validation_checks_connected_count_and_calibration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            calibrate_path = Path(tmp_dir) / "calibrate.pkl"
+            with calibrate_path.open("wb") as handle:
+                pickle.dump([[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]] * 3, handle)
+            write_calibration_metadata(
+                calibrate_path,
+                build_calibration_metadata(
+                    serial_numbers=["s0", "s1", "s2"],
+                    WH=(848, 480),
+                    fps=30,
+                    transform_count=3,
+                ),
+            )
+            args = self._parse(["--camera-ids", "0,1,2", "--calibrate-path", str(calibrate_path)])
+
+            validation = demo3_runtime.validate_live_realsense_contract(
+                args,
+                connected_serials_provider=lambda: ["s0", "s1", "s2"],
+            )
+            self.assertEqual(validation["active_serials"], ["s0", "s1", "s2"])
+
+            with self.assertRaisesRegex(RuntimeError, "exactly three connected RealSense"):
+                demo3_runtime.validate_live_realsense_contract(
+                    args,
+                    connected_serials_provider=lambda: ["s0", "s1"],
+                )
+
+    def test_non_dry_run_invokes_shared_runtime_adapter_with_realsense_depth(self) -> None:
+        class _Stats:
+            def __init__(self, fps: float) -> None:
+                self.fps = fps
+
+        class _FakeSharedRuntime:
+            last_args = None
+
+            def __init__(self, args) -> None:
+                type(self).last_args = args
+                self._summary = {
+                    "final": {
+                        "render_fps": 12.0,
+                        "capture_group_fps": 30.0,
+                        "fusion_fps": 28.0,
+                    }
+                }
+                self.edge_stats = {0: _Stats(24.0), 1: _Stats(25.0), 2: _Stats(26.0)}
+                self.render_stats = _Stats(12.0)
+                self.capture_group_stats = _Stats(30.0)
+                self.fusion_stats = _Stats(28.0)
+                self.demo3_overlay_ms_samples = [0.10, 0.20, 0.30]
+
+            def run(self) -> int:
+                return 0
+
+        class _FakeSharedModule:
+            @staticmethod
+            def build_arg_parser():
+                parser = argparse.ArgumentParser()
+                parser.add_argument("--preset")
+                parser.add_argument("--profile")
+                parser.add_argument("--fps", type=int)
+                parser.add_argument("--fusion-target-fps", type=float)
+                parser.add_argument("--capture-group-target-fps", type=float)
+                parser.add_argument("--camera-ids", type=demo3_runtime.parse_camera_ids)
+                parser.add_argument("--calibrate-path")
+                parser.add_argument("--serials", nargs="*")
+                parser.add_argument("--calibration-reference-serials", nargs="*")
+                parser.add_argument("--depth-source")
+                parser.add_argument("--render-mode")
+                parser.add_argument("--track-mode")
+                parser.add_argument("--object-prompt")
+                parser.add_argument("--controller-prompt")
+                parser.add_argument("--experiment-mode")
+                parser.add_argument("--duration-s", type=float)
+                parser.add_argument("--output-root")
+                parser.add_argument("--profile-pipeline", action="store_true")
+                parser.add_argument("--profile-visualization", action="store_true")
+                parser.add_argument("--render-micro-profile", action="store_true")
+                parser.add_argument("--tracking-backend")
+                parser.add_argument("--tracking-source")
+                parser.add_argument("--tracking-num-points", type=int)
+                parser.add_argument("--tracking-overlay-max-points", type=int)
+                parser.add_argument("--tracking-trail-len", type=int)
+                parser.add_argument("--tracking-depth-source")
+                parser.add_argument("--profile-json-output")
+                parser.add_argument("--debug", action="store_true")
+                parser.add_argument("--show-tracking-overlay", action="store_true")
+                return parser
+
+            @staticmethod
+            def apply_preset_defaults(args, *, explicit_options=None):
+                _ = explicit_options
+                return args
+
+            @staticmethod
+            def _explicit_cli_options(argv):
+                return {item for item in argv if str(item).startswith("--")}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            calibrate_path = Path(tmp_dir) / "calibrate.pkl"
+            with calibrate_path.open("wb") as handle:
+                pickle.dump([[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]] * 3, handle)
+            write_calibration_metadata(
+                calibrate_path,
+                build_calibration_metadata(
+                    serial_numbers=["s0", "s1", "s2"],
+                    WH=(848, 480),
+                    fps=30,
+                    transform_count=3,
+                ),
+            )
+            args = self._parse(
+                [
+                    "--camera-ids",
+                    "0,1,2",
+                    "--calibrate-path",
+                    str(calibrate_path),
+                    "--duration-s",
+                    "0.01",
+                ]
+            )
+            runtime = demo3_runtime.Demo3Runtime(
+                args,
+                shared_runtime_module=_FakeSharedModule,
+                shared_runtime_cls=_FakeSharedRuntime,
+                connected_serials_provider=lambda: ["s0", "s1", "s2"],
+            )
+
+            profile = runtime.run()
+
+            self.assertEqual(profile["summary"]["exit_code"], 0)
+            self.assertEqual(profile["summary"]["depth_source"], "realsense")
+            self.assertFalse(profile["summary"]["uses_ffs"])
+            self.assertEqual(profile["summary"]["rendered_fps"], 12.0)
+            self.assertEqual(profile["summary"]["capture_group_fps"], 30.0)
+            self.assertEqual(profile["summary"]["fusion_fps"], 28.0)
+            self.assertGreater(profile["summary"]["edgetam_mask_fps"], 0.0)
+            self.assertEqual(_FakeSharedRuntime.last_args.depth_source, "realsense")
+            self.assertEqual(_FakeSharedRuntime.last_args.tracking_backend, "cotracker3_online")
+            self.assertTrue(_FakeSharedRuntime.last_args.show_tracking_overlay)
 
 
 if __name__ == "__main__":

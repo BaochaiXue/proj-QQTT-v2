@@ -10,6 +10,11 @@ CoTracker output is used for visualization only. FuturePhysTwin post-processing
 artifacts such as `track_process_data.pkl`, inverse physics inputs, and final
 controller point selection are out of scope.
 
+Non-dry-run execution now adapts the shared three-view runtime: it opens the
+three RealSense cameras, uses HF EdgeTAM masks, fuses RealSense-depth semantic
+PCD, and starts CoTracker3 as a sidecar latest-wins overlay stage. Rendering
+does not wait for CoTracker; stale or missing overlays are skipped.
+
 Dry-run contract check:
 
 ```bash
@@ -28,3 +33,10 @@ Live contract defaults:
 - `overlay_max_points_per_camera = 30`
 - `render_waited_for_cotracker = false`
 - `uses_ffs = false`
+
+Recommended live validation order:
+
+1. `--preset demo3-realsense-mask-only`
+2. injected/fake CoTracker overlay in tests
+3. real CoTracker with `--cotracker-query-count 30`
+4. real CoTracker with the default `--cotracker-query-count 128`

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import threading
 import time
 from typing import Any
@@ -69,9 +69,29 @@ class LatestTrackingOverlaySlot:
             self._packet = packet
             self.published += 1
 
-    def get_optional(self) -> TrackingOverlayPacket | None:
+    def get_optional(
+        self,
+        *,
+        now_s: float | None = None,
+        stale_timeout_s: float | None = None,
+    ) -> TrackingOverlayPacket | None:
         with self._lock:
-            return self._packet
+            packet = self._packet
+        if (
+            packet is not None
+            and now_s is not None
+            and stale_timeout_s is not None
+            and float(stale_timeout_s) >= 0.0
+            and float(now_s) - float(packet.timestamp_s) > float(stale_timeout_s)
+        ):
+            return replace(packet, stale=True)
+        return packet
+
+    def get_fresh(self, *, now_s: float, stale_timeout_s: float) -> TrackingOverlayPacket | None:
+        packet = self.get_optional(now_s=now_s, stale_timeout_s=stale_timeout_s)
+        if packet is None or packet.stale:
+            return None
+        return packet
 
     def take_latest(self) -> TrackingOverlayPacket | None:
         with self._lock:
@@ -89,6 +109,95 @@ class LatestTrackingOverlaySlot:
                 "dropped": int(self.dropped),
                 "pending": int(self._packet is not None),
             }
+
+
+class LatestTrackingInputSlot:
+    """Latest-wins input queue for CoTracker work that must not block render."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._packet: TrackingOverlayInputPacket | None = None
+        self.published = 0
+        self.taken = 0
+        self.dropped = 0
+
+    def publish(self, packet: TrackingOverlayInputPacket) -> None:
+        with self._lock:
+            if self._packet is not None:
+                self.dropped += 1
+            self._packet = packet
+            self.published += 1
+
+    def take_latest(self) -> TrackingOverlayInputPacket | None:
+        with self._lock:
+            packet = self._packet
+            self._packet = None
+            if packet is not None:
+                self.taken += 1
+            return packet
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "published": int(self.published),
+                "taken": int(self.taken),
+                "dropped": int(self.dropped),
+                "pending": int(self._packet is not None),
+            }
+
+
+class CoTracker3OverlayThread:
+    """Background loop that converts latest tracking inputs into overlay packets."""
+
+    def __init__(
+        self,
+        *,
+        worker: "CoTracker3OverlayWorker",
+        input_slot: LatestTrackingInputSlot,
+        stop_event: threading.Event | None = None,
+        poll_interval_s: float = 0.001,
+    ) -> None:
+        self.worker = worker
+        self.input_slot = input_slot
+        self.stop_event = stop_event or threading.Event()
+        self.poll_interval_s = float(poll_interval_s)
+        self.thread: threading.Thread | None = None
+        self.processed_packets = 0
+        self.error_count = 0
+        self.last_error: str | None = None
+
+    def start(self) -> None:
+        if self.thread is not None and self.thread.is_alive():
+            return
+        self.thread = threading.Thread(target=self.run, name="demo3-cotracker-overlay", daemon=True)
+        self.thread.start()
+
+    def stop(self, *, timeout_s: float = 1.0) -> None:
+        self.stop_event.set()
+        if self.thread is not None and self.thread.is_alive():
+            self.thread.join(timeout=float(timeout_s))
+
+    def run(self) -> None:
+        while not self.stop_event.is_set():
+            packet = self.input_slot.take_latest()
+            if packet is None:
+                time.sleep(self.poll_interval_s)
+                continue
+            try:
+                self.worker.process_group(packet)
+                self.processed_packets += 1
+            except Exception as exc:
+                self.error_count += 1
+                self.last_error = f"{type(exc).__name__}: {exc}"
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "processed_packets": int(self.processed_packets),
+            "error_count": int(self.error_count),
+            "last_error": self.last_error,
+            "input_slot": self.input_slot.snapshot(),
+            "worker": self.worker.snapshot(),
+        }
 
 
 class CoTracker3OverlayWorker:
@@ -122,6 +231,9 @@ class CoTracker3OverlayWorker:
         self._backends: dict[int, Any] = {}
         self._query_points_yx: dict[int, np.ndarray] = {}
         self._published_packets = 0
+        self._model_ms_samples: list[float] = []
+        self._e2e_ms_samples: list[float] = []
+        self._publish_times_s: list[float] = []
         if self.query_count <= 0:
             raise ValueError("query_count must be positive.")
         if self.overlay_max_points_per_camera <= 0:
@@ -138,8 +250,9 @@ class CoTracker3OverlayWorker:
         return float(scale)
 
     def _ensure_camera_stream(self, camera_idx: int, mask: np.ndarray) -> np.ndarray:
-        if camera_idx in self._query_points_yx:
-            return self._query_points_yx[camera_idx]
+        existing = self._query_points_yx.get(camera_idx)
+        if existing is not None and len(existing) > 0:
+            return existing
         query_points = sample_query_points_from_mask(
             mask,
             num_points=self.query_count,
@@ -147,12 +260,14 @@ class CoTracker3OverlayWorker:
             seed=self.seed + int(camera_idx),
             strict=False,
         )
-        self._query_points_yx[camera_idx] = query_points.astype(np.float32)
-        if len(query_points) > 0:
-            backend = self.backend_factory(int(camera_idx))
-            backend.initialize([], query_points.astype(np.float32))
-            self._backends[camera_idx] = backend
-        return self._query_points_yx[camera_idx]
+        query_points = query_points.astype(np.float32)
+        if len(query_points) == 0:
+            return query_points
+        self._query_points_yx[camera_idx] = query_points
+        backend = self.backend_factory(int(camera_idx))
+        backend.initialize([], query_points)
+        self._backends[camera_idx] = backend
+        return query_points
 
     def process_group(self, packet: TrackingOverlayInputPacket) -> TrackingOverlayPacket | None:
         started_s = time.perf_counter()
@@ -229,6 +344,9 @@ class CoTracker3OverlayWorker:
         )
         self.output_slot.publish(overlay)
         self._published_packets += 1
+        self._model_ms_samples.append(float(model_ms))
+        self._e2e_ms_samples.append(float(e2e_ms))
+        self._publish_times_s.append(float(time.perf_counter()))
         return overlay
 
     def latest_overlay(self) -> TrackingOverlayPacket | None:
@@ -240,12 +358,38 @@ class CoTracker3OverlayWorker:
             "query_count": int(self.query_count),
             "overlay_max_points_per_camera": int(self.overlay_max_points_per_camera),
             "published_packets": int(self._published_packets),
+            "model_ms_median": _median(self._model_ms_samples),
+            "model_ms_p95": _p95(self._model_ms_samples),
+            "e2e_ms_median": _median(self._e2e_ms_samples),
+            "e2e_ms_p95": _p95(self._e2e_ms_samples),
+            "publish_fps": _event_fps(self._publish_times_s),
             "slot": self.output_slot.snapshot(),
         }
 
 
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return float(np.median(np.asarray(values, dtype=np.float32)))
+
+
+def _p95(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return float(np.percentile(np.asarray(values, dtype=np.float32), 95))
+
+
+def _event_fps(times_s: list[float]) -> float:
+    if len(times_s) < 2:
+        return 0.0
+    duration_s = float(max(times_s) - min(times_s))
+    return float((len(times_s) - 1) / duration_s) if duration_s > 0 else 0.0
+
+
 __all__ = [
+    "CoTracker3OverlayThread",
     "CoTracker3OverlayWorker",
+    "LatestTrackingInputSlot",
     "LatestTrackingOverlaySlot",
     "TrackingOverlayInputPacket",
     "TrackingOverlayPacket",

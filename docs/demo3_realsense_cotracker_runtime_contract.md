@@ -42,6 +42,12 @@ The hot path forbids:
 - FuturePhysTwin `track_process_data.pkl`
 - inverse physics or final controller point selection
 
+Non-dry-run execution delegates camera capture, timestamp grouping, HF EdgeTAM
+masking, RealSense-depth fusion, and Open3D rendering to the shared three-view
+runtime used by Demo 2.x. Demo 3 forces that runtime to use RealSense depth and
+starts its own sidecar CoTracker3 overlay stage. Demo 2.2 behavior stays
+unchanged because the Demo 3 hooks live in the Demo 3 adapter.
+
 ## CLI Contract
 
 Dry-run:
@@ -108,6 +114,15 @@ Default live visualization caps the overlay at 30 visible points per camera.
 Dense 5000-point CoTracker artifacts remain a benchmark/export diagnostic path,
 not the realtime rendering default.
 
+Live overlay query sampling is deterministic random visualization sampling from
+the current semantic mask. It is not byte-identical to FuturePhysTwin dense
+export sampling. FuturePhysTwin-style `torch.randperm` remains part of the
+offline benchmark/export compatibility path.
+
+If an early EdgeTAM mask is empty, Demo 3 does not permanently cache empty
+query points. The CoTracker stream initializes on the first non-empty semantic
+mask for each camera.
+
 ## Profile Fields
 
 Demo 3 profile summaries keep rendering and tracking metrics separate:
@@ -146,3 +161,18 @@ uses_ffs = false
 depth_source = realsense
 num_realsense_cameras = 3
 ```
+
+## Live Validation
+
+Before opening the live runtime, Demo 3 validates:
+
+- exactly three requested camera ids
+- RealSense depth only
+- exactly three connected RealSense cameras when `--serials` is omitted
+- exactly three requested serials, all connected, when `--serials` is used
+- `calibrate.pkl` exists
+- calibration metadata, when present, covers all active serials
+
+The live run still depends on hardware for final proof: each camera must produce
+color and depth frames, and the shared runtime must load the calibration
+transforms and camera intrinsics successfully.
