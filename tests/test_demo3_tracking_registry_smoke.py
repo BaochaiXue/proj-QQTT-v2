@@ -118,6 +118,59 @@ class Demo3TrackingRegistrySmokeTest(unittest.TestCase):
         self.assertEqual(second.tracks_yx.shape, (16, 2, 2))
         self.assertEqual(model.calls, [(True, 16), (False, 16), (False, 16)])
 
+    def test_cotracker_track_sequence_replays_online_update_frame_by_frame(self) -> None:
+        try:
+            import torch
+        except Exception as exc:
+            self.skipTest(f"torch is not installed: {exc}")
+
+        from qqtt.tracking.backends.cotracker3_online import CoTracker3OnlineBackend
+
+        class _FakeOnlineModel:
+            step = 8
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[bool, int]] = []
+                self.query_xy = None
+
+            def __call__(
+                self,
+                *,
+                video_chunk,
+                is_first_step=False,
+                queries=None,
+                grid_size=0,
+                add_support_grid=False,
+            ):
+                _ = grid_size, add_support_grid
+                self.calls.append((bool(is_first_step), int(video_chunk.shape[1])))
+                if is_first_step:
+                    self.query_xy = queries[:, :, 1:].float()
+                    return None, None
+                if self.query_xy is None:
+                    raise RuntimeError("queries were not initialized")
+                batch, frames = int(video_chunk.shape[0]), int(video_chunk.shape[1])
+                tracks = self.query_xy[:, None, :, :].repeat(1, frames, 1, 1)
+                visibility = torch.ones((batch, frames, self.query_xy.shape[1]), dtype=torch.float32, device=video_chunk.device)
+                return tracks, visibility
+
+        model = _FakeOnlineModel()
+        backend = CoTracker3OnlineBackend(device="cpu", model=model)
+        frames = [np.zeros((4, 6, 3), dtype=np.uint8) for _ in range(24)]
+        result = backend.track_sequence(
+            frames_rgb=frames,
+            query_points_yx=np.array([[2.0, 5.0], [3.0, 4.0]], dtype=np.float32),
+            camera_idx=1,
+        )
+
+        self.assertEqual(result.stats["mode"], "cotracker3_online_streaming_replay")
+        self.assertEqual(result.stats["published_chunks"], 2)
+        self.assertEqual(result.stats["stream_tail_unpublished_frames"], 0)
+        self.assertEqual(result.tracks_yx.shape, (24, 2, 2))
+        self.assertEqual(model.calls, [(True, 16), (False, 16), (False, 16)])
+        np.testing.assert_allclose(result.tracks_yx[:, 0, :], np.array([[2.0, 5.0]], dtype=np.float32).repeat(24, axis=0))
+        np.testing.assert_allclose(result.visibility, np.ones((24, 2), dtype=np.float32))
+
 
 if __name__ == "__main__":
     unittest.main()

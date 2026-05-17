@@ -19,6 +19,9 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
   artifacts without changing the existing Demo 3 overlay reader.
 - Make the Demo 3 CoTracker backend expose true online streaming updates with
   the CoTracker3 `window_len=16` / `step=8` rolling-buffer contract.
+- Keep the saved-case `cotracker3_online` benchmark/export path on the same
+  frame-by-frame `update(frame)` contract instead of a one-shot whole-video
+  call.
 - Update docs and tests to distinguish dense PhysTwin export artifacts from
   sparse realtime/overlay visualization.
 
@@ -39,3 +42,5 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
 - Completed: `python -m py_compile qqtt/tracking/sampling.py scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py tests/test_demo3_tracking_sampling_smoke.py tests/test_demo3_tracking_harness_smoke.py`
 - Completed: `conda run -n demo_2_max --no-capture-output python -m unittest -v tests.test_demo3_tracking_sampling_smoke tests.test_demo3_tracking_harness_smoke tests.test_demo3_tracking_registry_smoke`
 - Completed: `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
+- Completed after online replay change: `conda run -n demo_2_max --no-capture-output python -m unittest -v tests.test_demo3_tracking_registry_smoke tests.test_demo3_tracking_harness_smoke tests.test_demo3_tracking_sampling_smoke`
+- Completed after online replay change: `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`

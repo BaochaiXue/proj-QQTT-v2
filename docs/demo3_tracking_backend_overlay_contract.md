@@ -13,8 +13,9 @@ one-shot whole-video tracker. Frames enter a rolling buffer; the first publish
 occurs when the buffer reaches the CoTracker3 online window (`16` frames), and
 subsequent publishes occur every CoTracker online step (`8` new frames). Each
 published result carries the chunk frame range plus `tracks_yx + visibility`.
-The offline benchmark may still replay saved cases, but it uses the same online
-backend contract and output convention.
+The offline benchmark may still replay saved cases, but the
+`cotracker3_online` replay path feeds those saved frames through `update(frame)`
+one by one and uses the same online backend contract and output convention.
 
 Other backend names are reserved for:
 

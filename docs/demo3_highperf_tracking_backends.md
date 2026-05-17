@@ -24,8 +24,10 @@ dependency-gated probes for high-performance candidates.
   `tracks_yx + visibility`.
 - The Demo 3 `cotracker3_online` live path uses CoTracker3's online rolling
   buffer contract: `window_len=16`, `step=8`, first publish at 16 frames, then
-  one publish every 8 new frames. PhysTwin dense 5000-point runs remain cached
-  or offline artifacts unless explicitly enabled outside the render hot path.
+  one publish every 8 new frames. The saved-case replay benchmark uses the same
+  frame-by-frame `update(frame)` path for this backend. PhysTwin dense
+  5000-point runs remain cached or offline artifacts unless explicitly enabled
+  outside the render hot path.
 
 ## PhysTwin-Compatible CoTracker Export
 

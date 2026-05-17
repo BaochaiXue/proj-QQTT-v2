@@ -228,6 +228,63 @@ class CoTracker3OnlineBackend:
         load_start = time.perf_counter()
         model = self._load_model()
         load_ms = self._model_load_ms if self._model_load_ms else (time.perf_counter() - load_start) * 1000.0
+        if hasattr(model, "step"):
+            step, window_len = self._online_step_and_window(model)
+            query_points = np.asarray(query_points_yx, dtype=np.float32)
+            self._reset_stream(query_points, camera_idx=camera_idx)
+            frame_count = int(len(video_frames))
+            tracks_yx = np.zeros((frame_count, len(query_points), 2), dtype=np.float32)
+            visibility = np.zeros((frame_count, len(query_points)), dtype=np.float32)
+            model_run_ms = 0.0
+            published_chunks = 0
+            published_end_idx = -1
+            replay_start = time.perf_counter()
+            for frame in video_frames:
+                update_result = self.update(frame)
+                if str(update_result.stats.get("stream_status", "")) != "published":
+                    continue
+                chunk_start = int(update_result.stats.get("chunk_start_idx", 0))
+                chunk_end = min(int(update_result.stats.get("chunk_end_idx", chunk_start - 1)), frame_count - 1)
+                chunk_len = max(0, chunk_end - chunk_start + 1)
+                if chunk_len <= 0:
+                    continue
+                chunk_visibility = update_result.visibility
+                if chunk_visibility.ndim == 3 and chunk_visibility.shape[-1] == 1:
+                    chunk_visibility = chunk_visibility[..., 0]
+                tracks_yx[chunk_start : chunk_end + 1] = update_result.tracks_yx[:chunk_len]
+                visibility[chunk_start : chunk_end + 1] = chunk_visibility[:chunk_len]
+                model_run_ms += float(update_result.stats.get("model_run_ms", 0.0))
+                published_chunks += 1
+                published_end_idx = max(published_end_idx, chunk_end)
+            replay_ms = (time.perf_counter() - replay_start) * 1000.0
+            if published_chunks == 0:
+                tracks_yx = np.empty((0, len(query_points), 2), dtype=np.float32)
+                visibility = np.empty((0, len(query_points)), dtype=np.float32)
+            published_frame_count = int(published_end_idx + 1) if published_end_idx >= 0 else 0
+            return TrackingResult(
+                tracks_yx=tracks_yx,
+                visibility=visibility,
+                backend=self.name,
+                camera_idx=camera_idx,
+                query_points_yx=query_points,
+                stats={
+                    "backend": self.name,
+                    "camera_idx": None if camera_idx is None else int(camera_idx),
+                    "num_frames": frame_count,
+                    "num_published_frames": published_frame_count,
+                    "num_query_points": int(len(query_points)),
+                    "model_load_ms": float(load_ms),
+                    "model_run_ms": float(model_run_ms),
+                    "stream_replay_ms": float(replay_ms),
+                    "fps_model_only": float(published_frame_count * 1000.0 / model_run_ms) if model_run_ms > 0 else 0.0,
+                    "device": self.device,
+                    "mode": "cotracker3_online_streaming_replay",
+                    "online_step": int(step),
+                    "online_window_len": int(window_len),
+                    "published_chunks": int(published_chunks),
+                    "stream_tail_unpublished_frames": int(max(0, frame_count - published_frame_count)),
+                },
+            )
         import torch
 
         video = self._frames_to_torch_video(video_frames, device=self.device)
