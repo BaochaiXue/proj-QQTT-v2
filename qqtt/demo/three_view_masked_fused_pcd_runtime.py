@@ -2142,6 +2142,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "sam31_keep_runtime_until_all_cameras_init": bool(
                 getattr(args, "sam31_keep_runtime_until_all_cameras_init", False)
             ),
+            "sam31_torchvision_ops_preimport": args.init_mode == "sam31-first-frame",
             "formal_demo_requires_live_sam31": True,
             "fallback_allowed": False,
         },
@@ -2198,6 +2199,11 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             },
             "same_group_join_required": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
             "overlap_across_groups": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+            "depth_dispatch_policy": (
+                "after_mask_stage"
+                if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES
+                else "capture_dispatch"
+            ),
             "separate_ffs_and_edgetam_workers": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SEPARATE_WORKERS,
         },
         "memory_for_speed": {
@@ -2512,6 +2518,7 @@ class Demo21Runtime:
         )
         apply_wslg_open3d_env_defaults()
         self._validate_live_contract()
+        self._warm_torchvision_ops_imports_for_sam31()
         self._gpu_sampler.start()
         self._start_parallel_init()
         try:
@@ -2564,6 +2571,40 @@ class Demo21Runtime:
             "repeats": results,
             "init_profile": self._init_profile_snapshot(),
         }
+
+    def _warm_torchvision_ops_imports_for_sam31(self) -> None:
+        if self.args.init_mode != "sam31-first-frame":
+            self._init_profile_update(
+                ("sam31", "torchvision_ops_preimport"),
+                {
+                    "enabled": False,
+                    "ok": True,
+                },
+            )
+            return
+        start_s = time.perf_counter()
+        try:
+            from torchvision import ops as torchvision_ops  # noqa: F401
+            from torchvision.ops import StochasticDepth  # noqa: F401
+        except Exception as exc:
+            self._init_profile_update(
+                ("sam31", "torchvision_ops_preimport"),
+                {
+                    "enabled": True,
+                    "ok": False,
+                    "error": repr(exc),
+                    "wall_ms": float(_elapsed_ms(start_s, time.perf_counter())),
+                },
+            )
+            raise RuntimeError("SAM3.1 torchvision ops preimport failed before parallel init") from exc
+        self._init_profile_update(
+            ("sam31", "torchvision_ops_preimport"),
+            {
+                "enabled": True,
+                "ok": True,
+                "wall_ms": float(_elapsed_ms(start_s, time.perf_counter())),
+            },
+        )
 
     def _start_parallel_init(self) -> None:
         if not bool(getattr(self.args, "parallel_init", False)):
@@ -5572,14 +5613,15 @@ class Demo21Runtime:
                     self._profile_mark_drop(group.group_id, "overlapped_stage_drop_skewed_capture_group")
                     continue
                 dispatch_s = self._profile_rel_s()
-                self.stage_join_buffer.put_capture(group)
-                self.ffs_stage_input_slot.put(group)
                 self.edgetam_stage_input_slot.put(group)
                 self._profile_update(
                     group.group_id,
                     stage_dispatch={
                         "group_id": int(group.group_id),
                         "capture_dispatch_s": float(dispatch_s),
+                        "edgetam_dispatched": True,
+                        "ffs_dispatched": False,
+                        "depth_dispatch_policy": "after_mask_stage",
                     },
                 )
         except Exception as exc:
@@ -5657,16 +5699,20 @@ class Demo21Runtime:
                     edgetam_stage_sum_model_ms=float(sum_model_ms),
                     edgetam_stage_mode="batch-vision" if bool(getattr(self.args, "edgetam_batch_vision_encoder", False)) else "sequential",
                 )
+                self.stage_join_buffer.put_capture(group)
                 self.stage_join_buffer.put_mask(mask_group)
+                self.ffs_stage_input_slot.put(group)
                 self._profile_update(
                     group.group_id,
                     edgetam_stage={
                         "publish_s": self._profile_rel_s(),
+                        "depth_dispatch_s": self._profile_rel_s(),
                         "wall_ms": float(wall_ms),
                         "cycle_ms": float(edgetam_cycle_ms),
                         "sum_model_ms": float(sum_model_ms),
                         "mode": mask_group.edgetam_stage_mode,
                         "stateful_monotonic": True,
+                        "depth_dispatched_after_mask": True,
                     },
                 )
         except Exception as exc:
