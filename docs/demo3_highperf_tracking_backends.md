@@ -24,8 +24,8 @@ dependency-gated probes for high-performance candidates.
   `tracks_yx + visibility`.
 - The Demo 3 `cotracker3_online` live path uses CoTracker3's online rolling
   buffer contract: `window_len=16`, `step=8`, first publish at 16 frames, then
-  one publish every 8 new frames. Dense 5000/10000-point runs remain cached or
-  offline artifacts unless explicitly enabled outside the render hot path.
+  one publish every 8 new frames. PhysTwin dense 5000-point runs remain cached
+  or offline artifacts unless explicitly enabled outside the render hot path.
 
 ## PhysTwin-Compatible CoTracker Export
 
@@ -39,8 +39,8 @@ python scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py \
   --backends cotracker3_online
 ```
 
-`phystwin_dense` uses nested first-frame union masks, samples 10000 query
-points when available or 5000 otherwise, and writes `cotracker/{camera}.npz`.
+`phystwin_dense` uses nested first-frame union masks, samples exactly 5000
+query points per camera, and writes `cotracker/{camera}.npz`.
 The existing Demo 3 overlay remains sparse by default and should consume dense
 tracks only as an offline/cached artifact.
 

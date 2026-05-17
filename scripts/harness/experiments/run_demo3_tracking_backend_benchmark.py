@@ -99,11 +99,16 @@ def _parse_csv_ints(spec: str) -> list[int]:
 def _parse_query_point_requests(spec: str, query_mode: str) -> list[int]:
     normalized_spec = str(spec).strip().lower()
     normalized_mode = str(query_mode).strip().lower()
-    if normalized_spec in {"auto", "phystwin", "phystwin_auto"}:
-        return [AUTO_QUERY_POINTS]
     if normalized_mode == "phystwin_dense" and normalized_spec == DEFAULT_NUM_QUERY_POINTS:
         return [AUTO_QUERY_POINTS]
-    return _parse_csv_ints(spec)
+    if normalized_spec in {"auto", "phystwin", "phystwin_auto"}:
+        return [AUTO_QUERY_POINTS]
+    requests = _parse_csv_ints(spec)
+    if normalized_mode == "phystwin_dense" and any(int(item) != 5000 for item in requests):
+        raise ValueError("PhysTwin dense query mode is fixed at 5000 query points per camera.")
+    if normalized_mode == "phystwin_dense":
+        return [5000]
+    return requests
 
 
 def _format_query_requests(query_requests: list[int]) -> list[int | str]:

@@ -44,11 +44,11 @@ class Demo3TrackingSamplingSmokeTest(unittest.TestCase):
         self.assertEqual(sample_object_dense(mask, 5).shape, (5, 2))
         self.assertEqual(sample_controller_sparse(mask, 2).shape, (2, 2))
 
-    def test_phystwin_dense_query_count_matches_thresholds(self) -> None:
+    def test_phystwin_dense_query_count_is_fixed_at_5000(self) -> None:
         mask_5000 = np.ones((80, 80), dtype=np.uint8)
         self.assertEqual(phystwin_dense_query_count(mask_5000), 5000)
         mask_10000 = np.ones((120, 120), dtype=np.uint8)
-        self.assertEqual(phystwin_dense_query_count(mask_10000), 10000)
+        self.assertEqual(phystwin_dense_query_count(mask_10000), 5000)
         with self.assertRaises(ValueError):
             phystwin_dense_query_count(np.ones((10, 10), dtype=np.uint8))
 

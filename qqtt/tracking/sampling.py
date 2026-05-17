@@ -7,8 +7,7 @@ import numpy as np
 
 SamplingStrategy = Literal["random", "grid", "uniform_grid", "farthest", "phystwin_random"]
 
-PHYSTWIN_DENSE_MIN_QUERY_POINTS = 5000
-PHYSTWIN_DENSE_HIGH_QUERY_POINTS = 10000
+PHYSTWIN_DENSE_QUERY_POINTS = 5000
 
 
 def _mask_coordinates_yx(mask: np.ndarray) -> np.ndarray:
@@ -73,11 +72,9 @@ def sample_controller_sparse(mask: np.ndarray, num_points: int = 30, *, strategy
 
 def phystwin_dense_query_count(mask: np.ndarray) -> int:
     count = int(len(_mask_coordinates_yx(mask)))
-    if count >= PHYSTWIN_DENSE_HIGH_QUERY_POINTS:
-        return PHYSTWIN_DENSE_HIGH_QUERY_POINTS
-    if count >= PHYSTWIN_DENSE_MIN_QUERY_POINTS:
-        return PHYSTWIN_DENSE_MIN_QUERY_POINTS
-    raise ValueError(f"PhysTwin dense CoTracker requires at least {PHYSTWIN_DENSE_MIN_QUERY_POINTS} mask pixels; got {count}.")
+    if count >= PHYSTWIN_DENSE_QUERY_POINTS:
+        return PHYSTWIN_DENSE_QUERY_POINTS
+    raise ValueError(f"PhysTwin dense CoTracker requires at least {PHYSTWIN_DENSE_QUERY_POINTS} mask pixels; got {count}.")
 
 
 def sample_phystwin_dense(mask: np.ndarray, *, seed: int | None = 0) -> np.ndarray:
@@ -94,8 +91,10 @@ def query_counts_for_mode(mode: str) -> tuple[int, ...]:
     normalized = str(mode).strip().lower()
     if normalized == "object_sparse":
         return (100, 256, 512, 1024)
-    if normalized in {"object_dense", "phystwin_dense"}:
+    if normalized == "object_dense":
         return (5000, 10000)
+    if normalized == "phystwin_dense":
+        return (PHYSTWIN_DENSE_QUERY_POINTS,)
     if normalized == "controller_sparse":
         return (30, 100)
     raise ValueError(f"Unsupported query point mode: {mode}")

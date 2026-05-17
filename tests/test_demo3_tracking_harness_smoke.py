@@ -89,13 +89,34 @@ class Demo3TrackingHarnessSmokeTest(unittest.TestCase):
             output_dir = Path(summary["output_dir"])
             tracking_npz = output_dir / "cotracker" / "0.npz"
 
-            self.assertTrue((output_dir / "fake" / "points_10000" / "cam0.npz").is_file())
+            self.assertTrue((output_dir / "fake" / "points_5000" / "cam0.npz").is_file())
             self.assertTrue(tracking_npz.is_file())
             loaded, metadata = load_cotracker_like_npz(tracking_npz)
-            self.assertEqual(loaded.tracks_yx.shape[1], 10000)
+            self.assertEqual(loaded.tracks_yx.shape[1], 5000)
             self.assertEqual(metadata["query_mode"], "phystwin_dense")
             self.assertEqual(metadata["mask_source"], "phystwin_union")
             self.assertTrue(metadata["phystwin_compatible"])
+
+            args = parse_args(
+                [
+                    "--case-root",
+                    str(case_root),
+                    "--output-root",
+                    str(root / "out_10000"),
+                    "--backends",
+                    "fake",
+                    "--cameras",
+                    "0",
+                    "--frames",
+                    "1",
+                    "--query-mode",
+                    "phystwin_dense",
+                    "--num-query-points",
+                    "10000",
+                ]
+            )
+            with self.assertRaisesRegex(ValueError, "fixed at 5000"):
+                run_benchmark(args)
 
     def test_overlay_export_writes_ply_frame_video_and_stats(self) -> None:
         from scripts.harness.visualize_demo3_tracking_pcd_overlay import parse_args, run_overlay_export

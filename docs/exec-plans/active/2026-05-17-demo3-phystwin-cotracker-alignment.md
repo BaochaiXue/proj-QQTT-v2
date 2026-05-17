@@ -9,8 +9,8 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
 ## Scope
 
 - Add a PhysTwin dense query mode that uses first-frame union masks and selects
-  10000 query points when available, otherwise 5000, with strict failure below
-  5000 mask pixels.
+  exactly 5000 query points per camera, with strict failure below 5000 mask
+  pixels.
 - Support PhysTwin-style nested mask layouts such as `mask/{camera}/*/{frame}.png`
   for benchmark query generation and metrics.
 - Make the PhysTwin-compatible benchmark path write `cotracker/{camera}.npz`
@@ -22,7 +22,7 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
 
 ## Non-Goals
 
-- Do not put 5000/10000 dense CoTracker calls into the live Demo 2.2 render hot
+- Do not put 5000-point dense CoTracker calls into the live Demo 2.2 render hot
   path by default.
 - Do not change the Demo 3 overlay board layout or its default sparse display
   point cap.
