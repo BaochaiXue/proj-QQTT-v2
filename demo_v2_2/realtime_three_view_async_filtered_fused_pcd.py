@@ -50,6 +50,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     tracking = parser.add_argument_group("Tracking")
+    tracking.add_argument(
+        "--experiment-mode",
+        choices=runtime.EXPERIMENT_MODES,
+        default=None,
+        help="Semantic mode: controller-object-exp uses towel; demo-mode uses hand.",
+    )
     tracking.add_argument("--object-prompt", default=None, help="SAM3.1 first-frame object prompt.")
     tracking.add_argument("--controller-prompt", default=None, help="SAM3.1 first-frame controller prompt.")
     mode = tracking.add_mutually_exclusive_group()
@@ -101,9 +107,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     experiments = parser.add_argument_group("Explicit Experiments")
     experiments.add_argument(
-        "--experimental-edgetam-batch-vision",
+        "--edgetam-batch-vision",
+        dest="edgetam_batch_vision",
         action="store_true",
+        default=None,
         help="Batch 3 RGB frames through EdgeTAM image features, then keep per-camera video sessions.",
+    )
+    experiments.add_argument(
+        "--no-edgetam-batch-vision",
+        dest="edgetam_batch_vision",
+        action="store_false",
+        help="Disable the Demo 2.2 preset batch-vision EdgeTAM path for A/B profiling.",
+    )
+    experiments.add_argument(
+        "--experimental-edgetam-batch-vision",
+        dest="edgetam_batch_vision",
+        action="store_true",
+        help="Legacy alias for --edgetam-batch-vision.",
     )
     experiments.add_argument(
         "--experimental-staged-parallel",
@@ -169,6 +189,7 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--camera-ids", _format_camera_ids(parsed.camera_ids))
     _append_option(translated, "--calibrate-path", parsed.calibrate_path)
     _append_many(translated, "--calibration-reference-serials", parsed.calibration_reference_serials)
+    _append_option(translated, "--experiment-mode", parsed.experiment_mode)
     _append_option(translated, "--object-prompt", parsed.object_prompt)
     _append_option(translated, "--controller-prompt", parsed.controller_prompt)
     _append_option(translated, "--depth-min-m", parsed.min_depth_m)
@@ -209,8 +230,10 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
         translated.append("--no-parallel-init")
     if parsed.no_compile_prewarm:
         translated.append("--no-edgetam-prewarm-compile")
-    if parsed.experimental_edgetam_batch_vision:
+    if parsed.edgetam_batch_vision is True:
         translated.append("--edgetam-batch-vision-encoder")
+    elif parsed.edgetam_batch_vision is False:
+        translated.append("--no-edgetam-batch-vision-encoder")
     if parsed.show_tracking_overlay:
         translated.append("--show-tracking-overlay")
 

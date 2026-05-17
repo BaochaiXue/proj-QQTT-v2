@@ -65,7 +65,10 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--render-layer-mode", help_text)
         self.assertIn("--render-every-n", help_text)
         self.assertIn("--render-copy-mode", help_text)
+        self.assertIn("--edgetam-batch-vision", help_text)
+        self.assertIn("--no-edgetam-batch-vision", help_text)
         self.assertIn("--experimental-edgetam-batch-vision", help_text)
+        self.assertIn("--experiment-mode", help_text)
         self.assertIn("--advanced-help", help_text)
         self.assertNotIn("--fusion-target-fps", help_text)
         self.assertNotIn("--gpu-pipeline-mode", help_text)
@@ -152,6 +155,12 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--render-every-n", argv)
         self.assertIn("--render-micro-profile", argv)
 
+    def test_demo22_public_cli_can_disable_preset_batch_vision(self) -> None:
+        argv = demo22._to_demo22_argv(["--dry-run", "--no-edgetam-batch-vision"])
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
+        self.assertIn("--no-edgetam-batch-vision-encoder", argv)
+
     def test_demo22_public_cli_controller_only_alias_translates_to_runtime_flag(self) -> None:
         argv = demo22._to_demo22_argv(["--dry-run", "--controller-only", "--controller-prompt", "towel"])
 
@@ -180,6 +189,12 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
 
         self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
 
+    def test_demo22_public_experiment_mode_flag_is_forwarded(self) -> None:
+        argv = demo22._to_demo22_argv(["--dry-run", "--experiment-mode", demo.EXPERIMENT_MODE_DEMO])
+
+        self.assertIn("--experiment-mode", argv)
+        self.assertIn(demo.EXPERIMENT_MODE_DEMO, argv)
+
     def test_demo22_preset_contract_is_filtered_only_single_owner(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
@@ -195,6 +210,11 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["depth_source"], demo.DEPTH_SOURCE_FFS)
         self.assertEqual(contract["compile_mode"], demo.DEFAULT_COMPILE_MODE)
         self.assertEqual(contract["track_mode"], demo.TRACK_MODE_CONTROLLER_OBJECT)
+        self.assertEqual(contract["experiment_mode"], demo.EXPERIMENT_MODE_CONTROLLER_OBJECT)
+        self.assertEqual(contract["controller_semantic"], demo.CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL)
+        self.assertEqual(contract["controller_prompt"], demo.CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL)
+        self.assertEqual(contract["controller_prompt_expected"], demo.CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL)
+        self.assertTrue(contract["controller_prompt_matches_experiment_mode"])
         self.assertEqual(args.depth_min_m, demo.DEFAULT_DEMO22_DEPTH_MIN_M)
         self.assertEqual(contract["init"]["mode"], "sam31-first-frame")
         self.assertTrue(contract["init"]["parallel_init"])
@@ -203,7 +223,8 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_SHARED)
         self.assertTrue(contract["edgetam"]["prewarm_compile"])
         self.assertEqual(contract["edgetam"]["prewarm_runs"], 1)
-        self.assertFalse(contract["edgetam"]["batch_vision_encoder"])
+        self.assertTrue(contract["edgetam"]["batch_vision_encoder"])
+        self.assertEqual(contract["edgetam"]["batch_vision_batch_size"], 3)
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_SINGLE_OWNER)
         self.assertEqual(contract["gpu_pipeline"]["internal_order"], demo.SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
         self.assertEqual(contract["ffs_contract"]["trt_batch_size"], 3)
@@ -220,6 +241,30 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertTrue(contract["renderer"]["async_latest_only"])
         self.assertFalse(contract["renderer"]["quality_loss_default"])
         self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["towel", "stuffed animal"])
+
+    def test_demo22_demo_mode_uses_hand_controller(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--experiment-mode",
+                demo.EXPERIMENT_MODE_DEMO,
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--experiment-mode"},
+        )
+        contract = demo.build_contract(args)
+
+        self.assertEqual(contract["experiment_mode"], demo.EXPERIMENT_MODE_DEMO)
+        self.assertEqual(contract["controller_semantic"], demo.DEMO_MODE_CONTROLLER_LABEL)
+        self.assertEqual(contract["controller_prompt"], demo.DEMO_MODE_CONTROLLER_LABEL)
+        self.assertEqual(contract["controller_prompt_expected"], demo.DEMO_MODE_CONTROLLER_LABEL)
+        self.assertTrue(contract["controller_prompt_matches_experiment_mode"])
+        self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["hand", "stuffed animal"])
 
     def test_demo22_controller_only_contract_tracks_controller_layer(self) -> None:
         parser = demo.build_arg_parser()
@@ -271,24 +316,29 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
             demo.DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
         )
 
-    def test_demo22_batch_vision_option_is_explicit(self) -> None:
+    def test_demo22_batch_vision_can_be_disabled_for_ab_profile(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(
             [
                 "--dry-run",
                 "--preset",
                 demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
-                "--edgetam-batch-vision-encoder",
+                "--no-edgetam-batch-vision-encoder",
             ]
         )
         args = demo.apply_preset_defaults(
             args,
-            explicit_options={"--dry-run", "--preset", "--edgetam-batch-vision-encoder"},
+            explicit_options={
+                "--dry-run",
+                "--preset",
+                "--no-edgetam-batch-vision-encoder",
+                "--edgetam-batch-vision-encoder",
+            },
         )
         contract = demo.build_contract(args)
 
-        self.assertTrue(contract["edgetam"]["batch_vision_encoder"])
-        self.assertEqual(contract["edgetam"]["batch_vision_batch_size"], 3)
+        self.assertFalse(contract["edgetam"]["batch_vision_encoder"])
+        self.assertEqual(contract["edgetam"]["batch_vision_batch_size"], 1)
         self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_SHARED)
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_SINGLE_OWNER)
 
@@ -448,18 +498,22 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
                 "group_id": 0,
                 "t_group_created": 0.0,
                 "complete": True,
+                "gpu_owner": {"publish_s": 0.0},
                 "raw_fusion": {"publish_s": 0.0, "total_ms": 2.0},
                 "filter": {"publish_s": 0.1, "total_ms": 5.0},
                 "fusion": {"publish_s": 0.1, "total_ms": 7.0},
+                "render_publish": {"publish_s": 0.15},
                 "render": {"render_s": 0.2},
             },
             {
                 "group_id": 1,
                 "t_group_created": 0.2,
                 "complete": True,
+                "gpu_owner": {"publish_s": 0.2},
                 "raw_fusion": {"publish_s": 0.2, "total_ms": 2.0},
                 "filter": {"publish_s": 0.3, "total_ms": 5.0},
                 "fusion": {"publish_s": 0.3, "total_ms": 7.0},
+                "render_publish": {"publish_s": 0.35},
                 "render": {"render_s": 0.4},
             },
         ]
@@ -469,6 +523,9 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertAlmostEqual(summary["raw_fusion_fps"], 5.0)
         self.assertAlmostEqual(summary["filter_output_fps"], 5.0)
         self.assertAlmostEqual(summary["render_fps"], 5.0)
+        self.assertAlmostEqual(summary["stage_period_ms"]["median"], 200.0)
+        self.assertAlmostEqual(summary["display_packet_period_ms"]["median"], 200.0)
+        self.assertAlmostEqual(summary["period_ms"]["render_period_ms"]["median"], 200.0)
 
     def test_profile_payload_includes_init_profile_breakdown(self) -> None:
         parser = demo.build_arg_parser()

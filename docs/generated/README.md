@@ -33,6 +33,7 @@ manual; use the compressed harness index first.
 | Demo 2.2 FFS TensorRT batch=3 build and profile | `demo2_2_ffs_batch3_trt_build_and_profile.md` |
 | Demo 2.2 default FFS TensorRT batch=3 contract | `demo2_2_default_ffs_batch3.md` |
 | Demo 2.2 EdgeTAM batch vision encoder probe | `demo2_2_edgetam_batch_vision_profile.md` |
+| Demo 2.2 controller-object batch-vision warmup/real profile | `demo22_controller_object_exp_batchvision_profile_summary.md` |
 | Demo 2.2 simplified public CLI | `demo2_2_cli_simplification.md` |
 | Demo 2.2 pointcloud render fastpath | `demo22_render_optimization_summary.md`, `demo22_render_backend_microbenchmark.md` |
 | Demo 2.2 runtime split | `demo2_2_runtime_split.md` |

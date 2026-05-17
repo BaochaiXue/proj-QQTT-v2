@@ -118,6 +118,12 @@ PCD_FILTER_SCHEDULE_MODES = ("async", "sync", "none")
 DEFAULT_CAMERA_IDS = (0, 1, 2)
 DEFAULT_OBJECT_LABEL = "object"
 DEFAULT_CONTROLLER_LABEL = "hand"
+EXPERIMENT_MODE_CONTROLLER_OBJECT = "controller-object-exp"
+EXPERIMENT_MODE_DEMO = "demo-mode"
+EXPERIMENT_MODES = (EXPERIMENT_MODE_CONTROLLER_OBJECT, EXPERIMENT_MODE_DEMO)
+DEFAULT_EXPERIMENT_MODE = EXPERIMENT_MODE_DEMO
+DEMO_MODE_CONTROLLER_LABEL = DEFAULT_CONTROLLER_LABEL
+CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL = "towel"
 DEFAULT_MODEL_ID = "yonigozlan/EdgeTAM-hf"
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
@@ -198,7 +204,8 @@ MASK_POSTPROCESS_CUDA_INLINE = "cuda-inline"
 MASK_POSTPROCESS_MODES = (MASK_POSTPROCESS_HF, MASK_POSTPROCESS_CUDA_INLINE)
 EDGETAM_INPUT_PATH_PIL = "pil"
 EDGETAM_INPUT_PATH_MODES = (EDGETAM_INPUT_PATH_PIL,)
-DEFAULT_DEMO22_CONTROLLER_LABEL = "towel"
+DEFAULT_DEMO22_EXPERIMENT_MODE = EXPERIMENT_MODE_CONTROLLER_OBJECT
+DEFAULT_DEMO22_CONTROLLER_LABEL = CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL
 DEFAULT_DEMO22_DEPTH_MIN_M = 0.1
 DEFAULT_OUTPUT_ROOT = ROOT / "result" / "demo2_1_three_view_fused_pcd"
 DEFAULT_OBJECT_FILTER_CAP = 20_000
@@ -890,6 +897,26 @@ def _normalize_label(label: str) -> str:
     return str(label).strip().lower().replace("_", " ").replace("-", " ")
 
 
+def controller_prompt_for_experiment_mode(experiment_mode: str) -> str:
+    if experiment_mode == EXPERIMENT_MODE_CONTROLLER_OBJECT:
+        return CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL
+    if experiment_mode == EXPERIMENT_MODE_DEMO:
+        return DEMO_MODE_CONTROLLER_LABEL
+    raise ValueError(f"Unsupported experiment mode: {experiment_mode}")
+
+
+def resolved_experiment_mode(args: argparse.Namespace) -> str:
+    mode = str(getattr(args, "experiment_mode", DEFAULT_EXPERIMENT_MODE) or DEFAULT_EXPERIMENT_MODE)
+    if mode not in EXPERIMENT_MODES:
+        raise ValueError(f"Unsupported experiment mode: {mode}")
+    return mode
+
+
+def controller_prompt_matches_experiment_mode(args: argparse.Namespace) -> bool:
+    expected = controller_prompt_for_experiment_mode(resolved_experiment_mode(args))
+    return str(getattr(args, "controller_prompt", "")) == expected
+
+
 def is_controller_label(label: str) -> bool:
     normalized = _normalize_label(label)
     return normalized in {"controller", "hand", "hands", "left hand", "right hand", "hand a", "hand b"}
@@ -1016,6 +1043,18 @@ def _event_fps(records: Sequence[dict[str, Any]], path: Sequence[str]) -> float:
     if elapsed <= 0:
         return 0.0
     return float((len(times) - 1) / elapsed)
+
+
+def _event_period_stats_ms(records: Sequence[dict[str, Any]], path: Sequence[str]) -> dict[str, float]:
+    times = sorted(_series_for_path(records, path))
+    if len(times) < 2:
+        return _profile_stats([])
+    periods_ms = [
+        (float(later) - float(earlier)) * 1000.0
+        for earlier, later in zip(times[:-1], times[1:])
+        if float(later) >= float(earlier)
+    ]
+    return _profile_stats(periods_ms)
 
 
 GPU_SAMPLE_METRIC_NAMES: tuple[str, ...] = (
@@ -1451,6 +1490,13 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
             if preset == PRESET_DEMO22_ASYNC_FILTER_5FPS:
                 _set_if_not_explicit(args, explicit, flag="--ffs-trt-batch-size", attr="ffs_trt_batch_size", value=3)
+                _set_if_not_explicit(
+                    args,
+                    explicit,
+                    flag="--edgetam-batch-vision-encoder",
+                    attr="edgetam_batch_vision_encoder",
+                    value=True,
+                )
             _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_SINGLE_OWNER)
             _set_if_not_explicit(args, explicit, flag="--single-owner-order", attr="single_owner_order", value=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_SHARED)
@@ -1462,7 +1508,14 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
             _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
             _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
-            _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--experiment-mode", attr="experiment_mode", value=DEFAULT_DEMO22_EXPERIMENT_MODE)
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--controller-prompt",
+                attr="controller_prompt",
+                value=controller_prompt_for_experiment_mode(resolved_experiment_mode(args)),
+            )
             _set_if_not_explicit(args, explicit, flag="--depth-min-m", attr="depth_min_m", value=DEFAULT_DEMO22_DEPTH_MIN_M)
             _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
@@ -1483,7 +1536,14 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
             _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
             _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
-            _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--experiment-mode", attr="experiment_mode", value=DEFAULT_DEMO22_EXPERIMENT_MODE)
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--controller-prompt",
+                attr="controller_prompt",
+                value=controller_prompt_for_experiment_mode(resolved_experiment_mode(args)),
+            )
             _set_if_not_explicit(args, explicit, flag="--depth-min-m", attr="depth_min_m", value=DEFAULT_DEMO22_DEPTH_MIN_M)
             _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
@@ -1506,7 +1566,14 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
             _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
             _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
-            _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--experiment-mode", attr="experiment_mode", value=DEFAULT_DEMO22_EXPERIMENT_MODE)
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--controller-prompt",
+                attr="controller_prompt",
+                value=controller_prompt_for_experiment_mode(resolved_experiment_mode(args)),
+            )
             _set_if_not_explicit(args, explicit, flag="--pcd-max-points-per-camera", attr="pcd_max_points_per_camera", value=8000)
             _set_if_not_explicit(args, explicit, flag="--pcd-color-mode", attr="pcd_color_mode", value="class")
             _set_if_not_explicit(args, explicit, flag="--render-every-n", attr="render_every_n", value=2)
@@ -1528,7 +1595,14 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
             _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
             _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
-            _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--experiment-mode", attr="experiment_mode", value=DEFAULT_DEMO22_EXPERIMENT_MODE)
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--controller-prompt",
+                attr="controller_prompt",
+                value=controller_prompt_for_experiment_mode(resolved_experiment_mode(args)),
+            )
             _set_if_not_explicit(args, explicit, flag="--pcd-max-points-per-camera", attr="pcd_max_points_per_camera", value=10000)
             _set_if_not_explicit(args, explicit, flag="--pcd-color-mode", attr="pcd_color_mode", value="rgb")
             _set_if_not_explicit(args, explicit, flag="--render-every-n", attr="render_every_n", value=2)
@@ -1564,7 +1638,14 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
             _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
             _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
-            _set_if_not_explicit(args, explicit, flag="--controller-prompt", attr="controller_prompt", value=DEFAULT_DEMO22_CONTROLLER_LABEL)
+            _set_if_not_explicit(args, explicit, flag="--experiment-mode", attr="experiment_mode", value=DEFAULT_DEMO22_EXPERIMENT_MODE)
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--controller-prompt",
+                attr="controller_prompt",
+                value=controller_prompt_for_experiment_mode(resolved_experiment_mode(args)),
+            )
             _set_if_not_explicit(args, explicit, flag="--depth-min-m", attr="depth_min_m", value=DEFAULT_DEMO22_DEPTH_MIN_M)
             _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
@@ -1901,6 +1982,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         PRESET_DEMO215_LIVE_QUALITY_FFS,
         PRESET_DEMO215_MASK_ONLY_DEBUG,
     }
+    experiment_mode = resolved_experiment_mode(args)
+    expected_controller_prompt = controller_prompt_for_experiment_mode(experiment_mode)
     return {
         "demo": (
             "demo_2_2_async_filtered_fused_pcd"
@@ -1915,6 +1998,11 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "profile": args.profile,
         "fps": int(args.fps),
         "track_mode": args.track_mode,
+        "experiment_mode": experiment_mode,
+        "controller_semantic": expected_controller_prompt,
+        "controller_prompt": str(getattr(args, "controller_prompt", "")),
+        "controller_prompt_expected": expected_controller_prompt,
+        "controller_prompt_matches_experiment_mode": controller_prompt_matches_experiment_mode(args),
         "frame_by_frame_streaming": True,
         "offline_video_input_used": False,
         "edge_backend": "HF EdgeTAMVideo",
@@ -2770,7 +2858,22 @@ class Demo21Runtime:
             "fusion_fps": _event_fps(complete, ("fusion", "publish_s")),
             "render_fps": _event_fps(rendered, ("render", "render_s")),
         }
+        period_stats = {
+            "capture_group_period_ms": _event_period_stats_ms(records, ("t_group_created",)),
+            "gpu_owner_publish_period_ms": _event_period_stats_ms(records, ("gpu_owner", "publish_s")),
+            "raw_fusion_publish_period_ms": _event_period_stats_ms(records, ("raw_fusion", "publish_s")),
+            "filter_output_publish_period_ms": _event_period_stats_ms(complete, ("filter", "publish_s")),
+            "fusion_publish_period_ms": _event_period_stats_ms(complete, ("fusion", "publish_s")),
+            "display_packet_publish_period_ms": _event_period_stats_ms(records, ("render_publish", "publish_s")),
+            "render_period_ms": _event_period_stats_ms(rendered, ("render", "render_s")),
+        }
+        summary["period_ms"] = period_stats
+        summary["stage_period_ms"] = period_stats["gpu_owner_publish_period_ms"]
+        summary["display_packet_period_ms"] = period_stats["display_packet_publish_period_ms"]
         summary["complete_group_ratio"] = float(len(complete) / len(records)) if records else 0.0
+        summary["stage_drop_count"] = int(sum(1 for record in records if record.get("drop_reason")))
+        summary["raw_fused_pending_replacements_total"] = int(self.raw_fused_slot.total_dropped_count)
+        summary["render_buffer_dropped_total"] = int(self.render_buffer.snapshot().get("dropped", 0))
         target_fps = float(self.args.fusion_target_fps)
         summary["target_fps_deficit"] = float(target_fps - summary["render_fps"])
         summary["target_fps_deficit_ratio"] = float((target_fps - summary["render_fps"]) / target_fps) if target_fps > 0 else 0.0
@@ -2981,6 +3084,11 @@ class Demo21Runtime:
             "capture_group_target_fps": resolved_capture_group_target_fps(self.args),
             "demo22_pass_threshold_fps": float(self.args.fusion_target_fps) * DEMO22_PASS_THRESHOLD_RATIO,
             "track_mode": self.args.track_mode,
+            "experiment_mode": contract["experiment_mode"],
+            "controller_semantic": contract["controller_semantic"],
+            "controller_prompt": contract["controller_prompt"],
+            "controller_prompt_expected": contract["controller_prompt_expected"],
+            "controller_prompt_matches_experiment_mode": contract["controller_prompt_matches_experiment_mode"],
             "depth_source": self.args.depth_source,
             "compile_mode": self.args.compile_mode,
             "dtype": self.args.dtype,
@@ -3061,10 +3169,15 @@ class Demo21Runtime:
             f"- raw fusion FPS after warmup: `{warm.get('raw_fusion_fps', 0.0):.2f}`",
             f"- filter output FPS after warmup: `{warm.get('filter_output_fps', 0.0):.2f}`",
             f"- fusion FPS after warmup: `{warm.get('fusion_fps', 0.0):.2f}`",
+            f"- stage period p50 after warmup: `{warm.get('stage_period_ms', {}).get('median', 0.0):.2f} ms`",
+            f"- display packet period p50 after warmup: `{warm.get('display_packet_period_ms', {}).get('median', 0.0):.2f} ms`",
             f"- groups after warmup: `{warm.get('group_count', 0)}`",
             f"- complete fused groups after warmup: `{warm.get('complete_fusion_groups', 0)}`",
             f"- rendered groups after warmup: `{warm.get('rendered_groups', 0)}`",
             f"- complete group ratio after warmup: `{warm.get('complete_group_ratio', 0.0):.3f}`",
+            f"- stage drop count after warmup: `{warm.get('stage_drop_count', 0)}`",
+            f"- raw fused pending replacements total: `{warm.get('raw_fused_pending_replacements_total', 0)}`",
+            f"- render buffer dropped total: `{warm.get('render_buffer_dropped_total', 0)}`",
             f"- target deficit: `{warm.get('target_fps_deficit', 0.0):.2f}`",
             f"- bottleneck class: `{warm.get('bottleneck_class', 'unknown')}`",
             f"- GPU pipeline: `{payload.get('gpu_pipeline', {}).get('mode', 'separate-workers')}`",
@@ -3148,6 +3261,18 @@ class Demo21Runtime:
                 lines.extend(["", f"- sampler errors: `{'; '.join(str(error) for error in errors[:3])}`"])
         else:
             lines.append("GPU sampling disabled for this run.")
+        lines.append("")
+        lines.extend([
+            "## Throughput periods",
+            "",
+            "| Event | median ms | p90 ms | p95 ms | max ms |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ])
+        for name, stat in sorted((warm.get("period_ms") or {}).items()):
+            lines.append(
+                f"| `{name}` | `{stat.get('median', 0.0):.2f}` | `{stat.get('p90', 0.0):.2f}` | "
+                f"`{stat.get('p95', 0.0):.2f}` | `{stat.get('max', 0.0):.2f}` |"
+            )
         lines.append("")
         lines.extend([
             "| Metric | median | p90 | p95 | max |",
@@ -5643,7 +5768,16 @@ class Demo21Runtime:
     def _publish_render_packet(self, packet: FusedPcdPacket) -> None:
         if packet.group_id % int(self.args.render_every_n) != 0:
             return
+        publish_s = self._profile_rel_s()
         self.render_buffer.publish(packet)
+        self._profile_update(
+            packet.group_id,
+            render_publish={
+                "publish_s": float(publish_s),
+                "render_every_n": int(self.args.render_every_n),
+                "render_buffer": self.render_buffer.snapshot(),
+            },
+        )
         self._render_request()
 
     def _async_filter_worker(self) -> None:
@@ -6169,6 +6303,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--calibration-reference-serials", nargs="*", default=None)
     parser.add_argument("--track-mode", choices=TRACK_MODES, default=TRACK_MODE_CONTROLLER_OBJECT)
     parser.add_argument("--init-mode", choices=INIT_MODES, default="sam31-first-frame")
+    parser.add_argument(
+        "--experiment-mode",
+        choices=EXPERIMENT_MODES,
+        default=DEFAULT_EXPERIMENT_MODE,
+        help="Controller semantic mode: demo-mode uses hand; controller-object-exp uses towel.",
+    )
     parser.add_argument("--object-prompt", default="stuffed animal")
     parser.add_argument("--controller-prompt", default=DEFAULT_CONTROLLER_LABEL)
     parser.add_argument("--depth-source", choices=DEPTH_SOURCES, default=DEPTH_SOURCE_FFS)

@@ -25,6 +25,14 @@ PRESET_DEMO215_MASK_ONLY_DEBUG = _shared_runtime.PRESET_DEMO215_MASK_ONLY_DEBUG
 TRACK_MODE_OBJECT_ONLY = _shared_runtime.TRACK_MODE_OBJECT_ONLY
 TRACK_MODE_CONTROLLER_ONLY = _shared_runtime.TRACK_MODE_CONTROLLER_ONLY
 TRACK_MODE_CONTROLLER_OBJECT = _shared_runtime.TRACK_MODE_CONTROLLER_OBJECT
+EXPERIMENT_MODE_CONTROLLER_OBJECT = _shared_runtime.EXPERIMENT_MODE_CONTROLLER_OBJECT
+EXPERIMENT_MODE_DEMO = _shared_runtime.EXPERIMENT_MODE_DEMO
+EXPERIMENT_MODES = _shared_runtime.EXPERIMENT_MODES
+DEFAULT_EXPERIMENT_MODE = _shared_runtime.DEFAULT_EXPERIMENT_MODE
+DEFAULT_DEMO22_EXPERIMENT_MODE = _shared_runtime.DEFAULT_DEMO22_EXPERIMENT_MODE
+DEMO_MODE_CONTROLLER_LABEL = _shared_runtime.DEMO_MODE_CONTROLLER_LABEL
+CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL = _shared_runtime.CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL
+DEFAULT_DEMO22_CONTROLLER_LABEL = _shared_runtime.DEFAULT_DEMO22_CONTROLLER_LABEL
 
 DEPTH_SOURCE_FFS = _shared_runtime.DEPTH_SOURCE_FFS
 DEPTH_SOURCE_REALSENSE = _shared_runtime.DEPTH_SOURCE_REALSENSE
@@ -82,6 +90,9 @@ class Demo22Runtime(_shared_runtime.Demo21Runtime):
 elapsed_ms = _shared_runtime._elapsed_ms
 explicit_cli_options = _shared_runtime._explicit_cli_options
 summarize_gpu_samples = _shared_runtime.summarize_gpu_samples
+controller_prompt_for_experiment_mode = _shared_runtime.controller_prompt_for_experiment_mode
+resolved_experiment_mode = _shared_runtime.resolved_experiment_mode
+controller_prompt_matches_experiment_mode = _shared_runtime.controller_prompt_matches_experiment_mode
 
 
 def parse_camera_ids(value: str) -> tuple[int, ...]:
@@ -115,8 +126,12 @@ __all__ = [
     "COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS",
     "COMPILE_MODE_NONE",
     "CONTROLLER_ID",
+    "CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL",
     "DEFAULT_COMPILE_MODE",
     "DEFAULT_DEMO22_DEPTH_MIN_M",
+    "DEFAULT_DEMO22_CONTROLLER_LABEL",
+    "DEFAULT_DEMO22_EXPERIMENT_MODE",
+    "DEFAULT_EXPERIMENT_MODE",
     "DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR",
     "DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR",
     "DEPTH_SOURCE_FFS",
@@ -125,6 +140,9 @@ __all__ = [
     "EDGETAM_MODEL_TOPOLOGY_REPLICATED",
     "EDGETAM_MODEL_TOPOLOGY_SHARED",
     "EDGETAM_STREAM_MODE_PER_CAMERA",
+    "EXPERIMENT_MODE_CONTROLLER_OBJECT",
+    "EXPERIMENT_MODE_DEMO",
+    "EXPERIMENT_MODES",
     "FFS_TRT_BATCH_SIZES",
     "FusedLayerCloud",
     "GPU_PIPELINE_MODE_SEPARATE_WORKERS",
@@ -163,10 +181,13 @@ __all__ = [
     "apply_preset_defaults",
     "build_arg_parser",
     "build_contract",
+    "controller_prompt_for_experiment_mode",
+    "controller_prompt_matches_experiment_mode",
     "elapsed_ms",
     "explicit_cli_options",
     "main",
     "parse_camera_ids",
+    "resolved_experiment_mode",
     "summarize_gpu_samples",
     "time",
 ]
