@@ -17,6 +17,7 @@
 | File | Role |
 | --- | --- |
 | `_catalog.py` | Compact catalog of every public harness Python entrypoint, category, summary, and help-check profile. |
+| `check_demo22_boundaries.py` | Verifies Demo 2.2 imports only through `qqtt/demo/` and that its render replay benchmark is cataloged. |
 | `check_harness_catalog.py` | Verifies every public harness Python file is cataloged and categorized correctly. |
 | `check_all.py` | Runs the quick/full deterministic validation profiles; help-surface coverage comes from `_catalog.py`. |
 | `docs/generated/harness_engineering_compact_index.md` | Compressed index for current generated harness engineering results and claims. |
@@ -27,6 +28,7 @@ Run:
 
 ```bash
 conda run -n demo_2_max --no-capture-output python scripts/harness/check_harness_catalog.py
+conda run -n demo_2_max --no-capture-output python scripts/harness/check_demo22_boundaries.py
 conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
 conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full
 ```
@@ -37,11 +39,11 @@ packages such as OpenCV are absent.
 
 ## Catalog Summary
 
-Current `_catalog.py` entries: `71`.
+Current `_catalog.py` entries: `72`.
 
 | Category | Count | Meaning |
 | --- | ---: | --- |
-| `checks` | 5 | Repo, scope, architecture, experiment-boundary, and catalog guards. |
+| `checks` | 6 | Repo, scope, architecture, experiment-boundary, Demo 2.2 boundary, and catalog guards. |
 | `hardware_external` | 13 | RealSense probes, FFS/SAM/TensorRT proofs, WSLg/Open3D helpers, and static replay benchmarks. |
 | `mask_support` | 4 | SAM 3.1 mask generation, helper code, object-case registry, and single-pair reprojection support. |
 | `formal_cleanup` | 1 | Downstream cleanup for `data/different_types/`. |
@@ -55,7 +57,7 @@ Help profile coverage:
 | --- | ---: | --- |
 | `quick` | 8 | Fast help checks used by default `check_all.py`. |
 | `full` | 61 | Broader help checks used by `check_all.py --full`. |
-| none | 10 | Helpers or shell scripts without direct argparse help coverage. |
+| none | 11 | Helpers, shell scripts, or guard scripts without direct argparse help coverage. |
 
 ## Current Boundaries
 

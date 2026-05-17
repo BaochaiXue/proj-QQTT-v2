@@ -32,6 +32,11 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "Guard that every harness Python file is categorized here.",
     ),
     HarnessEntry(
+        "scripts/harness/check_demo22_boundaries.py",
+        "checks",
+        "Guard Demo 2.2 dependency separation and render replay harness cataloging.",
+    ),
+    HarnessEntry(
         "scripts/harness/check_scope.py",
         "checks",
         "Repo scope guard for removed or forbidden legacy surfaces.",

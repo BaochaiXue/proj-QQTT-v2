@@ -23,3 +23,11 @@ Make Demo 2.2 own its runtime import boundary instead of depending on other Demo
 - `python -m py_compile demo_v2_2/*.py demo_v2_1/*.py qqtt/demo/*.py scripts/harness/*.py`
 - `python -m unittest -v tests.test_demo22_render_fastpath tests.test_demo_v2_2_async_filtered_fused_pcd_smoke tests.test_demo_v2_1_three_view_fused_pcd_smoke tests.test_demo_v2_1_5_realsense_depth_smoke tests.test_check_all_smoke`
 - `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
+
+## 2026-05-17 Implementation Notes
+
+- Added `qqtt/demo/demo22_runtime.py` as the explicit Demo 2.2 runtime facade.
+- Reduced `demo_v2_2/runtime.py` to a compatibility alias.
+- Updated the Demo 2.2 CLI wrapper to import the shared facade directly.
+- Added `scripts/harness/check_demo22_boundaries.py` and wired it into the
+  harness catalog and quick `check_all.py` guard set.

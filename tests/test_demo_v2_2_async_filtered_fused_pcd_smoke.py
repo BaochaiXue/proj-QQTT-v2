@@ -74,14 +74,19 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
     def test_demo22_wrapper_imports_dedicated_runtime_boundary(self) -> None:
         source = Path(demo22.__file__).read_text(encoding="utf-8")
 
-        self.assertIn("from demo_v2_2 import runtime", source)
+        self.assertIn("from qqtt.demo import demo22_runtime as runtime", source)
+        self.assertNotIn("from demo_v2_2 import runtime", source)
         self.assertNotIn("from demo_v2_1 import realtime_three_view_masked_fused_pcd", source)
 
-    def test_demo22_runtime_boundary_uses_shared_runtime_not_demo21(self) -> None:
+    def test_demo22_runtime_boundary_is_shared_facade_not_demo2x_entrypoint(self) -> None:
         source = Path(demo.__file__).read_text(encoding="utf-8")
 
+        self.assertTrue(Path(demo.__file__).as_posix().endswith("qqtt/demo/demo22_runtime.py"))
         self.assertIn("from qqtt.demo import three_view_masked_fused_pcd_runtime", source)
+        self.assertIn("from qqtt.demo import render_fastpath", source)
+        self.assertNotIn("from demo_v2 import", source)
         self.assertNotIn("from demo_v2_1 import", source)
+        self.assertNotIn("from demo_v2_1_5 import", source)
 
     def test_demo22_public_cli_aliases_translate_to_runtime_flags(self) -> None:
         argv = demo22._to_demo22_argv(

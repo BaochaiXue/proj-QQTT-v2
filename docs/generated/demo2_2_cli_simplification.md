@@ -8,8 +8,10 @@ Demo 2.2 now has its own small public CLI in:
 demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py
 ```
 
-The wrapper still delegates to the Demo 2.1 runtime, but the daily `--help`
-surface no longer exposes old profiling and scheduling internals such as
+The public wrapper delegates through `qqtt.demo.demo22_runtime`, a Demo 2.2
+facade under the shared demo package. It no longer imports another versioned
+Demo 2.x entrypoint. The daily `--help` surface no longer exposes old profiling
+and scheduling internals such as
 `--fusion-target-fps`, `--gpu-pipeline-mode`, or `--single-owner-order`.
 
 ## Recommended Commands
@@ -72,6 +74,13 @@ python demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py --advanced-help
 ```
 
 to show the full legacy/runtime argument list.
+
+The compatibility module `demo_v2_2/runtime.py` is now only a thin alias to
+`qqtt.demo.demo22_runtime`. The boundary is guarded by:
+
+```bash
+python scripts/harness/check_demo22_boundaries.py
+```
 
 ## Default Contract
 

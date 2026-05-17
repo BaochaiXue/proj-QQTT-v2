@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from demo_v2_2 import runtime  # noqa: E402
+from qqtt.demo import demo22_runtime as runtime  # noqa: E402
 
 
 DEFAULT_PRESET = runtime.PRESET_DEMO22_ASYNC_FILTER_5FPS
