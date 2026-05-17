@@ -38,6 +38,7 @@ DEMO_HELP_SCRIPTS: tuple[str, ...] = (
     "demo_v2_1/realtime_three_view_masked_fused_pcd.py",
     "demo_v2_1_5/realtime_three_view_async_filtered_fused_pcd.py",
     "demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py",
+    "demo_v3/realtime_three_view_cotracker3_realsense_overlay.py",
 )
 
 QUICK_HELP_SCRIPTS: tuple[str, ...] = (*QUICK_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))
@@ -78,6 +79,9 @@ QUICK_UNITTEST_BATCHES: tuple[tuple[str, ...], ...] = (
         "tests.test_demo3_tracking_nvofa_stub_smoke",
         "tests.test_demo3_tracking_vpi_stub_smoke",
         "tests.test_demo3_tracking_backend_benchmark_fake_smoke",
+        "tests.test_demo3_contract",
+        "tests.test_demo3_cotracker_worker",
+        "tests.test_demo3_overlay_lift",
         "tests.test_check_all_smoke",
     ),
 )
@@ -222,6 +226,9 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_demo3_tracking_nvofa_stub_smoke",
     "tests.test_demo3_tracking_vpi_stub_smoke",
     "tests.test_demo3_tracking_backend_benchmark_fake_smoke",
+    "tests.test_demo3_contract",
+    "tests.test_demo3_cotracker_worker",
+    "tests.test_demo3_overlay_lift",
     "tests.test_check_all_smoke",
 )
 

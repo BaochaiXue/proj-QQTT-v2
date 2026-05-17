@@ -38,3 +38,17 @@ offline data-processing pipeline.
 - CoTracker overlay worker unit tests with fake backends.
 - Overlay lift unit tests.
 - `python scripts/harness/check_all.py` in `demo_2_max` after implementation.
+
+## Outcome
+
+- Added the thin `demo_v3` entrypoint and `qqtt.demo.demo3_runtime` facade.
+- Enforced the live Demo 3 contract: exactly three cameras, RealSense-only
+  depth, HF EdgeTAM mask source, CoTracker3 online backend, no FFS hot path,
+  and no FuturePhysTwin post-processing artifacts.
+- Added a latest-wins CoTracker3 overlay worker contract with frame-by-frame
+  online update semantics and a 30-point-per-camera default visualization cap.
+- Added RealSense-depth `y,x` overlay lift helpers for world-space tracks.
+- Added deterministic tests for the dry-run contract, fail-fast behavior,
+  worker publish cadence, latest-only overlay slot, and depth/mask lift rules.
+- `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
+  passes.
