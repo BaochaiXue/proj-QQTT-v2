@@ -29,6 +29,8 @@ class Demo3TrackingBackendBenchmarkFakeSmokeTest(unittest.TestCase):
                     "3",
                     "--frames",
                     "2",
+                    "--query-mode",
+                    "object_sparse",
                 ]
             )
             summary = run_benchmark(args)

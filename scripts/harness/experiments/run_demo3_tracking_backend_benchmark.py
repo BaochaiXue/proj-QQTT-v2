@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 
 DEFAULT_OUTPUT_ROOT = ROOT / "data" / "experiments" / "demo3_tracking_backend_benchmark"
 DEFAULT_NUM_QUERY_POINTS = "100,256,512,1024"
+DEFAULT_QUERY_MODE = "phystwin_dense"
 AUTO_QUERY_POINTS = -1
 MASK_SOURCE_DEFAULT = "mask_dir"
 MASK_SOURCE_PHYSTWIN_UNION = "phystwin_union"
@@ -67,7 +68,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mode",
         dest="query_mode",
         choices=("object_sparse", "object_dense", "controller_sparse", "phystwin_dense"),
-        default="object_sparse",
+        default=DEFAULT_QUERY_MODE,
     )
     parser.add_argument("--sampling-strategy", choices=("random", "grid", "uniform_grid", "farthest", "phystwin_random"), default="grid")
     parser.add_argument("--seed", type=int, default=42)

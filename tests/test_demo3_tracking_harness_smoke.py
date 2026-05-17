@@ -34,11 +34,14 @@ class Demo3TrackingHarnessSmokeTest(unittest.TestCase):
                     "3",
                     "--frames",
                     "2",
+                    "--query-mode",
+                    "object_sparse",
                     "--write-phystwin-cotracker-dir",
                 ]
             )
 
             self.assertEqual(args.seed, 42)
+            self.assertEqual(args.query_mode, "object_sparse")
             summary = run_benchmark(args)
             output_dir = Path(summary["output_dir"])
 
@@ -81,11 +84,10 @@ class Demo3TrackingHarnessSmokeTest(unittest.TestCase):
                     "0",
                     "--frames",
                     "1",
-                    "--query-mode",
-                    "phystwin_dense",
                 ]
             )
 
+            self.assertEqual(args.query_mode, "phystwin_dense")
             summary = run_benchmark(args)
             output_dir = Path(summary["output_dir"])
             tracking_npz = output_dir / "cotracker" / "0.npz"

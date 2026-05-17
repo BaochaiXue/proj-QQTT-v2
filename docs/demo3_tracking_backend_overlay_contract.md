@@ -40,16 +40,15 @@ row,column order.
 
 ## PhysTwin Dense Export Contract
 
-The offline benchmark supports a PhysTwin-compatible dense CoTracker mode:
+The offline benchmark defaults to a PhysTwin-compatible dense CoTracker mode:
 
 ```bash
 python scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py \
   --case-root data/<case> \
-  --query-mode phystwin_dense \
   --backends cotracker3_online
 ```
 
-In this mode the harness:
+In this default mode the harness:
 
 - reads first-frame nested masks from `mask/{camera}/*/0.png` unless
   `--mask-dir` points to another equivalent root

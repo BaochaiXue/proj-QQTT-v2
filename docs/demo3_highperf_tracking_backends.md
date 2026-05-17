@@ -31,13 +31,13 @@ dependency-gated probes for high-performance candidates.
 
 ## PhysTwin-Compatible CoTracker Export
 
-Use the dense export mode when the goal is to reproduce FuturePhysTwin-style
-CoTracker artifacts rather than a sparse visualization overlay:
+Demo 3 benchmark/export defaults to the dense PhysTwin-compatible query mode
+when the goal is to reproduce FuturePhysTwin-style CoTracker artifacts rather
+than a sparse visualization overlay:
 
 ```bash
 python scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py \
   --case-root data/<case> \
-  --query-mode phystwin_dense \
   --backends cotracker3_online
 ```
 
@@ -45,6 +45,7 @@ python scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py \
 query points per camera with FuturePhysTwin-style torch `randperm`
 (`seed + camera_idx`, default seed `42`), and writes `cotracker/{camera}.npz`.
 Masks with fewer than 5000 pixels use all available mask pixels.
+Pass `--query-mode object_sparse` explicitly for sparse overlay screening.
 The existing Demo 3 overlay remains sparse by default and should consume dense
 tracks only as an offline/cached artifact.
 

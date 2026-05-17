@@ -15,6 +15,7 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
   default seed `42`, and `seed + camera_idx`.
 - Support PhysTwin-style nested mask layouts such as `mask/{camera}/*/{frame}.png`
   for benchmark query generation and metrics.
+- Make `phystwin_dense` the default Demo 3 benchmark/export query mode.
 - Make the PhysTwin-compatible benchmark path write `cotracker/{camera}.npz`
   artifacts without changing the existing Demo 3 overlay reader.
 - Make the Demo 3 CoTracker backend expose true online streaming updates with
@@ -47,3 +48,6 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
 - Completed after up-to-5000 query cap change: `python -m py_compile qqtt/tracking/sampling.py scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py tests/test_demo3_tracking_sampling_smoke.py tests/test_demo3_tracking_harness_smoke.py`
 - Completed after up-to-5000 query cap change: `conda run -n demo_2_max --no-capture-output python -m unittest -v tests.test_demo3_tracking_sampling_smoke tests.test_demo3_tracking_harness_smoke tests.test_demo3_tracking_registry_smoke`
 - Completed after up-to-5000 query cap change: `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
+- Completed after default phystwin_dense change: `python -m py_compile scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py tests/test_demo3_tracking_harness_smoke.py tests/test_demo3_tracking_backend_benchmark_fake_smoke.py`
+- Completed after default phystwin_dense change: `conda run -n demo_2_max --no-capture-output python -m unittest -v tests.test_demo3_tracking_harness_smoke tests.test_demo3_tracking_backend_benchmark_fake_smoke tests.test_demo3_tracking_sampling_smoke tests.test_demo3_tracking_registry_smoke`
+- Completed after default phystwin_dense change: `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
