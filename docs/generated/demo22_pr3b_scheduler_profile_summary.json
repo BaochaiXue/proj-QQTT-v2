@@ -1,0 +1,222 @@
+{
+  "date": "2026-05-17",
+  "scheduler_commit_under_test": "79be7ae",
+  "profile_run_commit": "c25bc8c",
+  "experiment_mode": "controller-object-exp",
+  "object_prompt": "stuffed animal",
+  "controller_prompt": "towel",
+  "camera_serials": [
+    "239222300412",
+    "239222300781",
+    "239222303506"
+  ],
+  "questions": {
+    "does_pr3b_make_depth_ready_before_mask": true,
+    "best_mode_for_depth_ready_before_mask": "edge-start",
+    "does_pr3b_beat_pr2": false,
+    "likely_blocker": "same-GPU FFS/EdgeTAM contention or hidden synchronization"
+  },
+  "no_render": {
+    "A_pr2_single_owner_batchvision": {
+      "filter_fps": 5.8027,
+      "raw_fusion_fps": 5.8026,
+      "render_fps": 0.0,
+      "display_packet_period_ms": {
+        "p50": 164.56,
+        "p90": 181.325,
+        "p95": 194.608
+      },
+      "gpu_owner_total_ms": {
+        "p50": 164.667,
+        "p90": 180.795,
+        "p95": 191.401
+      },
+      "depth_ready_before_mask_ratio": 0.0
+    },
+    "B_mask_gated": {
+      "filter_fps": 5.4414,
+      "raw_fusion_fps": 5.4418,
+      "display_packet_period_ms": {
+        "p50": 175.314,
+        "p90": 194.875,
+        "p95": 208.007
+      },
+      "gpu_owner_total_ms": {
+        "p50": 175.718,
+        "p90": 192.117,
+        "p95": 204.571
+      },
+      "ffs_stage_wall_ms": {
+        "p50": 76.735,
+        "p90": 83.237,
+        "p95": 84.765
+      },
+      "edgetam_stage_wall_ms": {
+        "p50": 175.718,
+        "p90": 192.106,
+        "p95": 204.545
+      },
+      "depth_ready_before_mask_ratio": 0.0,
+      "mean_depth_wait_after_mask_ms": 77.776,
+      "mean_mask_wait_after_depth_ms": 0.0,
+      "depth_stale_drops": 0,
+      "ready_join_count": 595
+    },
+    "C_edge_start": {
+      "filter_fps": 5.6105,
+      "raw_fusion_fps": 5.6104,
+      "display_packet_period_ms": {
+        "p50": 167.319,
+        "p90": 219.667,
+        "p95": 243.227
+      },
+      "gpu_owner_total_ms": {
+        "p50": 166.592,
+        "p90": 221.463,
+        "p95": 243.071
+      },
+      "ffs_stage_wall_ms": {
+        "p50": 82.327,
+        "p90": 94.329,
+        "p95": 100.64
+      },
+      "edgetam_stage_wall_ms": {
+        "p50": 166.563,
+        "p90": 221.363,
+        "p95": 243.038
+      },
+      "depth_ready_before_mask_ratio": 1.0,
+      "mean_depth_wait_after_mask_ms": 0.0,
+      "mean_mask_wait_after_depth_ms": 87.47,
+      "depth_stale_drops": 1,
+      "ready_join_count": 629
+    },
+    "D_bounded_lookahead1": {
+      "filter_fps": 3.7172,
+      "raw_fusion_fps": 3.8445,
+      "display_packet_period_ms": {
+        "p50": 254.676,
+        "p90": 286.167,
+        "p95": 403.297
+      },
+      "gpu_owner_total_ms": {
+        "p50": 254.247,
+        "p90": 276.437,
+        "p95": 302.558
+      },
+      "ffs_stage_wall_ms": {
+        "p50": 78.834,
+        "p90": 107.855,
+        "p95": 111.333
+      },
+      "edgetam_stage_wall_ms": {
+        "p50": 254.228,
+        "p90": 276.429,
+        "p95": 302.529
+      },
+      "depth_ready_before_mask_ratio": 1.0,
+      "mean_depth_wait_after_mask_ms": 0.0,
+      "mean_mask_wait_after_depth_ms": 130.82,
+      "depth_stale_drops": 906,
+      "ready_join_count": 427,
+      "lookahead_requests": 929
+    },
+    "E_bounded_lookahead2": {
+      "filter_fps": 3.6571,
+      "raw_fusion_fps": 3.8985,
+      "display_packet_period_ms": {
+        "p50": 250.657,
+        "p90": 297.721,
+        "p95": 484.611
+      },
+      "gpu_owner_total_ms": {
+        "p50": 250.59,
+        "p90": 269.744,
+        "p95": 279.06
+      },
+      "ffs_stage_wall_ms": {
+        "p50": 76.793,
+        "p90": 107.53,
+        "p95": 111.713
+      },
+      "edgetam_stage_wall_ms": {
+        "p50": 250.58,
+        "p90": 269.731,
+        "p95": 278.71
+      },
+      "depth_ready_before_mask_ratio": 1.0,
+      "mean_depth_wait_after_mask_ms": 0.0,
+      "mean_mask_wait_after_depth_ms": 127.17,
+      "depth_stale_drops": 873,
+      "ready_join_count": 432,
+      "lookahead_requests": 896
+    }
+  },
+  "pointcloud": {
+    "pr2_single_owner_batchvision": {
+      "filter_fps": 5.2784,
+      "raw_fusion_fps": 5.2786,
+      "render_fps": 5.2784,
+      "display_packet_period_ms": {
+        "p50": 183.065,
+        "p90": 198.662,
+        "p95": 207.013
+      },
+      "gpu_owner_total_ms": {
+        "p50": 182.397,
+        "p90": 198.509,
+        "p95": 207.225
+      },
+      "render_total_ms": {
+        "p50": 1.81,
+        "p90": 2.254,
+        "p95": 2.451
+      },
+      "render_backpressure_count": 0
+    },
+    "pr3b_edge_start": {
+      "filter_fps": 5.2098,
+      "raw_fusion_fps": 5.2102,
+      "render_fps": 5.2104,
+      "display_packet_period_ms": {
+        "p50": 185.636,
+        "p90": 209.752,
+        "p95": 222.009
+      },
+      "gpu_owner_total_ms": {
+        "p50": 184.621,
+        "p90": 211.379,
+        "p95": 219.949
+      },
+      "ffs_stage_wall_ms": {
+        "p50": 90.366,
+        "p90": 100.239,
+        "p95": 105.455
+      },
+      "edgetam_stage_wall_ms": {
+        "p50": 184.628,
+        "p90": 211.501,
+        "p95": 219.885
+      },
+      "depth_ready_before_mask_ratio": 1.0,
+      "mean_depth_wait_after_mask_ms": 0.0,
+      "mean_mask_wait_after_depth_ms": 93.613,
+      "render_total_ms": {
+        "p50": 2.061,
+        "p90": 2.582,
+        "p95": 2.802
+      },
+      "render_backpressure_count": 0
+    }
+  },
+  "decision": {
+    "stable_performance_path": "PR2 single-owner + batch vision",
+    "pr3b_performance_path": false,
+    "pr3b_experimental_status": "scheduler semantics pass, throughput fail",
+    "renderer_bottleneck": false,
+    "next_optimization": [
+      "FFS static-buffer/CUDA Graph",
+      "EdgeTAM decoder-stage parallelization"
+    ]
+  }
+}
