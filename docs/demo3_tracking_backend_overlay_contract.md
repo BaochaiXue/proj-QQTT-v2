@@ -8,6 +8,14 @@ It is a multi-backend tracking benchmark plus 3D PCD temporal-anchor overlay.
 CoTracker3 online is the first baseline backend because it matches
 FuturePhysTwin's PhysTwin-style dense tracking pipeline.
 
+For live Demo 3 use, `cotracker3_online` must run as an online stream, not as a
+one-shot whole-video tracker. Frames enter a rolling buffer; the first publish
+occurs when the buffer reaches the CoTracker3 online window (`16` frames), and
+subsequent publishes occur every CoTracker online step (`8` new frames). Each
+published result carries the chunk frame range plus `tracks_yx + visibility`.
+The offline benchmark may still replay saved cases, but it uses the same online
+backend contract and output convention.
+
 Other backend names are reserved for:
 
 - NVOFA

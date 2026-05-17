@@ -56,6 +56,68 @@ class Demo3TrackingRegistrySmokeTest(unittest.TestCase):
         self.assertEqual(result.tracks_yx.shape, (2, 1, 2))
         np.testing.assert_allclose(result.tracks_yx[:, 0, :], np.array([[2.0, 5.0], [2.0, 5.0]], dtype=np.float32))
 
+    def test_cotracker_online_update_uses_16_frame_window_and_8_frame_step(self) -> None:
+        try:
+            import torch
+        except Exception as exc:
+            self.skipTest(f"torch is not installed: {exc}")
+
+        from qqtt.tracking.backends.cotracker3_online import CoTracker3OnlineBackend
+
+        class _FakeOnlineModel:
+            step = 8
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[bool, int]] = []
+                self.num_points = 0
+
+            def __call__(
+                self,
+                *,
+                video_chunk,
+                is_first_step=False,
+                queries=None,
+                grid_size=0,
+                add_support_grid=False,
+            ):
+                _ = grid_size, add_support_grid
+                self.calls.append((bool(is_first_step), int(video_chunk.shape[1])))
+                if is_first_step:
+                    self.num_points = int(queries.shape[1])
+                    return None, None
+                batch, frames = int(video_chunk.shape[0]), int(video_chunk.shape[1])
+                tracks = torch.zeros((batch, frames, self.num_points, 2), dtype=torch.float32, device=video_chunk.device)
+                visibility = torch.ones((batch, frames, self.num_points), dtype=torch.float32, device=video_chunk.device)
+                return tracks, visibility
+
+        model = _FakeOnlineModel()
+        backend = CoTracker3OnlineBackend(device="cpu", model=model)
+        backend.initialize([], np.array([[2.0, 5.0], [3.0, 6.0]], dtype=np.float32))
+        frame = np.zeros((4, 6, 3), dtype=np.uint8)
+
+        for _ in range(15):
+            result = backend.update(frame)
+            self.assertEqual(result.stats["stream_status"], "buffering")
+            self.assertEqual(result.tracks_yx.shape, (0, 2, 2))
+        first = backend.update(frame)
+        self.assertEqual(first.stats["stream_status"], "published")
+        self.assertEqual(first.stats["online_window_len"], 16)
+        self.assertEqual(first.stats["online_step"], 8)
+        self.assertEqual(first.stats["chunk_start_idx"], 0)
+        self.assertEqual(first.stats["chunk_end_idx"], 15)
+        self.assertEqual(first.tracks_yx.shape, (16, 2, 2))
+        self.assertEqual(model.calls, [(True, 16), (False, 16)])
+
+        for _ in range(7):
+            result = backend.update(frame)
+            self.assertEqual(result.stats["stream_status"], "waiting_for_step")
+        second = backend.update(frame)
+        self.assertEqual(second.stats["stream_status"], "published")
+        self.assertEqual(second.stats["chunk_start_idx"], 8)
+        self.assertEqual(second.stats["chunk_end_idx"], 23)
+        self.assertEqual(second.tracks_yx.shape, (16, 2, 2))
+        self.assertEqual(model.calls, [(True, 16), (False, 16), (False, 16)])
+
 
 if __name__ == "__main__":
     unittest.main()

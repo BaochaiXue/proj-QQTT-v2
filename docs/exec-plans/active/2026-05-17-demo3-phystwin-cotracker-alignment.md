@@ -15,6 +15,8 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
   for benchmark query generation and metrics.
 - Make the PhysTwin-compatible benchmark path write `cotracker/{camera}.npz`
   artifacts without changing the existing Demo 3 overlay reader.
+- Make the Demo 3 CoTracker backend expose true online streaming updates with
+  the CoTracker3 `window_len=16` / `step=8` rolling-buffer contract.
 - Update docs and tests to distinguish dense PhysTwin export artifacts from
   sparse realtime/overlay visualization.
 
@@ -25,6 +27,8 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
 - Do not change the Demo 3 overlay board layout or its default sparse display
   point cap.
 - Do not import FuturePhysTwin code or add a runtime dependency on that repo.
+- Do not make dense CoTracker streaming block the main fused-PCD render path by
+  default.
 
 ## Validation
 

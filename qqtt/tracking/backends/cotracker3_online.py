@@ -17,6 +17,12 @@ class CoTracker3OnlineBackend:
         self.hub_model = str(hub_model)
         self._model = model
         self._model_load_ms = 0.0
+        self._stream_query_points_yx: np.ndarray | None = None
+        self._stream_frames: list[np.ndarray] = []
+        self._stream_total_frames = 0
+        self._stream_last_processed_frame_count = 0
+        self._stream_initialized = False
+        self._stream_camera_idx: int | None = None
 
     def availability(self) -> BackendAvailability:
         try:
@@ -50,8 +56,11 @@ class CoTracker3OnlineBackend:
         return model
 
     def initialize(self, frames: Sequence[np.ndarray], query_points_yx: np.ndarray, masks: Sequence[np.ndarray] | None = None) -> None:
-        _ = frames, query_points_yx, masks
+        _ = masks
         self._load_model()
+        self._reset_stream(query_points_yx)
+        for frame in frames:
+            self.update(frame)
 
     @staticmethod
     def _frames_to_torch_video(frames: Sequence[np.ndarray], *, device: str):
@@ -92,6 +101,16 @@ class CoTracker3OnlineBackend:
         raise ValueError(f"Unsupported CoTracker output type: {type(output).__name__}")
 
     @staticmethod
+    def _prediction_to_numpy(tracks_xy: Any, visibility: Any) -> tuple[np.ndarray, np.ndarray]:
+        tracks_np = tracks_xy.detach().cpu().numpy() if hasattr(tracks_xy, "detach") else np.asarray(tracks_xy)
+        visibility_np = visibility.detach().cpu().numpy() if hasattr(visibility, "detach") else np.asarray(visibility)
+        if tracks_np.ndim == 4:
+            tracks_np = tracks_np[0]
+        if visibility_np.ndim in {3, 4} and visibility_np.shape[0] == 1:
+            visibility_np = visibility_np[0]
+        return tracks_np.astype(np.float32)[:, :, ::-1], visibility_np.astype(np.float32)
+
+    @staticmethod
     def _run_online_model(model: Any, video: Any, queries: Any) -> tuple[Any, Any]:
         """Run CoTrackerOnlinePredictor with its required init/step protocol."""
         step = int(getattr(model, "step", 0) or 0)
@@ -115,6 +134,83 @@ class CoTracker3OnlineBackend:
                 add_support_grid=False,
             )
         return pred_tracks, pred_visibility
+
+    @staticmethod
+    def _online_step_and_window(model: Any) -> tuple[int, int]:
+        step = int(getattr(model, "step", 0) or 0)
+        if step <= 0:
+            raise AttributeError("CoTracker online predictor does not expose a positive step size.")
+        return step, step * 2
+
+    def _reset_stream(self, query_points_yx: np.ndarray, *, camera_idx: int | None = None) -> None:
+        query_points = np.asarray(query_points_yx, dtype=np.float32)
+        if query_points.ndim != 2 or query_points.shape[1] != 2:
+            raise ValueError(f"query_points_yx must have shape (N,2); got {query_points.shape}")
+        self._stream_query_points_yx = query_points
+        self._stream_frames = []
+        self._stream_total_frames = 0
+        self._stream_last_processed_frame_count = 0
+        self._stream_initialized = False
+        self._stream_camera_idx = camera_idx
+
+    def _empty_stream_result(self, *, status: str, step: int, window_len: int) -> TrackingResult:
+        query_points = self._stream_query_points_yx
+        if query_points is None:
+            raise RuntimeError("CoTracker3 online stream is not initialized with query points.")
+        return TrackingResult(
+            tracks_yx=np.empty((0, len(query_points), 2), dtype=np.float32),
+            visibility=np.empty((0, len(query_points)), dtype=np.float32),
+            backend=self.name,
+            camera_idx=self._stream_camera_idx,
+            query_points_yx=query_points,
+            stats={
+                "backend": self.name,
+                "mode": "cotracker3_online_streaming_update",
+                "stream_status": status,
+                "online_step": int(step),
+                "online_window_len": int(window_len),
+                "frames_buffered": int(len(self._stream_frames)),
+                "frames_seen": int(self._stream_total_frames),
+            },
+        )
+
+    def _tracks_to_result(
+        self,
+        *,
+        tracks_xy: Any,
+        visibility: Any,
+        run_ms: float,
+        step: int,
+        window_len: int,
+    ) -> TrackingResult:
+        query_points = self._stream_query_points_yx
+        if query_points is None:
+            raise RuntimeError("CoTracker3 online stream is not initialized with query points.")
+        tracks_yx, visibility_np = self._prediction_to_numpy(tracks_xy, visibility)
+        chunk_end = self._stream_total_frames - 1
+        chunk_start = max(0, chunk_end - int(tracks_yx.shape[0]) + 1)
+        return TrackingResult(
+            tracks_yx=tracks_yx,
+            visibility=visibility_np,
+            backend=self.name,
+            camera_idx=self._stream_camera_idx,
+            query_points_yx=query_points,
+            stats={
+                "backend": self.name,
+                "mode": "cotracker3_online_streaming_update",
+                "stream_status": "published",
+                "online_step": int(step),
+                "online_window_len": int(window_len),
+                "chunk_start_idx": int(chunk_start),
+                "chunk_end_idx": int(chunk_end),
+                "frames_buffered": int(len(self._stream_frames)),
+                "frames_seen": int(self._stream_total_frames),
+                "num_query_points": int(len(query_points)),
+                "model_run_ms": float(run_ms),
+                "fps_model_only": float(1000.0 / run_ms) if run_ms > 0 else 0.0,
+                "device": self.device,
+            },
+        )
 
     def track_sequence(
         self,
@@ -147,8 +243,8 @@ class CoTracker3OnlineBackend:
                     output = model(video, queries=queries)
                 tracks_xy, visibility = self._extract_prediction(output)
         run_ms = (time.perf_counter() - run_start) * 1000.0
-        tracks_yx = tracks_xy.detach().cpu().numpy()[0].astype(np.float32)[:, :, ::-1]
-        visibility_np = visibility.detach().cpu().numpy()[0].astype(np.float32)
+        tracks_yx, visibility_np = self._prediction_to_numpy(tracks_xy, visibility)
+        step = int(getattr(model, "step", 0) or 0)
         return TrackingResult(
             tracks_yx=tracks_yx,
             visibility=visibility_np,
@@ -165,9 +261,46 @@ class CoTracker3OnlineBackend:
                 "fps_model_only": float(1000.0 / run_ms) if run_ms > 0 else 0.0,
                 "device": self.device,
                 "mode": "cotracker3_online_sequence_wrapper",
+                "online_step": step,
+                "online_window_len": step * 2 if step > 0 else 0,
             },
         )
 
     def update(self, frame: np.ndarray) -> TrackingResult:
-        _ = frame
-        raise NotImplementedError("Streaming update is reserved for the live Demo 3 integration slice.")
+        if self._stream_query_points_yx is None:
+            raise RuntimeError("Call initialize(..., query_points_yx=...) before update().")
+        model = self._load_model()
+        step, window_len = self._online_step_and_window(model)
+        self._stream_frames.append(np.asarray(frame, dtype=np.uint8))
+        self._stream_total_frames += 1
+        if len(self._stream_frames) > window_len:
+            self._stream_frames = self._stream_frames[-window_len:]
+        if len(self._stream_frames) < window_len:
+            return self._empty_stream_result(status="buffering", step=step, window_len=window_len)
+        if self._stream_initialized and self._stream_total_frames - self._stream_last_processed_frame_count < step:
+            return self._empty_stream_result(status="waiting_for_step", step=step, window_len=window_len)
+
+        import torch
+
+        video = self._frames_to_torch_video(self._stream_frames, device=self.device)
+        run_start = time.perf_counter()
+        with torch.no_grad():
+            if not self._stream_initialized:
+                queries = self._queries_yx_to_torch(self._stream_query_points_yx, device=self.device)
+                model(video_chunk=video, is_first_step=True, queries=queries, grid_size=0, add_support_grid=False)
+                self._stream_initialized = True
+            tracks_xy, visibility = model(
+                video_chunk=video,
+                is_first_step=False,
+                grid_size=0,
+                add_support_grid=False,
+            )
+        run_ms = (time.perf_counter() - run_start) * 1000.0
+        self._stream_last_processed_frame_count = self._stream_total_frames
+        return self._tracks_to_result(
+            tracks_xy=tracks_xy,
+            visibility=visibility,
+            run_ms=run_ms,
+            step=step,
+            window_len=window_len,
+        )

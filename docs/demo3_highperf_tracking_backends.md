@@ -22,6 +22,10 @@ dependency-gated probes for high-performance candidates.
 - LocoTrack is the priority near-dense high-speed neural candidate.
 - CoTracker3 remains the reference backend for PhysTwin-compatible
   `tracks_yx + visibility`.
+- The Demo 3 `cotracker3_online` live path uses CoTracker3's online rolling
+  buffer contract: `window_len=16`, `step=8`, first publish at 16 frames, then
+  one publish every 8 new frames. Dense 5000/10000-point runs remain cached or
+  offline artifacts unless explicitly enabled outside the render hot path.
 
 ## PhysTwin-Compatible CoTracker Export
 
