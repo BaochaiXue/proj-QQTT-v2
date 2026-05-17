@@ -48,6 +48,43 @@ def _raw_packet(seq: int) -> demo.RawFusedPcdPacket:
     )
 
 
+def _capture_group(seq: int) -> demo.CaptureGroup:
+    return demo.CaptureGroup(
+        group_id=int(seq),
+        created_perf_s=float(seq),
+        frames={},
+        group_timestamp_ns=int(seq),
+        max_temporal_skew_ms=0.0,
+        per_camera_time_offset_ms={},
+        per_camera_frame_seq={},
+        timestamp_source="test",
+    )
+
+
+def _depth_group(seq: int) -> demo.DepthGroup:
+    return demo.DepthGroup(
+        group_id=int(seq),
+        depths={},
+        total_ms=10.0,
+        per_camera_ms={},
+        gpu_gate_wait_ms=0.0,
+        max_temporal_skew_ms=0.0,
+        per_camera_time_offset_ms={},
+        per_camera_frame_seq={},
+        timestamp_source="test",
+    )
+
+
+def _mask_group(seq: int) -> demo.MaskGroup:
+    return demo.MaskGroup(
+        group_id=int(seq),
+        mask_packets={},
+        edgetam_stage_wall_ms=20.0,
+        edgetam_stage_sum_model_ms=18.0,
+        edgetam_stage_mode="batch-vision",
+    )
+
+
 class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
     def test_demo22_wrapper_defaults_to_async_filter_preset(self) -> None:
         argv = demo22._with_default_preset(["--dry-run"])
@@ -68,6 +105,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--edgetam-batch-vision", help_text)
         self.assertIn("--no-edgetam-batch-vision", help_text)
         self.assertIn("--experimental-edgetam-batch-vision", help_text)
+        self.assertIn("--experimental-overlapped-stages", help_text)
         self.assertIn("--experiment-mode", help_text)
         self.assertIn("--advanced-help", help_text)
         self.assertNotIn("--fusion-target-fps", help_text)
@@ -188,6 +226,13 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         argv = demo22._to_demo22_argv(["--dry-run", "--experimental-staged-parallel"])
 
         self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
+
+    def test_demo22_public_experimental_overlapped_stages_selects_runtime_mode(self) -> None:
+        argv = demo22._to_demo22_argv(["--dry-run", "--experimental-overlapped-stages"])
+
+        self.assertEqual(argv[:2], ["--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
+        self.assertIn("--gpu-pipeline-mode", argv)
+        self.assertIn(demo.GPU_PIPELINE_MODE_OVERLAPPED_STAGES, argv)
 
     def test_demo22_public_experiment_mode_flag_is_forwarded(self) -> None:
         argv = demo22._to_demo22_argv(["--dry-run", "--experiment-mode", demo.EXPERIMENT_MODE_DEMO])
@@ -361,6 +406,32 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "batch-vision-encoder requires single-owner"):
             runtime._validate_live_contract()
 
+    def test_demo22_overlapped_stages_contract_uses_same_group_join(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--gpu-pipeline-mode",
+                demo.GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--gpu-pipeline-mode"},
+        )
+        runtime = demo.Demo22Runtime(args)
+        contract = demo.build_contract(args)
+
+        runtime._validate_live_contract()
+        self.assertEqual(contract["gpu_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_OVERLAPPED_STAGES)
+        self.assertTrue(contract["gpu_pipeline"]["same_group_join_required"])
+        self.assertTrue(contract["gpu_pipeline"]["overlap_across_groups"])
+        self.assertEqual(contract["gpu_pipeline"]["edgetam_stage"], "batch_vision_stateful_decode")
+        self.assertTrue(contract["edgetam"]["batch_vision_encoder"])
+        self.assertEqual(contract["edgetam"]["model_topology"], demo.EDGETAM_MODEL_TOPOLOGY_SHARED)
+
     def test_demo22_staged_parallel_preset_contract(self) -> None:
         parser = demo.build_arg_parser()
         args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_STAGED_PARALLEL_5FPS])
@@ -429,6 +500,56 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         names = [name for name, _target in runtime._thread_specs()]
 
         self.assertEqual(names, ["capture-group", "staged-gpu", "fusion", "filter"])
+
+    def test_demo22_overlapped_stages_thread_specs_include_stage_workers(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--gpu-pipeline-mode",
+                demo.GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--gpu-pipeline-mode"},
+        )
+        runtime = demo.Demo22Runtime(args)
+        names = [name for name, _target in runtime._thread_specs()]
+
+        self.assertEqual(names, ["capture-group", "stage-dispatch", "ffs-stage", "edgetam-stage", "stage-join", "filter"])
+
+    def test_same_group_join_buffer_requires_matching_group_ids(self) -> None:
+        buffer = demo.SameGroupJoinBuffer(max_groups=8)
+
+        buffer.put_capture(_capture_group(1))
+        buffer.put_depth(_depth_group(1))
+        buffer.put_mask(_mask_group(2))
+
+        self.assertIsNone(buffer.pop_latest_ready())
+        self.assertEqual(buffer.snapshot()["ready_join_count"], 0)
+
+    def test_same_group_join_buffer_pops_latest_complete_group(self) -> None:
+        buffer = demo.SameGroupJoinBuffer(max_groups=8)
+        for group_id in (1, 3):
+            buffer.put_capture(_capture_group(group_id))
+            buffer.put_depth(_depth_group(group_id))
+            buffer.put_mask(_mask_group(group_id))
+
+        ready = buffer.pop_latest_ready()
+
+        self.assertIsNotNone(ready)
+        capture, depth, mask = ready  # type: ignore[misc]
+        self.assertEqual(capture.group_id, 3)
+        self.assertEqual(depth.group_id, 3)
+        self.assertEqual(mask.group_id, 3)
+        snapshot = buffer.snapshot()
+        self.assertEqual(snapshot["ready_join_count"], 1)
+        self.assertEqual(snapshot["capture_stale_drops"], 1)
+        self.assertEqual(snapshot["depth_stale_drops"], 1)
+        self.assertEqual(snapshot["mask_stale_drops"], 1)
 
     def test_raw_fused_packet_is_not_published_to_render_buffer(self) -> None:
         parser = demo.build_arg_parser()
@@ -526,6 +647,61 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertAlmostEqual(summary["stage_period_ms"]["median"], 200.0)
         self.assertAlmostEqual(summary["display_packet_period_ms"]["median"], 200.0)
         self.assertAlmostEqual(summary["period_ms"]["render_period_ms"]["median"], 200.0)
+
+    def test_profile_summary_includes_overlapped_stage_metrics(self) -> None:
+        parser = demo.build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--dry-run",
+                "--preset",
+                demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
+                "--gpu-pipeline-mode",
+                demo.GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+                "--profile-pipeline",
+            ]
+        )
+        args = demo.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--gpu-pipeline-mode", "--profile-pipeline"},
+        )
+        runtime = demo.Demo22Runtime(args)
+        records = [
+            {
+                "group_id": 0,
+                "t_group_created": 0.0,
+                "complete": True,
+                "ffs_stage": {"publish_s": 0.0, "wall_ms": 70.0},
+                "edgetam_stage": {"publish_s": 0.05, "wall_ms": 90.0, "sum_model_ms": 86.0},
+                "stage_join": {"publish_s": 0.09, "wall_ms": 2.0, "depth_mask_group_id_match": True},
+                "raw_fusion": {"publish_s": 0.10, "total_ms": 2.0},
+                "filter": {"publish_s": 0.15, "total_ms": 5.0},
+                "fusion": {"publish_s": 0.15, "total_ms": 7.0},
+                "render_publish": {"publish_s": 0.16},
+                "render": {"render_s": 0.20},
+            },
+            {
+                "group_id": 1,
+                "t_group_created": 0.2,
+                "complete": True,
+                "ffs_stage": {"publish_s": 0.2, "wall_ms": 72.0},
+                "edgetam_stage": {"publish_s": 0.25, "wall_ms": 92.0, "sum_model_ms": 88.0},
+                "stage_join": {"publish_s": 0.29, "wall_ms": 3.0, "depth_mask_group_id_match": True},
+                "raw_fusion": {"publish_s": 0.30, "total_ms": 2.0},
+                "filter": {"publish_s": 0.35, "total_ms": 5.0},
+                "fusion": {"publish_s": 0.35, "total_ms": 7.0},
+                "render_publish": {"publish_s": 0.36},
+                "render": {"render_s": 0.40},
+            },
+        ]
+
+        summary = runtime._profile_summary_for_records(records)
+
+        self.assertAlmostEqual(summary["stage_period_ms"]["median"], 200.0)
+        self.assertTrue(summary["stage_pipeline"]["overlap_attempted"])
+        self.assertEqual(summary["stage_pipeline"]["mode"], demo.GPU_PIPELINE_MODE_OVERLAPPED_STAGES)
+        self.assertAlmostEqual(summary["metrics"]["ffs_stage_wall_ms"]["median"], 71.0)
+        self.assertAlmostEqual(summary["metrics"]["edgetam_stage_wall_ms"]["median"], 91.0)
+        self.assertAlmostEqual(summary["metrics"]["stage_join_wall_ms"]["median"], 2.5)
 
     def test_profile_payload_includes_init_profile_breakdown(self) -> None:
         parser = demo.build_arg_parser()

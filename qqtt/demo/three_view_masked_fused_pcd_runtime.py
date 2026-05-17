@@ -405,7 +405,13 @@ def wrap_compiled_vision_encoder_outputs_for_parallel(model: Any, torch_module: 
 GPU_PIPELINE_MODE_SEPARATE_WORKERS = "separate-workers"
 GPU_PIPELINE_MODE_SINGLE_OWNER = "single-owner"
 GPU_PIPELINE_MODE_STAGED = "staged"
-GPU_PIPELINE_MODES = (GPU_PIPELINE_MODE_SEPARATE_WORKERS, GPU_PIPELINE_MODE_SINGLE_OWNER, GPU_PIPELINE_MODE_STAGED)
+GPU_PIPELINE_MODE_OVERLAPPED_STAGES = "overlapped-stages"
+GPU_PIPELINE_MODES = (
+    GPU_PIPELINE_MODE_SEPARATE_WORKERS,
+    GPU_PIPELINE_MODE_SINGLE_OWNER,
+    GPU_PIPELINE_MODE_STAGED,
+    GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+)
 SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM = "ffs-then-edgetam"
 SINGLE_OWNER_ORDER_EDGETAM_THEN_FFS = "edgetam-then-ffs"
 SINGLE_OWNER_ORDER_INTERLEAVED = "interleaved"
@@ -556,6 +562,99 @@ class CameraMaskPacket:
     @property
     def seq(self) -> int:
         return int(self.group_id)
+
+
+@dataclass(frozen=True)
+class MaskGroup:
+    group_id: int
+    mask_packets: dict[int, CameraMaskPacket]
+    edgetam_stage_wall_ms: float
+    edgetam_stage_sum_model_ms: float
+    edgetam_stage_mode: str
+
+    @property
+    def seq(self) -> int:
+        return int(self.group_id)
+
+
+class SameGroupJoinBuffer:
+    """Thread-safe bounded join buffer for capture, depth, and mask groups."""
+
+    def __init__(self, *, max_groups: int = 8) -> None:
+        if int(max_groups) < 1:
+            raise ValueError("max_groups must be >= 1")
+        self.max_groups = int(max_groups)
+        self._lock = threading.Lock()
+        self._captures: dict[int, CaptureGroup] = {}
+        self._depths: dict[int, DepthGroup] = {}
+        self._masks: dict[int, MaskGroup] = {}
+        self.capture_stale_drops = 0
+        self.depth_stale_drops = 0
+        self.mask_stale_drops = 0
+        self.ready_join_count = 0
+
+    def put_capture(self, group: CaptureGroup) -> None:
+        with self._lock:
+            self._captures[int(group.group_id)] = group
+            self._prune_locked()
+
+    def put_depth(self, depth: DepthGroup) -> None:
+        with self._lock:
+            self._depths[int(depth.group_id)] = depth
+            self._prune_locked()
+
+    def put_mask(self, mask: MaskGroup) -> None:
+        with self._lock:
+            self._masks[int(mask.group_id)] = mask
+            self._prune_locked()
+
+    def pop_latest_ready(self) -> tuple[CaptureGroup, DepthGroup, MaskGroup] | None:
+        with self._lock:
+            ready = set(self._captures) & set(self._depths) & set(self._masks)
+            if not ready:
+                return None
+            group_id = max(ready)
+            capture = self._captures.pop(group_id)
+            depth = self._depths.pop(group_id)
+            mask = self._masks.pop(group_id)
+            self.ready_join_count += 1
+            self._drop_older_than_locked(group_id)
+            return capture, depth, mask
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "max_groups": int(self.max_groups),
+                "capture_pending": int(len(self._captures)),
+                "depth_pending": int(len(self._depths)),
+                "mask_pending": int(len(self._masks)),
+                "capture_stale_drops": int(self.capture_stale_drops),
+                "depth_stale_drops": int(self.depth_stale_drops),
+                "mask_stale_drops": int(self.mask_stale_drops),
+                "ready_join_count": int(self.ready_join_count),
+            }
+
+    def _drop_older_than_locked(self, group_id: int) -> None:
+        for table, counter_name in (
+            (self._captures, "capture_stale_drops"),
+            (self._depths, "depth_stale_drops"),
+            (self._masks, "mask_stale_drops"),
+        ):
+            stale = [old_group_id for old_group_id in table if old_group_id < group_id]
+            for old_group_id in stale:
+                table.pop(old_group_id, None)
+            setattr(self, counter_name, getattr(self, counter_name) + len(stale))
+
+    def _prune_locked(self) -> None:
+        for table, counter_name in (
+            (self._captures, "capture_stale_drops"),
+            (self._depths, "depth_stale_drops"),
+            (self._masks, "mask_stale_drops"),
+        ):
+            while len(table) > self.max_groups:
+                oldest = min(table)
+                table.pop(oldest, None)
+                setattr(self, counter_name, getattr(self, counter_name) + 1)
 
 
 @dataclass(frozen=True)
@@ -2069,18 +2168,36 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         },
         "gpu_pipeline": {
             "mode": args.gpu_pipeline_mode,
-            "internal_order": args.staged_order if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED else args.single_owner_order,
+            "internal_order": (
+                args.staged_order
+                if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED
+                else (
+                    "cross_group_overlap"
+                    if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES
+                    else args.single_owner_order
+                )
+            ),
             "staged_order": args.staged_order,
             "ffs_stage": (
-                "sequential_cam0_cam1_cam2" if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED else None
+                "sequential_cam0_cam1_cam2"
+                if args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_STAGED, GPU_PIPELINE_MODE_OVERLAPPED_STAGES}
+                else None
             ),
             "edgetam_stage": (
-                "parallel_cam0_cam1_cam2" if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED else None
+                (
+                    "batch_vision_stateful_decode"
+                    if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES
+                    else "parallel_cam0_cam1_cam2"
+                )
+                if args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_STAGED, GPU_PIPELINE_MODE_OVERLAPPED_STAGES}
+                else None
             ),
             "depth_and_masks_published_together": args.gpu_pipeline_mode in {
                 GPU_PIPELINE_MODE_SINGLE_OWNER,
                 GPU_PIPELINE_MODE_STAGED,
             },
+            "same_group_join_required": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+            "overlap_across_groups": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
             "separate_ffs_and_edgetam_workers": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SEPARATE_WORKERS,
         },
         "memory_for_speed": {
@@ -2092,6 +2209,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                 GPU_PIPELINE_MODE_SEPARATE_WORKERS,
                 GPU_PIPELINE_MODE_SINGLE_OWNER,
                 GPU_PIPELINE_MODE_STAGED,
+                GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
             },
         },
         "h2d_transfer": {
@@ -2195,11 +2313,14 @@ class Demo21Runtime:
         self.camera_system: Any | None = None
         self.stop_event = threading.Event()
         self.capture_group_slot: LatestSlot[CaptureGroup] = LatestSlot()
+        self.ffs_stage_input_slot: LatestSlot[CaptureGroup] = LatestSlot()
+        self.edgetam_stage_input_slot: LatestSlot[CaptureGroup] = LatestSlot()
         self.depth_group_slot: LatestSlot[DepthGroup] = LatestSlot()
         self.complete_inference_slot: LatestSlot[CompleteInferenceGroup] = LatestSlot()
         self.mask_slots: dict[int, LatestSlot[CameraMaskPacket]] = {
             int(camera_idx): LatestSlot() for camera_idx in args.camera_ids
         }
+        self.stage_join_buffer = SameGroupJoinBuffer(max_groups=8)
         self.raw_fused_slot: LatestSlot[RawFusedPcdPacket] = LatestSlot()
         self.render_buffer: LatestOnlyRenderBuffer[FusedPcdPacket] = LatestOnlyRenderBuffer()
         self.render_post_gate = CoalescedRenderPostGate()
@@ -2452,11 +2573,13 @@ class Demo21Runtime:
         if self.args.depth_source == DEPTH_SOURCE_FFS and self.args.gpu_pipeline_mode in {
             GPU_PIPELINE_MODE_SINGLE_OWNER,
             GPU_PIPELINE_MODE_STAGED,
+            GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
         }:
             tasks["ffs_runner"] = self._prepare_ffs_runner
         if self.args.track_mode != TRACK_MODE_NONE and self.args.gpu_pipeline_mode in {
             GPU_PIPELINE_MODE_SINGLE_OWNER,
             GPU_PIPELINE_MODE_STAGED,
+            GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
         }:
             tasks["edgetam_states"] = self._init_gpu_owner_edgetam_states
         if (
@@ -2573,8 +2696,13 @@ class Demo21Runtime:
                 "implementation; use ffs-then-edgetam or edgetam-then-ffs for current profiling"
             )
         if bool(getattr(self.args, "edgetam_batch_vision_encoder", False)):
-            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_SINGLE_OWNER:
-                raise RuntimeError("Demo 2.1 --edgetam-batch-vision-encoder requires single-owner GPU pipeline")
+            if self.args.gpu_pipeline_mode not in {
+                GPU_PIPELINE_MODE_SINGLE_OWNER,
+                GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+            }:
+                raise RuntimeError(
+                    "Demo 2.1 --edgetam-batch-vision-encoder requires single-owner or overlapped-stages GPU pipeline"
+                )
             if self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_SHARED:
                 raise RuntimeError("Demo 2.1 --edgetam-batch-vision-encoder requires shared EdgeTAM model topology")
             if edge_pin_memory_enabled(self.args):
@@ -2592,14 +2720,20 @@ class Demo21Runtime:
             and self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_REPLICATED
         ):
             raise RuntimeError("Demo 2.1 staged mode requires --edgetam-model-topology replicated")
+        if (
+            self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES
+            and self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_SHARED
+        ):
+            raise RuntimeError("Demo 2.1 overlapped-stages mode requires --edgetam-model-topology shared")
         if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED and self.args.gpu_gate_mode != GPU_GATE_MODE_OFF:
             raise RuntimeError("Demo 2.1 staged mode requires --gpu-gate-mode off so EdgeTAM can run in parallel")
         depth_pipeline_sources = {DEPTH_SOURCE_FFS, DEPTH_SOURCE_REALSENSE}
         if (
-            self.args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_SINGLE_OWNER, GPU_PIPELINE_MODE_STAGED}
+            self.args.gpu_pipeline_mode
+            in {GPU_PIPELINE_MODE_SINGLE_OWNER, GPU_PIPELINE_MODE_STAGED, GPU_PIPELINE_MODE_OVERLAPPED_STAGES}
             and self.args.depth_source not in depth_pipeline_sources
         ):
-            raise RuntimeError("Demo 2.1 single-owner/staged modes require --depth-source ffs or realsense")
+            raise RuntimeError("Demo 2.1 single-owner/staged/overlapped-stages modes require --depth-source ffs or realsense")
         preset_canonical = canonical_preset_name(self.args.preset)
         if preset_canonical == PRESET_DEMO215_ASYNC_FILTER_5FPS:
             if self.args.depth_source != DEPTH_SOURCE_REALSENSE:
@@ -2654,8 +2788,11 @@ class Demo21Runtime:
         if preset_canonical == PRESET_DEMO22_ASYNC_FILTER_5FPS:
             if self.args.depth_source != DEPTH_SOURCE_FFS:
                 raise RuntimeError("Demo 2.2 requires local FFS depth")
-            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_SINGLE_OWNER:
-                raise RuntimeError("Demo 2.2 requires single-owner GPU pipeline")
+            if self.args.gpu_pipeline_mode not in {
+                GPU_PIPELINE_MODE_SINGLE_OWNER,
+                GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+            }:
+                raise RuntimeError("Demo 2.2 requires single-owner or overlapped-stages GPU pipeline")
             if not async_fusion_filter_enabled(self.args):
                 raise RuntimeError("Demo 2.2 requires async latest-wins PCD filtering")
         if preset_canonical == PRESET_DEMO22_STAGED_PARALLEL_5FPS:
@@ -2861,6 +2998,9 @@ class Demo21Runtime:
         period_stats = {
             "capture_group_period_ms": _event_period_stats_ms(records, ("t_group_created",)),
             "gpu_owner_publish_period_ms": _event_period_stats_ms(records, ("gpu_owner", "publish_s")),
+            "ffs_stage_publish_period_ms": _event_period_stats_ms(records, ("ffs_stage", "publish_s")),
+            "edgetam_stage_publish_period_ms": _event_period_stats_ms(records, ("edgetam_stage", "publish_s")),
+            "stage_join_publish_period_ms": _event_period_stats_ms(records, ("stage_join", "publish_s")),
             "raw_fusion_publish_period_ms": _event_period_stats_ms(records, ("raw_fusion", "publish_s")),
             "filter_output_publish_period_ms": _event_period_stats_ms(complete, ("filter", "publish_s")),
             "fusion_publish_period_ms": _event_period_stats_ms(complete, ("fusion", "publish_s")),
@@ -2868,10 +3008,20 @@ class Demo21Runtime:
             "render_period_ms": _event_period_stats_ms(rendered, ("render", "render_s")),
         }
         summary["period_ms"] = period_stats
-        summary["stage_period_ms"] = period_stats["gpu_owner_publish_period_ms"]
+        summary["stage_period_ms"] = (
+            period_stats["stage_join_publish_period_ms"]
+            if _series_for_path(records, ("stage_join", "publish_s"))
+            else period_stats["gpu_owner_publish_period_ms"]
+        )
         summary["display_packet_period_ms"] = period_stats["display_packet_publish_period_ms"]
         summary["complete_group_ratio"] = float(len(complete) / len(records)) if records else 0.0
         summary["stage_drop_count"] = int(sum(1 for record in records if record.get("drop_reason")))
+        summary["stage_pipeline"] = {
+            "mode": str(self.args.gpu_pipeline_mode),
+            "overlap_attempted": bool(self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES),
+            "effective_period_ms": summary["stage_period_ms"],
+            **self.stage_join_buffer.snapshot(),
+        }
         summary["raw_fused_pending_replacements_total"] = int(self.raw_fused_slot.total_dropped_count)
         summary["render_buffer_dropped_total"] = int(self.render_buffer.snapshot().get("dropped", 0))
         target_fps = float(self.args.fusion_target_fps)
@@ -2944,6 +3094,10 @@ class Demo21Runtime:
             "staged_edgetam_stage_sum_model_ms": ("gpu_owner", "edgetam_stage_sum_model_ms"),
             "staged_edgetam_parallel_efficiency": ("gpu_owner", "edgetam_parallel_efficiency"),
             "staged_stage_barrier_ms": ("gpu_owner", "stage_barrier_ms"),
+            "ffs_stage_wall_ms": ("ffs_stage", "wall_ms"),
+            "edgetam_stage_wall_ms": ("edgetam_stage", "wall_ms"),
+            "edgetam_stage_sum_model_ms": ("edgetam_stage", "sum_model_ms"),
+            "stage_join_wall_ms": ("stage_join", "wall_ms"),
             "raw_fusion_total_ms": ("raw_fusion", "total_ms"),
             "fusion_total_ms": ("fusion", "total_ms"),
             "filter_total_ms": ("filter", "total_ms"),
@@ -3366,6 +3520,12 @@ class Demo21Runtime:
             if self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
                 specs.append(("staged-gpu", self._staged_gpu_pipeline_worker))
                 specs.append(("fusion", self._fusion_worker_single_owner))
+        elif self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES:
+            if self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
+                specs.append(("stage-dispatch", self._stage_capture_dispatch_worker))
+                specs.append(("ffs-stage", self._ffs_stage_worker))
+                specs.append(("edgetam-stage", self._edgetam_stage_worker))
+                specs.append(("stage-join", self._stage_join_fusion_worker))
         else:
             if self.args.depth_source == DEPTH_SOURCE_FFS:
                 specs.append(("shared-ffs", self._shared_ffs_worker))
@@ -5394,6 +5554,250 @@ class Demo21Runtime:
             if not self.stop_event.is_set():
                 print(f"[ERROR] Demo 2.1 staged GPU worker failed: {type(exc).__name__}: {exc}", flush=True)
             self._mark_fatal_error("staged-gpu", exc)
+            self.stop_event.set()
+
+    def _stage_capture_dispatch_worker(self) -> None:
+        try:
+            last_group_id = -1
+            while not self.stop_event.is_set():
+                group = self.capture_group_slot.get_latest_after(last_group_id)
+                if group is None:
+                    time.sleep(0.001)
+                    continue
+                last_group_id = group.group_id
+                if not temporal_group_is_coherent(group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+                    self._summary["overlapped_stage_drop_skewed_capture_group"] = int(
+                        self._summary.get("overlapped_stage_drop_skewed_capture_group", 0)
+                    ) + 1
+                    self._profile_mark_drop(group.group_id, "overlapped_stage_drop_skewed_capture_group")
+                    continue
+                dispatch_s = self._profile_rel_s()
+                self.stage_join_buffer.put_capture(group)
+                self.ffs_stage_input_slot.put(group)
+                self.edgetam_stage_input_slot.put(group)
+                self._profile_update(
+                    group.group_id,
+                    stage_dispatch={
+                        "group_id": int(group.group_id),
+                        "capture_dispatch_s": float(dispatch_s),
+                    },
+                )
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                print(f"[ERROR] Demo 2.1 overlapped stage dispatch failed: {type(exc).__name__}: {exc}", flush=True)
+            self._mark_fatal_error("stage-dispatch", exc)
+            self.stop_event.set()
+
+    def _ffs_stage_worker(self) -> None:
+        try:
+            runner = self._get_or_prepare_ffs_runner() if self.args.depth_source == DEPTH_SOURCE_FFS else None
+            aligners: dict[int, FfsIrToColorAligner] = {}
+            last_group_id = -1
+            while not self.stop_event.is_set():
+                group = self.ffs_stage_input_slot.get_latest_after(last_group_id)
+                if group is None:
+                    time.sleep(0.001)
+                    continue
+                if int(group.group_id) <= int(last_group_id):
+                    continue
+                last_group_id = int(group.group_id)
+                start_s = time.perf_counter()
+                depth_group, _ = self._run_depth_cycle_for_group(
+                    group=group,
+                    runner=runner,
+                    aligners=aligners,
+                )
+                wall_ms = _elapsed_ms(start_s, time.perf_counter())
+                self.stage_join_buffer.put_depth(depth_group)
+                self._latest_depth_group = depth_group
+                self.ffs_stats.record()
+                self._profile_update(
+                    group.group_id,
+                    ffs_stage={
+                        "publish_s": self._profile_rel_s(),
+                        "wall_ms": float(wall_ms),
+                        "depth_total_ms": float(depth_group.total_ms),
+                        "input_age_ms": float((time.perf_counter() - group.created_perf_s) * 1000.0),
+                    },
+                )
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                print(f"[ERROR] Demo 2.1 overlapped FFS stage failed: {type(exc).__name__}: {exc}", flush=True)
+            self._mark_fatal_error("ffs-stage", exc)
+            self.stop_event.set()
+
+    def _edgetam_stage_worker(self) -> None:
+        try:
+            edgetam_states = self._get_or_init_gpu_owner_edgetam_states()
+            last_group_id = -1
+            while not self.stop_event.is_set():
+                group = self.edgetam_stage_input_slot.get_latest_after(last_group_id)
+                if group is None:
+                    time.sleep(0.001)
+                    continue
+                if int(group.group_id) <= int(last_group_id):
+                    continue
+                last_group_id = int(group.group_id)
+                start_s = time.perf_counter()
+                mask_packets, edgetam_cycle_ms = self._run_gpu_owner_edgetam_cycle(
+                    states=edgetam_states,
+                    group=group,
+                )
+                if mask_packets is None:
+                    continue
+                wall_ms = _elapsed_ms(start_s, time.perf_counter())
+                sum_model_ms = sum(
+                    float(packet.cuda_event_model_ms or packet.model_ms)
+                    for packet in mask_packets.values()
+                )
+                mask_group = MaskGroup(
+                    group_id=group.group_id,
+                    mask_packets=mask_packets,
+                    edgetam_stage_wall_ms=float(wall_ms),
+                    edgetam_stage_sum_model_ms=float(sum_model_ms),
+                    edgetam_stage_mode="batch-vision" if bool(getattr(self.args, "edgetam_batch_vision_encoder", False)) else "sequential",
+                )
+                self.stage_join_buffer.put_mask(mask_group)
+                self._profile_update(
+                    group.group_id,
+                    edgetam_stage={
+                        "publish_s": self._profile_rel_s(),
+                        "wall_ms": float(wall_ms),
+                        "cycle_ms": float(edgetam_cycle_ms),
+                        "sum_model_ms": float(sum_model_ms),
+                        "mode": mask_group.edgetam_stage_mode,
+                        "stateful_monotonic": True,
+                    },
+                )
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                print(f"[ERROR] Demo 2.1 overlapped EdgeTAM stage failed: {type(exc).__name__}: {exc}", flush=True)
+            self._mark_fatal_error("edgetam-stage", exc)
+            self.stop_event.set()
+
+    def _publish_complete_inference_group(
+        self,
+        *,
+        complete: CompleteInferenceGroup,
+        rng: np.random.Generator,
+        ray_cache: dict[int, tuple[np.ndarray, np.ndarray]],
+        fusion_waits: dict[str, float] | None = None,
+        warning_label: str,
+    ) -> bool:
+        depth_group = complete.depth_group
+        if not temporal_group_is_coherent(depth_group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+            self._summary["fusion_drop_skewed_group"] = int(self._summary.get("fusion_drop_skewed_group", 0)) + 1
+            self._profile_mark_drop(depth_group.group_id, "fusion_drop_skewed_group")
+            return False
+        if set(int(idx) for idx in complete.mask_packets) != set(int(idx) for idx in self.args.camera_ids):
+            self._summary["fusion_timeout_groups"] = int(self._summary.get("fusion_timeout_groups", 0)) + 1
+            self._profile_mark_drop(depth_group.group_id, "single_owner_missing_mask")
+            return False
+        waits = fusion_waits or {
+            "wait_depth_ms": 0.0,
+            "wait_total_ms": 0.0,
+            **{f"wait_mask_cam{int(camera_idx)}_ms": 0.0 for camera_idx in self.args.camera_ids},
+        }
+        self._profile_update(depth_group.group_id, fusion=waits)
+        try:
+            if async_fusion_filter_enabled(self.args):
+                raw_packet = self._build_raw_fused_packet(
+                    depth_group=depth_group,
+                    masks=complete.mask_packets,
+                    ray_cache=ray_cache,
+                    rng=rng,
+                )
+                self._publish_raw_fused_for_async_filter(raw_packet)
+                return True
+            packet = self._build_fused_packet(
+                depth_group=depth_group,
+                masks=complete.mask_packets,
+                ray_cache=ray_cache,
+                rng=rng,
+            )
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                print(f"[WARN] Demo 2.1 {warning_label} group {depth_group.group_id} failed: {type(exc).__name__}: {exc}", flush=True)
+            return False
+        self._latest_fused = packet
+        self.fusion_stats.record()
+        self._summary["fusion_complete_groups"] = int(self._summary.get("fusion_complete_groups", 0)) + 1
+        self._publish_render_packet(packet)
+        return True
+
+    def _stage_join_fusion_worker(self) -> None:
+        rng = np.random.default_rng()
+        ray_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+        try:
+            while not self.stop_event.is_set():
+                ready = self.stage_join_buffer.pop_latest_ready()
+                if ready is None:
+                    time.sleep(0.001)
+                    continue
+                capture_group, depth_group, mask_group = ready
+                start_s = time.perf_counter()
+                if not (
+                    int(capture_group.group_id) == int(depth_group.group_id) == int(mask_group.group_id)
+                ):
+                    self._summary["stage_join_group_id_mismatch"] = int(
+                        self._summary.get("stage_join_group_id_mismatch", 0)
+                    ) + 1
+                    self._profile_mark_drop(capture_group.group_id, "stage_join_group_id_mismatch")
+                    continue
+                complete = CompleteInferenceGroup(
+                    group_id=capture_group.group_id,
+                    capture_group=capture_group,
+                    depth_group=depth_group,
+                    mask_packets=mask_group.mask_packets,
+                    ffs_cycle_ms=float(depth_group.total_ms),
+                    edgetam_cycle_ms=float(mask_group.edgetam_stage_wall_ms),
+                    edgetam_stage_wall_ms=float(mask_group.edgetam_stage_wall_ms),
+                    edgetam_stage_sum_model_ms=float(mask_group.edgetam_stage_sum_model_ms),
+                    stage_barrier_ms=0.0,
+                    total_gpu_owner_ms=float(max(depth_group.total_ms, mask_group.edgetam_stage_wall_ms)),
+                    pipeline_mode=GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+                    internal_order="cross_group_overlap",
+                )
+                self.complete_inference_slot.put(complete)
+                self._init_profile_set_once(("first_complete_inference_group_s",), self._profile_rel_s())
+                self._init_profile_set_once(("first_complete_inference_group_id",), int(capture_group.group_id))
+                self.gpu_owner_stats.record()
+                published = self._publish_complete_inference_group(
+                    complete=complete,
+                    rng=rng,
+                    ray_cache=ray_cache,
+                    warning_label="overlapped-stage fusion",
+                )
+                join_ms = _elapsed_ms(start_s, time.perf_counter())
+                counters = self.stage_join_buffer.snapshot()
+                self._profile_update(
+                    capture_group.group_id,
+                    gpu_owner={
+                        "mode": GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+                        "internal_order": "cross_group_overlap",
+                        "ffs_cycle_ms": float(depth_group.total_ms),
+                        "edgetam_cycle_ms": float(mask_group.edgetam_stage_wall_ms),
+                        "edgetam_stage_wall_ms": float(mask_group.edgetam_stage_wall_ms),
+                        "edgetam_stage_sum_model_ms": float(mask_group.edgetam_stage_sum_model_ms),
+                        "stage_barrier_ms": 0.0,
+                        "total_ms": float(max(depth_group.total_ms, mask_group.edgetam_stage_wall_ms)),
+                        "publish_s": self._profile_rel_s(),
+                        "complete_group_published": bool(published),
+                    },
+                    stage_join={
+                        "publish_s": self._profile_rel_s(),
+                        "wall_ms": float(join_ms),
+                        "depth_mask_group_id_match": True,
+                        "capture_group_id": int(capture_group.group_id),
+                        "depth_group_id": int(depth_group.group_id),
+                        "mask_group_id": int(mask_group.group_id),
+                        **counters,
+                    },
+                )
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                print(f"[ERROR] Demo 2.1 overlapped stage join failed: {type(exc).__name__}: {exc}", flush=True)
+            self._mark_fatal_error("stage-join", exc)
             self.stop_event.set()
 
     def _wait_mask_for_group(self, *, camera_idx: int, group_id: int, deadline_s: float) -> CameraMaskPacket | None:

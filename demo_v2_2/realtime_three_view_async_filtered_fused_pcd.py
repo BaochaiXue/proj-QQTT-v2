@@ -131,6 +131,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Use the older staged FFS-then-parallel-EdgeTAM probe instead of the default single-owner path.",
     )
     experiments.add_argument(
+        "--experimental-overlapped-stages",
+        action="store_true",
+        help="Use the cross-group FFS/EdgeTAM/join stage-overlap throughput mode.",
+    )
+    experiments.add_argument(
         "--ffs-batch-size",
         type=int,
         choices=runtime.FFS_TRT_BATCH_SIZES,
@@ -234,6 +239,8 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
         translated.append("--edgetam-batch-vision-encoder")
     elif parsed.edgetam_batch_vision is False:
         translated.append("--no-edgetam-batch-vision-encoder")
+    if parsed.experimental_overlapped_stages:
+        translated.extend(["--gpu-pipeline-mode", runtime.GPU_PIPELINE_MODE_OVERLAPPED_STAGES])
     if parsed.show_tracking_overlay:
         translated.append("--show-tracking-overlay")
 

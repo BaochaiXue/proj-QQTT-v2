@@ -40,6 +40,7 @@ DEPTH_SOURCE_REALSENSE = _shared_runtime.DEPTH_SOURCE_REALSENSE
 GPU_PIPELINE_MODE_SEPARATE_WORKERS = _shared_runtime.GPU_PIPELINE_MODE_SEPARATE_WORKERS
 GPU_PIPELINE_MODE_SINGLE_OWNER = _shared_runtime.GPU_PIPELINE_MODE_SINGLE_OWNER
 GPU_PIPELINE_MODE_STAGED = _shared_runtime.GPU_PIPELINE_MODE_STAGED
+GPU_PIPELINE_MODE_OVERLAPPED_STAGES = _shared_runtime.GPU_PIPELINE_MODE_OVERLAPPED_STAGES
 SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM = _shared_runtime.SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM
 STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM = _shared_runtime.STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM
 
@@ -81,8 +82,11 @@ DEFAULT_RENDER_LAYER_MODE = _render_fastpath.DEFAULT_RENDER_LAYER_MODE
 CameraFramePacket = _shared_runtime.CameraFramePacket
 CameraIntrinsics = _shared_runtime.CameraIntrinsics
 CaptureGroup = _shared_runtime.CaptureGroup
+DepthGroup = _shared_runtime.DepthGroup
 FusedLayerCloud = _shared_runtime.FusedLayerCloud
+MaskGroup = _shared_runtime.MaskGroup
 RawFusedPcdPacket = _shared_runtime.RawFusedPcdPacket
+SameGroupJoinBuffer = _shared_runtime.SameGroupJoinBuffer
 
 class Demo22Runtime(_shared_runtime.Demo21Runtime):
     """Demo 2.2 named facade over the shared three-view runtime."""
@@ -145,9 +149,11 @@ __all__ = [
     "EXPERIMENT_MODES",
     "FFS_TRT_BATCH_SIZES",
     "FusedLayerCloud",
+    "DepthGroup",
     "GPU_PIPELINE_MODE_SEPARATE_WORKERS",
     "GPU_PIPELINE_MODE_SINGLE_OWNER",
     "GPU_PIPELINE_MODE_STAGED",
+    "GPU_PIPELINE_MODE_OVERLAPPED_STAGES",
     "GPU_SAMPLING_BACKENDS",
     "H2D_STREAM_MODE_DEDICATED",
     "MASK_POSTPROCESS_CUDA_INLINE",
@@ -167,6 +173,8 @@ __all__ = [
     "PRESET_DEMO22_ASYNC_FILTER_5FPS",
     "PRESET_DEMO22_STAGED_PARALLEL_5FPS",
     "RawFusedPcdPacket",
+    "MaskGroup",
+    "SameGroupJoinBuffer",
     "DEFAULT_RENDER_BACKEND",
     "DEFAULT_RENDER_COPY_MODE",
     "DEFAULT_RENDER_LAYER_MODE",
