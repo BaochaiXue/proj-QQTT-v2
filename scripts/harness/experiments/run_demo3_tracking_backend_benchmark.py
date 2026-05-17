@@ -70,7 +70,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="object_sparse",
     )
     parser.add_argument("--sampling-strategy", choices=("random", "grid", "uniform_grid", "farthest", "phystwin_random"), default="grid")
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--mask-source",
         choices=(MASK_SOURCE_DEFAULT, MASK_SOURCE_PHYSTWIN_UNION),
@@ -342,17 +342,19 @@ def _sample_query_points_for_request(
     query_mode: str,
     sampling_strategy: str,
     seed: int,
+    camera_idx: int = 0,
+    sampling_device: str = "cpu",
 ) -> np.ndarray:
     from qqtt.tracking.sampling import sample_phystwin_dense, sample_query_points_from_mask
 
     normalized_mode = str(query_mode).strip().lower()
-    if normalized_mode == "phystwin_dense" and int(requested_points) == AUTO_QUERY_POINTS:
-        return sample_phystwin_dense(mask, seed=seed)
+    if normalized_mode == "phystwin_dense":
+        if int(requested_points) not in {AUTO_QUERY_POINTS, 5000}:
+            raise ValueError("PhysTwin dense query mode is fixed at 5000 query points per camera.")
+        return sample_phystwin_dense(mask, seed=seed, camera_idx=camera_idx, torch_device=sampling_device)
     if int(requested_points) == AUTO_QUERY_POINTS:
         raise ValueError("auto query count is only supported with --query-mode phystwin_dense.")
     strategy = str(sampling_strategy)
-    if normalized_mode == "phystwin_dense" and strategy == "grid":
-        strategy = "phystwin_random"
     return sample_query_points_from_mask(
         mask,
         num_points=int(requested_points),
@@ -550,6 +552,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     query_mode=str(args.query_mode),
                     sampling_strategy=str(args.sampling_strategy),
                     seed=int(args.seed),
+                    camera_idx=int(camera_idx),
+                    sampling_device=str(args.device),
                 )
                 camera_query_counts.append(int(len(query_points)))
                 row: dict[str, Any] = {

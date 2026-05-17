@@ -40,7 +40,8 @@ python scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py \
 ```
 
 `phystwin_dense` uses nested first-frame union masks, samples exactly 5000
-query points per camera, and writes `cotracker/{camera}.npz`.
+query points per camera with FuturePhysTwin-style torch `randperm`
+(`seed + camera_idx`, default seed `42`), and writes `cotracker/{camera}.npz`.
 The existing Demo 3 overlay remains sparse by default and should consume dense
 tracks only as an offline/cached artifact.
 

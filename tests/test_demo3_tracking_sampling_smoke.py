@@ -52,13 +52,23 @@ class Demo3TrackingSamplingSmokeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             phystwin_dense_query_count(np.ones((10, 10), dtype=np.uint8))
 
-    def test_phystwin_dense_sampling_is_seeded_random_yx(self) -> None:
+    def test_phystwin_dense_sampling_matches_futurephystwin_torch_randperm(self) -> None:
+        try:
+            import torch
+        except Exception as exc:
+            self.skipTest(f"torch is not installed: {exc}")
+
         mask = np.ones((80, 80), dtype=np.uint8)
-        points_a = sample_phystwin_dense(mask, seed=7)
-        points_b = sample_phystwin_dense(mask, seed=7)
-        points_c = sample_phystwin_dense(mask, seed=8)
+        coords = np.argwhere(mask).astype(np.float32)
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(44)
+        expected_idx = torch.randperm(len(coords), generator=generator)[:5000].numpy()
+        points_a = sample_phystwin_dense(mask, seed=42, camera_idx=2, torch_device="cpu")
+        points_b = sample_phystwin_dense(mask, seed=42, camera_idx=2, torch_device="cpu")
+        points_c = sample_phystwin_dense(mask, seed=42, camera_idx=3, torch_device="cpu")
 
         self.assertEqual(points_a.shape, (5000, 2))
+        np.testing.assert_array_equal(points_a, coords[expected_idx])
         np.testing.assert_array_equal(points_a, points_b)
         self.assertFalse(np.array_equal(points_a, points_c))
         self.assertTrue(np.all(mask[points_a[:, 0].astype(int), points_a[:, 1].astype(int)] > 0))

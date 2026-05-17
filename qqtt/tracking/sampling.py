@@ -77,14 +77,33 @@ def phystwin_dense_query_count(mask: np.ndarray) -> int:
     raise ValueError(f"PhysTwin dense CoTracker requires at least {PHYSTWIN_DENSE_QUERY_POINTS} mask pixels; got {count}.")
 
 
-def sample_phystwin_dense(mask: np.ndarray, *, seed: int | None = 0) -> np.ndarray:
-    return sample_query_points_from_mask(
-        mask,
-        num_points=phystwin_dense_query_count(mask),
-        strategy="phystwin_random",
-        seed=seed,
-        strict=True,
-    )
+def _torch_randperm_indices(length: int, count: int, *, seed: int | None, camera_idx: int, device: str) -> np.ndarray:
+    import torch
+
+    torch_device = str(device)
+    if torch_device.startswith("cuda") and not torch.cuda.is_available():
+        torch_device = "cpu"
+    generator = torch.Generator(device=torch_device)
+    if seed is None or int(seed) < 0:
+        generator.seed()
+    else:
+        generator.manual_seed(int(seed) + int(camera_idx))
+    return torch.randperm(length, device=torch_device, generator=generator)[:count].cpu().numpy()
+
+
+def sample_phystwin_dense(
+    mask: np.ndarray,
+    *,
+    seed: int | None = 42,
+    camera_idx: int = 0,
+    torch_device: str = "cpu",
+) -> np.ndarray:
+    coords = _mask_coordinates_yx(mask)
+    count = phystwin_dense_query_count(mask)
+    if len(coords) < count:
+        raise ValueError(f"Mask has only {len(coords)} pixels, fewer than requested {count}.")
+    idx = _torch_randperm_indices(len(coords), count, seed=seed, camera_idx=camera_idx, device=torch_device)
+    return coords[idx].astype(np.float32)
 
 
 def query_counts_for_mode(mode: str) -> tuple[int, ...]:

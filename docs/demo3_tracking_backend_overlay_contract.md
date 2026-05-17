@@ -55,6 +55,8 @@ In this mode the harness:
 - unions all first-frame masks per camera before query sampling
 - samples exactly 5000 query points per camera, matching FuturePhysTwin's
   dense CoTracker convention
+- uses FuturePhysTwin-style torch `randperm` sampling with default seed `42`
+  and a per-camera offset (`seed + camera_idx`)
 - fails below 5000 mask pixels instead of silently tracking the full frame
 - writes PhysTwin-style root artifacts under `cotracker/{camera}.npz` in
   addition to the Demo 3 benchmark output tree

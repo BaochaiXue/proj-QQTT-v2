@@ -38,6 +38,7 @@ class Demo3TrackingHarnessSmokeTest(unittest.TestCase):
                 ]
             )
 
+            self.assertEqual(args.seed, 42)
             summary = run_benchmark(args)
             output_dir = Path(summary["output_dir"])
 

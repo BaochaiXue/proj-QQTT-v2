@@ -11,6 +11,8 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
 - Add a PhysTwin dense query mode that uses first-frame union masks and selects
   exactly 5000 query points per camera, with strict failure below 5000 mask
   pixels.
+- Match FuturePhysTwin's deterministic dense query sampling: torch `randperm`,
+  default seed `42`, and `seed + camera_idx`.
 - Support PhysTwin-style nested mask layouts such as `mask/{camera}/*/{frame}.png`
   for benchmark query generation and metrics.
 - Make the PhysTwin-compatible benchmark path write `cotracker/{camera}.npz`
@@ -34,3 +36,6 @@ FuturePhysTwin dense tracking convention while preserving the existing sparse
 
 - Targeted Demo 3 tracking sampling and harness tests.
 - `python scripts/harness/check_all.py` in the default environment if feasible.
+- Completed: `python -m py_compile qqtt/tracking/sampling.py scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py tests/test_demo3_tracking_sampling_smoke.py tests/test_demo3_tracking_harness_smoke.py`
+- Completed: `conda run -n demo_2_max --no-capture-output python -m unittest -v tests.test_demo3_tracking_sampling_smoke tests.test_demo3_tracking_harness_smoke tests.test_demo3_tracking_registry_smoke`
+- Completed: `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
