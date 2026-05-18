@@ -43,6 +43,8 @@ class CalibrationBoardProfilesTest(unittest.TestCase):
         default_args = parser.parse_args([])
 
         self.assertEqual(default_args.calibration_board, DEFAULT_CALIBRATION_BOARD)
+        self.assertEqual(default_args.calibration_world_frame, "opencv-board-native")
+        self.assertEqual(default_args.calibration_samples, 1)
 
         override_args = parser.parse_args(
             [
@@ -58,6 +60,10 @@ class CalibrationBoardProfilesTest(unittest.TestCase):
                 "30",
                 "--board-dictionary",
                 "DICT_5X5_250",
+                "--calibration-world-frame",
+                "robopil-rx180",
+                "--calibration-samples",
+                "3",
             ]
         )
         config = cameras_calibrate.resolve_board_config_from_args(override_args)
@@ -69,6 +75,8 @@ class CalibrationBoardProfilesTest(unittest.TestCase):
         self.assertAlmostEqual(config.marker_length_m, 0.030)
         self.assertEqual(config.dictionary_name, "DICT_5X5_250")
         self.assertFalse(config.deprecated)
+        self.assertEqual(override_args.calibration_world_frame, "robopil-rx180")
+        self.assertEqual(override_args.calibration_samples, 3)
 
     def test_cv2_board_builds_expected_corner_count(self) -> None:
         config = get_calibration_board_config(DEFAULT_CALIBRATION_BOARD)

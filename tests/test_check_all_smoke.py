@@ -47,6 +47,7 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_record_data_realtime_align_smoke",
                 "tests.test_calibration_metadata_smoke",
                 "tests.test_calibration_board_profiles",
+                "tests.test_robopil_calibration_converter",
                 "tests.test_multi_realsense_order_smoke",
                 "tests.test_calibrate_loader_smoke",
                 "tests.test_aligned_metadata_loader_smoke",

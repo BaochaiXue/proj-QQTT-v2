@@ -62,8 +62,11 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - `python cameras_calibrate.py` detects the ChArUco board from all 3 cameras
 - calibration completes without reprojection failure
 - `calibrate.pkl` is written in the repo root
-- `calibrate_metadata.json` is written next to it and records the calibration serial order and board profile
+- `calibrate.pkl` remains a calibration-order list of camera-to-world `4x4` transforms
+- `calibrate_metadata.json` is written next to it and records the calibration serial order, board profile, world-frame convention, color distortion coefficients, and per-camera corner counts
+- `calibrate_metadata.json` reports `distortion_used: true` when all selected color streams exposed RealSense distortion coefficients
 - the old `legacy-4x5-50mm` board is deprecated and should only be selected explicitly for legacy reproduction
+- yfang/Robopil `cam_params.pkl` files are converted with `scripts/convert_robopil_cam_params_to_qqtt_calibrate.py`; they are not used directly as QQTT `calibrate.pkl`
 - rerun calibration after any physical camera-position swap on the rig
 
 ### Recording

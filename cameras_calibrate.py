@@ -12,6 +12,7 @@ from qqtt.env.camera.defaults import DEFAULT_NUM_CAM
 CALIBRATE_DEFAULT_WIDTH = 1280
 CALIBRATE_DEFAULT_HEIGHT = 720
 CALIBRATE_DEFAULT_FPS = 5
+CALIBRATION_WORLD_FRAME_CHOICES = ("opencv-board-native", "robopil-rx180")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +64,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the cv2.aruco dictionary name, e.g. DICT_5X5_250.",
     )
     parser.add_argument(
+        "--calibration-world-frame",
+        choices=CALIBRATION_WORLD_FRAME_CHOICES,
+        default="opencv-board-native",
+        help=(
+            "World-frame convention written into calibrate.pkl. "
+            "The default keeps QQTT's OpenCV ChArUco board-native frame. "
+            "robopil-rx180 matches the yfang/Robopil converted board frame."
+        ),
+    )
+    parser.add_argument(
+        "--calibration-samples",
+        type=int,
+        default=1,
+        help=(
+            "Number of accepted full-rig calibration samples to collect. "
+            "The best single sample is still written to preserve calibrate.pkl semantics."
+        ),
+    )
+    parser.add_argument(
         "--serials",
         nargs="*",
         default=None,
@@ -107,7 +127,11 @@ def main() -> int:
         serial_numbers=args.serials if args.serials else None,
         enable_keyboard_listener=enable_keyboard_listener,
     )
-    camera_system.calibrate(board_config=board_config)
+    camera_system.calibrate(
+        board_config=board_config,
+        world_frame_convention=args.calibration_world_frame,
+        calibration_samples=args.calibration_samples,
+    )
     return 0
 
 

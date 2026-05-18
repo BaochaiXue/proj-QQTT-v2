@@ -61,10 +61,79 @@ CAPTURE_MODE_CONFIGS = {
     },
 }
 
+CALIBRATION_WORLD_FRAME_OPENCV_BOARD_NATIVE = "opencv-board-native"
+CALIBRATION_WORLD_FRAME_ROBOPIL_RX180 = "robopil-rx180"
+CALIBRATION_WORLD_FRAME_CHOICES = {
+    CALIBRATION_WORLD_FRAME_OPENCV_BOARD_NATIVE,
+    CALIBRATION_WORLD_FRAME_ROBOPIL_RX180,
+}
+
 
 def exist_dir(dir):
     if not os.path.exists(dir):
         os.makedirs(dir)
+
+
+def _dist_coeffs_from_metadata(metadata: dict[str, Any], key: str):
+    coeffs = metadata.get(key)
+    if coeffs is None:
+        return None
+    coeffs_array = np.asarray(coeffs, dtype=np.float64).reshape(-1, 1)
+    if coeffs_array.size == 0:
+        return None
+    return coeffs_array
+
+
+def _dist_coeffs_to_metadata(coeffs) -> list[float] | None:
+    if coeffs is None:
+        return None
+    return [float(value) for value in np.asarray(coeffs, dtype=np.float64).reshape(-1)]
+
+
+def _apply_calibration_world_frame(R_board2cam: np.ndarray, convention: str) -> np.ndarray:
+    if convention == CALIBRATION_WORLD_FRAME_OPENCV_BOARD_NATIVE:
+        return R_board2cam
+    if convention == CALIBRATION_WORLD_FRAME_ROBOPIL_RX180:
+        rx180 = np.diag([1.0, -1.0, -1.0])
+        return R_board2cam @ rx180
+    raise ValueError(
+        f"Unsupported calibration world frame {convention!r}. "
+        f"Choices: {sorted(CALIBRATION_WORLD_FRAME_CHOICES)}"
+    )
+
+
+def _rotation_angle_deg(R: np.ndarray) -> float:
+    trace_value = float(np.trace(R))
+    cos_angle = max(-1.0, min(1.0, (trace_value - 1.0) / 2.0))
+    return float(np.degrees(np.arccos(cos_angle)))
+
+
+def _compute_pose_stability(c2w_samples: list[list[np.ndarray]]) -> dict[str, Any] | None:
+    if len(c2w_samples) < 2 or not c2w_samples or len(c2w_samples[0]) < 2:
+        return None
+    num_cam = len(c2w_samples[0])
+    result: dict[str, Any] = {
+        "sample_count": len(c2w_samples),
+        "relative_to_camera_index": 0,
+        "per_camera": {},
+    }
+    for camera_idx in range(1, num_cam):
+        relatives = [
+            np.linalg.inv(sample[0]) @ sample[camera_idx]
+            for sample in c2w_samples
+        ]
+        translations = np.asarray([rel[:3, 3] for rel in relatives], dtype=np.float64)
+        base_R = relatives[0][:3, :3]
+        rotation_angles = [
+            _rotation_angle_deg(base_R.T @ rel[:3, :3])
+            for rel in relatives[1:]
+        ]
+        result["per_camera"][f"cam{camera_idx}"] = {
+            "translation_std_m": translations.std(axis=0).tolist(),
+            "translation_norm_std_m": float(np.linalg.norm(translations, axis=1).std()),
+            "rotation_angle_max_deg": max(rotation_angles) if rotation_angles else 0.0,
+        }
+    return result
 
 
 class CameraSystem:
@@ -358,12 +427,34 @@ class CameraSystem:
             stream_metadata=self.stream_metadata,
         )
 
-    def calibrate(self, visualize=True, board_config=None):
+    def calibrate(
+        self,
+        visualize=True,
+        board_config=None,
+        world_frame_convention=CALIBRATION_WORLD_FRAME_OPENCV_BOARD_NATIVE,
+        calibration_samples=1,
+    ):
+        if world_frame_convention not in CALIBRATION_WORLD_FRAME_CHOICES:
+            raise ValueError(
+                f"Unsupported calibration world frame {world_frame_convention!r}. "
+                f"Choices: {sorted(CALIBRATION_WORLD_FRAME_CHOICES)}"
+            )
+        calibration_samples = int(calibration_samples)
+        if calibration_samples < 1:
+            raise ValueError("calibration_samples must be >= 1.")
         # Initialize the calibration board information.
         board_config = get_calibration_board_config(board_config)
         dictionary, board = create_charuco_board(board_config)
         # Get the intrinsic information from the realsense camera
         intrinsics = self.realsense.get_intrinsics()
+        color_dist_coeffs = [
+            _dist_coeffs_from_metadata(metadata, "color_distortion_coeffs")
+            for metadata in self.stream_metadata
+        ]
+        color_dist_models = [
+            metadata.get("color_distortion_model")
+            for metadata in self.stream_metadata
+        ]
         error_threshold = 0.3
         min_charuco_corners = max(
             11,
@@ -377,7 +468,13 @@ class CameraSystem:
             f"marker={board_config.marker_length_mm:.1f}mm, "
             f"dictionary={board_config.dictionary_name}, "
             f"min_corners={min_charuco_corners}, "
-            f"error_threshold={error_threshold:.3f})"
+            f"error_threshold={error_threshold:.3f}, "
+            f"world_frame={world_frame_convention}, "
+            f"samples={calibration_samples})"
+        )
+        print(
+            "[Calibrate] Color distortion models: "
+            + ", ".join([str(model) for model in color_dist_models])
         )
         if board_config.deprecated:
             print(
@@ -385,19 +482,21 @@ class CameraSystem:
                 "Use the Calib.io 12x9 default for new calibrations."
             )
 
-        flag = True
         attempt_idx = 0
-        while flag:
+        accepted_samples: list[dict[str, Any]] = []
+        while len(accepted_samples) < calibration_samples:
             attempt_idx += 1
-            flag = False
             obs = self.get_observation()
             colors = [obs[i]["color"] for i in range(self.num_cam)]
             print(f"[Calibrate] Attempt {attempt_idx}")
 
             c2ws = []
             per_camera_errors = []
+            per_camera_corner_counts = []
+            sample_failed = False
             for i in range(self.num_cam):
                 intrinsic = intrinsics[i]
+                dist_coeffs = color_dist_coeffs[i] if i < len(color_dist_coeffs) else None
                 calibration_img = colors[i]
                 serial = (
                     self.serial_numbers[i]
@@ -414,7 +513,7 @@ class CameraSystem:
                     parameters=None,
                 )
                 if ids is None or len(corners) == 0:
-                    flag = True
+                    sample_failed = True
                     print(
                         f"{cam_tag} No ArUco markers detected. "
                         "Please adjust the board and try again."
@@ -427,6 +526,7 @@ class CameraSystem:
                         image=calibration_img,
                         board=board,
                         cameraMatrix=intrinsic,
+                        distCoeffs=dist_coeffs,
                     )
                 )
                 if (
@@ -434,7 +534,7 @@ class CameraSystem:
                     or charuco_ids is None
                     or len(charuco_corners) == 0
                 ):
-                    flag = True
+                    sample_failed = True
                     print(
                         f"{cam_tag} No ChArUco corners detected. "
                         "Please adjust the board and try again."
@@ -443,14 +543,6 @@ class CameraSystem:
                 # cv2.imshow("cablibration", calibration_img)
 
                 print(f"{cam_tag} Number of corners: {len(charuco_corners)}")
-                if visualize:
-                    cv2.aruco.drawDetectedCornersCharuco(
-                        image=calibration_img,
-                        charucoCorners=charuco_corners,
-                        charucoIds=charuco_ids,
-                    )
-                    cv2.imshow("cablibration", calibration_img)
-                    cv2.waitKey(1)
 
                 rvec = None
                 tvec = None
@@ -459,12 +551,12 @@ class CameraSystem:
                     charuco_ids,
                     board,
                     intrinsic,
-                    None,
+                    dist_coeffs,
                     rvec=rvec,
                     tvec=tvec,
                 )
                 if (not retval) or (rvec is None) or (tvec is None):
-                    flag = True
+                    sample_failed = True
                     print("Failed to estimate ChArUco pose. Please try again.")
                     break
 
@@ -475,11 +567,12 @@ class CameraSystem:
                     rvec,
                     tvec,
                     intrinsic,
-                    None,
+                    dist_coeffs,
                 )
                 # Reshape for easier handling
                 reprojected_points = reprojected_points.reshape(-1, 2)
                 charuco_corners = charuco_corners.reshape(-1, 2)
+                per_camera_corner_counts.append(int(len(charuco_corners)))
                 # Calculate the error
                 error = np.sqrt(
                     np.sum((reprojected_points - charuco_corners) ** 2, axis=1)
@@ -491,7 +584,7 @@ class CameraSystem:
                     error > error_threshold
                     or len(charuco_corners) < min_charuco_corners
                 ):
-                    flag = True
+                    sample_failed = True
                     print(
                         f"{cam_tag} Reprojection check failed "
                         f"(error={error:.6f}, corners={len(charuco_corners)}). "
@@ -499,22 +592,72 @@ class CameraSystem:
                     )
                     break
                 R_board2cam = cv2.Rodrigues(rvec)[0]
+                R_board2cam = _apply_calibration_world_frame(
+                    R_board2cam,
+                    world_frame_convention,
+                )
                 t_board2cam = tvec[:, 0]
                 w2c = np.eye(4)
                 w2c[:3, :3] = R_board2cam
                 w2c[:3, 3] = t_board2cam
                 c2ws.append(np.linalg.inv(w2c))
 
-            if (not flag) and len(per_camera_errors) == self.num_cam:
+                if visualize:
+                    calibration_vis = calibration_img.copy()
+                    cv2.aruco.drawDetectedMarkers(calibration_vis, corners, ids)
+                    cv2.aruco.drawDetectedCornersCharuco(
+                        image=calibration_vis,
+                        charucoCorners=charuco_corners.reshape(-1, 1, 2),
+                        charucoIds=charuco_id_values.reshape(-1, 1),
+                    )
+                    draw_rvec, _ = cv2.Rodrigues(R_board2cam)
+                    cv2.drawFrameAxes(
+                        calibration_vis,
+                        intrinsic,
+                        dist_coeffs,
+                        draw_rvec,
+                        tvec,
+                        0.1,
+                    )
+                    cv2.imshow("cablibration", calibration_vis)
+                    cv2.waitKey(1)
+
+            if (not sample_failed) and len(per_camera_errors) == self.num_cam:
                 errors_np = np.asarray(per_camera_errors, dtype=np.float64)
+                accepted_samples.append(
+                    {
+                        "c2ws": c2ws,
+                        "per_camera_errors": per_camera_errors,
+                        "per_camera_corner_counts": per_camera_corner_counts,
+                        "mean_error": float(errors_np.mean()),
+                    }
+                )
                 print(
-                    "[Calibrate] Per-camera reprojection errors accepted: "
+                    f"[Calibrate] Accepted sample {len(accepted_samples)}/"
+                    f"{calibration_samples}: "
                     + ", ".join([f"{e:.6f}" for e in errors_np.tolist()])
                 )
                 print(
                     f"[Calibrate] Error summary: mean={errors_np.mean():.6f}, "
                     f"max={errors_np.max():.6f}"
                 )
+
+        sample_mean_errors = [
+            float(sample["mean_error"])
+            for sample in accepted_samples
+        ]
+        selected_sample_index = int(np.argmin(sample_mean_errors))
+        selected_sample = accepted_samples[selected_sample_index]
+        c2ws = selected_sample["c2ws"]
+        per_camera_errors = selected_sample["per_camera_errors"]
+        per_camera_corner_counts = selected_sample["per_camera_corner_counts"]
+        pose_stability = _compute_pose_stability(
+            [sample["c2ws"] for sample in accepted_samples]
+        )
+        print(
+            f"[Calibrate] Selected sample {selected_sample_index} "
+            f"with mean reprojection error {sample_mean_errors[selected_sample_index]:.6f}"
+        )
 
         calibrate_path = Path("calibrate.pkl")
         with calibrate_path.open("wb") as f:
@@ -528,6 +671,18 @@ class CameraSystem:
                 transform_count=len(c2ws),
                 per_camera_reprojection_error=per_camera_errors,
                 calibration_board=charuco_board_config_to_metadata(board_config),
+                world_frame_convention=world_frame_convention,
+                distortion_used=all(item is not None for item in color_dist_coeffs),
+                distortion_model_by_camera=color_dist_models,
+                distortion_coeffs_by_camera=[
+                    _dist_coeffs_to_metadata(item) for item in color_dist_coeffs
+                ],
+                per_camera_corner_count=per_camera_corner_counts,
+                per_camera_pose_stability=pose_stability,
+                calibration_samples_requested=calibration_samples,
+                calibration_samples_used=len(accepted_samples),
+                selected_sample_index=selected_sample_index,
+                sample_mean_reprojection_error=sample_mean_errors,
             ),
         )
         print(f"[Calibrate] Wrote {calibrate_path} and {sidecar_path}")

@@ -35,6 +35,20 @@ def intrinsics_to_matrix(intrinsics) -> list[list[float]]:
     ]
 
 
+def intrinsics_distortion_model_name(intrinsics) -> str:
+    model = getattr(intrinsics, "model", None)
+    if model is None:
+        return "unknown"
+    name = getattr(model, "name", None)
+    if name:
+        return str(name)
+    return str(model).split(".")[-1]
+
+
+def intrinsics_distortion_coeffs(intrinsics) -> list[float]:
+    return [float(value) for value in getattr(intrinsics, "coeffs", [])]
+
+
 def extrinsics_to_matrix(extrinsics) -> list[list[float]]:
     rotation = list(map(float, extrinsics.rotation))
     translation = list(map(float, extrinsics.translation))
@@ -383,8 +397,14 @@ class SingleRealsense(mp.Process):
                 "fps": fps,
                 "streams_present": [],
                 "K_color": None,
+                "color_distortion_model": None,
+                "color_distortion_coeffs": None,
                 "K_ir_left": None,
+                "ir_left_distortion_model": None,
+                "ir_left_distortion_coeffs": None,
                 "K_ir_right": None,
+                "ir_right_distortion_model": None,
+                "ir_right_distortion_coeffs": None,
                 "T_ir_left_to_right": None,
                 "T_ir_left_to_color": None,
                 "ir_baseline_m": None,
@@ -414,6 +434,8 @@ class SingleRealsense(mp.Process):
                 for i, name in enumerate(order):
                     self.intrinsics_array.get()[i] = getattr(intr, name)
                 stream_metadata["K_color"] = intrinsics_to_matrix(intr)
+                stream_metadata["color_distortion_model"] = intrinsics_distortion_model_name(intr)
+                stream_metadata["color_distortion_coeffs"] = intrinsics_distortion_coeffs(intr)
                 stream_metadata["streams_present"].append("color")
                 color_sensor = device.first_color_sensor()
                 try:
@@ -454,16 +476,26 @@ class SingleRealsense(mp.Process):
                 ir_left_profile = self.pipeline_profile.get_stream(
                     rs.stream.infrared, 1
                 ).as_video_stream_profile()
-                stream_metadata["K_ir_left"] = intrinsics_to_matrix(
-                    ir_left_profile.get_intrinsics()
+                ir_left_intr = ir_left_profile.get_intrinsics()
+                stream_metadata["K_ir_left"] = intrinsics_to_matrix(ir_left_intr)
+                stream_metadata["ir_left_distortion_model"] = intrinsics_distortion_model_name(
+                    ir_left_intr
+                )
+                stream_metadata["ir_left_distortion_coeffs"] = intrinsics_distortion_coeffs(
+                    ir_left_intr
                 )
                 stream_metadata["streams_present"].append("ir_left")
             if self.enable_ir_right:
                 ir_right_profile = self.pipeline_profile.get_stream(
                     rs.stream.infrared, 2
                 ).as_video_stream_profile()
-                stream_metadata["K_ir_right"] = intrinsics_to_matrix(
-                    ir_right_profile.get_intrinsics()
+                ir_right_intr = ir_right_profile.get_intrinsics()
+                stream_metadata["K_ir_right"] = intrinsics_to_matrix(ir_right_intr)
+                stream_metadata["ir_right_distortion_model"] = intrinsics_distortion_model_name(
+                    ir_right_intr
+                )
+                stream_metadata["ir_right_distortion_coeffs"] = intrinsics_distortion_coeffs(
+                    ir_right_intr
                 )
                 stream_metadata["streams_present"].append("ir_right")
                 if ir_left_profile is not None:

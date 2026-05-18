@@ -498,7 +498,14 @@ calibration script.
 
 This writes `calibrate.pkl` and `calibrate_metadata.json` in the repo root by
 default. The metadata sidecar records the serial order that the transforms in
-`calibrate.pkl` use, along with the calibration board profile.
+`calibrate.pkl` use, along with the calibration board profile, RealSense color
+distortion metadata, reprojection corner counts, and the calibration world-frame
+convention.
+
+`calibrate.pkl` remains the compatibility artifact: a calibration-time ordered
+list of `camera_to_world_c2w` 4x4 transforms. Additional schema/convention
+details live in `calibrate_metadata.json` so existing QQTT and PhysTwin readers
+that consume only `calibrate.pkl` continue to work.
 
 If cameras have been physically swapped on the rig, rerun calibration before
 recording. Serial checks can catch a wrong or replaced device, but they cannot
@@ -510,6 +517,8 @@ Useful options:
 python cameras_calibrate.py --width 1280 --height 720 --fps 5 --num-cam 3
 python cameras_calibrate.py --serials 239222303506 239222300412 239222300781
 python cameras_calibrate.py --calibration-board legacy-4x5-50mm
+python cameras_calibrate.py --calibration-samples 3
+python cameras_calibrate.py --calibration-world-frame robopil-rx180
 ```
 
 The old `legacy-4x5-50mm` board profile remains available only for reproducing
@@ -517,6 +526,19 @@ older calibrations and is deprecated for new rig calibration. For a one-off
 custom target, override the selected profile with `--board-squares-x`,
 `--board-squares-y`, `--board-square-size-mm`, `--board-marker-size-mm`, and
 `--board-dictionary`.
+
+The default world frame is `opencv-board-native`, QQTT's native ChArUco board
+frame. `robopil-rx180` is available only when matching the yfang/Robopil
+converted board-frame convention. To import a yfang-style `cam_params.pkl`
+without changing the QQTT `calibrate.pkl` contract:
+
+```bash
+python scripts/convert_robopil_cam_params_to_qqtt_calibrate.py \
+  --input assets/calib_params/cam_params.pkl \
+  --output calibrate.pkl \
+  --serials 239222303506 239222300412 239222300781 \
+  --overwrite
+```
 
 ## 3. Record
 

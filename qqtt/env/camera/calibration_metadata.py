@@ -33,6 +33,18 @@ def build_calibration_metadata(
     transform_count: int,
     per_camera_reprojection_error: list[float] | None = None,
     calibration_board: dict[str, Any] | None = None,
+    world_frame_convention: str | None = None,
+    distortion_used: bool | None = None,
+    distortion_model_by_camera: list[str | None] | None = None,
+    distortion_coeffs_by_camera: list[list[float] | None] | None = None,
+    per_camera_corner_count: list[int] | None = None,
+    per_camera_pose_stability: dict[str, Any] | None = None,
+    calibration_samples_requested: int | None = None,
+    calibration_samples_used: int | None = None,
+    selected_sample_index: int | None = None,
+    sample_mean_reprojection_error: list[float] | None = None,
+    source_format: str | None = None,
+    source_path: str | None = None,
 ) -> dict[str, Any]:
     serials = _validate_serials("serial_numbers", list(serial_numbers))
     if int(transform_count) != len(serials):
@@ -49,12 +61,43 @@ def build_calibration_metadata(
         "WH": list(WH),
         "fps": int(fps),
         "transform_count": int(transform_count),
+        "transform_convention": "camera_to_world_c2w",
+        "compatibility_contract": "qqtt_calibrate_pkl_c2w_list_v1",
         "per_camera_reprojection_error": None
         if per_camera_reprojection_error is None
         else [float(item) for item in per_camera_reprojection_error],
     }
     if calibration_board is not None:
         metadata["calibration_board"] = dict(calibration_board)
+    if world_frame_convention is not None:
+        metadata["world_frame_convention"] = str(world_frame_convention)
+    if distortion_used is not None:
+        metadata["distortion_used"] = bool(distortion_used)
+    if distortion_model_by_camera is not None:
+        metadata["distortion_model_by_camera"] = list(distortion_model_by_camera)
+    if distortion_coeffs_by_camera is not None:
+        metadata["distortion_coeffs_by_camera"] = [
+            None if item is None else [float(value) for value in item]
+            for item in distortion_coeffs_by_camera
+        ]
+    if per_camera_corner_count is not None:
+        metadata["per_camera_corner_count"] = [int(item) for item in per_camera_corner_count]
+    if per_camera_pose_stability is not None:
+        metadata["per_camera_pose_stability"] = dict(per_camera_pose_stability)
+    if calibration_samples_requested is not None:
+        metadata["calibration_samples_requested"] = int(calibration_samples_requested)
+    if calibration_samples_used is not None:
+        metadata["calibration_samples_used"] = int(calibration_samples_used)
+    if selected_sample_index is not None:
+        metadata["selected_sample_index"] = int(selected_sample_index)
+    if sample_mean_reprojection_error is not None:
+        metadata["sample_mean_reprojection_error"] = [
+            float(item) for item in sample_mean_reprojection_error
+        ]
+    if source_format is not None:
+        metadata["source_format"] = str(source_format)
+    if source_path is not None:
+        metadata["source_path"] = str(source_path)
     return metadata
 
 
