@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make `cameras_calibrate.py` default to the new Calib.io ChArUco target shown in the lab update: `9x12`, 30 mm checker size, 22 mm marker size, and ArUco `DICT_5X5_1000`. Keep the previous `4x5 / 50mm / 37mm / DICT_4X4_50` board available but clearly deprecated.
+Make `cameras_calibrate.py` default to the new Calib.io ChArUco target used by the lab reference script: `12x9`, 30 mm checker size, 22 mm marker size, and ArUco `DICT_5X5_250`. Keep the previous `4x5 / 50mm / 37mm / DICT_4X4_50` board available but clearly deprecated.
 
 ## Plan
 
