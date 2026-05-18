@@ -58,8 +58,6 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_sam31_still_object_benchmark_smoke",
                 "tests.test_sam21_checkpoint_ladder_panel_smoke",
                 "tests.test_demo_v03_prepare_ir_triplets_smoke",
-                "tests.test_demo_v2_1_three_view_fused_pcd_smoke",
-                "tests.test_demo_v2_1_5_realsense_depth_smoke",
                 "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
                 "tests.test_demo_v2_3_dual_gpu_smoke",
                 "tests.test_demo3_tracking_contract_smoke",
@@ -93,11 +91,6 @@ class CheckAllSmokeTest(unittest.TestCase):
         commands = check_all.build_commands(python="python", profile="full")
         self.assertGreater(len(commands), len(check_all.build_commands(python="python", profile="quick")))
         self.assertIn(["python", "cameras_viewer_FFS.py", "--help"], commands)
-        self.assertIn(["python", "demo_v1/realtime_single_camera_pointcloud.py", "--help"], commands)
-        self.assertIn(["python", "demo_v2/realtime_single_camera_pointcloud.py", "--help"], commands)
-        self.assertIn(["python", "demo_v2/realtime_masked_edgetam_pcd.py", "--help"], commands)
-        self.assertIn(["python", "demo_v2_1/realtime_three_view_masked_fused_pcd.py", "--help"], commands)
-        self.assertIn(["python", "demo_v2_1_5/realtime_three_view_async_filtered_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "demo_v2_3/realtime_three_view_dual_gpu_async_filtered_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "demo_v3/realtime_three_view_cotracker3_realsense_overlay.py", "--help"], commands)

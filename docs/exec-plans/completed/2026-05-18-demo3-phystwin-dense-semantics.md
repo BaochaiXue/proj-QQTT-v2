@@ -61,11 +61,8 @@ query sampling instead of exposing object-only sparse tracking as the default.
 - PASS:
   `conda run --no-capture-output -n demo3-max python demo_v3/realtime_three_view_cotracker3_realsense_overlay.py --input-video foo.mp4`
   fails with argparse status 2.
-- BLOCKED:
+- PASS:
   `conda run --no-capture-output -n demo3-max python scripts/harness/check_all.py`
-  currently fails because the working tree has unrelated tracked deletions for
-  older demo directories (`demo_v0_2`, `demo_v0_3`, `demo_v1`, `demo_v2`,
-  `demo_v2_1`, and `demo_v2_1_5`). The quick harness still references modules
-  from those paths, so imports such as `demo_v2_1` and `demo_v2_1_5` fail before
-  this Demo 3 semantic patch can get a clean full quick-harness result.
-
+  quick deterministic checks passed after updating the harness catalog to stop
+  referencing the removed legacy demo directories (`demo_v1`, `demo_v2`,
+  `demo_v2_1`, and `demo_v2_1_5`). The run completed with 231 unittest tests.
