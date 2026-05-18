@@ -53,6 +53,7 @@ manual; use the compressed harness index first.
 | Demo 2.1.5 HF EdgeTAM mitigation matrix | `demo215_hf_edgetam_gpu_underutilization_mitigation.md` |
 | Demo 2.1.5 full local FFS fused PCD replicated profile | `demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_pointcloud_replicated_profile.md` |
 | Demo 2.1.5 full local FFS fused PCD no-render replicated profile | `demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_replicated_profile.md` |
+| Demo 2.1.5 HF EdgeTAM 80ms compile/batch-vision profile | `demo215_edgetam80_compiled_parallel_report.md` |
 | Demo 2.1.5 init cache warmup probe | `demo2_1_5_init_cache_warmup.md` |
 | Demo 2 GPU utilization sampling support | `demo2_gpu_sampling_profile_support.md` |
 | Demo 2 / 2.1 RTX 4090 `demo_2_max` environment | `demo_2_max_4090_ubuntu_env_validation.md`, `demo_2_max_4090_ubuntu_env_validation.json` |

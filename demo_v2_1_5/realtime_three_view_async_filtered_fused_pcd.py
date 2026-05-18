@@ -70,6 +70,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run.add_argument("--profile-sync", action="store_true", help="Allow explicit full-device syncs for profiling only.")
     run.add_argument("--profile-edgetam-stages", action="store_true", help="Record fine-grained EdgeTAM hot-path stages.")
     run.add_argument("--profile-nsys-markers", action="store_true", help="Emit NVTX ranges for nsys profiling.")
+    run.add_argument("--edgetam-stream-mode", choices=runtime.EDGETAM_STREAM_MODES, default=None)
+    run.add_argument("--edgetam-compile-scope", choices=runtime.EDGETAM_COMPILE_SCOPES, default=None)
+    run.add_argument("--edgetam-graph-output-policy", choices=runtime.EDGETAM_GRAPH_OUTPUT_POLICIES, default=None)
+    run.add_argument("--edgetam-stage-wall-target-ms", type=float, default=None)
+    run.add_argument("--fail-if-edgetam-stage-wall-p50-over", type=float, default=None)
 
     cameras = parser.add_argument_group("Cameras")
     cameras.add_argument("--serials", nargs="*", default=None, help="Optional RealSense serial list.")
@@ -179,14 +184,14 @@ def _to_demo215_argv(argv: Sequence[str] | None) -> list[str]:
         return ["--help"]
 
     translated: list[str] = []
-    if parsed.parallel_edgetam and not _has_flag(passthrough, "--preset"):
+    if parsed.mask_only_debug and not _has_flag(passthrough, "--preset"):
+        translated.extend(["--preset", runtime.PRESET_DEMO215_MASK_ONLY_DEBUG])
+    elif parsed.parallel_edgetam and not _has_flag(passthrough, "--preset"):
         translated.extend(["--preset", runtime.PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS])
     elif parsed.live_fast_native and not _has_flag(passthrough, "--preset"):
         translated.extend(["--preset", runtime.PRESET_DEMO215_LIVE_FAST_NATIVE])
     elif parsed.live_quality_ffs and not _has_flag(passthrough, "--preset"):
         translated.extend(["--preset", runtime.PRESET_DEMO215_LIVE_QUALITY_FFS])
-    elif parsed.mask_only_debug and not _has_flag(passthrough, "--preset"):
-        translated.extend(["--preset", runtime.PRESET_DEMO215_MASK_ONLY_DEBUG])
     elif parsed.experimental_staged_parallel and not _has_flag(passthrough, "--preset"):
         translated.extend(["--preset", runtime.PRESET_DEMO215_STAGED_PARALLEL_5FPS])
 
@@ -199,9 +204,18 @@ def _to_demo215_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--fps", parsed.fps)
     _append_option(translated, "--dtype", parsed.dtype)
     _append_option(translated, "--compile-mode", parsed.compile_mode)
+    _append_option(translated, "--edgetam-stream-mode", parsed.edgetam_stream_mode)
+    _append_option(translated, "--edgetam-compile-scope", parsed.edgetam_compile_scope)
+    _append_option(translated, "--edgetam-graph-output-policy", parsed.edgetam_graph_output_policy)
+    _append_option(translated, "--edgetam-stage-wall-target-ms", parsed.edgetam_stage_wall_target_ms)
+    _append_option(translated, "--fail-if-edgetam-stage-wall-p50-over", parsed.fail_if_edgetam_stage_wall_p50_over)
     _append_option(translated, "--mask-postprocess", parsed.mask_postprocess)
     if parsed.no_compile_edgetam and parsed.compile_mode is None and not _has_flag(passthrough, "--compile-mode"):
         translated.extend(["--compile-mode", runtime.COMPILE_MODE_NONE])
+    if parsed.parallel_edgetam and parsed.edgetam_stream_mode is None and not _has_flag(passthrough, "--edgetam-stream-mode"):
+        translated.extend(["--edgetam-stream-mode", runtime.EDGETAM_STREAM_MODE_PER_CAMERA])
+    if parsed.mask_only_debug and parsed.parallel_edgetam and not _has_flag(passthrough, "--gpu-pipeline-mode"):
+        translated.extend(["--gpu-pipeline-mode", runtime.GPU_PIPELINE_MODE_STAGED])
     _append_many(translated, "--serials", parsed.serials)
     _append_option(translated, "--camera-ids", _format_camera_ids(parsed.camera_ids))
     _append_option(translated, "--calibrate-path", parsed.calibrate_path)
