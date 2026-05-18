@@ -53,10 +53,17 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 
 ### Calibration
 
+- `python cameras_calibrate.py` uses the current lab Calib.io ChArUco board by default:
+  - profile: `calibio-12x9-30mm`
+  - grid: `12x9`
+  - checker size: 30 mm
+  - marker size: 22 mm
+  - dictionary: `DICT_5X5_250`
 - `python cameras_calibrate.py` detects the ChArUco board from all 3 cameras
 - calibration completes without reprojection failure
 - `calibrate.pkl` is written in the repo root
-- `calibrate_metadata.json` is written next to it and records the calibration serial order
+- `calibrate_metadata.json` is written next to it and records the calibration serial order and board profile
+- the old `legacy-4x5-50mm` board is deprecated and should only be selected explicitly for legacy reproduction
 - rerun calibration after any physical camera-position swap on the rig
 
 ### Recording

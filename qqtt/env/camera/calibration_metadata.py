@@ -32,6 +32,7 @@ def build_calibration_metadata(
     fps: int,
     transform_count: int,
     per_camera_reprojection_error: list[float] | None = None,
+    calibration_board: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     serials = _validate_serials("serial_numbers", list(serial_numbers))
     if int(transform_count) != len(serials):
@@ -39,7 +40,7 @@ def build_calibration_metadata(
             "Calibration transform count must match serial_numbers length. "
             f"transform_count={transform_count}, serial_numbers={len(serials)}"
         )
-    return {
+    metadata = {
         "schema_version": CALIBRATION_METADATA_SCHEMA_VERSION,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "serial_numbers": serials,
@@ -52,6 +53,9 @@ def build_calibration_metadata(
         if per_camera_reprojection_error is None
         else [float(item) for item in per_camera_reprojection_error],
     }
+    if calibration_board is not None:
+        metadata["calibration_board"] = dict(calibration_board)
+    return metadata
 
 
 def write_calibration_metadata(calibrate_path: str | Path, metadata: dict[str, Any]) -> Path:

@@ -112,13 +112,71 @@ the draw path is less dominated by point rasterization; pass explicit values
 when you want denser or larger splats for inspection.
 
 The single-camera coordinate contract above applies only to
-`demo_v2/realtime_single_camera_pointcloud.py`. Demo 2.1, Demo 2.1.5, and Demo
-2.2 keep their public entrypoints under their versioned folders, but shared
-three-camera fused-PCD runtime code lives under `qqtt/demo/`. These demos
-require `calibrate.pkl` when world fusion is enabled, load camera-to-world
-transforms after `CameraSystem` startup, transform each camera's backprojected
-masked RGB-D points into the shared world frame, then fuse object/controller
-semantic PCDs.
+`demo_v2/realtime_single_camera_pointcloud.py`. Demo 2.1, Demo 2.1.5, Demo 2.2,
+Demo 3.0, and Demo 3.1 keep their public entrypoints under their versioned
+folders, but shared three-camera fused-PCD runtime code lives under
+`qqtt/demo/`. These demos require `calibrate.pkl` when world fusion is enabled,
+load camera-to-world transforms after `CameraSystem` startup, transform each
+camera's backprojected masked RGB-D points into the shared world frame, then
+fuse object/controller semantic PCDs. Demo 3.1 adds a dual-4090 visualization
+contract where GPU0 owns capture/mask/fusion/render and GPU1 owns CoTracker3 in
+a latest-wins child process. Demo 3.0 and Demo 3.1 expose only `--mode exp|demo`
+for live semantics; both modes track the object/controller union with
+FuturePhysTwin-compatible dense CoTracker queries while keeping the rendered
+overlay cap separate.
+
+For Demo 2.2, Demo 2.3, Demo 3.0, and Demo 3.1 performance claims, use the
+rendered point-cloud path when reporting rendered FPS. A `--render-mode none`
+run is useful for upstream isolation, but it must not be described as rendered
+FPS. Finite-duration Open3D runs now stop workers and write summary/profile
+artifacts before requesting Open3D window/app teardown, so a later
+Open3D/Filament teardown hang or crash should not eat the profile JSON. On
+workstations where Open3D teardown is still unreliable, run through
+`scripts/harness/run_wslg_open3d.sh` or set `QQTT_WSLG_OPEN3D_FAST_EXIT=1`.
+
+Rendered profile command templates:
+
+```bash
+scripts/harness/run_wslg_open3d.sh \
+  conda run --no-capture-output -n demo_2_max \
+  python demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py \
+  --duration-s 120 \
+  --warmup-s 40 \
+  --gpu-sampling \
+  --render-micro-profile \
+  --profile-json-output docs/generated/demo22_rendered_pointcloud_profile.json
+
+scripts/harness/run_wslg_open3d.sh \
+  conda run --no-capture-output -n demo_2_max \
+  python demo_v2_3/realtime_three_view_dual_gpu_async_filtered_fused_pcd.py \
+  --fps 30 \
+  --duration-s 120 \
+  --warmup-s 40 \
+  --gpu-sampling \
+  --gpu-sampling-device-indexes 0,1 \
+  --render-mode pointcloud \
+  --render-micro-profile \
+  --profile-json-output docs/generated/demo23_rendered_pointcloud_profile.json
+
+scripts/harness/run_wslg_open3d.sh \
+  conda run --no-capture-output -n demo_2_max \
+  python demo_v3/realtime_three_view_cotracker3_realsense_overlay.py \
+  --duration-s 120 \
+  --render-mode pointcloud \
+  --profile-json-output docs/generated/demo3_rendered_pointcloud_profile.json
+
+scripts/harness/run_wslg_open3d.sh \
+  conda run --no-capture-output -n demo_2_max \
+  python demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py \
+  --duration-s 120 \
+  --render-mode pointcloud \
+  --profile-json-output docs/generated/demo31_rendered_pointcloud_profile.json
+```
+
+When interpreting those profiles, check `render_backpressure_count`,
+`render_total_ms`, `render_buffer_dropped_total`, and the upstream publish FPS
+together. If rendered FPS tracks fusion/filter FPS and render backpressure is
+zero, the bottleneck is upstream supply rather than Open3D rendering.
 
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:
@@ -433,9 +491,14 @@ Current live PyTorch status:
 python cameras_calibrate.py
 ```
 
+The default target is the current lab Calib.io ChArUco board:
+`calibio-12x9-30mm` (`12x9`, 30 mm checker size, 22 mm marker size,
+ArUco `DICT_5X5_250`). This matches the new board and the lab reference
+calibration script.
+
 This writes `calibrate.pkl` and `calibrate_metadata.json` in the repo root by
 default. The metadata sidecar records the serial order that the transforms in
-`calibrate.pkl` use.
+`calibrate.pkl` use, along with the calibration board profile.
 
 If cameras have been physically swapped on the rig, rerun calibration before
 recording. Serial checks can catch a wrong or replaced device, but they cannot
@@ -446,7 +509,14 @@ Useful options:
 ```bash
 python cameras_calibrate.py --width 1280 --height 720 --fps 5 --num-cam 3
 python cameras_calibrate.py --serials 239222303506 239222300412 239222300781
+python cameras_calibrate.py --calibration-board legacy-4x5-50mm
 ```
+
+The old `legacy-4x5-50mm` board profile remains available only for reproducing
+older calibrations and is deprecated for new rig calibration. For a one-off
+custom target, override the selected profile with `--board-squares-x`,
+`--board-squares-y`, `--board-square-size-mm`, `--board-marker-size-mm`, and
+`--board-dictionary`.
 
 ## 3. Record
 

@@ -46,6 +46,7 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_record_data_preflight_message_smoke",
                 "tests.test_record_data_realtime_align_smoke",
                 "tests.test_calibration_metadata_smoke",
+                "tests.test_calibration_board_profiles",
                 "tests.test_multi_realsense_order_smoke",
                 "tests.test_calibrate_loader_smoke",
                 "tests.test_aligned_metadata_loader_smoke",
@@ -58,9 +59,8 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_sam31_still_object_benchmark_smoke",
                 "tests.test_sam21_checkpoint_ladder_panel_smoke",
                 "tests.test_demo_v03_prepare_ir_triplets_smoke",
-                "tests.test_demo_v2_1_three_view_fused_pcd_smoke",
-                "tests.test_demo_v2_1_5_realsense_depth_smoke",
                 "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
+                "tests.test_demo_v2_3_dual_gpu_smoke",
                 "tests.test_demo3_tracking_contract_smoke",
                 "tests.test_demo3_tracking_sampling_smoke",
                 "tests.test_demo3_tracking_io_smoke",
@@ -75,6 +75,9 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_demo3_contract",
                 "tests.test_demo3_cotracker_worker",
                 "tests.test_demo3_overlay_lift",
+                "tests.test_demo31_dual_gpu_contract",
+                "tests.test_demo31_ipc_latest_wins",
+                "tests.test_demo31_cotracker_process_config",
                 "tests.test_check_all_smoke",
             ],
             commands,
@@ -89,13 +92,10 @@ class CheckAllSmokeTest(unittest.TestCase):
         commands = check_all.build_commands(python="python", profile="full")
         self.assertGreater(len(commands), len(check_all.build_commands(python="python", profile="quick")))
         self.assertIn(["python", "cameras_viewer_FFS.py", "--help"], commands)
-        self.assertIn(["python", "demo_v1/realtime_single_camera_pointcloud.py", "--help"], commands)
-        self.assertIn(["python", "demo_v2/realtime_single_camera_pointcloud.py", "--help"], commands)
-        self.assertIn(["python", "demo_v2/realtime_masked_edgetam_pcd.py", "--help"], commands)
-        self.assertIn(["python", "demo_v2_1/realtime_three_view_masked_fused_pcd.py", "--help"], commands)
-        self.assertIn(["python", "demo_v2_1_5/realtime_three_view_async_filtered_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py", "--help"], commands)
+        self.assertIn(["python", "demo_v2_3/realtime_three_view_dual_gpu_async_filtered_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "demo_v3/realtime_three_view_cotracker3_realsense_overlay.py", "--help"], commands)
+        self.assertIn(["python", "demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py", "--help"], commands)
         self.assertIn(["python", "scripts/demo_v0_3/prepare_ir_triplet_100kits.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/realtime_single_camera_pointcloud.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py", "--help"], commands)

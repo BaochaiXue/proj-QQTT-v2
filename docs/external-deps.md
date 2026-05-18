@@ -17,6 +17,31 @@
 - Runtime role: optional SAM 3.1 sidecar mask generation for aligned-case visualization diagnostics
 - Vendoring policy: keep external, do not copy source or weights into the QQTT repo
 
+## CoTracker3
+
+- Official code repo: `https://github.com/facebookresearch/co-tracker`
+- Official checkpoint repo: `https://huggingface.co/facebook/cotracker3`
+- Local repo path: `/home/xinjie/co-tracker`
+- Local checkpoint directory: `/home/xinjie/co-tracker/checkpoints`
+- Local checkpoints:
+  - `scaled_online.pth`: `101,695,610` bytes,
+    sha256 `205d34789f19699d64b22cf93f9b697f15f28d4025240e31532e504109837218`
+  - `scaled_offline.pth`: `101,890,938` bytes,
+    sha256 `2670d4562ed69326dda775a26e54883925cd11b6fc9b24cb7aa9f8078bce7834`
+  - `baseline_online.pth`: `101,694,458` bytes,
+    sha256 `8b30b2f239de9987323b729d9115cc5163720a07348a97d045095cd9ebdb7b3a`
+  - `baseline_offline.pth`: `101,889,786` bytes,
+    sha256 `da09bbac871f7398e5b29c4de5213652658949737bc158840b101678ba8ad1df`
+- How obtained: reconciled all `.pth` files with
+  `/home/xinjie/.local/bin/hf download facebook/cotracker3 --local-dir /home/xinjie/co-tracker/checkpoints --include "*.pth"`
+- Date obtained: `2026-05-17`
+- Runtime role: Demo 3 async CoTracker3 online overlay baseline and offline /
+  baseline model availability for replay, benchmark, and comparison diagnostics
+- PyTorch Hub cache: `~/.cache/torch/hub/checkpoints/*.pth` points at the
+  local checkpoint files so Demo 3's default torch.hub path can start without
+  redownloading weights
+- Vendoring policy: keep external, do not copy source or weights into the QQTT repo
+
 ## Selected Checkpoint
 
 - Checkpoint name: `23-36-37`
