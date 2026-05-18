@@ -2849,6 +2849,8 @@ class Demo21Runtime:
         self._debug_fusion_saved_group_ids: set[int] = set()
         self._debug_original_c2w_by_camera: dict[int, np.ndarray] = {}
         self._debug_effective_c2w_mapping_mode = "calibrate-c2w"
+        self._summary_write_lock = threading.Lock()
+        self._summary_written = False
         self._last_debug_s = 0.0
         self._render_request: Callable[[], None] = lambda: None
         self._fatal_error: str | None = None
@@ -3198,7 +3200,7 @@ class Demo21Runtime:
         finally:
             self.stop()
             self._gpu_sampler.stop()
-            self._write_summary()
+            self._write_summary_once()
         return 1 if self._fatal_error is not None else 0
 
     def warm_init_caches(
@@ -3763,6 +3765,13 @@ class Demo21Runtime:
             else:
                 profile_path = output_root / f"session_{timestamp}_profile.json"
             self._write_profile_report(profile_path)
+
+    def _write_summary_once(self) -> None:
+        with self._summary_write_lock:
+            if self._summary_written:
+                return
+            self._summary_written = True
+        self._write_summary()
 
     def _profile_summary_for_records(self, records: Sequence[dict[str, Any]]) -> dict[str, Any]:
         complete = [record for record in records if record.get("complete")]
@@ -7962,10 +7971,12 @@ class Demo21Runtime:
             self.stop_event.set()
             self._render_request = lambda: None
             self._summary["open3d_shutdown_requested"] = True
-            if fast_exit_after_open3d and first_request:
+            if first_request:
                 self.stop()
                 self._gpu_sampler.stop()
-                self._write_summary()
+                self._summary["open3d_profile_flushed_before_teardown"] = True
+                self._write_summary_once()
+            if fast_exit_after_open3d and first_request:
                 os._exit(0)
             if close_window:
                 try:

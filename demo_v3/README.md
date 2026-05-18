@@ -58,3 +58,9 @@ Recommended live validation order:
 2. injected/fake CoTracker overlay in tests
 3. real CoTracker with default `--cotracker-query-count auto`
 4. optional readability tuning through `--overlay-max-points-per-camera`
+
+Rendered FPS profiling must use `--render-mode pointcloud`; no-render runs are
+upstream isolation only. For finite-duration rendered profiles, the shared
+three-view runtime writes its profile before Open3D teardown. If the GUI still
+hangs or crashes during teardown on the local workstation, run through
+`scripts/harness/run_wslg_open3d.sh` or set `QQTT_WSLG_OPEN3D_FAST_EXIT=1`.

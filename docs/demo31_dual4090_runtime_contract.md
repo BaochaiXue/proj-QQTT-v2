@@ -112,6 +112,17 @@ tracking_sample_background_hits_by_camera
 overlay_display_count_by_camera
 ```
 
+Rendered FPS claims must come from `--render-mode pointcloud` runs. A
+`--render-mode none` run can isolate mask/fusion/tracking throughput, but it is
+not a rendered FPS result. Demo 3.1 delegates Open3D rendering to the shared
+three-view runtime, which stops workers and writes the shared runtime profile
+before requesting Open3D teardown on finite-duration runs. On workstations where
+Open3D/Filament teardown can still hang or crash, launch rendered profiles
+through `scripts/harness/run_wslg_open3d.sh` or set
+`QQTT_WSLG_OPEN3D_FAST_EXIT=1`. If fast exit is used, the shared runtime profile
+is the durable source of truth; wrapper-level summary output may be bypassed by
+the direct process exit.
+
 ## Boundaries
 
 - Demo 3.0 remains the stable single-process lineage.

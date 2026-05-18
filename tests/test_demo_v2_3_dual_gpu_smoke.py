@@ -354,6 +354,8 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         )
         runtime = demo23.Demo23Runtime(args)
         runtime._start_threads = lambda: None  # type: ignore[method-assign]
+        summary_writes = []
+        runtime._write_summary = lambda: summary_writes.append(True)  # type: ignore[method-assign]
 
         class FakeWindow:
             def __init__(self) -> None:
@@ -474,6 +476,8 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertTrue(runtime._summary["open3d_shutdown_requested"])
         self.assertTrue(runtime._summary["open3d_window_close_requested"])
         self.assertTrue(runtime._summary["open3d_app_quit_requested"])
+        self.assertTrue(runtime._summary["open3d_profile_flushed_before_teardown"])
+        self.assertEqual(len(summary_writes), 1)
 
     def test_sam31_runtime_releases_before_dual_gpu_steady_state(self) -> None:
         parser = demo23.build_arg_parser()

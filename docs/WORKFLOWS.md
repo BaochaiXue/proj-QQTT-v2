@@ -125,6 +125,59 @@ for live semantics; both modes track the object/controller union with
 FuturePhysTwin-compatible dense CoTracker queries while keeping the rendered
 overlay cap separate.
 
+For Demo 2.2, Demo 2.3, Demo 3.0, and Demo 3.1 performance claims, use the
+rendered point-cloud path when reporting rendered FPS. A `--render-mode none`
+run is useful for upstream isolation, but it must not be described as rendered
+FPS. Finite-duration Open3D runs now stop workers and write summary/profile
+artifacts before requesting Open3D window/app teardown, so a later
+Open3D/Filament teardown hang or crash should not eat the profile JSON. On
+workstations where Open3D teardown is still unreliable, run through
+`scripts/harness/run_wslg_open3d.sh` or set `QQTT_WSLG_OPEN3D_FAST_EXIT=1`.
+
+Rendered profile command templates:
+
+```bash
+scripts/harness/run_wslg_open3d.sh \
+  conda run --no-capture-output -n demo_2_max \
+  python demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py \
+  --duration-s 120 \
+  --warmup-s 40 \
+  --gpu-sampling \
+  --render-micro-profile \
+  --profile-json-output docs/generated/demo22_rendered_pointcloud_profile.json
+
+scripts/harness/run_wslg_open3d.sh \
+  conda run --no-capture-output -n demo_2_max \
+  python demo_v2_3/realtime_three_view_dual_gpu_async_filtered_fused_pcd.py \
+  --fps 30 \
+  --duration-s 120 \
+  --warmup-s 40 \
+  --gpu-sampling \
+  --gpu-sampling-device-indexes 0,1 \
+  --render-mode pointcloud \
+  --render-micro-profile \
+  --profile-json-output docs/generated/demo23_rendered_pointcloud_profile.json
+
+scripts/harness/run_wslg_open3d.sh \
+  conda run --no-capture-output -n demo_2_max \
+  python demo_v3/realtime_three_view_cotracker3_realsense_overlay.py \
+  --duration-s 120 \
+  --render-mode pointcloud \
+  --profile-json-output docs/generated/demo3_rendered_pointcloud_profile.json
+
+scripts/harness/run_wslg_open3d.sh \
+  conda run --no-capture-output -n demo_2_max \
+  python demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py \
+  --duration-s 120 \
+  --render-mode pointcloud \
+  --profile-json-output docs/generated/demo31_rendered_pointcloud_profile.json
+```
+
+When interpreting those profiles, check `render_backpressure_count`,
+`render_total_ms`, `render_buffer_dropped_total`, and the upstream publish FPS
+together. If rendered FPS tracks fusion/filter FPS and render backpressure is
+zero, the bottleneck is upstream supply rather than Open3D rendering.
+
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:
 

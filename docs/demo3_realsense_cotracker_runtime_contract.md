@@ -205,6 +205,16 @@ tracking_mask_scope = object_controller_union
 tracking_query_mode = phystwin_dense
 ```
 
+Rendered FPS claims must come from `--render-mode pointcloud` runs, not
+`--render-mode none` isolation runs. Demo 3 delegates Open3D rendering to the
+shared three-view runtime, which stops workers and writes the shared runtime
+profile before requesting Open3D teardown on finite-duration runs. On
+workstations where Open3D/Filament teardown can still hang or crash, launch the
+rendered profile through `scripts/harness/run_wslg_open3d.sh` or set
+`QQTT_WSLG_OPEN3D_FAST_EXIT=1`. If fast exit is used, the shared runtime profile
+is the durable source of truth; wrapper-level summary output may be bypassed by
+the direct process exit.
+
 ## Live Validation
 
 Before opening the live runtime, Demo 3 validates:

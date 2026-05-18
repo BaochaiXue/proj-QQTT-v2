@@ -35,3 +35,9 @@ conda run --no-capture-output -n demo3-max \
 
 Live validation still requires a real root-level `calibrate.pkl` that covers the
 active three RealSense serials.
+
+Rendered FPS profiling must use `--render-mode pointcloud`; no-render runs are
+upstream isolation only. For finite-duration rendered profiles, the shared
+three-view runtime writes its profile before Open3D teardown. If the GUI still
+hangs or crashes during teardown on the local workstation, run through
+`scripts/harness/run_wslg_open3d.sh` or set `QQTT_WSLG_OPEN3D_FAST_EXIT=1`.
