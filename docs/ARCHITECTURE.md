@@ -87,6 +87,7 @@ data product.
 - `demo_v2_1/**`
 - `demo_v2_1_5/**`
 - `demo_v2_2/**`
+- `demo_v2_3/**`
 - `demo_v3/**`
 - `demo_v3_1/**`
 - `qqtt/demo/**`

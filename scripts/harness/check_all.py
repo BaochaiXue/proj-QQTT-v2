@@ -38,6 +38,7 @@ DEMO_HELP_SCRIPTS: tuple[str, ...] = (
     "demo_v2_1/realtime_three_view_masked_fused_pcd.py",
     "demo_v2_1_5/realtime_three_view_async_filtered_fused_pcd.py",
     "demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py",
+    "demo_v2_3/realtime_three_view_dual_gpu_async_filtered_fused_pcd.py",
     "demo_v3/realtime_three_view_cotracker3_realsense_overlay.py",
     "demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py",
 )
@@ -69,6 +70,7 @@ QUICK_UNITTEST_BATCHES: tuple[tuple[str, ...], ...] = (
         "tests.test_demo_v2_1_three_view_fused_pcd_smoke",
         "tests.test_demo_v2_1_5_realsense_depth_smoke",
         "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
+        "tests.test_demo_v2_3_dual_gpu_smoke",
         "tests.test_demo3_tracking_contract_smoke",
         "tests.test_demo3_tracking_sampling_smoke",
         "tests.test_demo3_tracking_io_smoke",
@@ -219,6 +221,7 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_cleanup_different_types_cases_smoke",
     "tests.test_demo_v2_1_three_view_fused_pcd_smoke",
     "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
+    "tests.test_demo_v2_3_dual_gpu_smoke",
     "tests.test_demo3_tracking_contract_smoke",
     "tests.test_demo3_tracking_sampling_smoke",
     "tests.test_demo3_tracking_io_smoke",

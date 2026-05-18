@@ -11,6 +11,7 @@ from itertools import product
 import json
 import os
 from pathlib import Path
+import queue
 import sys
 import threading
 import time
@@ -146,6 +147,7 @@ PRESET_DEMO215_LIVE_QUALITY_FFS = "demo2.1.5-live-quality-ffs"
 PRESET_DEMO215_MASK_ONLY_DEBUG = "demo2.1.5-mask-only-debug"
 PRESET_DEMO22_ASYNC_FILTER_5FPS = "demo2.2-async-filter-5fps"
 PRESET_DEMO22_STAGED_PARALLEL_5FPS = "demo2.2-staged-parallel-5fps"
+PRESET_DEMO23_DUAL4090_MAXFPS = "demo2.3-dual4090-maxfps"
 PRESET_CLIMB_5 = "climb-5"
 PRESET_CLIMB_10 = "climb-10"
 PRESET_DIAGNOSTICS = "diagnostics"
@@ -168,6 +170,7 @@ PRESETS = (
     PRESET_DEMO215_MASK_ONLY_DEBUG,
     PRESET_DEMO22_ASYNC_FILTER_5FPS,
     PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+    PRESET_DEMO23_DUAL4090_MAXFPS,
     PRESET_CLIMB_5,
     PRESET_CLIMB_10,
     PRESET_DIAGNOSTICS,
@@ -406,11 +409,13 @@ GPU_PIPELINE_MODE_SEPARATE_WORKERS = "separate-workers"
 GPU_PIPELINE_MODE_SINGLE_OWNER = "single-owner"
 GPU_PIPELINE_MODE_STAGED = "staged"
 GPU_PIPELINE_MODE_OVERLAPPED_STAGES = "overlapped-stages"
+GPU_PIPELINE_MODE_DUAL_GPU_SPLIT = "dual-gpu-split"
 GPU_PIPELINE_MODES = (
     GPU_PIPELINE_MODE_SEPARATE_WORKERS,
     GPU_PIPELINE_MODE_SINGLE_OWNER,
     GPU_PIPELINE_MODE_STAGED,
     GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+    GPU_PIPELINE_MODE_DUAL_GPU_SPLIT,
 )
 SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM = "ffs-then-edgetam"
 SINGLE_OWNER_ORDER_EDGETAM_THEN_FFS = "edgetam-then-ffs"
@@ -1489,6 +1494,76 @@ class GpuUtilizationSampler:
                 pass
 
 
+class MultiGpuUtilizationSampler:
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        interval_s: float,
+        backend: str,
+        device_indexes: Sequence[int],
+        rel_time_fn: Callable[[], float],
+    ) -> None:
+        unique_indexes = tuple(dict.fromkeys(int(index) for index in device_indexes))
+        if not unique_indexes:
+            unique_indexes = (0,)
+        self.enabled = bool(enabled)
+        self.interval_s = max(0.05, float(interval_s))
+        self.requested_backend = str(backend)
+        self.device_indexes = unique_indexes
+        self._samplers = {
+            int(index): GpuUtilizationSampler(
+                enabled=self.enabled,
+                interval_s=self.interval_s,
+                backend=self.requested_backend,
+                device_index=int(index),
+                rel_time_fn=rel_time_fn,
+            )
+            for index in self.device_indexes
+        }
+
+    def start(self) -> None:
+        for sampler in self._samplers.values():
+            sampler.start()
+
+    def stop(self) -> None:
+        for sampler in self._samplers.values():
+            sampler.stop()
+
+    def samples_snapshot(self) -> list[dict[str, Any]]:
+        samples: list[dict[str, Any]] = []
+        for sampler in self._samplers.values():
+            samples.extend(sampler.samples_snapshot())
+        samples.sort(key=lambda item: (float(item.get("sample_s", 0.0) or 0.0), int(item.get("device_index", 0))))
+        return samples
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "requested_backend": self.requested_backend,
+            "interval_s": self.interval_s,
+            "device_indexes": list(self.device_indexes),
+            "devices": {
+                str(index): sampler.diagnostics()
+                for index, sampler in sorted(self._samplers.items())
+            },
+        }
+
+
+def summarize_gpu_samples_by_device(samples: Sequence[dict[str, Any]], *, start_s: float = 0.0) -> dict[str, Any]:
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for sample in samples:
+        try:
+            device_index = int(sample.get("device_index", 0))
+        except Exception:
+            device_index = 0
+        grouped.setdefault(device_index, []).append(dict(sample))
+    return {
+        str(device_index): summarize_gpu_samples(device_samples, start_s=start_s)
+        for device_index, device_samples in sorted(grouped.items())
+    }
+
+
 def fuse_semantic_camera_clouds(
     camera_clouds: Sequence[CameraLayerCloud],
     layers: Sequence[SemanticLayerSpec],
@@ -1618,6 +1693,17 @@ def parse_camera_ids(value: str) -> tuple[int, ...]:
     if len(set(ids)) != len(ids):
         raise argparse.ArgumentTypeError(f"Camera ids must be unique: {ids}")
     return ids
+
+
+def parse_gpu_sampling_device_indexes(value: str) -> tuple[int, ...]:
+    indexes = tuple(int(part.strip()) for part in str(value).split(",") if part.strip())
+    if not indexes:
+        raise argparse.ArgumentTypeError("GPU sampling indexes must look like 0 or 0,1")
+    if any(index < 0 for index in indexes):
+        raise argparse.ArgumentTypeError(f"GPU sampling indexes must be non-negative: {indexes}")
+    if len(set(indexes)) != len(indexes):
+        raise argparse.ArgumentTypeError(f"GPU sampling indexes must be unique: {indexes}")
+    return indexes
 
 
 def parse_profile(value: str) -> tuple[int, int]:
@@ -1763,6 +1849,48 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+        elif preset == PRESET_DEMO23_DUAL4090_MAXFPS:
+            _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=30)
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
+            _set_if_not_explicit(args, explicit, flag="--capture-group-target-fps", attr="capture_group_target_fps", value=15.0)
+            _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_FFS)
+            _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
+            _set_if_not_explicit(args, explicit, flag="--ffs-trt-batch-size", attr="ffs_trt_batch_size", value=3)
+            _set_if_not_explicit(args, explicit, flag="--gpu-pipeline-mode", attr="gpu_pipeline_mode", value=GPU_PIPELINE_MODE_DUAL_GPU_SPLIT)
+            _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_SHARED)
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--edgetam-batch-vision-encoder",
+                attr="edgetam_batch_vision_encoder",
+                value=True,
+            )
+            _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=False)
+            _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+            _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
+            _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
+            _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
+            _set_if_not_explicit(args, explicit, flag="--object-prompt", attr="object_prompt", value="stuffed animal")
+            _set_if_not_explicit(args, explicit, flag="--experiment-mode", attr="experiment_mode", value=DEFAULT_DEMO22_EXPERIMENT_MODE)
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--controller-prompt",
+                attr="controller_prompt",
+                value=controller_prompt_for_experiment_mode(resolved_experiment_mode(args)),
+            )
+            _set_if_not_explicit(args, explicit, flag="--depth-min-m", attr="depth_min_m", value=DEFAULT_DEMO22_DEPTH_MIN_M)
+            _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
+            _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
+            _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+            _set_if_not_explicit(args, explicit, flag="--ffs-device", attr="ffs_device", value="cuda:0")
+            _set_if_not_explicit(args, explicit, flag="--edgetam-device", attr="edgetam_device", value="cuda:1")
+            _set_if_not_explicit(args, explicit, flag="--sam31-device", attr="sam31_device", value=str(getattr(args, "edgetam_device", "cuda:1")))
+            _set_if_not_explicit(args, explicit, flag="--dual-gpu-queue-size", attr="dual_gpu_queue_size", value=2)
+            _set_if_not_explicit(args, explicit, flag="--dual-gpu-transport", attr="dual_gpu_transport", value="pickle")
+            _set_if_not_explicit(args, explicit, flag="--dual-gpu-start-method", attr="dual_gpu_start_method", value="spawn")
+            _set_if_not_explicit(args, explicit, flag="--dual-gpu-processes", attr="dual_gpu_processes", value=True)
         elif preset == PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS:
             _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
@@ -1916,10 +2044,12 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
                 PRESET_DEMO215_MASK_ONLY_DEBUG,
                 PRESET_DEMO22_ASYNC_FILTER_5FPS,
                 PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+                PRESET_DEMO23_DUAL4090_MAXFPS,
             }
             and "--capture-group-target-fps" not in explicit
         ):
-            setattr(args, "capture_group_target_fps", float(args.fps))
+            if preset != PRESET_DEMO23_DUAL4090_MAXFPS:
+                setattr(args, "capture_group_target_fps", float(args.fps))
     if int(getattr(args, "ffs_trt_batch_size", 1)) == 3 and "--ffs-trt-model-dir" not in explicit:
         setattr(args, "ffs_trt_model_dir", str(DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR))
     _normalize_pin_memory_options(args, explicit)
@@ -2216,6 +2346,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         PRESET_DEMO22_ASYNC_FILTER_5FPS,
         PRESET_DEMO22_STAGED_PARALLEL_5FPS,
     }
+    is_demo23_preset = preset_canonical == PRESET_DEMO23_DUAL4090_MAXFPS
     is_demo215_preset = preset_canonical in {
         PRESET_DEMO215_ASYNC_FILTER_5FPS,
         PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS,
@@ -2229,12 +2360,15 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     stage_scheduler_mode = str(getattr(args, "stage_scheduler_mode", STAGE_SCHEDULER_MODE_MASK_GATED))
     return {
         "demo": (
-            "demo_2_2_async_filtered_fused_pcd"
+            "demo_2_3_dual_gpu_async_filtered_fused_pcd"
+            if is_demo23_preset
+            else "demo_2_2_async_filtered_fused_pcd"
             if is_demo22_preset
             else "demo_2_1_5_realsense_async_filtered_fused_pcd"
             if is_demo215_preset
             else "demo_2_1_three_view_fused_masked_pcd"
         ),
+        "demo_version": "demo2.3" if is_demo23_preset else "demo2.2" if is_demo22_preset else "demo2.1.5" if is_demo215_preset else "demo2.1",
         "preset": getattr(args, "preset", PRESET_NONE),
         "preset_canonical": preset_canonical,
         "camera_ids": list(args.camera_ids),
@@ -2243,6 +2377,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "track_mode": args.track_mode,
         "experiment_mode": experiment_mode,
         "controller_semantic": expected_controller_prompt,
+        "object_prompt": str(getattr(args, "object_prompt", "")),
         "controller_prompt": str(getattr(args, "controller_prompt", "")),
         "controller_prompt_expected": expected_controller_prompt,
         "controller_prompt_matches_experiment_mode": controller_prompt_matches_experiment_mode(args),
@@ -2303,6 +2438,10 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "interval_s": float(getattr(args, "gpu_sampling_interval_s", 0.5)),
             "backend": str(getattr(args, "gpu_sampling_backend", "nvml")),
             "device_index": int(getattr(args, "gpu_sampling_device_index", 0)),
+            "device_indexes": list(
+                getattr(args, "gpu_sampling_device_indexes", None)
+                or (int(getattr(args, "gpu_sampling_device_index", 0)),)
+            ),
         },
         "profiling": {
             "profile_cuda_events": bool(args.profile_cuda_events),
@@ -2317,18 +2456,29 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                 args.staged_order
                 if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED
                 else (
+                    "dual_gpu_process_split"
+                    if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT
+                    else (
                     "cross_group_overlap"
                     if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES
                     else args.single_owner_order
+                    )
                 )
             ),
             "staged_order": args.staged_order,
             "ffs_stage": (
+                "dual_gpu_worker_process_cuda0"
+                if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT
+                else (
                 "sequential_cam0_cam1_cam2"
                 if args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_STAGED, GPU_PIPELINE_MODE_OVERLAPPED_STAGES}
                 else None
+                )
             ),
             "edgetam_stage": (
+                "dual_gpu_worker_process_cuda1_batch_vision"
+                if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT
+                else (
                 (
                     "batch_vision_stateful_decode"
                     if args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES
@@ -2336,12 +2486,16 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 if args.gpu_pipeline_mode in {GPU_PIPELINE_MODE_STAGED, GPU_PIPELINE_MODE_OVERLAPPED_STAGES}
                 else None
+                )
             ),
             "depth_and_masks_published_together": args.gpu_pipeline_mode in {
                 GPU_PIPELINE_MODE_SINGLE_OWNER,
                 GPU_PIPELINE_MODE_STAGED,
             },
-            "same_group_join_required": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+            "same_group_join_required": args.gpu_pipeline_mode in {
+                GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+                GPU_PIPELINE_MODE_DUAL_GPU_SPLIT,
+            },
             "overlap_across_groups": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
             "stage_scheduler_mode": stage_scheduler_mode,
             "stage_lookahead": int(getattr(args, "stage_lookahead", 1)),
@@ -2357,7 +2511,23 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                 and stage_scheduler_mode == STAGE_SCHEDULER_MODE_BOUNDED_LOOKAHEAD
                 else "capture_dispatch"
             ),
-            "separate_ffs_and_edgetam_workers": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_SEPARATE_WORKERS,
+            "separate_ffs_and_edgetam_workers": args.gpu_pipeline_mode in {
+                GPU_PIPELINE_MODE_SEPARATE_WORKERS,
+                GPU_PIPELINE_MODE_DUAL_GPU_SPLIT,
+            },
+            "cross_process_gpu_split": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT,
+        },
+        "dual_gpu": {
+            "enabled": args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT,
+            "ffs_device": str(getattr(args, "ffs_device", "cuda:0")),
+            "edgetam_device": str(getattr(args, "edgetam_device", "cuda:1")),
+            "sam31_device": str(getattr(args, "sam31_device", getattr(args, "edgetam_device", "cuda:1"))),
+            "queue_size": int(getattr(args, "dual_gpu_queue_size", 2)),
+            "transport": str(getattr(args, "dual_gpu_transport", "pickle")),
+            "start_method": str(getattr(args, "dual_gpu_start_method", "spawn")),
+            "processes": bool(getattr(args, "dual_gpu_processes", True)),
+            "profile_workers": bool(getattr(args, "dual_gpu_profile_workers", False)),
+            "cpu_numpy_contract": True,
         },
         "memory_for_speed": {
             "static_device_buffers": bool(args.static_device_buffers),
@@ -2369,6 +2539,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                 GPU_PIPELINE_MODE_SINGLE_OWNER,
                 GPU_PIPELINE_MODE_STAGED,
                 GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+                GPU_PIPELINE_MODE_DUAL_GPU_SPLIT,
             },
         },
         "h2d_transfer": {
@@ -2528,13 +2699,38 @@ class Demo21Runtime:
         self._profile_lock = threading.Lock()
         self._profile_started_perf_s = time.perf_counter()
         self._profile_records: dict[int, dict[str, Any]] = {}
-        self._gpu_sampler = GpuUtilizationSampler(
-            enabled=bool(getattr(args, "gpu_sampling", False)),
-            interval_s=float(getattr(args, "gpu_sampling_interval_s", 0.5)),
-            backend=str(getattr(args, "gpu_sampling_backend", "auto")),
-            device_index=int(getattr(args, "gpu_sampling_device_index", 0)),
-            rel_time_fn=self._profile_rel_s,
-        )
+        gpu_sampling_indexes = getattr(args, "gpu_sampling_device_indexes", None)
+        if gpu_sampling_indexes is None:
+            gpu_sampling_indexes = (int(getattr(args, "gpu_sampling_device_index", 0)),)
+        if len(tuple(gpu_sampling_indexes)) > 1:
+            self._gpu_sampler = MultiGpuUtilizationSampler(
+                enabled=bool(getattr(args, "gpu_sampling", False)),
+                interval_s=float(getattr(args, "gpu_sampling_interval_s", 0.5)),
+                backend=str(getattr(args, "gpu_sampling_backend", "auto")),
+                device_indexes=tuple(int(index) for index in gpu_sampling_indexes),
+                rel_time_fn=self._profile_rel_s,
+            )
+        else:
+            self._gpu_sampler = GpuUtilizationSampler(
+                enabled=bool(getattr(args, "gpu_sampling", False)),
+                interval_s=float(getattr(args, "gpu_sampling_interval_s", 0.5)),
+                backend=str(getattr(args, "gpu_sampling_backend", "auto")),
+                device_index=int(tuple(gpu_sampling_indexes)[0]),
+                rel_time_fn=self._profile_rel_s,
+            )
+        self._dual_gpu_start_lock = threading.Lock()
+        self._dual_gpu_processes_started = False
+        self._dual_gpu_context: Any | None = None
+        self._dual_gpu_ffs_task_queue: Any | None = None
+        self._dual_gpu_edgetam_task_queue: Any | None = None
+        self._dual_gpu_result_queue: Any | None = None
+        self._dual_gpu_processes: list[Any] = []
+        self._dual_gpu_ffs_queue_drops = 0
+        self._dual_gpu_edgetam_queue_drops = 0
+        self._dual_gpu_depth_groups_received = 0
+        self._dual_gpu_mask_groups_received = 0
+        self._dual_gpu_last_dispatch_s: float | None = None
+        self._dual_gpu_dispatch_periods_ms: list[float] = []
         self._latest_depth_group: DepthGroup | None = None
         self._latest_raw_fused: RawFusedPcdPacket | None = None
         self._latest_fused: FusedPcdPacket | None = None
@@ -2658,6 +2854,10 @@ class Demo21Runtime:
                     _deep_update_dict(record[key], value)
                 else:
                     record[key] = value
+
+    def pop_profile_record(self, group_id: int) -> dict[str, Any]:
+        with self._profile_lock:
+            return dict(self._profile_records.pop(int(group_id), {}))
 
     def _profile_mark_drop(self, group_id: int, reason: str) -> None:
         if not self._profile_enabled:
@@ -2783,6 +2983,7 @@ class Demo21Runtime:
         if (
             self.args.init_mode == "sam31-first-frame"
             and bool(getattr(self.args, "sam31_cache_init_model", False))
+            and self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_DUAL_GPU_SPLIT
         ):
             tasks["sam31_preload"] = self._preload_sam31_init_model
         self._init_profile_update(
@@ -2901,10 +3102,9 @@ class Demo21Runtime:
             if self.args.gpu_pipeline_mode not in {
                 GPU_PIPELINE_MODE_SINGLE_OWNER,
                 GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+                GPU_PIPELINE_MODE_DUAL_GPU_SPLIT,
             }:
-                raise RuntimeError(
-                    "Demo 2.1 --edgetam-batch-vision-encoder requires single-owner or overlapped-stages GPU pipeline"
-                )
+                raise RuntimeError("Demo 2.1 --edgetam-batch-vision-encoder requires single-owner, overlapped-stages, or dual-gpu-split GPU pipeline")
             if self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_SHARED:
                 raise RuntimeError("Demo 2.1 --edgetam-batch-vision-encoder requires shared EdgeTAM model topology")
             if edge_pin_memory_enabled(self.args):
@@ -2929,10 +3129,26 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 overlapped-stages mode requires --edgetam-model-topology shared")
         if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED and self.args.gpu_gate_mode != GPU_GATE_MODE_OFF:
             raise RuntimeError("Demo 2.1 staged mode requires --gpu-gate-mode off so EdgeTAM can run in parallel")
+        if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT:
+            if self.args.depth_source != DEPTH_SOURCE_FFS:
+                raise RuntimeError("Demo 2.3 dual-gpu-split requires local FFS depth")
+            if self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_SHARED:
+                raise RuntimeError("Demo 2.3 dual-gpu-split requires shared EdgeTAM model topology")
+            if int(getattr(self.args, "dual_gpu_queue_size", 2)) < 1:
+                raise RuntimeError("Demo 2.3 --dual-gpu-queue-size must be >= 1")
+            if str(getattr(self.args, "dual_gpu_transport", "pickle")) != "pickle":
+                raise RuntimeError("Demo 2.3 currently supports only --dual-gpu-transport pickle")
+            if str(getattr(self.args, "dual_gpu_start_method", "spawn")) not in {"spawn", "forkserver"}:
+                raise RuntimeError("Demo 2.3 requires --dual-gpu-start-method spawn or forkserver")
         depth_pipeline_sources = {DEPTH_SOURCE_FFS, DEPTH_SOURCE_REALSENSE}
         if (
             self.args.gpu_pipeline_mode
-            in {GPU_PIPELINE_MODE_SINGLE_OWNER, GPU_PIPELINE_MODE_STAGED, GPU_PIPELINE_MODE_OVERLAPPED_STAGES}
+            in {
+                GPU_PIPELINE_MODE_SINGLE_OWNER,
+                GPU_PIPELINE_MODE_STAGED,
+                GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+                GPU_PIPELINE_MODE_DUAL_GPU_SPLIT,
+            }
             and self.args.depth_source not in depth_pipeline_sources
         ):
             raise RuntimeError("Demo 2.1 single-owner/staged/overlapped-stages modes require --depth-source ffs or realsense")
@@ -3012,6 +3228,13 @@ class Demo21Runtime:
                 raise RuntimeError("Demo 2.2 staged parallel requires --pin-memory-mode all")
             if self.args.ffs_input_staging != FFS_INPUT_STAGING_PINNED:
                 raise RuntimeError("Demo 2.2 staged parallel requires pinned FFS input staging")
+        if preset_canonical == PRESET_DEMO23_DUAL4090_MAXFPS:
+            if self.args.gpu_pipeline_mode != GPU_PIPELINE_MODE_DUAL_GPU_SPLIT:
+                raise RuntimeError("Demo 2.3 requires dual-gpu-split GPU pipeline")
+            if int(self.args.ffs_trt_batch_size) != 3:
+                raise RuntimeError("Demo 2.3 requires FFS TensorRT batch size 3")
+            if not async_fusion_filter_enabled(self.args):
+                raise RuntimeError("Demo 2.3 requires async latest-wins PCD filtering")
         if self.args.init_mode != "sam31-first-frame":
             raise RuntimeError("Formal Demo 2.1 requires live SAM3.1 initialization; saved masks are not allowed")
         if int(self.args.object_filter_cap) < 0 or int(self.args.controller_filter_cap) < 0:
@@ -3028,6 +3251,9 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --gpu-sampling-interval-s must be > 0")
         if int(self.args.gpu_sampling_device_index) < 0:
             raise RuntimeError("Demo 2.1 --gpu-sampling-device-index must be >= 0")
+        gpu_sampling_device_indexes = getattr(self.args, "gpu_sampling_device_indexes", None)
+        if gpu_sampling_device_indexes is not None and any(int(index) < 0 for index in gpu_sampling_device_indexes):
+            raise RuntimeError("Demo 2.1 --gpu-sampling-device-indexes must be >= 0")
         if self.args.gpu_sampling_backend not in GPU_SAMPLING_BACKENDS:
             raise RuntimeError(f"Demo 2.1 unsupported --gpu-sampling-backend {self.args.gpu_sampling_backend}")
         if float(self.args.sam31_init_retry_interval_s) < 0:
@@ -3129,10 +3355,12 @@ class Demo21Runtime:
 
     def stop(self) -> None:
         self.stop_event.set()
+        self._request_dual_gpu_worker_stop()
         for thread in list(self._threads):
             if thread.is_alive():
                 thread.join(timeout=1.0)
         self._threads.clear()
+        self._stop_dual_gpu_workers()
         self._shutdown_parallel_init_executor()
         if self.camera_system is not None:
             try:
@@ -3167,6 +3395,16 @@ class Demo21Runtime:
             "raw_fused_pending_replacements_total": self.raw_fused_slot.total_dropped_count,
             "render_buffer": self.render_buffer.snapshot(),
             "render_post_gate": self.render_post_gate.snapshot(),
+            "dual_gpu": {
+                "pipeline": GPU_PIPELINE_MODE_DUAL_GPU_SPLIT if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT else None,
+                "ffs_device": str(getattr(self.args, "ffs_device", "cuda:0")),
+                "edgetam_device": str(getattr(self.args, "edgetam_device", "cuda:1")),
+                "ffs_queue_drops": int(self._dual_gpu_ffs_queue_drops),
+                "edgetam_queue_drops": int(self._dual_gpu_edgetam_queue_drops),
+                "depth_groups_received": int(self._dual_gpu_depth_groups_received),
+                "mask_groups_received": int(self._dual_gpu_mask_groups_received),
+                "ready_join_count": int(self.stage_join_buffer.snapshot().get("ready_join_count", 0)),
+            },
             "gpu_gate_wait_ms_median": {
                 key: stats.median for key, stats in sorted(self.gpu_gate_wait_stats.items())
             },
@@ -3246,6 +3484,30 @@ class Demo21Runtime:
         summary["stage_pipeline"]["mean_mask_wait_after_depth_ms"] = (
             float(sum(mask_wait_values) / len(mask_wait_values)) if mask_wait_values else 0.0
         )
+        summary["dual_gpu"] = {
+            "pipeline": GPU_PIPELINE_MODE_DUAL_GPU_SPLIT if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT else None,
+            "ffs_device": str(getattr(self.args, "ffs_device", "cuda:0")),
+            "edgetam_device": str(getattr(self.args, "edgetam_device", "cuda:1")),
+            "capture_dispatch_fps": _event_fps(records, ("dual_gpu", "capture_dispatch_s")),
+            "depth_publish_fps": _event_fps(records, ("dual_gpu", "depth_publish_s")),
+            "mask_publish_fps": _event_fps(records, ("dual_gpu", "mask_publish_s")),
+            "join_publish_fps": _event_fps(records, ("stage_join", "publish_s")),
+            "display_packet_period_ms": period_stats["display_packet_publish_period_ms"],
+            "ffs_worker_period_ms": _profile_stats(_series_for_path(records, ("ffs_stage", "worker_period_ms"))),
+            "edgetam_worker_period_ms": _profile_stats(_series_for_path(records, ("edgetam_stage", "worker_period_ms"))),
+            "join_latency_ms": _profile_stats(_series_for_path(records, ("stage_join", "same_group_join_latency_ms"))),
+            "depth_ready_before_mask_ratio": summary["stage_pipeline"]["depth_ready_before_mask_ratio"],
+            "mean_depth_wait_after_mask_ms": summary["stage_pipeline"]["mean_depth_wait_after_mask_ms"],
+            "mean_mask_wait_after_depth_ms": summary["stage_pipeline"]["mean_mask_wait_after_depth_ms"],
+            "ffs_queue_drops": int(self._dual_gpu_ffs_queue_drops),
+            "edgetam_queue_drops": int(self._dual_gpu_edgetam_queue_drops),
+            "depth_groups_received": int(self._dual_gpu_depth_groups_received),
+            "mask_groups_received": int(self._dual_gpu_mask_groups_received),
+            "ready_join_count": int(self.stage_join_buffer.snapshot().get("ready_join_count", 0)),
+            "stale_depth_drops": int(self.stage_join_buffer.snapshot().get("depth_stale_drops", 0)),
+            "stale_mask_drops": int(self.stage_join_buffer.snapshot().get("mask_stale_drops", 0)),
+            "capture_dispatch_period_ms": _profile_stats(self._dual_gpu_dispatch_periods_ms),
+        }
         summary["raw_fused_pending_replacements_total"] = int(self.raw_fused_slot.total_dropped_count)
         summary["render_buffer_dropped_total"] = int(self.render_buffer.snapshot().get("dropped", 0))
         target_fps = float(self.args.fusion_target_fps)
@@ -3324,6 +3586,10 @@ class Demo21Runtime:
             "edgetam_stage_wall_ms": ("edgetam_stage", "wall_ms"),
             "edgetam_stage_request_to_start_ms": ("edgetam_stage", "request_to_start_ms"),
             "edgetam_stage_sum_model_ms": ("edgetam_stage", "sum_model_ms"),
+            "dual_gpu_ffs_worker_period_ms": ("ffs_stage", "worker_period_ms"),
+            "dual_gpu_edgetam_worker_period_ms": ("edgetam_stage", "worker_period_ms"),
+            "dual_gpu_ffs_queue_wait_ms": ("ffs_stage", "queued_wait_ms"),
+            "dual_gpu_edgetam_queue_wait_ms": ("edgetam_stage", "queued_wait_ms"),
             "stage_join_wall_ms": ("stage_join", "wall_ms"),
             "stage_join_depth_wait_after_mask_ms": ("stage_join", "depth_wait_after_mask_ms"),
             "stage_join_mask_wait_after_depth_ms": ("stage_join", "mask_wait_after_depth_ms"),
@@ -3460,10 +3726,22 @@ class Demo21Runtime:
         gpu_sampling = self._gpu_sampler.diagnostics()
         gpu_sampling["summary_full_run"] = summarize_gpu_samples(gpu_samples, start_s=0.0)
         gpu_sampling["summary_after_warmup"] = summarize_gpu_samples(gpu_samples, start_s=warmup_s)
+        gpu_sampling["summary_by_device_full_run"] = summarize_gpu_samples_by_device(gpu_samples, start_s=0.0)
+        gpu_sampling["summary_by_device_after_warmup"] = summarize_gpu_samples_by_device(gpu_samples, start_s=warmup_s)
+        device_diagnostics = gpu_sampling.get("devices")
+        if isinstance(device_diagnostics, dict):
+            for device_key, device_summary in gpu_sampling["summary_by_device_after_warmup"].items():
+                if isinstance(device_diagnostics.get(device_key), dict):
+                    device_diagnostics[device_key]["summary_after_warmup"] = device_summary
+                    device_diagnostics[device_key]["summary_full_run"] = gpu_sampling["summary_by_device_full_run"].get(device_key, {})
         gpu_sampling["samples"] = gpu_samples
         return {
             "preset": self.args.preset,
             "preset_canonical": getattr(self.args, "preset_canonical", canonical_preset_name(self.args.preset)),
+            "demo_version": "demo2.3" if getattr(self.args, "preset_canonical", "") == PRESET_DEMO23_DUAL4090_MAXFPS else "demo2.2" if getattr(self.args, "preset_canonical", "") in {PRESET_DEMO22_ASYNC_FILTER_5FPS, PRESET_DEMO22_STAGED_PARALLEL_5FPS} else "demo2.1",
+            "pipeline": str(self.args.gpu_pipeline_mode),
+            "ffs_device": str(getattr(self.args, "ffs_device", "cuda:0")),
+            "edgetam_device": str(getattr(self.args, "edgetam_device", "cuda:1")),
             "target_fps": float(self.args.fusion_target_fps),
             "capture_group_target_fps": resolved_capture_group_target_fps(self.args),
             "demo22_pass_threshold_fps": float(self.args.fusion_target_fps) * DEMO22_PASS_THRESHOLD_RATIO,
@@ -3756,6 +4034,10 @@ class Demo21Runtime:
                 specs.append(("ffs-stage", self._ffs_stage_worker))
                 specs.append(("edgetam-stage", self._edgetam_stage_worker))
                 specs.append(("stage-join", self._stage_join_fusion_worker))
+        elif self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT:
+            if self.args.track_mode != TRACK_MODE_NONE and depth_for_pcd:
+                specs.append(("dual-gpu-dispatch", self._dual_gpu_dispatch_worker))
+                specs.append(("dual-gpu-result-collector", self._dual_gpu_result_collector_worker))
         else:
             if self.args.depth_source == DEPTH_SOURCE_FFS:
                 specs.append(("shared-ffs", self._shared_ffs_worker))
@@ -3771,6 +4053,303 @@ class Demo21Runtime:
         if self.args.debug and self.args.render_mode == "none":
             specs.append(("debug", self._debug_worker))
         return specs
+
+    def _ensure_dual_gpu_workers_started(self) -> None:
+        if not bool(getattr(self.args, "dual_gpu_processes", True)):
+            return
+        with self._dual_gpu_start_lock:
+            if self._dual_gpu_processes_started:
+                return
+            from torch import multiprocessing as torch_multiprocessing
+            from qqtt.demo import demo23_dual_gpu_workers as workers
+
+            queue_size = max(1, int(getattr(self.args, "dual_gpu_queue_size", 2)))
+            context = torch_multiprocessing.get_context(str(getattr(self.args, "dual_gpu_start_method", "spawn")))
+            result_queue = context.Queue(maxsize=queue_size * 4)
+            ffs_queue = context.Queue(maxsize=queue_size)
+            edgetam_queue = context.Queue(maxsize=queue_size)
+            ffs_process = context.Process(
+                target=workers.run_ffs_worker,
+                args=(self.args, ffs_queue, result_queue),
+                name="demo2.3-ffs-cuda0",
+                daemon=True,
+            )
+            edgetam_process = context.Process(
+                target=workers.run_edgetam_worker,
+                args=(self.args, edgetam_queue, result_queue),
+                name="demo2.3-edgetam-cuda1",
+                daemon=True,
+            )
+            ffs_process.start()
+            edgetam_process.start()
+            self._dual_gpu_context = context
+            self._dual_gpu_ffs_task_queue = ffs_queue
+            self._dual_gpu_edgetam_task_queue = edgetam_queue
+            self._dual_gpu_result_queue = result_queue
+            self._dual_gpu_processes = [ffs_process, edgetam_process]
+            self._dual_gpu_processes_started = True
+            self._summary["dual_gpu_processes_started"] = True
+            self._summary["dual_gpu_ffs_pid"] = int(ffs_process.pid or -1)
+            self._summary["dual_gpu_edgetam_pid"] = int(edgetam_process.pid or -1)
+
+    def _request_dual_gpu_worker_stop(self) -> None:
+        if not self._dual_gpu_processes_started:
+            return
+        from qqtt.demo import demo23_dual_gpu_workers as workers
+
+        for task_queue in (self._dual_gpu_ffs_task_queue, self._dual_gpu_edgetam_task_queue):
+            if task_queue is None:
+                continue
+            try:
+                task_queue.put_nowait(workers.STOP)
+            except Exception:
+                try:
+                    task_queue.put(workers.STOP, timeout=0.2)
+                except Exception:
+                    pass
+
+    def _stop_dual_gpu_workers(self) -> None:
+        self._request_dual_gpu_worker_stop()
+        for process in list(self._dual_gpu_processes):
+            try:
+                process.join(timeout=3.0)
+            except Exception:
+                pass
+            if getattr(process, "is_alive", lambda: False)():
+                try:
+                    process.terminate()
+                    process.join(timeout=2.0)
+                except Exception:
+                    pass
+        self._dual_gpu_processes.clear()
+
+    def _dual_gpu_dispatch_worker(self) -> None:
+        if not bool(getattr(self.args, "dual_gpu_processes", True)):
+            self._mark_fatal_error(
+                "dual-gpu-dispatch",
+                RuntimeError("Demo 2.3 live mode requires process workers; --no-dual-gpu-processes is for dry-run/debug contracts"),
+            )
+            self.stop_event.set()
+            return
+        from qqtt.demo import demo23_dual_gpu_workers as workers
+
+        try:
+            self._ensure_dual_gpu_workers_started()
+            assert self._dual_gpu_ffs_task_queue is not None
+            assert self._dual_gpu_edgetam_task_queue is not None
+            queue_size = max(1, int(getattr(self.args, "dual_gpu_queue_size", 2)))
+            ffs_queue = workers.BoundedLatestTaskQueue(self._dual_gpu_ffs_task_queue, maxsize=queue_size)
+            edgetam_queue = workers.BoundedLatestTaskQueue(self._dual_gpu_edgetam_task_queue, maxsize=queue_size)
+            last_group_id = -1
+            while not self.stop_event.is_set():
+                group = self.capture_group_slot.get_latest_after(last_group_id)
+                if group is None:
+                    time.sleep(0.001)
+                    continue
+                last_group_id = int(group.group_id)
+                if not temporal_group_is_coherent(group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+                    self._summary["dual_gpu_drop_skewed_capture_group"] = int(
+                        self._summary.get("dual_gpu_drop_skewed_capture_group", 0)
+                    ) + 1
+                    self._profile_mark_drop(group.group_id, "dual_gpu_drop_skewed_capture_group")
+                    continue
+                now_s = time.perf_counter()
+                if self._dual_gpu_last_dispatch_s is not None:
+                    self._dual_gpu_dispatch_periods_ms.append((now_s - self._dual_gpu_last_dispatch_s) * 1000.0)
+                self._dual_gpu_last_dispatch_s = now_s
+                task = workers.WorkerCaptureTask(group_id=int(group.group_id), group=group, enqueued_perf_s=now_s)
+                self.stage_join_buffer.put_capture(group)
+                ffs_drops = ffs_queue.put_latest(task)
+                edge_drops = edgetam_queue.put_latest(task)
+                self._dual_gpu_ffs_queue_drops += int(ffs_drops)
+                self._dual_gpu_edgetam_queue_drops += int(edge_drops)
+                self._profile_update(
+                    group.group_id,
+                    dual_gpu={
+                        "capture_dispatch_s": self._profile_rel_s(now_s),
+                        "ffs_queue_drops": int(self._dual_gpu_ffs_queue_drops),
+                        "edgetam_queue_drops": int(self._dual_gpu_edgetam_queue_drops),
+                        "ffs_device": str(getattr(self.args, "ffs_device", "cuda:0")),
+                        "edgetam_device": str(getattr(self.args, "edgetam_device", "cuda:1")),
+                    },
+                )
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                print(f"[ERROR] Demo 2.3 dual-GPU dispatch failed: {type(exc).__name__}: {exc}", flush=True)
+            self._mark_fatal_error("dual-gpu-dispatch", exc)
+            self.stop_event.set()
+
+    def _merge_worker_profile(self, group_id: int, worker_profile: dict[str, Any]) -> None:
+        if not worker_profile:
+            return
+        profile = dict(worker_profile)
+        for key in ("group_id", "complete", "drop_reason"):
+            profile.pop(key, None)
+        if profile:
+            self._profile_update(int(group_id), **profile)
+
+    def _publish_dual_gpu_ready_groups(self, *, rng: np.random.Generator, ray_cache: dict[int, tuple[np.ndarray, np.ndarray]]) -> None:
+        while not self.stop_event.is_set():
+            ready = self.stage_join_buffer.pop_latest_ready()
+            if ready is None:
+                return
+            capture_group, depth_group, mask_group = ready
+            start_s = time.perf_counter()
+            if not int(capture_group.group_id) == int(depth_group.group_id) == int(mask_group.group_id):
+                self._summary["dual_gpu_same_group_mismatch"] = int(self._summary.get("dual_gpu_same_group_mismatch", 0)) + 1
+                self._profile_mark_drop(capture_group.group_id, "dual_gpu_same_group_mismatch")
+                continue
+            complete = CompleteInferenceGroup(
+                group_id=capture_group.group_id,
+                capture_group=capture_group,
+                depth_group=depth_group,
+                mask_packets=mask_group.mask_packets,
+                ffs_cycle_ms=float(depth_group.total_ms),
+                edgetam_cycle_ms=float(mask_group.edgetam_stage_wall_ms),
+                edgetam_stage_wall_ms=float(mask_group.edgetam_stage_wall_ms),
+                edgetam_stage_sum_model_ms=float(mask_group.edgetam_stage_sum_model_ms),
+                stage_barrier_ms=0.0,
+                total_gpu_owner_ms=float(max(depth_group.total_ms, mask_group.edgetam_stage_wall_ms)),
+                pipeline_mode=GPU_PIPELINE_MODE_DUAL_GPU_SPLIT,
+                internal_order="dual_gpu_process_split",
+            )
+            self.complete_inference_slot.put(complete)
+            self._init_profile_set_once(("first_complete_inference_group_s",), self._profile_rel_s())
+            self._init_profile_set_once(("first_complete_inference_group_id",), int(capture_group.group_id))
+            self.gpu_owner_stats.record()
+            published = self._publish_complete_inference_group(
+                complete=complete,
+                rng=rng,
+                ray_cache=ray_cache,
+                warning_label="dual-GPU fusion",
+            )
+            join_ms = _elapsed_ms(start_s, time.perf_counter())
+            counters = self.stage_join_buffer.snapshot()
+            ffs_publish_s: float | None = None
+            mask_publish_s: float | None = None
+            with self._profile_lock:
+                record = self._profile_records.get(int(capture_group.group_id), {})
+                if isinstance(record.get("ffs_stage"), dict):
+                    value = record["ffs_stage"].get("publish_s")
+                    if isinstance(value, (int, float)):
+                        ffs_publish_s = float(value)
+                if isinstance(record.get("edgetam_stage"), dict):
+                    value = record["edgetam_stage"].get("publish_s")
+                    if isinstance(value, (int, float)):
+                        mask_publish_s = float(value)
+            join_publish_s = self._profile_rel_s()
+            if ffs_publish_s is not None and mask_publish_s is not None:
+                depth_ready_before_mask = bool(ffs_publish_s <= mask_publish_s)
+                depth_wait_after_mask_ms = max(0.0, (ffs_publish_s - mask_publish_s) * 1000.0)
+                mask_wait_after_depth_ms = max(0.0, (mask_publish_s - ffs_publish_s) * 1000.0)
+                same_group_join_latency_ms = max(0.0, (join_publish_s - max(ffs_publish_s, mask_publish_s)) * 1000.0)
+            else:
+                depth_ready_before_mask = False
+                depth_wait_after_mask_ms = 0.0
+                mask_wait_after_depth_ms = 0.0
+                same_group_join_latency_ms = 0.0
+            self._profile_update(
+                capture_group.group_id,
+                gpu_owner={
+                    "mode": GPU_PIPELINE_MODE_DUAL_GPU_SPLIT,
+                    "internal_order": "dual_gpu_process_split",
+                    "ffs_cycle_ms": float(depth_group.total_ms),
+                    "edgetam_cycle_ms": float(mask_group.edgetam_stage_wall_ms),
+                    "edgetam_stage_wall_ms": float(mask_group.edgetam_stage_wall_ms),
+                    "edgetam_stage_sum_model_ms": float(mask_group.edgetam_stage_sum_model_ms),
+                    "stage_barrier_ms": 0.0,
+                    "total_ms": float(max(depth_group.total_ms, mask_group.edgetam_stage_wall_ms)),
+                    "publish_s": self._profile_rel_s(),
+                    "complete_group_published": bool(published),
+                },
+                stage_join={
+                    "publish_s": float(join_publish_s),
+                    "wall_ms": float(join_ms),
+                    "depth_mask_group_id_match": True,
+                    "depth_ready_before_mask": depth_ready_before_mask,
+                    "depth_wait_after_mask_ms": float(depth_wait_after_mask_ms),
+                    "mask_wait_after_depth_ms": float(mask_wait_after_depth_ms),
+                    "same_group_join_latency_ms": float(same_group_join_latency_ms),
+                    "capture_group_id": int(capture_group.group_id),
+                    "depth_group_id": int(depth_group.group_id),
+                    "mask_group_id": int(mask_group.group_id),
+                    **counters,
+                },
+            )
+
+    def _dual_gpu_result_collector_worker(self) -> None:
+        if not bool(getattr(self.args, "dual_gpu_processes", True)):
+            return
+        from qqtt.demo import demo23_dual_gpu_workers as workers
+
+        rng = np.random.default_rng()
+        ray_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+        try:
+            self._ensure_dual_gpu_workers_started()
+            assert self._dual_gpu_result_queue is not None
+            while not self.stop_event.is_set():
+                try:
+                    result = self._dual_gpu_result_queue.get(timeout=0.02)
+                except queue.Empty:
+                    self._publish_dual_gpu_ready_groups(rng=rng, ray_cache=ray_cache)
+                    continue
+                receive_s = self._profile_rel_s()
+                if isinstance(result, workers.WorkerErrorResult):
+                    self._summary[f"dual_gpu_{result.stage}_worker_error"] = result.error
+                    self._summary[f"dual_gpu_{result.stage}_worker_traceback"] = result.traceback
+                    self._mark_fatal_error(f"dual-gpu-{result.stage}", RuntimeError(result.error))
+                    self.stop_event.set()
+                    break
+                if isinstance(result, workers.WorkerDepthResult):
+                    self._dual_gpu_depth_groups_received += 1
+                    self.stage_join_buffer.put_depth(result.depth_group)
+                    self._latest_depth_group = result.depth_group
+                    self.ffs_stats.record()
+                    self._merge_worker_profile(result.group_id, result.worker_profile)
+                    self._profile_update(
+                        result.group_id,
+                        ffs_stage={
+                            "publish_s": receive_s,
+                            "wall_ms": float(result.depth_group.total_ms),
+                            "worker_period_ms": float(result.worker_timing.get("worker_period_ms", 0.0)),
+                            "queued_wait_ms": float(result.worker_timing.get("queued_wait_ms", 0.0)),
+                            "device": str(result.worker_timing.get("device", getattr(self.args, "ffs_device", "cuda:0"))),
+                        },
+                        dual_gpu={
+                            "depth_publish_s": receive_s,
+                            "depth_groups_received": int(self._dual_gpu_depth_groups_received),
+                        },
+                    )
+                elif isinstance(result, workers.WorkerMaskResult):
+                    self._dual_gpu_mask_groups_received += 1
+                    self.stage_join_buffer.put_mask(result.mask_group)
+                    for camera_idx in result.mask_group.mask_packets:
+                        if int(camera_idx) in self.edge_stats:
+                            self.edge_stats[int(camera_idx)].record()
+                    self._merge_worker_profile(result.group_id, result.worker_profile)
+                    self._profile_update(
+                        result.group_id,
+                        edgetam_stage={
+                            "publish_s": receive_s,
+                            "wall_ms": float(result.mask_group.edgetam_stage_wall_ms),
+                            "sum_model_ms": float(result.mask_group.edgetam_stage_sum_model_ms),
+                            "mode": str(result.mask_group.edgetam_stage_mode),
+                            "worker_period_ms": float(result.worker_timing.get("worker_period_ms", 0.0)),
+                            "queued_wait_ms": float(result.worker_timing.get("queued_wait_ms", 0.0)),
+                            "device": str(result.worker_timing.get("device", getattr(self.args, "edgetam_device", "cuda:1"))),
+                            "stateful_monotonic": True,
+                        },
+                        dual_gpu={
+                            "mask_publish_s": receive_s,
+                            "mask_groups_received": int(self._dual_gpu_mask_groups_received),
+                        },
+                    )
+                self._publish_dual_gpu_ready_groups(rng=rng, ray_cache=ray_cache)
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                print(f"[ERROR] Demo 2.3 dual-GPU result collector failed: {type(exc).__name__}: {exc}", flush=True)
+            self._mark_fatal_error("dual-gpu-result-collector", exc)
+            self.stop_event.set()
 
     def _start_threads(self) -> None:
         specs = self._thread_specs()
@@ -7091,6 +7670,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-sampling-interval-s", type=float, default=0.5)
     parser.add_argument("--gpu-sampling-backend", choices=GPU_SAMPLING_BACKENDS, default="nvml")
     parser.add_argument("--gpu-sampling-device-index", type=int, default=0)
+    parser.add_argument(
+        "--gpu-sampling-device-indexes",
+        type=parse_gpu_sampling_device_indexes,
+        default=None,
+        help="Comma-separated GPU indexes to sample, e.g. 0,1. Overrides --gpu-sampling-device-index for summaries.",
+    )
     parser.add_argument("--sam31-init-retry-interval-s", type=float, default=0.5)
     parser.add_argument(
         "--sam31-init-max-attempts",
@@ -7130,6 +7715,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-gate-mode", choices=GPU_GATE_MODES, default=GPU_GATE_MODE_OFF)
     parser.add_argument("--gpu-gate-max-concurrent", type=int, default=0)
     parser.add_argument("--gpu-pipeline-mode", choices=GPU_PIPELINE_MODES, default=GPU_PIPELINE_MODE_SEPARATE_WORKERS)
+    parser.add_argument("--ffs-device", default="cuda:0")
+    parser.add_argument("--edgetam-device", default="cuda:1")
+    parser.add_argument("--sam31-device", default="cuda:1")
+    parser.add_argument("--dual-gpu-queue-size", type=int, default=2)
+    parser.add_argument("--dual-gpu-transport", choices=("pickle",), default="pickle")
+    parser.add_argument("--dual-gpu-start-method", choices=("spawn", "forkserver"), default="spawn")
+    parser.add_argument("--dual-gpu-profile-workers", action="store_true")
+    parser.add_argument("--dual-gpu-processes", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--single-owner-order", choices=SINGLE_OWNER_ORDERS, default=SINGLE_OWNER_ORDER_FFS_THEN_EDGETAM)
     parser.add_argument("--staged-order", choices=STAGED_ORDERS, default=STAGED_ORDER_FFS_THEN_PARALLEL_EDGETAM)
     parser.add_argument("--stage-scheduler-mode", choices=STAGE_SCHEDULER_MODES, default=STAGE_SCHEDULER_MODE_MASK_GATED)
