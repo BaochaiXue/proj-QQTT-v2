@@ -1852,7 +1852,6 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         elif preset == PRESET_DEMO23_DUAL4090_MAXFPS:
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=30)
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
-            _set_if_not_explicit(args, explicit, flag="--capture-group-target-fps", attr="capture_group_target_fps", value=15.0)
             _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_FFS)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
             _set_if_not_explicit(args, explicit, flag="--ffs-trt-batch-size", attr="ffs_trt_batch_size", value=3)
@@ -2048,8 +2047,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             }
             and "--capture-group-target-fps" not in explicit
         ):
-            if preset != PRESET_DEMO23_DUAL4090_MAXFPS:
-                setattr(args, "capture_group_target_fps", float(args.fps))
+            setattr(args, "capture_group_target_fps", float(args.fps))
     if int(getattr(args, "ffs_trt_batch_size", 1)) == 3 and "--ffs-trt-model-dir" not in explicit:
         setattr(args, "ffs_trt_model_dir", str(DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR))
     _normalize_pin_memory_options(args, explicit)
@@ -7702,7 +7700,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Target cadence for capture-group construction. Defaults to fusion-target-fps; "
-            "Demo 2.2 presets default this to camera --fps. Use 0 for no explicit throttle."
+            "Demo 2.2/2.3 presets default this to camera --fps. Use 0 for no explicit throttle."
         ),
     )
     parser.add_argument("--fusion-timeout-ms", type=float, default=150.0)

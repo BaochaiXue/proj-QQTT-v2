@@ -129,6 +129,7 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertEqual(contract["demo"], "demo_2_3_dual_gpu_async_filtered_fused_pcd")
         self.assertEqual(contract["fps"], 30)
         self.assertEqual(contract["fusion_target_fps"], 15.0)
+        self.assertEqual(contract["capture_group_target_fps"], 30.0)
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo23.GPU_PIPELINE_MODE_DUAL_GPU_SPLIT)
         self.assertTrue(contract["gpu_pipeline"]["same_group_join_required"])
         self.assertEqual(contract["dual_gpu"]["ffs_device"], "cuda:0")
@@ -139,6 +140,16 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertIn("batch3", contract["ffs_contract"]["trt_model_dir"])
         self.assertEqual(contract["controller_prompt"], "towel")
         self.assertEqual(contract["object_prompt"], "stuffed animal")
+
+    def test_demo23_explicit_fps_drives_capture_group_default(self) -> None:
+        parser = demo23.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", demo23.PRESET_DEMO23_DUAL4090_MAXFPS, "--fps", "15"])
+        args = demo23.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--fps"})
+        contract = demo23.build_contract(args)
+
+        self.assertEqual(contract["fps"], 15)
+        self.assertEqual(contract["capture_group_target_fps"], 15.0)
+        self.assertEqual(contract["fusion_target_fps"], 15.0)
 
     def test_demo23_thread_specs_do_not_start_same_gpu_overlap_workers(self) -> None:
         parser = demo23.build_arg_parser()

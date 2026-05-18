@@ -27,7 +27,7 @@ The first version keeps the existing CPU/NumPy `DepthGroup` and `CameraMaskPacke
 - `dual_gpu_start_method = spawn`
 - `dual_gpu_processes = True`
 - FFS TensorRT batch size is `3`, using the builderOptimizationLevel=5 batch-3 artifact path.
-- Capture FPS is `30` for Demo 2.3, while fusion/capture-group targets remain bounded for the current point-cloud path.
+- Capture FPS is `30` for Demo 2.3, and the default capture-group target follows the resolved camera FPS (`30` by default). The fusion/report target remains `15 FPS` for the current point-cloud path.
 
 ## Validation
 
