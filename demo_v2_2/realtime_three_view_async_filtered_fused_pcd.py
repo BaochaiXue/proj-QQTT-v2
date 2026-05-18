@@ -93,6 +93,33 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Precision policy for the external full hf_batched_multisession runtime.",
     )
     tracking.add_argument(
+        "--edgetam-component-runtime",
+        choices=runtime.EDGETAM_COMPONENT_RUNTIMES,
+        default=None,
+        help="Component runtime for the external full hf_batched_multisession runtime.",
+    )
+    tracking.add_argument(
+        "--edgetam-trt-engine-dir",
+        default=None,
+        help="BatchTam TensorRT engine directory for memory_path_all.",
+    )
+    tracking.add_argument(
+        "--edgetam-trt-report",
+        default=None,
+        help="BatchTam TRT closed-loop integration report JSON.",
+    )
+    tracking.add_argument(
+        "--edgetam-trt-scope",
+        choices=runtime.EDGETAM_TRT_SCOPES,
+        default=None,
+        help="BatchTam TensorRT scope.",
+    )
+    tracking.add_argument(
+        "--edgetam-trt-memory-attention-bucket-dir",
+        default=None,
+        help="Optional BatchTam memory_attention bucket engine directory.",
+    )
+    tracking.add_argument(
         "--strict-full-batched-edgetam",
         action="store_true",
         help="Require the external full-batched EdgeTAM contract/report gate before running.",
@@ -290,6 +317,15 @@ def _to_demo22_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--edgetam-external-path", parsed.edgetam_external_path)
     _append_option(translated, "--edgetam-batched-report", parsed.edgetam_batched_report)
     _append_option(translated, "--edgetam-precision-mode", parsed.edgetam_precision_mode)
+    _append_option(translated, "--edgetam-component-runtime", parsed.edgetam_component_runtime)
+    _append_option(translated, "--edgetam-trt-engine-dir", parsed.edgetam_trt_engine_dir)
+    _append_option(translated, "--edgetam-trt-report", parsed.edgetam_trt_report)
+    _append_option(translated, "--edgetam-trt-scope", parsed.edgetam_trt_scope)
+    _append_option(
+        translated,
+        "--edgetam-trt-memory-attention-bucket-dir",
+        parsed.edgetam_trt_memory_attention_bucket_dir,
+    )
     _append_option(translated, "--depth-min-m", parsed.min_depth_m)
     _append_option(translated, "--depth-max-m", parsed.max_depth_m)
     _append_option(translated, "--point-size", parsed.point_size)

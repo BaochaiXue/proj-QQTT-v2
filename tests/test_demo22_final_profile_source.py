@@ -69,6 +69,26 @@ class Demo22FinalProfileSourceTests(unittest.TestCase):
         self.assertEqual(result["final_fps"], 14.5)
         self.assertEqual(result["final_fps_source"], "filter_fps")
 
+    def test_final_fps_parser_accepts_batchtam_full_pipeline_profile(self) -> None:
+        result = demo.final_fps_from_demo22_profile(
+            {
+                "edgetam_backend": demo.EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
+                "edgetam_component_runtime": demo.EDGETAM_COMPONENT_RUNTIME_TRT,
+                "edgetam_trt_scope": demo.EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL,
+                "final_fps_source": "demo2.2-full-pipeline",
+                "profile_kind": "demo2.2-full-pipeline",
+                "summary_after_warmup": {
+                    "capture_group_fps": 18.0,
+                    "raw_fusion_fps": 16.0,
+                    "filter_fps": 12.25,
+                    "render_fps": 7.0,
+                },
+            }
+        )
+
+        self.assertEqual(result["final_fps"], 12.25)
+        self.assertEqual(result["final_fps_source"], "filter_fps")
+
 
 if __name__ == "__main__":
     unittest.main()
