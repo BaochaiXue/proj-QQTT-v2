@@ -1,11 +1,34 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 import io
 import unittest
 
 from qqtt.demo import demo31_runtime
 from qqtt.demo.demo31_dual_gpu_ipc import TrackingResultLitePacket
+
+
+@dataclass(frozen=True)
+class _FakePacket:
+    group_id: int
+    camera_idx: int
+    object_mask: object | None = None
+    controller_mask: object | None = None
+
+
+@dataclass(frozen=True)
+class _FakeMaskGroup:
+    group_id: int
+    mask_packets: dict[int, _FakePacket]
+    edgetam_stage_wall_ms: float = 1.0
+    edgetam_stage_sum_model_ms: float = 1.0
+    edgetam_stage_mode: str = "fake"
+
+
+@dataclass(frozen=True)
+class _FakeGroup:
+    group_id: int
 
 
 class Demo31DualGpuContractTest(unittest.TestCase):
@@ -114,6 +137,33 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(config.cotracker_gpu, "1")
         self.assertEqual(config.camera_ids, (0, 1, 2))
         self.assertEqual(config.cotracker_backend, "cotracker3_online")
+
+    def test_latest_reuse_join_buffer_retargets_latest_mask_to_fresh_depth(self) -> None:
+        buffer = demo31_runtime.Demo31MaskPolicyJoinBuffer(
+            policy="latest-reuse",
+            stale_timeout_ms=1000.0,
+        )
+        buffer.put_mask(_FakeMaskGroup(group_id=4, mask_packets={0: _FakePacket(group_id=4, camera_idx=0)}))
+        buffer.put_capture(_FakeGroup(group_id=5))
+        buffer.put_depth(_FakeGroup(group_id=5))
+
+        ready = buffer.pop_latest_ready()
+
+        self.assertIsNotNone(ready)
+        capture, depth, mask = ready  # type: ignore[misc]
+        self.assertEqual(capture.group_id, 5)
+        self.assertEqual(depth.group_id, 5)
+        self.assertEqual(mask.group_id, 5)
+        self.assertEqual(mask.mask_packets[0].group_id, 5)
+        self.assertEqual(buffer.snapshot()["mask_reuse_count"], 1)
+
+    def test_strict_join_buffer_requires_matching_mask_group(self) -> None:
+        buffer = demo31_runtime.Demo31MaskPolicyJoinBuffer(policy="strict")
+        buffer.put_mask(_FakeMaskGroup(group_id=4, mask_packets={0: _FakePacket(group_id=4, camera_idx=0)}))
+        buffer.put_capture(_FakeGroup(group_id=5))
+        buffer.put_depth(_FakeGroup(group_id=5))
+
+        self.assertIsNone(buffer.pop_latest_ready())
 
     def test_renderer_can_proceed_with_no_cotracker_result(self) -> None:
         self.assertIsNone(

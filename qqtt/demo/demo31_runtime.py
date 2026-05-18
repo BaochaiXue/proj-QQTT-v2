@@ -360,6 +360,137 @@ def _semantic_tracking_mask(mask_packet: Any, track_mode: str) -> np.ndarray:
     return object_mask | controller_mask
 
 
+class Demo31MaskPolicyJoinBuffer:
+    """Join capture/depth with strict or latest-reuse mask semantics."""
+
+    def __init__(
+        self,
+        *,
+        max_groups: int = 8,
+        policy: str = FUSION_MASK_POLICY_LATEST_REUSE,
+        stale_timeout_ms: float = DEFAULT_MASK_STALE_TIMEOUT_MS,
+    ) -> None:
+        self.max_groups = int(max_groups)
+        self.policy = str(policy)
+        self.stale_timeout_ms = float(stale_timeout_ms)
+        self._captures: dict[int, Any] = {}
+        self._depths: dict[int, Any] = {}
+        self._masks: dict[int, tuple[Any, float]] = {}
+        self.capture_stale_drops = 0
+        self.depth_stale_drops = 0
+        self.mask_stale_drops = 0
+        self.ready_join_count = 0
+        self.mask_selection_count = 0
+        self.mask_reuse_count = 0
+        self.mask_age_ms_samples: list[float] = []
+
+    def put_capture(self, group: Any) -> None:
+        self._captures[int(group.group_id)] = group
+        self._prune()
+
+    def put_depth(self, depth: Any) -> None:
+        self._depths[int(depth.group_id)] = depth
+        self._prune()
+
+    def put_mask(self, mask: Any) -> None:
+        self._masks[int(mask.group_id)] = (mask, time.perf_counter())
+        self._prune()
+
+    def pop_latest_ready(self) -> tuple[Any, Any, Any] | None:
+        ready_depth = sorted(set(self._captures) & set(self._depths))
+        if not ready_depth:
+            return None
+        now_s = time.perf_counter()
+        for group_id in reversed(ready_depth):
+            mask = self._select_mask_for_group(group_id=group_id, now_s=now_s)
+            if mask is None:
+                continue
+            capture = self._captures.pop(group_id)
+            depth = self._depths.pop(group_id)
+            self.ready_join_count += 1
+            self._drop_older_capture_depth(group_id)
+            return capture, depth, mask
+        return None
+
+    def snapshot(self) -> dict[str, Any]:
+        age = percentile_summary(self.mask_age_ms_samples)
+        return {
+            "max_groups": int(self.max_groups),
+            "policy": str(self.policy),
+            "capture_pending": int(len(self._captures)),
+            "depth_pending": int(len(self._depths)),
+            "mask_pending": int(len(self._masks)),
+            "capture_stale_drops": int(self.capture_stale_drops),
+            "depth_stale_drops": int(self.depth_stale_drops),
+            "mask_stale_drops": int(self.mask_stale_drops),
+            "ready_join_count": int(self.ready_join_count),
+            "mask_selection_count": int(self.mask_selection_count),
+            "mask_reuse_count": int(self.mask_reuse_count),
+            "mask_reuse_ratio": float(self.mask_reuse_count / self.mask_selection_count)
+            if self.mask_selection_count
+            else 0.0,
+            "mask_age_ms_median": float(age["median"]),
+            "mask_age_ms_p95": float(age["p95"]),
+        }
+
+    def _select_mask_for_group(self, *, group_id: int, now_s: float) -> Any | None:
+        if not self._masks:
+            return None
+        if self.policy == FUSION_MASK_POLICY_STRICT:
+            entry = self._masks.get(int(group_id))
+            if entry is None:
+                return None
+            mask_group, arrival_s = entry
+        else:
+            source_group_id = max(self._masks)
+            mask_group, arrival_s = self._masks[source_group_id]
+        age_ms = max(0.0, (float(now_s) - float(arrival_s)) * 1000.0)
+        if age_ms > self.stale_timeout_ms:
+            self.mask_stale_drops += 1
+            return None
+        self.mask_selection_count += 1
+        self.mask_age_ms_samples.append(float(age_ms))
+        if int(mask_group.group_id) != int(group_id):
+            self.mask_reuse_count += 1
+        return self._retarget_mask_group(mask_group, target_group_id=int(group_id))
+
+    def _retarget_mask_group(self, mask_group: Any, *, target_group_id: int) -> Any:
+        if int(mask_group.group_id) == int(target_group_id):
+            return mask_group
+        packets = {
+            int(camera_idx): replace(packet, group_id=int(target_group_id))
+            for camera_idx, packet in mask_group.mask_packets.items()
+        }
+        return mask_group.__class__(
+            group_id=int(target_group_id),
+            mask_packets=packets,
+            edgetam_stage_wall_ms=float(mask_group.edgetam_stage_wall_ms),
+            edgetam_stage_sum_model_ms=float(mask_group.edgetam_stage_sum_model_ms),
+            edgetam_stage_mode=str(mask_group.edgetam_stage_mode),
+        )
+
+    def _drop_older_capture_depth(self, group_id: int) -> None:
+        for table, counter_name in (
+            (self._captures, "capture_stale_drops"),
+            (self._depths, "depth_stale_drops"),
+        ):
+            stale = [old_group_id for old_group_id in table if old_group_id < group_id]
+            for old_group_id in stale:
+                table.pop(old_group_id, None)
+            setattr(self, counter_name, getattr(self, counter_name) + len(stale))
+
+    def _prune(self) -> None:
+        for table, counter_name in (
+            (self._captures, "capture_stale_drops"),
+            (self._depths, "depth_stale_drops"),
+            (self._masks, "mask_stale_drops"),
+        ):
+            while len(table) > self.max_groups:
+                oldest = min(table)
+                table.pop(oldest, None)
+                setattr(self, counter_name, getattr(self, counter_name) + 1)
+
+
 def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client_factory: ProcessClientFactory | None = None):
     base_cls = shared_runtime_module.Demo21Runtime
 
@@ -378,8 +509,13 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_cotracker_config = cotracker_process_config
             self.demo31_process_client = (
                 (process_client_factory or start_cotracker_process)(cotracker_process_config)
-                if self.demo31_cotracker_enabled
-                else None
+            if self.demo31_cotracker_enabled
+            else None
+            )
+            self.stage_join_buffer = Demo31MaskPolicyJoinBuffer(
+                max_groups=8,
+                policy=str(self.demo31_contract["fusion_mask_policy"]),
+                stale_timeout_ms=float(self.demo31_contract["mask_stale_timeout_ms"]),
             )
             self.demo31_latest_depth_by_camera: dict[int, np.ndarray] = {}
             self.demo31_latest_intrinsics_by_camera: dict[int, np.ndarray] = {}
@@ -524,6 +660,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             e2e = percentile_summary(self.demo31_overlay_e2e_ms_samples)
             return {
                 "process": process_snapshot,
+                "stage_join_buffer": self.stage_join_buffer.snapshot()
+                if hasattr(self.stage_join_buffer, "snapshot")
+                else {},
                 "tracking_input_skip_count": int(self.demo31_tracking_input_skip_count),
                 "tracking_input_queue_replace_count": int(self.demo31_tracking_input_queue_replace_count),
                 "tracking_input_drop_count": int(self.demo31_tracking_input_drop_count),
@@ -624,7 +763,7 @@ class Demo31Runtime:
         )
         if snapshot:
             process = snapshot.get("process") or {}
-            mask_cache = snapshot.get("mask_cache") or {}
+            mask_cache = snapshot.get("stage_join_buffer") or snapshot.get("mask_cache") or {}
             input_endpoint = process.get("input_endpoint") or {}
             summary.update(
                 {
@@ -685,5 +824,6 @@ __all__ = [
     "fresh_tracking_result_or_none",
     "main",
     "make_demo31_live_runtime_class",
+    "Demo31MaskPolicyJoinBuffer",
     "validate_args",
 ]
