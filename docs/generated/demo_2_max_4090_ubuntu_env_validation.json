@@ -1,0 +1,126 @@
+{
+  "machine": {
+    "target": "native Ubuntu RTX 4090 desktop",
+    "gpu": "2 x NVIDIA GeForce RTX 4090",
+    "driver_version": "580.126.09",
+    "nvidia_smi_cuda": "13.0",
+    "os": "Ubuntu 22.04.5 LTS",
+    "kernel": "6.8.0-106-generic",
+    "cuda_toolkit": {
+      "cuda_home": "/usr/local/cuda",
+      "nvcc_release": "13.2",
+      "nvcc_version": "V13.2.78"
+    }
+  },
+  "env": {
+    "conda_env": "demo_2_max",
+    "python": "3.12.13",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "torchvision": "0.26.0+cu130",
+    "triton": "3.6.0",
+    "cuda_available": true,
+    "gpu_name": "NVIDIA GeForce RTX 4090",
+    "gpu_capability": [8, 9],
+    "torch_cuda_arch_list": "8.9",
+    "numpy": "2.4.5",
+    "open3d": "0.19.0",
+    "pyrealsense2_import": "PASS",
+    "transformers": "5.7.0",
+    "accelerate": "1.13.0",
+    "timm": "1.0.27",
+    "sam3": "0.1.0",
+    "sam31_checkpoint": "/home/xinjie/.cache/huggingface/qqtt_sam31/sam3.1_multiplex.pt",
+    "sam31_checkpoint_status": "MISSING_HF_GATED_ACCESS",
+    "pip_check": {
+      "status": "KNOWN_CAVEAT",
+      "message": "sam3 0.1.0 has requirement numpy<2,>=1.26, but you have numpy 2.4.5."
+    }
+  },
+  "tensorrt": {
+    "python_version": "10.16.1.11",
+    "package": "tensorrt-cu13==10.16.1.11",
+    "builder_probe": "PASS",
+    "trtexec_path": "/usr/bin/trtexec",
+    "trtexec_version_header": "TensorRT v101601",
+    "trtexec_version_caveat": "trtexec --version prints the TensorRT header and help, then exits nonzero with 'Model missing or format not recognized'."
+  },
+  "realsense": {
+    "status": "PASS",
+    "device_count": 3,
+    "devices": [
+      {
+        "name": "Intel RealSense D455",
+        "serial": "239222300781"
+      },
+      {
+        "name": "Intel RealSense D455",
+        "serial": "239222303506"
+      },
+      {
+        "name": "Intel RealSense D455",
+        "serial": "239222300412"
+      }
+    ]
+  },
+  "external_repos": {
+    "qqtt": {
+      "path": "/home/xinjie/proj-QQTT-v2",
+      "git_pull_ff_only_origin_main": "PASS"
+    },
+    "fast_foundation_stereo": {
+      "path": "/home/xinjie/Fast-FoundationStereo",
+      "commit": "f8442a5f406d3058e060c48acbd019963e54f490",
+      "weight": "/home/xinjie/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth",
+      "cfg": "/home/xinjie/Fast-FoundationStereo/weights/20-30-48/cfg.yaml",
+      "status": "PASS"
+    },
+    "edgetam": {
+      "path": "/home/xinjie/EdgeTAM",
+      "commit": "7711e012a30a2402c4eaab637bdb00a521302c91",
+      "checkpoint": "/home/xinjie/EdgeTAM/checkpoints/edgetam.pt",
+      "cuda_extension_import": "PASS"
+    }
+  },
+  "ffs_tensorrt": {
+    "contract": {
+      "model": "20-30-48",
+      "valid_iters": 4,
+      "max_disp": 192,
+      "real_input": "848x480",
+      "trt_shape": "480x864",
+      "builder_optimization_level": 5,
+      "gpu": "NVIDIA GeForce RTX 4090",
+      "compute_capability": "8.9"
+    },
+    "batch1_engine_dir": "/home/xinjie/proj-QQTT-v2/data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864",
+    "batch1_status": "PASS",
+    "batch3_engine_dir": "/home/xinjie/proj-QQTT-v2/data/experiments/ffs_trt_4090_848x480_pad864_builderopt5_batch3/engines/model_20-30-48_iters_4_res_480x864_batch3",
+    "batch3_status": "PASS",
+    "no_5090_engine_reuse": true
+  },
+  "validation": {
+    "check_harness_catalog.py": "PASS",
+    "check_all.py": "PASS",
+    "demo_v2_help": "PASS",
+    "demo_v2_1_dry_run_official_lowfps": "PASS",
+    "realsense_device_smoke": "PASS",
+    "single_camera_ffs_smoke": "PASS",
+    "three_camera_official_lowfps": {
+      "status": "FAIL_BLOCKED",
+      "reason": "Missing /home/xinjie/proj-QQTT-v2/calibrate.pkl required for Demo 2.1 world fusion"
+    }
+  },
+  "blockers": [
+    {
+      "item": "SAM3.1 checkpoint",
+      "path": "/home/xinjie/.cache/huggingface/qqtt_sam31/sam3.1_multiplex.pt",
+      "reason": "Hugging Face gated repo access for facebook/sam3.1"
+    },
+    {
+      "item": "Three-camera calibration",
+      "path": "/home/xinjie/proj-QQTT-v2/calibrate.pkl",
+      "reason": "Required for Demo 2.1 world-coordinate fused PCD live runtime"
+    }
+  ]
+}

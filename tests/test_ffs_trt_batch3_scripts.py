@@ -65,6 +65,7 @@ class FfsTrtBatch3ScriptsTest(unittest.TestCase):
 
         script = Path("scripts/harness/verify_ffs_tensorrt_wsl.py").read_text(encoding="utf-8")
         self.assertIn('parser.add_argument("--batch_size", type=int, default=1)', script)
+        self.assertIn('parser.add_argument("--builder_optimization_level", type=int, default=5)', script)
 
 
 if __name__ == "__main__":

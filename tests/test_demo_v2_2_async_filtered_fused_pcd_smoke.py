@@ -13,6 +13,9 @@ from demo_v2_2 import runtime as demo
 from demo_v2_2 import realtime_three_view_async_filtered_fused_pcd as demo22
 
 
+FIXTURE_CALIBRATE = Path(__file__).resolve().parent / "fixtures" / "record_data_align_minimal" / "calibrate.pkl"
+
+
 def _raw_packet(seq: int) -> demo.RawFusedPcdPacket:
     raw_object = demo.FusedLayerCloud(
         label="stuffed animal",
@@ -433,11 +436,13 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
                 demo.PRESET_DEMO22_ASYNC_FILTER_5FPS,
                 "--gpu-pipeline-mode",
                 demo.GPU_PIPELINE_MODE_OVERLAPPED_STAGES,
+                "--calibrate-path",
+                str(FIXTURE_CALIBRATE),
             ]
         )
         args = demo.apply_preset_defaults(
             args,
-            explicit_options={"--dry-run", "--preset", "--gpu-pipeline-mode"},
+            explicit_options={"--dry-run", "--preset", "--gpu-pipeline-mode", "--calibrate-path"},
         )
         runtime = demo.Demo22Runtime(args)
         contract = demo.build_contract(args)

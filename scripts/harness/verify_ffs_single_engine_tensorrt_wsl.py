@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--valid_iters", type=int, default=4)
     parser.add_argument("--max_disp", type=int, default=192)
     parser.add_argument("--workspace_gib", type=int, default=8)
+    parser.add_argument("--builder_optimization_level", type=int, default=5)
     parser.add_argument("--fp16", action="store_true")
     return parser.parse_args()
 
@@ -153,6 +154,7 @@ def export_single_engine_onnx(
         input_names=["left_image", "right_image"],
         output_names=["disparity"],
         do_constant_folding=True,
+        dynamo=False,
     )
 
     cfg = OmegaConf.to_container(model.args)
@@ -231,6 +233,10 @@ def main() -> int:
         raise ValueError(f"Expected engine size divisible by 32, got {args.width}x{args.height}")
     if int(args.batch_size) <= 0:
         raise ValueError(f"Expected positive --batch_size, got {args.batch_size}")
+    if int(args.builder_optimization_level) < 0:
+        raise ValueError(
+            f"Expected non-negative --builder_optimization_level, got {args.builder_optimization_level}"
+        )
 
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -253,6 +259,7 @@ def main() -> int:
         log_path=out_dir / "single_engine_build.log",
         workspace_gib=int(args.workspace_gib),
         fp16=bool(args.fp16),
+        builder_optimization_level=int(args.builder_optimization_level),
     )
     audit_stats = run_demo_smoke(
         ffs_repo=ffs_repo,

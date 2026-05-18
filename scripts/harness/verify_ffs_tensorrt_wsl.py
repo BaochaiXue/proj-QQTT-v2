@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--valid_iters", type=int, default=4)
     parser.add_argument("--max_disp", type=int, default=192)
     parser.add_argument("--workspace_gib", type=int, default=8)
+    parser.add_argument("--builder_optimization_level", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--total", type=int, default=20)
     parser.add_argument("--zfar", type=float, default=100.0)
@@ -132,6 +133,7 @@ def export_onnx(
             "stem_2x",
         ],
         do_constant_folding=True,
+        dynamo=False,
     )
 
     features_left_04, features_left_08, features_left_16, features_left_32, features_right_04, stem_2x = feature_runner(
@@ -169,6 +171,7 @@ def export_onnx(
         ],
         output_names=["disp"],
         do_constant_folding=True,
+        dynamo=False,
     )
 
     with open(out_dir / "onnx.yaml", "w", encoding="utf-8") as handle:
@@ -184,6 +187,7 @@ def build_engine_from_onnx(
     log_path: Path,
     workspace_gib: int,
     fp16: bool,
+    builder_optimization_level: int,
 ) -> None:
     import tensorrt as trt
 
@@ -198,6 +202,7 @@ def build_engine_from_onnx(
 
     config = builder.create_builder_config()
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, int(workspace_gib) << 30)
+    config.builder_optimization_level = int(builder_optimization_level)
     if fp16:
         config.set_flag(trt.BuilderFlag.FP16)
     serialized_engine = builder.build_serialized_network(network, config)
@@ -212,6 +217,7 @@ def build_engine_from_onnx(
                 f"engine={engine_path}",
                 f"workspace_gib={int(workspace_gib)}",
                 f"fp16={bool(fp16)}",
+                f"builder_optimization_level={int(builder_optimization_level)}",
             ]
         )
         + "\n",
@@ -416,6 +422,10 @@ def main() -> int:
         raise ValueError(f"Expected engine size divisible by 32, got {args.width}x{args.height}")
     if int(args.batch_size) <= 0:
         raise ValueError(f"Expected positive --batch_size, got {args.batch_size}")
+    if int(args.builder_optimization_level) < 0:
+        raise ValueError(
+            f"Expected non-negative --builder_optimization_level, got {args.builder_optimization_level}"
+        )
 
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -441,6 +451,7 @@ def main() -> int:
         log_path=out_dir / "feature_engine_build.log",
         workspace_gib=args.workspace_gib,
         fp16=True,
+        builder_optimization_level=args.builder_optimization_level,
     )
     build_engine_from_onnx(
         onnx_path=out_dir / "post_runner.onnx",
@@ -448,6 +459,7 @@ def main() -> int:
         log_path=out_dir / "post_engine_build.log",
         workspace_gib=args.workspace_gib,
         fp16=True,
+        builder_optimization_level=args.builder_optimization_level,
     )
     run_demo(
         torch_module=torch_module,

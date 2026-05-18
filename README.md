@@ -116,7 +116,7 @@ The default TensorRT FFS path for viewer, proxy, and visualization runs is:
 - `--ffs_valid_iters 4`
 - `--ffs_max_disp 192`
 - backend: `--ffs_backend tensorrt --ffs_trt_mode two_stage`
-- TensorRT artifact: `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
+- TensorRT artifact: `data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864/`
 - TensorRT build level: `builder_optimization_level=5`
 
 For actual QQTT performance, use the recorded `848x480` RealSense image size. If the TRT shape needs a multiple of `32`, pad `848x480` to `864x480` and unpad the output; do not resize down to `640x480` and report that as QQTT runtime.

@@ -178,7 +178,7 @@ Live FFS mode selection is now:
 - `--ffs_backend tensorrt --ffs_trt_mode two_stage`
   - default live path
   - default external repo: sibling `../Fast-FoundationStereo`, resolved from the QQTT repo root
-  - default model directory: `result/ffs_trt_static_rounds_848x480_pad864_builderopt5_rtx5090_laptop_20260428/engines/model_20-30-48_iters_4_res_480x864/`
+  - default model directory: `data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864/`
   - official-style two-stage TensorRT path: `feature_runner.engine` + Triton GWC + `post_runner.engine`
   - requires a working Triton kernel runtime in the active Python environment
 - `--ffs_backend pytorch`

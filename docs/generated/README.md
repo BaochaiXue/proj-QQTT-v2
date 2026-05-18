@@ -54,7 +54,7 @@ manual; use the compressed harness index first.
 | Demo 2.1.5 full local FFS fused PCD no-render replicated profile | `demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_replicated_profile.md` |
 | Demo 2.1.5 init cache warmup probe | `demo2_1_5_init_cache_warmup.md` |
 | Demo 2 GPU utilization sampling support | `demo2_gpu_sampling_profile_support.md` |
-| Demo 2 / 2.1 RTX 4090 `demo_2_max` environment | `demo_2_max_4090_env_validation.md` |
+| Demo 2 / 2.1 RTX 4090 `demo_2_max` environment | `demo_2_max_4090_ubuntu_env_validation.md`, `demo_2_max_4090_ubuntu_env_validation.json` |
 | Demo 2 single-camera local FFS path | `demo2_local_ffs_professor_speed_polish.md` |
 | Demo 2 depth source comparison | `demo2_depth_source_fps_comparison.md` |
 | Demo v0.3 remote FFS 100-kit replay | `demo_v03_100kit_replay_validation.md`; staged 7003 server/client implementation branch writes `demo_v03_100kit_remote_<timestamp>.summary.json` and `demo_v03_100kit_remote_<timestamp>.per_kit.jsonl` |
