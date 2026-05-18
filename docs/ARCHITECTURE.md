@@ -87,9 +87,12 @@ data product.
 - `demo_v2_1/**`
 - `demo_v2_1_5/**`
 - `demo_v2_2/**`
+- `demo_v3/**`
+- `demo_v3_1/**`
 - `qqtt/demo/**`
 - `services/ffs_remote/**`
 - `qqtt/tracking/**`
+- `docs/demo31_dual4090_runtime_contract.md`
 - `docs/demo3_highperf_tracking_backends.md`
 - `docs/demo3_tracking_backend_overlay_contract.md`
 
