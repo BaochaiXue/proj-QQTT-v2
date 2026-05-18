@@ -128,7 +128,7 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertEqual(contract["demo_version"], "demo2.3")
         self.assertEqual(contract["demo"], "demo_2_3_dual_gpu_async_filtered_fused_pcd")
         self.assertEqual(contract["fps"], 30)
-        self.assertEqual(contract["fusion_target_fps"], 15.0)
+        self.assertEqual(contract["fusion_target_fps"], 30.0)
         self.assertEqual(contract["capture_group_target_fps"], 30.0)
         self.assertEqual(contract["gpu_pipeline"]["mode"], demo23.GPU_PIPELINE_MODE_DUAL_GPU_SPLIT)
         self.assertTrue(contract["gpu_pipeline"]["same_group_join_required"])
@@ -149,7 +149,7 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
 
         self.assertEqual(contract["fps"], 15)
         self.assertEqual(contract["capture_group_target_fps"], 15.0)
-        self.assertEqual(contract["fusion_target_fps"], 15.0)
+        self.assertEqual(contract["fusion_target_fps"], 30.0)
 
     def test_demo23_thread_specs_do_not_start_same_gpu_overlap_workers(self) -> None:
         parser = demo23.build_arg_parser()

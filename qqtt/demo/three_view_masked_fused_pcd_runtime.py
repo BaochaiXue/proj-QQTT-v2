@@ -1851,7 +1851,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
         elif preset == PRESET_DEMO23_DUAL4090_MAXFPS:
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=30)
-            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
+            _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=30.0)
             _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_FFS)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
             _set_if_not_explicit(args, explicit, flag="--ffs-trt-batch-size", attr="ffs_trt_batch_size", value=3)
