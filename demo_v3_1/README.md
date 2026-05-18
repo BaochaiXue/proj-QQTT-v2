@@ -12,6 +12,13 @@ RealSense CoTracker overlay lineage.
   intrinsics, and camera-to-world transforms.
 - The renderer never waits for CoTracker.
 - Demo 3.1 does not use FFS.
+- Demo 3.1 inherits Demo 3.0's online-only FuturePhysTwin-compatible tracking
+  semantics: `--mode exp|demo`, object/controller union masks, CoTracker3
+  online, `phystwin_dense` query sampling, and default query count `auto`
+  (`min(union_mask_pixels, 5000)` per camera).
+- Raw tracked queries are separate from display overlays. CoTracker may track up
+  to 5000 points per camera while the rendered overlay remains capped at 30
+  points per camera by default.
 
 Dry-run:
 
@@ -28,4 +35,3 @@ conda run --no-capture-output -n demo3-max \
 
 Live validation still requires a real root-level `calibrate.pkl` that covers the
 active three RealSense serials.
-

@@ -1,14 +1,20 @@
 # Demo 3 RealSense CoTracker Runtime Contract
 
-Demo 3 is a realtime visualization demo built on the Demo 2.2 asynchronous
-three-camera runtime pattern. It requires exactly three RealSense cameras, uses
-RealSense RGB-D as the only depth source, uses HF EdgeTAM masks for semantic
+Demo 3 is an online-only realtime visualization demo built on the Demo 2.2
+asynchronous three-camera runtime pattern. It requires exactly three RealSense
+cameras, uses RealSense RGB-D as the only depth source, uses SAM3.1 first-frame
+initialization plus HF EdgeTAM online propagation for semantic
 object/controller masks through the shared batch vision encoder path, and runs
 CoTracker3 online as a separate async tracking overlay stage.
 
 CoTracker output is used for visualization only. FuturePhysTwin post-processing
 artifacts such as `track_process_data.pkl`, inverse-physics data generation,
 and final controller point selection are out of scope for Demo 3.
+
+Demo 3 tracks the object/controller union. It does not expose object-only or
+controller-only live tracking. The only public semantic switch is
+`--mode exp|demo`: `exp` uses controller `towel` for the current lab setup and
+`demo` uses controller `hand` for the formal live demo.
 
 Demo 3 是实时可视化 demo，不是 FuturePhysTwin 数据处理 pipeline。它必须使用三台
 RealSense，相机分组和渲染架构学习 Demo 2.2；depth 只用 RealSense，不使用 FFS；mask
@@ -70,6 +76,19 @@ depth_source = realsense
 uses_ffs = false
 mask_source = hf_edgetam
 edgetam_batch_vision_encoder = true
+input_source = live_realsense
+offline_mode_available = false
+offline_tracking_available = false
+init_mode = sam31_first_frame
+mask_propagation = hf_edgetam_online
+semantic_mode = exp
+tracking_mask_scope = object_controller_union
+tracking_query_mode = phystwin_dense
+tracking_query_count_requested = auto
+tracking_query_count_rule = min(union_mask_pixels, 5000)
+tracking_sampling = torch_randperm_seed_plus_camera_idx
+cotracker_seed = 42
+phystwin_dense_compatible = true
 cotracker_backend = cotracker3_online
 cotracker_async = true
 render_latest_wins = true
@@ -93,11 +112,13 @@ The second fails because Demo 3 does not support FFS.
 - `--depth-source realsense`
 - `--mask-source hf-edgetam`
 - HF EdgeTAM batch vision encoder enabled
-- `--track-mode object-only`
+- `--mode exp`
 - `--object-prompt "stuffed animal"`
-- `--controller-prompt "towel"`
+- controller prompt resolved by mode: `towel` for `exp`, `hand` for `demo`
 - `--cotracker-backend cotracker3_online`
-- `--cotracker-query-count 128`
+- `--cotracker-query-mode phystwin_dense`
+- `--cotracker-query-count auto`
+- `--cotracker-seed 42`
 - `--overlay-max-points-per-camera 30`
 - `--overlay-trail-len 16`
 - `--overlay-stale-timeout-ms 500`
@@ -105,10 +126,10 @@ The second fails because Demo 3 does not support FFS.
 ## CoTracker Overlay Contract
 
 CoTracker3 online is a separate stage. It receives grouped RGB frames and
-EdgeTAM masks, samples query points from the semantic mask, converts queries to
-CoTracker's `[t, x, y]` input convention through the existing backend, and
-stores output tracks as `y,x` so RealSense depth and masks can be indexed
-directly.
+EdgeTAM object/controller union masks, samples query points from that union,
+converts queries to CoTracker's `[t, x, y]` input convention through the
+existing backend, and stores output tracks as `y,x` so RealSense depth and masks
+can be indexed directly.
 
 The live overlay worker uses a latest-only slot. The renderer reads the latest
 overlay packet if one exists and proceeds without it when CoTracker is still
@@ -118,18 +139,17 @@ Overlay freshness is measured from the overlay publish time, not the source
 capture timestamp, so a slow CoTracker update is not discarded immediately
 after it finishes. The source timestamp remains diagnostic metadata.
 
-Default live visualization caps the overlay at 30 visible points per camera.
-Dense 5000-point CoTracker artifacts remain a benchmark/export diagnostic path,
-not the realtime rendering default.
+Default live tracking is FuturePhysTwin-compatible dense sampling: up to 5000
+raw query points per camera from `object_mask | controller_mask`, sampled with
+torch `randperm(seed + camera_idx)`. Default seed is 42.
 
-Live overlay query sampling is deterministic random visualization sampling from
-the current semantic mask. It is not byte-identical to FuturePhysTwin dense
-export sampling. FuturePhysTwin-style `torch.randperm` remains part of the
-offline benchmark/export compatibility path.
+Default live visualization caps the displayed overlay at 30 visible points per
+camera. This display cap does not reduce the raw CoTracker query count.
 
-If an early EdgeTAM mask is empty, Demo 3 does not permanently cache empty
-query points. The CoTracker stream initializes on the first non-empty semantic
-mask for each camera.
+If an early EdgeTAM result contains only object or only controller, Demo 3 does
+not initialize CoTracker for that camera yet. The stream initializes only after
+both object and controller masks are non-empty, so the first query set cannot
+lock into an object-only subset.
 
 ## Profile Fields
 
@@ -160,6 +180,18 @@ calibrate_pkl_loaded = true
 cotracker_backend = cotracker3_online
 cotracker_window_len = 16
 cotracker_publish_step = 8
+tracking_mask_scope = object_controller_union
+tracking_query_mode = phystwin_dense
+tracking_query_count_requested = auto
+tracking_query_count_actual_by_camera
+tracking_union_pixels_by_camera
+tracking_object_pixels_by_camera
+tracking_controller_pixels_by_camera
+tracking_sample_object_hits_by_camera
+tracking_sample_controller_hits_by_camera
+tracking_sample_overlap_hits_by_camera
+tracking_sample_background_hits_by_camera
+overlay_display_count_by_camera
 ```
 
 The acceptance-critical fields are:
@@ -169,6 +201,8 @@ render_waited_for_cotracker = false
 uses_ffs = false
 depth_source = realsense
 num_realsense_cameras = 3
+tracking_mask_scope = object_controller_union
+tracking_query_mode = phystwin_dense
 ```
 
 ## Live Validation

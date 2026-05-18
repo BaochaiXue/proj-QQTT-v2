@@ -35,16 +35,20 @@ MASK_SOURCE_HF_EDGETAM = "hf_edgetam"
 MASK_SOURCE_HF_EDGETAM_CLI = "hf-edgetam"
 COTRACKER3_ONLINE = "cotracker3_online"
 
-TRACK_MODE_OBJECT_ONLY = "object-only"
-TRACK_MODE_CONTROLLER_ONLY = "controller-only"
-TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
-TRACK_MODE_NONE = "none"
-TRACK_MODES = (
-    TRACK_MODE_OBJECT_ONLY,
-    TRACK_MODE_CONTROLLER_ONLY,
-    TRACK_MODE_CONTROLLER_OBJECT,
-    TRACK_MODE_NONE,
-)
+MODE_EXP = "exp"
+MODE_DEMO = "demo"
+MODES = (MODE_EXP, MODE_DEMO)
+
+SHARED_EXPERIMENT_MODE_CONTROLLER_OBJECT = "controller-object-exp"
+SHARED_EXPERIMENT_MODE_DEMO = "demo-mode"
+SHARED_TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
+TRACK_SCOPE_OBJECT_CONTROLLER_UNION = "object_controller_union"
+TRACKING_QUERY_MODE_PHYSTWIN_DENSE = "phystwin_dense"
+TRACKING_QUERY_COUNT_AUTO = "auto"
+TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE = "min(union_mask_pixels, 5000)"
+TRACKING_SAMPLING_TORCH_RANDPERM = "torch_randperm_seed_plus_camera_idx"
+DEFAULT_COTRACKER_SEED = 42
+PHYSTWIN_DENSE_MAX_POINTS = 5000
 
 RENDER_MODE_POINTCLOUD = "pointcloud"
 RENDER_MODE_NONE = "none"
@@ -55,8 +59,10 @@ DEFAULT_HEIGHT = 480
 DEFAULT_FPS = 30
 DEFAULT_CAMERA_IDS = (0, 1, 2)
 DEFAULT_OBJECT_PROMPT = "stuffed animal"
-DEFAULT_CONTROLLER_PROMPT = "towel"
-DEFAULT_COTRACKER_QUERY_COUNT = 128
+EXP_CONTROLLER_PROMPT = "towel"
+DEMO_CONTROLLER_PROMPT = "hand"
+DEFAULT_MODE = MODE_EXP
+DEFAULT_COTRACKER_QUERY_COUNT_REQUEST = TRACKING_QUERY_COUNT_AUTO
 DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA = 30
 DEFAULT_OVERLAY_TRAIL_LEN = 16
 DEFAULT_OVERLAY_STALE_TIMEOUT_MS = 500.0
@@ -95,6 +101,47 @@ def _normalize_mask_source(value: str) -> str:
     return MASK_SOURCE_HF_EDGETAM
 
 
+def resolve_demo3_mode(mode: str) -> dict[str, str]:
+    normalized = str(mode).strip().lower()
+    if normalized == MODE_EXP:
+        return {
+            "semantic_mode": MODE_EXP,
+            "experiment_mode": SHARED_EXPERIMENT_MODE_CONTROLLER_OBJECT,
+            "controller_prompt": EXP_CONTROLLER_PROMPT,
+            "controller_label": EXP_CONTROLLER_PROMPT,
+        }
+    if normalized == MODE_DEMO:
+        return {
+            "semantic_mode": MODE_DEMO,
+            "experiment_mode": SHARED_EXPERIMENT_MODE_DEMO,
+            "controller_prompt": DEMO_CONTROLLER_PROMPT,
+            "controller_label": DEMO_CONTROLLER_PROMPT,
+        }
+    raise ValueError(f"Unsupported Demo 3 mode: {mode}")
+
+
+def normalize_cotracker_query_count_request(value: Any) -> str:
+    raw = str(value).strip().lower()
+    if raw == TRACKING_QUERY_COUNT_AUTO:
+        return TRACKING_QUERY_COUNT_AUTO
+    try:
+        count = int(raw)
+    except ValueError as exc:
+        raise ValueError("--cotracker-query-count must be 'auto' or a positive integer.") from exc
+    if count <= 0:
+        raise ValueError("--cotracker-query-count must be 'auto' or a positive integer.")
+    return str(count)
+
+
+def phystwin_dense_compatible_for_args(args: argparse.Namespace) -> bool:
+    return (
+        str(args.cotracker_query_mode) == TRACKING_QUERY_MODE_PHYSTWIN_DENSE
+        and normalize_cotracker_query_count_request(args.cotracker_query_count) == TRACKING_QUERY_COUNT_AUTO
+        and int(args.cotracker_seed) == DEFAULT_COTRACKER_SEED
+        and str(args.cotracker_backend) == COTRACKER3_ONLINE
+    )
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -117,11 +164,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--depth-source", default=DEPTH_SOURCE_REALSENSE)
     parser.add_argument("--mask-source", default=MASK_SOURCE_HF_EDGETAM_CLI)
-    parser.add_argument("--track-mode", choices=TRACK_MODES, default=TRACK_MODE_OBJECT_ONLY)
+    parser.add_argument("--mode", choices=MODES, default=DEFAULT_MODE)
     parser.add_argument("--object-prompt", default=DEFAULT_OBJECT_PROMPT)
-    parser.add_argument("--controller-prompt", default=DEFAULT_CONTROLLER_PROMPT)
     parser.add_argument("--cotracker-backend", default=COTRACKER3_ONLINE)
-    parser.add_argument("--cotracker-query-count", type=int, default=DEFAULT_COTRACKER_QUERY_COUNT)
+    parser.add_argument("--cotracker-query-mode", choices=(TRACKING_QUERY_MODE_PHYSTWIN_DENSE,), default=TRACKING_QUERY_MODE_PHYSTWIN_DENSE)
+    parser.add_argument("--cotracker-query-count", default=DEFAULT_COTRACKER_QUERY_COUNT_REQUEST)
+    parser.add_argument("--cotracker-seed", type=int, default=DEFAULT_COTRACKER_SEED)
     parser.add_argument("--disable-cotracker", action="store_true")
     parser.add_argument("--render-mode", choices=RENDER_MODES, default=RENDER_MODE_POINTCLOUD)
     parser.add_argument("--overlay-max-points-per-camera", type=int, default=DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
@@ -135,8 +183,6 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
     if args.preset == PRESET_DEMO3_REALSENSE_MASK_ONLY:
         if "--disable-cotracker" not in explicit:
             args.disable_cotracker = True
-        if "--track-mode" not in explicit:
-            args.track_mode = TRACK_MODE_OBJECT_ONLY
     elif args.preset == PRESET_DEMO3_REALSENSE_COTRACKER_PROFILE:
         if "--render-mode" not in explicit:
             args.render_mode = RENDER_MODE_NONE
@@ -144,7 +190,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             args.duration_s = 60.0
     elif args.preset == PRESET_DEMO3_REALSENSE_COTRACKER_HIGHFPS:
         if "--cotracker-query-count" not in explicit:
-            args.cotracker_query_count = DEFAULT_COTRACKER_QUERY_COUNT
+            args.cotracker_query_count = DEFAULT_COTRACKER_QUERY_COUNT_REQUEST
         if "--overlay-max-points-per-camera" not in explicit:
             args.overlay_max_points_per_camera = DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA
     return args
@@ -164,8 +210,9 @@ def validate_args(args: argparse.Namespace, *, require_calibration: bool = False
     _normalize_mask_source(str(args.mask_source))
     if str(args.cotracker_backend) != COTRACKER3_ONLINE:
         raise ValueError("Demo 3 currently supports only --cotracker-backend cotracker3_online.")
-    if int(args.cotracker_query_count) <= 0 and not bool(args.disable_cotracker):
-        raise ValueError("--cotracker-query-count must be positive when CoTracker is enabled.")
+    if str(args.cotracker_query_mode) != TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
+        raise ValueError("Demo 3 currently supports only --cotracker-query-mode phystwin_dense.")
+    normalize_cotracker_query_count_request(args.cotracker_query_count)
     if int(args.overlay_max_points_per_camera) <= 0:
         raise ValueError("--overlay-max-points-per-camera must be positive.")
     if require_calibration and not Path(args.calibrate_path).is_file():
@@ -175,9 +222,16 @@ def validate_args(args: argparse.Namespace, *, require_calibration: bool = False
 def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     camera_ids = parse_camera_ids(args.camera_ids)
     cotracker_enabled = not bool(args.disable_cotracker)
+    mode = resolve_demo3_mode(str(args.mode))
+    query_count_request = normalize_cotracker_query_count_request(args.cotracker_query_count)
     contract: dict[str, Any] = {
         "demo": "demo3",
         "preset": str(args.preset),
+        "input_source": "live_realsense",
+        "offline_mode_available": False,
+        "offline_tracking_available": False,
+        "init_mode": "sam31_first_frame",
+        "mask_propagation": "hf_edgetam_online",
         "requires_three_realsense": True,
         "num_cameras": int(len(camera_ids)),
         "num_realsense_cameras": int(len(camera_ids)),
@@ -190,14 +244,24 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "mask_source": MASK_SOURCE_HF_EDGETAM,
         "edgetam_batch_vision_encoder": EDGETAM_BATCH_VISION_ENCODER_REQUIRED,
         "edgetam_sessions_per_camera": 1,
-        "track_mode": str(args.track_mode),
+        "semantic_mode": str(mode["semantic_mode"]),
+        "shared_experiment_mode": str(mode["experiment_mode"]),
+        "shared_runtime_track_mode": SHARED_TRACK_MODE_CONTROLLER_OBJECT,
+        "tracking_mask_scope": TRACK_SCOPE_OBJECT_CONTROLLER_UNION,
         "object_prompt": str(args.object_prompt),
-        "controller_prompt": str(args.controller_prompt),
+        "controller_prompt": str(mode["controller_prompt"]),
+        "tracking_controller_label": str(mode["controller_label"]),
         "cotracker_enabled": bool(cotracker_enabled),
         "cotracker_backend": COTRACKER3_ONLINE,
         "cotracker_async": True,
         "cotracker_latest_wins": True,
-        "cotracker_query_count": int(args.cotracker_query_count),
+        "tracking_query_mode": TRACKING_QUERY_MODE_PHYSTWIN_DENSE,
+        "tracking_query_count_requested": str(query_count_request),
+        "tracking_query_count_rule": TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE,
+        "tracking_sampling": TRACKING_SAMPLING_TORCH_RANDPERM,
+        "tracking_max_query_points_per_camera": PHYSTWIN_DENSE_MAX_POINTS,
+        "cotracker_seed": int(args.cotracker_seed),
+        "phystwin_dense_compatible": bool(phystwin_dense_compatible_for_args(args)),
         "cotracker_window_len": DEFAULT_COTRACKER_WINDOW_LEN,
         "cotracker_publish_step": DEFAULT_COTRACKER_PUBLISH_STEP,
         "overlay_max_points_per_camera": int(args.overlay_max_points_per_camera),
@@ -249,18 +313,49 @@ def build_empty_profile_summary(contract: dict[str, Any]) -> dict[str, Any]:
         "cotracker_backend": COTRACKER3_ONLINE,
         "cotracker_window_len": DEFAULT_COTRACKER_WINDOW_LEN,
         "cotracker_publish_step": DEFAULT_COTRACKER_PUBLISH_STEP,
+        "input_source": "live_realsense",
+        "offline_mode_available": False,
+        "offline_tracking_available": False,
+        "init_mode": "sam31_first_frame",
+        "mask_propagation": "hf_edgetam_online",
+        "semantic_mode": str(contract.get("semantic_mode", DEFAULT_MODE)),
+        "tracking_mask_scope": TRACK_SCOPE_OBJECT_CONTROLLER_UNION,
+        "tracking_query_mode": TRACKING_QUERY_MODE_PHYSTWIN_DENSE,
+        "tracking_query_count_requested": str(contract.get("tracking_query_count_requested", TRACKING_QUERY_COUNT_AUTO)),
+        "tracking_query_count_rule": TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE,
+        "tracking_sampling": TRACKING_SAMPLING_TORCH_RANDPERM,
+        "cotracker_seed": int(contract.get("cotracker_seed", DEFAULT_COTRACKER_SEED)),
+        "phystwin_dense_compatible": bool(contract.get("phystwin_dense_compatible", False)),
+        "tracking_query_count_actual_by_camera": {},
+        "tracking_union_pixels_by_camera": {},
+        "tracking_object_pixels_by_camera": {},
+        "tracking_controller_pixels_by_camera": {},
+        "overlay_max_points_per_camera": int(contract.get("overlay_max_points_per_camera", DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)),
     }
 
 
 def format_contract(contract: dict[str, Any]) -> str:
     keys = (
         "demo",
+        "input_source",
+        "offline_mode_available",
         "requires_three_realsense",
         "num_cameras",
         "depth_source",
         "uses_ffs",
         "mask_source",
         "edgetam_batch_vision_encoder",
+        "init_mode",
+        "mask_propagation",
+        "semantic_mode",
+        "tracking_mask_scope",
+        "tracking_query_mode",
+        "tracking_query_count_requested",
+        "tracking_query_count_rule",
+        "tracking_sampling",
+        "cotracker_seed",
+        "overlay_max_points_per_camera",
+        "phystwin_dense_compatible",
         "cotracker_backend",
         "cotracker_async",
         "render_latest_wins",
@@ -382,6 +477,7 @@ def build_shared_runtime_argv(
     shared_profile_path: Path | None,
 ) -> list[str]:
     render_mode = RENDER_MODE_NONE if str(args.render_mode) == RENDER_MODE_NONE else RENDER_MODE_POINTCLOUD
+    mode = resolve_demo3_mode(str(args.mode))
     argv = [
         "--preset",
         "demo2.1.5-live-fast-native",
@@ -405,13 +501,13 @@ def build_shared_runtime_argv(
         "--render-mode",
         render_mode,
         "--track-mode",
-        str(args.track_mode),
+        SHARED_TRACK_MODE_CONTROLLER_OBJECT,
         "--object-prompt",
         str(args.object_prompt),
         "--controller-prompt",
-        str(args.controller_prompt),
+        str(mode["controller_prompt"]),
         "--experiment-mode",
-        "controller-object-exp",
+        str(mode["experiment_mode"]),
         "--duration-s",
         str(float(args.duration_s)),
         "--output-root",
@@ -424,7 +520,7 @@ def build_shared_runtime_argv(
         "--tracking-source",
         "cached",
         "--tracking-num-points",
-        str(int(args.cotracker_query_count)),
+        str(PHYSTWIN_DENSE_MAX_POINTS),
         "--tracking-overlay-max-points",
         str(int(args.overlay_max_points_per_camera)),
         "--tracking-trail-len",
@@ -460,17 +556,11 @@ def build_shared_runtime_args(
     return shared.apply_preset_defaults(shared_args, explicit_options=shared._explicit_cli_options(shared_argv))
 
 
-def _semantic_tracking_mask(mask_packet: Any, track_mode: str) -> np.ndarray:
-    mode = str(track_mode)
+def _phystwin_union_tracking_masks(mask_packet: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     object_mask = np.asarray(mask_packet.object_mask, dtype=bool)
     controller_mask = np.asarray(mask_packet.controller_mask, dtype=bool)
-    if mode == TRACK_MODE_OBJECT_ONLY:
-        return object_mask
-    if mode == TRACK_MODE_CONTROLLER_ONLY:
-        return controller_mask
-    if mode == TRACK_MODE_NONE:
-        return np.zeros_like(object_mask, dtype=bool)
-    return object_mask | controller_mask
+    union_mask = np.asarray(object_mask | controller_mask, dtype=bool)
+    return union_mask, object_mask, controller_mask
 
 
 def _runtime_stat_fps(runtime: Any, attr: str) -> float:
@@ -544,6 +634,18 @@ def _build_demo3_live_summary(
             "cotracker_backend": COTRACKER3_ONLINE,
             "cotracker_window_len": DEFAULT_COTRACKER_WINDOW_LEN,
             "cotracker_publish_step": DEFAULT_COTRACKER_PUBLISH_STEP,
+            "tracking_query_count_actual_by_camera": tracking_worker.get("tracking_query_count_actual_by_camera", {}),
+            "tracking_union_pixels_by_camera": tracking_worker.get("tracking_union_pixels_by_camera", {}),
+            "tracking_object_pixels_by_camera": tracking_worker.get("tracking_object_pixels_by_camera", {}),
+            "tracking_controller_pixels_by_camera": tracking_worker.get("tracking_controller_pixels_by_camera", {}),
+            "tracking_sample_object_hits_by_camera": tracking_worker.get("tracking_sample_object_hits_by_camera", {}),
+            "tracking_sample_controller_hits_by_camera": tracking_worker.get("tracking_sample_controller_hits_by_camera", {}),
+            "tracking_sample_overlap_hits_by_camera": tracking_worker.get("tracking_sample_overlap_hits_by_camera", {}),
+            "tracking_sample_background_hits_by_camera": tracking_worker.get("tracking_sample_background_hits_by_camera", {}),
+            "cotracker_waiting_for_object_controller_by_camera": tracking_worker.get("cotracker_waiting_for_object_controller_by_camera", {}),
+            "object_mask_nonempty_by_camera": tracking_worker.get("object_mask_nonempty_by_camera", {}),
+            "controller_mask_nonempty_by_camera": tracking_worker.get("controller_mask_nonempty_by_camera", {}),
+            "overlay_display_count_by_camera": tracking_worker.get("overlay_display_count_by_camera", {}),
         }
     )
     return summary
@@ -578,7 +680,13 @@ def make_demo3_live_runtime_class(shared_runtime_module: Any):
                     camera_ids=tuple(int(item) for item in args.camera_ids),
                     backend_factory=backend_factory,
                     output_slot=self.demo3_tracking_output_slot,
-                    query_count=int(getattr(args, "tracking_num_points", DEFAULT_COTRACKER_QUERY_COUNT)),
+                    query_mode=str(self.demo3_contract.get("tracking_query_mode", TRACKING_QUERY_MODE_PHYSTWIN_DENSE)),
+                    query_count_request=str(
+                        self.demo3_contract.get("tracking_query_count_requested", TRACKING_QUERY_COUNT_AUTO)
+                    ),
+                    seed=int(self.demo3_contract.get("cotracker_seed", DEFAULT_COTRACKER_SEED)),
+                    sampling_device=str(getattr(args, "device", "cuda")),
+                    init_requires_object_and_controller=True,
                     overlay_max_points_per_camera=int(
                         getattr(args, "tracking_overlay_max_points", DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
                     ),
@@ -604,6 +712,8 @@ def make_demo3_live_runtime_class(shared_runtime_module: Any):
             if self.demo3_tracking_input_slot is not None:
                 rgb_by_camera: dict[int, np.ndarray] = {}
                 mask_by_camera: dict[int, np.ndarray] = {}
+                object_mask_by_camera: dict[int, np.ndarray] = {}
+                controller_mask_by_camera: dict[int, np.ndarray] = {}
                 depth_by_camera: dict[int, np.ndarray] = {}
                 intrinsics_by_camera: dict[int, np.ndarray] = {}
                 c2w_by_camera: dict[int, np.ndarray] = {}
@@ -613,7 +723,10 @@ def make_demo3_live_runtime_class(shared_runtime_module: Any):
                         continue
                     mask_packet = masks[idx]
                     rgb_by_camera[idx] = np.ascontiguousarray(np.asarray(mask_packet.color_bgr)[..., ::-1])
-                    mask_by_camera[idx] = _semantic_tracking_mask(mask_packet, str(self.args.track_mode))
+                    union_mask, object_mask, controller_mask = _phystwin_union_tracking_masks(mask_packet)
+                    mask_by_camera[idx] = union_mask
+                    object_mask_by_camera[idx] = object_mask
+                    controller_mask_by_camera[idx] = controller_mask
                     depth_by_camera[idx] = np.asarray(depth_group.depths[idx].depth_m, dtype=np.float32)
                     if getattr(self, "_stream_metadata", None) and idx < len(self._stream_metadata):
                         intrinsics_by_camera[idx] = np.asarray(self._stream_metadata[idx]["K_color"], dtype=np.float32).reshape(3, 3)
@@ -627,6 +740,8 @@ def make_demo3_live_runtime_class(shared_runtime_module: Any):
                             timestamp_s=float(time.perf_counter()),
                             rgb_by_camera=rgb_by_camera,
                             mask_by_camera=mask_by_camera,
+                            object_mask_by_camera=object_mask_by_camera,
+                            controller_mask_by_camera=controller_mask_by_camera,
                             depth_by_camera=depth_by_camera,
                             intrinsics_by_camera=intrinsics_by_camera,
                             c2w_by_camera=c2w_by_camera,
@@ -774,14 +889,25 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "COTRACKER3_ONLINE",
+    "DEFAULT_COTRACKER_QUERY_COUNT_REQUEST",
     "DEFAULT_COTRACKER_PUBLISH_STEP",
+    "DEFAULT_COTRACKER_SEED",
     "DEFAULT_COTRACKER_WINDOW_LEN",
+    "DEFAULT_MODE",
     "DEPTH_SOURCE_REALSENSE",
     "Demo3Runtime",
     "MASK_SOURCE_HF_EDGETAM",
+    "MODE_DEMO",
+    "MODE_EXP",
+    "MODES",
+    "PHYSTWIN_DENSE_MAX_POINTS",
     "PRESET_DEMO3_REALSENSE_COTRACKER_HIGHFPS",
     "PRESET_DEMO3_REALSENSE_COTRACKER_PROFILE",
     "PRESET_DEMO3_REALSENSE_MASK_ONLY",
+    "SHARED_TRACK_MODE_CONTROLLER_OBJECT",
+    "TRACKING_QUERY_COUNT_AUTO",
+    "TRACKING_QUERY_MODE_PHYSTWIN_DENSE",
+    "TRACK_SCOPE_OBJECT_CONTROLLER_UNION",
     "apply_preset_defaults",
     "build_arg_parser",
     "build_contract",
@@ -790,7 +916,9 @@ __all__ = [
     "format_contract",
     "main",
     "make_demo3_live_runtime_class",
+    "normalize_cotracker_query_count_request",
     "parse_camera_ids",
+    "resolve_demo3_mode",
     "validate_live_realsense_contract",
     "validate_args",
 ]

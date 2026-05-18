@@ -14,7 +14,11 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         config = process_mod.CoTrackerProcessConfig(
             camera_ids=(0, 1, 2),
             cotracker_gpu="1",
-            query_count=30,
+            query_mode="phystwin_dense",
+            query_count_request="auto",
+            seed=42,
+            sampling_device="cuda",
+            init_requires_object_and_controller=True,
             overlay_max_points_per_camera=15,
         )
 
@@ -54,7 +58,10 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(os.environ["CUDA_VISIBLE_DEVICES"], "1")
-        self.assertIn("cpu_numpy_latest_wins", stdout.getvalue())
+        output = stdout.getvalue()
+        self.assertIn("cpu_numpy_latest_wins", output)
+        self.assertIn("phystwin_dense", output)
+        self.assertIn('"tracking_query_count_requested": "auto"', output)
         if old_value is None:
             os.environ.pop("CUDA_VISIBLE_DEVICES", None)
         else:

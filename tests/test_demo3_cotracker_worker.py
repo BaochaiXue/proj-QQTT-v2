@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -84,6 +85,27 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
             timestamp_s=float(frame_idx) / 30.0,
             rgb_by_camera={0: rgb},
             mask_by_camera={0: mask},
+            object_mask_by_camera={0: mask},
+            controller_mask_by_camera={0: mask},
+        )
+
+    def _packet_with_component_masks(
+        self,
+        frame_idx: int,
+        *,
+        object_mask: np.ndarray,
+        controller_mask: np.ndarray,
+    ) -> TrackingOverlayInputPacket:
+        rgb = np.zeros((*object_mask.shape, 3), dtype=np.uint8)
+        union = np.asarray(object_mask, dtype=bool) | np.asarray(controller_mask, dtype=bool)
+        return TrackingOverlayInputPacket(
+            group_id=frame_idx,
+            frame_idx=frame_idx,
+            timestamp_s=float(frame_idx) / 30.0,
+            rgb_by_camera={0: rgb},
+            mask_by_camera={0: union},
+            object_mask_by_camera={0: object_mask},
+            controller_mask_by_camera={0: controller_mask},
         )
 
     def test_fake_backend_receives_frames_one_by_one_and_publishes_on_window(self) -> None:
@@ -185,6 +207,111 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
         self.assertIsNotNone(overlay)
         self.assertEqual(backend.update_calls, 2)
         self.assertEqual(overlay.camera_tracks_yx[0].shape, (4, 2))  # type: ignore[union-attr]
+
+    def test_object_only_first_frame_does_not_initialize(self) -> None:
+        backend = _FakeOnlineBackend(window_len=1, step=1)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0,),
+            backend_factory=lambda _camera_idx: backend,
+            overlay_max_points_per_camera=4,
+        )
+        object_mask = np.zeros((8, 8), dtype=bool)
+        object_mask[:4, :] = True
+        controller_mask = np.zeros((8, 8), dtype=bool)
+
+        self.assertIsNone(
+            worker.process_group(
+                self._packet_with_component_masks(
+                    0,
+                    object_mask=object_mask,
+                    controller_mask=controller_mask,
+                )
+            )
+        )
+
+        self.assertEqual(backend.update_calls, 0)
+        self.assertTrue(worker.snapshot()["cotracker_waiting_for_object_controller_by_camera"][0])
+
+    def test_controller_only_first_frame_does_not_initialize(self) -> None:
+        backend = _FakeOnlineBackend(window_len=1, step=1)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0,),
+            backend_factory=lambda _camera_idx: backend,
+            overlay_max_points_per_camera=4,
+        )
+        object_mask = np.zeros((8, 8), dtype=bool)
+        controller_mask = np.zeros((8, 8), dtype=bool)
+        controller_mask[4:, :] = True
+
+        self.assertIsNone(
+            worker.process_group(
+                self._packet_with_component_masks(
+                    0,
+                    object_mask=object_mask,
+                    controller_mask=controller_mask,
+                )
+            )
+        )
+
+        self.assertEqual(backend.update_calls, 0)
+        self.assertTrue(worker.snapshot()["cotracker_waiting_for_object_controller_by_camera"][0])
+
+    def test_object_controller_union_initializes_dense_queries(self) -> None:
+        backend = _FakeOnlineBackend(window_len=1, step=1)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0,),
+            backend_factory=lambda _camera_idx: backend,
+            overlay_max_points_per_camera=30,
+        )
+        object_mask = np.zeros((100, 100), dtype=bool)
+        object_mask[:60, :] = True
+        controller_mask = np.zeros((100, 100), dtype=bool)
+        controller_mask[40:, :] = True
+
+        overlay = worker.process_group(
+            self._packet_with_component_masks(
+                0,
+                object_mask=object_mask,
+                controller_mask=controller_mask,
+            )
+        )
+
+        self.assertIsNotNone(overlay)
+        snapshot = worker.snapshot()
+        self.assertEqual(snapshot["query_mode"], "phystwin_dense")
+        self.assertEqual(snapshot["query_count_request"], "auto")
+        self.assertEqual(snapshot["tracking_query_count_actual_by_camera"][0], 5000)
+        self.assertEqual(snapshot["tracking_union_pixels_by_camera"][0], 10000)
+        self.assertEqual(snapshot["overlay_display_count_by_camera"][0], 30)
+        self.assertEqual(overlay.camera_tracks_yx[0].shape, (30, 2))  # type: ignore[union-attr]
+
+    def test_sampling_calls_phystwin_dense_with_seed_and_camera_idx(self) -> None:
+        backend = _FakeOnlineBackend(window_len=1, step=1)
+        object_mask = np.ones((8, 8), dtype=bool)
+        controller_mask = np.ones((8, 8), dtype=bool)
+        sampled = np.array([[0, 0], [1, 1], [2, 2]], dtype=np.float32)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0,),
+            backend_factory=lambda _camera_idx: backend,
+            overlay_max_points_per_camera=3,
+            seed=42,
+            sampling_device="cpu",
+        )
+
+        with mock.patch("qqtt.demo.cotracker3_overlay_worker.sample_phystwin_dense", return_value=sampled) as sampler:
+            worker.process_group(
+                self._packet_with_component_masks(
+                    0,
+                    object_mask=object_mask,
+                    controller_mask=controller_mask,
+                )
+            )
+
+        sampler.assert_called_once()
+        _args, kwargs = sampler.call_args
+        self.assertEqual(kwargs["seed"], 42)
+        self.assertEqual(kwargs["camera_idx"], 0)
+        self.assertEqual(kwargs["torch_device"], "cpu")
 
     def test_overlay_slot_marks_stale_packets(self) -> None:
         slot = LatestTrackingOverlaySlot()

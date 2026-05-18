@@ -24,16 +24,15 @@ dependency-gated probes for high-performance candidates.
   `tracks_yx + visibility`.
 - The Demo 3 `cotracker3_online` live path uses CoTracker3's online rolling
   buffer contract: `window_len=16`, `step=8`, first publish at 16 frames, then
-  one publish every 8 new frames. The saved-case replay benchmark uses the same
-  frame-by-frame `update(frame)` path for this backend. PhysTwin dense
-  up-to-5000-point runs remain cached or offline artifacts unless explicitly
-  enabled outside the render hot path.
+  one publish every 8 new frames. Demo 3 live now uses the FuturePhysTwin dense
+  query rule by default: object/controller union masks, up to 5000 query points
+  per camera, and torch `randperm(seed + camera_idx)`. The rendered overlay cap
+  remains separate from the raw tracked query count.
 
 ## PhysTwin-Compatible CoTracker Export
 
-Demo 3 benchmark/export defaults to the dense PhysTwin-compatible query mode
-when the goal is to reproduce FuturePhysTwin-style CoTracker artifacts rather
-than a sparse visualization overlay:
+Demo 3 benchmark/export also defaults to the dense PhysTwin-compatible query
+mode when the goal is to reproduce FuturePhysTwin-style CoTracker artifacts:
 
 ```bash
 python scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py \
@@ -46,8 +45,8 @@ query points per camera with FuturePhysTwin-style torch `randperm`
 (`seed + camera_idx`, default seed `42`), and writes `cotracker/{camera}.npz`.
 Masks with fewer than 5000 pixels use all available mask pixels.
 Pass `--query-mode object_sparse` explicitly for sparse overlay screening.
-The existing Demo 3 overlay remains sparse by default and should consume dense
-tracks only as an offline/cached artifact.
+The live Demo 3 overlay displays only a capped subset for readability, but that
+display cap does not reduce the raw dense CoTracker query set.
 
 ## Installation
 

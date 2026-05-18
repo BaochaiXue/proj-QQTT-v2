@@ -53,6 +53,19 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(contract["uses_ffs"])
         self.assertEqual(contract["mask_source"], "hf_edgetam")
         self.assertTrue(contract["edgetam_batch_vision_encoder"])
+        self.assertEqual(contract["input_source"], "live_realsense")
+        self.assertFalse(contract["offline_mode_available"])
+        self.assertFalse(contract["offline_tracking_available"])
+        self.assertEqual(contract["init_mode"], "sam31_first_frame")
+        self.assertEqual(contract["mask_propagation"], "hf_edgetam_online")
+        self.assertEqual(contract["semantic_mode"], "exp")
+        self.assertEqual(contract["controller_prompt"], "towel")
+        self.assertEqual(contract["tracking_mask_scope"], "object_controller_union")
+        self.assertEqual(contract["tracking_query_mode"], "phystwin_dense")
+        self.assertEqual(contract["tracking_query_count_requested"], "auto")
+        self.assertEqual(contract["tracking_sampling"], "torch_randperm_seed_plus_camera_idx")
+        self.assertEqual(contract["cotracker_seed"], 42)
+        self.assertTrue(contract["phystwin_dense_compatible"])
         self.assertEqual(contract["cotracker_backend"], "cotracker3_online")
         self.assertEqual(contract["cotracker_owner"], "process")
         self.assertEqual(contract["cotracker_process_mode"], "subprocess")
@@ -78,6 +91,13 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("main_cuda_visible_devices = 0", output)
         self.assertIn("cotracker_cuda_visible_devices = 1", output)
         self.assertIn("uses_ffs = false", output)
+        self.assertIn("input_source = live_realsense", output)
+        self.assertIn("offline_mode_available = false", output)
+        self.assertIn("semantic_mode = exp", output)
+        self.assertIn("tracking_mask_scope = object_controller_union", output)
+        self.assertIn("tracking_query_mode = phystwin_dense", output)
+        self.assertIn("tracking_query_count_requested = auto", output)
+        self.assertIn("phystwin_dense_compatible = true", output)
         self.assertIn("cotracker_owner = process", output)
         self.assertIn("cross_gpu_cuda_tensor_transfer = false", output)
         self.assertIn("render_waited_for_cotracker = false", output)
@@ -137,6 +157,37 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(config.cotracker_gpu, "1")
         self.assertEqual(config.camera_ids, (0, 1, 2))
         self.assertEqual(config.cotracker_backend, "cotracker3_online")
+        self.assertEqual(config.query_mode, "phystwin_dense")
+        self.assertEqual(config.query_count_request, "auto")
+        self.assertEqual(config.seed, 42)
+        self.assertTrue(config.init_requires_object_and_controller)
+
+    def test_mode_demo_uses_hand_controller_without_changing_gpu_split(self) -> None:
+        args = self._parse(
+            [
+                "--dry-run",
+                "--camera-ids",
+                "0,1,2",
+                "--mask-gpu",
+                "0",
+                "--cotracker-gpu",
+                "1",
+                "--mode",
+                "demo",
+            ]
+        )
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+
+        self.assertEqual(contract["semantic_mode"], "demo")
+        self.assertEqual(contract["shared_experiment_mode"], "demo-mode")
+        self.assertEqual(contract["controller_prompt"], "hand")
+        self.assertEqual(contract["main_cuda_visible_devices"], "0")
+        self.assertEqual(contract["cotracker_cuda_visible_devices"], "1")
+
+    def test_track_mode_is_not_public_cli(self) -> None:
+        parser = demo31_runtime.build_arg_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--dry-run", "--camera-ids", "0,1,2", "--track-mode", "object-only"])
 
     def test_latest_reuse_join_buffer_retargets_latest_mask_to_fresh_depth(self) -> None:
         buffer = demo31_runtime.Demo31MaskPolicyJoinBuffer(

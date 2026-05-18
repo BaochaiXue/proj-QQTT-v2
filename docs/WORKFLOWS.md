@@ -120,7 +120,10 @@ load camera-to-world transforms after `CameraSystem` startup, transform each
 camera's backprojected masked RGB-D points into the shared world frame, then
 fuse object/controller semantic PCDs. Demo 3.1 adds a dual-4090 visualization
 contract where GPU0 owns capture/mask/fusion/render and GPU1 owns CoTracker3 in
-a latest-wins child process.
+a latest-wins child process. Demo 3.0 and Demo 3.1 expose only `--mode exp|demo`
+for live semantics; both modes track the object/controller union with
+FuturePhysTwin-compatible dense CoTracker queries while keeping the rendered
+overlay cap separate.
 
 When you want a cheaper native-viewer throughput probe, replace the depth
 colormap with a black placeholder that only reports received depth FPS:

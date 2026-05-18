@@ -26,7 +26,11 @@ class CoTrackerProcessConfig:
     camera_ids: tuple[int, ...] = (0, 1, 2)
     cotracker_gpu: str = "1"
     cotracker_backend: str = "cotracker3_online"
-    query_count: int = 128
+    query_mode: str = "phystwin_dense"
+    query_count_request: str = "auto"
+    seed: int = 42
+    sampling_device: str = "cuda"
+    init_requires_object_and_controller: bool = True
     overlay_max_points_per_camera: int = 30
     input_max_age_ms: float = 250.0
     poll_interval_s: float = 0.001
@@ -38,7 +42,11 @@ class CoTrackerProcessConfig:
             "camera_ids": [int(item) for item in self.camera_ids],
             "cotracker_gpu": str(self.cotracker_gpu),
             "cotracker_backend": str(self.cotracker_backend),
-            "query_count": int(self.query_count),
+            "query_mode": str(self.query_mode),
+            "query_count_request": str(self.query_count_request),
+            "seed": int(self.seed),
+            "sampling_device": str(self.sampling_device),
+            "init_requires_object_and_controller": bool(self.init_requires_object_and_controller),
             "overlay_max_points_per_camera": int(self.overlay_max_points_per_camera),
             "input_max_age_ms": float(self.input_max_age_ms),
             "poll_interval_s": float(self.poll_interval_s),
@@ -52,7 +60,11 @@ class CoTrackerProcessConfig:
             camera_ids=tuple(int(item) for item in payload.get("camera_ids", (0, 1, 2))),
             cotracker_gpu=str(payload.get("cotracker_gpu", "1")),
             cotracker_backend=str(payload.get("cotracker_backend", "cotracker3_online")),
-            query_count=int(payload.get("query_count", 128)),
+            query_mode=str(payload.get("query_mode", "phystwin_dense")),
+            query_count_request=str(payload.get("query_count_request", payload.get("query_count", "auto"))),
+            seed=int(payload.get("seed", 42)),
+            sampling_device=str(payload.get("sampling_device", "cuda")),
+            init_requires_object_and_controller=bool(payload.get("init_requires_object_and_controller", True)),
             overlay_max_points_per_camera=int(payload.get("overlay_max_points_per_camera", 30)),
             input_max_age_ms=float(payload.get("input_max_age_ms", 250.0)),
             poll_interval_s=float(payload.get("poll_interval_s", 0.001)),
@@ -193,7 +205,11 @@ def run_cotracker_worker_loop(
         camera_ids=tuple(int(item) for item in config.camera_ids),
         backend_factory=backend_factory,
         output_slot=output_slot,
-        query_count=int(config.query_count),
+        query_mode=str(config.query_mode),
+        query_count_request=str(config.query_count_request),
+        seed=int(config.seed),
+        sampling_device=str(config.sampling_device),
+        init_requires_object_and_controller=bool(config.init_requires_object_and_controller),
         overlay_max_points_per_camera=int(config.overlay_max_points_per_camera),
         device=str(config.device),
     )
@@ -240,6 +256,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "cotracker_process": True,
                     "cotracker_backend": config.cotracker_backend,
                     "cotracker_cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                    "tracking_query_mode": config.query_mode,
+                    "tracking_query_count_requested": config.query_count_request,
+                    "cotracker_seed": config.seed,
+                    "init_requires_object_and_controller": config.init_requires_object_and_controller,
                     "cross_gpu_cuda_tensor_transfer": False,
                     "ipc_payload": "cpu_numpy_latest_wins",
                 },

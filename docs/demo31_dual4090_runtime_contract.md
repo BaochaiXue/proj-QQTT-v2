@@ -6,9 +6,19 @@ RealSense-depth fusion, and render path. GPU1 owns CoTracker3 online in a
 separate child process.
 
 No CUDA tensors are transferred between processes. CoTracker receives CPU
-RGB/mask latest-wins packets and returns small CPU 2D track/visibility packets.
-The main process lifts tracks to world using latest RealSense depth,
-intrinsics, and camera-to-world transforms.
+RGB plus live object/controller union-mask latest-wins packets and returns
+small CPU 2D track/visibility packets. It does not receive offline video,
+saved masks, depth, intrinsics, or camera-to-world transforms. The main process
+lifts tracks to world using latest RealSense depth, intrinsics, and
+camera-to-world transforms.
+
+Demo 3.1 inherits Demo 3.0's online-only FuturePhysTwin-compatible tracking
+semantics. The only public semantic switch is `--mode exp|demo`; both modes
+track `object_mask | controller_mask`. `exp` uses controller `towel`, while
+`demo` uses controller `hand`. CoTracker query sampling defaults to
+`phystwin_dense`: `min(union_mask_pixels, 5000)` query points per camera,
+sampled by torch `randperm(seed + camera_idx)` with seed 42. Overlay display
+count is separate and remains capped at 30 points per camera by default.
 
 The renderer uses fresh RealSense depth, latest non-stale masks when
 `fusion_mask_policy = latest-reuse`, and latest non-stale tracking overlays.
@@ -18,6 +28,9 @@ Rendering never waits for CoTracker.
 
 ```text
 demo = demo3.1
+input_source = live_realsense
+offline_mode_available = false
+offline_tracking_available = false
 dual_gpu_enabled = true
 required_cuda_devices = 2
 mask_gpu_physical = 0
@@ -28,6 +41,17 @@ uses_ffs = false
 depth_source = realsense
 mask_source = hf_edgetam
 edgetam_batch_vision_encoder = true
+init_mode = sam31_first_frame
+mask_propagation = hf_edgetam_online
+semantic_mode = exp
+tracking_mask_scope = object_controller_union
+tracking_query_mode = phystwin_dense
+tracking_query_count_requested = auto
+tracking_query_count_rule = min(union_mask_pixels, 5000)
+tracking_sampling = torch_randperm_seed_plus_camera_idx
+cotracker_seed = 42
+phystwin_dense_compatible = true
+overlay_max_points_per_camera = 30
 cotracker_backend = cotracker3_online
 cotracker_owner = process
 cotracker_process_mode = subprocess
@@ -77,6 +101,15 @@ gpu1_util_p95
 gpu1_mem_used_gb
 main_process_pid
 cotracker_process_pid
+tracking_query_count_actual_by_camera
+tracking_union_pixels_by_camera
+tracking_object_pixels_by_camera
+tracking_controller_pixels_by_camera
+tracking_sample_object_hits_by_camera
+tracking_sample_controller_hits_by_camera
+tracking_sample_overlap_hits_by_camera
+tracking_sample_background_hits_by_camera
+overlay_display_count_by_camera
 ```
 
 ## Boundaries
@@ -85,5 +118,7 @@ cotracker_process_pid
 - Demo 3.1 does not build or consume FFS depth.
 - Demo 3.1 does not rely on cross-GPU tensor operations or CUDA tensor IPC.
 - CoTracker process does not receive depth, intrinsics, or camera-to-world data.
+- Demo 3.1 does not expose object-only or controller-only live tracking modes.
+- Demo 3.1 does not expose offline video, cached tracking input, saved-mask
+  initialization, or case replay through the live entrypoint.
 - CoTracker output is visualization-only tracking overlay data.
-

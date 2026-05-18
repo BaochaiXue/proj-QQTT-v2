@@ -30,9 +30,46 @@ class Demo3RuntimeContractTest(unittest.TestCase):
         self.assertFalse(contract["uses_ffs"])
         self.assertEqual(contract["mask_source"], "hf_edgetam")
         self.assertTrue(contract["edgetam_batch_vision_encoder"])
+        self.assertEqual(contract["input_source"], "live_realsense")
+        self.assertFalse(contract["offline_mode_available"])
+        self.assertFalse(contract["offline_tracking_available"])
+        self.assertEqual(contract["init_mode"], "sam31_first_frame")
+        self.assertEqual(contract["mask_propagation"], "hf_edgetam_online")
+        self.assertEqual(contract["semantic_mode"], "exp")
+        self.assertEqual(contract["controller_prompt"], "towel")
+        self.assertEqual(contract["tracking_mask_scope"], "object_controller_union")
+        self.assertEqual(contract["tracking_query_mode"], "phystwin_dense")
+        self.assertEqual(contract["tracking_query_count_requested"], "auto")
+        self.assertEqual(contract["tracking_query_count_rule"], "min(union_mask_pixels, 5000)")
+        self.assertEqual(contract["tracking_sampling"], "torch_randperm_seed_plus_camera_idx")
+        self.assertEqual(contract["cotracker_seed"], 42)
+        self.assertTrue(contract["phystwin_dense_compatible"])
         self.assertEqual(contract["cotracker_backend"], "cotracker3_online")
         self.assertTrue(contract["cotracker_async"])
         self.assertTrue(contract["render_latest_wins"])
+
+    def test_mode_demo_uses_hand_controller(self) -> None:
+        args = self._parse(["--dry-run", "--camera-ids", "0,1,2", "--mode", "demo"])
+        contract = demo3_runtime.build_contract(args)
+
+        self.assertEqual(contract["semantic_mode"], "demo")
+        self.assertEqual(contract["shared_experiment_mode"], "demo-mode")
+        self.assertEqual(contract["controller_prompt"], "hand")
+        self.assertEqual(contract["tracking_controller_label"], "hand")
+
+    def test_track_mode_is_not_public_cli(self) -> None:
+        parser = demo3_runtime.build_arg_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--dry-run", "--camera-ids", "0,1,2", "--track-mode", "object-only"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--dry-run", "--camera-ids", "0,1,2", "--track-mode", "controller-only"])
+
+    def test_offline_inputs_are_not_public_cli(self) -> None:
+        parser = demo3_runtime.build_arg_parser()
+        for flag, value in (("--input-video", "foo.mp4"), ("--case-root", "case"), ("--saved-masks", "masks")):
+            with self.subTest(flag=flag):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args(["--dry-run", "--camera-ids", "0,1,2", flag, value])
 
     def test_one_or_two_cameras_fail_fast(self) -> None:
         for camera_ids in ("0", "0,1"):
@@ -60,6 +97,16 @@ class Demo3RuntimeContractTest(unittest.TestCase):
         self.assertIn("uses_ffs = false", output)
         self.assertIn("mask_source = hf_edgetam", output)
         self.assertIn("edgetam_batch_vision_encoder = true", output)
+        self.assertIn("input_source = live_realsense", output)
+        self.assertIn("offline_mode_available = false", output)
+        self.assertIn("init_mode = sam31_first_frame", output)
+        self.assertIn("mask_propagation = hf_edgetam_online", output)
+        self.assertIn("semantic_mode = exp", output)
+        self.assertIn("tracking_mask_scope = object_controller_union", output)
+        self.assertIn("tracking_query_mode = phystwin_dense", output)
+        self.assertIn("tracking_query_count_requested = auto", output)
+        self.assertIn("tracking_sampling = torch_randperm_seed_plus_camera_idx", output)
+        self.assertIn("phystwin_dense_compatible = true", output)
         self.assertIn("cotracker_backend = cotracker3_online", output)
         self.assertIn("cotracker_async = true", output)
         self.assertIn("render_latest_wins = true", output)
@@ -211,6 +258,9 @@ class Demo3RuntimeContractTest(unittest.TestCase):
             self.assertTrue(profile["summary"]["edgetam_batch_vision_encoder"])
             self.assertEqual(_FakeSharedRuntime.last_args.depth_source, "realsense")
             self.assertTrue(_FakeSharedRuntime.last_args.edgetam_batch_vision_encoder)
+            self.assertEqual(_FakeSharedRuntime.last_args.track_mode, "controller-object")
+            self.assertEqual(_FakeSharedRuntime.last_args.experiment_mode, "controller-object-exp")
+            self.assertEqual(_FakeSharedRuntime.last_args.controller_prompt, "towel")
             self.assertEqual(_FakeSharedRuntime.last_args.tracking_backend, "none")
             self.assertEqual(_FakeSharedRuntime.last_args.tracking_source, "cached")
             self.assertFalse(_FakeSharedRuntime.last_args.show_tracking_overlay)

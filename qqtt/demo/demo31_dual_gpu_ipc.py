@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import queue
 import time
 from typing import Any
@@ -16,6 +16,8 @@ class TrackingInputLitePacket:
     timestamp_s: float
     rgb_by_camera: Mapping[int, np.ndarray]
     mask_by_camera: Mapping[int, np.ndarray]
+    object_mask_by_camera: Mapping[int, np.ndarray]
+    controller_mask_by_camera: Mapping[int, np.ndarray]
 
     @property
     def seq(self) -> int:
@@ -36,6 +38,14 @@ class TrackingInputLitePacket:
                 int(camera_idx): np.ascontiguousarray(np.asarray(mask, dtype=bool))
                 for camera_idx, mask in self.mask_by_camera.items()
             },
+            object_mask_by_camera={
+                int(camera_idx): np.ascontiguousarray(np.asarray(mask, dtype=bool))
+                for camera_idx, mask in self.object_mask_by_camera.items()
+            },
+            controller_mask_by_camera={
+                int(camera_idx): np.ascontiguousarray(np.asarray(mask, dtype=bool))
+                for camera_idx, mask in self.controller_mask_by_camera.items()
+            },
         )
 
 
@@ -52,6 +62,15 @@ class TrackingResultLitePacket:
     model_ms: float = 0.0
     e2e_ms: float = 0.0
     stale: bool = False
+    tracking_query_count_actual_by_camera: dict[int, int] = field(default_factory=dict)
+    tracking_union_pixels_by_camera: dict[int, int] = field(default_factory=dict)
+    tracking_object_pixels_by_camera: dict[int, int] = field(default_factory=dict)
+    tracking_controller_pixels_by_camera: dict[int, int] = field(default_factory=dict)
+    tracking_sample_object_hits_by_camera: dict[int, int] = field(default_factory=dict)
+    tracking_sample_controller_hits_by_camera: dict[int, int] = field(default_factory=dict)
+    tracking_sample_overlap_hits_by_camera: dict[int, int] = field(default_factory=dict)
+    tracking_sample_background_hits_by_camera: dict[int, int] = field(default_factory=dict)
+    overlay_display_count_by_camera: dict[int, int] = field(default_factory=dict)
 
     @property
     def seq(self) -> int:
@@ -80,6 +99,42 @@ class TrackingResultLitePacket:
             model_ms=float(packet.model_ms),
             e2e_ms=float(packet.e2e_ms),
             stale=bool(getattr(packet, "stale", False)),
+            tracking_query_count_actual_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "tracking_query_count_actual_by_camera", {}).items()
+            },
+            tracking_union_pixels_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "tracking_union_pixels_by_camera", {}).items()
+            },
+            tracking_object_pixels_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "tracking_object_pixels_by_camera", {}).items()
+            },
+            tracking_controller_pixels_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "tracking_controller_pixels_by_camera", {}).items()
+            },
+            tracking_sample_object_hits_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "tracking_sample_object_hits_by_camera", {}).items()
+            },
+            tracking_sample_controller_hits_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "tracking_sample_controller_hits_by_camera", {}).items()
+            },
+            tracking_sample_overlap_hits_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "tracking_sample_overlap_hits_by_camera", {}).items()
+            },
+            tracking_sample_background_hits_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "tracking_sample_background_hits_by_camera", {}).items()
+            },
+            overlay_display_count_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "overlay_display_count_by_camera", {}).items()
+            },
         )
 
     def mark_stale(self) -> "TrackingResultLitePacket":
@@ -95,6 +150,15 @@ class TrackingResultLitePacket:
             model_ms=self.model_ms,
             e2e_ms=self.e2e_ms,
             stale=True,
+            tracking_query_count_actual_by_camera=self.tracking_query_count_actual_by_camera,
+            tracking_union_pixels_by_camera=self.tracking_union_pixels_by_camera,
+            tracking_object_pixels_by_camera=self.tracking_object_pixels_by_camera,
+            tracking_controller_pixels_by_camera=self.tracking_controller_pixels_by_camera,
+            tracking_sample_object_hits_by_camera=self.tracking_sample_object_hits_by_camera,
+            tracking_sample_controller_hits_by_camera=self.tracking_sample_controller_hits_by_camera,
+            tracking_sample_overlap_hits_by_camera=self.tracking_sample_overlap_hits_by_camera,
+            tracking_sample_background_hits_by_camera=self.tracking_sample_background_hits_by_camera,
+            overlay_display_count_by_camera=self.overlay_display_count_by_camera,
         )
 
 

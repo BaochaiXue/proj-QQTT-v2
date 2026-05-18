@@ -108,11 +108,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=int, default=demo3_runtime.DEFAULT_FPS)
     parser.add_argument("--depth-source", default=demo3_runtime.DEPTH_SOURCE_REALSENSE)
     parser.add_argument("--mask-source", default=demo3_runtime.MASK_SOURCE_HF_EDGETAM_CLI)
-    parser.add_argument("--track-mode", choices=demo3_runtime.TRACK_MODES, default=demo3_runtime.TRACK_MODE_OBJECT_ONLY)
+    parser.add_argument("--mode", choices=demo3_runtime.MODES, default=demo3_runtime.DEFAULT_MODE)
     parser.add_argument("--object-prompt", default=demo3_runtime.DEFAULT_OBJECT_PROMPT)
-    parser.add_argument("--controller-prompt", default=demo3_runtime.DEFAULT_CONTROLLER_PROMPT)
     parser.add_argument("--cotracker-backend", default=demo3_runtime.COTRACKER3_ONLINE)
-    parser.add_argument("--cotracker-query-count", type=int, default=demo3_runtime.DEFAULT_COTRACKER_QUERY_COUNT)
+    parser.add_argument("--cotracker-query-mode", choices=(demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,), default=demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE)
+    parser.add_argument("--cotracker-query-count", default=demo3_runtime.DEFAULT_COTRACKER_QUERY_COUNT_REQUEST)
+    parser.add_argument("--cotracker-seed", type=int, default=demo3_runtime.DEFAULT_COTRACKER_SEED)
     parser.add_argument("--disable-cotracker", action="store_true")
     parser.add_argument("--render-mode", choices=demo3_runtime.RENDER_MODES, default=demo3_runtime.RENDER_MODE_POINTCLOUD)
     parser.add_argument("--overlay-max-points-per-camera", type=int, default=demo3_runtime.DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
@@ -165,8 +166,9 @@ def validate_args(
     _normalize_mask_source(str(args.mask_source))
     if str(args.cotracker_backend) != demo3_runtime.COTRACKER3_ONLINE:
         raise ValueError("Demo 3.1 currently supports only --cotracker-backend cotracker3_online.")
-    if int(args.cotracker_query_count) <= 0 and not bool(args.disable_cotracker):
-        raise ValueError("--cotracker-query-count must be positive when CoTracker is enabled.")
+    if str(args.cotracker_query_mode) != demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
+        raise ValueError("Demo 3.1 currently supports only --cotracker-query-mode phystwin_dense.")
+    demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
     if int(args.overlay_max_points_per_camera) <= 0:
         raise ValueError("--overlay-max-points-per-camera must be positive.")
     if float(args.cotracker_input_fps) < 0.0:
@@ -186,7 +188,11 @@ def build_cotracker_process_config(args: argparse.Namespace) -> CoTrackerProcess
         camera_ids=demo3_runtime.parse_camera_ids(args.camera_ids),
         cotracker_gpu=str(args.cotracker_gpu),
         cotracker_backend=str(args.cotracker_backend),
-        query_count=int(args.cotracker_query_count),
+        query_mode=str(args.cotracker_query_mode),
+        query_count_request=demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count),
+        seed=int(args.cotracker_seed),
+        sampling_device="cuda",
+        init_requires_object_and_controller=True,
         overlay_max_points_per_camera=int(args.overlay_max_points_per_camera),
         input_max_age_ms=float(args.cotracker_input_max_age_ms),
         process_mode=str(args.cotracker_process_mode),
@@ -201,9 +207,16 @@ def build_contract(
 ) -> dict[str, Any]:
     camera_ids = demo3_runtime.parse_camera_ids(args.camera_ids)
     render_waited_for_mask = str(args.fusion_mask_policy) == FUSION_MASK_POLICY_STRICT
+    mode = demo3_runtime.resolve_demo3_mode(str(args.mode))
+    query_count_request = demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
     contract: dict[str, Any] = {
         "demo": "demo3.1",
         "preset": str(args.preset),
+        "input_source": "live_realsense",
+        "offline_mode_available": False,
+        "offline_tracking_available": False,
+        "init_mode": "sam31_first_frame",
+        "mask_propagation": "hf_edgetam_online",
         "dual_gpu_enabled": True,
         "required_cuda_devices": 2,
         "physical_cuda_device_count": int(_cuda_count(cuda_device_count_provider)),
@@ -223,9 +236,13 @@ def build_contract(
         "uses_ffs": False,
         "mask_source": demo3_runtime.MASK_SOURCE_HF_EDGETAM,
         "edgetam_batch_vision_encoder": True,
-        "track_mode": str(args.track_mode),
+        "semantic_mode": str(mode["semantic_mode"]),
+        "shared_experiment_mode": str(mode["experiment_mode"]),
+        "shared_runtime_track_mode": demo3_runtime.SHARED_TRACK_MODE_CONTROLLER_OBJECT,
+        "tracking_mask_scope": demo3_runtime.TRACK_SCOPE_OBJECT_CONTROLLER_UNION,
         "object_prompt": str(args.object_prompt),
-        "controller_prompt": str(args.controller_prompt),
+        "controller_prompt": str(mode["controller_prompt"]),
+        "tracking_controller_label": str(mode["controller_label"]),
         "cotracker_enabled": not bool(args.disable_cotracker),
         "cotracker_backend": demo3_runtime.COTRACKER3_ONLINE,
         "cotracker_owner": "process",
@@ -233,7 +250,13 @@ def build_contract(
         "cotracker_input_fps": float(args.cotracker_input_fps),
         "cotracker_input_max_age_ms": float(args.cotracker_input_max_age_ms),
         "cotracker_result_stale_timeout_ms": float(args.cotracker_result_stale_timeout_ms),
-        "cotracker_query_count": int(args.cotracker_query_count),
+        "tracking_query_mode": demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,
+        "tracking_query_count_requested": str(query_count_request),
+        "tracking_query_count_rule": demo3_runtime.TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE,
+        "tracking_sampling": demo3_runtime.TRACKING_SAMPLING_TORCH_RANDPERM,
+        "tracking_max_query_points_per_camera": demo3_runtime.PHYSTWIN_DENSE_MAX_POINTS,
+        "cotracker_seed": int(args.cotracker_seed),
+        "phystwin_dense_compatible": bool(demo3_runtime.phystwin_dense_compatible_for_args(args)),
         "cotracker_window_len": demo3_runtime.DEFAULT_COTRACKER_WINDOW_LEN,
         "cotracker_publish_step": demo3_runtime.DEFAULT_COTRACKER_PUBLISH_STEP,
         "ipc_payload": "cpu_numpy_latest_wins",
@@ -275,6 +298,8 @@ def build_contract(
 def format_contract(contract: dict[str, Any]) -> str:
     keys = (
         "demo",
+        "input_source",
+        "offline_mode_available",
         "dual_gpu_enabled",
         "required_cuda_devices",
         "mask_gpu_physical",
@@ -285,6 +310,17 @@ def format_contract(contract: dict[str, Any]) -> str:
         "uses_ffs",
         "mask_source",
         "edgetam_batch_vision_encoder",
+        "init_mode",
+        "mask_propagation",
+        "semantic_mode",
+        "tracking_mask_scope",
+        "tracking_query_mode",
+        "tracking_query_count_requested",
+        "tracking_query_count_rule",
+        "tracking_sampling",
+        "cotracker_seed",
+        "overlay_max_points_per_camera",
+        "phystwin_dense_compatible",
         "cotracker_backend",
         "cotracker_owner",
         "cotracker_process_mode",
@@ -348,16 +384,11 @@ def build_shared_runtime_args(
     return shared_args
 
 
-def _semantic_tracking_mask(mask_packet: Any, track_mode: str) -> np.ndarray:
+def _phystwin_union_tracking_masks(mask_packet: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     object_mask = np.asarray(mask_packet.object_mask, dtype=bool)
     controller_mask = np.asarray(mask_packet.controller_mask, dtype=bool)
-    if track_mode == demo3_runtime.TRACK_MODE_OBJECT_ONLY:
-        return object_mask
-    if track_mode == demo3_runtime.TRACK_MODE_CONTROLLER_ONLY:
-        return controller_mask
-    if track_mode == demo3_runtime.TRACK_MODE_NONE:
-        return np.zeros_like(object_mask, dtype=bool)
-    return object_mask | controller_mask
+    union_mask = np.asarray(object_mask | controller_mask, dtype=bool)
+    return union_mask, object_mask, controller_mask
 
 
 class Demo31MaskPolicyJoinBuffer:
@@ -529,6 +560,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_overlay_age_ms_samples: list[float] = []
             self.demo31_overlay_model_ms_samples: list[float] = []
             self.demo31_overlay_e2e_ms_samples: list[float] = []
+            self.demo31_tracking_stats: dict[str, dict[int, int]] = {}
 
         def stop(self) -> None:
             if self.demo31_process_client is not None:
@@ -539,13 +571,18 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             now_s = time.perf_counter()
             rgb_by_camera: dict[int, np.ndarray] = {}
             mask_by_camera: dict[int, np.ndarray] = {}
+            object_mask_by_camera: dict[int, np.ndarray] = {}
+            controller_mask_by_camera: dict[int, np.ndarray] = {}
             for camera_idx in self.args.camera_ids:
                 idx = int(camera_idx)
                 if idx not in masks or idx not in depth_group.depths:
                     continue
                 mask_packet = masks[idx]
                 rgb_by_camera[idx] = np.ascontiguousarray(np.asarray(mask_packet.color_bgr)[..., ::-1])
-                mask_by_camera[idx] = _semantic_tracking_mask(mask_packet, str(self.args.track_mode))
+                union_mask, object_mask, controller_mask = _phystwin_union_tracking_masks(mask_packet)
+                mask_by_camera[idx] = union_mask
+                object_mask_by_camera[idx] = object_mask
+                controller_mask_by_camera[idx] = controller_mask
                 self.demo31_latest_mask_by_camera[idx] = mask_by_camera[idx]
                 self.demo31_latest_depth_by_camera[idx] = np.asarray(depth_group.depths[idx].depth_m, dtype=np.float32)
                 if getattr(self, "_stream_metadata", None) and idx < len(self._stream_metadata):
@@ -575,6 +612,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             timestamp_s=now_s,
                             rgb_by_camera=rgb_by_camera,
                             mask_by_camera=mask_by_camera,
+                            object_mask_by_camera=object_mask_by_camera,
+                            controller_mask_by_camera=controller_mask_by_camera,
                         )
                     )
                     self.demo31_tracking_input_queue_replace_count += int(replaced_count)
@@ -647,6 +686,17 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_overlay_age_ms_samples.append(float(age_ms))
             self.demo31_overlay_model_ms_samples.append(float(result.model_ms))
             self.demo31_overlay_e2e_ms_samples.append(float(result.e2e_ms))
+            self.demo31_tracking_stats = {
+                "tracking_query_count_actual_by_camera": dict(result.tracking_query_count_actual_by_camera),
+                "tracking_union_pixels_by_camera": dict(result.tracking_union_pixels_by_camera),
+                "tracking_object_pixels_by_camera": dict(result.tracking_object_pixels_by_camera),
+                "tracking_controller_pixels_by_camera": dict(result.tracking_controller_pixels_by_camera),
+                "tracking_sample_object_hits_by_camera": dict(result.tracking_sample_object_hits_by_camera),
+                "tracking_sample_controller_hits_by_camera": dict(result.tracking_sample_controller_hits_by_camera),
+                "tracking_sample_overlap_hits_by_camera": dict(result.tracking_sample_overlap_hits_by_camera),
+                "tracking_sample_background_hits_by_camera": dict(result.tracking_sample_background_hits_by_camera),
+                "overlay_display_count_by_camera": dict(result.overlay_display_count_by_camera),
+            }
             return result
 
         def demo31_snapshot(self) -> dict[str, Any]:
@@ -673,6 +723,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "cotracker_e2e_ms_median": float(e2e["median"]),
                 "cotracker_e2e_ms_p95": float(e2e["p95"]),
                 "mask_cache": self.demo31_mask_cache.snapshot(),
+                "tracking_stats": dict(self.demo31_tracking_stats),
             }
 
     return Demo31LiveRuntime
@@ -765,6 +816,7 @@ class Demo31Runtime:
             process = snapshot.get("process") or {}
             mask_cache = snapshot.get("stage_join_buffer") or snapshot.get("mask_cache") or {}
             input_endpoint = process.get("input_endpoint") or {}
+            tracking_stats = snapshot.get("tracking_stats") or {}
             summary.update(
                 {
                     "cotracker_process_pid": int(process.get("pid", 0) or 0),
@@ -783,6 +835,15 @@ class Demo31Runtime:
                     "mask_reuse_ratio": float(mask_cache.get("mask_reuse_ratio", 0.0) or 0.0),
                     "mask_age_ms_median": float(mask_cache.get("mask_age_ms_median", 0.0) or 0.0),
                     "mask_age_ms_p95": float(mask_cache.get("mask_age_ms_p95", 0.0) or 0.0),
+                    "tracking_query_count_actual_by_camera": tracking_stats.get("tracking_query_count_actual_by_camera", {}),
+                    "tracking_union_pixels_by_camera": tracking_stats.get("tracking_union_pixels_by_camera", {}),
+                    "tracking_object_pixels_by_camera": tracking_stats.get("tracking_object_pixels_by_camera", {}),
+                    "tracking_controller_pixels_by_camera": tracking_stats.get("tracking_controller_pixels_by_camera", {}),
+                    "tracking_sample_object_hits_by_camera": tracking_stats.get("tracking_sample_object_hits_by_camera", {}),
+                    "tracking_sample_controller_hits_by_camera": tracking_stats.get("tracking_sample_controller_hits_by_camera", {}),
+                    "tracking_sample_overlap_hits_by_camera": tracking_stats.get("tracking_sample_overlap_hits_by_camera", {}),
+                    "tracking_sample_background_hits_by_camera": tracking_stats.get("tracking_sample_background_hits_by_camera", {}),
+                    "overlay_display_count_by_camera": tracking_stats.get("overlay_display_count_by_camera", {}),
                 }
             )
         return summary

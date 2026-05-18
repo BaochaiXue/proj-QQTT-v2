@@ -31,6 +31,8 @@ class Demo31IpcLatestWinsTest(unittest.TestCase):
             timestamp_s=3.0,
             rgb_by_camera={0: np.zeros((4, 4, 3), dtype=np.uint8)},
             mask_by_camera={0: np.ones((4, 4), dtype=bool)},
+            object_mask_by_camera={0: np.eye(4, dtype=bool)},
+            controller_mask_by_camera={0: np.fliplr(np.eye(4, dtype=bool))},
         )
 
         self.assertEqual(packet.seq, 1)
@@ -42,6 +44,31 @@ class Demo31IpcLatestWinsTest(unittest.TestCase):
         self.assertIsNone(overlay_input.depth_by_camera)
         self.assertIsNone(overlay_input.intrinsics_by_camera)
         self.assertIsNone(overlay_input.c2w_by_camera)
+        np.testing.assert_array_equal(overlay_input.object_mask_by_camera[0], np.eye(4, dtype=bool))
+        np.testing.assert_array_equal(overlay_input.controller_mask_by_camera[0], np.fliplr(np.eye(4, dtype=bool)))
+
+    def test_tracking_lite_packet_preserves_union_object_controller_masks(self) -> None:
+        object_mask = np.zeros((4, 4), dtype=bool)
+        object_mask[:2, :] = True
+        controller_mask = np.zeros((4, 4), dtype=bool)
+        controller_mask[2:, :] = True
+        union = object_mask | controller_mask
+
+        packet = TrackingInputLitePacket(
+            group_id=1,
+            frame_idx=2,
+            timestamp_s=3.0,
+            rgb_by_camera={0: np.zeros((4, 4, 3), dtype=np.uint8)},
+            mask_by_camera={0: union},
+            object_mask_by_camera={0: object_mask},
+            controller_mask_by_camera={0: controller_mask},
+        )
+
+        overlay_input = packet.to_overlay_input_packet()
+
+        np.testing.assert_array_equal(overlay_input.mask_by_camera[0], union)
+        np.testing.assert_array_equal(overlay_input.object_mask_by_camera[0], object_mask)
+        np.testing.assert_array_equal(overlay_input.controller_mask_by_camera[0], controller_mask)
 
     def test_tracking_input_fps_gate(self) -> None:
         self.assertTrue(should_publish_tracking_input(now_s=10.0, last_publish_s=None, target_fps=10.0))
@@ -84,4 +111,3 @@ class Demo31IpcLatestWinsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
