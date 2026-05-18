@@ -138,9 +138,12 @@ list lengths, and calibration reference lists that do not cover the case
 serials.
 
 New calibrations write `calibrate_metadata.json` next to `calibrate.pkl`. The
-sidecar records the calibration transform serial order, and recording entry
-points prefer that sidecar over inferred connected-device order when writing
-`metadata["calibration_reference_serials"]`.
+sidecar records the calibration transform serial order and the ChArUco board
+profile, and recording entry points prefer that sidecar over inferred
+connected-device order when writing `metadata["calibration_reference_serials"]`.
+The current default board profile is `calibio-12x9-30mm`; the previous
+`legacy-4x5-50mm` board remains selectable only for deprecated legacy
+reproduction.
 
 Swapping USB ports is safe because capture uses device serial numbers rather
 than port order. Physically swapping camera positions in the rig is not a
