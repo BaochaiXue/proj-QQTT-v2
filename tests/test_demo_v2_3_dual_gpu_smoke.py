@@ -15,6 +15,7 @@ from demo_v2_3 import realtime_three_view_dual_gpu_async_filtered_fused_pcd as d
 from qqtt.demo import demo23_dual_gpu_workers as workers
 from qqtt.demo import demo23_runtime as demo23
 from qqtt.demo import realtime_masked_edgetam_pcd as masked_runtime
+from qqtt.demo import three_view_masked_fused_pcd_runtime as shared_runtime
 
 
 def _capture_group(seq: int) -> demo23.CaptureGroup:
@@ -165,6 +166,138 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertNotIn("stage-dispatch", names)
         self.assertNotIn("ffs-stage", names)
         self.assertNotIn("edgetam-stage", names)
+
+    def test_open3d_duration_shutdown_closes_window_and_quits_app(self) -> None:
+        parser = demo23.build_arg_parser()
+        args = parser.parse_args(
+            ["--dry-run", "--preset", demo23.PRESET_DEMO23_DUAL4090_MAXFPS, "--duration-s", "0.01"]
+        )
+        args = demo23.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--preset", "--duration-s"},
+        )
+        runtime = demo23.Demo23Runtime(args)
+        runtime._start_threads = lambda: None  # type: ignore[method-assign]
+
+        class FakeWindow:
+            def __init__(self) -> None:
+                self.renderer = object()
+                self.content_rect = types.SimpleNamespace(x=0, y=0, width=1280, height=800)
+                self.theme = types.SimpleNamespace(font_size=12)
+                self.close_calls = 0
+                self.on_close = None
+
+            def add_child(self, _child):
+                return None
+
+            def set_on_layout(self, _callback):
+                return None
+
+            def set_on_close(self, callback):
+                self.on_close = callback
+
+            def close(self):
+                self.close_calls += 1
+                if self.on_close is not None:
+                    self.on_close()
+
+        class FakeApp:
+            def __init__(self) -> None:
+                self.window = FakeWindow()
+                self.quit_calls = 0
+                self.run_calls = 0
+                self.post_calls = 0
+
+            def initialize(self):
+                return None
+
+            def create_window(self, *_args):
+                return self.window
+
+            def post_to_main_thread(self, _window, callback):
+                self.post_calls += 1
+                callback()
+
+            def run(self):
+                self.run_calls += 1
+
+            def quit(self):
+                self.quit_calls += 1
+
+        class FakeSceneWidget:
+            def __init__(self) -> None:
+                self.scene = None
+                self.frame = None
+
+            def setup_camera(self, *_args):
+                return None
+
+        class FakePanel:
+            def __init__(self, *_args) -> None:
+                return None
+
+            def add_child(self, _child):
+                return None
+
+            def calc_preferred_size(self, *_args):
+                return types.SimpleNamespace(width=760, height=120)
+
+        class FakeOpen3DScene:
+            def __init__(self, _renderer) -> None:
+                self.scene = types.SimpleNamespace()
+
+            def set_background(self, _color):
+                return None
+
+        class FakeTimer:
+            def __init__(self, _interval, callback) -> None:
+                self.callback = callback
+                self.daemon = False
+                self.cancelled = False
+
+            def start(self):
+                self.callback()
+
+            def cancel(self):
+                self.cancelled = True
+
+        fake_app = FakeApp()
+        fake_o3d = types.SimpleNamespace(core=types.SimpleNamespace(Device=lambda _name: object()))
+        fake_gui = types.SimpleNamespace(
+            Application=types.SimpleNamespace(instance=fake_app),
+            SceneWidget=FakeSceneWidget,
+            Label=lambda text: types.SimpleNamespace(text=text, text_color=None),
+            Color=lambda *_args: object(),
+            Vert=FakePanel,
+            Margins=lambda *_args: object(),
+            Widget=types.SimpleNamespace(Constraints=lambda: object()),
+            Rect=lambda *args: args,
+        )
+        fake_rendering = types.SimpleNamespace(
+            Open3DScene=FakeOpen3DScene,
+            MaterialRecord=lambda: types.SimpleNamespace(shader="", point_size=0.0),
+        )
+
+        with mock.patch.dict(os.environ, {"QQTT_WSLG_OPEN3D_FAST_EXIT": "0"}), mock.patch(
+            "qqtt.demo.three_view_masked_fused_pcd_runtime._load_open3d_modules",
+            return_value=(fake_o3d, fake_gui, fake_rendering),
+        ), mock.patch(
+            "qqtt.demo.three_view_masked_fused_pcd_runtime.Open3DSceneTensorLayer",
+            return_value=types.SimpleNamespace(update=lambda *_args: None),
+        ), mock.patch.object(
+            shared_runtime.threading,
+            "Timer",
+            FakeTimer,
+        ):
+            runtime._run_open3d()
+
+        self.assertTrue(runtime.stop_event.is_set())
+        self.assertGreaterEqual(fake_app.window.close_calls, 1)
+        self.assertGreaterEqual(fake_app.quit_calls, 1)
+        self.assertEqual(fake_app.post_calls, 1)
+        self.assertTrue(runtime._summary["open3d_shutdown_requested"])
+        self.assertTrue(runtime._summary["open3d_window_close_requested"])
+        self.assertTrue(runtime._summary["open3d_app_quit_requested"])
 
     def test_sam31_runtime_releases_before_dual_gpu_steady_state(self) -> None:
         parser = demo23.build_arg_parser()

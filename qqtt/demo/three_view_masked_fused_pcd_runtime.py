@@ -7567,30 +7567,49 @@ class Demo21Runtime:
                 pass
 
         self._render_request = request_render
+        fast_exit_after_open3d = os.environ.get("QQTT_WSLG_OPEN3D_FAST_EXIT") == "1"
+        shutdown_started = {"value": False}
 
-        def stop_and_quit() -> None:
+        def request_open3d_shutdown(*, close_window: bool) -> None:
+            first_request = not shutdown_started["value"]
+            shutdown_started["value"] = True
             self.stop_event.set()
-            if os.environ.get("QQTT_WSLG_OPEN3D_FAST_EXIT") == "1":
+            self._render_request = lambda: None
+            self._summary["open3d_shutdown_requested"] = True
+            if fast_exit_after_open3d and first_request:
                 self.stop()
+                self._gpu_sampler.stop()
                 self._write_summary()
                 os._exit(0)
+            if close_window:
+                try:
+                    window.close()
+                    self._summary["open3d_window_close_requested"] = True
+                except Exception:
+                    pass
             try:
                 app.quit()
+                self._summary["open3d_app_quit_requested"] = True
             except Exception:
                 pass
 
-        window.set_on_close(lambda: (stop_and_quit(), True)[1])
+        window.set_on_close(lambda: (request_open3d_shutdown(close_window=False), True)[1])
         self._start_threads()
         timer: threading.Timer | None = None
         if self.args.duration_s > 0:
-            timer = threading.Timer(float(self.args.duration_s), lambda: app.post_to_main_thread(window, stop_and_quit))
+            timer = threading.Timer(
+                float(self.args.duration_s),
+                lambda: app.post_to_main_thread(window, lambda: request_open3d_shutdown(close_window=True)),
+            )
             timer.daemon = True
             timer.start()
         try:
             app.run()
         finally:
+            self._render_request = lambda: None
             if timer is not None:
                 timer.cancel()
+            request_open3d_shutdown(close_window=True)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
