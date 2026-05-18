@@ -10,13 +10,14 @@ Machine-readable inventory:
 - `docs/generated/harness_engineering_artifact_inventory.json`
 - inventory scope: tracked files under `docs/generated/`; ignored local scratch
   outputs may exist but are not part of this source-controlled inventory
-- last synchronized locally: 2026-05-11
+- last synchronized locally: 2026-05-18
 
 ## Current Operator Truth
 
 | Area | Current status | Primary artifacts |
 | --- | --- | --- |
 | Scope boundary | The repo is camera-first, with sanctioned demo/proxy/tracking diagnostics. The formal data product still stops at recording, alignment, realtime native aligned export, and aligned native-vs-FFS comparison; demo masks/tracks must not become formal aligned-case outputs. | `../SCOPE.md`, `../ARCHITECTURE.md`, `../../AGENTS.md` |
+| Harness engineering operating model | `AGENTS.md` is the short map, not the encyclopedia. Durable harness knowledge belongs in scope, architecture, workflows, the harness catalog, generated compact indexes, and exec plans. Repeatable rules should become checks instead of long prose. | `../../scripts/harness/README.md`, `../SCOPE.md`, `../ARCHITECTURE.md`, `../WORKFLOWS.md` |
 | Demo 2.1.5 current quality profile | Latest full local `stuffed animal` + `towel` FFS quality profile is not realtime: point-cloud render reaches `2.50 FPS`; raw/filter/fusion are about `5.00 FPS`; complete group ratio is `0.368`; bottleneck is still upstream supply. The matching no-render replicate reaches `4.49 FPS` fused/filter output and is diagnostic only. | `demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_pointcloud_replicated_profile.md`, `demo215_full_local_ffs_fused_pcd_object_stuffed_animal_controller_towel_no_render_replicated_profile.md` |
 | Demo 2.2 async filtered fused PCD | Current Demo 2.2 profiles still fail the `14.40 FPS` pass threshold. Batch-3 FFS profile reaches `5.37 FPS`, batch-vision profile reaches `5.25 FPS`, and parallel-init profile reaches `4.92 FPS`; bottleneck remains upstream supply. Demo 2.2 now reaches shared three-camera runtime through `qqtt/demo/` instead of importing another Demo 2.x entrypoint, and the render replay benchmark is cataloged under `scripts/harness/`. | `demo2_2_async_filter_batch3_ffs_20s_warmup_20s_formal_profile.md`, `demo2_2_async_filter_batchvision_40s_warmup_20s_formal_profile.md`, `demo2_2_async_filter_parallel_init_20s_warmup_20s_formal_profile.md` |
 | Demo 2 single-camera FFS quality path | Local FFS + HF EdgeTAM compiled remains the single-camera quality reference on the 5090 laptop. Native RealSense depth remains fallback/debug for quality comparisons. | `demo2_local_ffs_professor_speed_polish.md`, `demo2_depth_source_fps_comparison.md`, `demo2_realtime_masked_edgetam_pcd_profile_isolation.md` |

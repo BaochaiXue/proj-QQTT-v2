@@ -1,30 +1,93 @@
 # Harness Engineering Map
 
-`scripts/harness/` is the operator-facing edge of the repo: CLI wrappers, probes, deterministic guards, and bounded diagnostics. Reusable calibration, geometry, point-cloud, layout, render, depth, and demo runtime logic belongs under `data_process/` or `qqtt/demo/`.
+`scripts/harness/` is the repo's agent-legible control surface: thin CLIs,
+deterministic guards, probes, benchmarks, and bounded diagnostics. It should
+help Codex and humans answer three questions quickly:
 
-## Maintenance Contract
+1. What workflow exists?
+2. Where is the real implementation?
+3. Which command proves it still works?
 
-- Keep stable public CLIs at their existing paths unless docs and tests move with them.
-- Add every new public harness Python file to `scripts/harness/_catalog.py`.
-- Keep one-off visualization experiments under `scripts/harness/experiments/`.
-- Keep formal recording/alignment code free of `scripts.harness.experiments` and `data_process.visualization.experiments` imports.
-- Treat `qqtt/demo/` as sanctioned demo runtime, not formal recording/alignment code.
-- Keep external repos, checkpoints, TensorRT engines, SAM assets, generated proof outputs, and local replay datasets outside harness code.
-- Remove local cache artifacts such as `__pycache__/`.
+Use this README as a map, not an encyclopedia. Put durable behavior and
+architecture in the source-of-truth docs below, keep generated evidence under
+`docs/generated/`, and encode repeatable rules in checks.
 
-## Source Of Truth
+## Source-Of-Truth Ladder
 
-| File | Role |
-| --- | --- |
-| `_catalog.py` | Compact catalog of every public harness Python entrypoint, category, summary, and help-check profile. |
-| `check_demo22_boundaries.py` | Verifies Demo 2.2 imports only through `qqtt/demo/` and that its render replay benchmark is cataloged. |
-| `check_harness_catalog.py` | Verifies every public harness Python file is cataloged and categorized correctly. |
-| `check_all.py` | Runs the quick/full deterministic validation profiles; help-surface coverage comes from `_catalog.py`. |
-| `docs/generated/harness_engineering_compact_index.md` | Compressed index for current generated harness engineering results and claims. |
-| `docs/envs.md` | CUDA/toolkit and validated environment policy. |
-| `docs/WORKFLOWS.md` | Operator workflows and FFS live-vs-proxy reporting boundary. |
+| Layer | File | Purpose |
+| --- | --- | --- |
+| Repo charter | `AGENTS.md` | Short injected map for agents: scope, defaults, invariants, and where to look next. |
+| Scope | `docs/SCOPE.md` | In-scope vs out-of-scope boundary for recording, alignment, demos, proxy, tracking, and visualization. |
+| Architecture | `docs/ARCHITECTURE.md` | Package and entrypoint layering, dependency direction, and formal data-product boundaries. |
+| Workflows | `docs/WORKFLOWS.md` | Operator commands and expected manual procedures. |
+| Harness catalog | `scripts/harness/_catalog.py` | Machine-checkable list of public harness entrypoints, categories, summaries, and help coverage. |
+| Harness guards | `scripts/harness/check_*.py` | Mechanical enforcement for scope, catalog coverage, visual architecture, experiments, and Demo 2.2 boundaries. |
+| Current evidence | `docs/generated/harness_engineering_compact_index.md` | Compact index for generated validation artifacts and current harness claims. |
+| Plans | `docs/exec-plans/active/`, `docs/exec-plans/completed/` | Versioned intent, decisions, validation, and follow-up state for non-trivial changes. |
 
-Run:
+If a claim is important enough for a future agent to rely on, make it
+repository-local and link it from one of these layers.
+
+## Harness Contract
+
+- Public harness scripts are thin entrypoints. Reusable calibration, geometry,
+  point-cloud, render, depth, demo runtime, and tracking logic belongs under
+  `data_process/`, `qqtt/demo/`, or `qqtt/tracking/`.
+- Every public Python file under `scripts/harness/` must have a `HarnessEntry`
+  in `_catalog.py`.
+- One-off or research-style workflows live under `scripts/harness/experiments/`.
+- Formal recording/alignment code must not import `scripts.harness.experiments`
+  or `data_process.visualization.experiments`.
+- External repos, checkpoints, TensorRT engines, SAM assets, generated proof
+  outputs, and replay datasets stay outside harness code.
+- Generated artifacts are evidence, not runtime dependencies.
+- Local cache artifacts such as `__pycache__/` should not be committed.
+
+## Current Catalog Shape
+
+`_catalog.py` currently contains 72 entries.
+
+| Category | Count | Meaning |
+| --- | ---: | --- |
+| `checks` | 6 | Repo, scope, architecture, experiment-boundary, Demo 2.2 boundary, and catalog guards. |
+| `hardware_external` | 13 | RealSense, FFS, SAM, TensorRT, WSLg/Open3D, and static replay probes. |
+| `mask_support` | 4 | SAM mask generation, helper code, object-case registry, and reprojection support. |
+| `formal_cleanup` | 1 | Downstream cleanup for `data/different_types/`. |
+| `current_compare` | 12 | In-scope aligned RealSense/native-vs-FFS comparison visualizations. |
+| `experiments` | 31 | Experiment-only workflows under `scripts/harness/experiments/`. |
+| `focused_diagnostics` | 5 | Narrow audits, overlays, render probes, and source diagnostics. |
+
+Help coverage:
+
+| Profile | Entries | Use |
+| --- | ---: | --- |
+| `quick` | 8 | Fast help checks included in default `check_all.py`. |
+| `full` | 53 | Additional help checks included by `check_all.py --full`. |
+| none | 11 | Guards, helpers, or shell scripts without direct argparse help coverage. |
+
+## Add Or Change A Harness Entrypoint
+
+1. Put shared implementation outside `scripts/harness/` first.
+2. Add a small CLI, probe, guard, or visualization wrapper in the appropriate
+   harness folder.
+3. Register it in `_catalog.py` with category, summary, and help profile.
+4. Link the durable claim from `docs/generated/harness_engineering_compact_index.md`
+   when the result supersedes older generated reports.
+5. Add or update tests when behavior changes.
+6. Run the deterministic checks below.
+
+## Generated Artifact Policy
+
+- Prefer one compact validation note per theme over many near-duplicate notes.
+- Keep raw logs only when a linked validation note needs them.
+- Treat `docs/generated/harness_engineering_compact_index.md` as the current
+  claim index; older generated reports remain historical unless linked there.
+- Cleanup old generated artifacts through documented cleanup passes, not ad hoc
+  deletion from harness scripts.
+
+## Validation Commands
+
+Use the documented default environment:
 
 ```bash
 conda run -n demo_2_max --no-capture-output python scripts/harness/check_harness_catalog.py
@@ -33,50 +96,19 @@ conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
 conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full
 ```
 
-Use the documented default `demo_2_max` environment for these checks. A bare
-base-Python run can fail before reaching harness logic if optional runtime
-packages such as OpenCV are absent.
+For ordinary doc or narrow harness changes, run the default `check_all.py`.
+Use `--full` when the change broadens public CLI surface or harness coverage.
 
-## Catalog Summary
+## Agent-First Maintenance
 
-Current `_catalog.py` entries: `72`.
+When Codex struggles, do not only patch the immediate symptom. Ask which
+repository-local capability was missing:
 
-| Category | Count | Meaning |
-| --- | ---: | --- |
-| `checks` | 6 | Repo, scope, architecture, experiment-boundary, Demo 2.2 boundary, and catalog guards. |
-| `hardware_external` | 13 | RealSense probes, FFS/SAM/TensorRT proofs, WSLg/Open3D helpers, and static replay benchmarks. |
-| `mask_support` | 4 | SAM 3.1 mask generation, helper code, object-case registry, and single-pair reprojection support. |
-| `formal_cleanup` | 1 | Downstream cleanup for `data/different_types/`. |
-| `current_compare` | 12 | In-scope aligned RealSense/native-vs-FFS comparison visualizations. |
-| `experiments` | 31 | Experiment-only workflows under `scripts/harness/experiments/`. |
-| `focused_diagnostics` | 5 | Narrow audits, overlays, render probes, and source diagnostics. |
+- Was the map unclear?
+- Was the source of truth stale?
+- Was an invariant only written in prose when it should be a check?
+- Was generated evidence not indexed?
+- Was a long-lived plan missing decisions or validation?
 
-Help profile coverage:
-
-| Profile | Entries | Use |
-| --- | ---: | --- |
-| `quick` | 8 | Fast help checks used by default `check_all.py`. |
-| `full` | 61 | Broader help checks used by `check_all.py --full`. |
-| none | 11 | Helpers, shell scripts, or guard scripts without direct argparse help coverage. |
-
-## Current Boundaries
-
-- FFS defaults and current performance claims are summarized in `docs/generated/harness_engineering_compact_index.md`; use `docs/generated/ffs_live_vs_proxy_boundary.md` for live-vs-proxy wording.
-- Shared CUDA 13 toolkit policy lives in `docs/envs.md`; do not duplicate CUDA install guidance here.
-- Demo v0.3 remote FFS work is tracked by `docs/exec-plans/active/2026-05-08-demo-v0-3-100kit-staged-remote-ffs.md` and the generated Demo v0.3 validation notes.
-- Object/controller PCD filtering caveats are summarized in `docs/generated/harness_engineering_compact_index.md`.
-- Object capture lookup should use `scripts.harness.object_case_registry` by `(object_set, round_id)`.
-
-## Adding A Harness File
-
-1. Put reusable implementation outside harness first, usually under `data_process/` or `qqtt/demo/`.
-2. Add the thin CLI/probe/check file under the right harness folder.
-3. Add a `HarnessEntry` in `_catalog.py` with the right category and `help_profile`.
-4. Run `conda run -n demo_2_max --no-capture-output python scripts/harness/check_harness_catalog.py`.
-5. Run `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`; use `--full` for broad changes.
-
-## Retention Policy
-
-- Keep current user-facing CLIs, deterministic checks, hardware probes, and bounded diagnostics.
-- Archive or delete obsolete generated results through documented cleanup passes, not from harness scripts.
-- Prefer extending `docs/generated/harness_engineering_compact_index.md` over adding more long-form README sections.
+Capture the answer in docs or tooling so the next agent can move faster with
+less human context.
