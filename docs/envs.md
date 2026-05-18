@@ -188,8 +188,13 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - `sam3==0.1.0`
   - `pycocotools==2.0.11`
   - editable `cotracker==3.0` from `/home/xinjie/co-tracker`
-  - CoTracker3 online checkpoint:
-    `/home/xinjie/co-tracker/checkpoints/scaled_online.pth`
+  - CoTracker3 full checkpoint set in `/home/xinjie/co-tracker/checkpoints/`:
+    `scaled_online.pth`, `scaled_offline.pth`, `baseline_online.pth`,
+    `baseline_offline.pth`
+  - PyTorch Hub checkpoint cache prewarmed through symlinks under
+    `/home/xinjie/.cache/torch/hub/checkpoints/` for Demo 3's default
+    `torch.hub.load("facebookresearch/co-tracker", "cotracker3_online")`
+    path
 - Demo 3 runtime contract:
   - exactly three RealSense cameras
   - `depth_source = realsense`
@@ -209,6 +214,7 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - `conda run --no-capture-output -n demo3-max python scripts/harness/check_all.py`
 - Validation note:
   - `docs/generated/demo3_max_4090_ubuntu_env_validation.md`
+  - `docs/generated/demo3_cotracker3_full_weights_validation.md`
 - Expected use:
   - Demo 3 RealSense RGB-D, HF EdgeTAM masks, fused semantic PCD, and async
     CoTracker3 visualization overlay on the native Ubuntu RTX 4090 machine
