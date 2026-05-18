@@ -28,6 +28,7 @@ The first version keeps the existing CPU/NumPy `DepthGroup` and `CameraMaskPacke
 - `dual_gpu_processes = True`
 - FFS TensorRT batch size is `3`, using the builderOptimizationLevel=5 batch-3 artifact path.
 - Capture FPS is `30` for Demo 2.3. The default capture-group and fusion/report targets are both `30 FPS`.
+- GPU1 trims SAM3.1 temporary CUDA allocations after each first-frame segmentation, then releases cached SAM3.1 init resources immediately after all three EdgeTAM sessions are initialized, before the first steady-state EdgeTAM batch-vision forward. This avoids the SAM3.1 + EdgeTAM peak causing CUDA OOM while still allowing cached model reuse during initialization.
 
 ## Validation
 

@@ -5968,6 +5968,24 @@ class Demo21Runtime:
         state["initialized"] = True
         return True
 
+    def _release_sam31_runtime_after_all_cameras_init_if_needed(self, states: dict[int, dict[str, Any]]) -> bool:
+        if (
+            not bool(getattr(self.args, "sam31_keep_runtime_until_all_cameras_init", False))
+            or self._sam31_runtime_released_after_init
+            or not states
+            or not all(bool(state.get("initialized")) for state in states.values())
+        ):
+            return False
+        release_start_s = time.perf_counter()
+        release_ms = release_sam31_runtime_resources(str(self.args.device))
+        self._sam31_runtime_released_after_init = True
+        self._summary["sam31_runtime_released_after_all_cameras_init"] = True
+        self._init_profile_set(
+            ("sam31", "release_cleanup_ms"),
+            float(release_ms if release_ms is not None else _elapsed_ms(release_start_s, time.perf_counter())),
+        )
+        return True
+
     def _prepare_edgetam_batch_vision_frames(
         self,
         *,
@@ -6071,6 +6089,7 @@ class Demo21Runtime:
                 initialized_before[idx] = bool(state["initialized"])
                 if not self._ensure_gpu_owner_edgetam_initialized(state=state, camera_idx=idx, frame=frame):
                     return None, _elapsed_ms(cycle_start_s, time.perf_counter())
+            self._release_sam31_runtime_after_all_cameras_init_if_needed(states)
             prepared_frames = self._prepare_edgetam_batch_vision_frames(states=states, group=group)
         for camera_idx in self.args.camera_ids:
             idx = int(camera_idx)
@@ -6103,19 +6122,7 @@ class Demo21Runtime:
             packets[idx] = packet
             self.mask_slots[idx].put(packet)
             self.edge_stats[idx].record()
-        if (
-            bool(getattr(self.args, "sam31_keep_runtime_until_all_cameras_init", False))
-            and not self._sam31_runtime_released_after_init
-            and all(bool(state["initialized"]) for state in states.values())
-        ):
-            release_start_s = time.perf_counter()
-            release_ms = release_sam31_runtime_resources(str(self.args.device))
-            self._sam31_runtime_released_after_init = True
-            self._summary["sam31_runtime_released_after_all_cameras_init"] = True
-            self._init_profile_set(
-                ("sam31", "release_cleanup_ms"),
-                float(release_ms if release_ms is not None else _elapsed_ms(release_start_s, time.perf_counter())),
-            )
+        self._release_sam31_runtime_after_all_cameras_init_if_needed(states)
         return packets, _elapsed_ms(cycle_start_s, time.perf_counter())
 
     def _run_staged_edgetam_cycle_parallel(

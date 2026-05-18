@@ -6,6 +6,7 @@ import queue
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -13,6 +14,7 @@ from demo_v2_2 import runtime as demo22
 from demo_v2_3 import realtime_three_view_dual_gpu_async_filtered_fused_pcd as demo23_entry
 from qqtt.demo import demo23_dual_gpu_workers as workers
 from qqtt.demo import demo23_runtime as demo23
+from qqtt.demo import realtime_masked_edgetam_pcd as masked_runtime
 
 
 def _capture_group(seq: int) -> demo23.CaptureGroup:
@@ -163,6 +165,70 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertNotIn("stage-dispatch", names)
         self.assertNotIn("ffs-stage", names)
         self.assertNotIn("edgetam-stage", names)
+
+    def test_sam31_runtime_releases_before_dual_gpu_steady_state(self) -> None:
+        parser = demo23.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--preset", demo23.PRESET_DEMO23_DUAL4090_MAXFPS])
+        args = demo23.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
+        runtime = demo23.Demo23Runtime(args)
+        states = {
+            0: {"initialized": True},
+            1: {"initialized": True},
+            2: {"initialized": True},
+        }
+
+        with mock.patch(
+            "qqtt.demo.three_view_masked_fused_pcd_runtime.release_sam31_runtime_resources",
+            return_value=12.5,
+        ) as release:
+            self.assertTrue(runtime._release_sam31_runtime_after_all_cameras_init_if_needed(states))
+            self.assertFalse(runtime._release_sam31_runtime_after_all_cameras_init_if_needed(states))
+
+        release.assert_called_once_with("cuda")
+        self.assertTrue(runtime._summary["sam31_runtime_released_after_all_cameras_init"])
+        self.assertEqual(runtime._init_profile_snapshot()["sam31"]["release_cleanup_ms"], 12.5)
+
+    def test_cached_sam31_init_trims_cuda_cache_after_each_frame(self) -> None:
+        args = types.SimpleNamespace(
+            track_mode=masked_runtime.TRACK_MODE_OBJECT_ONLY,
+            object_prompt="stuffed animal",
+            controller_prompt="towel",
+            device="cuda",
+            sam31_cache_init_model=True,
+            sam31_keep_runtime_until_all_cameras_init=True,
+        )
+
+        def fake_run_image_segmentation(**_kwargs):
+            return {
+                "masks_by_label": {
+                    "stuffed animal": [
+                        np.asarray([[False, True, False], [True, True, False]], dtype=bool)
+                    ]
+                },
+                "timing_ms": {"total_ms": 1.0},
+            }
+
+        with mock.patch(
+            "scripts.harness.sam31_mask_helper.run_image_segmentation",
+            side_effect=fake_run_image_segmentation,
+        ), mock.patch.object(
+            masked_runtime,
+            "trim_sam31_cuda_allocator",
+            return_value=7.5,
+        ) as trim, mock.patch.object(
+            masked_runtime,
+            "release_sam31_runtime_resources",
+        ) as release:
+            controller_mask, object_mask = masked_runtime.run_sam31_first_frame_masks(
+                np.zeros((2, 3, 3), dtype=np.uint8),
+                args,
+            )
+
+        trim.assert_called_once_with("cuda")
+        release.assert_not_called()
+        self.assertEqual(args._sam31_last_trim_cleanup_ms, 7.5)
+        self.assertFalse(np.any(controller_mask))
+        self.assertEqual(int(np.count_nonzero(object_mask)), 3)
 
     def test_worker_result_dataclasses_are_pickleable(self) -> None:
         depth_result = workers.WorkerDepthResult(

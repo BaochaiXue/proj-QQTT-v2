@@ -1174,6 +1174,20 @@ def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> float:
     return _elapsed_ms(started_s, time.perf_counter())
 
 
+def trim_sam31_cuda_allocator(device: str = DEFAULT_DEVICE) -> float:
+    started_s = time.perf_counter()
+    gc.collect()
+    try:
+        import torch  # noqa: PLC0415
+
+        if str(device).startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+    except Exception as exc:
+        print(f"[WARN] SAM3.1 CUDA trim failed: {type(exc).__name__}: {exc}", flush=True)
+    return _elapsed_ms(started_s, time.perf_counter())
+
+
 def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
     from scripts.harness.sam31_mask_helper import parse_text_prompts, run_image_segmentation
 
@@ -1201,7 +1215,10 @@ def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace)
         )
         setattr(args, "_sam31_last_timing_ms", result.get("timing_ms", {}))
     finally:
-        if not keep_runtime_until_all_cameras_init:
+        if keep_runtime_until_all_cameras_init:
+            trim_ms = trim_sam31_cuda_allocator(str(args.device))
+            setattr(args, "_sam31_last_trim_cleanup_ms", float(trim_ms))
+        else:
             release_ms = release_sam31_runtime_resources(str(args.device))
             setattr(args, "_sam31_last_release_cleanup_ms", float(release_ms))
 
