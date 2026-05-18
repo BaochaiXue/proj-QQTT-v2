@@ -8,6 +8,7 @@ from qqtt.env.camera.calibration_boards import (
     LEGACY_CALIBRATION_BOARD,
     charuco_board_config_to_metadata,
     create_charuco_board,
+    get_charuco_chessboard_corners,
     get_calibration_board_config,
 )
 from qqtt.env.camera.calibration_metadata import build_calibration_metadata
@@ -73,7 +74,7 @@ class CalibrationBoardProfilesTest(unittest.TestCase):
         config = get_calibration_board_config(DEFAULT_CALIBRATION_BOARD)
         _, board = create_charuco_board(config)
 
-        self.assertEqual(len(board.getChessboardCorners()), 88)
+        self.assertEqual(len(get_charuco_chessboard_corners(board)), 88)
 
     def test_metadata_records_board_profile(self) -> None:
         config = get_calibration_board_config(DEFAULT_CALIBRATION_BOARD)

@@ -137,10 +137,29 @@ def create_charuco_board(config: CharucoBoardConfig):
     dictionary = cv2.aruco.getPredefinedDictionary(
         resolve_aruco_dictionary_id(config.dictionary_name)
     )
-    board = cv2.aruco.CharucoBoard(
-        (config.squares_x, config.squares_y),
-        squareLength=config.square_length_m,
-        markerLength=config.marker_length_m,
-        dictionary=dictionary,
-    )
+    if hasattr(cv2.aruco, "CharucoBoard"):
+        board = cv2.aruco.CharucoBoard(
+            (config.squares_x, config.squares_y),
+            squareLength=config.square_length_m,
+            markerLength=config.marker_length_m,
+            dictionary=dictionary,
+        )
+    elif hasattr(cv2.aruco, "CharucoBoard_create"):
+        board = cv2.aruco.CharucoBoard_create(
+            config.squares_x,
+            config.squares_y,
+            config.square_length_m,
+            config.marker_length_m,
+            dictionary,
+        )
+    else:
+        raise RuntimeError("This OpenCV build does not provide ChArUco board APIs.")
     return dictionary, board
+
+
+def get_charuco_chessboard_corners(board):
+    if hasattr(board, "getChessboardCorners"):
+        return board.getChessboardCorners()
+    if hasattr(board, "chessboardCorners"):
+        return board.chessboardCorners
+    raise RuntimeError("Unsupported ChArUco board object: missing chessboard corners.")
