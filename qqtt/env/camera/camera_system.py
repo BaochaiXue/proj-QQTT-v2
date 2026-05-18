@@ -4,6 +4,7 @@ from .calibration_metadata import build_calibration_metadata, write_calibration_
 from .calibration_boards import (
     charuco_board_config_to_metadata,
     create_charuco_board,
+    get_charuco_chessboard_corners,
     get_calibration_board_config,
 )
 from .defaults import (
@@ -470,7 +471,7 @@ class CameraSystem:
                 # Reproject the points to calculate the error
                 charuco_id_values = charuco_ids.reshape(-1)
                 reprojected_points, _ = cv2.projectPoints(
-                    board.getChessboardCorners()[charuco_id_values, :],
+                    get_charuco_chessboard_corners(board)[charuco_id_values, :],
                     rvec,
                     tvec,
                     intrinsic,
