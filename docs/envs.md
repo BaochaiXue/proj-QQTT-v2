@@ -159,6 +159,61 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - not a replacement for isolated benchmark envs when measuring clean FPS for
     a single backend
 
+## `demo3-max`
+
+- Purpose: native Ubuntu RTX 4090 Demo 3 environment for the three-RealSense
+  CoTracker overlay demo.
+- Created from:
+  - `conda create -y -n demo3-max --clone demo_2_max`
+- Current validated Python:
+  - `3.12.13`
+- Current validated torch stack:
+  - `torch==2.11.0+cu130`
+  - `torchvision==0.26.0+cu130`
+  - CUDA available through `torch.version.cuda == 13.0`
+  - validated RTX 4090 capability: `(8, 9)`
+- Current activation-hook policy:
+  - `QQTT_REPO_ROOT=/home/xinjie/proj-QQTT-v2`
+  - `EDGETAM_REPO=/home/xinjie/EdgeTAM`
+  - `COTRACKER_REPO=/home/xinjie/co-tracker`
+  - `CUDA_HOME=/usr/local/cuda`
+  - PyTorch `torch/lib` plus shared CUDA libraries are prepended to
+    `LD_LIBRARY_PATH`
+  - `TORCH_CUDA_ARCH_LIST=8.9`
+  - `QQTT_SAM31_CHECKPOINT=/home/xinjie/.cache/huggingface/qqtt_sam31/sam3.1_multiplex.pt`
+- Current validated runtime packages:
+  - `pyrealsense2`
+  - `open3d==0.19.0`
+  - `transformers==5.7.0`
+  - `sam3==0.1.0`
+  - `pycocotools==2.0.11`
+  - editable `cotracker==3.0` from `/home/xinjie/co-tracker`
+  - CoTracker3 online checkpoint:
+    `/home/xinjie/co-tracker/checkpoints/scaled_online.pth`
+- Demo 3 runtime contract:
+  - exactly three RealSense cameras
+  - `depth_source = realsense`
+  - `uses_ffs = false`
+  - `mask_source = hf_edgetam`
+  - `edgetam_batch_vision_encoder = true`
+  - `cotracker_backend = cotracker3_online`
+  - `render_waited_for_cotracker = false`
+- Current caveat:
+  - `python -m pip check` reports the inherited `sam3` metadata requirement
+    `numpy<2,>=1.26` while this stack keeps `numpy==2.4.5`
+  - live Demo 3 mask/q30/q128 validation is blocked until a real root-level
+    `calibrate.pkl` is present
+- Validation commands:
+  - `conda run --no-capture-output -n demo3-max python demo_v3/realtime_three_view_cotracker3_realsense_overlay.py --dry-run --camera-ids 0,1,2`
+  - `conda run --no-capture-output -n demo3-max python scripts/harness/check_harness_catalog.py`
+  - `conda run --no-capture-output -n demo3-max python scripts/harness/check_all.py`
+- Validation note:
+  - `docs/generated/demo3_max_4090_ubuntu_env_validation.md`
+- Expected use:
+  - Demo 3 RealSense RGB-D, HF EdgeTAM masks, fused semantic PCD, and async
+    CoTracker3 visualization overlay on the native Ubuntu RTX 4090 machine
+  - not an FFS environment target and not a WSL RTX 5090 install target
+
 ## `FFS-max-sam31-rs`
 
 - Purpose: cloned `FFS-max` environment for FFS max torch/CUDA/TensorRT experiments that also need QQTT RealSense entrypoints and SAM 3.1 masks
