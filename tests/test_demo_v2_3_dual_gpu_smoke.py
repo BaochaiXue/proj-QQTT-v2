@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import pickle
 import queue
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -74,6 +75,13 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertIn("--gpu-sampling-device-indexes", help_text)
         self.assertIn("--edgetam-batch-vision", help_text)
         self.assertIn("--render-micro-profile", help_text)
+        self.assertIn("--depth-source", help_text)
+        self.assertIn("--debug-color-by-camera", help_text)
+        self.assertIn("--debug-save-per-camera-pcd", help_text)
+        self.assertIn("--debug-save-mask-overlays", help_text)
+        self.assertIn("--debug-identity-c2w", help_text)
+        self.assertIn("--debug-invert-c2w", help_text)
+        self.assertIn("--debug-only-camera-idx", help_text)
         self.assertNotIn("--experimental-overlapped-stages", help_text)
 
     def test_demo23_entrypoint_uses_dedicated_runtime_boundary(self) -> None:
@@ -103,6 +111,16 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
                 "0,1",
                 "--render-mode",
                 "none",
+                "--depth-source",
+                "realsense",
+                "--debug-color-by-camera",
+                "--debug-save-per-camera-pcd",
+                "--debug-save-mask-overlays",
+                "--debug-identity-c2w",
+                "--debug-only-camera-idx",
+                "1",
+                "--debug-fusion-max-saved-groups",
+                "2",
             ]
         )
 
@@ -121,6 +139,16 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertIn("0,1", argv)
         self.assertIn("--render-mode", argv)
         self.assertIn("none", argv)
+        self.assertIn("--depth-source", argv)
+        self.assertIn("realsense", argv)
+        self.assertIn("--debug-color-by-camera", argv)
+        self.assertIn("--debug-save-per-camera-pcd", argv)
+        self.assertIn("--debug-save-mask-overlays", argv)
+        self.assertIn("--debug-identity-c2w", argv)
+        self.assertIn("--debug-only-camera-idx", argv)
+        self.assertIn("1", argv)
+        self.assertIn("--debug-fusion-max-saved-groups", argv)
+        self.assertIn("2", argv)
 
     def test_demo23_dry_run_contract_is_dual_gpu_split_batch3(self) -> None:
         parser = demo23.build_arg_parser()
@@ -143,6 +171,7 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertIn("batch3", contract["ffs_contract"]["trt_model_dir"])
         self.assertEqual(contract["controller_prompt"], "towel")
         self.assertEqual(contract["object_prompt"], "stuffed animal")
+        self.assertFalse(contract["fusion_debug"]["color_by_camera"])
 
     def test_demo23_explicit_fps_drives_capture_group_default(self) -> None:
         parser = demo23.build_arg_parser()
@@ -153,6 +182,153 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertEqual(contract["fps"], 15)
         self.assertEqual(contract["capture_group_target_fps"], 15.0)
         self.assertEqual(contract["fusion_target_fps"], 30.0)
+
+    def test_demo23_native_depth_debug_contract_skips_ffs_batch_requirement(self) -> None:
+        with tempfile.NamedTemporaryFile() as calibration_file:
+            parser = demo23.build_arg_parser()
+            args = parser.parse_args(
+                [
+                    "--dry-run",
+                    "--preset",
+                    demo23.PRESET_DEMO23_DUAL4090_MAXFPS,
+                    "--calibrate-path",
+                    calibration_file.name,
+                    "--depth-source",
+                    demo23.DEPTH_SOURCE_REALSENSE,
+                    "--debug-color-by-camera",
+                ]
+            )
+            args = demo23.apply_preset_defaults(
+                args,
+                explicit_options={
+                    "--dry-run",
+                    "--preset",
+                    "--calibrate-path",
+                    "--depth-source",
+                    "--debug-color-by-camera",
+                },
+            )
+            runtime = demo23.Demo23Runtime(args)
+
+            runtime._validate_live_contract()
+            self.assertEqual(demo23.build_contract(args)["depth_source"], demo23.DEPTH_SOURCE_REALSENSE)
+
+    def test_fusion_debug_writes_per_camera_artifacts_and_profile_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            parser = demo23.build_arg_parser()
+            args = parser.parse_args(
+                [
+                    "--dry-run",
+                    "--preset",
+                    demo23.PRESET_DEMO23_DUAL4090_MAXFPS,
+                    "--render-mode",
+                    "none",
+                    "--profile-json-output",
+                    str(tmp / "profile.json"),
+                    "--object-postprocess",
+                    demo23.POSTPROCESS_NONE,
+                    "--controller-postprocess",
+                    demo23.POSTPROCESS_NONE,
+                    "--debug-color-by-camera",
+                    "--debug-save-per-camera-pcd",
+                    "--debug-save-mask-overlays",
+                    "--debug-identity-c2w",
+                    "--debug-only-camera-idx",
+                    "1",
+                ]
+            )
+            args = demo23.apply_preset_defaults(
+                args,
+                explicit_options={
+                    "--dry-run",
+                    "--preset",
+                    "--render-mode",
+                    "--profile-json-output",
+                    "--object-postprocess",
+                    "--controller-postprocess",
+                    "--debug-color-by-camera",
+                    "--debug-save-per-camera-pcd",
+                    "--debug-save-mask-overlays",
+                    "--debug-identity-c2w",
+                    "--debug-only-camera-idx",
+                },
+            )
+            runtime = demo23.Demo23Runtime(args)
+            runtime._debug_fusion_dir = tmp / "debug_fusion"
+            runtime._debug_effective_c2w_mapping_mode = "debug-identity-c2w"
+            identity = np.eye(4, dtype=np.float32)
+            runtime._c2w_by_camera = {0: identity, 1: identity, 2: identity}
+            runtime._debug_original_c2w_by_camera = {0: identity, 1: identity, 2: identity}
+            runtime.camera_system = types.SimpleNamespace(
+                serial_numbers=["serial0", "serial1", "serial2"],
+                calibration_reference_serials=["serial0", "serial1", "serial2"],
+            )
+            runtime._write_calibration_debug_report()
+
+            object_mask = np.asarray([[True, False], [False, True]], dtype=bool)
+            controller_mask = np.asarray([[False, True], [False, False]], dtype=bool)
+            mask_packet = demo23.CameraMaskPacket(
+                group_id=7,
+                camera_idx=1,
+                color_bgr=np.zeros((2, 2, 3), dtype=np.uint8),
+                controller_mask=controller_mask,
+                object_mask=object_mask,
+                model_ms=1.0,
+                cuda_event_model_ms=1.0,
+                mask_ms=1.0,
+                gpu_gate_wait_ms=0.0,
+            )
+            depth_group = demo23.DepthGroup(
+                group_id=7,
+                depths={
+                    1: demo23.DepthPacket(
+                        group_id=7,
+                        camera_idx=1,
+                        depth_m=np.full((2, 2), 0.5, dtype=np.float32),
+                        ffs_ms=1.0,
+                        align_ms=0.0,
+                    )
+                },
+                total_ms=1.0,
+                per_camera_ms={1: {"ffs_ms": 1.0, "align_ms": 0.0}},
+                gpu_gate_wait_ms=0.0,
+                max_temporal_skew_ms=0.0,
+                per_camera_time_offset_ms={},
+                per_camera_frame_seq={},
+                timestamp_source="test",
+            )
+            ray_cache = {
+                1: (
+                    np.asarray([[0.0, 1.0], [0.0, 1.0]], dtype=np.float32),
+                    np.asarray([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32),
+                )
+            }
+
+            packet = runtime._build_fused_packet(
+                depth_group=depth_group,
+                masks={1: mask_packet},
+                ray_cache=ray_cache,
+                rng=np.random.default_rng(0),
+            )
+            record = runtime.pop_profile_record(7)
+
+            np.testing.assert_array_equal(
+                packet.object_colors_rgb,
+                np.full_like(packet.object_colors_rgb, [0, 255, 0]),
+            )
+            fusion = record["fusion"]
+            self.assertEqual(fusion["active_camera_ids"], [1])
+            self.assertEqual(fusion["per_camera_point_counts"]["cam0"]["total"], 0)
+            self.assertFalse(fusion["per_camera_point_counts"]["cam0"]["active_for_fusion"])
+            self.assertEqual(fusion["per_camera_point_counts"]["cam1"]["object"], 2)
+            self.assertEqual(fusion["per_camera_point_counts"]["cam1"]["controller"], 1)
+            self.assertEqual(fusion["per_camera_mask_pixel_counts"]["cam1"]["union"], 3)
+            self.assertIsNotNone(fusion["per_camera_cloud_centroids"]["cam1"]["object"])
+            self.assertTrue((tmp / "debug_fusion" / "calibration_report.json").is_file())
+            self.assertTrue((tmp / "debug_fusion" / "group_000007_cam1_object.ply").is_file())
+            self.assertTrue((tmp / "debug_fusion" / "group_000007_cam1_controller.ply").is_file())
+            self.assertTrue((tmp / "debug_fusion" / "group_000007_cam1_mask_overlay.png").is_file())
 
     def test_demo23_thread_specs_do_not_start_same_gpu_overlap_workers(self) -> None:
         parser = demo23.build_arg_parser()

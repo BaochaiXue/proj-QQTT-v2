@@ -11,6 +11,7 @@ from qqtt.demo.three_view_masked_fused_pcd_runtime import (
     CameraMaskPacket,
     CaptureGroup,
     DepthGroup,
+    DEPTH_SOURCE_FFS,
     MaskGroup,
     _elapsed_ms,
 )
@@ -137,7 +138,7 @@ def run_ffs_worker(args: Any, in_queue: Any, out_queue: Any) -> None:
         from qqtt.demo.demo23_runtime import Demo23WorkerRuntime
 
         runtime = Demo23WorkerRuntime(child_args)
-        runner = runtime._get_or_prepare_ffs_runner()
+        runner = runtime._get_or_prepare_ffs_runner() if child_args.depth_source == DEPTH_SOURCE_FFS else None
         aligners = {}
         profile_workers = bool(getattr(args, "dual_gpu_profile_workers", False))
         while True:

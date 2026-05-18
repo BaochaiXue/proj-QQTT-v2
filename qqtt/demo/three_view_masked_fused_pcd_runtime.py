@@ -221,6 +221,12 @@ OBJECT_ID = 2
 CONTROLLER_ID = 1
 OBJECT_COLOR_RGB = (64, 180, 255)
 CONTROLLER_COLOR_RGB = (255, 96, 32)
+DEBUG_CAMERA_COLORS_RGB = {
+    0: (255, 0, 0),
+    1: (0, 255, 0),
+    2: (0, 0, 255),
+}
+DEBUG_FUSION_OUTPUT_ROOT = ROOT / "docs" / "generated" / "debug_fusion"
 DEBUG_LOG_INTERVAL_S = 1.0
 GPU_GATE_MODE_SERIALIZED = "serialized"
 GPU_GATE_MODE_LIMITED = "limited"
@@ -1232,6 +1238,102 @@ def _as_colors(colors: np.ndarray) -> np.ndarray:
     if arr.size == 0:
         return np.empty((0, 3), dtype=np.uint8)
     return arr.reshape(-1, 3)
+
+
+def _slugify_debug_name(value: str) -> str:
+    chars: list[str] = []
+    last_was_sep = False
+    for char in str(value).lower():
+        if char.isalnum():
+            chars.append(char)
+            last_was_sep = False
+        elif not last_was_sep:
+            chars.append("_")
+            last_was_sep = True
+    name = "".join(chars).strip("_")
+    return name or "layer"
+
+
+def _camera_debug_color_rgb(camera_idx: int) -> tuple[int, int, int]:
+    color = DEBUG_CAMERA_COLORS_RGB.get(int(camera_idx))
+    if color is not None:
+        return color
+    palette = tuple(DEBUG_CAMERA_COLORS_RGB.values())
+    return palette[int(camera_idx) % len(palette)]
+
+
+def _solid_color_array(point_count: int, color_rgb: tuple[int, int, int]) -> np.ndarray:
+    if int(point_count) <= 0:
+        return np.empty((0, 3), dtype=np.uint8)
+    return np.full((int(point_count), 3), np.asarray(color_rgb, dtype=np.uint8), dtype=np.uint8)
+
+
+def _cloud_profile(points: np.ndarray) -> dict[str, Any]:
+    pts = _as_points(points)
+    finite = pts[np.all(np.isfinite(pts), axis=1)] if pts.size else pts
+    if finite.size == 0:
+        return {
+            "point_count": int(pts.shape[0]),
+            "finite_point_count": 0,
+            "bounds_min": None,
+            "bounds_max": None,
+            "centroid": None,
+        }
+    return {
+        "point_count": int(pts.shape[0]),
+        "finite_point_count": int(finite.shape[0]),
+        "bounds_min": finite.min(axis=0).astype(float).tolist(),
+        "bounds_max": finite.max(axis=0).astype(float).tolist(),
+        "centroid": finite.mean(axis=0).astype(float).tolist(),
+    }
+
+
+def _write_ascii_ply(path: Path, points: np.ndarray, colors_rgb: np.ndarray) -> None:
+    pts = _as_points(points)
+    cols = _as_colors(colors_rgb)
+    if len(cols) != len(pts):
+        cols = _solid_color_array(len(pts), (255, 255, 255))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("ply\n")
+        handle.write("format ascii 1.0\n")
+        handle.write(f"element vertex {len(pts)}\n")
+        handle.write("property float x\n")
+        handle.write("property float y\n")
+        handle.write("property float z\n")
+        handle.write("property uchar red\n")
+        handle.write("property uchar green\n")
+        handle.write("property uchar blue\n")
+        handle.write("end_header\n")
+        for point, color in zip(pts, cols, strict=False):
+            handle.write(
+                f"{float(point[0]):.7f} {float(point[1]):.7f} {float(point[2]):.7f} "
+                f"{int(color[0])} {int(color[1])} {int(color[2])}\n"
+            )
+
+
+def _write_mask_overlay_png(path: Path, color_bgr: np.ndarray, object_mask: np.ndarray, controller_mask: np.ndarray) -> None:
+    import cv2  # noqa: PLC0415
+
+    image = np.asarray(color_bgr, dtype=np.uint8)
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("mask overlay expects HxWx3 BGR image")
+    overlay = image.copy()
+    object_bool = np.asarray(object_mask, dtype=bool)
+    controller_bool = np.asarray(controller_mask, dtype=bool)
+    object_bgr = np.asarray(OBJECT_COLOR_RGB[::-1], dtype=np.uint8)
+    controller_bgr = np.asarray(CONTROLLER_COLOR_RGB[::-1], dtype=np.uint8)
+    overlap_bgr = np.asarray((255, 255, 255), dtype=np.uint8)
+    if object_bool.shape == image.shape[:2]:
+        overlay[object_bool] = object_bgr
+    if controller_bool.shape == image.shape[:2]:
+        overlay[controller_bool] = controller_bgr
+    if object_bool.shape == image.shape[:2] and controller_bool.shape == image.shape[:2]:
+        overlay[object_bool & controller_bool] = overlap_bgr
+    blended = cv2.addWeighted(overlay, 0.45, image, 0.55, 0.0)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(path), blended):
+        raise RuntimeError(f"failed to write mask overlay: {path}")
 
 
 def _profile_stats(values: Sequence[float]) -> dict[str, float]:
@@ -2397,6 +2499,17 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "display_lod": "off",
             "quality_loss_default": False,
         },
+        "fusion_debug": {
+            "color_by_camera": bool(getattr(args, "debug_color_by_camera", False)),
+            "save_per_camera_pcd": bool(getattr(args, "debug_save_per_camera_pcd", False)),
+            "save_mask_overlays": bool(getattr(args, "debug_save_mask_overlays", False)),
+            "identity_c2w": bool(getattr(args, "debug_identity_c2w", False)),
+            "invert_c2w": bool(getattr(args, "debug_invert_c2w", False)),
+            "only_camera_idx": getattr(args, "debug_only_camera_idx", None),
+            "max_saved_groups": int(getattr(args, "debug_fusion_max_saved_groups", 1)),
+            "output_root": str(DEBUG_FUSION_OUTPUT_ROOT),
+            "changes_runtime_algorithm": False,
+        },
         "fusion_target_fps": float(args.fusion_target_fps),
         "capture_group_target_fps": resolved_capture_group_target_fps(args),
         "fusion_timeout_ms": float(args.fusion_timeout_ms),
@@ -2732,6 +2845,10 @@ class Demo21Runtime:
         self._latest_depth_group: DepthGroup | None = None
         self._latest_raw_fused: RawFusedPcdPacket | None = None
         self._latest_fused: FusedPcdPacket | None = None
+        self._debug_fusion_dir: Path | None = None
+        self._debug_fusion_saved_group_ids: set[int] = set()
+        self._debug_original_c2w_by_camera: dict[int, np.ndarray] = {}
+        self._debug_effective_c2w_mapping_mode = "calibrate-c2w"
         self._last_debug_s = 0.0
         self._render_request: Callable[[], None] = lambda: None
         self._fatal_error: str | None = None
@@ -2758,6 +2875,200 @@ class Demo21Runtime:
         self.temporal_skew_stats.record(value)
         with self._temporal_skews_lock:
             self._temporal_skews_ms.append(value)
+
+    def _fusion_diagnostics_enabled(self) -> bool:
+        return bool(
+            getattr(self.args, "debug_color_by_camera", False)
+            or getattr(self.args, "debug_save_per_camera_pcd", False)
+            or getattr(self.args, "debug_save_mask_overlays", False)
+            or getattr(self.args, "debug_identity_c2w", False)
+            or getattr(self.args, "debug_invert_c2w", False)
+            or getattr(self.args, "debug_only_camera_idx", None) is not None
+        )
+
+    def _debug_active_camera_ids(self) -> tuple[int, ...]:
+        camera_ids = tuple(int(camera_idx) for camera_idx in self.args.camera_ids)
+        only_camera_idx = getattr(self.args, "debug_only_camera_idx", None)
+        if only_camera_idx is None:
+            return camera_ids
+        return tuple(camera_idx for camera_idx in camera_ids if camera_idx == int(only_camera_idx))
+
+    def _debug_fusion_directory(self) -> Path:
+        if self._debug_fusion_dir is None:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            candidate = DEBUG_FUSION_OUTPUT_ROOT / timestamp
+            suffix = 1
+            while candidate.exists():
+                suffix += 1
+                candidate = DEBUG_FUSION_OUTPUT_ROOT / f"{timestamp}_{suffix:02d}"
+            candidate.mkdir(parents=True, exist_ok=False)
+            self._debug_fusion_dir = candidate
+            self._summary["debug_fusion_output_dir"] = str(candidate)
+        else:
+            self._debug_fusion_dir.mkdir(parents=True, exist_ok=True)
+        return self._debug_fusion_dir
+
+    def _calibration_debug_report_payload(self) -> dict[str, Any]:
+        serial_numbers = list(getattr(self.camera_system, "serial_numbers", []) or [])
+        calibration_reference_serials = list(getattr(self.camera_system, "calibration_reference_serials", []) or [])
+        transforms: dict[str, Any] = {}
+        centers: dict[int, np.ndarray] = {}
+        for camera_idx in self.args.camera_ids:
+            idx = int(camera_idx)
+            effective = np.asarray(self._c2w_by_camera.get(idx, np.eye(4, dtype=np.float32)), dtype=np.float32).reshape(4, 4)
+            original = np.asarray(self._debug_original_c2w_by_camera.get(idx, effective), dtype=np.float32).reshape(4, 4)
+            rotation = effective[:3, :3].astype(np.float64)
+            center = effective[:3, 3]
+            centers[idx] = center.astype(np.float32, copy=False)
+            transforms[f"cam{idx}"] = {
+                "camera_idx": idx,
+                "runtime_serial": serial_numbers[idx] if idx < len(serial_numbers) else None,
+                "calibration_reference_serial": (
+                    calibration_reference_serials[idx] if idx < len(calibration_reference_serials) else None
+                ),
+                "original_c2w": original.tolist(),
+                "effective_c2w": effective.tolist(),
+                "rotation_det": float(np.linalg.det(rotation)),
+                "orthonormal_error_fro": float(np.linalg.norm(rotation @ rotation.T - np.eye(3))),
+                "camera_center": center.astype(float).tolist(),
+            }
+        pairwise_center_distances_m: dict[str, float] = {}
+        for left_idx, left_center in centers.items():
+            for right_idx, right_center in centers.items():
+                if right_idx <= left_idx:
+                    continue
+                pairwise_center_distances_m[f"cam{left_idx}_cam{right_idx}"] = float(
+                    np.linalg.norm(left_center.astype(np.float64) - right_center.astype(np.float64))
+                )
+        return {
+            "runtime_serial_numbers": serial_numbers,
+            "calibration_reference_serials": calibration_reference_serials,
+            "calibrate_path": str(self.args.calibrate_path),
+            "mapping_mode": self._debug_effective_c2w_mapping_mode,
+            "debug_identity_c2w": bool(getattr(self.args, "debug_identity_c2w", False)),
+            "debug_invert_c2w": bool(getattr(self.args, "debug_invert_c2w", False)),
+            "debug_only_camera_idx": getattr(self.args, "debug_only_camera_idx", None),
+            "camera_ids": [int(camera_idx) for camera_idx in self.args.camera_ids],
+            "active_camera_ids": list(self._debug_active_camera_ids()),
+            "transforms": transforms,
+            "pairwise_center_distances_m": pairwise_center_distances_m,
+        }
+
+    def _write_calibration_debug_report(self) -> None:
+        if not self._fusion_diagnostics_enabled():
+            return
+        debug_dir = self._debug_fusion_directory()
+        payload = self._calibration_debug_report_payload()
+        report_path = debug_dir / "calibration_report.json"
+        report_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
+        self._summary["debug_fusion_calibration_report"] = str(report_path)
+
+    def _fusion_debug_profile(
+        self,
+        *,
+        object_clouds: Sequence[CameraLayerCloud],
+        controller_clouds: Sequence[CameraLayerCloud],
+        masks: Mapping[int, CameraMaskPacket],
+    ) -> dict[str, Any]:
+        if not self._fusion_diagnostics_enabled():
+            return {}
+        object_by_camera = {int(cloud.camera_idx): cloud for cloud in object_clouds}
+        controller_by_camera = {int(cloud.camera_idx): cloud for cloud in controller_clouds}
+        active_camera_ids = set(self._debug_active_camera_ids())
+        per_camera_point_counts: dict[str, Any] = {}
+        per_camera_layer_bounds: dict[str, Any] = {}
+        per_camera_cloud_centroids: dict[str, Any] = {}
+        per_camera_mask_pixel_counts: dict[str, Any] = {}
+        for camera_idx in self.args.camera_ids:
+            idx = int(camera_idx)
+            object_profile = _cloud_profile(
+                object_by_camera[idx].points_m if idx in object_by_camera else np.empty((0, 3), dtype=np.float32)
+            )
+            controller_profile = _cloud_profile(
+                controller_by_camera[idx].points_m if idx in controller_by_camera else np.empty((0, 3), dtype=np.float32)
+            )
+            per_camera_point_counts[f"cam{idx}"] = {
+                "object": int(object_profile["point_count"]),
+                "controller": int(controller_profile["point_count"]),
+                "total": int(object_profile["point_count"]) + int(controller_profile["point_count"]),
+                "active_for_fusion": bool(idx in active_camera_ids),
+            }
+            per_camera_layer_bounds[f"cam{idx}"] = {
+                "object": {"min": object_profile["bounds_min"], "max": object_profile["bounds_max"]},
+                "controller": {"min": controller_profile["bounds_min"], "max": controller_profile["bounds_max"]},
+            }
+            per_camera_cloud_centroids[f"cam{idx}"] = {
+                "object": object_profile["centroid"],
+                "controller": controller_profile["centroid"],
+            }
+            mask = masks.get(idx)
+            if mask is None:
+                per_camera_mask_pixel_counts[f"cam{idx}"] = {"object": 0, "controller": 0, "union": 0}
+            else:
+                object_mask = np.asarray(mask.object_mask, dtype=bool)
+                controller_mask = np.asarray(mask.controller_mask, dtype=bool)
+                per_camera_mask_pixel_counts[f"cam{idx}"] = {
+                    "object": int(np.count_nonzero(object_mask)),
+                    "controller": int(np.count_nonzero(controller_mask)),
+                    "union": int(np.count_nonzero(object_mask | controller_mask)),
+                }
+        return {
+            "debug_color_by_camera": bool(getattr(self.args, "debug_color_by_camera", False)),
+            "debug_only_camera_idx": getattr(self.args, "debug_only_camera_idx", None),
+            "active_camera_ids": list(self._debug_active_camera_ids()),
+            "per_camera_point_counts": per_camera_point_counts,
+            "per_camera_layer_bounds": per_camera_layer_bounds,
+            "per_camera_cloud_centroids": per_camera_cloud_centroids,
+            "per_camera_mask_pixel_counts": per_camera_mask_pixel_counts,
+        }
+
+    def _maybe_write_fusion_debug_artifacts(
+        self,
+        *,
+        group_id: int,
+        object_clouds: Sequence[CameraLayerCloud],
+        controller_clouds: Sequence[CameraLayerCloud],
+        masks: Mapping[int, CameraMaskPacket],
+        diagnostics: dict[str, Any],
+    ) -> None:
+        if not (
+            bool(getattr(self.args, "debug_save_per_camera_pcd", False))
+            or bool(getattr(self.args, "debug_save_mask_overlays", False))
+        ):
+            return
+        max_saved_groups = int(getattr(self.args, "debug_fusion_max_saved_groups", 1))
+        group_key = int(group_id)
+        if (
+            max_saved_groups <= 0
+            or group_key in self._debug_fusion_saved_group_ids
+            or len(self._debug_fusion_saved_group_ids) >= max_saved_groups
+        ):
+            return
+        debug_dir = self._debug_fusion_directory()
+        artifact_paths: list[str] = []
+        active_camera_ids = set(self._debug_active_camera_ids())
+        if bool(getattr(self.args, "debug_save_per_camera_pcd", False)):
+            for role, clouds in (("object", object_clouds), ("controller", controller_clouds)):
+                for cloud in clouds:
+                    if int(cloud.camera_idx) not in active_camera_ids:
+                        continue
+                    path = debug_dir / f"group_{group_key:06d}_cam{int(cloud.camera_idx)}_{_slugify_debug_name(role)}.ply"
+                    _write_ascii_ply(path, cloud.points_m, cloud.colors_rgb)
+                    artifact_paths.append(str(path))
+        if bool(getattr(self.args, "debug_save_mask_overlays", False)):
+            for camera_idx in self.args.camera_ids:
+                idx = int(camera_idx)
+                if idx not in active_camera_ids or idx not in masks:
+                    continue
+                mask = masks[idx]
+                path = debug_dir / f"group_{group_key:06d}_cam{idx}_mask_overlay.png"
+                _write_mask_overlay_png(path, mask.color_bgr, mask.object_mask, mask.controller_mask)
+                artifact_paths.append(str(path))
+        self._debug_fusion_saved_group_ids.add(group_key)
+        if artifact_paths:
+            diagnostics["debug_artifact_dir"] = str(debug_dir)
+            diagnostics["debug_artifact_paths"] = artifact_paths
+            self._summary["debug_fusion_last_artifacts"] = artifact_paths
 
     def _temporal_grouping_summary(self) -> dict[str, Any]:
         with self._temporal_skews_lock:
@@ -3128,7 +3439,9 @@ class Demo21Runtime:
         if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_STAGED and self.args.gpu_gate_mode != GPU_GATE_MODE_OFF:
             raise RuntimeError("Demo 2.1 staged mode requires --gpu-gate-mode off so EdgeTAM can run in parallel")
         if self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT:
-            if self.args.depth_source != DEPTH_SOURCE_FFS:
+            if self.args.depth_source != DEPTH_SOURCE_FFS and not (
+                self.args.depth_source == DEPTH_SOURCE_REALSENSE and self._fusion_diagnostics_enabled()
+            ):
                 raise RuntimeError("Demo 2.3 dual-gpu-split requires local FFS depth")
             if self.args.edgetam_model_topology != EDGETAM_MODEL_TOPOLOGY_SHARED:
                 raise RuntimeError("Demo 2.3 dual-gpu-split requires shared EdgeTAM model topology")
@@ -3254,6 +3567,16 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --gpu-sampling-device-indexes must be >= 0")
         if self.args.gpu_sampling_backend not in GPU_SAMPLING_BACKENDS:
             raise RuntimeError(f"Demo 2.1 unsupported --gpu-sampling-backend {self.args.gpu_sampling_backend}")
+        if bool(getattr(self.args, "debug_identity_c2w", False)) and bool(getattr(self.args, "debug_invert_c2w", False)):
+            raise RuntimeError("Demo 2.3 fusion debug accepts only one of --debug-identity-c2w or --debug-invert-c2w")
+        if getattr(self.args, "debug_only_camera_idx", None) is not None:
+            only_camera_idx = int(self.args.debug_only_camera_idx)
+            if only_camera_idx not in {int(camera_idx) for camera_idx in self.args.camera_ids}:
+                raise RuntimeError(
+                    f"Demo 2.3 --debug-only-camera-idx {only_camera_idx} is not in --camera-ids {self.args.camera_ids}"
+                )
+        if int(getattr(self.args, "debug_fusion_max_saved_groups", 1)) < 0:
+            raise RuntimeError("Demo 2.3 --debug-fusion-max-saved-groups must be >= 0")
         if float(self.args.sam31_init_retry_interval_s) < 0:
             raise RuntimeError("Demo 2.1 --sam31-init-retry-interval-s must be >= 0")
         if int(self.args.sam31_init_max_attempts) < 0:
@@ -3272,9 +3595,7 @@ class Demo21Runtime:
             raise RuntimeError(f"Demo 2.1 unsupported --ffs-input-staging {self.args.ffs_input_staging}")
         if int(self.args.ffs_trt_batch_size) not in FFS_TRT_BATCH_SIZES:
             raise RuntimeError(f"Demo 2.1 unsupported --ffs-trt-batch-size {self.args.ffs_trt_batch_size}")
-        if int(self.args.ffs_trt_batch_size) > 1:
-            if self.args.depth_source != DEPTH_SOURCE_FFS:
-                raise RuntimeError("Demo 2.1 batch FFS TensorRT requires --depth-source ffs")
+        if self.args.depth_source == DEPTH_SOURCE_FFS and int(self.args.ffs_trt_batch_size) > 1:
             if len(tuple(self.args.camera_ids)) != int(self.args.ffs_trt_batch_size):
                 raise RuntimeError(
                     "Demo 2.1 batch FFS TensorRT requires camera count to match --ffs-trt-batch-size"
@@ -3338,11 +3659,35 @@ class Demo21Runtime:
             )
         else:
             c2w_list = [np.eye(4, dtype=np.float32) for _ in self.args.camera_ids]
-        self._c2w_by_camera = {
+        original_c2w_by_camera = {
             int(camera_idx): np.asarray(c2w_list[int(camera_idx)], dtype=np.float32).reshape(4, 4)
             for camera_idx in self.args.camera_ids
         }
+        self._debug_original_c2w_by_camera = {
+            idx: np.asarray(transform, dtype=np.float32).copy()
+            for idx, transform in original_c2w_by_camera.items()
+        }
+        if bool(getattr(self.args, "debug_identity_c2w", False)):
+            self._debug_effective_c2w_mapping_mode = "debug-identity-c2w"
+            c2w_by_camera = {
+                int(camera_idx): np.eye(4, dtype=np.float32)
+                for camera_idx in self.args.camera_ids
+            }
+        elif bool(getattr(self.args, "debug_invert_c2w", False)):
+            self._debug_effective_c2w_mapping_mode = "debug-invert-c2w"
+            c2w_by_camera = {
+                idx: np.linalg.inv(transform.astype(np.float64)).astype(np.float32)
+                for idx, transform in original_c2w_by_camera.items()
+            }
+        else:
+            self._debug_effective_c2w_mapping_mode = "calibrate-c2w"
+            c2w_by_camera = original_c2w_by_camera
+        self._c2w_by_camera = {
+            int(camera_idx): np.asarray(c2w_by_camera[int(camera_idx)], dtype=np.float32).reshape(4, 4)
+            for camera_idx in self.args.camera_ids
+        }
         self._stream_metadata = list(self.camera_system.stream_metadata)
+        self._write_calibration_debug_report()
         print(
             "[demo2.1] "
             f"serials={self.camera_system.serial_numbers} profile={self.width}x{self.height}@{self.args.fps} "
@@ -6844,7 +7189,10 @@ class Demo21Runtime:
         controller_clouds: list[CameraLayerCloud] = []
         build_object_raw_ms = 0.0
         build_controller_raw_ms = 0.0
+        active_camera_ids = set(self._debug_active_camera_ids())
         for camera_idx in self.args.camera_ids:
+            if int(camera_idx) not in active_camera_ids:
+                continue
             depth = depth_group.depths[int(camera_idx)]
             mask = masks[int(camera_idx)]
             if depth.group_id != mask.group_id:
@@ -6881,6 +7229,8 @@ class Demo21Runtime:
             else:
                 object_pts_cam = np.empty((0, 3), dtype=np.float32)
                 object_cols = np.empty((0, 3), dtype=np.uint8)
+            if bool(getattr(self.args, "debug_color_by_camera", False)):
+                object_cols = _solid_color_array(len(object_pts_cam), _camera_debug_color_rgb(int(camera_idx)))
             build_object_raw_ms += _elapsed_ms(object_build_start_s, time.perf_counter())
             object_clouds.append(
                 CameraLayerCloud(
@@ -6908,6 +7258,8 @@ class Demo21Runtime:
             else:
                 controller_pts_cam = np.empty((0, 3), dtype=np.float32)
                 controller_cols = np.empty((0, 3), dtype=np.uint8)
+            if bool(getattr(self.args, "debug_color_by_camera", False)):
+                controller_cols = _solid_color_array(len(controller_pts_cam), _camera_debug_color_rgb(int(camera_idx)))
             build_controller_raw_ms += _elapsed_ms(controller_build_start_s, time.perf_counter())
             controller_clouds.append(
                 CameraLayerCloud(
@@ -6918,6 +7270,18 @@ class Demo21Runtime:
                 )
             )
 
+        fusion_debug = self._fusion_debug_profile(
+            object_clouds=object_clouds,
+            controller_clouds=controller_clouds,
+            masks=masks,
+        )
+        self._maybe_write_fusion_debug_artifacts(
+            group_id=depth_group.group_id,
+            object_clouds=object_clouds,
+            controller_clouds=controller_clouds,
+            masks=masks,
+            diagnostics=fusion_debug,
+        )
         layers = semantic_layers_for_track_mode(
             self.args.track_mode,
             object_label=self.args.object_prompt,
@@ -6932,17 +7296,19 @@ class Demo21Runtime:
         object_raw_count = 0 if raw_object is None else raw_object.point_count
         controller_raw_count = 0 if raw_controller is None else raw_controller.point_count
         raw_fusion_ms = _elapsed_ms(started_s, time.perf_counter())
+        raw_fusion_profile: dict[str, Any] = {
+            "build_object_raw_ms": float(build_object_raw_ms),
+            "build_controller_raw_ms": float(build_controller_raw_ms),
+            "capture_temporal_skew_ms": float(depth_group.max_temporal_skew_ms),
+            "timestamp_source": depth_group.timestamp_source,
+            "total_ms": float(raw_fusion_ms),
+            "publish_s": self._profile_rel_s(),
+            "raw_packet_submitted": True,
+        }
+        raw_fusion_profile.update(fusion_debug)
         self._profile_update(
             depth_group.group_id,
-            raw_fusion={
-                "build_object_raw_ms": float(build_object_raw_ms),
-                "build_controller_raw_ms": float(build_controller_raw_ms),
-                "capture_temporal_skew_ms": float(depth_group.max_temporal_skew_ms),
-                "timestamp_source": depth_group.timestamp_source,
-                "total_ms": float(raw_fusion_ms),
-                "publish_s": self._profile_rel_s(),
-                "raw_packet_submitted": True,
-            },
+            raw_fusion=raw_fusion_profile,
             points={
                 "object_raw": int(object_raw_count),
                 "controller_raw": int(controller_raw_count),
@@ -7121,7 +7487,10 @@ class Demo21Runtime:
         controller_clouds: list[CameraLayerCloud] = []
         build_object_raw_ms = 0.0
         build_controller_raw_ms = 0.0
+        active_camera_ids = set(self._debug_active_camera_ids())
         for camera_idx in self.args.camera_ids:
+            if int(camera_idx) not in active_camera_ids:
+                continue
             depth = depth_group.depths[int(camera_idx)]
             mask = masks[int(camera_idx)]
             if depth.group_id != mask.group_id:
@@ -7158,6 +7527,8 @@ class Demo21Runtime:
             else:
                 object_pts_cam = np.empty((0, 3), dtype=np.float32)
                 object_cols = np.empty((0, 3), dtype=np.uint8)
+            if bool(getattr(self.args, "debug_color_by_camera", False)):
+                object_cols = _solid_color_array(len(object_pts_cam), _camera_debug_color_rgb(int(camera_idx)))
             build_object_raw_ms += _elapsed_ms(object_build_start_s, time.perf_counter())
             object_clouds.append(
                 CameraLayerCloud(
@@ -7185,6 +7556,8 @@ class Demo21Runtime:
             else:
                 controller_pts_cam = np.empty((0, 3), dtype=np.float32)
                 controller_cols = np.empty((0, 3), dtype=np.uint8)
+            if bool(getattr(self.args, "debug_color_by_camera", False)):
+                controller_cols = _solid_color_array(len(controller_pts_cam), _camera_debug_color_rgb(int(camera_idx)))
             build_controller_raw_ms += _elapsed_ms(controller_build_start_s, time.perf_counter())
             controller_clouds.append(
                 CameraLayerCloud(
@@ -7195,6 +7568,18 @@ class Demo21Runtime:
                 )
             )
 
+        fusion_debug = self._fusion_debug_profile(
+            object_clouds=object_clouds,
+            controller_clouds=controller_clouds,
+            masks=masks,
+        )
+        self._maybe_write_fusion_debug_artifacts(
+            group_id=depth_group.group_id,
+            object_clouds=object_clouds,
+            controller_clouds=controller_clouds,
+            masks=masks,
+            diagnostics=fusion_debug,
+        )
         layers = semantic_layers_for_track_mode(
             self.args.track_mode,
             object_label=self.args.object_prompt,
@@ -7258,6 +7643,7 @@ class Demo21Runtime:
             "total_ms": float(fusion_total_ms),
             "publish_s": self._profile_rel_s(),
         }
+        profile_fusion.update(fusion_debug)
         if self.args.profile_filter_detail:
             profile_fusion["object_filter_detail"] = object_filter_stats
             profile_fusion["controller_filter_detail"] = controller_filter_stats
@@ -7667,6 +8053,38 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dtype", choices=("bfloat16", "float16", "float32"), default="bfloat16")
     parser.add_argument("--duration-s", type=float, default=0.0)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--debug-color-by-camera",
+        action="store_true",
+        help="Color fused point-cloud contributions by camera: cam0 red, cam1 green, cam2 blue.",
+    )
+    parser.add_argument(
+        "--debug-save-per-camera-pcd",
+        action="store_true",
+        help="Save per-camera semantic PLY files for fusion mismatch diagnosis.",
+    )
+    parser.add_argument(
+        "--debug-save-mask-overlays",
+        action="store_true",
+        help="Save RGB mask overlay PNG files for each camera in the debug fusion directory.",
+    )
+    parser.add_argument(
+        "--debug-identity-c2w",
+        action="store_true",
+        help="Ignore calibrate.pkl c2w transforms and use identity transforms for per-camera RGB-D sanity checks.",
+    )
+    parser.add_argument(
+        "--debug-invert-c2w",
+        action="store_true",
+        help="Use inverse calibrate.pkl transforms as an explicit transform-convention A/B check.",
+    )
+    parser.add_argument("--debug-only-camera-idx", type=int, choices=DEFAULT_CAMERA_IDS, default=None)
+    parser.add_argument(
+        "--debug-fusion-max-saved-groups",
+        type=int,
+        default=1,
+        help="Maximum number of fused groups for which PLY/overlay debug artifacts are written.",
+    )
     parser.add_argument(
         "--parallel-init",
         action=argparse.BooleanOptionalAction,

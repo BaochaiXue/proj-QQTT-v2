@@ -71,6 +71,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     view = parser.add_argument_group("Point Cloud")
     view.add_argument("--render-mode", choices=("pointcloud", "none"), default=None, help="Render point cloud or run headless.")
+    view.add_argument("--depth-source", choices=runtime.DEPTH_SOURCES, default=None, help="Depth source for fusion diagnostics.")
     view.add_argument("--min-depth-m", type=float, default=None, help="Minimum depth kept in fused PCD.")
     view.add_argument("--max-depth-m", type=float, default=None, help="Maximum depth kept in fused PCD.")
     view.add_argument("--point-size", type=float, default=None, help="Open3D point size.")
@@ -81,6 +82,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     view.add_argument("--no-render-async-latest-only", action="store_true", help="Disable coalesced latest-only render posts.")
     view.add_argument("--render-micro-profile", action="store_true", help="Record detailed renderer copy/update timing.")
     view.add_argument("--output-root", default=None, help="Output root for runtime artifacts.")
+
+    diagnostics = parser.add_argument_group("Fusion Diagnostics")
+    diagnostics.add_argument("--debug-color-by-camera", action="store_true", help="Render/debug object and controller points by camera color.")
+    diagnostics.add_argument("--debug-save-per-camera-pcd", action="store_true", help="Save per-camera object/controller PLY files.")
+    diagnostics.add_argument("--debug-save-mask-overlays", action="store_true", help="Save per-camera RGB mask overlay PNG files.")
+    diagnostics.add_argument("--debug-identity-c2w", action="store_true", help="Use identity c2w transforms for RGB-D sanity checks.")
+    diagnostics.add_argument("--debug-invert-c2w", action="store_true", help="Use inverse calibrate.pkl transforms for convention A/B checks.")
+    diagnostics.add_argument("--debug-only-camera-idx", type=int, choices=(0, 1, 2), default=None, help="Fuse only one logical camera.")
+    diagnostics.add_argument("--debug-fusion-max-saved-groups", type=int, default=None, help="Maximum fused groups with PLY/overlay artifacts.")
 
     dual = parser.add_argument_group("Dual GPU")
     dual.add_argument("--ffs-device", default="cuda:0", help="Physical CUDA device for FFS TensorRT depth.")
@@ -171,6 +181,7 @@ def _to_demo23_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--object-prompt", parsed.object_prompt)
     _append_option(translated, "--controller-prompt", parsed.controller_prompt)
     _append_option(translated, "--render-mode", parsed.render_mode)
+    _append_option(translated, "--depth-source", parsed.depth_source)
     _append_option(translated, "--depth-min-m", parsed.min_depth_m)
     _append_option(translated, "--depth-max-m", parsed.max_depth_m)
     _append_option(translated, "--point-size", parsed.point_size)
@@ -179,6 +190,8 @@ def _to_demo23_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--render-layer-mode", parsed.render_layer_mode)
     _append_option(translated, "--render-copy-mode", parsed.render_copy_mode)
     _append_option(translated, "--output-root", parsed.output_root)
+    _append_option(translated, "--debug-only-camera-idx", parsed.debug_only_camera_idx)
+    _append_option(translated, "--debug-fusion-max-saved-groups", parsed.debug_fusion_max_saved_groups)
     _append_option(translated, "--ffs-device", parsed.ffs_device)
     _append_option(translated, "--edgetam-device", parsed.edgetam_device)
     _append_option(translated, "--sam31-device", parsed.sam31_device or parsed.edgetam_device)
@@ -197,6 +210,16 @@ def _to_demo23_argv(argv: Sequence[str] | None) -> list[str]:
         translated.append("--no-render-async-latest-only")
     if parsed.render_micro_profile:
         translated.append("--render-micro-profile")
+    if parsed.debug_color_by_camera:
+        translated.append("--debug-color-by-camera")
+    if parsed.debug_save_per_camera_pcd:
+        translated.append("--debug-save-per-camera-pcd")
+    if parsed.debug_save_mask_overlays:
+        translated.append("--debug-save-mask-overlays")
+    if parsed.debug_identity_c2w:
+        translated.append("--debug-identity-c2w")
+    if parsed.debug_invert_c2w:
+        translated.append("--debug-invert-c2w")
     if parsed.object_only:
         translated.extend(["--track-mode", runtime.TRACK_MODE_OBJECT_ONLY])
     if parsed.controller_only:
