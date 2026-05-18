@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import pickle
 import queue
+import types
 import unittest
 from pathlib import Path
 
@@ -167,6 +169,28 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
 
         self.assertEqual(pickle.loads(pickle.dumps(depth_result)).group_id, 7)
         self.assertEqual(pickle.loads(pickle.dumps(mask_result)).mask_group.group_id, 7)
+
+    def test_worker_child_args_use_cuda_alias_after_visible_device_isolation(self) -> None:
+        args = types.SimpleNamespace(
+            device="cuda:1",
+            gpu_sampling=True,
+            parallel_init=True,
+            sam31_device="cuda:1",
+        )
+
+        prior_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+        try:
+            child_args = workers._prepare_child_args(args, physical_device="cuda:1", stage="edgetam")
+        finally:
+            if prior_visible is None:
+                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            else:
+                os.environ["CUDA_VISIBLE_DEVICES"] = prior_visible
+
+        self.assertEqual(child_args.device, "cuda")
+        self.assertEqual(child_args.sam31_device, "cuda")
+        self.assertFalse(child_args.gpu_sampling)
+        self.assertFalse(child_args.parallel_init)
 
     def test_bounded_latest_task_queue_drops_oldest(self) -> None:
         task_queue: queue.Queue[workers.WorkerCaptureTask] = queue.Queue(maxsize=2)

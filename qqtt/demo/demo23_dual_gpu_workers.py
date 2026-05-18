@@ -107,11 +107,11 @@ def _prepare_child_args(args: Any, *, physical_device: str, stage: str) -> Any:
     child_args = copy.deepcopy(args)
     physical_index = parse_cuda_device_index(physical_device)
     os.environ["CUDA_VISIBLE_DEVICES"] = str(physical_index)
-    child_args.device = "cuda:0"
+    child_args.device = "cuda"
     child_args.gpu_sampling = False
     child_args.parallel_init = False
     if stage == "edgetam":
-        child_args.sam31_device = "cuda:0"
+        child_args.sam31_device = "cuda"
     return child_args
 
 
