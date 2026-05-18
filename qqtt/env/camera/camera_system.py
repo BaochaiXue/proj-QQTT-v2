@@ -1,6 +1,11 @@
 from .realsense import MultiRealsense, SingleRealsense
 from .recording_metadata import build_recording_metadata as build_recording_metadata_payload
 from .calibration_metadata import build_calibration_metadata, write_calibration_metadata
+from .calibration_boards import (
+    charuco_board_config_to_metadata,
+    create_charuco_board,
+    get_calibration_board_config,
+)
 from .defaults import (
     DEFAULT_EXPOSURE,
     DEFAULT_FPS,
@@ -352,19 +357,32 @@ class CameraSystem:
             stream_metadata=self.stream_metadata,
         )
 
-    def calibrate(self, visualize=True):
-        # Initialize the calibration board information
-        dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-        board = cv2.aruco.CharucoBoard(
-            (4, 5),
-            squareLength=0.05,
-            markerLength=0.037,
-            dictionary=dictionary,
-        )
+    def calibrate(self, visualize=True, board_config=None):
+        # Initialize the calibration board information.
+        board_config = get_calibration_board_config(board_config)
+        dictionary, board = create_charuco_board(board_config)
         # Get the intrinsic information from the realsense camera
         intrinsics = self.realsense.get_intrinsics()
-        error_threshold = 0.19
-        min_charuco_corners = 11
+        error_threshold = 0.3
+        min_charuco_corners = max(
+            11,
+            min(35, int(0.4 * board_config.chessboard_corner_count)),
+        )
+        print(
+            "[Calibrate] Board profile: "
+            f"{board_config.name} "
+            f"({board_config.squares_x}x{board_config.squares_y}, "
+            f"square={board_config.square_length_mm:.1f}mm, "
+            f"marker={board_config.marker_length_mm:.1f}mm, "
+            f"dictionary={board_config.dictionary_name}, "
+            f"min_corners={min_charuco_corners}, "
+            f"error_threshold={error_threshold:.3f})"
+        )
+        if board_config.deprecated:
+            print(
+                "[Calibrate] WARNING: this calibration board profile is deprecated. "
+                "Use the Calib.io 12x9 default for new calibrations."
+            )
 
         flag = True
         attempt_idx = 0
@@ -450,8 +468,9 @@ class CameraSystem:
                     break
 
                 # Reproject the points to calculate the error
+                charuco_id_values = charuco_ids.reshape(-1)
                 reprojected_points, _ = cv2.projectPoints(
-                    board.getChessboardCorners()[charuco_ids, :],
+                    board.getChessboardCorners()[charuco_id_values, :],
                     rvec,
                     tvec,
                     intrinsic,
@@ -507,6 +526,7 @@ class CameraSystem:
                 fps=self.fps,
                 transform_count=len(c2ws),
                 per_camera_reprojection_error=per_camera_errors,
+                calibration_board=charuco_board_config_to_metadata(board_config),
             ),
         )
         print(f"[Calibrate] Wrote {calibrate_path} and {sidecar_path}")

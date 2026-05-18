@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import argparse
 
+from qqtt.env.camera.calibration_boards import (
+    DEFAULT_CALIBRATION_BOARD,
+    available_calibration_boards,
+    get_calibration_board_config,
+)
 from qqtt.env.camera.defaults import DEFAULT_NUM_CAM
 
 CALIBRATE_DEFAULT_WIDTH = 1280
@@ -18,6 +23,45 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--height", type=int, default=CALIBRATE_DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=CALIBRATE_DEFAULT_FPS)
     parser.add_argument("--num-cam", type=int, default=DEFAULT_NUM_CAM)
+    board_group = parser.add_argument_group("Calibration board")
+    board_group.add_argument(
+        "--calibration-board",
+        choices=available_calibration_boards(),
+        default=DEFAULT_CALIBRATION_BOARD,
+        help=(
+            "Named ChArUco board profile. The legacy 4x5 board remains "
+            "available for old rigs but is deprecated."
+        ),
+    )
+    board_group.add_argument(
+        "--board-squares-x",
+        type=int,
+        default=None,
+        help="Override the ChArUco square count in the board X direction.",
+    )
+    board_group.add_argument(
+        "--board-squares-y",
+        type=int,
+        default=None,
+        help="Override the ChArUco square count in the board Y direction.",
+    )
+    board_group.add_argument(
+        "--board-square-size-mm",
+        type=float,
+        default=None,
+        help="Override the checker/square size in millimeters.",
+    )
+    board_group.add_argument(
+        "--board-marker-size-mm",
+        type=float,
+        default=None,
+        help="Override the ArUco marker size in millimeters.",
+    )
+    board_group.add_argument(
+        "--board-dictionary",
+        default=None,
+        help="Override the cv2.aruco dictionary name, e.g. DICT_5X5_250.",
+    )
     parser.add_argument(
         "--serials",
         nargs="*",
@@ -37,10 +81,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_board_config_from_args(args: argparse.Namespace):
+    return get_calibration_board_config(args.calibration_board).with_overrides(
+        squares_x=args.board_squares_x,
+        squares_y=args.board_squares_y,
+        square_size_mm=args.board_square_size_mm,
+        marker_size_mm=args.board_marker_size_mm,
+        dictionary_name=args.board_dictionary,
+    )
+
+
 def main() -> int:
     args = build_parser().parse_args()
     from qqtt.env import CameraSystem
 
+    board_config = resolve_board_config_from_args(args)
     enable_keyboard_listener = args.enable_keyboard_listener
     if args.disable_keyboard_listener:
         enable_keyboard_listener = False
@@ -52,7 +107,7 @@ def main() -> int:
         serial_numbers=args.serials if args.serials else None,
         enable_keyboard_listener=enable_keyboard_listener,
     )
-    camera_system.calibrate()
+    camera_system.calibrate(board_config=board_config)
     return 0
 
 
