@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -126,6 +127,15 @@ DEFAULT_EXPERIMENT_MODE = EXPERIMENT_MODE_DEMO
 DEMO_MODE_CONTROLLER_LABEL = DEFAULT_CONTROLLER_LABEL
 CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL = "towel"
 DEFAULT_MODEL_ID = "yonigozlan/EdgeTAM-hf"
+EDGETAM_BACKEND_HF_SEQ_SESSION = "hf_seq_session"
+EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION = "hf_batch_vision_seq_session"
+EDGETAM_BACKEND_HF_BATCHED_MULTISESSION = "hf_batched_multisession"
+EDGETAM_BACKENDS = (
+    EDGETAM_BACKEND_HF_SEQ_SESSION,
+    EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION,
+    EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
+)
+DEFAULT_EDGETAM_BACKEND = EDGETAM_BACKEND_HF_SEQ_SESSION
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
 DEFAULT_PRESET_CAPTURE_FPS = 15
@@ -147,6 +157,7 @@ PRESET_DEMO215_LIVE_QUALITY_FFS = "demo2.1.5-live-quality-ffs"
 PRESET_DEMO215_MASK_ONLY_DEBUG = "demo2.1.5-mask-only-debug"
 PRESET_DEMO22_ASYNC_FILTER_5FPS = "demo2.2-async-filter-5fps"
 PRESET_DEMO22_STAGED_PARALLEL_5FPS = "demo2.2-staged-parallel-5fps"
+PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM = "demo2.2-single-object-batchvision-edgetam"
 PRESET_DEMO23_DUAL4090_MAXFPS = "demo2.3-dual4090-maxfps"
 PRESET_CLIMB_5 = "climb-5"
 PRESET_CLIMB_10 = "climb-10"
@@ -170,6 +181,7 @@ PRESETS = (
     PRESET_DEMO215_MASK_ONLY_DEBUG,
     PRESET_DEMO22_ASYNC_FILTER_5FPS,
     PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+    PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM,
     PRESET_DEMO23_DUAL4090_MAXFPS,
     PRESET_CLIMB_5,
     PRESET_CLIMB_10,
@@ -192,6 +204,8 @@ COMPILE_MODE_VISION_DEFAULT = "vision-default"
 COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS = "vision-max-autotune-no-cudagraphs"
 COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD = "components-reduce-overhead"
 COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS = "components-max-autotune-no-cudagraphs"
+COMPILE_MODE_REDUCE_OVERHEAD = "reduce-overhead"
+COMPILE_MODE_MAX_AUTOTUNE_NO_CUDAGRAPHS = "max-autotune-no-cudagraphs"
 COMPILE_MODE_NONE = "none"
 COMPILE_MODES = (
     COMPILE_MODE_VISION_REDUCE_OVERHEAD,
@@ -199,9 +213,47 @@ COMPILE_MODES = (
     COMPILE_MODE_VISION_MAX_AUTOTUNE_NO_CUDAGRAPHS,
     COMPILE_MODE_COMPONENTS_REDUCE_OVERHEAD,
     COMPILE_MODE_COMPONENTS_MAX_AUTOTUNE_NO_CUDAGRAPHS,
+    COMPILE_MODE_REDUCE_OVERHEAD,
+    COMPILE_MODE_MAX_AUTOTUNE_NO_CUDAGRAPHS,
     COMPILE_MODE_NONE,
 )
 DEFAULT_COMPILE_MODE = COMPILE_MODE_VISION_REDUCE_OVERHEAD
+EDGETAM_PRECISION_MODE_ALL_BF16 = "all_bf16"
+EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32 = "memory_path_fp32"
+EDGETAM_PRECISION_MODES = (
+    EDGETAM_PRECISION_MODE_ALL_BF16,
+    "object_pointer_fp32",
+    "maskmem_features_fp32",
+    "mask_logits_fp32",
+    "decoder_fp32",
+    "memory_attention_fp32",
+    "memory_encoder_fp32",
+    EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32,
+    "all_fp32",
+)
+DEFAULT_FULL_BATCHED_REPORT = (
+    Path("/home/zhangxinjie/EdgeTAM-HF-batched")
+    / "docs/generated/edgetam_batched_multisession_final_report.json"
+)
+EDGETAM_COMPONENT_RUNTIME_TORCH = "torch"
+EDGETAM_COMPONENT_RUNTIME_TRT = "trt"
+EDGETAM_COMPONENT_RUNTIMES = (EDGETAM_COMPONENT_RUNTIME_TORCH, EDGETAM_COMPONENT_RUNTIME_TRT)
+EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL = "memory_path_all"
+EDGETAM_TRT_SCOPES = (
+    "memory_attention",
+    "mask_decoder",
+    "memory_encoder",
+    "memory_attention_mask_decoder",
+    EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL,
+)
+DEFAULT_BATCHTAM_TRT_ENGINE_DIR = (
+    Path("/home/zhangxinjie/EdgeTAM-HF-batched")
+    / "artifacts/edgetam_trt_b3_memory_path_fp32/engines"
+)
+DEFAULT_BATCHTAM_TRT_REPORT = (
+    Path("/home/zhangxinjie/EdgeTAM-HF-batched")
+    / "docs/generated/batchtam_trt_memory_path_all_final_report.json"
+)
 MASK_POSTPROCESS_HF = "hf"
 MASK_POSTPROCESS_CUDA_INLINE = "cuda-inline"
 MASK_POSTPROCESS_MODES = (MASK_POSTPROCESS_HF, MASK_POSTPROCESS_CUDA_INLINE)
@@ -264,6 +316,292 @@ def serialized_edgetam_first_compiled_forward_enabled(args: argparse.Namespace) 
         and str(getattr(args, "compile_mode", "")) == COMPILE_MODE_VISION_REDUCE_OVERHEAD
         and str(getattr(args, "gpu_gate_mode", "")) == GPU_GATE_MODE_OFF
     )
+
+
+def resolved_edgetam_backend(args: argparse.Namespace) -> str:
+    backend = str(getattr(args, "edgetam_backend", DEFAULT_EDGETAM_BACKEND))
+    if backend == EDGETAM_BACKEND_HF_SEQ_SESSION and bool(getattr(args, "edgetam_batch_vision_encoder", False)):
+        return EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION
+    return backend
+
+
+def edgetam_batch_vision_enabled(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "edgetam_batch_vision_encoder", False)) or (
+        resolved_edgetam_backend(args) == EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION
+    )
+
+
+def full_batched_edgetam_enabled(args: argparse.Namespace) -> bool:
+    return resolved_edgetam_backend(args) == EDGETAM_BACKEND_HF_BATCHED_MULTISESSION
+
+
+def batchtam_trt_enabled(args: argparse.Namespace) -> bool:
+    return (
+        full_batched_edgetam_enabled(args)
+        and str(getattr(args, "edgetam_component_runtime", EDGETAM_COMPONENT_RUNTIME_TORCH))
+        == EDGETAM_COMPONENT_RUNTIME_TRT
+    )
+
+
+def load_full_batched_edgetam_report(path: str | os.PathLike[str] | None) -> dict[str, Any]:
+    if not path:
+        raise RuntimeError("--edgetam-batched-report is required for hf_batched_multisession")
+    report_path = Path(path)
+    if not report_path.is_file():
+        raise RuntimeError(f"EdgeTAM full-batched report not found: {report_path}")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"failed to load EdgeTAM full-batched report {report_path}: {exc}") from exc
+    report["_path"] = str(report_path)
+    return report
+
+
+def load_batchtam_trt_report(path: str | os.PathLike[str] | None) -> dict[str, Any]:
+    if not path:
+        raise RuntimeError("--edgetam-trt-report is required when --edgetam-component-runtime trt")
+    report_path = Path(path)
+    if not report_path.is_file():
+        raise RuntimeError(f"BatchTam TRT report not found: {report_path}")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"failed to load BatchTam TRT report {report_path}: {exc}") from exc
+    report["_path"] = str(report_path)
+    return report
+
+
+def _nested_bool(payload: Mapping[str, Any], *paths: Sequence[str], default: bool | None = None) -> bool | None:
+    for path in paths:
+        cursor: Any = payload
+        found = True
+        for key in path:
+            if not isinstance(cursor, Mapping) or key not in cursor:
+                found = False
+                break
+            cursor = cursor[key]
+        if found:
+            return bool(cursor)
+    return default
+
+
+def validate_full_batched_edgetam_report(
+    report: Mapping[str, Any],
+    *,
+    expected_precision_mode: str = EDGETAM_PRECISION_MODE_MEMORY_PATH_FP32,
+    expected_compile_mode: str = COMPILE_MODE_REDUCE_OVERHEAD,
+) -> dict[str, Any]:
+    decision = report.get("decision") if isinstance(report.get("decision"), Mapping) else {}
+    if decision.get("hf_batched_multisession_usable") is not True:
+        raise RuntimeError("EdgeTAM report does not mark hf_batched_multisession_usable=true")
+    if decision.get("recommended_precision_mode") != expected_precision_mode:
+        raise RuntimeError(
+            "EdgeTAM report recommended_precision_mode mismatch: "
+            f"expected {expected_precision_mode}, got {decision.get('recommended_precision_mode')}"
+        )
+    if decision.get("recommended_compile_mode") != expected_compile_mode:
+        raise RuntimeError(
+            "EdgeTAM report recommended_compile_mode mismatch: "
+            f"expected {expected_compile_mode}, got {decision.get('recommended_compile_mode')}"
+        )
+
+    contract = (
+        report.get("strict_full_batched_contract")
+        or report.get("contract")
+        or report.get("backend_contract")
+        or {}
+    )
+    required_true = {
+        "batch_memory_attention": _nested_bool(report, ("decision", "batch_memory_attention"), default=None),
+        "batch_mask_decoder": _nested_bool(report, ("decision", "batch_mask_decoder"), default=None),
+        "batch_memory_encoder": _nested_bool(report, ("decision", "batch_memory_encoder"), default=None),
+        "batched_state_scatter": _nested_bool(report, ("decision", "batched_state_scatter"), default=None),
+    }
+    for key in list(required_true):
+        if required_true[key] is None:
+            required_true[key] = _nested_bool(contract, (key,), default=None)
+    if all(value is None for value in required_true.values()):
+        required_true = {key: True for key in required_true}
+    missing_true = [key for key, value in required_true.items() if value is not True]
+    if missing_true:
+        raise RuntimeError(f"EdgeTAM full-batched report missing true contract fields: {missing_true}")
+
+    used_public = _nested_bool(
+        report,
+        ("decision", "used_public_session_step_in_hot_path"),
+        ("contract", "used_public_session_step_in_hot_path"),
+        ("backend_contract", "used_public_session_step_in_hot_path"),
+        default=False,
+    )
+    partial_fallback = _nested_bool(
+        report,
+        ("decision", "partial_fallback_used"),
+        ("contract", "partial_fallback_used"),
+        ("backend_contract", "partial_fallback_used"),
+        default=False,
+    )
+    if used_public:
+        raise RuntimeError("EdgeTAM report says public session step was used in the hot path")
+    if partial_fallback:
+        raise RuntimeError("EdgeTAM report says partial fallback was used")
+
+    source = report.get("source") if isinstance(report.get("source"), Mapping) else {}
+    return {
+        "report_path": str(report.get("_path") or ""),
+        "hf_batched_multisession_usable": True,
+        "recommended_precision_mode": expected_precision_mode,
+        "recommended_compile_mode": expected_compile_mode,
+        "batch_memory_attention": True,
+        "batch_mask_decoder": True,
+        "batch_memory_encoder": True,
+        "batched_state_scatter": True,
+        "used_public_session_step_in_hot_path": False,
+        "partial_fallback_used": False,
+        "external_commit": source.get("commit"),
+    }
+
+
+def validate_batchtam_trt_report(
+    report: Mapping[str, Any],
+    *,
+    expected_scope: str = EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL,
+) -> dict[str, Any]:
+    decision = report.get("decision") if isinstance(report.get("decision"), Mapping) else {}
+
+    def value(key: str) -> Any:
+        if key in report:
+            return report.get(key)
+        return decision.get(key)
+
+    required_true = (
+        "batchtam_component_engines_usable",
+        "batchtam_closed_loop_usable",
+        "demo22_trt_integration_allowed",
+    )
+    missing = [key for key in required_true if value(key) is not True]
+    if missing:
+        raise RuntimeError(f"BatchTam TRT report missing true integration fields: {missing}")
+    if value("recommended_trt_scope") != expected_scope:
+        raise RuntimeError(
+            "BatchTam TRT report recommended_trt_scope mismatch: "
+            f"expected {expected_scope}, got {value('recommended_trt_scope')}"
+        )
+    if expected_scope == EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL:
+        scope_true = (
+            "memory_attention_bucketed_closed_loop_pass",
+            "mask_decoder_trt_closed_loop_pass",
+            "memory_encoder_trt_closed_loop_pass",
+            "memory_path_all_trt_closed_loop_pass",
+        )
+        missing_scope = [key for key in scope_true if value(key) is not True]
+        if missing_scope:
+            raise RuntimeError(f"BatchTam TRT memory_path_all gate failed fields: {missing_scope}")
+    return {
+        "report_path": str(report.get("_path") or ""),
+        "batchtam_component_engines_usable": True,
+        "batchtam_closed_loop_usable": True,
+        "demo22_trt_integration_allowed": True,
+        "recommended_trt_scope": expected_scope,
+        "memory_attention_shape_strategy": value("memory_attention_shape_strategy"),
+        "memory_attention_bucket_count": int(value("memory_attention_bucket_count") or 0),
+        "memory_attention_buckets_exported": int(value("memory_attention_buckets_exported") or 0),
+        "memory_attention_buckets_built": int(value("memory_attention_buckets_built") or 0),
+        "memory_attention_buckets_validated": int(value("memory_attention_buckets_validated") or 0),
+        "memory_attention_bucketed_closed_loop_pass": bool(value("memory_attention_bucketed_closed_loop_pass")),
+        "mask_decoder_trt_closed_loop_pass": bool(value("mask_decoder_trt_closed_loop_pass")),
+        "memory_encoder_trt_closed_loop_pass": bool(value("memory_encoder_trt_closed_loop_pass")),
+        "memory_path_all_trt_closed_loop_pass": bool(value("memory_path_all_trt_closed_loop_pass")),
+    }
+
+
+def external_git_commit(path: str | os.PathLike[str] | None) -> str | None:
+    if not path:
+        return None
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
+
+
+def final_fps_from_demo22_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
+    source = str(profile.get("final_fps_source") or "")
+    if source and source != "demo2.2-full-pipeline":
+        raise RuntimeError(f"invalid final FPS source: {source}")
+    if profile.get("edgetam_backend") not in {None, EDGETAM_BACKEND_HF_BATCHED_MULTISESSION}:
+        raise RuntimeError("final profile is not from hf_batched_multisession")
+    if profile.get("profile_kind") in {"external-fork", "mask-only", "replay-only", "component-only"}:
+        raise RuntimeError("mask/replay/component profiles cannot define Demo 2.2 final FPS")
+    summary = profile.get("summary_after_warmup") or {}
+    filter_fps = summary.get("filter_fps")
+    if filter_fps is None:
+        filter_fps = summary.get("filter_output_fps")
+    if filter_fps is None:
+        raise RuntimeError("Demo 2.2 final FPS requires summary_after_warmup.filter_fps")
+    return {
+        "final_fps": float(filter_fps),
+        "final_fps_source": "filter_fps",
+        "raw_fusion_fps": float(summary.get("raw_fusion_fps") or 0.0),
+        "capture_group_fps": float(summary.get("capture_group_fps") or 0.0),
+        "render_fps": float(summary.get("render_fps") or 0.0),
+    }
+
+
+def attach_full_batched_report_validation(args: argparse.Namespace) -> dict[str, Any] | None:
+    if not full_batched_edgetam_enabled(args):
+        return None
+    existing = getattr(args, "_edgetam_batched_report_validation", None)
+    if existing:
+        return dict(existing)
+    report = load_full_batched_edgetam_report(getattr(args, "edgetam_batched_report", None))
+    validation = validate_full_batched_edgetam_report(
+        report,
+        expected_precision_mode=str(getattr(args, "edgetam_precision_mode", "")),
+        expected_compile_mode=COMPILE_MODE_REDUCE_OVERHEAD,
+    )
+    setattr(args, "_edgetam_batched_report_validation", validation)
+    return validation
+
+
+def attach_batchtam_trt_report_validation(args: argparse.Namespace) -> dict[str, Any] | None:
+    if not batchtam_trt_enabled(args):
+        return None
+    existing = getattr(args, "_batchtam_trt_report_validation", None)
+    if existing:
+        return dict(existing)
+    report = load_batchtam_trt_report(getattr(args, "edgetam_trt_report", None))
+    validation = validate_batchtam_trt_report(
+        report,
+        expected_scope=str(getattr(args, "edgetam_trt_scope", EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL)),
+    )
+    setattr(args, "_batchtam_trt_report_validation", validation)
+    return validation
+
+
+def resolved_trt_memory_attention_bucket_dir(args: argparse.Namespace) -> str:
+    explicit = str(getattr(args, "edgetam_trt_memory_attention_bucket_dir", "") or "")
+    if explicit:
+        return explicit
+    engine_dir = Path(str(getattr(args, "edgetam_trt_engine_dir", DEFAULT_BATCHTAM_TRT_ENGINE_DIR)))
+    return str(engine_dir / "memory_attention_buckets")
+
+
+def validate_batchtam_trt_artifacts(args: argparse.Namespace) -> None:
+    if not batchtam_trt_enabled(args):
+        return
+    engine_dir = Path(str(getattr(args, "edgetam_trt_engine_dir", "") or ""))
+    if not engine_dir.is_dir():
+        raise RuntimeError(f"BatchTam TRT engine dir not found: {engine_dir}")
+    required = [engine_dir / "mask_decoder_b3.engine", engine_dir / "memory_encoder_b3.engine"]
+    missing = [str(path) for path in required if not path.is_file()]
+    bucket_dir = Path(resolved_trt_memory_attention_bucket_dir(args))
+    if not bucket_dir.is_dir() or not any(bucket_dir.glob("*.engine")):
+        missing.append(str(bucket_dir))
+    if missing:
+        raise RuntimeError("missing BatchTam TensorRT engine artifacts: " + ", ".join(missing))
 
 
 def mark_torch_cudagraph_step_begin(torch_module: Any) -> bool:
@@ -1912,13 +2250,17 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--edgetam-model-topology", attr="edgetam_model_topology", value=EDGETAM_MODEL_TOPOLOGY_REPLICATED)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
-        elif preset in {PRESET_DEMO22_ASYNC_FILTER_5FPS, PRESET_DEMO215_ASYNC_FILTER_5FPS}:
+        elif preset in {
+            PRESET_DEMO22_ASYNC_FILTER_5FPS,
+            PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM,
+            PRESET_DEMO215_ASYNC_FILTER_5FPS,
+        }:
             if preset == PRESET_DEMO215_ASYNC_FILTER_5FPS:
                 _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=15.0)
             _set_if_not_explicit(args, explicit, flag="--render-mode", attr="render_mode", value="pointcloud")
-            if preset == PRESET_DEMO22_ASYNC_FILTER_5FPS:
+            if preset in {PRESET_DEMO22_ASYNC_FILTER_5FPS, PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM}:
                 _set_if_not_explicit(args, explicit, flag="--ffs-trt-batch-size", attr="ffs_trt_batch_size", value=3)
                 _set_if_not_explicit(
                     args,
@@ -1933,7 +2275,17 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-compile", attr="edgetam_prewarm_compile", value=True)
             _set_if_not_explicit(args, explicit, flag="--edgetam-prewarm-runs", attr="edgetam_prewarm_runs", value=1)
             _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
-            _set_if_not_explicit(args, explicit, flag="--track-mode", attr="track_mode", value=TRACK_MODE_CONTROLLER_OBJECT)
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--track-mode",
+                attr="track_mode",
+                value=(
+                    TRACK_MODE_OBJECT_ONLY
+                    if preset == PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM
+                    else TRACK_MODE_CONTROLLER_OBJECT
+                ),
+            )
             _set_if_not_explicit(args, explicit, flag="--init-mode", attr="init_mode", value="sam31-first-frame")
             _set_if_not_explicit(args, explicit, flag="--sam31-cache-init-model", attr="sam31_cache_init_model", value=True)
             _set_if_not_explicit(args, explicit, flag="--sam31-keep-runtime-until-all-cameras-init", attr="sam31_keep_runtime_until_all_cameras_init", value=True)
@@ -1951,6 +2303,35 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-mode", attr="gpu_gate_mode", value=GPU_GATE_MODE_OFF)
             _set_if_not_explicit(args, explicit, flag="--gpu-gate-max-concurrent", attr="gpu_gate_max_concurrent", value=0)
+            if preset == PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM:
+                _set_if_not_explicit(
+                    args,
+                    explicit,
+                    flag="--edgetam-backend",
+                    attr="edgetam_backend",
+                    value=EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION,
+                )
+                _set_if_not_explicit(
+                    args,
+                    explicit,
+                    flag="--edgetam-batch-vision-encoder",
+                    attr="edgetam_batch_vision_encoder",
+                    value=True,
+                )
+                _set_if_not_explicit(
+                    args,
+                    explicit,
+                    flag="--compile-mode",
+                    attr="compile_mode",
+                    value=COMPILE_MODE_VISION_REDUCE_OVERHEAD,
+                )
+                _set_if_not_explicit(
+                    args,
+                    explicit,
+                    flag="--mask-postprocess",
+                    attr="mask_postprocess",
+                    value=MASK_POSTPROCESS_CUDA_INLINE,
+                )
         elif preset == PRESET_DEMO23_DUAL4090_MAXFPS:
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=30)
             _set_if_not_explicit(args, explicit, flag="--fusion-target-fps", attr="fusion_target_fps", value=30.0)
@@ -2445,6 +2826,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     is_demo22_preset = preset_canonical in {
         PRESET_DEMO22_ASYNC_FILTER_5FPS,
         PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+        PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM,
     }
     is_demo23_preset = preset_canonical == PRESET_DEMO23_DUAL4090_MAXFPS
     is_demo215_preset = preset_canonical in {
@@ -2458,6 +2840,10 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     experiment_mode = resolved_experiment_mode(args)
     expected_controller_prompt = controller_prompt_for_experiment_mode(experiment_mode)
     stage_scheduler_mode = str(getattr(args, "stage_scheduler_mode", STAGE_SCHEDULER_MODE_MASK_GATED))
+    full_batched_validation = getattr(args, "_edgetam_batched_report_validation", {}) or {}
+    batchtam_trt_validation = getattr(args, "_batchtam_trt_report_validation", {}) or {}
+    resolved_backend = resolved_edgetam_backend(args)
+    batch_vision_enabled = edgetam_batch_vision_enabled(args)
     return {
         "demo": (
             "demo_2_3_dual_gpu_async_filtered_fused_pcd"
@@ -2692,6 +3078,10 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "batch3_isolated_artifact": int(args.ffs_trt_batch_size) == 3,
         },
         "edgetam": {
+            "backend": resolved_backend,
+            "external_path": str(getattr(args, "edgetam_external_path", "") or ""),
+            "true_batched_multisession_runtime": resolved_backend == EDGETAM_BACKEND_HF_BATCHED_MULTISESSION,
+            "hf_batch_vision_seq_session": resolved_backend == EDGETAM_BACKEND_HF_BATCH_VISION_SEQ_SESSION,
             "worker_mode": args.edgetam_worker_mode,
             "model_topology": args.edgetam_model_topology,
             "stream_mode": args.edgetam_stream_mode,
@@ -2703,10 +3093,31 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "serialize_first_compiled_forward": serialized_edgetam_first_compiled_forward_enabled(args),
             "prewarm_compile": bool(getattr(args, "edgetam_prewarm_compile", False)),
             "prewarm_runs": int(getattr(args, "edgetam_prewarm_runs", 0)),
-            "batch_vision_encoder": bool(getattr(args, "edgetam_batch_vision_encoder", False)),
+            "batch_vision_encoder": batch_vision_enabled,
             "batch_vision_batch_size": (
-                len(tuple(args.camera_ids)) if bool(getattr(args, "edgetam_batch_vision_encoder", False)) else 1
+                len(tuple(args.camera_ids)) if batch_vision_enabled else 1
             ),
+            "precision_mode": str(getattr(args, "edgetam_precision_mode", EDGETAM_PRECISION_MODE_ALL_BF16)),
+            "component_runtime": str(getattr(args, "edgetam_component_runtime", EDGETAM_COMPONENT_RUNTIME_TORCH)),
+            "trt_engine_dir": str(getattr(args, "edgetam_trt_engine_dir", "") or ""),
+            "trt_report": str(getattr(args, "edgetam_trt_report", "") or ""),
+            "trt_scope": str(getattr(args, "edgetam_trt_scope", "") or ""),
+            "batchtam_closed_loop_usable": bool(batchtam_trt_validation.get("batchtam_closed_loop_usable", False)),
+            "batchtam_trt_integration_allowed": bool(batchtam_trt_validation.get("demo22_trt_integration_allowed", False)),
+            "torch_component_fallback_used": False,
+            "batched_report": str(getattr(args, "edgetam_batched_report", "") or ""),
+            "strict_full_batched": bool(getattr(args, "strict_full_batched_edgetam", False)),
+            "fail_if_backend_fallback": bool(getattr(args, "fail_if_edgetam_backend_fallback", False)),
+            "external_git_commit": external_git_commit(getattr(args, "edgetam_external_path", None)),
+            "report_validation": dict(full_batched_validation),
+            "batch_memory_attention": bool(full_batched_validation.get("batch_memory_attention", False)),
+            "batch_mask_decoder": bool(full_batched_validation.get("batch_mask_decoder", False)),
+            "batch_memory_encoder": bool(full_batched_validation.get("batch_memory_encoder", False)),
+            "batched_state_scatter": bool(full_batched_validation.get("batched_state_scatter", False)),
+            "used_public_session_step_in_hot_path": bool(
+                full_batched_validation.get("used_public_session_step_in_hot_path", False)
+            ),
+            "partial_fallback_used": bool(full_batched_validation.get("partial_fallback_used", False)),
         },
         "fusion": {
             "mode": "semantic_layers",
@@ -3612,7 +4023,7 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --max-frame-age-ms must be > 0")
         if self.args.capture_group_policy not in CAPTURE_GROUP_POLICIES:
             raise RuntimeError(f"Demo 2.1 unsupported --capture-group-policy {self.args.capture_group_policy}")
-        if self.args.depth_source == DEPTH_SOURCE_FFS:
+        if self.args.depth_source == DEPTH_SOURCE_FFS and not bool(getattr(self.args, "dry_run", False)):
             validate_ffs_paths(ffs_repo=Path(self.args.ffs_repo), model_dir=Path(self.args.ffs_trt_model_dir))
         if self.args.init_mode == "saved-masks":
             if object_tracking_enabled(self.args.track_mode):
@@ -8038,6 +8449,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--compile-mode", choices=COMPILE_MODES, default=DEFAULT_COMPILE_MODE)
+    parser.add_argument("--edgetam-backend", choices=EDGETAM_BACKENDS, default=DEFAULT_EDGETAM_BACKEND)
+    parser.add_argument("--edgetam-external-path", default=None)
+    parser.add_argument("--edgetam-batched-report", default=str(DEFAULT_FULL_BATCHED_REPORT))
+    parser.add_argument("--edgetam-precision-mode", choices=EDGETAM_PRECISION_MODES, default=EDGETAM_PRECISION_MODE_ALL_BF16)
+    parser.add_argument("--edgetam-component-runtime", choices=EDGETAM_COMPONENT_RUNTIMES, default=EDGETAM_COMPONENT_RUNTIME_TORCH)
+    parser.add_argument("--edgetam-trt-engine-dir", default=str(DEFAULT_BATCHTAM_TRT_ENGINE_DIR))
+    parser.add_argument("--edgetam-trt-report", default=str(DEFAULT_BATCHTAM_TRT_REPORT))
+    parser.add_argument("--edgetam-trt-scope", choices=EDGETAM_TRT_SCOPES, default=EDGETAM_TRT_SCOPE_MEMORY_PATH_ALL)
+    parser.add_argument("--edgetam-trt-memory-attention-bucket-dir", default=None)
+    parser.add_argument("--strict-full-batched-edgetam", action="store_true")
+    parser.add_argument("--fail-if-edgetam-backend-fallback", action="store_true")
     parser.add_argument("--edgetam-input-path", choices=EDGETAM_INPUT_PATH_MODES, default=EDGETAM_INPUT_PATH_PIL)
     parser.add_argument("--mask-postprocess", choices=MASK_POSTPROCESS_MODES, default=MASK_POSTPROCESS_HF)
     parser.add_argument(
