@@ -19,6 +19,9 @@ class TrackingInputLitePacket:
     mask_by_camera: Mapping[int, np.ndarray]
     object_mask_by_camera: Mapping[int, np.ndarray]
     controller_mask_by_camera: Mapping[int, np.ndarray]
+    mask_source_group_id: int | None = None
+    mask_age_ms: float = 0.0
+    mask_reused: bool = False
 
     @property
     def seq(self) -> int:
@@ -47,6 +50,9 @@ class TrackingInputLitePacket:
                 int(camera_idx): np.ascontiguousarray(np.asarray(mask, dtype=bool))
                 for camera_idx, mask in self.controller_mask_by_camera.items()
             },
+            mask_source_group_id=self.mask_source_group_id,
+            mask_age_ms=float(self.mask_age_ms),
+            mask_reused=bool(self.mask_reused),
         )
 
 
@@ -65,6 +71,17 @@ class TrackingResultLitePacket:
     model_ms: float = 0.0
     e2e_ms: float = 0.0
     stale: bool = False
+    cotracker_update_mode: str = "serial"
+    cotracker_batch_size: int = 1
+    cotracker_batch_update_count: int = 0
+    cotracker_serial_group_update_count: int = 0
+    cotracker_serial_camera_update_count: int = 0
+    cotracker_serial_fallback_count: int = 0
+    cotracker_batch_error_count: int = 0
+    cotracker_batch_disabled_reason: str | None = None
+    mask_source_group_id: int | None = None
+    mask_age_ms: float = 0.0
+    mask_reused: bool = False
     overlay_display_scope: str = "controller"
     tracking_query_count_actual_by_camera: dict[int, int] = field(default_factory=dict)
     tracking_union_pixels_by_camera: dict[int, int] = field(default_factory=dict)
@@ -113,6 +130,25 @@ class TrackingResultLitePacket:
             model_ms=float(packet.model_ms),
             e2e_ms=float(packet.e2e_ms),
             stale=bool(getattr(packet, "stale", False)),
+            cotracker_update_mode=str(getattr(packet, "cotracker_update_mode", "serial")),
+            cotracker_batch_size=int(getattr(packet, "cotracker_batch_size", 1) or 1),
+            cotracker_batch_update_count=int(getattr(packet, "cotracker_batch_update_count", 0) or 0),
+            cotracker_serial_group_update_count=int(
+                getattr(packet, "cotracker_serial_group_update_count", 0) or 0
+            ),
+            cotracker_serial_camera_update_count=int(
+                getattr(packet, "cotracker_serial_camera_update_count", 0) or 0
+            ),
+            cotracker_serial_fallback_count=int(getattr(packet, "cotracker_serial_fallback_count", 0) or 0),
+            cotracker_batch_error_count=int(getattr(packet, "cotracker_batch_error_count", 0) or 0),
+            cotracker_batch_disabled_reason=getattr(packet, "cotracker_batch_disabled_reason", None),
+            mask_source_group_id=(
+                None
+                if getattr(packet, "mask_source_group_id", None) is None
+                else int(getattr(packet, "mask_source_group_id"))
+            ),
+            mask_age_ms=float(getattr(packet, "mask_age_ms", 0.0) or 0.0),
+            mask_reused=bool(getattr(packet, "mask_reused", False)),
             overlay_display_scope=str(getattr(packet, "overlay_display_scope", "controller")),
             tracking_query_count_actual_by_camera={
                 int(camera_idx): int(count)
@@ -175,6 +211,17 @@ class TrackingResultLitePacket:
             model_ms=self.model_ms,
             e2e_ms=self.e2e_ms,
             stale=True,
+            cotracker_update_mode=self.cotracker_update_mode,
+            cotracker_batch_size=self.cotracker_batch_size,
+            cotracker_batch_update_count=self.cotracker_batch_update_count,
+            cotracker_serial_group_update_count=self.cotracker_serial_group_update_count,
+            cotracker_serial_camera_update_count=self.cotracker_serial_camera_update_count,
+            cotracker_serial_fallback_count=self.cotracker_serial_fallback_count,
+            cotracker_batch_error_count=self.cotracker_batch_error_count,
+            cotracker_batch_disabled_reason=self.cotracker_batch_disabled_reason,
+            mask_source_group_id=self.mask_source_group_id,
+            mask_age_ms=self.mask_age_ms,
+            mask_reused=self.mask_reused,
             overlay_display_scope=self.overlay_display_scope,
             tracking_query_count_actual_by_camera=self.tracking_query_count_actual_by_camera,
             tracking_union_pixels_by_camera=self.tracking_union_pixels_by_camera,

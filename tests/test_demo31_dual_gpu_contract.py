@@ -193,6 +193,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["cotracker_backend"], "cotracker3_online")
         self.assertEqual(contract["cotracker_owner"], "process")
         self.assertEqual(contract["cotracker_process_mode"], "subprocess")
+        self.assertEqual(contract["cotracker_update_mode"], "auto")
+        self.assertEqual(contract["cotracker_batch_size_target"], 3)
+        self.assertTrue(contract["cotracker_batch_fallback_enabled"])
         self.assertFalse(contract["cross_gpu_cuda_tensor_transfer"])
         self.assertEqual(contract["ipc_payload"], "cpu_numpy_latest_wins")
         self.assertFalse(contract["tracking_input_contains_depth"])
@@ -287,6 +290,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(config.query_mode, "phystwin_dense")
         self.assertEqual(config.query_count_request, "auto")
         self.assertEqual(config.seed, 42)
+        self.assertEqual(config.update_mode, "auto")
         self.assertTrue(config.init_requires_object_and_controller)
         self.assertEqual(config.overlay_display_scope, "controller")
 
@@ -420,7 +424,11 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(depth.group_id, 5)
         self.assertEqual(mask.group_id, 5)
         self.assertEqual(mask.mask_packets[0].group_id, 5)
+        self.assertEqual(mask.source_group_id, 4)
+        self.assertTrue(mask.mask_reused)
+        self.assertEqual(buffer.selection_for_group(5)["source_group_id"], 4)  # type: ignore[index]
         self.assertEqual(buffer.snapshot()["mask_reuse_count"], 1)
+        self.assertEqual(buffer.snapshot()["mask_group_delta_median"], 1.0)
 
     def test_strict_join_buffer_requires_matching_mask_group(self) -> None:
         buffer = demo31_runtime.Demo31MaskPolicyJoinBuffer(policy="strict")

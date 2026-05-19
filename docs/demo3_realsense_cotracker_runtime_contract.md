@@ -216,6 +216,12 @@ capture_group_fps
 edgetam_mask_fps
 fusion_fps
 cotracker_publish_fps
+cotracker_update_mode
+cotracker_update_mode_effective
+cotracker_batch_size
+cotracker_batch_update_count
+cotracker_serial_camera_update_count
+cotracker_serial_fallback_count
 cotracker_model_ms_median
 cotracker_model_ms_p95
 cotracker_e2e_ms_median

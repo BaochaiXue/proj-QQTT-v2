@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from typing import Any, Sequence
 
 import numpy as np
@@ -23,6 +24,13 @@ class CoTracker3OnlineBackend:
         self._stream_last_processed_frame_count = 0
         self._stream_initialized = False
         self._stream_camera_idx: int | None = None
+        self._batch_camera_ids: tuple[int, ...] = ()
+        self._batch_query_points_yx_by_camera: dict[int, np.ndarray] = {}
+        self._batch_query_counts_by_camera: dict[int, int] = {}
+        self._batch_stream_frames: list[np.ndarray] = []
+        self._batch_total_frames = 0
+        self._batch_last_processed_frame_count = 0
+        self._batch_initialized = False
 
     def availability(self) -> BackendAvailability:
         try:
@@ -70,6 +78,10 @@ class CoTracker3OnlineBackend:
         for frame in frames:
             self.update(frame)
 
+    def initialize_batch(self, query_points_yx_by_camera: Mapping[int, np.ndarray]) -> None:
+        self._load_model()
+        self._reset_batch_stream(query_points_yx_by_camera)
+
     @staticmethod
     def _frames_to_torch_video(frames: Sequence[np.ndarray], *, device: str):
         import torch
@@ -82,6 +94,17 @@ class CoTracker3OnlineBackend:
         return torch.from_numpy(arr).permute(0, 3, 1, 2)[None].float().to(device)
 
     @staticmethod
+    def _batch_frames_to_torch_video(frames: Sequence[np.ndarray], *, device: str):
+        import torch
+
+        if not frames:
+            raise ValueError("CoTracker3 batch update requires at least one frame stack.")
+        arr = np.stack([np.asarray(frame_stack, dtype=np.uint8) for frame_stack in frames], axis=1)
+        if arr.ndim != 5 or arr.shape[-1] != 3:
+            raise ValueError(f"batch frame stacks must be BxHxWx3 RGB arrays; got {arr.shape}")
+        return torch.from_numpy(arr).permute(0, 1, 4, 2, 3).float().to(device)
+
+    @staticmethod
     def _queries_yx_to_torch(query_points_yx: np.ndarray, *, device: str):
         import torch
 
@@ -91,6 +114,29 @@ class CoTracker3OnlineBackend:
         query_pixels_xy = query_points_yx[:, ::-1]
         query_frame = np.zeros((query_pixels_xy.shape[0], 1), dtype=np.float32)
         return torch.from_numpy(np.concatenate([query_frame, query_pixels_xy], axis=1))[None].to(device)
+
+    @staticmethod
+    def _batch_queries_yx_to_torch(
+        query_points_yx_by_camera: Mapping[int, np.ndarray],
+        *,
+        camera_ids: Sequence[int],
+        device: str,
+    ):
+        import torch
+
+        counts = [int(len(np.asarray(query_points_yx_by_camera[int(camera_idx)]).reshape(-1, 2))) for camera_idx in camera_ids]
+        max_count = max(counts) if counts else 0
+        if max_count <= 0:
+            raise ValueError("CoTracker3 batch update requires at least one query point.")
+        queries = np.zeros((len(tuple(camera_ids)), max_count, 3), dtype=np.float32)
+        for batch_idx, camera_idx in enumerate(camera_ids):
+            points_yx = np.asarray(query_points_yx_by_camera[int(camera_idx)], dtype=np.float32).reshape(-1, 2)
+            if len(points_yx) == 0:
+                continue
+            queries[batch_idx, : len(points_yx), 1:] = points_yx[:, ::-1]
+            if len(points_yx) < max_count:
+                queries[batch_idx, len(points_yx) :, 1:] = points_yx[-1, ::-1]
+        return torch.from_numpy(queries).to(device)
 
     @staticmethod
     def _extract_prediction(output: Any) -> tuple[Any, Any]:
@@ -117,6 +163,18 @@ class CoTracker3OnlineBackend:
         if visibility_np.ndim in {3, 4} and visibility_np.shape[0] == 1:
             visibility_np = visibility_np[0]
         return tracks_np.astype(np.float32)[:, :, ::-1], visibility_np.astype(np.float32)
+
+    @staticmethod
+    def _prediction_to_numpy_batch(tracks_xy: Any, visibility: Any) -> tuple[np.ndarray, np.ndarray]:
+        tracks_np = tracks_xy.detach().cpu().numpy() if hasattr(tracks_xy, "detach") else np.asarray(tracks_xy)
+        visibility_np = visibility.detach().cpu().numpy() if hasattr(visibility, "detach") else np.asarray(visibility)
+        if tracks_np.ndim != 4:
+            raise ValueError(f"batch CoTracker tracks must be BxTxNx2; got {tracks_np.shape}")
+        if visibility_np.ndim == 4 and visibility_np.shape[-1] == 1:
+            visibility_np = visibility_np[..., 0]
+        if visibility_np.ndim != 3:
+            raise ValueError(f"batch CoTracker visibility must be BxTxN; got {visibility_np.shape}")
+        return tracks_np.astype(np.float32)[:, :, :, ::-1], visibility_np.astype(np.float32)
 
     @staticmethod
     def _run_online_model(model: Any, video: Any, queries: Any) -> tuple[Any, Any]:
@@ -161,6 +219,28 @@ class CoTracker3OnlineBackend:
         self._stream_initialized = False
         self._stream_camera_idx = camera_idx
 
+    def _reset_batch_stream(self, query_points_yx_by_camera: Mapping[int, np.ndarray]) -> None:
+        query_points: dict[int, np.ndarray] = {}
+        for camera_idx, points in sorted(query_points_yx_by_camera.items()):
+            arr = np.asarray(points, dtype=np.float32)
+            if arr.ndim != 2 or arr.shape[1] != 2:
+                raise ValueError(f"query_points_yx for camera {camera_idx} must have shape (N,2); got {arr.shape}")
+            if len(arr) == 0:
+                raise ValueError(f"query_points_yx for camera {camera_idx} is empty.")
+            query_points[int(camera_idx)] = arr
+        if not query_points:
+            raise ValueError("batch CoTracker stream requires at least one camera.")
+        self._batch_camera_ids = tuple(sorted(query_points))
+        self._batch_query_points_yx_by_camera = query_points
+        self._batch_query_counts_by_camera = {
+            int(camera_idx): int(len(points))
+            for camera_idx, points in query_points.items()
+        }
+        self._batch_stream_frames = []
+        self._batch_total_frames = 0
+        self._batch_last_processed_frame_count = 0
+        self._batch_initialized = False
+
     def _empty_stream_result(self, *, status: str, step: int, window_len: int) -> TrackingResult:
         query_points = self._stream_query_points_yx
         if query_points is None:
@@ -181,6 +261,31 @@ class CoTracker3OnlineBackend:
                 "frames_seen": int(self._stream_total_frames),
             },
         )
+
+    def _empty_batch_results(self, *, status: str, step: int, window_len: int) -> dict[int, TrackingResult]:
+        results: dict[int, TrackingResult] = {}
+        for camera_idx in self._batch_camera_ids:
+            query_points = self._batch_query_points_yx_by_camera[int(camera_idx)]
+            results[int(camera_idx)] = TrackingResult(
+                tracks_yx=np.empty((0, len(query_points), 2), dtype=np.float32),
+                visibility=np.empty((0, len(query_points)), dtype=np.float32),
+                backend=self.name,
+                camera_idx=int(camera_idx),
+                query_points_yx=query_points,
+                stats={
+                    "backend": self.name,
+                    "mode": "cotracker3_online_batch_update",
+                    "update_mode": "batch",
+                    "stream_status": status,
+                    "online_step": int(step),
+                    "online_window_len": int(window_len),
+                    "frames_buffered": int(len(self._batch_stream_frames)),
+                    "frames_seen": int(self._batch_total_frames),
+                    "batch_size": int(len(self._batch_camera_ids)),
+                    "batch_camera_ids": [int(item) for item in self._batch_camera_ids],
+                },
+            )
+        return results
 
     def _tracks_to_result(
         self,
@@ -219,6 +324,49 @@ class CoTracker3OnlineBackend:
                 "device": self.device,
             },
         )
+
+    def _tracks_to_batch_results(
+        self,
+        *,
+        tracks_xy: Any,
+        visibility: Any,
+        run_ms: float,
+        step: int,
+        window_len: int,
+    ) -> dict[int, TrackingResult]:
+        tracks_yx_batch, visibility_batch = self._prediction_to_numpy_batch(tracks_xy, visibility)
+        chunk_end = self._batch_total_frames - 1
+        chunk_start = max(0, chunk_end - int(tracks_yx_batch.shape[1]) + 1)
+        results: dict[int, TrackingResult] = {}
+        for batch_idx, camera_idx in enumerate(self._batch_camera_ids):
+            count = int(self._batch_query_counts_by_camera[int(camera_idx)])
+            query_points = self._batch_query_points_yx_by_camera[int(camera_idx)]
+            results[int(camera_idx)] = TrackingResult(
+                tracks_yx=tracks_yx_batch[batch_idx, :, :count, :],
+                visibility=visibility_batch[batch_idx, :, :count],
+                backend=self.name,
+                camera_idx=int(camera_idx),
+                query_points_yx=query_points,
+                stats={
+                    "backend": self.name,
+                    "mode": "cotracker3_online_batch_update",
+                    "update_mode": "batch",
+                    "stream_status": "published",
+                    "online_step": int(step),
+                    "online_window_len": int(window_len),
+                    "chunk_start_idx": int(chunk_start),
+                    "chunk_end_idx": int(chunk_end),
+                    "frames_buffered": int(len(self._batch_stream_frames)),
+                    "frames_seen": int(self._batch_total_frames),
+                    "num_query_points": int(count),
+                    "model_run_ms": float(run_ms),
+                    "fps_model_only": float(1000.0 / run_ms) if run_ms > 0 else 0.0,
+                    "device": self.device,
+                    "batch_size": int(len(self._batch_camera_ids)),
+                    "batch_camera_ids": [int(item) for item in self._batch_camera_ids],
+                },
+            )
+        return results
 
     def track_sequence(
         self,
@@ -363,6 +511,58 @@ class CoTracker3OnlineBackend:
         run_ms = (time.perf_counter() - run_start) * 1000.0
         self._stream_last_processed_frame_count = self._stream_total_frames
         return self._tracks_to_result(
+            tracks_xy=tracks_xy,
+            visibility=visibility,
+            run_ms=run_ms,
+            step=step,
+            window_len=window_len,
+        )
+
+    def update_batch(self, frames_by_camera: Mapping[int, np.ndarray]) -> dict[int, TrackingResult]:
+        if not self._batch_camera_ids:
+            raise RuntimeError("Call initialize_batch(...) before update_batch().")
+        model = self._load_model()
+        step, window_len = self._online_step_and_window(model)
+        frame_stack = np.stack(
+            [
+                np.asarray(frames_by_camera[int(camera_idx)], dtype=np.uint8)
+                for camera_idx in self._batch_camera_ids
+            ],
+            axis=0,
+        )
+        if frame_stack.ndim != 4 or frame_stack.shape[-1] != 3:
+            raise ValueError(f"batch frames must be BxHxWx3 RGB arrays; got {frame_stack.shape}")
+        self._batch_stream_frames.append(frame_stack)
+        self._batch_total_frames += 1
+        if len(self._batch_stream_frames) > window_len:
+            self._batch_stream_frames = self._batch_stream_frames[-window_len:]
+        if len(self._batch_stream_frames) < window_len:
+            return self._empty_batch_results(status="buffering", step=step, window_len=window_len)
+        if self._batch_initialized and self._batch_total_frames - self._batch_last_processed_frame_count < step:
+            return self._empty_batch_results(status="waiting_for_step", step=step, window_len=window_len)
+
+        import torch
+
+        video = self._batch_frames_to_torch_video(self._batch_stream_frames, device=self.device)
+        run_start = time.perf_counter()
+        with torch.no_grad():
+            if not self._batch_initialized:
+                queries = self._batch_queries_yx_to_torch(
+                    self._batch_query_points_yx_by_camera,
+                    camera_ids=self._batch_camera_ids,
+                    device=self.device,
+                )
+                model(video_chunk=video, is_first_step=True, queries=queries, grid_size=0, add_support_grid=False)
+                self._batch_initialized = True
+            tracks_xy, visibility = model(
+                video_chunk=video,
+                is_first_step=False,
+                grid_size=0,
+                add_support_grid=False,
+            )
+        run_ms = (time.perf_counter() - run_start) * 1000.0
+        self._batch_last_processed_frame_count = self._batch_total_frames
+        return self._tracks_to_batch_results(
             tracks_xy=tracks_xy,
             visibility=visibility,
             run_ms=run_ms,

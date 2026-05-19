@@ -20,6 +20,7 @@ from qqtt.demo.demo31_dual_gpu_ipc import (
 PROCESS_MODE_SUBPROCESS = "subprocess"
 PROCESS_MODE_SPAWN = "spawn"
 PROCESS_MODES = (PROCESS_MODE_SUBPROCESS, PROCESS_MODE_SPAWN)
+COTRACKER_UPDATE_MODE_AUTO = "auto"
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class CoTrackerProcessConfig:
     process_mode: str = PROCESS_MODE_SUBPROCESS
     device: str = "cuda"
     prewarm_backends: bool = True
+    update_mode: str = COTRACKER_UPDATE_MODE_AUTO
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +59,7 @@ class CoTrackerProcessConfig:
             "process_mode": str(self.process_mode),
             "device": str(self.device),
             "prewarm_backends": bool(self.prewarm_backends),
+            "update_mode": str(self.update_mode),
         }
 
     @classmethod
@@ -77,6 +80,7 @@ class CoTrackerProcessConfig:
             process_mode=str(payload.get("process_mode", PROCESS_MODE_SUBPROCESS)),
             device=str(payload.get("device", "cuda")),
             prewarm_backends=bool(payload.get("prewarm_backends", True)),
+            update_mode=str(payload.get("update_mode", COTRACKER_UPDATE_MODE_AUTO)),
         )
 
     @classmethod
@@ -249,6 +253,7 @@ def run_cotracker_worker_loop(
         overlay_max_points_per_camera=int(config.overlay_max_points_per_camera),
         overlay_display_scope=str(config.overlay_display_scope),
         device=str(config.device),
+        update_mode=str(config.update_mode),
     )
     warmup_profile: dict[str, Any] = {}
     if bool(config.prewarm_backends):
@@ -277,6 +282,7 @@ def run_cotracker_worker_loop(
                     "stage": "cotracker",
                     "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
                     "prewarm_backends": bool(config.prewarm_backends),
+                    "update_mode": str(config.update_mode),
                     "warmup_profile": warmup_profile,
                     "total_init_ms": float((time.perf_counter() - process_start_s) * 1000.0),
                     "ready_perf_s": time.perf_counter(),
@@ -334,6 +340,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "overlay_max_points_per_camera": config.overlay_max_points_per_camera,
                     "overlay_display_scope": config.overlay_display_scope,
                     "prewarm_backends": config.prewarm_backends,
+                    "update_mode": config.update_mode,
                     "cross_gpu_cuda_tensor_transfer": False,
                     "ipc_payload": "cpu_numpy_latest_wins",
                 },

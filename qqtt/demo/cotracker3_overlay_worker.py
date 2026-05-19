@@ -26,6 +26,14 @@ OVERLAY_DISPLAY_SCOPES = (
     OVERLAY_DISPLAY_SCOPE_OBJECT,
     OVERLAY_DISPLAY_SCOPE_UNION,
 )
+COTRACKER_UPDATE_MODE_AUTO = "auto"
+COTRACKER_UPDATE_MODE_BATCH = "batch"
+COTRACKER_UPDATE_MODE_SERIAL = "serial"
+COTRACKER_UPDATE_MODES = (
+    COTRACKER_UPDATE_MODE_AUTO,
+    COTRACKER_UPDATE_MODE_BATCH,
+    COTRACKER_UPDATE_MODE_SERIAL,
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +49,9 @@ class TrackingOverlayInputPacket:
     intrinsics_by_camera: Mapping[int, Any] | None = None
     c2w_by_camera: Mapping[int, np.ndarray] | None = None
     depth_scale_m_per_unit: float | Mapping[int, float] = 0.001
+    mask_source_group_id: int | None = None
+    mask_age_ms: float = 0.0
+    mask_reused: bool = False
 
     @property
     def seq(self) -> int:
@@ -63,6 +74,17 @@ class TrackingOverlayPacket:
     model_ms: float = 0.0
     e2e_ms: float = 0.0
     stale: bool = False
+    cotracker_update_mode: str = COTRACKER_UPDATE_MODE_SERIAL
+    cotracker_batch_size: int = 1
+    cotracker_batch_update_count: int = 0
+    cotracker_serial_group_update_count: int = 0
+    cotracker_serial_camera_update_count: int = 0
+    cotracker_serial_fallback_count: int = 0
+    cotracker_batch_error_count: int = 0
+    cotracker_batch_disabled_reason: str | None = None
+    mask_source_group_id: int | None = None
+    mask_age_ms: float = 0.0
+    mask_reused: bool = False
     overlay_display_scope: str = OVERLAY_DISPLAY_SCOPE_CONTROLLER
     tracking_query_count_actual_by_camera: dict[int, int] = field(default_factory=dict)
     tracking_union_pixels_by_camera: dict[int, int] = field(default_factory=dict)
@@ -253,6 +275,7 @@ class CoTracker3OverlayWorker:
         device: str = "cuda",
         sampling_device: str = "cpu",
         init_requires_object_and_controller: bool = True,
+        update_mode: str = COTRACKER_UPDATE_MODE_AUTO,
     ) -> None:
         self.camera_ids = tuple(int(camera_id) for camera_id in camera_ids)
         self.backend_factory = backend_factory or (
@@ -264,10 +287,14 @@ class CoTracker3OverlayWorker:
         self.query_count = self._normalize_query_count_request(self.query_count_request)
         self.overlay_max_points_per_camera = int(overlay_max_points_per_camera)
         self.overlay_display_scope = self._normalize_overlay_display_scope(overlay_display_scope)
+        self.update_mode = self._normalize_update_mode(update_mode)
         self.seed = int(seed)
         self.sampling_device = str(sampling_device)
         self.init_requires_object_and_controller = bool(init_requires_object_and_controller)
         self._backends: dict[int, Any] = {}
+        self._batch_backend: Any | None = None
+        self._batch_backend_signature: tuple[tuple[int, int], ...] | None = None
+        self._batch_backend_disabled_reason: str | None = None
         self._query_points_yx: dict[int, np.ndarray] = {}
         self._query_is_object: dict[int, np.ndarray] = {}
         self._query_is_controller: dict[int, np.ndarray] = {}
@@ -280,6 +307,15 @@ class CoTracker3OverlayWorker:
         self._e2e_ms_samples: list[float] = []
         self._publish_times_s: list[float] = []
         self._backend_warmup_profile: dict[int, dict[str, Any]] = {}
+        self._batch_warmup_profile: dict[str, Any] = {}
+        self._batch_update_count = 0
+        self._serial_camera_update_count = 0
+        self._serial_group_update_count = 0
+        self._serial_fallback_count = 0
+        self._batch_error_count = 0
+        self._last_batch_error: str | None = None
+        self._last_update_mode = COTRACKER_UPDATE_MODE_SERIAL
+        self._last_batch_size = 0
         if self.query_mode != "phystwin_dense":
             raise ValueError("CoTracker3OverlayWorker currently supports only query_mode='phystwin_dense'.")
         if self.overlay_max_points_per_camera <= 0:
@@ -310,6 +346,13 @@ class CoTracker3OverlayWorker:
         normalized = str(value).strip().lower().replace("-", "_")
         if normalized not in OVERLAY_DISPLAY_SCOPES:
             raise ValueError(f"overlay_display_scope must be one of {OVERLAY_DISPLAY_SCOPES}; got {value!r}")
+        return normalized
+
+    @staticmethod
+    def _normalize_update_mode(value: str) -> str:
+        normalized = str(value).strip().lower().replace("_", "-")
+        if normalized not in COTRACKER_UPDATE_MODES:
+            raise ValueError(f"update_mode must be one of {COTRACKER_UPDATE_MODES}; got {value!r}")
         return normalized
 
     def _component_mask_or_empty(
@@ -418,6 +461,36 @@ class CoTracker3OverlayWorker:
 
     def warmup_backends(self) -> dict[str, Any]:
         started_s = time.perf_counter()
+        if self.update_mode != COTRACKER_UPDATE_MODE_SERIAL:
+            construct_start_s = time.perf_counter()
+            backend = self._batch_backend
+            construct_ms = 0.0
+            if backend is None:
+                backend = self.backend_factory(-1)
+                construct_ms = float((time.perf_counter() - construct_start_s) * 1000.0)
+                self._batch_backend = backend
+            warmup_start_s = time.perf_counter()
+            warmup_stats: dict[str, Any] = {}
+            if hasattr(backend, "warmup"):
+                result = backend.warmup()
+                if isinstance(result, dict):
+                    warmup_stats.update(result)
+            self._batch_warmup_profile = {
+                "construct_ms": float(construct_ms),
+                "warmup_ms": float((time.perf_counter() - warmup_start_s) * 1000.0),
+                "supports_batch_update": bool(
+                    hasattr(backend, "initialize_batch")
+                    and hasattr(backend, "update_batch")
+                ),
+                **warmup_stats,
+            }
+            return {
+                "camera_ids": [int(item) for item in self.camera_ids],
+                "update_mode": str(self.update_mode),
+                "batch": dict(self._batch_warmup_profile),
+                "per_camera": {},
+                "total_ms": float((time.perf_counter() - started_s) * 1000.0),
+            }
         per_camera: dict[int, dict[str, Any]] = {}
         for camera_idx in self.camera_ids:
             idx = int(camera_idx)
@@ -442,6 +515,7 @@ class CoTracker3OverlayWorker:
         self._backend_warmup_profile = per_camera
         return {
             "camera_ids": [int(item) for item in self.camera_ids],
+            "update_mode": str(self.update_mode),
             "per_camera": {str(idx): dict(value) for idx, value in per_camera.items()},
             "total_ms": float((time.perf_counter() - started_s) * 1000.0),
         }
@@ -490,12 +564,90 @@ class CoTracker3OverlayWorker:
         )
         self._query_is_object[camera_idx] = query_is_object
         self._query_is_controller[camera_idx] = query_is_controller
+        return query_points
+
+    def _ensure_serial_backend(self, camera_idx: int, query_points: np.ndarray) -> Any:
         backend = self._backends.get(int(camera_idx))
         if backend is None:
             backend = self.backend_factory(int(camera_idx))
-        backend.initialize([], query_points)
-        self._backends[camera_idx] = backend
-        return query_points
+            backend.initialize([], query_points)
+            self._backends[int(camera_idx)] = backend
+        return backend
+
+    def _supports_batch_backend(self, backend: Any) -> bool:
+        return bool(hasattr(backend, "initialize_batch") and hasattr(backend, "update_batch"))
+
+    def _batch_signature(self, query_points_by_camera: Mapping[int, np.ndarray]) -> tuple[tuple[int, int], ...]:
+        return tuple(
+            (int(camera_idx), int(len(np.asarray(query_points_by_camera[int(camera_idx)]).reshape(-1, 2))))
+            for camera_idx in sorted(query_points_by_camera)
+        )
+
+    def _ensure_batch_backend(self, query_points_by_camera: Mapping[int, np.ndarray]) -> Any | None:
+        if self._batch_backend_disabled_reason is not None:
+            return None
+        backend = self._batch_backend
+        if backend is None:
+            backend = self.backend_factory(-1)
+            self._batch_backend = backend
+        if not self._supports_batch_backend(backend):
+            self._batch_backend_disabled_reason = "backend does not implement initialize_batch/update_batch"
+            return None
+        signature = self._batch_signature(query_points_by_camera)
+        if signature != self._batch_backend_signature:
+            backend.initialize_batch(query_points_by_camera)
+            self._batch_backend_signature = signature
+        return backend
+
+    def _clear_cuda_cache_after_batch_error(self) -> None:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            return
+
+    def _batch_preferred(self) -> bool:
+        return self.update_mode in {COTRACKER_UPDATE_MODE_AUTO, COTRACKER_UPDATE_MODE_BATCH} and len(self.camera_ids) > 1
+
+    def _process_batch_updates(
+        self,
+        active_inputs: Mapping[int, dict[str, Any]],
+    ) -> dict[int, Any] | None:
+        query_points_by_camera = {
+            int(camera_idx): np.asarray(payload["query_points"], dtype=np.float32)
+            for camera_idx, payload in active_inputs.items()
+        }
+        backend = self._ensure_batch_backend(query_points_by_camera)
+        if backend is None:
+            return None
+        frames_by_camera = {
+            int(camera_idx): np.asarray(payload["frame"], dtype=np.uint8)
+            for camera_idx, payload in active_inputs.items()
+        }
+        results = backend.update_batch(frames_by_camera)
+        self._batch_update_count += 1
+        self._last_update_mode = COTRACKER_UPDATE_MODE_BATCH
+        self._last_batch_size = int(len(active_inputs))
+        return {int(camera_idx): result for camera_idx, result in results.items()}
+
+    def _process_serial_updates(
+        self,
+        active_inputs: Mapping[int, dict[str, Any]],
+    ) -> dict[int, Any]:
+        results: dict[int, Any] = {}
+        for camera_idx, payload in active_inputs.items():
+            idx = int(camera_idx)
+            query_points = np.asarray(payload["query_points"], dtype=np.float32)
+            backend = self._ensure_serial_backend(idx, query_points)
+            results[idx] = backend.update(np.asarray(payload["frame"], dtype=np.uint8))
+            self._serial_camera_update_count += 1
+        if active_inputs:
+            self._serial_group_update_count += 1
+        self._last_update_mode = COTRACKER_UPDATE_MODE_SERIAL
+        self._last_batch_size = 1 if active_inputs else 0
+        return results
 
     def process_group(self, packet: TrackingOverlayInputPacket) -> TrackingOverlayPacket | None:
         started_s = time.perf_counter()
@@ -508,6 +660,7 @@ class CoTracker3OverlayWorker:
         publish_starts: list[int] = []
         publish_ends: list[int] = []
         model_ms = 0.0
+        active_inputs: dict[int, dict[str, Any]] = {}
 
         for camera_idx in self.camera_ids:
             frame = packet.rgb_by_camera.get(camera_idx)
@@ -529,10 +682,50 @@ class CoTracker3OverlayWorker:
             query_points_yx[camera_idx] = query_points
             if len(query_points) == 0:
                 continue
-            backend = self._backends[camera_idx]
-            result = backend.update(np.asarray(frame, dtype=np.uint8))
+            active_inputs[int(camera_idx)] = {
+                "frame": np.asarray(frame, dtype=np.uint8),
+                "union_mask": union_mask,
+                "query_points": query_points,
+            }
+
+        if not active_inputs:
+            return None
+
+        results: dict[int, Any] | None = None
+        batch_attempt_failed = False
+        if self._batch_preferred() and self._batch_backend_disabled_reason is None:
+            if len(active_inputs) == len(self.camera_ids):
+                try:
+                    results = self._process_batch_updates(active_inputs)
+                except BaseException as exc:
+                    batch_attempt_failed = True
+                    self._batch_error_count += 1
+                    self._last_batch_error = f"{type(exc).__name__}: {exc}"
+                    self._batch_backend_disabled_reason = self._last_batch_error
+                    self._clear_cuda_cache_after_batch_error()
+                    if self.update_mode == COTRACKER_UPDATE_MODE_BATCH:
+                        raise
+                    self._serial_fallback_count += 1
+            elif self.update_mode == COTRACKER_UPDATE_MODE_AUTO:
+                return None
+            elif self.update_mode == COTRACKER_UPDATE_MODE_BATCH:
+                return None
+        if results is None:
+            if self.update_mode == COTRACKER_UPDATE_MODE_BATCH:
+                return None
+            if self._batch_preferred() and self._batch_backend_disabled_reason is not None and not batch_attempt_failed:
+                self._serial_fallback_count += 1
+            results = self._process_serial_updates(active_inputs)
+
+        counted_batch_model_ms = False
+        for camera_idx in self.camera_ids:
+            if camera_idx not in results or camera_idx not in active_inputs:
+                continue
+            result = results[int(camera_idx)]
             if str(result.stats.get("stream_status", "")) != "published" or result.tracks_yx.shape[0] == 0:
                 continue
+            query_points = np.asarray(active_inputs[int(camera_idx)]["query_points"], dtype=np.float32)
+            union_mask = np.asarray(active_inputs[int(camera_idx)]["union_mask"], dtype=bool)
             tracks_t = np.asarray(result.tracks_yx[-1], dtype=np.float32)
             visibility_t = np.asarray(result.visibility[-1], dtype=np.float32).reshape(-1)
             selection_visibility = self._selection_visibility(visibility=visibility_t, camera_idx=int(camera_idx))
@@ -556,7 +749,12 @@ class CoTracker3OverlayWorker:
             self._overlay_display_count_by_camera[int(camera_idx)] = int(len(selected))
             self._overlay_display_object_count_by_camera[int(camera_idx)] = int(np.count_nonzero(selected_is_object))
             self._overlay_display_controller_count_by_camera[int(camera_idx)] = int(np.count_nonzero(selected_is_controller))
-            model_ms += float(result.stats.get("model_run_ms", 0.0))
+            if str(result.stats.get("update_mode", "")) == COTRACKER_UPDATE_MODE_BATCH:
+                if not counted_batch_model_ms:
+                    model_ms += float(result.stats.get("model_run_ms", 0.0))
+                    counted_batch_model_ms = True
+            else:
+                model_ms += float(result.stats.get("model_run_ms", 0.0))
             publish_starts.append(int(result.stats.get("chunk_start_idx", packet.frame_idx)))
             publish_ends.append(int(result.stats.get("chunk_end_idx", packet.frame_idx)))
 
@@ -598,6 +796,19 @@ class CoTracker3OverlayWorker:
             model_ms=float(model_ms),
             e2e_ms=float(e2e_ms),
             stale=False,
+            cotracker_update_mode=str(self._last_update_mode),
+            cotracker_batch_size=int(self._last_batch_size),
+            cotracker_batch_update_count=int(self._batch_update_count),
+            cotracker_serial_group_update_count=int(self._serial_group_update_count),
+            cotracker_serial_camera_update_count=int(self._serial_camera_update_count),
+            cotracker_serial_fallback_count=int(self._serial_fallback_count),
+            cotracker_batch_error_count=int(self._batch_error_count),
+            cotracker_batch_disabled_reason=self._batch_backend_disabled_reason,
+            mask_source_group_id=(
+                None if packet.mask_source_group_id is None else int(packet.mask_source_group_id)
+            ),
+            mask_age_ms=float(packet.mask_age_ms),
+            mask_reused=bool(packet.mask_reused),
             overlay_display_scope=str(self.overlay_display_scope),
             tracking_query_count_actual_by_camera={
                 int(camera_idx): int(stats.get("tracking_query_count_actual", 0))
@@ -655,6 +866,16 @@ class CoTracker3OverlayWorker:
             "query_mode": str(self.query_mode),
             "query_count_request": str(self.query_count),
             "query_count": int(PHYSTWIN_DENSE_QUERY_POINTS if self.query_count == "auto" else self.query_count),
+            "cotracker_update_mode_requested": str(self.update_mode),
+            "cotracker_update_mode_effective": str(self._last_update_mode),
+            "cotracker_batch_size": int(self._last_batch_size),
+            "cotracker_batch_update_count": int(self._batch_update_count),
+            "cotracker_serial_group_update_count": int(self._serial_group_update_count),
+            "cotracker_serial_camera_update_count": int(self._serial_camera_update_count),
+            "cotracker_serial_fallback_count": int(self._serial_fallback_count),
+            "cotracker_batch_error_count": int(self._batch_error_count),
+            "cotracker_batch_disabled_reason": self._batch_backend_disabled_reason,
+            "cotracker_last_batch_error": self._last_batch_error,
             "overlay_display_scope": str(self.overlay_display_scope),
             "tracking_query_count_actual_by_camera": actual_by_camera,
             "tracking_union_pixels_by_camera": {
@@ -714,6 +935,7 @@ class CoTracker3OverlayWorker:
                 str(camera_idx): dict(profile)
                 for camera_idx, profile in self._backend_warmup_profile.items()
             },
+            "batch_backend_warmup": dict(self._batch_warmup_profile),
             "published_packets": int(self._published_packets),
             "model_ms_median": _median(self._model_ms_samples),
             "model_ms_p95": _p95(self._model_ms_samples),
@@ -744,6 +966,10 @@ def _event_fps(times_s: list[float]) -> float:
 
 
 __all__ = [
+    "COTRACKER_UPDATE_MODE_AUTO",
+    "COTRACKER_UPDATE_MODE_BATCH",
+    "COTRACKER_UPDATE_MODE_SERIAL",
+    "COTRACKER_UPDATE_MODES",
     "CoTracker3OverlayThread",
     "CoTracker3OverlayWorker",
     "LatestTrackingInputSlot",

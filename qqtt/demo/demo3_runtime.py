@@ -12,6 +12,8 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 from qqtt.demo.cotracker3_overlay_worker import (
+    COTRACKER_UPDATE_MODE_AUTO,
+    COTRACKER_UPDATE_MODES,
     CoTracker3OverlayThread,
     CoTracker3OverlayWorker,
     LatestTrackingInputSlot,
@@ -79,6 +81,7 @@ EXP_CONTROLLER_PROMPT = "towel"
 DEMO_CONTROLLER_PROMPT = "hand"
 DEFAULT_MODE = MODE_EXP
 DEFAULT_COTRACKER_QUERY_COUNT_REQUEST = TRACKING_QUERY_COUNT_AUTO
+DEFAULT_COTRACKER_UPDATE_MODE = COTRACKER_UPDATE_MODE_AUTO
 DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA = 30
 DEFAULT_OVERLAY_DISPLAY_SCOPE = OVERLAY_DISPLAY_SCOPE_CONTROLLER
 DEFAULT_OVERLAY_TRAIL_LEN = 16
@@ -211,6 +214,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cotracker-query-mode", choices=(TRACKING_QUERY_MODE_PHYSTWIN_DENSE,), default=TRACKING_QUERY_MODE_PHYSTWIN_DENSE)
     parser.add_argument("--cotracker-query-count", default=DEFAULT_COTRACKER_QUERY_COUNT_REQUEST)
     parser.add_argument("--cotracker-seed", type=int, default=DEFAULT_COTRACKER_SEED)
+    parser.add_argument("--cotracker-update-mode", choices=COTRACKER_UPDATE_MODES, default=DEFAULT_COTRACKER_UPDATE_MODE)
     parser.add_argument("--disable-cotracker", action="store_true")
     parser.add_argument("--render-mode", choices=RENDER_MODES, default=RENDER_MODE_POINTCLOUD)
     parser.add_argument("--point-size", type=float, default=None)
@@ -291,6 +295,8 @@ def validate_args(args: argparse.Namespace, *, require_calibration: bool = False
     if str(args.cotracker_query_mode) != TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError("Demo 3 currently supports only --cotracker-query-mode phystwin_dense.")
     normalize_cotracker_query_count_request(args.cotracker_query_count)
+    if str(args.cotracker_update_mode) not in COTRACKER_UPDATE_MODES:
+        raise ValueError(f"--cotracker-update-mode must be one of {COTRACKER_UPDATE_MODES}.")
     if str(args.object_point_control) not in OBJECT_POINT_CONTROLS:
         raise ValueError(f"Demo 3 unsupported --object-point-control {args.object_point_control}")
     if str(args.object_volume_origin) not in PHYSTWIN_VOLUME_ORIGINS:
@@ -365,6 +371,9 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "cotracker_backend": COTRACKER3_ONLINE,
         "cotracker_async": True,
         "cotracker_latest_wins": True,
+        "cotracker_update_mode": str(args.cotracker_update_mode),
+        "cotracker_batch_size_target": int(len(camera_ids)),
+        "cotracker_batch_fallback_enabled": str(args.cotracker_update_mode) == COTRACKER_UPDATE_MODE_AUTO,
         "tracking_query_mode": TRACKING_QUERY_MODE_PHYSTWIN_DENSE,
         "tracking_query_count_requested": str(query_count_request),
         "tracking_query_count_rule": TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE,
@@ -474,6 +483,16 @@ def build_empty_profile_summary(contract: dict[str, Any]) -> dict[str, Any]:
         "tracking_query_count_rule": TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE,
         "tracking_sampling": TRACKING_SAMPLING_TORCH_RANDPERM,
         "cotracker_seed": int(contract.get("cotracker_seed", DEFAULT_COTRACKER_SEED)),
+        "cotracker_update_mode": str(contract.get("cotracker_update_mode", DEFAULT_COTRACKER_UPDATE_MODE)),
+        "cotracker_update_mode_effective": str(contract.get("cotracker_update_mode", DEFAULT_COTRACKER_UPDATE_MODE)),
+        "cotracker_batch_size_target": int(contract.get("cotracker_batch_size_target", 3)),
+        "cotracker_batch_size": 0,
+        "cotracker_batch_update_count": 0,
+        "cotracker_serial_group_update_count": 0,
+        "cotracker_serial_camera_update_count": 0,
+        "cotracker_serial_fallback_count": 0,
+        "cotracker_batch_error_count": 0,
+        "cotracker_batch_disabled_reason": None,
         "phystwin_dense_compatible": bool(contract.get("phystwin_dense_compatible", False)),
         "tracking_query_count_actual_by_camera": {},
         "tracking_union_pixels_by_camera": {},
@@ -512,6 +531,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracking_query_count_rule",
         "tracking_sampling",
         "cotracker_seed",
+        "cotracker_update_mode",
         "overlay_max_points_per_camera",
         "overlay_display_scope",
         "phystwin_dense_compatible",
@@ -862,6 +882,29 @@ def _build_demo3_live_summary(
             "edgetam_mask_fps": float(np.mean(edge_fps_values)) if edge_fps_values else 0.0,
             "fusion_fps": float(final.get("fusion_fps", warm.get("fusion_fps", _runtime_stat_fps(runtime, "fusion_stats"))) or 0.0),
             "cotracker_publish_fps": float(tracking_worker.get("publish_fps", 0.0) or 0.0),
+            "cotracker_update_mode": str(
+                tracking_worker.get(
+                    "cotracker_update_mode_requested",
+                    contract.get("cotracker_update_mode", DEFAULT_COTRACKER_UPDATE_MODE),
+                )
+            ),
+            "cotracker_update_mode_effective": str(
+                tracking_worker.get(
+                    "cotracker_update_mode_effective",
+                    contract.get("cotracker_update_mode", DEFAULT_COTRACKER_UPDATE_MODE),
+                )
+            ),
+            "cotracker_batch_size": int(tracking_worker.get("cotracker_batch_size", 0) or 0),
+            "cotracker_batch_update_count": int(tracking_worker.get("cotracker_batch_update_count", 0) or 0),
+            "cotracker_serial_group_update_count": int(
+                tracking_worker.get("cotracker_serial_group_update_count", 0) or 0
+            ),
+            "cotracker_serial_camera_update_count": int(
+                tracking_worker.get("cotracker_serial_camera_update_count", 0) or 0
+            ),
+            "cotracker_serial_fallback_count": int(tracking_worker.get("cotracker_serial_fallback_count", 0) or 0),
+            "cotracker_batch_error_count": int(tracking_worker.get("cotracker_batch_error_count", 0) or 0),
+            "cotracker_batch_disabled_reason": tracking_worker.get("cotracker_batch_disabled_reason"),
             "cotracker_model_ms_median": float(tracking_worker.get("model_ms_median", 0.0) or 0.0),
             "cotracker_model_ms_p95": float(tracking_worker.get("model_ms_p95", 0.0) or 0.0),
             "cotracker_e2e_ms_median": float(tracking_worker.get("e2e_ms_median", 0.0) or 0.0),
@@ -951,6 +994,7 @@ def make_demo3_live_runtime_class(shared_runtime_module: Any):
                         self.demo3_contract.get("overlay_display_scope", DEFAULT_OVERLAY_DISPLAY_SCOPE)
                     ),
                     device=str(getattr(args, "device", "cuda")),
+                    update_mode=str(self.demo3_contract.get("cotracker_update_mode", DEFAULT_COTRACKER_UPDATE_MODE)),
                 )
                 self.demo3_cotracker_thread = CoTracker3OverlayThread(
                     worker=self.demo3_cotracker_worker,

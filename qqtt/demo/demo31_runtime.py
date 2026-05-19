@@ -64,6 +64,22 @@ class Demo31LiftInputSnapshot:
     mask_by_camera: dict[int, np.ndarray]
 
 
+@dataclass(frozen=True)
+class Demo31RetargetedMaskGroup:
+    group_id: int
+    mask_packets: dict[int, Any]
+    edgetam_stage_wall_ms: float
+    edgetam_stage_sum_model_ms: float
+    edgetam_stage_mode: str
+    source_group_id: int
+    mask_age_ms: float
+    mask_reused: bool
+
+    @property
+    def seq(self) -> int:
+        return int(self.group_id)
+
+
 class Demo31LiftInputCache:
     """Bounded main-process cache for group-aligned 2D-to-world lift inputs."""
 
@@ -282,6 +298,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-plan", choices=GPU_PLANS, default=GPU_PLAN_SPLIT_MASK0_TRACK1)
     parser.add_argument("--cotracker-process-mode", choices=PROCESS_MODES, default=PROCESS_MODE_SUBPROCESS)
     parser.add_argument("--cotracker-prewarm-backends", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--cotracker-update-mode",
+        choices=demo3_runtime.COTRACKER_UPDATE_MODES,
+        default=demo3_runtime.DEFAULT_COTRACKER_UPDATE_MODE,
+    )
     parser.add_argument("--cotracker-input-fps", type=float, default=DEFAULT_COTRACKER_INPUT_FPS)
     parser.add_argument("--cotracker-input-max-age-ms", type=float, default=DEFAULT_COTRACKER_INPUT_MAX_AGE_MS)
     parser.add_argument("--cotracker-result-stale-timeout-ms", type=float, default=DEFAULT_COTRACKER_RESULT_STALE_TIMEOUT_MS)
@@ -360,6 +381,8 @@ def validate_args(
         raise ValueError(f"--overlay-display-scope must be one of {demo3_runtime.OVERLAY_DISPLAY_SCOPES}.")
     if float(args.cotracker_input_fps) < 0.0:
         raise ValueError("--cotracker-input-fps must be non-negative.")
+    if str(args.cotracker_update_mode) not in demo3_runtime.COTRACKER_UPDATE_MODES:
+        raise ValueError(f"--cotracker-update-mode must be one of {demo3_runtime.COTRACKER_UPDATE_MODES}.")
     if str(args.mask_gpu) == str(args.cotracker_gpu) and not bool(args.allow_single_gpu_debug):
         raise ValueError("Demo 3.1 requires distinct --mask-gpu and --cotracker-gpu unless --allow-single-gpu-debug is passed.")
     if bool(args.require_two_cuda) and not bool(args.allow_single_gpu_debug):
@@ -386,6 +409,7 @@ def build_cotracker_process_config(args: argparse.Namespace) -> CoTrackerProcess
         process_mode=str(args.cotracker_process_mode),
         device="cuda",
         prewarm_backends=bool(args.cotracker_prewarm_backends),
+        update_mode=str(args.cotracker_update_mode),
     )
 
 
@@ -439,6 +463,9 @@ def build_contract(
         "cotracker_owner": "process",
         "cotracker_process_mode": str(args.cotracker_process_mode),
         "cotracker_prewarm_backends": bool(args.cotracker_prewarm_backends),
+        "cotracker_update_mode": str(args.cotracker_update_mode),
+        "cotracker_batch_size_target": int(len(camera_ids)),
+        "cotracker_batch_fallback_enabled": str(args.cotracker_update_mode) == demo3_runtime.COTRACKER_UPDATE_MODE_AUTO,
         "cotracker_input_fps": float(args.cotracker_input_fps),
         "cotracker_input_max_age_ms": float(args.cotracker_input_max_age_ms),
         "cotracker_result_stale_timeout_ms": float(args.cotracker_result_stale_timeout_ms),
@@ -559,6 +586,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "cotracker_owner",
         "cotracker_process_mode",
         "cotracker_prewarm_backends",
+        "cotracker_update_mode",
         "cross_gpu_cuda_tensor_transfer",
         "ipc_payload",
         "fusion_mask_policy",
@@ -649,6 +677,8 @@ class Demo31MaskPolicyJoinBuffer:
         self.mask_selection_count = 0
         self.mask_reuse_count = 0
         self.mask_age_ms_samples: list[float] = []
+        self.mask_group_delta_samples: list[float] = []
+        self._selection_by_group: dict[int, dict[str, Any]] = {}
 
     def put_capture(self, group: Any) -> None:
         self._captures[int(group.group_id)] = group
@@ -697,7 +727,13 @@ class Demo31MaskPolicyJoinBuffer:
             else 0.0,
             "mask_age_ms_median": float(age["median"]),
             "mask_age_ms_p95": float(age["p95"]),
+            "mask_group_delta_median": float(percentile_summary(self.mask_group_delta_samples)["median"]),
+            "mask_group_delta_p95": float(percentile_summary(self.mask_group_delta_samples)["p95"]),
         }
+
+    def selection_for_group(self, group_id: int) -> dict[str, Any] | None:
+        item = self._selection_by_group.get(int(group_id))
+        return None if item is None else dict(item)
 
     def _select_mask_for_group(self, *, group_id: int, now_s: float) -> Any | None:
         if not self._masks:
@@ -716,23 +752,50 @@ class Demo31MaskPolicyJoinBuffer:
             return None
         self.mask_selection_count += 1
         self.mask_age_ms_samples.append(float(age_ms))
-        if int(mask_group.group_id) != int(group_id):
-            self.mask_reuse_count += 1
-        return self._retarget_mask_group(mask_group, target_group_id=int(group_id))
-
-    def _retarget_mask_group(self, mask_group: Any, *, target_group_id: int) -> Any:
-        if int(mask_group.group_id) == int(target_group_id):
-            return mask_group
-        packets = {
-            int(camera_idx): replace(packet, group_id=int(target_group_id))
-            for camera_idx, packet in mask_group.mask_packets.items()
+        source_group_id = int(mask_group.group_id)
+        reused = source_group_id != int(group_id)
+        self.mask_group_delta_samples.append(float(abs(int(group_id) - source_group_id)))
+        self._selection_by_group[int(group_id)] = {
+            "target_group_id": int(group_id),
+            "source_group_id": int(source_group_id),
+            "age_ms": float(age_ms),
+            "reused": bool(reused),
         }
-        return mask_group.__class__(
+        if reused:
+            self.mask_reuse_count += 1
+        return self._retarget_mask_group(
+            mask_group,
+            target_group_id=int(group_id),
+            source_group_id=source_group_id,
+            age_ms=float(age_ms),
+            reused=bool(reused),
+        )
+
+    def _retarget_mask_group(
+        self,
+        mask_group: Any,
+        *,
+        target_group_id: int,
+        source_group_id: int,
+        age_ms: float,
+        reused: bool,
+    ) -> Any:
+        if int(mask_group.group_id) == int(target_group_id):
+            packets = dict(mask_group.mask_packets)
+        else:
+            packets = {
+                int(camera_idx): replace(packet, group_id=int(target_group_id))
+                for camera_idx, packet in mask_group.mask_packets.items()
+            }
+        return Demo31RetargetedMaskGroup(
             group_id=int(target_group_id),
             mask_packets=packets,
             edgetam_stage_wall_ms=float(mask_group.edgetam_stage_wall_ms),
             edgetam_stage_sum_model_ms=float(mask_group.edgetam_stage_sum_model_ms),
             edgetam_stage_mode=str(mask_group.edgetam_stage_mode),
+            source_group_id=int(source_group_id),
+            mask_age_ms=float(age_ms),
+            mask_reused=bool(reused),
         )
 
     def _drop_older_capture_depth(self, group_id: int) -> None:
@@ -755,6 +818,11 @@ class Demo31MaskPolicyJoinBuffer:
                 oldest = min(table)
                 table.pop(oldest, None)
                 setattr(self, counter_name, getattr(self, counter_name) + 1)
+        keep_after = min([*self._captures, *self._depths, *self._masks], default=None)
+        if keep_after is not None:
+            stale = [group_id for group_id in self._selection_by_group if group_id < keep_after]
+            for group_id in stale:
+                self._selection_by_group.pop(group_id, None)
 
 
 def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client_factory: ProcessClientFactory | None = None):
@@ -812,6 +880,11 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_overlay_age_ms_samples: list[float] = []
             self.demo31_overlay_model_ms_samples: list[float] = []
             self.demo31_overlay_e2e_ms_samples: list[float] = []
+            self.demo31_overlay_render_group_delta_samples: list[float] = []
+            self.demo31_tracking_mask_age_ms_samples: list[float] = []
+            self.demo31_tracking_mask_reuse_count = 0
+            self.demo31_tracking_mask_selection_count = 0
+            self.demo31_overlay_render_group_mismatch_count = 0
             self.demo31_tracking_stats: dict[str, dict[int, int]] = {}
 
         def stop(self) -> None:
@@ -865,6 +938,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             depth_by_camera: dict[int, np.ndarray] = {}
             intrinsics_by_camera: dict[int, np.ndarray] = {}
             c2w_by_camera: dict[int, np.ndarray] = {}
+            mask_selection = (
+                self.stage_join_buffer.selection_for_group(int(depth_group.group_id))
+                if hasattr(self.stage_join_buffer, "selection_for_group")
+                else None
+            )
+            mask_source_group_id = int(mask_selection.get("source_group_id", depth_group.group_id)) if mask_selection else int(depth_group.group_id)
+            mask_age_ms = float(mask_selection.get("age_ms", 0.0)) if mask_selection else 0.0
+            mask_reused = bool(mask_selection.get("reused", False)) if mask_selection else False
             for camera_idx in self.args.camera_ids:
                 idx = int(camera_idx)
                 if idx not in masks or idx not in depth_group.depths:
@@ -913,6 +994,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             mask_by_camera=mask_by_camera,
                             object_mask_by_camera=object_mask_by_camera,
                             controller_mask_by_camera=controller_mask_by_camera,
+                            mask_source_group_id=mask_source_group_id,
+                            mask_age_ms=mask_age_ms,
+                            mask_reused=mask_reused,
                         )
                     )
                     self.demo31_tracking_input_queue_replace_count += int(replaced_count)
@@ -927,8 +1011,13 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             overlay_points = np.empty((0, 3), dtype=np.float32)
             overlay_lift_cache_hit = False
             overlay_group_id: int | None = None
+            overlay_render_group_delta: int | None = None
             if overlay is not None:
                 overlay_group_id = int(overlay.group_id)
+                overlay_render_group_delta = int(packet.group_id) - int(overlay.group_id)
+                self.demo31_overlay_render_group_delta_samples.append(float(abs(overlay_render_group_delta)))
+                if overlay_render_group_delta != 0:
+                    self.demo31_overlay_render_group_mismatch_count += 1
                 lift_inputs = self.demo31_lift_input_cache.get(overlay_group_id)
                 if lift_inputs is not None:
                     overlay_lift_cache_hit = True
@@ -969,6 +1058,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_ms": overlay_ms,
                     "overlay_group_id": overlay_group_id,
                     "render_group_id": int(packet.group_id),
+                    "overlay_render_group_delta": overlay_render_group_delta,
+                    "tracking_mask_source_group_id": (
+                        None if overlay is None or overlay.mask_source_group_id is None else int(overlay.mask_source_group_id)
+                    ),
+                    "tracking_mask_age_ms": 0.0 if overlay is None else float(overlay.mask_age_ms),
+                    "tracking_mask_reused": False if overlay is None else bool(overlay.mask_reused),
                     "overlay_lift_cache_hit": bool(overlay_lift_cache_hit),
                     "render_waited_for_cotracker": False,
                     "cross_gpu_cuda_tensor_transfer": False,
@@ -994,6 +1089,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_overlay_age_ms_samples.append(float(age_ms))
             self.demo31_overlay_model_ms_samples.append(float(result.model_ms))
             self.demo31_overlay_e2e_ms_samples.append(float(result.e2e_ms))
+            self.demo31_tracking_mask_selection_count += 1
+            self.demo31_tracking_mask_reuse_count += int(bool(result.mask_reused))
+            self.demo31_tracking_mask_age_ms_samples.append(float(result.mask_age_ms))
             self.demo31_tracking_stats = {
                 "tracking_query_count_actual_by_camera": dict(result.tracking_query_count_actual_by_camera),
                 "tracking_union_pixels_by_camera": dict(result.tracking_union_pixels_by_camera),
@@ -1007,6 +1105,19 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "overlay_display_count_by_camera": dict(result.overlay_display_count_by_camera),
                 "overlay_display_object_count_by_camera": dict(result.overlay_display_object_count_by_camera),
                 "overlay_display_controller_count_by_camera": dict(result.overlay_display_controller_count_by_camera),
+                "cotracker_update_mode": str(result.cotracker_update_mode),
+                "cotracker_batch_size": int(result.cotracker_batch_size),
+                "cotracker_batch_update_count": int(result.cotracker_batch_update_count),
+                "cotracker_serial_group_update_count": int(result.cotracker_serial_group_update_count),
+                "cotracker_serial_camera_update_count": int(result.cotracker_serial_camera_update_count),
+                "cotracker_serial_fallback_count": int(result.cotracker_serial_fallback_count),
+                "cotracker_batch_error_count": int(result.cotracker_batch_error_count),
+                "cotracker_batch_disabled_reason": result.cotracker_batch_disabled_reason,
+                "tracking_mask_source_group_id": (
+                    None if result.mask_source_group_id is None else int(result.mask_source_group_id)
+                ),
+                "tracking_mask_age_ms": float(result.mask_age_ms),
+                "tracking_mask_reused": bool(result.mask_reused),
             }
             return result
 
@@ -1020,6 +1131,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             age = percentile_summary(self.demo31_overlay_age_ms_samples)
             model = percentile_summary(self.demo31_overlay_model_ms_samples)
             e2e = percentile_summary(self.demo31_overlay_e2e_ms_samples)
+            overlay_delta = percentile_summary(self.demo31_overlay_render_group_delta_samples)
+            tracking_mask_age = percentile_summary(self.demo31_tracking_mask_age_ms_samples)
             return {
                 "process": process_snapshot,
                 "process_status_events": list(self.demo31_process_status_events),
@@ -1035,6 +1148,16 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "cotracker_model_ms_p95": float(model["p95"]),
                 "cotracker_e2e_ms_median": float(e2e["median"]),
                 "cotracker_e2e_ms_p95": float(e2e["p95"]),
+                "overlay_render_group_delta_median": float(overlay_delta["median"]),
+                "overlay_render_group_delta_p95": float(overlay_delta["p95"]),
+                "overlay_render_group_mismatch_count": int(self.demo31_overlay_render_group_mismatch_count),
+                "tracking_input_mask_reuse_ratio": (
+                    float(self.demo31_tracking_mask_reuse_count / self.demo31_tracking_mask_selection_count)
+                    if self.demo31_tracking_mask_selection_count
+                    else 0.0
+                ),
+                "tracking_input_mask_age_ms_median": float(tracking_mask_age["median"]),
+                "tracking_input_mask_age_ms_p95": float(tracking_mask_age["p95"]),
                 "mask_cache": self.demo31_mask_cache.snapshot(),
                 "lift_input_cache": self.demo31_lift_input_cache.snapshot(),
                 "tracking_stats": dict(self.demo31_tracking_stats),
@@ -1172,6 +1295,25 @@ class Demo31Runtime:
                     "cotracker_backend_warmup_by_camera": (
                         warmup_profile.get("per_camera", {}) if isinstance(warmup_profile, dict) else {}
                     ),
+                    "cotracker_update_mode": str(
+                        tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "auto"))
+                    ),
+                    "cotracker_update_mode_effective": str(
+                        tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "auto"))
+                    ),
+                    "cotracker_batch_size": int(tracking_stats.get("cotracker_batch_size", 0) or 0),
+                    "cotracker_batch_update_count": int(tracking_stats.get("cotracker_batch_update_count", 0) or 0),
+                    "cotracker_serial_group_update_count": int(
+                        tracking_stats.get("cotracker_serial_group_update_count", 0) or 0
+                    ),
+                    "cotracker_serial_camera_update_count": int(
+                        tracking_stats.get("cotracker_serial_camera_update_count", 0) or 0
+                    ),
+                    "cotracker_serial_fallback_count": int(
+                        tracking_stats.get("cotracker_serial_fallback_count", 0) or 0
+                    ),
+                    "cotracker_batch_error_count": int(tracking_stats.get("cotracker_batch_error_count", 0) or 0),
+                    "cotracker_batch_disabled_reason": tracking_stats.get("cotracker_batch_disabled_reason"),
                     "cotracker_input_drop_count": int(snapshot.get("tracking_input_drop_count", 0) or 0),
                     "cotracker_input_queue_replace_count": int(
                         snapshot.get("tracking_input_queue_replace_count", 0)
@@ -1184,9 +1326,29 @@ class Demo31Runtime:
                     "cotracker_e2e_ms_p95": float(snapshot.get("cotracker_e2e_ms_p95", 0.0) or 0.0),
                     "overlay_age_ms_median": float(snapshot.get("overlay_age_ms_median", 0.0) or 0.0),
                     "overlay_age_ms_p95": float(snapshot.get("overlay_age_ms_p95", 0.0) or 0.0),
+                    "overlay_render_group_delta_median": float(
+                        snapshot.get("overlay_render_group_delta_median", 0.0) or 0.0
+                    ),
+                    "overlay_render_group_delta_p95": float(
+                        snapshot.get("overlay_render_group_delta_p95", 0.0) or 0.0
+                    ),
+                    "overlay_render_group_mismatch_count": int(
+                        snapshot.get("overlay_render_group_mismatch_count", 0) or 0
+                    ),
                     "mask_reuse_ratio": float(mask_cache.get("mask_reuse_ratio", 0.0) or 0.0),
                     "mask_age_ms_median": float(mask_cache.get("mask_age_ms_median", 0.0) or 0.0),
                     "mask_age_ms_p95": float(mask_cache.get("mask_age_ms_p95", 0.0) or 0.0),
+                    "mask_group_delta_median": float(mask_cache.get("mask_group_delta_median", 0.0) or 0.0),
+                    "mask_group_delta_p95": float(mask_cache.get("mask_group_delta_p95", 0.0) or 0.0),
+                    "tracking_input_mask_reuse_ratio": float(
+                        snapshot.get("tracking_input_mask_reuse_ratio", 0.0) or 0.0
+                    ),
+                    "tracking_input_mask_age_ms_median": float(
+                        snapshot.get("tracking_input_mask_age_ms_median", 0.0) or 0.0
+                    ),
+                    "tracking_input_mask_age_ms_p95": float(
+                        snapshot.get("tracking_input_mask_age_ms_p95", 0.0) or 0.0
+                    ),
                     "tracking_query_count_actual_by_camera": tracking_stats.get("tracking_query_count_actual_by_camera", {}),
                     "tracking_union_pixels_by_camera": tracking_stats.get("tracking_union_pixels_by_camera", {}),
                     "tracking_object_pixels_by_camera": tracking_stats.get("tracking_object_pixels_by_camera", {}),

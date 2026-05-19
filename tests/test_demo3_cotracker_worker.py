@@ -7,6 +7,7 @@ from unittest import mock
 import numpy as np
 
 from qqtt.demo.cotracker3_overlay_worker import (
+    COTRACKER_UPDATE_MODE_BATCH,
     CoTracker3OverlayThread,
     CoTracker3OverlayWorker,
     LatestTrackingInputSlot,
@@ -73,6 +74,53 @@ class _FakeOnlineBackend:
         )
 
 
+class _FakeBatchBackend:
+    name = "fake_cotracker3_online_batch"
+
+    def __init__(self, *, window_len: int = 1, step: int = 1) -> None:
+        self.window_len = int(window_len)
+        self.step = int(step)
+        self.frames_seen = 0
+        self.last_published_frame_count = 0
+        self.initialize_batch_calls = 0
+        self.update_batch_calls = 0
+        self.query_points_yx_by_camera: dict[int, np.ndarray] = {}
+
+    def initialize_batch(self, query_points_yx_by_camera) -> None:
+        self.initialize_batch_calls += 1
+        self.query_points_yx_by_camera = {
+            int(camera_idx): np.asarray(points, dtype=np.float32)
+            for camera_idx, points in query_points_yx_by_camera.items()
+        }
+
+    def update_batch(self, frames_by_camera) -> dict[int, TrackingResult]:
+        self.update_batch_calls += 1
+        self.frames_seen += 1
+        results: dict[int, TrackingResult] = {}
+        for camera_idx, query_points in self.query_points_yx_by_camera.items():
+            _ = np.asarray(frames_by_camera[int(camera_idx)])
+            n = int(len(query_points))
+            tracks = np.repeat(query_points[None, :, :], self.window_len, axis=0).astype(np.float32)
+            tracks[-1, :, 0] += float(camera_idx)
+            visibility = np.ones((self.window_len, n), dtype=np.float32)
+            results[int(camera_idx)] = TrackingResult(
+                tracks_yx=tracks,
+                visibility=visibility,
+                backend=self.name,
+                camera_idx=int(camera_idx),
+                query_points_yx=query_points,
+                stats={
+                    "stream_status": "published",
+                    "update_mode": "batch",
+                    "chunk_start_idx": self.frames_seen - self.window_len,
+                    "chunk_end_idx": self.frames_seen - 1,
+                    "model_run_ms": 2.5,
+                    "batch_size": len(self.query_points_yx_by_camera),
+                },
+            )
+        return results
+
+
 class Demo3CoTrackerWorkerTest(unittest.TestCase):
     def _packet(self, frame_idx: int) -> TrackingOverlayInputPacket:
         rgb = np.zeros((8, 8, 3), dtype=np.uint8)
@@ -110,6 +158,22 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
             controller_mask_by_camera={0: controller_mask},
         )
 
+    def _three_camera_packet(self, frame_idx: int) -> TrackingOverlayInputPacket:
+        rgb = np.zeros((8, 8, 3), dtype=np.uint8)
+        mask = np.ones((8, 8), dtype=bool)
+        return TrackingOverlayInputPacket(
+            group_id=frame_idx,
+            frame_idx=frame_idx,
+            timestamp_s=float(frame_idx) / 30.0,
+            rgb_by_camera={idx: rgb.copy() for idx in (0, 1, 2)},
+            mask_by_camera={idx: mask.copy() for idx in (0, 1, 2)},
+            object_mask_by_camera={idx: mask.copy() for idx in (0, 1, 2)},
+            controller_mask_by_camera={idx: mask.copy() for idx in (0, 1, 2)},
+            mask_source_group_id=frame_idx - 1,
+            mask_age_ms=12.5,
+            mask_reused=True,
+        )
+
     def test_fake_backend_receives_frames_one_by_one_and_publishes_on_window(self) -> None:
         backend = _FakeOnlineBackend()
         worker = CoTracker3OverlayWorker(
@@ -135,6 +199,59 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
         self.assertLessEqual(overlay.timestamp_s, after_publish_s)  # type: ignore[union-attr]
         self.assertEqual(overlay.source_timestamp_s, 15.0 / 30.0)  # type: ignore[union-attr]
         self.assertEqual(worker.latest_overlay().seq, 15)  # type: ignore[union-attr]
+
+    def test_batch_backend_updates_three_cameras_together(self) -> None:
+        backend = _FakeBatchBackend()
+
+        def factory(camera_idx: int):
+            if int(camera_idx) != -1:
+                raise AssertionError("batch mode should not construct per-camera backends")
+            return backend
+
+        sampled = np.array([[0, 0], [1, 1], [2, 2], [3, 3]], dtype=np.float32)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0, 1, 2),
+            backend_factory=factory,
+            query_count=4,
+            overlay_max_points_per_camera=2,
+            update_mode=COTRACKER_UPDATE_MODE_BATCH,
+        )
+        with mock.patch("qqtt.demo.cotracker3_overlay_worker.sample_phystwin_dense", return_value=sampled):
+            overlay = worker.process_group(self._three_camera_packet(7))
+
+        self.assertIsNotNone(overlay)
+        self.assertEqual(backend.initialize_batch_calls, 1)
+        self.assertEqual(backend.update_batch_calls, 1)
+        self.assertEqual(set(overlay.camera_tracks_yx), {0, 1, 2})  # type: ignore[union-attr]
+        self.assertEqual(overlay.cotracker_update_mode, "batch")  # type: ignore[union-attr]
+        self.assertEqual(overlay.cotracker_batch_size, 3)  # type: ignore[union-attr]
+        self.assertEqual(overlay.model_ms, 2.5)  # type: ignore[union-attr]
+        self.assertTrue(overlay.mask_reused)  # type: ignore[union-attr]
+        self.assertEqual(overlay.mask_source_group_id, 6)  # type: ignore[union-attr]
+        self.assertEqual(worker.snapshot()["cotracker_batch_update_count"], 1)
+
+    def test_auto_mode_falls_back_to_serial_when_backend_lacks_batch_api(self) -> None:
+        backends = {idx: _FakeOnlineBackend(window_len=1, step=1) for idx in (-1, 0, 1, 2)}
+
+        sampled = np.array([[0, 0], [1, 1], [2, 2], [3, 3]], dtype=np.float32)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0, 1, 2),
+            backend_factory=lambda camera_idx: backends[int(camera_idx)],
+            query_count=4,
+            overlay_max_points_per_camera=2,
+        )
+        with mock.patch("qqtt.demo.cotracker3_overlay_worker.sample_phystwin_dense", return_value=sampled):
+            overlay = worker.process_group(self._three_camera_packet(8))
+
+        self.assertIsNotNone(overlay)
+        self.assertEqual(overlay.cotracker_update_mode, "serial")  # type: ignore[union-attr]
+        self.assertEqual(backends[0].update_calls, 1)
+        self.assertEqual(backends[1].update_calls, 1)
+        self.assertEqual(backends[2].update_calls, 1)
+        snapshot = worker.snapshot()
+        self.assertEqual(snapshot["cotracker_serial_group_update_count"], 1)
+        self.assertEqual(snapshot["cotracker_serial_camera_update_count"], 3)
+        self.assertEqual(snapshot["cotracker_serial_fallback_count"], 1)
 
     def test_later_publish_occurs_every_step_frames(self) -> None:
         backend = _FakeOnlineBackend()

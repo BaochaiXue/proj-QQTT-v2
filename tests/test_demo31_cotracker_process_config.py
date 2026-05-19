@@ -21,6 +21,7 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
             init_requires_object_and_controller=True,
             overlay_max_points_per_camera=15,
             overlay_display_scope="controller",
+            update_mode="batch",
         )
 
         restored = process_mod.CoTrackerProcessConfig.from_json(config.to_json())
@@ -64,6 +65,7 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         self.assertIn("phystwin_dense", output)
         self.assertIn('"tracking_query_count_requested": "auto"', output)
         self.assertIn('"overlay_display_scope": "controller"', output)
+        self.assertIn('"update_mode": "auto"', output)
         if old_value is None:
             os.environ.pop("CUDA_VISIBLE_DEVICES", None)
         else:
