@@ -516,10 +516,17 @@ Useful options:
 ```bash
 python cameras_calibrate.py --width 1280 --height 720 --fps 5 --num-cam 3
 python cameras_calibrate.py --serials 239222303506 239222300412 239222300781
+python cameras_calibrate.py --exposure 70 --gain 60
 python cameras_calibrate.py --calibration-board legacy-4x5-50mm
 python cameras_calibrate.py --calibration-samples 3
 python cameras_calibrate.py --calibration-world-frame robopil-rx180
 ```
+
+`CameraSystem` applies shared per-serial RGB exposure overrides for the current
+lab rig before calibration and recording. As of the May 19, 2026 brightness
+probe, the defaults are `239222300412=156`, `239222300781=156`, and
+`239222303506=180` with gain `60`. The `--exposure` and `--gain` values are the
+base manual settings for unknown serials or one-off runs.
 
 The old `legacy-4x5-50mm` board profile remains available only for reproducing
 older calibrations and is deprecated for new rig calibration. For a one-off
@@ -549,6 +556,9 @@ python record_data.py --case_name my_case --capture_mode rgbd
 If `--case_name` is omitted, a timestamp is used.
 
 The recorder writes raw data to `data_collect/<case_name>/`.
+It uses the same shared per-serial RGB exposure/gain defaults as calibration, so
+raw recordings and newly written calibration files start from matched camera
+brightness unless `--exposure` or `--gain` is explicitly overridden.
 
 Default RealSense path:
 

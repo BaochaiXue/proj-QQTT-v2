@@ -60,6 +60,8 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
   - marker size: 22 mm
   - dictionary: `DICT_5X5_250`
 - `python cameras_calibrate.py` detects the ChArUco board from all 3 cameras
+- selected RGB exposure values match the current rig defaults:
+  `239222300412=156`, `239222300781=156`, `239222303506=180`; gain remains `60`
 - calibration completes without reprojection failure
 - `calibrate.pkl` is written in the repo root
 - `calibrate.pkl` remains a calibration-order list of camera-to-world `4x4` transforms
@@ -73,6 +75,8 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 
 - `python record_data.py --case_name smoke_case --capture_mode rgbd` creates `data_collect/smoke_case/`
 - per-camera `color/<camera>/<step>.png` files are written
+- per-camera RGB brightness is visually comparable across the three current rig
+  serials with the shared calibration/recording color-control defaults
 - per-camera `depth/<camera>/<step>.npy` files are written for `rgbd`
 - per-camera `ir_left/<camera>/<step>.png` and `ir_right/<camera>/<step>.png` are written for `stereo_ir`
 - `metadata.json` exists

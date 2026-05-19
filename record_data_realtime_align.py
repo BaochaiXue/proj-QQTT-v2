@@ -15,7 +15,9 @@ import numpy as np
 from data_process.aligned_case_metadata import LEGACY_ALIGNED_METADATA_KEYS
 from qqtt.env.camera.calibration_metadata import load_calibration_reference_serials
 from qqtt.env.camera.defaults import (
+    DEFAULT_EXPOSURE,
     DEFAULT_FPS,
+    DEFAULT_GAIN,
     DEFAULT_HEIGHT,
     DEFAULT_NUM_CAM,
     DEFAULT_WIDTH,
@@ -68,6 +70,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--num-cam", type=int, default=DEFAULT_NUM_CAM)
+    parser.add_argument(
+        "--exposure",
+        type=float,
+        default=DEFAULT_EXPOSURE,
+        help="Base manual RGB exposure. Known lab-rig serials use shared per-camera overrides.",
+    )
+    parser.add_argument(
+        "--gain",
+        type=float,
+        default=DEFAULT_GAIN,
+        help="Base manual RGB gain. Known lab-rig serials use shared per-camera overrides.",
+    )
     parser.add_argument("--serials", nargs="*", default=None)
     parser.add_argument("--duration-s", type=float, default=0.0)
     parser.add_argument("--stats-log-interval-s", type=float, default=1.0)
@@ -372,6 +386,8 @@ def run_realtime_export(
         serial_numbers=args.serials if args.serials else None,
         calibration_reference_serials=calibration_reference_serials,
         capture_mode="rgbd",
+        exposure=float(getattr(args, "exposure", DEFAULT_EXPOSURE)),
+        gain=float(getattr(args, "gain", DEFAULT_GAIN)),
         enable_keyboard_listener=False,
     )
     state = RealtimeExportState(

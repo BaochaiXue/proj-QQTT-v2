@@ -42,6 +42,7 @@ class CheckAllSmokeTest(unittest.TestCase):
                 "tests.test_agents_scope_contract_smoke",
                 "tests.test_recording_metadata_schema_v2",
                 "tests.test_cameras_viewer_fps_smoke",
+                "tests.test_camera_color_controls",
                 "tests.test_record_preflight_policy_smoke",
                 "tests.test_record_data_preflight_message_smoke",
                 "tests.test_record_data_realtime_align_smoke",

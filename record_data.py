@@ -6,7 +6,9 @@ from pathlib import Path
 from shutil import copy2
 
 from qqtt.env.camera.defaults import (
+    DEFAULT_EXPOSURE,
     DEFAULT_FPS,
+    DEFAULT_GAIN,
     DEFAULT_HEIGHT,
     DEFAULT_NUM_CAM,
     DEFAULT_WIDTH,
@@ -53,6 +55,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--num-cam", type=int, default=DEFAULT_NUM_CAM)
+    parser.add_argument(
+        "--exposure",
+        type=float,
+        default=DEFAULT_EXPOSURE,
+        help="Base manual RGB exposure. Known lab-rig serials use shared per-camera overrides.",
+    )
+    parser.add_argument(
+        "--gain",
+        type=float,
+        default=DEFAULT_GAIN,
+        help="Base manual RGB gain. Known lab-rig serials use shared per-camera overrides.",
+    )
     parser.add_argument("--serials", nargs="*", default=None)
     parser.add_argument(
         "--capture_mode",
@@ -152,6 +166,8 @@ def main() -> int:
         serial_numbers=args.serials,
         capture_mode=args.capture_mode,
         emitter=args.emitter,
+        exposure=args.exposure,
+        gain=args.gain,
         calibration_reference_serials=calibration_reference_serials,
         enable_keyboard_listener=not args.disable_keyboard_listener,
     )

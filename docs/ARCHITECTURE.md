@@ -118,6 +118,12 @@ data product.
 `cameras_calibrate.py`, `record_data.py`, and `record_data_realtime_align.py`
 import `CameraSystem`.
 
+`CameraSystem` owns shared RGB color controls for all formal camera entry
+points. The current lab rig uses per-serial manual exposure overrides
+(`239222300412=156`, `239222300781=156`, `239222303506=180`) and gain `60` so
+calibration, raw recording, realtime aligned export, and viewer startup see
+comparable RGB brightness by default.
+
 `record_data_realtime_align.py` writes native RGB-D directly as one growing
 formal aligned case under `data/different_types_real_time/`. It keeps FPS logs
 outside the case so the case itself remains limited to `color/`, `depth/`,

@@ -8,6 +8,8 @@ from .calibration_boards import (
     get_calibration_board_config,
 )
 from .defaults import (
+    DEFAULT_COLOR_EXPOSURE_OVERRIDES,
+    DEFAULT_COLOR_GAIN_OVERRIDES,
     DEFAULT_EXPOSURE,
     DEFAULT_FPS,
     DEFAULT_GAIN,
@@ -15,6 +17,7 @@ from .defaults import (
     DEFAULT_NUM_CAM,
     DEFAULT_WHITE_BALANCE,
     DEFAULT_WIDTH,
+    resolve_per_camera_control_values,
 )
 from multiprocessing.managers import SharedMemoryManager
 import numpy as np
@@ -29,10 +32,8 @@ from typing import Optional, Any
 np.set_printoptions(threshold=np.inf)
 np.set_printoptions(suppress=True)
 
-DEFAULT_EXPOSURE_OVERRIDES = {
-    "239222303506": 156,
-    "239222300781": 156,
-}
+DEFAULT_EXPOSURE_OVERRIDES = DEFAULT_COLOR_EXPOSURE_OVERRIDES
+DEFAULT_GAIN_OVERRIDES = DEFAULT_COLOR_GAIN_OVERRIDES
 
 CAPTURE_MODE_CONFIGS = {
     "rgbd": {
@@ -149,6 +150,7 @@ class CameraSystem:
         gain=DEFAULT_GAIN,
         white_balance=DEFAULT_WHITE_BALANCE,
         exposure_overrides=None,
+        gain_overrides=None,
         calibration_reference_serials=None,
         enable_keyboard_listener=True,
     ):
@@ -196,8 +198,6 @@ class CameraSystem:
         self.capture_config = CAPTURE_MODE_CONFIGS[capture_mode]
         self.streams_present = list(self.capture_config["streams_present"])
         self.emitter = emitter
-        self.exposure = exposure
-        self.gain = gain
         self.white_balance = white_balance
 
         self.shm_manager = SharedMemoryManager()
@@ -219,14 +219,23 @@ class CameraSystem:
         # Some camera settings
         if exposure_overrides is None:
             exposure_overrides = DEFAULT_EXPOSURE_OVERRIDES
-        if isinstance(exposure, (int, float)):
-            exposure_values = [
-                float(exposure_overrides.get(sn, exposure))
-                for sn in self.serial_numbers
-            ]
-        else:
-            exposure_values = exposure
-        self.realsense.set_exposure(exposure=exposure_values, gain=gain)
+        if gain_overrides is None:
+            gain_overrides = DEFAULT_GAIN_OVERRIDES
+        exposure_values = resolve_per_camera_control_values(
+            exposure,
+            overrides=exposure_overrides,
+            serial_numbers=self.serial_numbers,
+            label="exposure",
+        )
+        gain_values = resolve_per_camera_control_values(
+            gain,
+            overrides=gain_overrides,
+            serial_numbers=self.serial_numbers,
+            label="gain",
+        )
+        self.exposure = exposure_values
+        self.gain = gain_values
+        self.realsense.set_exposure(exposure=exposure_values, gain=gain_values)
         self.realsense.set_white_balance(white_balance)
 
         self.realsense.start()

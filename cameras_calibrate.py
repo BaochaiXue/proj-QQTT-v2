@@ -7,7 +7,7 @@ from qqtt.env.camera.calibration_boards import (
     available_calibration_boards,
     get_calibration_board_config,
 )
-from qqtt.env.camera.defaults import DEFAULT_NUM_CAM
+from qqtt.env.camera.defaults import DEFAULT_EXPOSURE, DEFAULT_GAIN, DEFAULT_NUM_CAM
 
 CALIBRATE_DEFAULT_WIDTH = 1280
 CALIBRATE_DEFAULT_HEIGHT = 720
@@ -24,6 +24,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--height", type=int, default=CALIBRATE_DEFAULT_HEIGHT)
     parser.add_argument("--fps", type=int, default=CALIBRATE_DEFAULT_FPS)
     parser.add_argument("--num-cam", type=int, default=DEFAULT_NUM_CAM)
+    parser.add_argument(
+        "--exposure",
+        type=float,
+        default=DEFAULT_EXPOSURE,
+        help="Base manual RGB exposure. Known lab-rig serials use shared per-camera overrides.",
+    )
+    parser.add_argument(
+        "--gain",
+        type=float,
+        default=DEFAULT_GAIN,
+        help="Base manual RGB gain. Known lab-rig serials use shared per-camera overrides.",
+    )
     board_group = parser.add_argument_group("Calibration board")
     board_group.add_argument(
         "--calibration-board",
@@ -125,6 +137,8 @@ def main() -> int:
         fps=args.fps,
         num_cam=args.num_cam,
         serial_numbers=args.serials if args.serials else None,
+        exposure=args.exposure,
+        gain=args.gain,
         enable_keyboard_listener=enable_keyboard_listener,
     )
     camera_system.calibrate(

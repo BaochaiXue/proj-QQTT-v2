@@ -44,7 +44,10 @@ from data_process.visualization.depth_colormap import (
     colorize_depth_units,
 )
 from qqtt.env.camera.defaults import (
+    DEFAULT_COLOR_EXPOSURE_OVERRIDES,
+    DEFAULT_EXPOSURE,
     DEFAULT_FPS,
+    DEFAULT_GAIN,
     DEFAULT_HEIGHT,
     DEFAULT_NUM_CAM,
     DEFAULT_WIDTH,
@@ -64,10 +67,7 @@ def _runtime_imports():
     return cv2, np, rs
 
 
-DEFAULT_EXPOSURE_OVERRIDES = {
-    "239222303506": 156.0,
-    "239222300781": 156.0,
-}
+DEFAULT_EXPOSURE_OVERRIDES = DEFAULT_COLOR_EXPOSURE_OVERRIDES
 MEASURED_FPS_WINDOW_S = 1.0
 MIN_MEASURED_FPS_SAMPLES = 2
 _SCREEN_SIZE_CACHE: Optional[Tuple[int, int]] = None
@@ -727,8 +727,8 @@ def main() -> int:
     parser.add_argument("--max-cams", type=int, default=DEFAULT_NUM_CAM)
     parser.add_argument("--serials", nargs="*", default=None)
     parser.add_argument("--auto-exposure", action="store_true")
-    parser.add_argument("--exposure", type=float, default=70.0)
-    parser.add_argument("--gain", type=float, default=60.0)
+    parser.add_argument("--exposure", type=float, default=DEFAULT_EXPOSURE)
+    parser.add_argument("--gain", type=float, default=DEFAULT_GAIN)
     parser.add_argument(
         "--depth-vis-min-m", type=float, default=DEFAULT_DEPTH_VIS_MIN_M
     )
