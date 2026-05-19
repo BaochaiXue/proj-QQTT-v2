@@ -22,6 +22,7 @@ ALIGNED_METADATA_EXT_KEYS = (
     "schema_version",
     "source_case_name",
     "calibration_reference_serials",
+    "source_calibration_reference_serials",
     "logical_camera_names",
     "capture_mode",
     "streams_present",

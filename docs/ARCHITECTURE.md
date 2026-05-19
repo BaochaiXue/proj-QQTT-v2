@@ -510,9 +510,10 @@ Important selection/artifact-contract distinction:
 - product-vs-debug output sets are now built through `io_artifacts.py` helpers and typed artifact contracts
 - this does not force every workflow to emit the same files, but it does stop each workflow from inventing its own implicit output schema from scratch
 
-Aligned cases still carry `metadata["calibration_reference_serials"]` for
-traceability, but their emitted `calibrate.pkl` is normalized to case camera
-order for direct `c2ws[camera_idx]` compatibility.
+Aligned cases set `metadata["calibration_reference_serials"]` to the emitted
+case-order `calibrate.pkl` serial order. When the source calibration file used a
+different order, `metadata_ext.json["source_calibration_reference_serials"]`
+preserves that original calibration order for traceability.
 
 ## Architectural Invariants
 

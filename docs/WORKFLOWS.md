@@ -749,7 +749,10 @@ If those RGB sidecars are missing, execute mode auto-generates them from `color/
 All `record_data_align.py` outputs normalize `calibrate.pkl` into the case
 camera order (`color/0`, `1`, `2`) instead of preserving a separate
 calibration-reference order, so direct PhysTwin-style `c2ws[camera_idx]` reads
-the matching pose. When `record_data_align.py` writes directly under
+the matching pose. In aligned metadata, `calibration_reference_serials` describes
+that emitted case-order `calibrate.pkl`; the original source calibration order is
+kept as `source_calibration_reference_serials` in `metadata_ext.json`. When
+`record_data_align.py` writes directly under
 `data/different_types/<case_name>/`, it also auto-generates those
 `color/<camera>.mp4` sidecars even if `--write_mp4` was not passed, because
 downstream formal consumers depend on them.

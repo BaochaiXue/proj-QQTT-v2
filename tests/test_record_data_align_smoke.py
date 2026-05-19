@@ -13,8 +13,10 @@ from unittest import mock
 from data_process.aligned_case_metadata import (
     ALIGNED_METADATA_EXT_FILENAME,
     LEGACY_ALIGNED_METADATA_KEYS,
+    load_aligned_metadata,
 )
 from data_process.record_data_align import align_case
+from data_process.visualization.calibration_io import load_calibration_transforms
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,6 +120,16 @@ class RecordDataAlignSmokeTest(unittest.TestCase):
             with (aligned_case / "calibrate.pkl").open("rb") as handle:
                 c2ws = pickle.load(handle)
             self.assertEqual([float(item[0][3]) for item in c2ws], [0.0, 2.0, 1.0])
+            _, metadata_ext, merged_metadata = load_aligned_metadata(aligned_case)
+            self.assertEqual(merged_metadata["serial_numbers"], ["cam0", "cam2", "cam1"])
+            self.assertEqual(merged_metadata["calibration_reference_serials"], ["cam0", "cam2", "cam1"])
+            self.assertEqual(metadata_ext["source_calibration_reference_serials"], ["cam0", "cam1", "cam2"])
+            loaded_c2ws = load_calibration_transforms(
+                aligned_case / "calibrate.pkl",
+                serial_numbers=merged_metadata["serial_numbers"],
+                calibration_reference_serials=merged_metadata["calibration_reference_serials"],
+            )
+            self.assertEqual([float(item[0][3]) for item in loaded_c2ws], [0.0, 2.0, 1.0])
 
     def test_formal_different_types_export_writes_color_mp4_sidecars_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -91,6 +91,8 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - aligned `depth/` exists for `realsense` and `ffs`
 - aligned `calibrate.pkl` is normalized to aligned case camera order, so
   `c2ws[camera_idx]` matches `metadata["serial_numbers"][camera_idx]`
+- aligned `metadata_ext.json["calibration_reference_serials"]` matches that
+  emitted case-order `calibrate.pkl`
 - aligned `depth_ffs/` exists only for `both`
 - optional `--write_mp4` produces per-camera mp4 files if ffmpeg is installed
 
