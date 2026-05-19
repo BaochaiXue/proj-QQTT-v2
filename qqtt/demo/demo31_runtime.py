@@ -48,6 +48,8 @@ DEFAULT_MASK_STALE_TIMEOUT_MS = 250.0
 DEFAULT_MASK_GPU = "0"
 DEFAULT_COTRACKER_GPU = "1"
 DEFAULT_LIFT_INPUT_CACHE_GROUPS = 32
+DEFAULT_WAIT_FOR_TRACKING_OVERLAY = True
+DEFAULT_DEMO31_OVERLAY_MAX_POINTS_PER_CAMERA = 0
 PCD_COLOR_MODE_RGB = "rgb"
 PCD_COLOR_MODE_CLASS = "class"
 PCD_COLOR_MODES = (PCD_COLOR_MODE_RGB, PCD_COLOR_MODE_CLASS)
@@ -296,7 +298,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-sampling-backend", choices=demo3_runtime.GPU_SAMPLING_BACKENDS, default="nvml")
     parser.add_argument("--gpu-sampling-device-index", type=int, default=0)
     parser.add_argument("--gpu-sampling-device-indexes", type=demo3_runtime.parse_gpu_sampling_device_indexes, default=None)
-    parser.add_argument("--overlay-max-points-per-camera", type=int, default=demo3_runtime.DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
+    parser.add_argument(
+        "--overlay-max-points-per-camera",
+        type=int,
+        default=DEFAULT_DEMO31_OVERLAY_MAX_POINTS_PER_CAMERA,
+        help="Maximum rendered CoTracker overlay points per camera; 0 renders all selected visible tracks.",
+    )
     parser.add_argument(
         "--overlay-display-scope",
         choices=demo3_runtime.OVERLAY_DISPLAY_SCOPES,
@@ -319,6 +326,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cotracker-input-fps", type=float, default=DEFAULT_COTRACKER_INPUT_FPS)
     parser.add_argument("--cotracker-input-max-age-ms", type=float, default=DEFAULT_COTRACKER_INPUT_MAX_AGE_MS)
     parser.add_argument("--cotracker-result-stale-timeout-ms", type=float, default=DEFAULT_COTRACKER_RESULT_STALE_TIMEOUT_MS)
+    parser.add_argument(
+        "--wait-for-tracking-overlay",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_WAIT_FOR_TRACKING_OVERLAY,
+        help="Treat first non-empty CoTracker overlay as rendered-demo warmup completion.",
+    )
     parser.add_argument("--fusion-mask-policy", choices=FUSION_MASK_POLICIES, default=FUSION_MASK_POLICY_LATEST_REUSE)
     parser.add_argument("--mask-stale-timeout-ms", type=float, default=DEFAULT_MASK_STALE_TIMEOUT_MS)
     parser.add_argument("--render-target-fps", type=float, default=DEFAULT_RENDER_TARGET_FPS)
@@ -388,8 +401,8 @@ def validate_args(
         raise ValueError("--gpu-sampling-device-indexes must be >= 0.")
     if float(args.gpu_sampling_interval_s) <= 0.0:
         raise ValueError("--gpu-sampling-interval-s must be > 0.")
-    if int(args.overlay_max_points_per_camera) <= 0:
-        raise ValueError("--overlay-max-points-per-camera must be positive.")
+    if int(args.overlay_max_points_per_camera) < 0:
+        raise ValueError("--overlay-max-points-per-camera must be >= 0; use 0 for all selected visible tracks.")
     if str(args.overlay_display_scope) not in demo3_runtime.OVERLAY_DISPLAY_SCOPES:
         raise ValueError(f"--overlay-display-scope must be one of {demo3_runtime.OVERLAY_DISPLAY_SCOPES}.")
     if float(args.cotracker_input_fps) < 0.0:
@@ -482,6 +495,9 @@ def build_contract(
         "cotracker_input_fps": float(args.cotracker_input_fps),
         "cotracker_input_max_age_ms": float(args.cotracker_input_max_age_ms),
         "cotracker_result_stale_timeout_ms": float(args.cotracker_result_stale_timeout_ms),
+        "wait_for_tracking_overlay": bool(args.wait_for_tracking_overlay),
+        "tracking_overlay_required_before_first_render": bool(args.wait_for_tracking_overlay),
+        "tracking_overlay_color_rgb": [int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist()],
         "tracking_query_mode": demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,
         "tracking_query_count_requested": str(query_count_request),
         "tracking_query_count_rule": demo3_runtime.TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE,
@@ -593,6 +609,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracking_query_count_rule",
         "tracking_sampling",
         "cotracker_seed",
+        "wait_for_tracking_overlay",
         "overlay_max_points_per_camera",
         "overlay_display_scope",
         "phystwin_dense_compatible",
@@ -900,6 +917,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_tracking_mask_reuse_count = 0
             self.demo31_tracking_mask_selection_count = 0
             self.demo31_overlay_render_group_mismatch_count = 0
+            self.demo31_latest_tracking_result: TrackingResultLitePacket | None = None
+            self.demo31_wait_for_tracking_overlay = bool(
+                self.demo31_contract.get("wait_for_tracking_overlay", DEFAULT_WAIT_FOR_TRACKING_OVERLAY)
+            ) and self.demo31_cotracker_enabled
+            self.demo31_tracking_overlay_warmup_skipped_render_count = 0
+            self.demo31_tracking_overlay_first_render_group_id: int | None = None
             self.demo31_tracking_stats: dict[str, dict[int, int]] = {}
 
         def stop(self) -> None:
@@ -1064,16 +1087,24 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             controller_points_m=np.concatenate([packet.controller_points_m, overlay_points], axis=0),
                             controller_colors_rgb=np.concatenate([packet.controller_colors_rgb, overlay_colors], axis=0),
                         )
+            tracking_overlay_warmup_blocked = bool(
+                self.demo31_wait_for_tracking_overlay
+                and self.demo31_tracking_overlay_first_render_group_id is None
+                and len(overlay_points) == 0
+            )
             overlay_ms = float((time.perf_counter() - overlay_start_s) * 1000.0)
             self._profile_update(
                 packet.group_id,
                 demo31_tracking_overlay={
                     "overlay_available": bool(overlay is not None),
                     "overlay_points": int(len(overlay_points)),
+                    "overlay_color_rgb": [int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist()],
                     "overlay_ms": overlay_ms,
                     "overlay_group_id": overlay_group_id,
                     "render_group_id": int(packet.group_id),
                     "overlay_render_group_delta": overlay_render_group_delta,
+                    "tracking_overlay_warmup_blocked": tracking_overlay_warmup_blocked,
+                    "tracking_overlay_required_before_first_render": bool(self.demo31_wait_for_tracking_overlay),
                     "tracking_mask_source_group_id": (
                         None if overlay is None or overlay.mask_source_group_id is None else int(overlay.mask_source_group_id)
                     ),
@@ -1084,22 +1115,42 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "cross_gpu_cuda_tensor_transfer": False,
                 },
             )
+            if tracking_overlay_warmup_blocked:
+                self.demo31_tracking_overlay_warmup_skipped_render_count += 1
+                return
+            if len(overlay_points) > 0 and self.demo31_tracking_overlay_first_render_group_id is None:
+                self.demo31_tracking_overlay_first_render_group_id = int(packet.group_id)
             super()._publish_render_packet(packet)
 
         def _take_fresh_tracking_result(self, *, now_s: float) -> TrackingResultLitePacket | None:
             if self.demo31_process_client is None:
                 return None
             result = self.demo31_process_client.get_result()
-            fresh = fresh_tracking_result_or_none(
-                result,
+            if result is not None:
+                fresh = fresh_tracking_result_or_none(
+                    result,
+                    now_s=now_s,
+                    stale_timeout_ms=float(self.demo31_contract["cotracker_result_stale_timeout_ms"]),
+                )
+                if fresh is None:
+                    self.demo31_tracking_input_drop_count += 1
+                else:
+                    self.demo31_latest_tracking_result = fresh
+                    self._record_new_tracking_result(fresh, now_s=now_s)
+                    return fresh
+            cached = fresh_tracking_result_or_none(
+                self.demo31_latest_tracking_result,
                 now_s=now_s,
                 stale_timeout_ms=float(self.demo31_contract["cotracker_result_stale_timeout_ms"]),
             )
-            if fresh is None:
-                if result is not None:
-                    self.demo31_tracking_input_drop_count += 1
+            if cached is None:
+                self.demo31_latest_tracking_result = None
                 return None
-            result = fresh
+            age_ms = max(0.0, (now_s - float(cached.publish_timestamp_s)) * 1000.0)
+            self.demo31_overlay_age_ms_samples.append(float(age_ms))
+            return cached
+
+        def _record_new_tracking_result(self, result: TrackingResultLitePacket, *, now_s: float) -> None:
             age_ms = max(0.0, (now_s - float(result.publish_timestamp_s)) * 1000.0)
             self.demo31_overlay_age_ms_samples.append(float(age_ms))
             self.demo31_overlay_model_ms_samples.append(float(result.model_ms))
@@ -1134,7 +1185,6 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "tracking_mask_age_ms": float(result.mask_age_ms),
                 "tracking_mask_reused": bool(result.mask_reused),
             }
-            return result
 
         def demo31_snapshot(self) -> dict[str, Any]:
             self._drain_demo31_process_status()
@@ -1166,6 +1216,10 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "overlay_render_group_delta_median": float(overlay_delta["median"]),
                 "overlay_render_group_delta_p95": float(overlay_delta["p95"]),
                 "overlay_render_group_mismatch_count": int(self.demo31_overlay_render_group_mismatch_count),
+                "tracking_overlay_warmup_skipped_render_count": int(
+                    self.demo31_tracking_overlay_warmup_skipped_render_count
+                ),
+                "tracking_overlay_first_render_group_id": self.demo31_tracking_overlay_first_render_group_id,
                 "tracking_input_mask_reuse_ratio": (
                     float(self.demo31_tracking_mask_reuse_count / self.demo31_tracking_mask_selection_count)
                     if self.demo31_tracking_mask_selection_count
@@ -1350,6 +1404,10 @@ class Demo31Runtime:
                     "overlay_render_group_mismatch_count": int(
                         snapshot.get("overlay_render_group_mismatch_count", 0) or 0
                     ),
+                    "tracking_overlay_warmup_skipped_render_count": int(
+                        snapshot.get("tracking_overlay_warmup_skipped_render_count", 0) or 0
+                    ),
+                    "tracking_overlay_first_render_group_id": snapshot.get("tracking_overlay_first_render_group_id"),
                     "mask_reuse_ratio": float(mask_cache.get("mask_reuse_ratio", 0.0) or 0.0),
                     "mask_age_ms_median": float(mask_cache.get("mask_age_ms_median", 0.0) or 0.0),
                     "mask_age_ms_p95": float(mask_cache.get("mask_age_ms_p95", 0.0) or 0.0),

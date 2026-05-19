@@ -33,7 +33,7 @@ class CoTrackerProcessConfig:
     seed: int = 42
     sampling_device: str = "cuda"
     init_requires_object_and_controller: bool = True
-    overlay_max_points_per_camera: int = 30
+    overlay_max_points_per_camera: int = 0
     overlay_display_scope: str = "controller"
     input_max_age_ms: float = 250.0
     poll_interval_s: float = 0.001
@@ -73,7 +73,7 @@ class CoTrackerProcessConfig:
             seed=int(payload.get("seed", 42)),
             sampling_device=str(payload.get("sampling_device", "cuda")),
             init_requires_object_and_controller=bool(payload.get("init_requires_object_and_controller", True)),
-            overlay_max_points_per_camera=int(payload.get("overlay_max_points_per_camera", 30)),
+            overlay_max_points_per_camera=int(payload.get("overlay_max_points_per_camera", 0)),
             overlay_display_scope=str(payload.get("overlay_display_scope", "controller")),
             input_max_age_ms=float(payload.get("input_max_age_ms", 250.0)),
             poll_interval_s=float(payload.get("poll_interval_s", 0.001)),

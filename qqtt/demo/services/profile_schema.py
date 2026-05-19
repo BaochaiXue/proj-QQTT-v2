@@ -71,6 +71,11 @@ DEMO31_REQUIRED_PROFILE_KEYS = (
     "tracking_query_mode",
     "tracking_query_count_requested",
     "overlay_max_points_per_camera",
+    "wait_for_tracking_overlay",
+    "tracking_overlay_required_before_first_render",
+    "tracking_overlay_color_rgb",
+    "tracking_overlay_warmup_skipped_render_count",
+    "tracking_overlay_first_render_group_id",
 )
 
 
@@ -240,7 +245,14 @@ def build_empty_demo31_profile_summary(contract: Mapping[str, Any]) -> dict[str,
         "tracking_sample_controller_hits_by_camera": {},
         "tracking_sample_overlap_hits_by_camera": {},
         "tracking_sample_background_hits_by_camera": {},
-        "overlay_max_points_per_camera": int(contract.get("overlay_max_points_per_camera", 30)),
+        "overlay_max_points_per_camera": int(contract.get("overlay_max_points_per_camera", 0)),
+        "wait_for_tracking_overlay": bool(contract.get("wait_for_tracking_overlay", True)),
+        "tracking_overlay_required_before_first_render": bool(
+            contract.get("tracking_overlay_required_before_first_render", True)
+        ),
+        "tracking_overlay_color_rgb": list(contract.get("tracking_overlay_color_rgb", [255, 0, 0])),
+        "tracking_overlay_warmup_skipped_render_count": 0,
+        "tracking_overlay_first_render_group_id": None,
         "overlay_display_scope": str(contract.get("overlay_display_scope", "controller")),
         "overlay_display_classification": str(
             contract.get("overlay_display_classification", "first_frame_mask_membership")

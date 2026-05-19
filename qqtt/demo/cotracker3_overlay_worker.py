@@ -318,8 +318,8 @@ class CoTracker3OverlayWorker:
         self._last_batch_size = 0
         if self.query_mode != "phystwin_dense":
             raise ValueError("CoTracker3OverlayWorker currently supports only query_mode='phystwin_dense'.")
-        if self.overlay_max_points_per_camera <= 0:
-            raise ValueError("overlay_max_points_per_camera must be positive.")
+        # Non-positive means "render all selected visible tracks". Demo 3.1 uses
+        # this to show every controller-labeled CoTracker point by default.
 
     @property
     def published_packets(self) -> int:
@@ -729,9 +729,10 @@ class CoTracker3OverlayWorker:
             tracks_t = np.asarray(result.tracks_yx[-1], dtype=np.float32)
             visibility_t = np.asarray(result.visibility[-1], dtype=np.float32).reshape(-1)
             selection_visibility = self._selection_visibility(visibility=visibility_t, camera_idx=int(camera_idx))
+            overlay_cap = None if self.overlay_max_points_per_camera <= 0 else self.overlay_max_points_per_camera
             selected = select_overlay_point_indices(
                 selection_visibility,
-                max_points=self.overlay_max_points_per_camera,
+                max_points=overlay_cap,
             )
             if len(selected) == 0:
                 continue

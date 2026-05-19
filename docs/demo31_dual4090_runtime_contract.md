@@ -9,8 +9,8 @@ No CUDA tensors are transferred between processes. CoTracker receives CPU
 RGB plus live object/controller union-mask latest-wins packets and returns
 small CPU 2D track/visibility packets. It does not receive offline video,
 saved masks, depth, intrinsics, or camera-to-world transforms. The main process
-lifts tracks to world using latest RealSense depth, intrinsics, and
-camera-to-world transforms.
+lifts tracks to world using group-aligned cached RealSense depth, intrinsics,
+and camera-to-world transforms.
 
 Demo 3.1 inherits Demo 3.0's online-only FuturePhysTwin-compatible tracking
 semantics. The only public semantic switch is `--mode exp|demo`; both modes
@@ -21,11 +21,19 @@ sampled by torch `randperm(seed + camera_idx)` with seed 42. Overlay display
 selection is separate: raw CoTracker tracks still come from the union, but each
 query is labeled by first-frame object/controller mask membership and the
 default rendered overlay shows controller-labeled tracks only. The display cap
-remains 30 controller points per camera by default.
+is disabled by default for Demo 3.1: `overlay_max_points_per_camera = 0`
+means render all visible controller-labeled tracks selected from the CoTracker
+union queries. The visible CoTracker tracking overlay color is high-contrast
+red, separate from the semantic PCD object/controller colors.
 
 The renderer uses fresh RealSense depth, latest non-stale masks when
 `fusion_mask_policy = latest-reuse`, and latest non-stale tracking overlays.
-Rendering never waits for CoTracker.
+By default, rendered mode treats the first non-empty, liftable CoTracker overlay
+as the end of startup warmup, so the first displayed Open3D frame already has
+red tracking points. After that first overlay is shown, rendering reuses the
+latest non-stale tracking result and does not block on CoTracker. Use
+`--no-wait-for-tracking-overlay` only for debugging the semantic PCD before
+tracking is available.
 
 The rendered object PCD uses FuturePhysTwin-style world-volume sampling by
 default: one representative point per occupied 5mm voxel. This is independent
@@ -62,7 +70,10 @@ tracking_query_count_rule = min(union_mask_pixels, 5000)
 tracking_sampling = torch_randperm_seed_plus_camera_idx
 cotracker_seed = 42
 phystwin_dense_compatible = true
-overlay_max_points_per_camera = 30
+wait_for_tracking_overlay = true
+tracking_overlay_required_before_first_render = true
+tracking_overlay_color_rgb = [255, 0, 0]
+overlay_max_points_per_camera = 0
 overlay_display_scope = controller
 overlay_display_classification = first_frame_mask_membership
 cotracker_backend = cotracker3_online
@@ -119,6 +130,8 @@ overlay_age_ms_median
 overlay_age_ms_p95
 overlay_render_group_delta_median
 overlay_render_group_delta_p95
+tracking_overlay_warmup_skipped_render_count
+tracking_overlay_first_render_group_id
 tracking_input_mask_reuse_ratio
 tracking_input_mask_age_ms_median
 tracking_input_mask_age_ms_p95
@@ -183,6 +196,7 @@ CLI and forwards them to the shared three-view runtime:
 --gpu-sampling
 --gpu-sampling-device-indexes
 --overlay-display-scope controller|object|union
+--wait-for-tracking-overlay / --no-wait-for-tracking-overlay
 --point-size
 --render-every-n
 --render-backend

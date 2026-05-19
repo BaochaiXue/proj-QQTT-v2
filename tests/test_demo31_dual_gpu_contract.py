@@ -187,7 +187,10 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracking_query_count_requested"], "auto")
         self.assertEqual(contract["tracking_sampling"], "torch_randperm_seed_plus_camera_idx")
         self.assertEqual(contract["cotracker_seed"], 42)
-        self.assertEqual(contract["overlay_max_points_per_camera"], 30)
+        self.assertTrue(contract["wait_for_tracking_overlay"])
+        self.assertTrue(contract["tracking_overlay_required_before_first_render"])
+        self.assertEqual(contract["tracking_overlay_color_rgb"], [255, 0, 0])
+        self.assertEqual(contract["overlay_max_points_per_camera"], 0)
         self.assertEqual(contract["overlay_display_scope"], "controller")
         self.assertEqual(contract["overlay_display_classification"], "first_frame_mask_membership")
         self.assertTrue(contract["phystwin_dense_compatible"])
@@ -228,6 +231,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("tracking_mask_scope = object_controller_union", output)
         self.assertIn("tracking_query_mode = phystwin_dense", output)
         self.assertIn("tracking_query_count_requested = auto", output)
+        self.assertIn("wait_for_tracking_overlay = true", output)
         self.assertIn("overlay_display_scope = controller", output)
         self.assertIn("phystwin_dense_compatible = true", output)
         self.assertIn("cotracker_owner = process", output)
@@ -598,6 +602,122 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["overlay_group_id"], 1)
         self.assertEqual(overlay_profile["render_group_id"], 2)
         self.assertTrue(overlay_profile["overlay_lift_cache_hit"])
+
+    def test_renderer_reuses_latest_tracking_overlay_until_stale(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            publish_range=(1, 1),
+        )
+
+        class _OneShotProcessClient(_FakeProcessClient):
+            def get_result(self) -> TrackingResultLitePacket | None:
+                current = self.result
+                self.result = None
+                return current
+
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _OneShotProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime.demo31_lift_input_cache.publish(
+            group_id=1,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 1), 1.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+        )
+
+        for group_id in (2, 3):
+            runtime._publish_render_packet(
+                _FakeRenderPacket(
+                    group_id=group_id,
+                    controller_points_m=np.empty((0, 3), dtype=np.float32),
+                    controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+                )
+            )
+            published = runtime.published_packet
+            self.assertIsNotNone(published)
+            np.testing.assert_allclose(  # type: ignore[union-attr]
+                published.controller_points_m[-1],
+                np.array([0.0, 0.0, 1.0], dtype=np.float32),
+            )
+            overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+            self.assertTrue(overlay_profile["overlay_available"])
+            self.assertEqual(overlay_profile["overlay_group_id"], 1)
+
+    def test_renderer_warmup_blocks_first_frame_until_tracking_overlay_points_exist(self) -> None:
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(None),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "wait_for_tracking_overlay": True,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+
+        runtime._publish_render_packet(
+            _FakeRenderPacket(
+                group_id=2,
+                controller_points_m=np.empty((0, 3), dtype=np.float32),
+                controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+            )
+        )
+
+        self.assertIsNone(runtime.published_packet)
+        self.assertEqual(runtime.demo31_tracking_overlay_warmup_skipped_render_count, 1)
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertTrue(overlay_profile["tracking_overlay_warmup_blocked"])
+        self.assertFalse(overlay_profile["overlay_available"])
+
+    def test_renderer_can_disable_tracking_overlay_warmup_gate(self) -> None:
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(None),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "wait_for_tracking_overlay": False,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+
+        packet = _FakeRenderPacket(
+            group_id=2,
+            controller_points_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+        )
+        runtime._publish_render_packet(packet)
+
+        self.assertIs(runtime.published_packet, packet)
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertFalse(overlay_profile["tracking_overlay_warmup_blocked"])
 
 
 if __name__ == "__main__":

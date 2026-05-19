@@ -91,7 +91,7 @@ DEFAULT_COTRACKER_PUBLISH_STEP = 8
 DEFAULT_OUTPUT_ROOT = Path("result/demo3_realsense_cotracker")
 DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
 EDGETAM_BATCH_VISION_ENCODER_REQUIRED = True
-OVERLAY_COLOR_RGB = np.array([255, 230, 32], dtype=np.uint8)
+OVERLAY_COLOR_RGB = np.array([255, 0, 0], dtype=np.uint8)
 
 
 ConnectedSerialsProvider = Callable[[], Sequence[str]]
@@ -253,7 +253,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-sampling-backend", choices=GPU_SAMPLING_BACKENDS, default="nvml")
     parser.add_argument("--gpu-sampling-device-index", type=int, default=0)
     parser.add_argument("--gpu-sampling-device-indexes", type=parse_gpu_sampling_device_indexes, default=None)
-    parser.add_argument("--overlay-max-points-per-camera", type=int, default=DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
+    parser.add_argument(
+        "--overlay-max-points-per-camera",
+        type=int,
+        default=DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA,
+        help="Maximum rendered CoTracker overlay points per camera; 0 renders all selected visible tracks.",
+    )
     parser.add_argument("--overlay-display-scope", choices=OVERLAY_DISPLAY_SCOPES, default=DEFAULT_OVERLAY_DISPLAY_SCOPE)
     parser.add_argument("--overlay-trail-len", type=int, default=DEFAULT_OVERLAY_TRAIL_LEN)
     parser.add_argument("--overlay-stale-timeout-ms", type=float, default=DEFAULT_OVERLAY_STALE_TIMEOUT_MS)
@@ -325,8 +330,8 @@ def validate_args(args: argparse.Namespace, *, require_calibration: bool = False
         raise ValueError("--gpu-sampling-device-indexes must be >= 0.")
     if float(args.gpu_sampling_interval_s) <= 0.0:
         raise ValueError("--gpu-sampling-interval-s must be > 0.")
-    if int(args.overlay_max_points_per_camera) <= 0:
-        raise ValueError("--overlay-max-points-per-camera must be positive.")
+    if int(args.overlay_max_points_per_camera) < 0:
+        raise ValueError("--overlay-max-points-per-camera must be >= 0; use 0 for all selected visible tracks.")
     if str(args.overlay_display_scope) not in OVERLAY_DISPLAY_SCOPES:
         raise ValueError(f"--overlay-display-scope must be one of {OVERLAY_DISPLAY_SCOPES}.")
     if require_calibration and not Path(args.calibrate_path).is_file():
