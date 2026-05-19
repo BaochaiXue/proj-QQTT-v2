@@ -269,6 +269,7 @@ DEFAULT_OBJECT_FILTER_VOXEL_M = 0.004
 DEFAULT_CONTROLLER_FILTER_VOXEL_M = 0.003
 DEFAULT_FILTER_EVERY_N = 3
 DEFAULT_FILTER_BUDGET_MS = 12.0
+DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
 OBJECT_ID = 2
 CONTROLLER_ID = 1
 OBJECT_COLOR_RGB = (64, 180, 255)
@@ -297,6 +298,32 @@ DEMO22_PASS_THRESHOLD_RATIO = 0.96
 
 def canonical_preset_name(preset: str) -> str:
     return PRESET_COMPAT_ALIASES.get(str(preset), str(preset))
+
+
+def demo_version_for_args(args: argparse.Namespace) -> str:
+    preset = canonical_preset_name(str(getattr(args, "preset_canonical", None) or getattr(args, "preset", PRESET_NONE)))
+    if preset == PRESET_DEMO23_DUAL4090_MAXFPS:
+        return "demo2.3"
+    if preset in {
+        PRESET_DEMO22_ASYNC_FILTER_5FPS,
+        PRESET_DEMO22_STAGED_PARALLEL_5FPS,
+        PRESET_DEMO22_SINGLE_OBJECT_BATCHVISION_EDGETAM,
+    }:
+        return "demo2.2"
+    if preset in {
+        PRESET_DEMO215_ASYNC_FILTER_5FPS,
+        PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS,
+        PRESET_DEMO215_STAGED_PARALLEL_5FPS,
+        PRESET_DEMO215_LIVE_FAST_NATIVE,
+        PRESET_DEMO215_LIVE_QUALITY_FFS,
+        PRESET_DEMO215_MASK_ONLY_DEBUG,
+    }:
+        return "demo2.1.5"
+    return "demo2.1"
+
+
+def demo_display_name_for_args(args: argparse.Namespace) -> str:
+    return f"Demo {demo_version_for_args(args).removeprefix('demo')}"
 
 
 def resolved_capture_group_target_fps(args: argparse.Namespace) -> float:
@@ -2819,6 +2846,45 @@ def slice_hf_original_sizes(original_sizes: Any, batch_idx: int) -> Any:
     return original_sizes
 
 
+def prune_edgetam_live_session(session: Any, *, current_frame_idx: int, keep_frames: int) -> dict[str, int]:
+    """Bound HF EdgeTAM streaming-session tensors for long live runs."""
+    keep = int(keep_frames)
+    if keep <= 0 or int(current_frame_idx) < 0:
+        return {"processed_frames": 0, "non_cond_outputs": 0, "tracked_frames": 0}
+    min_frame_idx = int(current_frame_idx) - keep + 1
+    if min_frame_idx <= 0:
+        return {"processed_frames": 0, "non_cond_outputs": 0, "tracked_frames": 0}
+
+    pruned = {"processed_frames": 0, "non_cond_outputs": 0, "tracked_frames": 0}
+    processed_frames = getattr(session, "processed_frames", None)
+    if isinstance(processed_frames, dict):
+        for frame_idx in [idx for idx in processed_frames if int(idx) < min_frame_idx]:
+            processed_frames.pop(frame_idx, None)
+            pruned["processed_frames"] += 1
+
+    output_dict_per_obj = getattr(session, "output_dict_per_obj", {}) or {}
+    if isinstance(output_dict_per_obj, dict):
+        for obj_outputs in output_dict_per_obj.values():
+            if not isinstance(obj_outputs, dict):
+                continue
+            non_cond = obj_outputs.get("non_cond_frame_outputs")
+            if isinstance(non_cond, dict):
+                for frame_idx in [idx for idx in non_cond if int(idx) < min_frame_idx]:
+                    non_cond.pop(frame_idx, None)
+                    pruned["non_cond_outputs"] += 1
+
+    frames_tracked_per_obj = getattr(session, "frames_tracked_per_obj", {}) or {}
+    if isinstance(frames_tracked_per_obj, dict):
+        for tracked in frames_tracked_per_obj.values():
+            if not isinstance(tracked, dict):
+                continue
+            for frame_idx in [idx for idx in tracked if int(idx) < min_frame_idx]:
+                tracked.pop(frame_idx, None)
+                pruned["tracked_frames"] += 1
+
+    return pruned
+
+
 def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     layers = semantic_layers_for_track_mode(
         args.track_mode,
@@ -2859,7 +2925,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             if is_demo215_preset
             else "demo_2_1_three_view_fused_masked_pcd"
         ),
-        "demo_version": "demo2.3" if is_demo23_preset else "demo2.2" if is_demo22_preset else "demo2.1.5" if is_demo215_preset else "demo2.1",
+        "demo_version": demo_version_for_args(args),
         "preset": getattr(args, "preset", PRESET_NONE),
         "preset_canonical": preset_canonical,
         "camera_ids": list(args.camera_ids),
@@ -3102,6 +3168,10 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "batch_vision_batch_size": (
                 len(tuple(args.camera_ids)) if batch_vision_enabled else 1
             ),
+            "live_session_keep_frames": int(
+                getattr(args, "edgetam_live_session_keep_frames", DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES)
+            ),
+            "live_session_pruning": True,
             "precision_mode": str(getattr(args, "edgetam_precision_mode", EDGETAM_PRECISION_MODE_ALL_BF16)),
             "component_runtime": str(getattr(args, "edgetam_component_runtime", EDGETAM_COMPONENT_RUNTIME_TORCH)),
             "trt_engine_dir": str(getattr(args, "edgetam_trt_engine_dir", "") or ""),
@@ -4005,6 +4075,8 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 serialized GPU gate requires --gpu-gate-max-concurrent 1")
         if int(self.args.pinned_ring_size) < 1:
             raise RuntimeError("Demo 2.1 --pinned-ring-size must be >= 1")
+        if int(getattr(self.args, "edgetam_live_session_keep_frames", DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES)) < 1:
+            raise RuntimeError("Demo 2.3 --edgetam-live-session-keep-frames must be >= 1")
         if self.args.pin_memory_mode not in PIN_MEMORY_MODES:
             raise RuntimeError(f"Demo 2.1 unsupported --pin-memory-mode {self.args.pin_memory_mode}")
         if self.args.h2d_stream_mode not in H2D_STREAM_MODES:
@@ -4106,13 +4178,14 @@ class Demo21Runtime:
         }
         self._stream_metadata = list(self.camera_system.stream_metadata)
         self._write_calibration_debug_report()
+        log_prefix = f"[{demo_version_for_args(self.args)}]"
         print(
-            "[demo2.1] "
+            f"{log_prefix} "
             f"serials={self.camera_system.serial_numbers} profile={self.width}x{self.height}@{self.args.fps} "
             f"depth={self.args.depth_source} ffs_worker=shared edgetam_workers=per-camera",
             flush=True,
         )
-        print(f"[demo2.1-contract] {json.dumps(build_contract(self.args), sort_keys=True)}", flush=True)
+        print(f"{log_prefix[:-1]}-contract] {json.dumps(build_contract(self.args), sort_keys=True)}", flush=True)
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -4174,7 +4247,7 @@ class Demo21Runtime:
         self._summary["init_profile"] = self._init_profile_snapshot()
         self._summary["gpu_sampling"] = self._gpu_sampler.diagnostics()
         summary_path.write_text(json.dumps(self._summary, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
-        print(f"[demo2.1] summary={summary_path}", flush=True)
+        print(f"[{demo_version_for_args(self.args)}] summary={summary_path}", flush=True)
         if self._profile_enabled:
             if self.args.profile_json_output:
                 profile_path = Path(self.args.profile_json_output)
@@ -4506,7 +4579,7 @@ class Demo21Runtime:
         return {
             "preset": self.args.preset,
             "preset_canonical": getattr(self.args, "preset_canonical", canonical_preset_name(self.args.preset)),
-            "demo_version": "demo2.3" if getattr(self.args, "preset_canonical", "") == PRESET_DEMO23_DUAL4090_MAXFPS else "demo2.2" if getattr(self.args, "preset_canonical", "") in {PRESET_DEMO22_ASYNC_FILTER_5FPS, PRESET_DEMO22_STAGED_PARALLEL_5FPS} else "demo2.1",
+            "demo_version": demo_version_for_args(self.args),
             "pipeline": str(self.args.gpu_pipeline_mode),
             "ffs_device": str(getattr(self.args, "ffs_device", "cuda:0")),
             "edgetam_device": str(getattr(self.args, "edgetam_device", "cuda:1")),
@@ -4525,6 +4598,7 @@ class Demo21Runtime:
             "input_path": self.args.edgetam_input_path,
             "mask_postprocess": self.args.mask_postprocess,
             "gpu_pipeline": contract["gpu_pipeline"],
+            "edgetam": contract["edgetam"],
             "gpu_sampling": gpu_sampling,
             "filter_scheduler": contract["filter_scheduler"],
             "renderer": contract["renderer"],
@@ -4581,8 +4655,9 @@ class Demo21Runtime:
             and payload.get("filter_scheduler", {}).get("render_filtered_only")
             else "FAIL"
         )
+        demo_display_name = demo_display_name_for_args(self.args)
         lines = [
-            "# Demo 2.2 performance profile" if is_demo22 else "# Demo 2.1 performance profile",
+            f"# {demo_display_name} performance profile",
             "",
             f"- preset: `{payload['preset']}`",
             f"- canonical preset: `{payload.get('preset_canonical', payload['preset'])}`",
@@ -4592,6 +4667,7 @@ class Demo21Runtime:
             f"- dtype: `{payload.get('dtype', 'unknown')}`",
             f"- EdgeTAM input path: `{payload.get('input_path', 'pil')}`",
             f"- mask postprocess: `{payload.get('mask_postprocess', 'hf')}`",
+            f"- EdgeTAM live session keep frames: `{payload.get('edgetam', {}).get('live_session_keep_frames', DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES)}`",
             f"- render backend: `{payload.get('renderer', {}).get('backend', 'legacy-inplace')}`",
             f"- render latest-only: `{payload.get('renderer', {}).get('async_latest_only', True)}`",
             f"- render copy mode: `{payload.get('renderer', {}).get('copy_mode', 'sync-cpu')}`",
@@ -4780,8 +4856,8 @@ class Demo21Runtime:
                 f"`{item.get('input_points', 0)}` | `{item.get('kept_points', 0)}` |"
             )
         md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"[demo2.1] profile_json={profile_path}", flush=True)
-        print(f"[demo2.1] profile_md={md_path}", flush=True)
+        print(f"[{demo_version_for_args(self.args)}] profile_json={profile_path}", flush=True)
+        print(f"[{demo_version_for_args(self.args)}] profile_md={md_path}", flush=True)
 
     def _thread_specs(self) -> list[tuple[str, Callable[[], None]]]:
         specs: list[tuple[str, Callable[[], None]]] = [
@@ -5955,7 +6031,7 @@ class Demo21Runtime:
                 )
                 self._init_profile_add(("edgetam", "prewarm", "runs"), float(prewarm_profile.get("runs", 0)))
         print(
-            "[demo2.1-edgetam] "
+            f"[{demo_version_for_args(self.args)}-edgetam] "
             f"cam={camera_idx} topology={topology_label} model={self.args.model_id} "
             f"compile={self.args.compile_mode} applied={compile_metadata.get('applied_targets', [])} "
             f"clone_wrap={compile_metadata.get('cudagraph_output_clone_wrapper', False)}",
@@ -6203,7 +6279,7 @@ class Demo21Runtime:
         if self.args.debug:
             first_run = model_runs[0]["total_ms"] if model_runs else 0.0
             print(
-                "[demo2.1-edgetam-prewarm] "
+                f"[{demo_version_for_args(self.args)}-edgetam-prewarm] "
                 f"loader={loader_key} runs={runs} total_ms={total_ms:.2f} "
                 f"first_model_total_ms={first_run:.2f} "
                 f"batch_vision_ms={(batch_vision_profile or {}).get('total_ms', 0.0):.2f}",
@@ -6406,6 +6482,15 @@ class Demo21Runtime:
         controller_mask = masks_by_id.get(CONTROLLER_ID)
         if controller_mask is None:
             controller_mask = np.zeros_like(reference_mask, dtype=bool)
+        live_prune = prune_edgetam_live_session(
+            session,
+            current_frame_idx=frame_idx,
+            keep_frames=int(getattr(self.args, "edgetam_live_session_keep_frames", DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES)),
+        )
+        if any(int(value) > 0 for value in live_prune.values()):
+            for key, value in live_prune.items():
+                summary_key = f"edgetam_live_session_pruned_{key}"
+                self._summary[summary_key] = int(self._summary.get(summary_key, 0)) + int(value)
         total_ms = _elapsed_ms(frame_started_s, time.perf_counter())
         if add_prompt:
             cam_key = f"cam{int(frame.camera_idx)}"
@@ -6455,6 +6540,10 @@ class Demo21Runtime:
                     "mask_threshold_ms": float(mask_threshold_ms),
                     "mask_to_cpu_ms": float(mask_to_cpu_ms),
                     "mask_postprocess": mask_postprocess_mode,
+                    "live_session_keep_frames": int(
+                        getattr(self.args, "edgetam_live_session_keep_frames", DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES)
+                    ),
+                    "live_session_pruned": live_prune,
                     "total_ms": float(total_ms),
                     "stream_mode": str(self.args.edgetam_stream_mode),
                     "batch_vision_encoder": prepared_frame is not None,
@@ -8161,13 +8250,15 @@ class Demo21Runtime:
         o3d, gui, rendering = _load_open3d_modules()
         o3c = o3d.core
         device = o3c.Device("CPU:0")
+        demo_display_name = demo_display_name_for_args(self.args)
+        render_label = f"{demo_display_name} fused PCD"
         app = gui.Application.instance
         app.initialize()
-        window = app.create_window("Demo 2.1 Three-View Fused EdgeTAM PCD", 1280, 800)
+        window = app.create_window(f"{demo_display_name} Three-View Fused EdgeTAM PCD", 1280, 800)
         scene_widget = gui.SceneWidget()
         scene_widget.scene = rendering.Open3DScene(window.renderer)
         scene_widget.scene.set_background([0.02, 0.02, 0.02, 1.0])
-        hud_label = gui.Label("Demo 2.1 warming up: capture + shared FFS + per-camera EdgeTAM")
+        hud_label = gui.Label(f"{demo_display_name} warming up: capture + shared FFS + per-camera EdgeTAM")
         hud_label.text_color = gui.Color(1.0, 1.0, 1.0)
         hud_panel = gui.Vert(0, gui.Margins(8, 8, 8, 8))
         hud_panel.add_child(hud_label)
@@ -8286,7 +8377,7 @@ class Demo21Runtime:
                 now = time.perf_counter()
                 self.render_stats.record_render(render_time_s=now, latency_ms=_elapsed_ms(packet.created_perf_s, now))
                 hud_label.text = (
-                    f"Demo 2.1 fused PCD | group={packet.group_id} | "
+                    f"{render_label} | group={packet.group_id} | "
                     f"object={packet.object_point_count} pts | controller={packet.controller_point_count} pts | "
                     f"skew={packet.capture_temporal_skew_ms:.1f} ms | "
                     f"fusion={packet.fusion_ms:.1f} ms | filter={packet.filter_ms:.1f} ms | "
@@ -8490,6 +8581,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Experiment: batch the three camera RGB frames through HF EdgeTAM get_image_features(), "
             "split the features into per-camera session caches, then keep video tracking state per camera."
+        ),
+    )
+    parser.add_argument(
+        "--edgetam-live-session-keep-frames",
+        type=int,
+        default=DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES,
+        help=(
+            "Maximum recent HF EdgeTAM live-session frames/non-conditioning outputs kept per camera. "
+            "Bounds GPU memory for long live runs while preserving recent memory attention state."
         ),
     )
     parser.add_argument("--dtype", choices=("bfloat16", "float16", "float32"), default="bfloat16")
