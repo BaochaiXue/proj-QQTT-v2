@@ -502,6 +502,10 @@ default. The metadata sidecar records the serial order that the transforms in
 distortion metadata, reprojection corner counts, and the calibration world-frame
 convention.
 
+Calibration opens only the RealSense color streams. ChArUco pose estimation uses
+RGB images plus color intrinsics/distortion, so depth is intentionally disabled
+during calibration.
+
 `calibrate.pkl` remains the compatibility artifact: a calibration-time ordered
 list of `camera_to_world_c2w` 4x4 transforms. Additional schema/convention
 details live in `calibrate_metadata.json` so existing QQTT and PhysTwin readers

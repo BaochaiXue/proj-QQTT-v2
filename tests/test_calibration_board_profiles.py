@@ -45,6 +45,10 @@ class CalibrationBoardProfilesTest(unittest.TestCase):
         self.assertEqual(default_args.calibration_board, DEFAULT_CALIBRATION_BOARD)
         self.assertEqual(default_args.calibration_world_frame, "opencv-board-native")
         self.assertEqual(default_args.calibration_samples, 1)
+        self.assertEqual(
+            cameras_calibrate.build_camera_system_kwargs(default_args)["capture_mode"],
+            "color",
+        )
 
         override_args = parser.parse_args(
             [

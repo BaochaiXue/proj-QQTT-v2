@@ -110,6 +110,14 @@ wandb/
 *.obj
 *.glb
 *.mp4
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.bmp
+*.tif
+*.tiff
+*.gif
 
 # Large Demo 2.2 full-backend run payloads; keep compact final summaries instead.
 docs/generated/demo22_full_hf_batched_multisession_stuffed_animal_*_profile.json

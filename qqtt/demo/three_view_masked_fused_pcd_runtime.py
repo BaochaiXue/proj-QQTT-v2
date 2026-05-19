@@ -806,6 +806,7 @@ class SemanticLayerSpec:
 @dataclass(frozen=True)
 class CameraLayerCloud:
     camera_idx: int
+    obj_id: int
     label: str
     points_m: np.ndarray
     colors_rgb: np.ndarray
@@ -813,6 +814,7 @@ class CameraLayerCloud:
 
 @dataclass(frozen=True)
 class FusedLayerCloud:
+    obj_id: int
     label: str
     postprocess_mode: str
     points_m: np.ndarray
@@ -2007,18 +2009,20 @@ def summarize_gpu_samples_by_device(samples: Sequence[dict[str, Any]], *, start_
 def fuse_semantic_camera_clouds(
     camera_clouds: Sequence[CameraLayerCloud],
     layers: Sequence[SemanticLayerSpec],
-) -> dict[str, FusedLayerCloud]:
-    """Fuse cam0/cam1/cam2 clouds per semantic label without mixing labels."""
+) -> dict[int, FusedLayerCloud]:
+    """Fuse cam0/cam1/cam2 clouds per semantic role without mixing roles."""
 
-    clouds_by_label: dict[str, list[CameraLayerCloud]] = {layer.label: [] for layer in layers}
-    postprocess_by_label = {layer.label: layer.default_postprocess for layer in layers}
+    clouds_by_obj_id: dict[int, list[CameraLayerCloud]] = {int(layer.obj_id): [] for layer in layers}
+    layer_by_obj_id = {int(layer.obj_id): layer for layer in layers}
     for cloud in camera_clouds:
-        if cloud.label not in clouds_by_label:
+        obj_id = int(cloud.obj_id)
+        if obj_id not in clouds_by_obj_id:
             continue
-        clouds_by_label[cloud.label].append(cloud)
+        clouds_by_obj_id[obj_id].append(cloud)
 
-    fused: dict[str, FusedLayerCloud] = {}
-    for label, clouds in clouds_by_label.items():
+    fused: dict[int, FusedLayerCloud] = {}
+    for obj_id, clouds in clouds_by_obj_id.items():
+        layer = layer_by_obj_id[obj_id]
         point_sets: list[np.ndarray] = []
         color_sets: list[np.ndarray] = []
         per_camera: list[dict[str, int]] = []
@@ -2027,7 +2031,7 @@ def fuse_semantic_camera_clouds(
             colors = _as_colors(cloud.colors_rgb)
             if len(colors) != len(points):
                 raise ValueError(
-                    f"Point/color count mismatch for {label} cam{cloud.camera_idx}: "
+                    f"Point/color count mismatch for {layer.label} cam{cloud.camera_idx}: "
                     f"{len(points)} points vs {len(colors)} colors"
                 )
             point_sets.append(points)
@@ -2046,9 +2050,10 @@ def fuse_semantic_camera_clouds(
             fused_points = np.empty((0, 3), dtype=np.float32)
             fused_colors = np.empty((0, 3), dtype=np.uint8)
 
-        fused[label] = FusedLayerCloud(
-            label=label,
-            postprocess_mode=postprocess_by_label[label],
+        fused[obj_id] = FusedLayerCloud(
+            obj_id=obj_id,
+            label=layer.label,
+            postprocess_mode=layer.default_postprocess,
             points_m=fused_points,
             colors_rgb=fused_colors,
             per_camera=tuple(per_camera),
@@ -2090,11 +2095,11 @@ def apply_semantic_postprocess(
             "output_point_count": int(len(points)),
         }
     if layer.postprocess_mode == POSTPROCESS_PT_FILTER:
-        from data_process.visualization.experiments.ffs_confidence_filter_pcd_compare import (
-            _apply_phystwin_like_radius_postprocess,
+        from qqtt.demo.pcd_postprocess import (
+            apply_phystwin_like_radius_postprocess,
         )
 
-        filtered_points, filtered_colors, stats = _apply_phystwin_like_radius_postprocess(
+        filtered_points, filtered_colors, stats = apply_phystwin_like_radius_postprocess(
             points=points,
             colors=colors,
             enabled=True,
@@ -2106,11 +2111,11 @@ def apply_semantic_postprocess(
         stats["capped_point_count"] = capped_count
         return filtered_points, filtered_colors, stats
     if layer.postprocess_mode == POSTPROCESS_ENHANCED_PT:
-        from data_process.visualization.experiments.ffs_confidence_filter_pcd_compare import (
-            _apply_enhanced_phystwin_like_postprocess,
+        from qqtt.demo.pcd_postprocess import (
+            apply_enhanced_phystwin_like_postprocess,
         )
 
-        filtered_points, filtered_colors, stats = _apply_enhanced_phystwin_like_postprocess(
+        filtered_points, filtered_colors, stats = apply_enhanced_phystwin_like_postprocess(
             points=points,
             colors=colors,
             enabled=True,
@@ -7655,6 +7660,7 @@ class Demo21Runtime:
             object_clouds.append(
                 CameraLayerCloud(
                     camera_idx=int(camera_idx),
+                    obj_id=OBJECT_ID,
                     label=str(self.args.object_prompt),
                     points_m=transform_points(object_pts_cam, self._c2w_by_camera[int(camera_idx)]),
                     colors_rgb=object_cols,
@@ -7684,6 +7690,7 @@ class Demo21Runtime:
             controller_clouds.append(
                 CameraLayerCloud(
                     camera_idx=int(camera_idx),
+                    obj_id=CONTROLLER_ID,
                     label=str(self.args.controller_prompt),
                     points_m=transform_points(controller_pts_cam, self._c2w_by_camera[int(camera_idx)]),
                     colors_rgb=controller_cols,
@@ -7711,8 +7718,8 @@ class Demo21Runtime:
         )
         assert build_contract(self.args)["fusion"]["object_controller_union_before_filter"] is False
         fused = fuse_semantic_camera_clouds([*object_clouds, *controller_clouds], layers)
-        raw_object = fused.get(str(self.args.object_prompt))
-        raw_controller = fused.get(str(self.args.controller_prompt))
+        raw_object = fused.get(OBJECT_ID)
+        raw_controller = fused.get(CONTROLLER_ID)
         object_raw_count = 0 if raw_object is None else raw_object.point_count
         controller_raw_count = 0 if raw_controller is None else raw_controller.point_count
         raw_fusion_ms = _elapsed_ms(started_s, time.perf_counter())
@@ -7953,6 +7960,7 @@ class Demo21Runtime:
             object_clouds.append(
                 CameraLayerCloud(
                     camera_idx=int(camera_idx),
+                    obj_id=OBJECT_ID,
                     label=str(self.args.object_prompt),
                     points_m=transform_points(object_pts_cam, self._c2w_by_camera[int(camera_idx)]),
                     colors_rgb=object_cols,
@@ -7982,6 +7990,7 @@ class Demo21Runtime:
             controller_clouds.append(
                 CameraLayerCloud(
                     camera_idx=int(camera_idx),
+                    obj_id=CONTROLLER_ID,
                     label=str(self.args.controller_prompt),
                     points_m=transform_points(controller_pts_cam, self._c2w_by_camera[int(camera_idx)]),
                     colors_rgb=controller_cols,
@@ -8009,8 +8018,8 @@ class Demo21Runtime:
         )
         assert build_contract(self.args)["fusion"]["object_controller_union_before_filter"] is False
         fused = fuse_semantic_camera_clouds([*object_clouds, *controller_clouds], layers)
-        raw_object = fused.get(str(self.args.object_prompt))
-        raw_controller = fused.get(str(self.args.controller_prompt))
+        raw_object = fused.get(OBJECT_ID)
+        raw_controller = fused.get(CONTROLLER_ID)
         object_raw_count = 0 if raw_object is None else raw_object.point_count
         controller_raw_count = 0 if raw_controller is None else raw_controller.point_count
         filter_start_s = time.perf_counter()

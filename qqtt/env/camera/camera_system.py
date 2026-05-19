@@ -36,6 +36,14 @@ DEFAULT_EXPOSURE_OVERRIDES = DEFAULT_COLOR_EXPOSURE_OVERRIDES
 DEFAULT_GAIN_OVERRIDES = DEFAULT_COLOR_GAIN_OVERRIDES
 
 CAPTURE_MODE_CONFIGS = {
+    "color": {
+        "enable_color": True,
+        "enable_depth": False,
+        "enable_ir_left": False,
+        "enable_ir_right": False,
+        "process_depth": False,
+        "streams_present": ["color"],
+    },
     "rgbd": {
         "enable_color": True,
         "enable_depth": True,

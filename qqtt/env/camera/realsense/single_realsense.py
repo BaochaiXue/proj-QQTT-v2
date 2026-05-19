@@ -701,7 +701,14 @@ class SingleRealsense(mp.Process):
                         sensor = self.pipeline_profile.get_device().first_color_sensor()
                         option = rs.option(command["option_enum"])
                         value = float(command["option_value"])
-                        sensor.set_option(option, value)
+                        try:
+                            sensor.set_option(option, value)
+                        except RuntimeError as e:
+                            print(
+                                f"[SingleRealsense {self.serial_number}] Warning: "
+                                f"failed to set color option {option}={value}: {e}.",
+                                flush=True,
+                            )
                         # print('auto', sensor.get_option(rs.option.enable_auto_exposure))
                         # print('exposure', sensor.get_option(rs.option.exposure))
                         # print('gain', sensor.get_option(rs.option.gain))
@@ -709,7 +716,14 @@ class SingleRealsense(mp.Process):
                         sensor = self.pipeline_profile.get_device().first_depth_sensor()
                         option = rs.option(command["option_enum"])
                         value = float(command["option_value"])
-                        sensor.set_option(option, value)
+                        try:
+                            sensor.set_option(option, value)
+                        except RuntimeError as e:
+                            print(
+                                f"[SingleRealsense {self.serial_number}] Warning: "
+                                f"failed to set depth option {option}={value}: {e}.",
+                                flush=True,
+                            )
                     elif cmd == Command.RESTART_PUT.value:
                         put_idx = None
                         put_start_time = command["put_start_time"]

@@ -18,6 +18,7 @@ FIXTURE_CALIBRATE = Path(__file__).resolve().parent / "fixtures" / "record_data_
 
 def _raw_packet(seq: int) -> demo.RawFusedPcdPacket:
     raw_object = demo.FusedLayerCloud(
+        obj_id=demo.OBJECT_ID,
         label="stuffed animal",
         postprocess_mode=demo.POSTPROCESS_NONE,
         points_m=np.array([[0.0, 0.0, 0.4], [0.01, 0.0, 0.4], [0.20, 0.0, 0.4]], dtype=np.float32),
@@ -25,6 +26,7 @@ def _raw_packet(seq: int) -> demo.RawFusedPcdPacket:
         per_camera=({"camera_idx": 0, "point_count": 3},),
     )
     raw_controller = demo.FusedLayerCloud(
+        obj_id=demo.CONTROLLER_ID,
         label="towel",
         postprocess_mode=demo.POSTPROCESS_NONE,
         points_m=np.array([[0.0, 0.1, 0.4]], dtype=np.float32),

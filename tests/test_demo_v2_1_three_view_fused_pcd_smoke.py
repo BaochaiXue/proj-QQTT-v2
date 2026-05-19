@@ -8,7 +8,7 @@ import unittest
 
 import numpy as np
 
-from demo_v2_1 import realtime_three_view_masked_fused_pcd as demo
+from qqtt.demo import three_view_masked_fused_pcd_runtime as demo
 
 
 def _dummy_frame(camera_idx: int, *, seq: int, timestamp_ms: float) -> demo.CameraFramePacket:
@@ -254,18 +254,21 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         clouds = [
             demo.CameraLayerCloud(
                 camera_idx=0,
+                obj_id=demo.OBJECT_ID,
                 label="stuffed animal",
                 points_m=np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
                 colors_rgb=np.array([[255, 0, 0]], dtype=np.uint8),
             ),
             demo.CameraLayerCloud(
                 camera_idx=1,
+                obj_id=demo.OBJECT_ID,
                 label="stuffed animal",
                 points_m=np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32),
                 colors_rgb=np.array([[0, 255, 0], [0, 0, 255]], dtype=np.uint8),
             ),
             demo.CameraLayerCloud(
                 camera_idx=2,
+                obj_id=demo.CONTROLLER_ID,
                 label="hand",
                 points_m=np.array([[0.0, 1.0, 0.0]], dtype=np.float32),
                 colors_rgb=np.array([[255, 255, 0]], dtype=np.uint8),
@@ -273,13 +276,44 @@ class DemoV21ThreeViewFusedPcdSmoke(unittest.TestCase):
         ]
         fused = demo.fuse_semantic_camera_clouds(clouds, layers)
 
-        self.assertEqual(fused["stuffed animal"].point_count, 3)
-        self.assertEqual(fused["hand"].point_count, 1)
-        self.assertEqual(fused["stuffed animal"].postprocess_mode, demo.POSTPROCESS_ENHANCED_PT)
-        self.assertEqual(fused["hand"].postprocess_mode, demo.POSTPROCESS_PT_FILTER)
+        self.assertEqual(fused[demo.OBJECT_ID].point_count, 3)
+        self.assertEqual(fused[demo.CONTROLLER_ID].point_count, 1)
+        self.assertEqual(fused[demo.OBJECT_ID].postprocess_mode, demo.POSTPROCESS_ENHANCED_PT)
+        self.assertEqual(fused[demo.CONTROLLER_ID].postprocess_mode, demo.POSTPROCESS_PT_FILTER)
+
+    def test_fusion_keeps_roles_separate_when_prompt_labels_match(self) -> None:
+        layers = demo.semantic_layers_for_track_mode(
+            demo.TRACK_MODE_CONTROLLER_OBJECT,
+            object_label="towel",
+            controller_label="towel",
+        )
+        clouds = [
+            demo.CameraLayerCloud(
+                camera_idx=0,
+                obj_id=demo.OBJECT_ID,
+                label="towel",
+                points_m=np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+                colors_rgb=np.array([[255, 0, 0]], dtype=np.uint8),
+            ),
+            demo.CameraLayerCloud(
+                camera_idx=0,
+                obj_id=demo.CONTROLLER_ID,
+                label="towel",
+                points_m=np.array([[0.0, 1.0, 0.0], [0.0, 2.0, 0.0]], dtype=np.float32),
+                colors_rgb=np.array([[0, 255, 0], [0, 0, 255]], dtype=np.uint8),
+            ),
+        ]
+
+        fused = demo.fuse_semantic_camera_clouds(clouds, layers)
+
+        self.assertEqual(fused[demo.OBJECT_ID].point_count, 1)
+        self.assertEqual(fused[demo.CONTROLLER_ID].point_count, 2)
+        self.assertEqual(fused[demo.OBJECT_ID].obj_id, demo.OBJECT_ID)
+        self.assertEqual(fused[demo.CONTROLLER_ID].obj_id, demo.CONTROLLER_ID)
 
     def test_semantic_postprocess_caps_before_cleanup(self) -> None:
         layer = demo.FusedLayerCloud(
+            obj_id=demo.OBJECT_ID,
             label="stuffed animal",
             postprocess_mode=demo.POSTPROCESS_NONE,
             points_m=np.array(

@@ -60,6 +60,8 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
   - marker size: 22 mm
   - dictionary: `DICT_5X5_250`
 - `python cameras_calibrate.py` detects the ChArUco board from all 3 cameras
+- calibration opens color streams only; depth streams are not required for
+  ChArUco pose estimation
 - selected RGB exposure values match the current rig defaults:
   `239222300412=156`, `239222300781=156`, `239222303506=180`; gain remains `60`
 - calibration completes without reprojection failure

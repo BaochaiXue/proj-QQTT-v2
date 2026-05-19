@@ -1876,11 +1876,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
             filtered_points = np.asarray(density_points, dtype=np.float32).reshape(-1, 3)
             filtered_colors = np.asarray(density_colors_or_none, dtype=np.uint8).reshape(-1, 3)
         elif mode == PCD_FILTER_PT_FILTER:
-            from data_process.visualization.experiments.ffs_confidence_filter_pcd_compare import (
-                _apply_phystwin_like_radius_postprocess,
+            from qqtt.demo.pcd_postprocess import (
+                apply_phystwin_like_radius_postprocess,
             )
 
-            filtered_points, filtered_colors, _unused_stats = _apply_phystwin_like_radius_postprocess(
+            filtered_points, filtered_colors, _unused_stats = apply_phystwin_like_radius_postprocess(
                 points=capped_points,
                 colors=capped_colors,
                 enabled=True,
@@ -1888,11 +1888,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 nb_points=int(self.args.filter_nb_points),
             )
         elif mode == PCD_FILTER_ENHANCED_PT:
-            from data_process.visualization.experiments.ffs_confidence_filter_pcd_compare import (
-                _apply_enhanced_phystwin_like_postprocess,
+            from qqtt.demo.pcd_postprocess import (
+                apply_enhanced_phystwin_like_postprocess,
             )
 
-            filtered_points, filtered_colors, _unused_stats = _apply_enhanced_phystwin_like_postprocess(
+            filtered_points, filtered_colors, _unused_stats = apply_enhanced_phystwin_like_postprocess(
                 points=capped_points,
                 colors=capped_colors,
                 enabled=True,

@@ -3,7 +3,10 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 import io
+from types import SimpleNamespace
 import unittest
+
+import numpy as np
 
 from qqtt.demo import demo31_runtime
 from qqtt.demo.demo31_dual_gpu_ipc import TrackingResultLitePacket
@@ -29,6 +32,44 @@ class _FakeMaskGroup:
 @dataclass(frozen=True)
 class _FakeGroup:
     group_id: int
+
+
+@dataclass(frozen=True)
+class _FakeRenderPacket:
+    group_id: int
+    controller_points_m: np.ndarray
+    controller_colors_rgb: np.ndarray
+
+
+class _FakeProcessClient:
+    def __init__(self, result: TrackingResultLitePacket | None) -> None:
+        self.result = result
+
+    def get_result(self) -> TrackingResultLitePacket | None:
+        return self.result
+
+    def snapshot(self) -> dict[str, int]:
+        return {}
+
+    def stop(self, *, timeout_s: float) -> None:
+        return None
+
+
+class _FakeSharedRuntimeModule:
+    class Demo21Runtime:
+        def __init__(self, args: object) -> None:
+            self.args = args
+            self.profile_updates: list[tuple[int, dict[str, object]]] = []
+            self.published_packet: object | None = None
+
+        def _profile_update(self, group_id: int, **kwargs: object) -> None:
+            self.profile_updates.append((int(group_id), kwargs))
+
+        def _publish_render_packet(self, packet: object) -> None:
+            self.published_packet = packet
+
+        def stop(self) -> None:
+            return None
 
 
 class Demo31DualGpuContractTest(unittest.TestCase):
@@ -262,6 +303,101 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 stale_timeout_ms=1500.0,
             ),
         )
+
+    def test_lift_input_cache_returns_group_aligned_copies(self) -> None:
+        cache = demo31_runtime.Demo31LiftInputCache(max_groups=2)
+        depth1 = np.full((1, 1), 1.0, dtype=np.float32)
+        depth2 = np.full((1, 1), 2.0, dtype=np.float32)
+        cache.publish(
+            group_id=1,
+            timestamp_s=1.0,
+            depth_by_camera={0: depth1},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+        )
+        cache.publish(
+            group_id=2,
+            timestamp_s=2.0,
+            depth_by_camera={0: depth2},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+        )
+        depth1[0, 0] = 9.0
+
+        snapshot1 = cache.get(1)
+        self.assertIsNotNone(snapshot1)
+        self.assertEqual(float(snapshot1.depth_by_camera[0][0, 0]), 1.0)  # type: ignore[union-attr]
+
+        cache.publish(
+            group_id=3,
+            timestamp_s=3.0,
+            depth_by_camera={0: np.full((1, 1), 3.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+        )
+        self.assertIsNone(cache.get(1))
+        self.assertIsNotNone(cache.get(2))
+        self.assertEqual(cache.snapshot()["evicted"], 1)
+
+    def test_renderer_lifts_overlay_with_matching_group_depth_not_latest_depth(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            publish_range=(1, 1),
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime.demo31_lift_input_cache.publish(
+            group_id=1,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 1), 1.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+        )
+        runtime.demo31_lift_input_cache.publish(
+            group_id=2,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 1), 2.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+        )
+        packet = _FakeRenderPacket(
+            group_id=2,
+            controller_points_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+        )
+
+        runtime._publish_render_packet(packet)
+
+        published = runtime.published_packet
+        self.assertIsNotNone(published)
+        np.testing.assert_allclose(published.controller_points_m[-1], np.array([0.0, 0.0, 1.0], dtype=np.float32))  # type: ignore[union-attr]
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertEqual(overlay_profile["overlay_group_id"], 1)
+        self.assertEqual(overlay_profile["render_group_id"], 2)
+        self.assertTrue(overlay_profile["overlay_lift_cache_hit"])
 
 
 if __name__ == "__main__":

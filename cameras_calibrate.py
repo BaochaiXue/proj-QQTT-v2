@@ -123,6 +123,18 @@ def resolve_board_config_from_args(args: argparse.Namespace):
     )
 
 
+def build_camera_system_kwargs(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "WH": [args.width, args.height],
+        "fps": args.fps,
+        "num_cam": args.num_cam,
+        "serial_numbers": args.serials if args.serials else None,
+        "capture_mode": "color",
+        "exposure": args.exposure,
+        "gain": args.gain,
+    }
+
+
 def main() -> int:
     args = build_parser().parse_args()
     from qqtt.env import CameraSystem
@@ -133,12 +145,7 @@ def main() -> int:
         enable_keyboard_listener = False
 
     camera_system = CameraSystem(
-        WH=[args.width, args.height],
-        fps=args.fps,
-        num_cam=args.num_cam,
-        serial_numbers=args.serials if args.serials else None,
-        exposure=args.exposure,
-        gain=args.gain,
+        **build_camera_system_kwargs(args),
         enable_keyboard_listener=enable_keyboard_listener,
     )
     camera_system.calibrate(

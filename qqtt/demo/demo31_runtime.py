@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -47,10 +47,92 @@ DEFAULT_COTRACKER_RESULT_STALE_TIMEOUT_MS = 1500.0
 DEFAULT_MASK_STALE_TIMEOUT_MS = 250.0
 DEFAULT_MASK_GPU = "0"
 DEFAULT_COTRACKER_GPU = "1"
+DEFAULT_LIFT_INPUT_CACHE_GROUPS = 32
 
 ConnectedSerialsProvider = Callable[[], Sequence[str]]
 CudaDeviceCountProvider = Callable[[], int]
 ProcessClientFactory = Callable[[CoTrackerProcessConfig], Any]
+
+
+@dataclass(frozen=True)
+class Demo31LiftInputSnapshot:
+    group_id: int
+    timestamp_s: float
+    depth_by_camera: dict[int, np.ndarray]
+    intrinsics_by_camera: dict[int, np.ndarray]
+    c2w_by_camera: dict[int, np.ndarray]
+    mask_by_camera: dict[int, np.ndarray]
+
+
+class Demo31LiftInputCache:
+    """Bounded main-process cache for group-aligned 2D-to-world lift inputs."""
+
+    def __init__(self, *, max_groups: int = DEFAULT_LIFT_INPUT_CACHE_GROUPS) -> None:
+        self.max_groups = int(max_groups)
+        self._snapshots: dict[int, Demo31LiftInputSnapshot] = {}
+        self.published = 0
+        self.evicted = 0
+        self.hit_count = 0
+        self.miss_count = 0
+
+    def publish(
+        self,
+        *,
+        group_id: int,
+        timestamp_s: float,
+        depth_by_camera: dict[int, np.ndarray],
+        intrinsics_by_camera: dict[int, np.ndarray],
+        c2w_by_camera: dict[int, np.ndarray],
+        mask_by_camera: dict[int, np.ndarray],
+    ) -> None:
+        self._snapshots[int(group_id)] = Demo31LiftInputSnapshot(
+            group_id=int(group_id),
+            timestamp_s=float(timestamp_s),
+            depth_by_camera={
+                int(camera_idx): np.ascontiguousarray(np.asarray(depth, dtype=np.float32)).copy()
+                for camera_idx, depth in depth_by_camera.items()
+            },
+            intrinsics_by_camera={
+                int(camera_idx): np.ascontiguousarray(np.asarray(intrinsics, dtype=np.float32).reshape(3, 3)).copy()
+                for camera_idx, intrinsics in intrinsics_by_camera.items()
+            },
+            c2w_by_camera={
+                int(camera_idx): np.ascontiguousarray(np.asarray(c2w, dtype=np.float32).reshape(4, 4)).copy()
+                for camera_idx, c2w in c2w_by_camera.items()
+            },
+            mask_by_camera={
+                int(camera_idx): np.ascontiguousarray(np.asarray(mask, dtype=bool)).copy()
+                for camera_idx, mask in mask_by_camera.items()
+            },
+        )
+        self.published += 1
+        self._prune()
+
+    def get(self, group_id: int) -> Demo31LiftInputSnapshot | None:
+        snapshot = self._snapshots.get(int(group_id))
+        if snapshot is None:
+            self.miss_count += 1
+            return None
+        self.hit_count += 1
+        return snapshot
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "max_groups": int(self.max_groups),
+            "cached_groups": int(len(self._snapshots)),
+            "oldest_group_id": int(min(self._snapshots)) if self._snapshots else None,
+            "newest_group_id": int(max(self._snapshots)) if self._snapshots else None,
+            "published": int(self.published),
+            "evicted": int(self.evicted),
+            "hit_count": int(self.hit_count),
+            "miss_count": int(self.miss_count),
+        }
+
+    def _prune(self) -> None:
+        while len(self._snapshots) > max(1, int(self.max_groups)):
+            oldest = min(self._snapshots)
+            self._snapshots.pop(oldest, None)
+            self.evicted += 1
 
 
 def _normalize_mask_source(value: str) -> str:
@@ -548,10 +630,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 policy=str(self.demo31_contract["fusion_mask_policy"]),
                 stale_timeout_ms=float(self.demo31_contract["mask_stale_timeout_ms"]),
             )
-            self.demo31_latest_depth_by_camera: dict[int, np.ndarray] = {}
-            self.demo31_latest_intrinsics_by_camera: dict[int, np.ndarray] = {}
-            self.demo31_latest_c2w_by_camera: dict[int, np.ndarray] = {}
-            self.demo31_latest_mask_by_camera: dict[int, np.ndarray] = {}
+            self.demo31_lift_input_cache = Demo31LiftInputCache()
             self.demo31_mask_cache = LatestMaskCache()
             self.demo31_last_tracking_input_s: float | None = None
             self.demo31_tracking_input_skip_count = 0
@@ -573,6 +652,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             mask_by_camera: dict[int, np.ndarray] = {}
             object_mask_by_camera: dict[int, np.ndarray] = {}
             controller_mask_by_camera: dict[int, np.ndarray] = {}
+            depth_by_camera: dict[int, np.ndarray] = {}
+            intrinsics_by_camera: dict[int, np.ndarray] = {}
+            c2w_by_camera: dict[int, np.ndarray] = {}
             for camera_idx in self.args.camera_ids:
                 idx = int(camera_idx)
                 if idx not in masks or idx not in depth_group.depths:
@@ -583,15 +665,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 mask_by_camera[idx] = union_mask
                 object_mask_by_camera[idx] = object_mask
                 controller_mask_by_camera[idx] = controller_mask
-                self.demo31_latest_mask_by_camera[idx] = mask_by_camera[idx]
-                self.demo31_latest_depth_by_camera[idx] = np.asarray(depth_group.depths[idx].depth_m, dtype=np.float32)
+                depth_by_camera[idx] = np.asarray(depth_group.depths[idx].depth_m, dtype=np.float32)
                 if getattr(self, "_stream_metadata", None) and idx < len(self._stream_metadata):
-                    self.demo31_latest_intrinsics_by_camera[idx] = np.asarray(
+                    intrinsics_by_camera[idx] = np.asarray(
                         self._stream_metadata[idx]["K_color"],
                         dtype=np.float32,
                     ).reshape(3, 3)
                 if idx in getattr(self, "_c2w_by_camera", {}):
-                    self.demo31_latest_c2w_by_camera[idx] = np.asarray(self._c2w_by_camera[idx], dtype=np.float32).reshape(4, 4)
+                    c2w_by_camera[idx] = np.asarray(self._c2w_by_camera[idx], dtype=np.float32).reshape(4, 4)
             if mask_by_camera:
                 self.demo31_mask_cache.publish(
                     group_id=int(depth_group.group_id),
@@ -605,6 +686,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     target_fps=float(self.demo31_contract["cotracker_input_fps"]),
                 ):
                     frame_idx = int(max(depth_group.per_camera_frame_seq.values()) if depth_group.per_camera_frame_seq else depth_group.group_id)
+                    self.demo31_lift_input_cache.publish(
+                        group_id=int(depth_group.group_id),
+                        timestamp_s=now_s,
+                        depth_by_camera=depth_by_camera,
+                        intrinsics_by_camera=intrinsics_by_camera,
+                        c2w_by_camera=c2w_by_camera,
+                        mask_by_camera=mask_by_camera,
+                    )
                     replaced_count = self.demo31_process_client.publish_input(
                         TrackingInputLitePacket(
                             group_id=int(depth_group.group_id),
@@ -626,35 +715,41 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             overlay_start_s = time.perf_counter()
             overlay = self._take_fresh_tracking_result(now_s=overlay_start_s)
             overlay_points = np.empty((0, 3), dtype=np.float32)
+            overlay_lift_cache_hit = False
+            overlay_group_id: int | None = None
             if overlay is not None:
-                lifted_points = []
-                for camera_idx, tracks_yx in overlay.camera_tracks_yx.items():
-                    idx = int(camera_idx)
-                    if (
-                        idx not in self.demo31_latest_depth_by_camera
-                        or idx not in self.demo31_latest_intrinsics_by_camera
-                        or idx not in self.demo31_latest_c2w_by_camera
-                    ):
-                        continue
-                    lifted = lift_tracks_yx_to_world(
-                        tracks_yx=tracks_yx,
-                        visibility=overlay.camera_visibility[idx],
-                        depth=self.demo31_latest_depth_by_camera[idx],
-                        intrinsics=self.demo31_latest_intrinsics_by_camera[idx],
-                        c2w=self.demo31_latest_c2w_by_camera[idx],
-                        depth_scale_m_per_unit=1.0,
-                        mask=self.demo31_latest_mask_by_camera.get(idx),
-                    )
-                    if lifted.points_world.size:
-                        lifted_points.append(lifted.points_world)
-                if lifted_points:
-                    overlay_points = np.concatenate(lifted_points, axis=0).astype(np.float32)
-                    overlay_colors = np.repeat(demo3_runtime.OVERLAY_COLOR_RGB[None, :], len(overlay_points), axis=0)
-                    packet = replace(
-                        packet,
-                        controller_points_m=np.concatenate([packet.controller_points_m, overlay_points], axis=0),
-                        controller_colors_rgb=np.concatenate([packet.controller_colors_rgb, overlay_colors], axis=0),
-                    )
+                overlay_group_id = int(overlay.group_id)
+                lift_inputs = self.demo31_lift_input_cache.get(overlay_group_id)
+                if lift_inputs is not None:
+                    overlay_lift_cache_hit = True
+                    lifted_points = []
+                    for camera_idx, tracks_yx in overlay.camera_tracks_yx.items():
+                        idx = int(camera_idx)
+                        if (
+                            idx not in lift_inputs.depth_by_camera
+                            or idx not in lift_inputs.intrinsics_by_camera
+                            or idx not in lift_inputs.c2w_by_camera
+                        ):
+                            continue
+                        lifted = lift_tracks_yx_to_world(
+                            tracks_yx=tracks_yx,
+                            visibility=overlay.camera_visibility[idx],
+                            depth=lift_inputs.depth_by_camera[idx],
+                            intrinsics=lift_inputs.intrinsics_by_camera[idx],
+                            c2w=lift_inputs.c2w_by_camera[idx],
+                            depth_scale_m_per_unit=1.0,
+                            mask=lift_inputs.mask_by_camera.get(idx),
+                        )
+                        if lifted.points_world.size:
+                            lifted_points.append(lifted.points_world)
+                    if lifted_points:
+                        overlay_points = np.concatenate(lifted_points, axis=0).astype(np.float32)
+                        overlay_colors = np.repeat(demo3_runtime.OVERLAY_COLOR_RGB[None, :], len(overlay_points), axis=0)
+                        packet = replace(
+                            packet,
+                            controller_points_m=np.concatenate([packet.controller_points_m, overlay_points], axis=0),
+                            controller_colors_rgb=np.concatenate([packet.controller_colors_rgb, overlay_colors], axis=0),
+                        )
             overlay_ms = float((time.perf_counter() - overlay_start_s) * 1000.0)
             self._profile_update(
                 packet.group_id,
@@ -662,6 +757,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_available": bool(overlay is not None),
                     "overlay_points": int(len(overlay_points)),
                     "overlay_ms": overlay_ms,
+                    "overlay_group_id": overlay_group_id,
+                    "render_group_id": int(packet.group_id),
+                    "overlay_lift_cache_hit": bool(overlay_lift_cache_hit),
                     "render_waited_for_cotracker": False,
                     "cross_gpu_cuda_tensor_transfer": False,
                 },
@@ -723,6 +821,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "cotracker_e2e_ms_median": float(e2e["median"]),
                 "cotracker_e2e_ms_p95": float(e2e["p95"]),
                 "mask_cache": self.demo31_mask_cache.snapshot(),
+                "lift_input_cache": self.demo31_lift_input_cache.snapshot(),
                 "tracking_stats": dict(self.demo31_tracking_stats),
             }
 
