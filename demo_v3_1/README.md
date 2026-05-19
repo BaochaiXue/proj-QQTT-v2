@@ -17,8 +17,9 @@ RealSense CoTracker overlay lineage.
   online, `phystwin_dense` query sampling, and default query count `auto`
   (`min(union_mask_pixels, 5000)` per camera).
 - Raw tracked queries are separate from display overlays. CoTracker may track up
-  to 5000 points per camera while the rendered overlay remains capped at 30
-  points per camera by default.
+  to 5000 union points per camera while first-frame mask labels decide what is
+  rendered. The default overlay scope is `controller`, capped at 30 controller
+  points per camera.
 - Rendered object PCD density is controlled by FuturePhysTwin-style 5mm world
   voxel sampling by default. `--object-volume-points-per-voxel` can retain more
   representatives inside each occupied voxel without changing CoTracker query
@@ -54,6 +55,7 @@ Useful rendered/debug profiling flags:
 ```bash
 --gpu-sampling \
 --gpu-sampling-device-indexes 0,1 \
+--overlay-display-scope controller \
 --debug-color-by-camera \
 --debug-save-per-camera-pcd \
 --debug-save-mask-overlays

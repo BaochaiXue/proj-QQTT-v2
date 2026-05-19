@@ -15,6 +15,11 @@ is `--mode exp|demo`; both modes track the object/controller union. `exp` uses
 the current lab controller prompt `towel`; `demo` uses the formal live demo
 controller prompt `hand`.
 
+Raw CoTracker query sampling and visualization are intentionally separate. Demo
+3 tracks dense object/controller union points, labels each query by first-frame
+mask membership, and by default renders only controller-labeled tracks with the
+30-points-per-camera overlay cap.
+
 Non-dry-run execution now adapts the shared three-view runtime: it opens the
 three RealSense cameras, uses HF EdgeTAM masks, fuses RealSense-depth semantic
 PCD, forces the HF EdgeTAM batch vision encoder, and starts CoTracker3 as a
@@ -47,6 +52,8 @@ Live contract defaults:
 - `edgetam_batch_vision_encoder = true`
 - `cotracker_backend = cotracker3_online`
 - `overlay_max_points_per_camera = 30`
+- `overlay_display_scope = controller`
+- `overlay_display_classification = first_frame_mask_membership`
 - `render_object_filter.point_control = phystwin-volume`
 - `render_object_filter.voxel_m = 0.005`
 - `render_object_filter.points_per_voxel = 1`
@@ -60,7 +67,8 @@ Recommended live validation order:
 1. `--preset demo3-realsense-mask-only`
 2. injected/fake CoTracker overlay in tests
 3. real CoTracker with default `--cotracker-query-count auto`
-4. optional readability tuning through `--overlay-max-points-per-camera`
+4. optional readability tuning through `--overlay-max-points-per-camera` and
+   `--overlay-display-scope controller|object|union`
 5. optional object render density tuning through `--object-volume-points-per-voxel`
 
 Rendered FPS profiling must use `--render-mode pointcloud`; no-render runs are

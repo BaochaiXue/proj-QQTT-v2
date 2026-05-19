@@ -35,6 +35,11 @@ def build_empty_dual_gpu_profile_summary(contract: dict[str, Any]) -> dict[str, 
         "ipc_payload": "cpu_numpy_latest_wins",
         "cotracker_owner": "process",
         "cotracker_process_mode": str(contract.get("cotracker_process_mode", "subprocess")),
+        "cotracker_prewarm_backends": bool(contract.get("cotracker_prewarm_backends", True)),
+        "cotracker_process_ready": False,
+        "cotracker_process_total_init_ms": 0.0,
+        "cotracker_backend_warmup_ms": 0.0,
+        "cotracker_backend_warmup_by_camera": {},
         "render_waited_for_cotracker": False,
         "render_waited_for_mask": bool(contract.get("render_waited_for_mask", False)),
         "fusion_mask_policy": str(contract.get("fusion_mask_policy", "latest-reuse")),
@@ -93,7 +98,13 @@ def build_empty_dual_gpu_profile_summary(contract: dict[str, Any]) -> dict[str, 
         "tracking_sample_overlap_hits_by_camera": {},
         "tracking_sample_background_hits_by_camera": {},
         "overlay_max_points_per_camera": int(contract.get("overlay_max_points_per_camera", 30)),
+        "overlay_display_scope": str(contract.get("overlay_display_scope", "controller")),
+        "overlay_display_classification": str(
+            contract.get("overlay_display_classification", "first_frame_mask_membership")
+        ),
         "overlay_display_count_by_camera": {},
+        "overlay_display_object_count_by_camera": {},
+        "overlay_display_controller_count_by_camera": {},
     }
 
 

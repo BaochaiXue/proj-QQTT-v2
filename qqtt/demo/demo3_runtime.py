@@ -16,6 +16,8 @@ from qqtt.demo.cotracker3_overlay_worker import (
     CoTracker3OverlayWorker,
     LatestTrackingInputSlot,
     LatestTrackingOverlaySlot,
+    OVERLAY_DISPLAY_SCOPE_CONTROLLER,
+    OVERLAY_DISPLAY_SCOPES,
     TrackingOverlayInputPacket,
 )
 from qqtt.demo.phystwin_volume_filter import (
@@ -78,6 +80,7 @@ DEMO_CONTROLLER_PROMPT = "hand"
 DEFAULT_MODE = MODE_EXP
 DEFAULT_COTRACKER_QUERY_COUNT_REQUEST = TRACKING_QUERY_COUNT_AUTO
 DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA = 30
+DEFAULT_OVERLAY_DISPLAY_SCOPE = OVERLAY_DISPLAY_SCOPE_CONTROLLER
 DEFAULT_OVERLAY_TRAIL_LEN = 16
 DEFAULT_OVERLAY_STALE_TIMEOUT_MS = 500.0
 DEFAULT_COTRACKER_WINDOW_LEN = 16
@@ -247,6 +250,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-sampling-device-index", type=int, default=0)
     parser.add_argument("--gpu-sampling-device-indexes", type=parse_gpu_sampling_device_indexes, default=None)
     parser.add_argument("--overlay-max-points-per-camera", type=int, default=DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
+    parser.add_argument("--overlay-display-scope", choices=OVERLAY_DISPLAY_SCOPES, default=DEFAULT_OVERLAY_DISPLAY_SCOPE)
     parser.add_argument("--overlay-trail-len", type=int, default=DEFAULT_OVERLAY_TRAIL_LEN)
     parser.add_argument("--overlay-stale-timeout-ms", type=float, default=DEFAULT_OVERLAY_STALE_TIMEOUT_MS)
     return parser
@@ -317,6 +321,8 @@ def validate_args(args: argparse.Namespace, *, require_calibration: bool = False
         raise ValueError("--gpu-sampling-interval-s must be > 0.")
     if int(args.overlay_max_points_per_camera) <= 0:
         raise ValueError("--overlay-max-points-per-camera must be positive.")
+    if str(args.overlay_display_scope) not in OVERLAY_DISPLAY_SCOPES:
+        raise ValueError(f"--overlay-display-scope must be one of {OVERLAY_DISPLAY_SCOPES}.")
     if require_calibration and not Path(args.calibrate_path).is_file():
         raise FileNotFoundError(f"Demo 3 requires calibrate.pkl for three-camera world fusion: {args.calibrate_path}")
 
@@ -369,6 +375,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "cotracker_window_len": DEFAULT_COTRACKER_WINDOW_LEN,
         "cotracker_publish_step": DEFAULT_COTRACKER_PUBLISH_STEP,
         "overlay_max_points_per_camera": int(args.overlay_max_points_per_camera),
+        "overlay_display_scope": str(args.overlay_display_scope),
+        "overlay_display_classification": "first_frame_mask_membership",
         "overlay_trail_len": int(args.overlay_trail_len),
         "overlay_stale_timeout_ms": float(args.overlay_stale_timeout_ms),
         "render_mode": str(args.render_mode),
@@ -472,6 +480,13 @@ def build_empty_profile_summary(contract: dict[str, Any]) -> dict[str, Any]:
         "tracking_object_pixels_by_camera": {},
         "tracking_controller_pixels_by_camera": {},
         "overlay_max_points_per_camera": int(contract.get("overlay_max_points_per_camera", DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)),
+        "overlay_display_scope": str(contract.get("overlay_display_scope", DEFAULT_OVERLAY_DISPLAY_SCOPE)),
+        "overlay_display_classification": str(
+            contract.get("overlay_display_classification", "first_frame_mask_membership")
+        ),
+        "overlay_display_count_by_camera": {},
+        "overlay_display_object_count_by_camera": {},
+        "overlay_display_controller_count_by_camera": {},
     }
 
 
@@ -498,6 +513,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracking_sampling",
         "cotracker_seed",
         "overlay_max_points_per_camera",
+        "overlay_display_scope",
         "phystwin_dense_compatible",
         "cotracker_backend",
         "cotracker_async",
@@ -874,7 +890,19 @@ def _build_demo3_live_summary(
             "cotracker_waiting_for_object_controller_by_camera": tracking_worker.get("cotracker_waiting_for_object_controller_by_camera", {}),
             "object_mask_nonempty_by_camera": tracking_worker.get("object_mask_nonempty_by_camera", {}),
             "controller_mask_nonempty_by_camera": tracking_worker.get("controller_mask_nonempty_by_camera", {}),
+            "overlay_display_scope": tracking_worker.get(
+                "overlay_display_scope",
+                contract.get("overlay_display_scope", DEFAULT_OVERLAY_DISPLAY_SCOPE),
+            ),
             "overlay_display_count_by_camera": tracking_worker.get("overlay_display_count_by_camera", {}),
+            "overlay_display_object_count_by_camera": tracking_worker.get(
+                "overlay_display_object_count_by_camera",
+                {},
+            ),
+            "overlay_display_controller_count_by_camera": tracking_worker.get(
+                "overlay_display_controller_count_by_camera",
+                {},
+            ),
         }
     )
     return summary
@@ -917,7 +945,10 @@ def make_demo3_live_runtime_class(shared_runtime_module: Any):
                     sampling_device=str(getattr(args, "device", "cuda")),
                     init_requires_object_and_controller=True,
                     overlay_max_points_per_camera=int(
-                        getattr(args, "tracking_overlay_max_points", DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
+                        self.demo3_contract.get("overlay_max_points_per_camera", DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
+                    ),
+                    overlay_display_scope=str(
+                        self.demo3_contract.get("overlay_display_scope", DEFAULT_OVERLAY_DISPLAY_SCOPE)
                     ),
                     device=str(getattr(args, "device", "cuda")),
                 )

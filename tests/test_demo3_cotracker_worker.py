@@ -11,6 +11,8 @@ from qqtt.demo.cotracker3_overlay_worker import (
     CoTracker3OverlayWorker,
     LatestTrackingInputSlot,
     LatestTrackingOverlaySlot,
+    OVERLAY_DISPLAY_SCOPE_CONTROLLER,
+    OVERLAY_DISPLAY_SCOPE_UNION,
     TrackingOverlayInputPacket,
     TrackingOverlayPacket,
 )
@@ -282,8 +284,75 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
         self.assertEqual(snapshot["query_count_request"], "auto")
         self.assertEqual(snapshot["tracking_query_count_actual_by_camera"][0], 5000)
         self.assertEqual(snapshot["tracking_union_pixels_by_camera"][0], 10000)
+        self.assertEqual(snapshot["overlay_display_scope"], "controller")
         self.assertEqual(snapshot["overlay_display_count_by_camera"][0], 30)
+        self.assertEqual(snapshot["overlay_display_controller_count_by_camera"][0], 30)
         self.assertEqual(overlay.camera_tracks_yx[0].shape, (30, 2))  # type: ignore[union-attr]
+
+    def test_default_overlay_display_selects_controller_labeled_points_only(self) -> None:
+        backend = _FakeOnlineBackend(window_len=1, step=1)
+        object_mask = np.zeros((8, 8), dtype=bool)
+        object_mask[0, 0] = True
+        object_mask[1, 1] = True
+        controller_mask = np.zeros((8, 8), dtype=bool)
+        controller_mask[5, 5] = True
+        controller_mask[4, 4] = True
+        sampled = np.array([[0, 0], [5, 5], [1, 1], [4, 4]], dtype=np.float32)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0,),
+            backend_factory=lambda _camera_idx: backend,
+            overlay_max_points_per_camera=2,
+            overlay_display_scope=OVERLAY_DISPLAY_SCOPE_CONTROLLER,
+            sampling_device="cpu",
+        )
+
+        with mock.patch("qqtt.demo.cotracker3_overlay_worker.sample_phystwin_dense", return_value=sampled):
+            overlay = worker.process_group(
+                self._packet_with_component_masks(
+                    0,
+                    object_mask=object_mask,
+                    controller_mask=controller_mask,
+                )
+            )
+
+        self.assertIsNotNone(overlay)
+        self.assertEqual(overlay.overlay_display_scope, "controller")  # type: ignore[union-attr]
+        np.testing.assert_array_equal(overlay.query_points_yx[0], sampled[[1, 3]])  # type: ignore[union-attr]
+        self.assertTrue(np.all(overlay.query_is_controller_by_camera[0]))  # type: ignore[union-attr]
+        self.assertFalse(np.any(overlay.query_is_object_by_camera[0]))  # type: ignore[union-attr]
+        self.assertEqual(overlay.overlay_display_count_by_camera[0], 2)  # type: ignore[union-attr]
+        self.assertEqual(overlay.overlay_display_controller_count_by_camera[0], 2)  # type: ignore[union-attr]
+        self.assertEqual(overlay.overlay_display_object_count_by_camera[0], 0)  # type: ignore[union-attr]
+
+    def test_union_overlay_display_scope_keeps_union_points_available(self) -> None:
+        backend = _FakeOnlineBackend(window_len=1, step=1)
+        object_mask = np.zeros((8, 8), dtype=bool)
+        object_mask[0, 0] = True
+        controller_mask = np.zeros((8, 8), dtype=bool)
+        controller_mask[5, 5] = True
+        sampled = np.array([[0, 0], [5, 5]], dtype=np.float32)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0,),
+            backend_factory=lambda _camera_idx: backend,
+            overlay_max_points_per_camera=2,
+            overlay_display_scope=OVERLAY_DISPLAY_SCOPE_UNION,
+            sampling_device="cpu",
+        )
+
+        with mock.patch("qqtt.demo.cotracker3_overlay_worker.sample_phystwin_dense", return_value=sampled):
+            overlay = worker.process_group(
+                self._packet_with_component_masks(
+                    0,
+                    object_mask=object_mask,
+                    controller_mask=controller_mask,
+                )
+            )
+
+        self.assertIsNotNone(overlay)
+        self.assertEqual(overlay.overlay_display_scope, "union")  # type: ignore[union-attr]
+        self.assertEqual(overlay.overlay_display_count_by_camera[0], 2)  # type: ignore[union-attr]
+        self.assertEqual(overlay.overlay_display_object_count_by_camera[0], 1)  # type: ignore[union-attr]
+        self.assertEqual(overlay.overlay_display_controller_count_by_camera[0], 1)  # type: ignore[union-attr]
 
     def test_sampling_calls_phystwin_dense_with_seed_and_camera_idx(self) -> None:
         backend = _FakeOnlineBackend(window_len=1, step=1)

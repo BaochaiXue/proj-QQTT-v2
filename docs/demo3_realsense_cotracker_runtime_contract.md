@@ -16,6 +16,12 @@ controller-only live tracking. The only public semantic switch is
 `--mode exp|demo`: `exp` uses controller `towel` for the current lab setup and
 `demo` uses controller `hand` for the formal live demo.
 
+The rendered overlay is label-filtered after dense tracking. CoTracker samples
+and tracks the raw object/controller union, then each query is labeled by its
+first-frame object/controller mask membership. By default
+`overlay_display_scope = controller`, so the visible overlay keeps only
+controller-labeled tracks before applying the 30-points-per-camera cap.
+
 Demo 3 是实时可视化 demo，不是 FuturePhysTwin 数据处理 pipeline。它必须使用三台
 RealSense，相机分组和渲染架构学习 Demo 2.2；depth 只用 RealSense，不使用 FFS；mask
 来自 HF EdgeTAM，并强制使用 batch vision encoder；CoTracker3 online 作为独立异步
@@ -124,6 +130,7 @@ The second fails because Demo 3 does not support FFS.
 - `--cotracker-query-count auto`
 - `--cotracker-seed 42`
 - `--overlay-max-points-per-camera 30`
+- `--overlay-display-scope controller`
 - `--overlay-trail-len 16`
 - `--overlay-stale-timeout-ms 500`
 - render object PCD filter defaults to FuturePhysTwin-style volume sampling:
@@ -179,8 +186,11 @@ Default live tracking is FuturePhysTwin-compatible dense sampling: up to 5000
 raw query points per camera from `object_mask | controller_mask`, sampled with
 torch `randperm(seed + camera_idx)`. Default seed is 42.
 
-Default live visualization caps the displayed overlay at 30 visible points per
-camera. This display cap does not reduce the raw CoTracker query count.
+Default live visualization first filters displayed tracks to first-frame
+controller-labeled queries, then caps the displayed overlay at 30 visible
+points per camera. This display cap and label filter do not reduce the raw
+CoTracker query count. `--overlay-display-scope object|union` is available for
+debug views without changing raw tracking.
 
 The rendered object point cloud is filtered independently from CoTracker
 queries. By default Demo 3 keeps up to one representative point per occupied
@@ -241,7 +251,10 @@ tracking_sample_object_hits_by_camera
 tracking_sample_controller_hits_by_camera
 tracking_sample_overlap_hits_by_camera
 tracking_sample_background_hits_by_camera
+overlay_display_scope
 overlay_display_count_by_camera
+overlay_display_object_count_by_camera
+overlay_display_controller_count_by_camera
 ```
 
 The acceptance-critical fields are:
@@ -253,6 +266,7 @@ depth_source = realsense
 num_realsense_cameras = 3
 tracking_mask_scope = object_controller_union
 tracking_query_mode = phystwin_dense
+overlay_display_scope = controller
 ```
 
 Rendered FPS claims must come from `--render-mode pointcloud` runs, not

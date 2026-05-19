@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 import multiprocessing as mp
 import os
+import queue
 import sys
 import time
 from typing import Any, Sequence
@@ -32,10 +33,12 @@ class CoTrackerProcessConfig:
     sampling_device: str = "cuda"
     init_requires_object_and_controller: bool = True
     overlay_max_points_per_camera: int = 30
+    overlay_display_scope: str = "controller"
     input_max_age_ms: float = 250.0
     poll_interval_s: float = 0.001
     process_mode: str = PROCESS_MODE_SUBPROCESS
     device: str = "cuda"
+    prewarm_backends: bool = True
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -48,10 +51,12 @@ class CoTrackerProcessConfig:
             "sampling_device": str(self.sampling_device),
             "init_requires_object_and_controller": bool(self.init_requires_object_and_controller),
             "overlay_max_points_per_camera": int(self.overlay_max_points_per_camera),
+            "overlay_display_scope": str(self.overlay_display_scope),
             "input_max_age_ms": float(self.input_max_age_ms),
             "poll_interval_s": float(self.poll_interval_s),
             "process_mode": str(self.process_mode),
             "device": str(self.device),
+            "prewarm_backends": bool(self.prewarm_backends),
         }
 
     @classmethod
@@ -66,10 +71,12 @@ class CoTrackerProcessConfig:
             sampling_device=str(payload.get("sampling_device", "cuda")),
             init_requires_object_and_controller=bool(payload.get("init_requires_object_and_controller", True)),
             overlay_max_points_per_camera=int(payload.get("overlay_max_points_per_camera", 30)),
+            overlay_display_scope=str(payload.get("overlay_display_scope", "controller")),
             input_max_age_ms=float(payload.get("input_max_age_ms", 250.0)),
             poll_interval_s=float(payload.get("poll_interval_s", 0.001)),
             process_mode=str(payload.get("process_mode", PROCESS_MODE_SUBPROCESS)),
             device=str(payload.get("device", "cuda")),
+            prewarm_backends=bool(payload.get("prewarm_backends", True)),
         )
 
     @classmethod
@@ -118,13 +125,16 @@ class CoTrackerProcessHandle:
         process: Any,
         input_queue: Any,
         output_queue: Any,
+        status_queue: Any | None,
         stop_event: Any,
     ) -> None:
         self.process = process
         self.input_endpoint = LatestWinsQueue(input_queue)
         self.output_endpoint = LatestWinsQueue(output_queue)
+        self.status_queue = status_queue
         self.stop_event = stop_event
         self.started_s = time.perf_counter()
+        self._status_events: list[dict[str, Any]] = []
 
     @property
     def pid(self) -> int:
@@ -149,12 +159,34 @@ class CoTrackerProcessHandle:
             self.process.terminate()
             self.process.join(float(timeout_s))
 
+    def drain_status_events(self) -> list[dict[str, Any]]:
+        if self.status_queue is None:
+            return []
+        drained: list[dict[str, Any]] = []
+        while True:
+            try:
+                item = self.status_queue.get_nowait()
+            except queue.Empty:
+                break
+            if isinstance(item, dict):
+                drained.append(dict(item))
+        self._status_events.extend(drained)
+        return drained
+
     def snapshot(self) -> dict[str, Any]:
+        self.drain_status_events()
+        ready_events = [
+            event
+            for event in self._status_events
+            if str(event.get("type")) == "ready"
+        ]
         return {
             "pid": self.pid,
             "alive": bool(self.process.is_alive()) if hasattr(self.process, "is_alive") else False,
             "input_endpoint": self.input_endpoint.snapshot(),
             "output_endpoint": self.output_endpoint.snapshot(),
+            "status_events": list(self._status_events),
+            "ready": ready_events[-1] if ready_events else None,
         }
 
 
@@ -166,17 +198,19 @@ def start_cotracker_process(
     ctx = mp.get_context(context_name)
     input_queue = ctx.Queue(maxsize=1)
     output_queue = ctx.Queue(maxsize=1)
+    status_queue = ctx.Queue(maxsize=16)
     stop_event = ctx.Event()
     process = ctx.Process(
         target=run_cotracker_worker_loop,
         name="demo31-cotracker-gpu",
-        args=(config, input_queue, output_queue, stop_event),
+        args=(config, input_queue, output_queue, stop_event, status_queue),
         daemon=True,
     )
     handle = CoTrackerProcessHandle(
         process=process,
         input_queue=input_queue,
         output_queue=output_queue,
+        status_queue=status_queue,
         stop_event=stop_event,
     )
     handle.start()
@@ -188,9 +222,11 @@ def run_cotracker_worker_loop(
     input_queue: Any,
     output_queue: Any,
     stop_event: Any,
+    status_queue: Any | None = None,
     *,
     backend_factory: Any | None = None,
 ) -> dict[str, Any]:
+    process_start_s = time.perf_counter()
     configure_cotracker_cuda_environment(config)
 
     from qqtt.demo.cotracker3_overlay_worker import (  # noqa: PLC0415
@@ -211,8 +247,43 @@ def run_cotracker_worker_loop(
         sampling_device=str(config.sampling_device),
         init_requires_object_and_controller=bool(config.init_requires_object_and_controller),
         overlay_max_points_per_camera=int(config.overlay_max_points_per_camera),
+        overlay_display_scope=str(config.overlay_display_scope),
         device=str(config.device),
     )
+    warmup_profile: dict[str, Any] = {}
+    if bool(config.prewarm_backends):
+        try:
+            warmup_profile = worker.warmup_backends()
+        except BaseException as exc:
+            if status_queue is not None:
+                try:
+                    status_queue.put_nowait(
+                        {
+                            "type": "error",
+                            "stage": "cotracker_warmup",
+                            "error": f"{type(exc).__name__}: {exc}",
+                            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                            "total_init_ms": float((time.perf_counter() - process_start_s) * 1000.0),
+                        }
+                    )
+                except Exception:
+                    pass
+            raise
+    if status_queue is not None:
+        try:
+            status_queue.put_nowait(
+                {
+                    "type": "ready",
+                    "stage": "cotracker",
+                    "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                    "prewarm_backends": bool(config.prewarm_backends),
+                    "warmup_profile": warmup_profile,
+                    "total_init_ms": float((time.perf_counter() - process_start_s) * 1000.0),
+                    "ready_perf_s": time.perf_counter(),
+                }
+            )
+        except Exception:
+            pass
     processed = 0
     dropped_old = 0
     while not stop_event.is_set():
@@ -260,6 +331,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "tracking_query_count_requested": config.query_count_request,
                     "cotracker_seed": config.seed,
                     "init_requires_object_and_controller": config.init_requires_object_and_controller,
+                    "overlay_max_points_per_camera": config.overlay_max_points_per_camera,
+                    "overlay_display_scope": config.overlay_display_scope,
+                    "prewarm_backends": config.prewarm_backends,
                     "cross_gpu_cuda_tensor_transfer": False,
                     "ipc_payload": "cpu_numpy_latest_wins",
                 },

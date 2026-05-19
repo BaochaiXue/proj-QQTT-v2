@@ -18,6 +18,15 @@ from qqtt.tracking.sampling import (
 
 BackendFactory = Callable[[int], Any]
 
+OVERLAY_DISPLAY_SCOPE_CONTROLLER = "controller"
+OVERLAY_DISPLAY_SCOPE_OBJECT = "object"
+OVERLAY_DISPLAY_SCOPE_UNION = "union"
+OVERLAY_DISPLAY_SCOPES = (
+    OVERLAY_DISPLAY_SCOPE_CONTROLLER,
+    OVERLAY_DISPLAY_SCOPE_OBJECT,
+    OVERLAY_DISPLAY_SCOPE_UNION,
+)
+
 
 @dataclass(frozen=True)
 class TrackingOverlayInputPacket:
@@ -47,11 +56,14 @@ class TrackingOverlayPacket:
     camera_visibility: dict[int, np.ndarray]
     camera_tracks_world: dict[int, np.ndarray] = field(default_factory=dict)
     query_points_yx: dict[int, np.ndarray] = field(default_factory=dict)
+    query_is_object_by_camera: dict[int, np.ndarray] = field(default_factory=dict)
+    query_is_controller_by_camera: dict[int, np.ndarray] = field(default_factory=dict)
     source_timestamp_s: float | None = None
     publish_range: tuple[int, int] = (0, 0)
     model_ms: float = 0.0
     e2e_ms: float = 0.0
     stale: bool = False
+    overlay_display_scope: str = OVERLAY_DISPLAY_SCOPE_CONTROLLER
     tracking_query_count_actual_by_camera: dict[int, int] = field(default_factory=dict)
     tracking_union_pixels_by_camera: dict[int, int] = field(default_factory=dict)
     tracking_object_pixels_by_camera: dict[int, int] = field(default_factory=dict)
@@ -61,6 +73,8 @@ class TrackingOverlayPacket:
     tracking_sample_overlap_hits_by_camera: dict[int, int] = field(default_factory=dict)
     tracking_sample_background_hits_by_camera: dict[int, int] = field(default_factory=dict)
     overlay_display_count_by_camera: dict[int, int] = field(default_factory=dict)
+    overlay_display_object_count_by_camera: dict[int, int] = field(default_factory=dict)
+    overlay_display_controller_count_by_camera: dict[int, int] = field(default_factory=dict)
 
     @property
     def seq(self) -> int:
@@ -234,6 +248,7 @@ class CoTracker3OverlayWorker:
         query_count_request: int | str = "auto",
         query_count: int | None = None,
         overlay_max_points_per_camera: int = 30,
+        overlay_display_scope: str = OVERLAY_DISPLAY_SCOPE_CONTROLLER,
         seed: int = 42,
         device: str = "cuda",
         sampling_device: str = "cpu",
@@ -248,17 +263,23 @@ class CoTracker3OverlayWorker:
         self.query_count_request = str(query_count if query_count is not None else query_count_request)
         self.query_count = self._normalize_query_count_request(self.query_count_request)
         self.overlay_max_points_per_camera = int(overlay_max_points_per_camera)
+        self.overlay_display_scope = self._normalize_overlay_display_scope(overlay_display_scope)
         self.seed = int(seed)
         self.sampling_device = str(sampling_device)
         self.init_requires_object_and_controller = bool(init_requires_object_and_controller)
         self._backends: dict[int, Any] = {}
         self._query_points_yx: dict[int, np.ndarray] = {}
+        self._query_is_object: dict[int, np.ndarray] = {}
+        self._query_is_controller: dict[int, np.ndarray] = {}
         self._camera_stats: dict[int, dict[str, int | bool]] = {}
         self._overlay_display_count_by_camera: dict[int, int] = {}
+        self._overlay_display_object_count_by_camera: dict[int, int] = {}
+        self._overlay_display_controller_count_by_camera: dict[int, int] = {}
         self._published_packets = 0
         self._model_ms_samples: list[float] = []
         self._e2e_ms_samples: list[float] = []
         self._publish_times_s: list[float] = []
+        self._backend_warmup_profile: dict[int, dict[str, Any]] = {}
         if self.query_mode != "phystwin_dense":
             raise ValueError("CoTracker3OverlayWorker currently supports only query_mode='phystwin_dense'.")
         if self.overlay_max_points_per_camera <= 0:
@@ -283,6 +304,13 @@ class CoTracker3OverlayWorker:
         if count <= 0:
             raise ValueError("query_count_request must be 'auto' or a positive integer.")
         return count
+
+    @staticmethod
+    def _normalize_overlay_display_scope(value: str) -> str:
+        normalized = str(value).strip().lower().replace("-", "_")
+        if normalized not in OVERLAY_DISPLAY_SCOPES:
+            raise ValueError(f"overlay_display_scope must be one of {OVERLAY_DISPLAY_SCOPES}; got {value!r}")
+        return normalized
 
     def _component_mask_or_empty(
         self,
@@ -309,6 +337,53 @@ class CoTracker3OverlayWorker:
             torch_device=self.sampling_device,
         ).astype(np.float32)
         return dense[: int(self.query_count)].astype(np.float32)
+
+    def _classify_query_points(
+        self,
+        *,
+        points: np.ndarray,
+        object_mask: np.ndarray,
+        controller_mask: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        query_points = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+        if len(query_points) == 0:
+            empty = np.empty((0,), dtype=bool)
+            return empty, empty
+        height, width = object_mask.shape[:2]
+        yi = np.clip(np.rint(query_points[:, 0]).astype(np.int64), 0, height - 1)
+        xi = np.clip(np.rint(query_points[:, 1]).astype(np.int64), 0, width - 1)
+        query_is_object = np.asarray(object_mask[yi, xi], dtype=bool)
+        query_is_controller = np.asarray(controller_mask[yi, xi], dtype=bool)
+        return query_is_object, query_is_controller
+
+    def _selection_visibility(self, *, visibility: np.ndarray, camera_idx: int) -> np.ndarray:
+        vis = np.asarray(visibility, dtype=np.float32).reshape(-1)
+        if self.overlay_display_scope == OVERLAY_DISPLAY_SCOPE_UNION:
+            return vis
+        if self.overlay_display_scope == OVERLAY_DISPLAY_SCOPE_OBJECT:
+            label = self._query_is_object.get(int(camera_idx), np.zeros_like(vis, dtype=bool))
+        else:
+            label = self._query_is_controller.get(int(camera_idx), np.zeros_like(vis, dtype=bool))
+        label_bool = np.asarray(label, dtype=bool).reshape(-1)
+        if label_bool.shape[0] != vis.shape[0]:
+            label_bool = np.zeros_like(vis, dtype=bool)
+        return np.where(label_bool, vis, 0.0).astype(np.float32)
+
+    def _query_labels_for_camera(self, *, camera_idx: int, query_count: int) -> tuple[np.ndarray, np.ndarray]:
+        count = int(query_count)
+        object_labels = np.asarray(
+            self._query_is_object.get(int(camera_idx), np.zeros(count, dtype=bool)),
+            dtype=bool,
+        ).reshape(-1)
+        controller_labels = np.asarray(
+            self._query_is_controller.get(int(camera_idx), np.zeros(count, dtype=bool)),
+            dtype=bool,
+        ).reshape(-1)
+        if object_labels.shape[0] != count:
+            object_labels = np.zeros(count, dtype=bool)
+        if controller_labels.shape[0] != count:
+            controller_labels = np.zeros(count, dtype=bool)
+        return object_labels, controller_labels
 
     def _record_sampling_stats(
         self,
@@ -339,6 +414,36 @@ class CoTracker3OverlayWorker:
             "cotracker_waiting_for_object_controller": bool(waiting_for_object_controller),
             "object_mask_nonempty": bool(np.count_nonzero(object_mask) > 0),
             "controller_mask_nonempty": bool(np.count_nonzero(controller_mask) > 0),
+        }
+
+    def warmup_backends(self) -> dict[str, Any]:
+        started_s = time.perf_counter()
+        per_camera: dict[int, dict[str, Any]] = {}
+        for camera_idx in self.camera_ids:
+            idx = int(camera_idx)
+            backend = self._backends.get(idx)
+            construct_ms = 0.0
+            if backend is None:
+                construct_start_s = time.perf_counter()
+                backend = self.backend_factory(idx)
+                construct_ms = float((time.perf_counter() - construct_start_s) * 1000.0)
+                self._backends[idx] = backend
+            warmup_start_s = time.perf_counter()
+            warmup_stats: dict[str, Any] = {}
+            if hasattr(backend, "warmup"):
+                result = backend.warmup()
+                if isinstance(result, dict):
+                    warmup_stats.update(result)
+            per_camera[idx] = {
+                "construct_ms": float(construct_ms),
+                "warmup_ms": float((time.perf_counter() - warmup_start_s) * 1000.0),
+                **warmup_stats,
+            }
+        self._backend_warmup_profile = per_camera
+        return {
+            "camera_ids": [int(item) for item in self.camera_ids],
+            "per_camera": {str(idx): dict(value) for idx, value in per_camera.items()},
+            "total_ms": float((time.perf_counter() - started_s) * 1000.0),
         }
 
     def _ensure_camera_stream(
@@ -378,7 +483,16 @@ class CoTracker3OverlayWorker:
         if len(query_points) == 0:
             return query_points
         self._query_points_yx[camera_idx] = query_points
-        backend = self.backend_factory(int(camera_idx))
+        query_is_object, query_is_controller = self._classify_query_points(
+            points=query_points,
+            object_mask=object_mask,
+            controller_mask=controller_mask,
+        )
+        self._query_is_object[camera_idx] = query_is_object
+        self._query_is_controller[camera_idx] = query_is_controller
+        backend = self._backends.get(int(camera_idx))
+        if backend is None:
+            backend = self.backend_factory(int(camera_idx))
         backend.initialize([], query_points)
         self._backends[camera_idx] = backend
         return query_points
@@ -389,6 +503,8 @@ class CoTracker3OverlayWorker:
         camera_visibility: dict[int, np.ndarray] = {}
         camera_tracks_world: dict[int, np.ndarray] = {}
         query_points_yx: dict[int, np.ndarray] = {}
+        query_is_object_by_camera: dict[int, np.ndarray] = {}
+        query_is_controller_by_camera: dict[int, np.ndarray] = {}
         publish_starts: list[int] = []
         publish_ends: list[int] = []
         model_ms = 0.0
@@ -419,8 +535,9 @@ class CoTracker3OverlayWorker:
                 continue
             tracks_t = np.asarray(result.tracks_yx[-1], dtype=np.float32)
             visibility_t = np.asarray(result.visibility[-1], dtype=np.float32).reshape(-1)
+            selection_visibility = self._selection_visibility(visibility=visibility_t, camera_idx=int(camera_idx))
             selected = select_overlay_point_indices(
-                visibility_t,
+                selection_visibility,
                 max_points=self.overlay_max_points_per_camera,
             )
             if len(selected) == 0:
@@ -428,7 +545,17 @@ class CoTracker3OverlayWorker:
             camera_tracks_yx[camera_idx] = tracks_t[selected]
             camera_visibility[camera_idx] = visibility_t[selected]
             query_points_yx[camera_idx] = query_points[selected]
+            is_object, is_controller = self._query_labels_for_camera(
+                camera_idx=int(camera_idx),
+                query_count=len(query_points),
+            )
+            selected_is_object = is_object[selected]
+            selected_is_controller = is_controller[selected]
+            query_is_object_by_camera[camera_idx] = selected_is_object
+            query_is_controller_by_camera[camera_idx] = selected_is_controller
             self._overlay_display_count_by_camera[int(camera_idx)] = int(len(selected))
+            self._overlay_display_object_count_by_camera[int(camera_idx)] = int(np.count_nonzero(selected_is_object))
+            self._overlay_display_controller_count_by_camera[int(camera_idx)] = int(np.count_nonzero(selected_is_controller))
             model_ms += float(result.stats.get("model_run_ms", 0.0))
             publish_starts.append(int(result.stats.get("chunk_start_idx", packet.frame_idx)))
             publish_ends.append(int(result.stats.get("chunk_end_idx", packet.frame_idx)))
@@ -464,11 +591,14 @@ class CoTracker3OverlayWorker:
             camera_visibility=camera_visibility,
             camera_tracks_world=camera_tracks_world,
             query_points_yx=query_points_yx,
+            query_is_object_by_camera=query_is_object_by_camera,
+            query_is_controller_by_camera=query_is_controller_by_camera,
             source_timestamp_s=float(packet.timestamp_s),
             publish_range=(min(publish_starts), max(publish_ends)),
             model_ms=float(model_ms),
             e2e_ms=float(e2e_ms),
             stale=False,
+            overlay_display_scope=str(self.overlay_display_scope),
             tracking_query_count_actual_by_camera={
                 int(camera_idx): int(stats.get("tracking_query_count_actual", 0))
                 for camera_idx, stats in self._camera_stats.items()
@@ -502,6 +632,8 @@ class CoTracker3OverlayWorker:
                 for camera_idx, stats in self._camera_stats.items()
             },
             overlay_display_count_by_camera=dict(self._overlay_display_count_by_camera),
+            overlay_display_object_count_by_camera=dict(self._overlay_display_object_count_by_camera),
+            overlay_display_controller_count_by_camera=dict(self._overlay_display_controller_count_by_camera),
         )
         self.output_slot.publish(overlay)
         self._published_packets += 1
@@ -523,6 +655,7 @@ class CoTracker3OverlayWorker:
             "query_mode": str(self.query_mode),
             "query_count_request": str(self.query_count),
             "query_count": int(PHYSTWIN_DENSE_QUERY_POINTS if self.query_count == "auto" else self.query_count),
+            "overlay_display_scope": str(self.overlay_display_scope),
             "tracking_query_count_actual_by_camera": actual_by_camera,
             "tracking_union_pixels_by_camera": {
                 int(camera_idx): int(stats.get("tracking_union_pixels", 0))
@@ -568,7 +701,19 @@ class CoTracker3OverlayWorker:
                 int(camera_idx): int(count)
                 for camera_idx, count in self._overlay_display_count_by_camera.items()
             },
+            "overlay_display_object_count_by_camera": {
+                int(camera_idx): int(count)
+                for camera_idx, count in self._overlay_display_object_count_by_camera.items()
+            },
+            "overlay_display_controller_count_by_camera": {
+                int(camera_idx): int(count)
+                for camera_idx, count in self._overlay_display_controller_count_by_camera.items()
+            },
             "overlay_max_points_per_camera": int(self.overlay_max_points_per_camera),
+            "backend_warmup": {
+                str(camera_idx): dict(profile)
+                for camera_idx, profile in self._backend_warmup_profile.items()
+            },
             "published_packets": int(self._published_packets),
             "model_ms_median": _median(self._model_ms_samples),
             "model_ms_p95": _p95(self._model_ms_samples),
@@ -603,6 +748,10 @@ __all__ = [
     "CoTracker3OverlayWorker",
     "LatestTrackingInputSlot",
     "LatestTrackingOverlaySlot",
+    "OVERLAY_DISPLAY_SCOPE_CONTROLLER",
+    "OVERLAY_DISPLAY_SCOPE_OBJECT",
+    "OVERLAY_DISPLAY_SCOPE_UNION",
+    "OVERLAY_DISPLAY_SCOPES",
     "TrackingOverlayInputPacket",
     "TrackingOverlayPacket",
 ]

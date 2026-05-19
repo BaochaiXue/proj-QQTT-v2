@@ -268,6 +268,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-sampling-device-index", type=int, default=0)
     parser.add_argument("--gpu-sampling-device-indexes", type=demo3_runtime.parse_gpu_sampling_device_indexes, default=None)
     parser.add_argument("--overlay-max-points-per-camera", type=int, default=demo3_runtime.DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
+    parser.add_argument(
+        "--overlay-display-scope",
+        choices=demo3_runtime.OVERLAY_DISPLAY_SCOPES,
+        default=demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE,
+    )
     parser.add_argument("--overlay-trail-len", type=int, default=demo3_runtime.DEFAULT_OVERLAY_TRAIL_LEN)
     parser.add_argument("--overlay-stale-timeout-ms", type=float, default=demo3_runtime.DEFAULT_OVERLAY_STALE_TIMEOUT_MS)
     parser.add_argument("--mask-gpu", default=DEFAULT_MASK_GPU)
@@ -276,6 +281,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-single-gpu-debug", action="store_true")
     parser.add_argument("--gpu-plan", choices=GPU_PLANS, default=GPU_PLAN_SPLIT_MASK0_TRACK1)
     parser.add_argument("--cotracker-process-mode", choices=PROCESS_MODES, default=PROCESS_MODE_SUBPROCESS)
+    parser.add_argument("--cotracker-prewarm-backends", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--cotracker-input-fps", type=float, default=DEFAULT_COTRACKER_INPUT_FPS)
     parser.add_argument("--cotracker-input-max-age-ms", type=float, default=DEFAULT_COTRACKER_INPUT_MAX_AGE_MS)
     parser.add_argument("--cotracker-result-stale-timeout-ms", type=float, default=DEFAULT_COTRACKER_RESULT_STALE_TIMEOUT_MS)
@@ -350,6 +356,8 @@ def validate_args(
         raise ValueError("--gpu-sampling-interval-s must be > 0.")
     if int(args.overlay_max_points_per_camera) <= 0:
         raise ValueError("--overlay-max-points-per-camera must be positive.")
+    if str(args.overlay_display_scope) not in demo3_runtime.OVERLAY_DISPLAY_SCOPES:
+        raise ValueError(f"--overlay-display-scope must be one of {demo3_runtime.OVERLAY_DISPLAY_SCOPES}.")
     if float(args.cotracker_input_fps) < 0.0:
         raise ValueError("--cotracker-input-fps must be non-negative.")
     if str(args.mask_gpu) == str(args.cotracker_gpu) and not bool(args.allow_single_gpu_debug):
@@ -373,9 +381,11 @@ def build_cotracker_process_config(args: argparse.Namespace) -> CoTrackerProcess
         sampling_device="cuda",
         init_requires_object_and_controller=True,
         overlay_max_points_per_camera=int(args.overlay_max_points_per_camera),
+        overlay_display_scope=str(args.overlay_display_scope),
         input_max_age_ms=float(args.cotracker_input_max_age_ms),
         process_mode=str(args.cotracker_process_mode),
         device="cuda",
+        prewarm_backends=bool(args.cotracker_prewarm_backends),
     )
 
 
@@ -428,6 +438,7 @@ def build_contract(
         "cotracker_backend": demo3_runtime.COTRACKER3_ONLINE,
         "cotracker_owner": "process",
         "cotracker_process_mode": str(args.cotracker_process_mode),
+        "cotracker_prewarm_backends": bool(args.cotracker_prewarm_backends),
         "cotracker_input_fps": float(args.cotracker_input_fps),
         "cotracker_input_max_age_ms": float(args.cotracker_input_max_age_ms),
         "cotracker_result_stale_timeout_ms": float(args.cotracker_result_stale_timeout_ms),
@@ -448,6 +459,8 @@ def build_contract(
         "cross_gpu_cuda_tensor_transfer": False,
         "shared_runtime_tracking_backend": "none",
         "overlay_max_points_per_camera": int(args.overlay_max_points_per_camera),
+        "overlay_display_scope": str(args.overlay_display_scope),
+        "overlay_display_classification": "first_frame_mask_membership",
         "overlay_trail_len": int(args.overlay_trail_len),
         "overlay_stale_timeout_ms": float(args.overlay_stale_timeout_ms),
         "fusion_mask_policy": str(args.fusion_mask_policy),
@@ -540,10 +553,12 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracking_sampling",
         "cotracker_seed",
         "overlay_max_points_per_camera",
+        "overlay_display_scope",
         "phystwin_dense_compatible",
         "cotracker_backend",
         "cotracker_owner",
         "cotracker_process_mode",
+        "cotracker_prewarm_backends",
         "cross_gpu_cuda_tensor_transfer",
         "ipc_payload",
         "fusion_mask_policy",
@@ -763,6 +778,20 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             if self.demo31_cotracker_enabled
             else None
             )
+            self.demo31_process_status_events: list[dict[str, Any]] = []
+            if self.demo31_process_client is not None:
+                self._summary["demo31_cotracker_process_eager_started_before_camera"] = True
+                self._summary["demo31_cotracker_pid"] = int(getattr(self.demo31_process_client, "pid", 0) or 0)
+                self._init_profile_update(
+                    ("demo31", "cotracker_process", "eager_start"),
+                    {
+                        "enabled": True,
+                        "before_camera_startup": True,
+                        "pid": int(getattr(self.demo31_process_client, "pid", 0) or 0),
+                        "prewarm_backends": bool(getattr(cotracker_process_config, "prewarm_backends", True)),
+                        "started_s": self._profile_rel_s(),
+                    },
+                )
             self.stage_join_buffer = Demo31MaskPolicyJoinBuffer(
                 max_groups=8,
                 policy=str(self.demo31_contract["fusion_mask_policy"]),
@@ -780,9 +809,46 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_tracking_stats: dict[str, dict[int, int]] = {}
 
         def stop(self) -> None:
+            self._drain_demo31_process_status()
             if self.demo31_process_client is not None:
                 self.demo31_process_client.stop(timeout_s=2.0)
+                self._drain_demo31_process_status()
             super().stop()
+
+        def _drain_demo31_process_status(self) -> list[dict[str, Any]]:
+            if self.demo31_process_client is None or not hasattr(self.demo31_process_client, "drain_status_events"):
+                return []
+            events = self.demo31_process_client.drain_status_events()
+            for event in events:
+                if not isinstance(event, dict):
+                    continue
+                event = dict(event)
+                self.demo31_process_status_events.append(event)
+                if str(event.get("type")) == "error":
+                    self._summary["demo31_cotracker_process_error"] = str(event.get("error", "unknown"))
+                    self._summary["demo31_cotracker_process_error_stage"] = str(event.get("stage", "cotracker"))
+                    self._init_profile_update(("demo31", "cotracker_process", "error"), event)
+                    continue
+                if str(event.get("type")) != "ready":
+                    continue
+                self._summary["demo31_cotracker_process_ready"] = True
+                self._summary["demo31_cotracker_process_init_ms"] = float(event.get("total_init_ms", 0.0) or 0.0)
+                self._summary["demo31_cotracker_prewarm_backends"] = bool(event.get("prewarm_backends", False))
+                warmup_profile = event.get("warmup_profile") if isinstance(event.get("warmup_profile"), dict) else {}
+                self._summary["demo31_cotracker_backend_warmup_ms"] = float(
+                    warmup_profile.get("total_ms", 0.0) if isinstance(warmup_profile, dict) else 0.0
+                )
+                self._init_profile_update(
+                    ("demo31", "cotracker_process", "ready"),
+                    {
+                        "cuda_visible_devices": event.get("cuda_visible_devices"),
+                        "prewarm_backends": bool(event.get("prewarm_backends", False)),
+                        "total_init_ms": float(event.get("total_init_ms", 0.0) or 0.0),
+                        "warmup_profile": warmup_profile,
+                        "ready_receive_s": self._profile_rel_s(),
+                    },
+                )
+            return events
 
         def _build_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
             now_s = time.perf_counter()
@@ -931,11 +997,15 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "tracking_sample_controller_hits_by_camera": dict(result.tracking_sample_controller_hits_by_camera),
                 "tracking_sample_overlap_hits_by_camera": dict(result.tracking_sample_overlap_hits_by_camera),
                 "tracking_sample_background_hits_by_camera": dict(result.tracking_sample_background_hits_by_camera),
+                "overlay_display_scope": str(result.overlay_display_scope),
                 "overlay_display_count_by_camera": dict(result.overlay_display_count_by_camera),
+                "overlay_display_object_count_by_camera": dict(result.overlay_display_object_count_by_camera),
+                "overlay_display_controller_count_by_camera": dict(result.overlay_display_controller_count_by_camera),
             }
             return result
 
         def demo31_snapshot(self) -> dict[str, Any]:
+            self._drain_demo31_process_status()
             process_snapshot = (
                 self.demo31_process_client.snapshot()
                 if self.demo31_process_client is not None and hasattr(self.demo31_process_client, "snapshot")
@@ -946,6 +1016,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             e2e = percentile_summary(self.demo31_overlay_e2e_ms_samples)
             return {
                 "process": process_snapshot,
+                "process_status_events": list(self.demo31_process_status_events),
                 "stage_join_buffer": self.stage_join_buffer.snapshot()
                 if hasattr(self.stage_join_buffer, "snapshot")
                 else {},
@@ -1068,12 +1139,33 @@ class Demo31Runtime:
         )
         if snapshot:
             process = snapshot.get("process") or {}
+            process_ready = process.get("ready") if isinstance(process.get("ready"), dict) else {}
+            warmup_profile = (
+                process_ready.get("warmup_profile")
+                if isinstance(process_ready, dict) and isinstance(process_ready.get("warmup_profile"), dict)
+                else {}
+            )
             mask_cache = snapshot.get("stage_join_buffer") or snapshot.get("mask_cache") or {}
             input_endpoint = process.get("input_endpoint") or {}
             tracking_stats = snapshot.get("tracking_stats") or {}
             summary.update(
                 {
                     "cotracker_process_pid": int(process.get("pid", 0) or 0),
+                    "cotracker_process_ready": bool(process_ready),
+                    "cotracker_process_total_init_ms": float(
+                        process_ready.get("total_init_ms", 0.0) if isinstance(process_ready, dict) else 0.0
+                    ),
+                    "cotracker_prewarm_backends": bool(
+                        process_ready.get("prewarm_backends", self.contract.get("cotracker_prewarm_backends", True))
+                        if isinstance(process_ready, dict)
+                        else self.contract.get("cotracker_prewarm_backends", True)
+                    ),
+                    "cotracker_backend_warmup_ms": float(
+                        warmup_profile.get("total_ms", 0.0) if isinstance(warmup_profile, dict) else 0.0
+                    ),
+                    "cotracker_backend_warmup_by_camera": (
+                        warmup_profile.get("per_camera", {}) if isinstance(warmup_profile, dict) else {}
+                    ),
                     "cotracker_input_drop_count": int(snapshot.get("tracking_input_drop_count", 0) or 0),
                     "cotracker_input_queue_replace_count": int(
                         snapshot.get("tracking_input_queue_replace_count", 0)
@@ -1097,7 +1189,19 @@ class Demo31Runtime:
                     "tracking_sample_controller_hits_by_camera": tracking_stats.get("tracking_sample_controller_hits_by_camera", {}),
                     "tracking_sample_overlap_hits_by_camera": tracking_stats.get("tracking_sample_overlap_hits_by_camera", {}),
                     "tracking_sample_background_hits_by_camera": tracking_stats.get("tracking_sample_background_hits_by_camera", {}),
+                    "overlay_display_scope": tracking_stats.get(
+                        "overlay_display_scope",
+                        self.contract.get("overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE),
+                    ),
                     "overlay_display_count_by_camera": tracking_stats.get("overlay_display_count_by_camera", {}),
+                    "overlay_display_object_count_by_camera": tracking_stats.get(
+                        "overlay_display_object_count_by_camera",
+                        {},
+                    ),
+                    "overlay_display_controller_count_by_camera": tracking_stats.get(
+                        "overlay_display_controller_count_by_camera",
+                        {},
+                    ),
                 }
             )
         return summary

@@ -117,9 +117,15 @@ class MultiRealsense:
             print("processing camera {}".format(camera.serial_number))
             camera.start_wait()
 
-    def stop_wait(self):
+    def stop_wait(self, timeout_s=5.0):
         for camera in self._cameras_in_logical_order():
-            camera.join()
+            camera.join(timeout=timeout_s)
+            if camera.is_alive():
+                try:
+                    camera.terminate()
+                    camera.join(timeout=2.0)
+                except Exception:
+                    pass
 
     def get(self, k=None, index=None, out=None) -> Dict[int, Dict[str, np.ndarray]]:
         """

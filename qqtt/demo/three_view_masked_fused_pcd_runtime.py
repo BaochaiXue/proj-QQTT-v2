@@ -4299,12 +4299,12 @@ class Demo21Runtime:
         self._shutdown_parallel_init_executor()
         if self.camera_system is not None:
             try:
-                if getattr(self.camera_system, "listener", None) is not None:
-                    self.camera_system.listener.stop()
-            except Exception:
-                pass
-            try:
-                self.camera_system.realsense.stop()
+                if hasattr(self.camera_system, "stop"):
+                    self.camera_system.stop()
+                else:
+                    if getattr(self.camera_system, "listener", None) is not None:
+                        self.camera_system.listener.stop()
+                    self.camera_system.realsense.stop()
             except Exception:
                 pass
             self.camera_system = None

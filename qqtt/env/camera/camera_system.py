@@ -166,6 +166,7 @@ class CameraSystem:
         self.fps = fps
         self.listener: Optional[Any] = None
         self._keyboard = None
+        self._stopped = False
 
         if capture_mode not in CAPTURE_MODE_CONFIGS:
             raise ValueError(f"Unsupported capture_mode: {capture_mode}")
@@ -263,6 +264,32 @@ class CameraSystem:
             self.listener = self._keyboard.Listener(on_press=self.on_press)
             self.listener.start()
         print("Camera system is ready.")
+
+    def stop(self, wait=True):
+        if self._stopped:
+            return
+        self._stopped = True
+        self.end = True
+        listener = getattr(self, "listener", None)
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception:
+                pass
+            self.listener = None
+        realsense = getattr(self, "realsense", None)
+        if realsense is not None:
+            try:
+                realsense.stop(wait=wait)
+            except Exception:
+                pass
+        shm_manager = getattr(self, "shm_manager", None)
+        if shm_manager is not None:
+            try:
+                shm_manager.shutdown()
+            except Exception:
+                pass
+            self.shm_manager = None
 
     def get_observation(self):
         # Used to get the latest observations from all cameras

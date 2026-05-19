@@ -319,13 +319,16 @@ class SingleRealsense(mp.Process):
             init_device()
             return True
 
+        if self.stop_event.is_set():
+            return False
         try:
             device.hardware_reset()
         except Exception as reset_error:
-            print(
-                f"[SingleRealsense {self.serial_number}] Warning: hardware reset failed "
-                f"during recovery: {reset_error}."
-            )
+            if not self.stop_event.is_set():
+                print(
+                    f"[SingleRealsense {self.serial_number}] Warning: hardware reset failed "
+                    f"during recovery: {reset_error}."
+                )
 
         self._stop_pipeline_safely()
         if self.stop_event.is_set():
@@ -731,7 +734,10 @@ class SingleRealsense(mp.Process):
                 iter_idx += 1
         finally:
             self._stop_pipeline_safely()
-            rs_config.disable_all_streams()
+            try:
+                rs_config.disable_all_streams()
+            except Exception:
+                pass
             self.ready_event.set()
 
         if self.verbose:

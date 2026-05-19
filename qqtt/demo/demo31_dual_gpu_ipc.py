@@ -59,9 +59,12 @@ class TrackingResultLitePacket:
     camera_visibility: dict[int, np.ndarray]
     query_points_yx: dict[int, np.ndarray]
     publish_range: tuple[int, int]
+    query_is_object_by_camera: dict[int, np.ndarray] = field(default_factory=dict)
+    query_is_controller_by_camera: dict[int, np.ndarray] = field(default_factory=dict)
     model_ms: float = 0.0
     e2e_ms: float = 0.0
     stale: bool = False
+    overlay_display_scope: str = "controller"
     tracking_query_count_actual_by_camera: dict[int, int] = field(default_factory=dict)
     tracking_union_pixels_by_camera: dict[int, int] = field(default_factory=dict)
     tracking_object_pixels_by_camera: dict[int, int] = field(default_factory=dict)
@@ -71,6 +74,8 @@ class TrackingResultLitePacket:
     tracking_sample_overlap_hits_by_camera: dict[int, int] = field(default_factory=dict)
     tracking_sample_background_hits_by_camera: dict[int, int] = field(default_factory=dict)
     overlay_display_count_by_camera: dict[int, int] = field(default_factory=dict)
+    overlay_display_object_count_by_camera: dict[int, int] = field(default_factory=dict)
+    overlay_display_controller_count_by_camera: dict[int, int] = field(default_factory=dict)
 
     @property
     def seq(self) -> int:
@@ -95,10 +100,19 @@ class TrackingResultLitePacket:
                 int(camera_idx): np.asarray(points, dtype=np.float32)
                 for camera_idx, points in packet.query_points_yx.items()
             },
+            query_is_object_by_camera={
+                int(camera_idx): np.asarray(labels, dtype=bool)
+                for camera_idx, labels in getattr(packet, "query_is_object_by_camera", {}).items()
+            },
+            query_is_controller_by_camera={
+                int(camera_idx): np.asarray(labels, dtype=bool)
+                for camera_idx, labels in getattr(packet, "query_is_controller_by_camera", {}).items()
+            },
             publish_range=tuple(int(item) for item in packet.publish_range),
             model_ms=float(packet.model_ms),
             e2e_ms=float(packet.e2e_ms),
             stale=bool(getattr(packet, "stale", False)),
+            overlay_display_scope=str(getattr(packet, "overlay_display_scope", "controller")),
             tracking_query_count_actual_by_camera={
                 int(camera_idx): int(count)
                 for camera_idx, count in getattr(packet, "tracking_query_count_actual_by_camera", {}).items()
@@ -135,6 +149,14 @@ class TrackingResultLitePacket:
                 int(camera_idx): int(count)
                 for camera_idx, count in getattr(packet, "overlay_display_count_by_camera", {}).items()
             },
+            overlay_display_object_count_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "overlay_display_object_count_by_camera", {}).items()
+            },
+            overlay_display_controller_count_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(packet, "overlay_display_controller_count_by_camera", {}).items()
+            },
         )
 
     def mark_stale(self) -> "TrackingResultLitePacket":
@@ -146,10 +168,13 @@ class TrackingResultLitePacket:
             camera_tracks_yx=self.camera_tracks_yx,
             camera_visibility=self.camera_visibility,
             query_points_yx=self.query_points_yx,
+            query_is_object_by_camera=self.query_is_object_by_camera,
+            query_is_controller_by_camera=self.query_is_controller_by_camera,
             publish_range=self.publish_range,
             model_ms=self.model_ms,
             e2e_ms=self.e2e_ms,
             stale=True,
+            overlay_display_scope=self.overlay_display_scope,
             tracking_query_count_actual_by_camera=self.tracking_query_count_actual_by_camera,
             tracking_union_pixels_by_camera=self.tracking_union_pixels_by_camera,
             tracking_object_pixels_by_camera=self.tracking_object_pixels_by_camera,
@@ -159,6 +184,8 @@ class TrackingResultLitePacket:
             tracking_sample_overlap_hits_by_camera=self.tracking_sample_overlap_hits_by_camera,
             tracking_sample_background_hits_by_camera=self.tracking_sample_background_hits_by_camera,
             overlay_display_count_by_camera=self.overlay_display_count_by_camera,
+            overlay_display_object_count_by_camera=self.overlay_display_object_count_by_camera,
+            overlay_display_controller_count_by_camera=self.overlay_display_controller_count_by_camera,
         )
 
 

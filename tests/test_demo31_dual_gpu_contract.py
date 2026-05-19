@@ -186,6 +186,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracking_query_count_requested"], "auto")
         self.assertEqual(contract["tracking_sampling"], "torch_randperm_seed_plus_camera_idx")
         self.assertEqual(contract["cotracker_seed"], 42)
+        self.assertEqual(contract["overlay_max_points_per_camera"], 30)
+        self.assertEqual(contract["overlay_display_scope"], "controller")
+        self.assertEqual(contract["overlay_display_classification"], "first_frame_mask_membership")
         self.assertTrue(contract["phystwin_dense_compatible"])
         self.assertEqual(contract["cotracker_backend"], "cotracker3_online")
         self.assertEqual(contract["cotracker_owner"], "process")
@@ -220,6 +223,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("tracking_mask_scope = object_controller_union", output)
         self.assertIn("tracking_query_mode = phystwin_dense", output)
         self.assertIn("tracking_query_count_requested = auto", output)
+        self.assertIn("overlay_display_scope = controller", output)
         self.assertIn("phystwin_dense_compatible = true", output)
         self.assertIn("cotracker_owner = process", output)
         self.assertIn("cross_gpu_cuda_tensor_transfer = false", output)
@@ -284,6 +288,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(config.query_count_request, "auto")
         self.assertEqual(config.seed, 42)
         self.assertTrue(config.init_requires_object_and_controller)
+        self.assertEqual(config.overlay_display_scope, "controller")
 
     def test_mode_demo_uses_hand_controller_without_changing_gpu_split(self) -> None:
         args = self._parse(

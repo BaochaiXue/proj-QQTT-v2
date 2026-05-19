@@ -18,7 +18,10 @@ track `object_mask | controller_mask`. `exp` uses controller `towel`, while
 `demo` uses controller `hand`. CoTracker query sampling defaults to
 `phystwin_dense`: `min(union_mask_pixels, 5000)` query points per camera,
 sampled by torch `randperm(seed + camera_idx)` with seed 42. Overlay display
-count is separate and remains capped at 30 points per camera by default.
+selection is separate: raw CoTracker tracks still come from the union, but each
+query is labeled by first-frame object/controller mask membership and the
+default rendered overlay shows controller-labeled tracks only. The display cap
+remains 30 controller points per camera by default.
 
 The renderer uses fresh RealSense depth, latest non-stale masks when
 `fusion_mask_policy = latest-reuse`, and latest non-stale tracking overlays.
@@ -60,6 +63,8 @@ tracking_sampling = torch_randperm_seed_plus_camera_idx
 cotracker_seed = 42
 phystwin_dense_compatible = true
 overlay_max_points_per_camera = 30
+overlay_display_scope = controller
+overlay_display_classification = first_frame_mask_membership
 cotracker_backend = cotracker3_online
 cotracker_owner = process
 cotracker_process_mode = subprocess
@@ -127,6 +132,8 @@ tracking_sample_controller_hits_by_camera
 tracking_sample_overlap_hits_by_camera
 tracking_sample_background_hits_by_camera
 overlay_display_count_by_camera
+overlay_display_object_count_by_camera
+overlay_display_controller_count_by_camera
 ```
 
 Rendered FPS claims must come from `--render-mode pointcloud` runs. A
@@ -162,6 +169,7 @@ CLI and forwards them to the shared three-view runtime:
 --debug-fusion-max-saved-groups
 --gpu-sampling
 --gpu-sampling-device-indexes
+--overlay-display-scope controller|object|union
 --point-size
 --render-every-n
 --render-backend
@@ -180,7 +188,9 @@ per-device utilization and memory summaries into `gpu0_*` and `gpu1_*` fields.
 - Demo 3.1 does not build or consume FFS depth.
 - Demo 3.1 does not rely on cross-GPU tensor operations or CUDA tensor IPC.
 - CoTracker process does not receive depth, intrinsics, or camera-to-world data.
-- Demo 3.1 does not expose object-only or controller-only live tracking modes.
+- Demo 3.1 does not expose object-only or controller-only raw live tracking
+  modes; `--overlay-display-scope controller|object|union` changes only which
+  already-tracked first-frame labels are rendered.
 - Demo 3.1 does not expose offline video, cached tracking input, saved-mask
   initialization, or case replay through the live entrypoint.
 - CoTracker output is visualization-only tracking overlay data.

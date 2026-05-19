@@ -55,6 +55,14 @@ class CoTracker3OnlineBackend:
         self._model_load_ms = (time.perf_counter() - start) * 1000.0
         return model
 
+    def warmup(self) -> dict[str, float]:
+        start = time.perf_counter()
+        self._load_model()
+        return {
+            "model_load_ms": float(self._model_load_ms),
+            "total_ms": float((time.perf_counter() - start) * 1000.0),
+        }
+
     def initialize(self, frames: Sequence[np.ndarray], query_points_yx: np.ndarray, masks: Sequence[np.ndarray] | None = None) -> None:
         _ = masks
         self._load_model()
