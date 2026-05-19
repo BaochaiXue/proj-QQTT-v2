@@ -43,6 +43,9 @@ conda run -n demo_2_max --no-capture-output python -m unittest -v \
   controller-labeled CoTracker tracks instead of only 30 per camera.
 - Made the default rendered Demo 3.1 path skip startup render packets until a
   non-empty CoTracker overlay can be lifted into world coordinates.
-- Kept post-warmup rendering nonblocking by reusing the latest non-stale
-  tracking result.
+- Tightened the rendered-result contract so Camera/Mask/PCD stages may run
+  asynchronously, but no rendered result is published until the matching
+  CoTracker result for that `group_id` is ready and liftable.
+- Rendered FPS now counts track-ready result packets, not semantic-only PCD
+  packets produced while CoTracker is still working.
 - Updated Demo 3.1 contract/profile fields and deterministic tests.

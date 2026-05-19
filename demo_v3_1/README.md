@@ -10,9 +10,9 @@ RealSense CoTracker overlay lineage.
 - CoTracker returns small CPU 2D track/visibility packets.
 - The main process lifts tracks to world with group-aligned cached RealSense depth,
   intrinsics, and camera-to-world transforms.
-- Rendered mode waits through startup warmup until the first non-empty
-  CoTracker overlay is liftable, then reuses the latest non-stale overlay
-  without blocking the render loop.
+- Camera/mask/PCD work stays asynchronous, but rendered results are gated by
+  CoTracker: a PCD packet is published only when the matching CoTracker result
+  for that group can be lifted into red tracking points.
 - Demo 3.1 does not use FFS.
 - Demo 3.1 inherits Demo 3.0's online-only FuturePhysTwin-compatible tracking
   semantics: `--mode exp|demo`, object/controller union masks, CoTracker3
@@ -24,6 +24,9 @@ RealSense CoTracker overlay lineage.
   visible controller-labeled tracks by default with
   `--overlay-max-points-per-camera 0`, shown as high-contrast red tracking
   points.
+- When CoTracker is not ready, the Open3D window keeps the last valid rendered
+  result instead of publishing a new semantic-only PCD frame. Rendered FPS
+  therefore measures track-ready results, not camera/mask-only throughput.
 - Rendered object PCD density is controlled by FuturePhysTwin-style 5mm world
   voxel sampling by default. `--object-volume-points-per-voxel` can retain more
   representatives inside each occupied voxel without changing CoTracker query

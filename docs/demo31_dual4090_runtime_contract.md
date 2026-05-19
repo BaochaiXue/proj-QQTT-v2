@@ -26,14 +26,15 @@ means render all visible controller-labeled tracks selected from the CoTracker
 union queries. The visible CoTracker tracking overlay color is high-contrast
 red, separate from the semantic PCD object/controller colors.
 
-The renderer uses fresh RealSense depth, latest non-stale masks when
-`fusion_mask_policy = latest-reuse`, and latest non-stale tracking overlays.
-By default, rendered mode treats the first non-empty, liftable CoTracker overlay
-as the end of startup warmup, so the first displayed Open3D frame already has
-red tracking points. After that first overlay is shown, rendering reuses the
-latest non-stale tracking result and does not block on CoTracker. Use
-`--no-wait-for-tracking-overlay` only for debugging the semantic PCD before
-tracking is available.
+Camera/mask/PCD work remains asynchronous, but rendered result publication is
+gated by CoTracker by default. The main process stores pending PCD packets by
+`group_id`; when a fresh CoTracker result arrives, Demo 3.1 renders only the
+matching PCD packet after the result can be lifted into red tracking points. If
+CoTracker is not ready, or the matching PCD/lift inputs are no longer available,
+no new rendered result is published and Open3D keeps the previous valid frame.
+Rendered FPS therefore measures track-ready results, not semantic-only PCD
+throughput. Use `--no-wait-for-tracking-overlay` only for debugging the semantic
+PCD before tracking is available.
 
 The rendered object PCD uses FuturePhysTwin-style world-volume sampling by
 default: one representative point per occupied 5mm voxel. This is independent
@@ -72,6 +73,7 @@ cotracker_seed = 42
 phystwin_dense_compatible = true
 wait_for_tracking_overlay = true
 tracking_overlay_required_before_first_render = true
+tracking_overlay_required_for_render = true
 tracking_overlay_color_rgb = [255, 0, 0]
 overlay_max_points_per_camera = 0
 overlay_display_scope = controller
@@ -86,7 +88,7 @@ tracking_input_contains_intrinsics = false
 tracking_input_contains_c2w = false
 world_lift_owner = main_process
 fusion_mask_policy = latest-reuse
-render_waited_for_cotracker = false
+render_waited_for_cotracker = true
 render_waited_for_mask = false
 debug_fusion.color_by_camera = false
 gpu_sampling.enabled = false
@@ -132,6 +134,10 @@ overlay_render_group_delta_median
 overlay_render_group_delta_p95
 tracking_overlay_warmup_skipped_render_count
 tracking_overlay_first_render_group_id
+tracking_overlay_render_blocked_count
+tracking_pending_render_packets
+tracking_pending_render_packet_drop_count
+tracking_result_without_render_packet_count
 tracking_input_mask_reuse_ratio
 tracking_input_mask_age_ms_median
 tracking_input_mask_age_ms_p95
