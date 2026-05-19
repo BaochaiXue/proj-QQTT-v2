@@ -24,6 +24,9 @@ RealSense CoTracker overlay lineage.
   voxel sampling by default. `--object-volume-points-per-voxel` can retain more
   representatives inside each occupied voxel without changing CoTracker query
   counts or overlay caps.
+- Rendered PCD color defaults to live RGB via `--pcd-color-mode rgb`. Use
+  `--pcd-color-mode class` only when you want semantic object/controller solid
+  colors for debugging.
 - The shared Open3D window/profile label is overridden to `Demo 3.1`.
 - Demo 3.1 forwards Demo 2.3 fusion diagnostics and GPU sampling flags to the
   shared three-view runtime.

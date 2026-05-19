@@ -80,6 +80,7 @@ class _FakeSharedRuntimeModule:
         parser.add_argument("--render-backend")
         parser.add_argument("--render-layer-mode")
         parser.add_argument("--render-copy-mode")
+        parser.add_argument("--pcd-color-mode")
         parser.add_argument("--no-render-async-latest-only", action="store_true")
         parser.add_argument("--track-mode")
         parser.add_argument("--object-prompt")
@@ -202,6 +203,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["shared_runtime_tracking_backend"], "none")
         self.assertFalse(contract["render_waited_for_cotracker"])
         self.assertFalse(contract["render_waited_for_mask"])
+        self.assertEqual(contract["pcd_color_mode"], "rgb")
 
     def test_main_dry_run_prints_dual_gpu_contract(self) -> None:
         stdout = io.StringIO()
@@ -230,6 +232,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("phystwin_dense_compatible = true", output)
         self.assertIn("cotracker_owner = process", output)
         self.assertIn("cross_gpu_cuda_tensor_transfer = false", output)
+        self.assertIn("pcd_color_mode = rgb", output)
         self.assertIn("render_waited_for_cotracker = false", output)
 
     def test_requires_two_cuda_unless_debug_override(self) -> None:
@@ -356,11 +359,27 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(shared_args.gpu_sampling)
         self.assertEqual(shared_args.gpu_sampling_device_indexes, (0, 1))
         self.assertEqual(shared_args.point_size, 1.5)
+        self.assertEqual(shared_args.pcd_color_mode, "rgb")
         self.assertEqual(shared_args.object_point_control, "phystwin-volume")
         self.assertEqual(shared_args.object_volume_voxel_m, 0.005)
         self.assertEqual(shared_args.object_volume_points_per_voxel, 3)
         self.assertEqual(shared_args.depth_source, "realsense")
         self.assertTrue(shared_args.edgetam_batch_vision_encoder)
+
+    def test_explicit_class_pcd_color_mode_is_forwarded(self) -> None:
+        args = self._parse(["--camera-ids", "0,1,2", "--pcd-color-mode", "class"])
+
+        shared_args = demo31_runtime.build_shared_runtime_args(
+            args,
+            shared_runtime_module=_FakeSharedRuntimeModule,
+            live_validation={
+                "active_serials": ["s0", "s1", "s2"],
+                "calibration_reference_serials": ["s0", "s1", "s2"],
+            },
+            shared_profile_path=None,
+        )
+
+        self.assertEqual(shared_args.pcd_color_mode, "class")
 
     def test_summary_extracts_shared_gpu_sampling_by_physical_device(self) -> None:
         args = self._parse(["--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"])

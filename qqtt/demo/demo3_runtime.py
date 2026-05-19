@@ -702,6 +702,8 @@ def build_shared_runtime_argv(
         str(int(args.edgetam_live_session_keep_frames)),
         "--render-mode",
         render_mode,
+        "--pcd-color-mode",
+        str(getattr(args, "pcd_color_mode", "rgb")),
         "--track-mode",
         SHARED_TRACK_MODE_CONTROLLER_OBJECT,
         "--object-prompt",

@@ -48,6 +48,9 @@ DEFAULT_MASK_STALE_TIMEOUT_MS = 250.0
 DEFAULT_MASK_GPU = "0"
 DEFAULT_COTRACKER_GPU = "1"
 DEFAULT_LIFT_INPUT_CACHE_GROUPS = 32
+PCD_COLOR_MODE_RGB = "rgb"
+PCD_COLOR_MODE_CLASS = "class"
+PCD_COLOR_MODES = (PCD_COLOR_MODE_RGB, PCD_COLOR_MODE_CLASS)
 
 ConnectedSerialsProvider = Callable[[], Sequence[str]]
 CudaDeviceCountProvider = Callable[[], int]
@@ -228,6 +231,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--render-backend", default=None)
     parser.add_argument("--render-layer-mode", default=None)
     parser.add_argument("--render-copy-mode", default=None)
+    parser.add_argument(
+        "--pcd-color-mode",
+        choices=PCD_COLOR_MODES,
+        default=PCD_COLOR_MODE_RGB,
+        help=(
+            "Color mode forwarded to the shared PCD runtime. Demo 3.1 defaults "
+            "to live RGB so the rendered point cloud keeps camera color instead "
+            "of inheriting the fast-native class-color preset."
+        ),
+    )
     parser.add_argument("--no-render-async-latest-only", action="store_true")
     parser.add_argument("--render-micro-profile", action="store_true")
     parser.add_argument(
@@ -498,6 +511,7 @@ def build_contract(
         "render_backend": None if args.render_backend is None else str(args.render_backend),
         "render_layer_mode": None if args.render_layer_mode is None else str(args.render_layer_mode),
         "render_copy_mode": None if args.render_copy_mode is None else str(args.render_copy_mode),
+        "pcd_color_mode": str(args.pcd_color_mode),
         "render_micro_profile": True,
         "render_latest_wins": True,
         "render_waited_for_cotracker": False,
@@ -590,6 +604,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "cross_gpu_cuda_tensor_transfer",
         "ipc_payload",
         "fusion_mask_policy",
+        "pcd_color_mode",
         "render_waited_for_cotracker",
         "render_waited_for_mask",
     )

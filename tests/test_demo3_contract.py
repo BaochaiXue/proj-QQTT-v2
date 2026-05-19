@@ -209,6 +209,7 @@ class Demo3RuntimeContractTest(unittest.TestCase):
                 parser.add_argument("--render-backend")
                 parser.add_argument("--render-layer-mode")
                 parser.add_argument("--render-copy-mode")
+                parser.add_argument("--pcd-color-mode")
                 parser.add_argument("--no-render-async-latest-only", action="store_true")
                 parser.add_argument("--track-mode")
                 parser.add_argument("--object-prompt")
