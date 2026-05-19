@@ -197,12 +197,26 @@ class SingleRealsense(mp.Process):
         self.stop_event.set()
         if wait:
             self.end_wait()
+            self.close_ipc()
 
     def start_wait(self):
         self.ready_event.wait()
 
     def end_wait(self):
         self.join()
+
+    def close_ipc(self):
+        queue = getattr(self, "metadata_queue", None)
+        if queue is not None:
+            try:
+                queue.cancel_join_thread()
+            except Exception:
+                pass
+            try:
+                queue.close()
+            except Exception:
+                pass
+            self.metadata_queue = None
 
     @property
     def is_ready(self):

@@ -5110,6 +5110,28 @@ class Demo21Runtime:
                 except Exception:
                     pass
         self._dual_gpu_processes.clear()
+        self._close_dual_gpu_worker_queues()
+
+    def _close_dual_gpu_worker_queues(self) -> None:
+        queues = (
+            self._dual_gpu_ffs_task_queue,
+            self._dual_gpu_edgetam_task_queue,
+            self._dual_gpu_result_queue,
+        )
+        for queue in queues:
+            if queue is None:
+                continue
+            try:
+                queue.cancel_join_thread()
+            except Exception:
+                pass
+            try:
+                queue.close()
+            except Exception:
+                pass
+        self._dual_gpu_ffs_task_queue = None
+        self._dual_gpu_edgetam_task_queue = None
+        self._dual_gpu_result_queue = None
 
     def _dual_gpu_dispatch_worker(self) -> None:
         if not bool(getattr(self.args, "dual_gpu_processes", True)):

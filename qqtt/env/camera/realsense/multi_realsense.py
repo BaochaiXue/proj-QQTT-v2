@@ -126,6 +126,10 @@ class MultiRealsense:
                     camera.join(timeout=2.0)
                 except Exception:
                     pass
+            try:
+                camera.close_ipc()
+            except Exception:
+                pass
 
     def get(self, k=None, index=None, out=None) -> Dict[int, Dict[str, np.ndarray]]:
         """
