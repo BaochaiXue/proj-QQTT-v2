@@ -19,6 +19,10 @@ RealSense CoTracker overlay lineage.
 - Raw tracked queries are separate from display overlays. CoTracker may track up
   to 5000 points per camera while the rendered overlay remains capped at 30
   points per camera by default.
+- Rendered object PCD density is controlled by FuturePhysTwin-style 5mm world
+  voxel sampling by default. `--object-volume-points-per-voxel` can retain more
+  representatives inside each occupied voxel without changing CoTracker query
+  counts or overlay caps.
 - The shared Open3D window/profile label is overridden to `Demo 3.1`.
 - Demo 3.1 forwards Demo 2.3 fusion diagnostics and GPU sampling flags to the
   shared three-view runtime.

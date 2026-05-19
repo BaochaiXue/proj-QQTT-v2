@@ -81,6 +81,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     view.add_argument("--render-copy-mode", choices=runtime.RENDER_COPY_MODES, default=None, help="Renderer copy/profile mode.")
     view.add_argument("--no-render-async-latest-only", action="store_true", help="Disable coalesced latest-only render posts.")
     view.add_argument("--render-micro-profile", action="store_true", help="Record detailed renderer copy/update timing.")
+    view.add_argument("--object-point-control", choices=runtime.OBJECT_POINT_CONTROLS, default=None, help="Object render point control policy.")
+    view.add_argument("--object-volume-voxel-m", type=float, default=None, help="World voxel size for PhysTwin-style object render sampling.")
+    view.add_argument("--object-volume-origin", choices=runtime.PHYSTWIN_VOLUME_ORIGINS, default=None, help="Origin policy for object volume sampling.")
+    view.add_argument("--object-volume-adaptive", dest="object_volume_adaptive", action="store_true", default=None, help="Enable adaptive object voxel size.")
+    view.add_argument("--no-object-volume-adaptive", dest="object_volume_adaptive", action="store_false", help="Disable adaptive object voxel size.")
+    view.add_argument("--object-volume-min-voxel-m", type=float, default=None, help="Minimum adaptive object voxel size.")
+    view.add_argument("--object-volume-max-voxel-m", type=float, default=None, help="Maximum adaptive object voxel size.")
+    view.add_argument("--object-volume-target-ms", type=float, default=None, help="Object volume filter target milliseconds.")
+    view.add_argument("--object-volume-emergency-max-points", type=int, default=None, help="Safety cap applied after object voxel sampling.")
+    view.add_argument("--object-volume-points-per-voxel", type=int, default=None, help="Representatives kept per occupied object voxel.")
     view.add_argument("--output-root", default=None, help="Output root for runtime artifacts.")
 
     diagnostics = parser.add_argument_group("Fusion Diagnostics")
@@ -189,6 +199,14 @@ def _to_demo23_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--render-backend", parsed.render_backend)
     _append_option(translated, "--render-layer-mode", parsed.render_layer_mode)
     _append_option(translated, "--render-copy-mode", parsed.render_copy_mode)
+    _append_option(translated, "--object-point-control", parsed.object_point_control)
+    _append_option(translated, "--object-volume-voxel-m", parsed.object_volume_voxel_m)
+    _append_option(translated, "--object-volume-origin", parsed.object_volume_origin)
+    _append_option(translated, "--object-volume-min-voxel-m", parsed.object_volume_min_voxel_m)
+    _append_option(translated, "--object-volume-max-voxel-m", parsed.object_volume_max_voxel_m)
+    _append_option(translated, "--object-volume-target-ms", parsed.object_volume_target_ms)
+    _append_option(translated, "--object-volume-emergency-max-points", parsed.object_volume_emergency_max_points)
+    _append_option(translated, "--object-volume-points-per-voxel", parsed.object_volume_points_per_voxel)
     _append_option(translated, "--output-root", parsed.output_root)
     _append_option(translated, "--debug-only-camera-idx", parsed.debug_only_camera_idx)
     _append_option(translated, "--debug-fusion-max-saved-groups", parsed.debug_fusion_max_saved_groups)
@@ -210,6 +228,10 @@ def _to_demo23_argv(argv: Sequence[str] | None) -> list[str]:
         translated.append("--no-render-async-latest-only")
     if parsed.render_micro_profile:
         translated.append("--render-micro-profile")
+    if parsed.object_volume_adaptive is True:
+        translated.append("--object-volume-adaptive")
+    elif parsed.object_volume_adaptive is False:
+        translated.append("--no-object-volume-adaptive")
     if parsed.debug_color_by_camera:
         translated.append("--debug-color-by-camera")
     if parsed.debug_save_per_camera_pcd:

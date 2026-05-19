@@ -53,6 +53,12 @@ class WorkerErrorResult:
     traceback: str
 
 
+@dataclass(frozen=True)
+class WorkerReadyResult:
+    stage: str
+    worker_timing: dict[str, Any]
+
+
 STOP = WorkerStop()
 
 
@@ -132,15 +138,42 @@ def run_ffs_worker(args: Any, in_queue: Any, out_queue: Any) -> None:
     import traceback
 
     group_id: int | None = None
+    process_start_s = time.perf_counter()
     try:
+        child_args_start_s = time.perf_counter()
         child_args = _prepare_child_args(args, physical_device=getattr(args, "ffs_device", "cuda:0"), stage="ffs")
+        child_args_ms = _elapsed_ms(child_args_start_s, time.perf_counter())
+        torch_start_s = time.perf_counter()
         _set_torch_device()
+        torch_device_ms = _elapsed_ms(torch_start_s, time.perf_counter())
+        import_start_s = time.perf_counter()
         from qqtt.demo.demo23_runtime import Demo23WorkerRuntime
+        runtime_import_ms = _elapsed_ms(import_start_s, time.perf_counter())
 
+        runtime_start_s = time.perf_counter()
         runtime = Demo23WorkerRuntime(child_args)
+        runtime_init_ms = _elapsed_ms(runtime_start_s, time.perf_counter())
+        runner_start_s = time.perf_counter()
         runner = runtime._get_or_prepare_ffs_runner() if child_args.depth_source == DEPTH_SOURCE_FFS else None
+        runner_prepare_ms = _elapsed_ms(runner_start_s, time.perf_counter())
         aligners = {}
         profile_workers = bool(getattr(args, "dual_gpu_profile_workers", False))
+        out_queue.put(
+            WorkerReadyResult(
+                stage="ffs",
+                worker_timing={
+                    "stage": "ffs",
+                    "device": str(getattr(args, "ffs_device", "cuda:0")),
+                    "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                    "child_args_ms": float(child_args_ms),
+                    "torch_device_ms": float(torch_device_ms),
+                    "runtime_import_ms": float(runtime_import_ms),
+                    "runtime_init_ms": float(runtime_init_ms),
+                    "runner_prepare_ms": float(runner_prepare_ms),
+                    "total_init_ms": _elapsed_ms(process_start_s, time.perf_counter()),
+                },
+            )
+        )
         while True:
             task = in_queue.get()
             if is_stop_task(task):
@@ -182,14 +215,41 @@ def run_edgetam_worker(args: Any, in_queue: Any, out_queue: Any) -> None:
     import traceback
 
     group_id: int | None = None
+    process_start_s = time.perf_counter()
     try:
+        child_args_start_s = time.perf_counter()
         child_args = _prepare_child_args(args, physical_device=getattr(args, "edgetam_device", "cuda:1"), stage="edgetam")
+        child_args_ms = _elapsed_ms(child_args_start_s, time.perf_counter())
+        torch_start_s = time.perf_counter()
         _set_torch_device()
+        torch_device_ms = _elapsed_ms(torch_start_s, time.perf_counter())
+        import_start_s = time.perf_counter()
         from qqtt.demo.demo23_runtime import Demo23WorkerRuntime
+        runtime_import_ms = _elapsed_ms(import_start_s, time.perf_counter())
 
+        runtime_start_s = time.perf_counter()
         runtime = Demo23WorkerRuntime(child_args)
+        runtime_init_ms = _elapsed_ms(runtime_start_s, time.perf_counter())
+        states_start_s = time.perf_counter()
         states = runtime._get_or_init_gpu_owner_edgetam_states()
+        edgetam_states_init_ms = _elapsed_ms(states_start_s, time.perf_counter())
         profile_workers = bool(getattr(args, "dual_gpu_profile_workers", False))
+        out_queue.put(
+            WorkerReadyResult(
+                stage="edgetam",
+                worker_timing={
+                    "stage": "edgetam",
+                    "device": str(getattr(args, "edgetam_device", "cuda:1")),
+                    "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                    "child_args_ms": float(child_args_ms),
+                    "torch_device_ms": float(torch_device_ms),
+                    "runtime_import_ms": float(runtime_import_ms),
+                    "runtime_init_ms": float(runtime_init_ms),
+                    "edgetam_states_init_ms": float(edgetam_states_init_ms),
+                    "total_init_ms": _elapsed_ms(process_start_s, time.perf_counter()),
+                },
+            )
+        )
         while True:
             task = in_queue.get()
             if is_stop_task(task):

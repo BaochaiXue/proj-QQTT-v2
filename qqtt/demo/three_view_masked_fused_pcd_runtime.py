@@ -56,6 +56,20 @@ from qqtt.demo.realtime_masked_edgetam_pcd import (  # noqa: E402
     resolve_initial_masks,
 )
 from qqtt.demo.pcd_filter_fast import voxel_cap_points  # noqa: E402
+from qqtt.demo.phystwin_volume_filter import (  # noqa: E402
+    DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
+    DEFAULT_PHYSTWIN_OBJECT_VOLUME_MAX_VOXEL_M,
+    DEFAULT_PHYSTWIN_OBJECT_VOLUME_MIN_VOXEL_M,
+    DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
+    DEFAULT_PHYSTWIN_OBJECT_VOLUME_TARGET_MS,
+    DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M,
+    PHYSTWIN_VOLUME_ORIGIN_FIRST_STABLE_FRAME_MIN,
+    PHYSTWIN_VOLUME_ORIGIN_FRAME_MIN,
+    PHYSTWIN_VOLUME_ORIGIN_WORLD,
+    PHYSTWIN_VOLUME_ORIGINS,
+    ObjectVoxelBudgetController,
+    phystwin_volume_sample_points,
+)
 from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     CameraIntrinsics,
     ColorFloat32Buffer,
@@ -116,6 +130,9 @@ POSTPROCESS_PT_FILTER = "pt-filter"
 POSTPROCESS_ENHANCED_PT = "enhanced-pt"
 POSTPROCESS_MODES = (POSTPROCESS_NONE, POSTPROCESS_PT_FILTER, POSTPROCESS_ENHANCED_PT)
 PCD_FILTER_SCHEDULE_MODES = ("async", "sync", "none")
+OBJECT_POINT_CONTROL_FIXED_CAP = "fixed-cap"
+OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME = "phystwin-volume"
+OBJECT_POINT_CONTROLS = (OBJECT_POINT_CONTROL_FIXED_CAP, OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME)
 
 DEFAULT_CAMERA_IDS = (0, 1, 2)
 DEFAULT_OBJECT_LABEL = "object"
@@ -2411,6 +2428,27 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             _set_if_not_explicit(args, explicit, flag="--dual-gpu-transport", attr="dual_gpu_transport", value="pickle")
             _set_if_not_explicit(args, explicit, flag="--dual-gpu-start-method", attr="dual_gpu_start_method", value="spawn")
             _set_if_not_explicit(args, explicit, flag="--dual-gpu-processes", attr="dual_gpu_processes", value=True)
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--object-point-control",
+                attr="object_point_control",
+                value=OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME,
+            )
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--object-volume-voxel-m",
+                attr="object_volume_voxel_m",
+                value=DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M,
+            )
+            _set_if_not_explicit(
+                args,
+                explicit,
+                flag="--object-volume-origin",
+                attr="object_volume_origin",
+                value=PHYSTWIN_VOLUME_ORIGIN_WORLD,
+            )
         elif preset == PRESET_DEMO215_COMPILED_PARALLEL_EDGETAM_5FPS:
             _set_if_not_explicit(args, explicit, flag="--depth-source", attr="depth_source", value=DEPTH_SOURCE_REALSENSE)
             _set_if_not_explicit(args, explicit, flag="--fps", attr="fps", value=DEFAULT_PRESET_CAPTURE_FPS)
@@ -3218,9 +3256,38 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "filter_every_n": int(args.filter_every_n),
             "filter_budget_ms": float(args.filter_budget_ms),
             "object": {
+                "point_control": str(getattr(args, "object_point_control", OBJECT_POINT_CONTROL_FIXED_CAP)),
                 "postprocess": args.object_postprocess,
                 "cap": int(args.object_filter_cap),
                 "voxel_size_m": float(args.object_filter_voxel_m),
+                "volume": {
+                    "voxel_m": float(getattr(args, "object_volume_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M)),
+                    "origin_policy": str(getattr(args, "object_volume_origin", PHYSTWIN_VOLUME_ORIGIN_WORLD)),
+                    "adaptive": bool(getattr(args, "object_volume_adaptive", True)),
+                    "min_voxel_m": float(
+                        getattr(args, "object_volume_min_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_MIN_VOXEL_M)
+                    ),
+                    "max_voxel_m": float(
+                        getattr(args, "object_volume_max_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_MAX_VOXEL_M)
+                    ),
+                    "target_ms": float(
+                        getattr(args, "object_volume_target_ms", DEFAULT_PHYSTWIN_OBJECT_VOLUME_TARGET_MS)
+                    ),
+                    "emergency_max_points": int(
+                        getattr(
+                            args,
+                            "object_volume_emergency_max_points",
+                            DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
+                        )
+                    ),
+                    "points_per_voxel": int(
+                        getattr(
+                            args,
+                            "object_volume_points_per_voxel",
+                            DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
+                        )
+                    ),
+                },
             },
             "controller": {
                 "postprocess": args.controller_postprocess,
@@ -3343,6 +3410,17 @@ class Demo21Runtime:
         self._debug_effective_c2w_mapping_mode = "calibrate-c2w"
         self._summary_write_lock = threading.Lock()
         self._summary_written = False
+        self._object_volume_stable_origin_world: np.ndarray | None = None
+        self._object_volume_budget = ObjectVoxelBudgetController(
+            target_ms=float(getattr(args, "object_volume_target_ms", DEFAULT_PHYSTWIN_OBJECT_VOLUME_TARGET_MS)),
+            base_voxel_m=float(getattr(args, "object_volume_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M)),
+            min_voxel_m=float(
+                getattr(args, "object_volume_min_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_MIN_VOXEL_M)
+            ),
+            max_voxel_m=float(
+                getattr(args, "object_volume_max_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_MAX_VOXEL_M)
+            ),
+        )
         self._last_debug_s = 0.0
         self._render_request: Callable[[], None] = lambda: None
         self._fatal_error: str | None = None
@@ -3681,6 +3759,7 @@ class Demo21Runtime:
         self._warm_torchvision_ops_imports_for_sam31()
         self._gpu_sampler.start()
         self._start_parallel_init()
+        self._eager_start_dual_gpu_workers_before_camera()
         try:
             camera_start_s = time.perf_counter()
             self._start_camera_system()
@@ -4046,6 +4125,22 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 filter caps must be >= 0")
         if float(self.args.object_filter_voxel_m) <= 0 or float(self.args.controller_filter_voxel_m) <= 0:
             raise RuntimeError("Demo 2.1 filter voxel sizes must be positive")
+        if self.args.object_point_control not in OBJECT_POINT_CONTROLS:
+            raise RuntimeError(f"Demo 2.1 unsupported --object-point-control {self.args.object_point_control}")
+        if self.args.object_volume_origin not in PHYSTWIN_VOLUME_ORIGINS:
+            raise RuntimeError(f"Demo 2.1 unsupported --object-volume-origin {self.args.object_volume_origin}")
+        if float(self.args.object_volume_voxel_m) <= 0:
+            raise RuntimeError("Demo 2.1 --object-volume-voxel-m must be positive")
+        if float(self.args.object_volume_min_voxel_m) <= 0 or float(self.args.object_volume_max_voxel_m) <= 0:
+            raise RuntimeError("Demo 2.1 object volume min/max voxel sizes must be positive")
+        if float(self.args.object_volume_min_voxel_m) > float(self.args.object_volume_max_voxel_m):
+            raise RuntimeError("Demo 2.1 --object-volume-min-voxel-m must be <= --object-volume-max-voxel-m")
+        if float(self.args.object_volume_target_ms) <= 0:
+            raise RuntimeError("Demo 2.1 --object-volume-target-ms must be > 0")
+        if int(self.args.object_volume_emergency_max_points) < 0:
+            raise RuntimeError("Demo 2.1 --object-volume-emergency-max-points must be >= 0")
+        if int(self.args.object_volume_points_per_voxel) < 1:
+            raise RuntimeError("Demo 2.1 --object-volume-points-per-voxel must be >= 1")
         if int(self.args.filter_every_n) < 1:
             raise RuntimeError("Demo 2.1 --filter-every-n must be >= 1")
         if float(self.args.filter_budget_ms) < 0:
@@ -4446,6 +4541,9 @@ class Demo21Runtime:
             "filter_total_ms": ("filter", "total_ms"),
             "filter_input_age_ms": ("filter", "input_age_ms"),
             "object_enhanced_pt_ms": ("fusion", "object_enhanced_pt_ms"),
+            "object_volume_ms": ("fusion", "object_volume_ms"),
+            "object_volume_occupied_voxels": ("fusion", "object_volume_occupied_voxels"),
+            "object_volume_output_points": ("fusion", "object_volume_output_points"),
             "controller_pt_filter_ms": ("fusion", "controller_pt_filter_ms"),
             "render_total_ms": ("render", "total_ms"),
             "render_queue_wait_ms": ("render", "queue_wait_ms"),
@@ -4932,6 +5030,7 @@ class Demo21Runtime:
             )
             ffs_process.start()
             edgetam_process.start()
+            start_method = str(getattr(self.args, "dual_gpu_start_method", "spawn"))
             self._dual_gpu_context = context
             self._dual_gpu_ffs_task_queue = ffs_queue
             self._dual_gpu_edgetam_task_queue = edgetam_queue
@@ -4941,6 +5040,45 @@ class Demo21Runtime:
             self._summary["dual_gpu_processes_started"] = True
             self._summary["dual_gpu_ffs_pid"] = int(ffs_process.pid or -1)
             self._summary["dual_gpu_edgetam_pid"] = int(edgetam_process.pid or -1)
+            self._init_profile_update(
+                ("dual_gpu", "worker_processes"),
+                {
+                    "started_s": self._profile_rel_s(),
+                    "start_method": start_method,
+                    "queue_size": int(queue_size),
+                    "ffs_pid": int(ffs_process.pid or -1),
+                    "edgetam_pid": int(edgetam_process.pid or -1),
+                    "ffs_device": str(getattr(self.args, "ffs_device", "cuda:0")),
+                    "edgetam_device": str(getattr(self.args, "edgetam_device", "cuda:1")),
+                },
+            )
+
+    def _should_eager_start_dual_gpu_workers(self) -> bool:
+        depth_for_pcd = self.args.depth_source in {DEPTH_SOURCE_FFS, DEPTH_SOURCE_REALSENSE}
+        return bool(
+            self.args.gpu_pipeline_mode == GPU_PIPELINE_MODE_DUAL_GPU_SPLIT
+            and self.args.track_mode != TRACK_MODE_NONE
+            and depth_for_pcd
+            and bool(getattr(self.args, "dual_gpu_processes", True))
+        )
+
+    def _eager_start_dual_gpu_workers_before_camera(self) -> None:
+        if not self._should_eager_start_dual_gpu_workers():
+            return
+        start_s = time.perf_counter()
+        self._ensure_dual_gpu_workers_started()
+        launch_ms = _elapsed_ms(start_s, time.perf_counter())
+        self._summary["dual_gpu_workers_eager_started_before_camera"] = True
+        self._init_profile_update(
+            ("dual_gpu", "eager_start"),
+            {
+                "enabled": True,
+                "before_camera_startup": True,
+                "launch_ms": float(launch_ms),
+                "started_s": self._profile_rel_s(start_s),
+                "finished_s": self._profile_rel_s(),
+            },
+        )
 
     def _request_dual_gpu_worker_stop(self) -> None:
         if not self._dual_gpu_processes_started:
@@ -5150,6 +5288,17 @@ class Demo21Runtime:
                     self._mark_fatal_error(f"dual-gpu-{result.stage}", RuntimeError(result.error))
                     self.stop_event.set()
                     break
+                if isinstance(result, workers.WorkerReadyResult):
+                    stage = str(result.stage)
+                    worker_timing = dict(result.worker_timing)
+                    self._summary[f"dual_gpu_{stage}_worker_ready"] = True
+                    self._summary[f"dual_gpu_{stage}_worker_ready_s"] = float(receive_s)
+                    self._summary[f"dual_gpu_{stage}_worker_init_ms"] = float(
+                        worker_timing.get("total_init_ms", 0.0)
+                    )
+                    worker_timing["ready_receive_s"] = float(receive_s)
+                    self._init_profile_update(("dual_gpu", stage, "worker_ready"), worker_timing)
+                    continue
                 if isinstance(result, workers.WorkerDepthResult):
                     self._dual_gpu_depth_groups_received += 1
                     self.stage_join_buffer.put_depth(result.depth_group)
@@ -7855,6 +8004,117 @@ class Demo21Runtime:
             timestamp_source=str(depth_group.timestamp_source),
         )
 
+    def _object_volume_origin_for_points(self, points: np.ndarray) -> np.ndarray | None:
+        policy = str(getattr(self.args, "object_volume_origin", PHYSTWIN_VOLUME_ORIGIN_WORLD))
+        if policy == PHYSTWIN_VOLUME_ORIGIN_WORLD:
+            return np.zeros((3,), dtype=np.float32)
+        if policy == PHYSTWIN_VOLUME_ORIGIN_FRAME_MIN:
+            return None
+        if policy == PHYSTWIN_VOLUME_ORIGIN_FIRST_STABLE_FRAME_MIN:
+            if self._object_volume_stable_origin_world is None and int(points.shape[0]) > 0:
+                self._object_volume_stable_origin_world = np.asarray(points, dtype=np.float32).min(axis=0)
+            if self._object_volume_stable_origin_world is None:
+                return None
+            return self._object_volume_stable_origin_world
+        raise ValueError(f"Unsupported --object-volume-origin {policy!r}")
+
+    def _object_volume_filter_profile_fields(self, stats: dict[str, Any], *, object_filter_ms: float) -> dict[str, Any]:
+        if str(getattr(self.args, "object_point_control", OBJECT_POINT_CONTROL_FIXED_CAP)) != OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME:
+            return {}
+        return {
+            "object_point_control": OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME,
+            "object_volume_voxel_m_base": float(
+                getattr(self.args, "object_volume_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M)
+            ),
+            "object_volume_voxel_m_current": float(
+                stats.get(
+                    "voxel_size_m",
+                    getattr(self.args, "object_volume_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M),
+                )
+            ),
+            "object_volume_origin_policy": str(
+                stats.get("origin_policy", getattr(self.args, "object_volume_origin", PHYSTWIN_VOLUME_ORIGIN_WORLD))
+            ),
+            "object_volume_points_per_voxel": int(
+                stats.get(
+                    "points_per_voxel",
+                    getattr(
+                        self.args,
+                        "object_volume_points_per_voxel",
+                        DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
+                    ),
+                )
+            ),
+            "object_volume_input_points": int(stats.get("input_point_count", 0)),
+            "object_volume_occupied_voxels": int(stats.get("occupied_voxel_count", 0)),
+            "object_volume_output_points": int(stats.get("output_point_count", 0)),
+            "object_volume_ms": float(object_filter_ms),
+            "object_volume_safety_cap_triggered": bool(stats.get("safety_cap_triggered", False)),
+            "object_volume_safety_cap_points": int(
+                stats.get(
+                    "safety_cap_points",
+                    getattr(
+                        self.args,
+                        "object_volume_emergency_max_points",
+                        DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
+                    ),
+                )
+            ),
+            "object_volume_target_ms": float(
+                getattr(self.args, "object_volume_target_ms", DEFAULT_PHYSTWIN_OBJECT_VOLUME_TARGET_MS)
+            ),
+            "object_volume_adaptive_enabled": bool(getattr(self.args, "object_volume_adaptive", True)),
+        }
+
+    def _filter_object_layer(self, layer: FusedLayerCloud) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+        point_control = str(getattr(self.args, "object_point_control", OBJECT_POINT_CONTROL_FIXED_CAP))
+        if point_control != OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME:
+            return apply_semantic_postprocess(
+                layer,
+                filter_cap=int(self.args.object_filter_cap),
+                filter_voxel_size_m=float(self.args.object_filter_voxel_m),
+                phystwin_radius_m=float(self.args.phystwin_radius_m),
+                phystwin_nb_points=int(self.args.phystwin_nb_points),
+                enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
+                enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
+            )
+
+        points = _as_points(layer.points_m)
+        colors = _as_colors(layer.colors_rgb)
+        voxel_m = (
+            float(self._object_volume_budget.current_voxel_m)
+            if bool(getattr(self.args, "object_volume_adaptive", True))
+            else float(getattr(self.args, "object_volume_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M))
+        )
+        sampled_points, sampled_colors_or_none, stats = phystwin_volume_sample_points(
+            points,
+            colors,
+            voxel_size_m=voxel_m,
+            origin_world=self._object_volume_origin_for_points(points),
+            origin_policy=str(getattr(self.args, "object_volume_origin", PHYSTWIN_VOLUME_ORIGIN_WORLD)),
+            points_per_voxel=int(
+                getattr(
+                    self.args,
+                    "object_volume_points_per_voxel",
+                    DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
+                )
+            ),
+            emergency_max_points=int(
+                getattr(
+                    self.args,
+                    "object_volume_emergency_max_points",
+                    DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
+                )
+            ),
+        )
+        stats["enabled"] = True
+        stats["point_control"] = OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME
+        stats["postprocess_bypassed"] = str(layer.postprocess_mode)
+        sampled_colors = _as_colors(
+            np.empty((0, 3), dtype=np.uint8) if sampled_colors_or_none is None else sampled_colors_or_none
+        )
+        return sampled_points, sampled_colors, stats
+
     def _filter_raw_fused_packet(self, raw: RawFusedPcdPacket) -> FusedPcdPacket:
         filter_start_s = time.perf_counter()
         object_filter_ms = 0.0
@@ -7863,17 +8123,15 @@ class Demo21Runtime:
         controller_filter_stats: dict[str, Any] = {}
         if raw.raw_object is not None:
             object_filter_start_s = time.perf_counter()
-            object_points, object_colors, stats = apply_semantic_postprocess(
-                raw.raw_object,
-                filter_cap=int(self.args.object_filter_cap),
-                filter_voxel_size_m=float(self.args.object_filter_voxel_m),
-                phystwin_radius_m=float(self.args.phystwin_radius_m),
-                phystwin_nb_points=int(self.args.phystwin_nb_points),
-                enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
-                enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
-            )
+            object_points, object_colors, stats = self._filter_object_layer(raw.raw_object)
             object_filter_ms = _elapsed_ms(object_filter_start_s, time.perf_counter())
             object_filter_stats = stats if isinstance(stats, dict) else {}
+            if (
+                str(getattr(self.args, "object_point_control", OBJECT_POINT_CONTROL_FIXED_CAP))
+                == OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME
+                and bool(getattr(self.args, "object_volume_adaptive", True))
+            ):
+                self._object_volume_budget.update(object_filter_ms)
         else:
             object_points = np.empty((0, 3), dtype=np.float32)
             object_colors = np.empty((0, 3), dtype=np.uint8)
@@ -7904,9 +8162,16 @@ class Demo21Runtime:
             "pending_replacements": int(self.raw_fused_slot.dropped_count),
             "pending_replacements_total": int(self.raw_fused_slot.total_dropped_count),
         }
+        profile_filter.update(
+            self._object_volume_filter_profile_fields(object_filter_stats, object_filter_ms=object_filter_ms)
+        )
         if self.args.profile_filter_detail:
             profile_filter["object_filter_detail"] = object_filter_stats
             profile_filter["controller_filter_detail"] = controller_filter_stats
+        object_volume_profile = self._object_volume_filter_profile_fields(
+            object_filter_stats,
+            object_filter_ms=object_filter_ms,
+        )
         self._profile_update(
             raw.group_id,
             filter=profile_filter,
@@ -7921,10 +8186,12 @@ class Demo21Runtime:
                 "raw_fusion_ms": float(raw.raw_fusion_ms),
                 "total_ms": float(raw.raw_fusion_ms + filter_ms),
                 "publish_s": self._profile_rel_s(),
+                **object_volume_profile,
             },
             points={
                 "object_raw": int(raw.object_raw_points),
                 "object_filtered": int(len(object_points)),
+                "object_volume_occupied_voxels": int(object_filter_stats.get("occupied_voxel_count", 0)),
                 "controller_raw": int(raw.controller_raw_points),
                 "controller_filtered": int(len(controller_points)),
             },
@@ -8124,17 +8391,15 @@ class Demo21Runtime:
         controller_filter_stats: dict[str, Any] = {}
         if raw_object is not None:
             object_filter_start_s = time.perf_counter()
-            object_points, object_colors, _ = apply_semantic_postprocess(
-                raw_object,
-                filter_cap=int(self.args.object_filter_cap),
-                filter_voxel_size_m=float(self.args.object_filter_voxel_m),
-                phystwin_radius_m=float(self.args.phystwin_radius_m),
-                phystwin_nb_points=int(self.args.phystwin_nb_points),
-                enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
-                enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
-            )
+            object_points, object_colors, object_stats = self._filter_object_layer(raw_object)
             object_filter_ms = _elapsed_ms(object_filter_start_s, time.perf_counter())
-            object_filter_stats = _ if isinstance(_, dict) else {}
+            object_filter_stats = object_stats if isinstance(object_stats, dict) else {}
+            if (
+                str(getattr(self.args, "object_point_control", OBJECT_POINT_CONTROL_FIXED_CAP))
+                == OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME
+                and bool(getattr(self.args, "object_volume_adaptive", True))
+            ):
+                self._object_volume_budget.update(object_filter_ms)
         else:
             object_points = np.empty((0, 3), dtype=np.float32)
             object_colors = np.empty((0, 3), dtype=np.uint8)
@@ -8167,6 +8432,9 @@ class Demo21Runtime:
             "total_ms": float(fusion_total_ms),
             "publish_s": self._profile_rel_s(),
         }
+        profile_fusion.update(
+            self._object_volume_filter_profile_fields(object_filter_stats, object_filter_ms=object_filter_ms)
+        )
         profile_fusion.update(fusion_debug)
         if self.args.profile_filter_detail:
             profile_fusion["object_filter_detail"] = object_filter_stats
@@ -8177,6 +8445,7 @@ class Demo21Runtime:
             points={
                 "object_raw": int(object_raw_count),
                 "object_filtered": int(len(object_points)),
+                "object_volume_occupied_voxels": int(object_filter_stats.get("occupied_voxel_count", 0)),
                 "controller_raw": int(controller_raw_count),
                 "controller_filtered": int(len(controller_points)),
             },
@@ -8812,6 +9081,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--controller-filter-cap", type=int, default=DEFAULT_CONTROLLER_FILTER_CAP)
     parser.add_argument("--object-filter-voxel-m", type=float, default=DEFAULT_OBJECT_FILTER_VOXEL_M)
     parser.add_argument("--controller-filter-voxel-m", type=float, default=DEFAULT_CONTROLLER_FILTER_VOXEL_M)
+    parser.add_argument("--object-point-control", choices=OBJECT_POINT_CONTROLS, default=OBJECT_POINT_CONTROL_FIXED_CAP)
+    parser.add_argument("--object-volume-voxel-m", type=float, default=DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M)
+    parser.add_argument("--object-volume-origin", choices=PHYSTWIN_VOLUME_ORIGINS, default=PHYSTWIN_VOLUME_ORIGIN_WORLD)
+    parser.add_argument("--object-volume-adaptive", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--object-volume-min-voxel-m", type=float, default=DEFAULT_PHYSTWIN_OBJECT_VOLUME_MIN_VOXEL_M)
+    parser.add_argument("--object-volume-max-voxel-m", type=float, default=DEFAULT_PHYSTWIN_OBJECT_VOLUME_MAX_VOXEL_M)
+    parser.add_argument("--object-volume-target-ms", type=float, default=DEFAULT_PHYSTWIN_OBJECT_VOLUME_TARGET_MS)
+    parser.add_argument(
+        "--object-volume-emergency-max-points",
+        type=int,
+        default=DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
+    )
+    parser.add_argument(
+        "--object-volume-points-per-voxel",
+        type=int,
+        default=DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
+    )
     parser.add_argument("--filter-every-n", type=int, default=DEFAULT_FILTER_EVERY_N)
     parser.add_argument("--filter-budget-ms", type=float, default=DEFAULT_FILTER_BUDGET_MS)
     parser.add_argument("--phystwin-radius-m", type=float, default=0.01)

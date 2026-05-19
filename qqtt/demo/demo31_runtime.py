@@ -214,6 +214,47 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--render-copy-mode", default=None)
     parser.add_argument("--no-render-async-latest-only", action="store_true")
     parser.add_argument("--render-micro-profile", action="store_true")
+    parser.add_argument(
+        "--object-point-control",
+        choices=demo3_runtime.OBJECT_POINT_CONTROLS,
+        default=demo3_runtime.OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME,
+    )
+    parser.add_argument(
+        "--object-volume-voxel-m",
+        type=float,
+        default=demo3_runtime.DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M,
+    )
+    parser.add_argument(
+        "--object-volume-origin",
+        choices=demo3_runtime.PHYSTWIN_VOLUME_ORIGINS,
+        default=demo3_runtime.PHYSTWIN_VOLUME_ORIGIN_WORLD,
+    )
+    parser.add_argument("--object-volume-adaptive", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--object-volume-min-voxel-m",
+        type=float,
+        default=demo3_runtime.DEFAULT_PHYSTWIN_OBJECT_VOLUME_MIN_VOXEL_M,
+    )
+    parser.add_argument(
+        "--object-volume-max-voxel-m",
+        type=float,
+        default=demo3_runtime.DEFAULT_PHYSTWIN_OBJECT_VOLUME_MAX_VOXEL_M,
+    )
+    parser.add_argument(
+        "--object-volume-target-ms",
+        type=float,
+        default=demo3_runtime.DEFAULT_PHYSTWIN_OBJECT_VOLUME_TARGET_MS,
+    )
+    parser.add_argument(
+        "--object-volume-emergency-max-points",
+        type=int,
+        default=demo3_runtime.DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
+    )
+    parser.add_argument(
+        "--object-volume-points-per-voxel",
+        type=int,
+        default=demo3_runtime.DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
+    )
     parser.add_argument("--debug-color-by-camera", action="store_true")
     parser.add_argument("--debug-save-per-camera-pcd", action="store_true")
     parser.add_argument("--debug-save-mask-overlays", action="store_true")
@@ -279,6 +320,22 @@ def validate_args(
     if str(args.cotracker_query_mode) != demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError("Demo 3.1 currently supports only --cotracker-query-mode phystwin_dense.")
     demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
+    if str(args.object_point_control) not in demo3_runtime.OBJECT_POINT_CONTROLS:
+        raise ValueError(f"Demo 3.1 unsupported --object-point-control {args.object_point_control}")
+    if str(args.object_volume_origin) not in demo3_runtime.PHYSTWIN_VOLUME_ORIGINS:
+        raise ValueError(f"Demo 3.1 unsupported --object-volume-origin {args.object_volume_origin}")
+    if float(args.object_volume_voxel_m) <= 0.0:
+        raise ValueError("--object-volume-voxel-m must be positive.")
+    if float(args.object_volume_min_voxel_m) <= 0.0 or float(args.object_volume_max_voxel_m) <= 0.0:
+        raise ValueError("--object-volume-min-voxel-m and --object-volume-max-voxel-m must be positive.")
+    if float(args.object_volume_min_voxel_m) > float(args.object_volume_max_voxel_m):
+        raise ValueError("--object-volume-min-voxel-m must be <= --object-volume-max-voxel-m.")
+    if float(args.object_volume_target_ms) <= 0.0:
+        raise ValueError("--object-volume-target-ms must be > 0.")
+    if int(args.object_volume_emergency_max_points) < 0:
+        raise ValueError("--object-volume-emergency-max-points must be >= 0.")
+    if int(args.object_volume_points_per_voxel) < 1:
+        raise ValueError("--object-volume-points-per-voxel must be >= 1.")
     if int(args.edgetam_live_session_keep_frames) < 1:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 1.")
     if bool(args.debug_identity_c2w) and bool(args.debug_invert_c2w):
@@ -405,6 +462,17 @@ def build_contract(
         "render_latest_wins": True,
         "render_waited_for_cotracker": False,
         "render_waited_for_mask": bool(render_waited_for_mask),
+        "render_object_filter": {
+            "point_control": str(args.object_point_control),
+            "voxel_m": float(args.object_volume_voxel_m),
+            "origin_policy": str(args.object_volume_origin),
+            "adaptive": bool(args.object_volume_adaptive),
+            "min_voxel_m": float(args.object_volume_min_voxel_m),
+            "max_voxel_m": float(args.object_volume_max_voxel_m),
+            "target_ms": float(args.object_volume_target_ms),
+            "emergency_max_points": int(args.object_volume_emergency_max_points),
+            "points_per_voxel": int(args.object_volume_points_per_voxel),
+        },
         "debug_fusion": {
             "color_by_camera": bool(args.debug_color_by_camera),
             "save_per_camera_pcd": bool(args.debug_save_per_camera_pcd),

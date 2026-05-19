@@ -90,6 +90,15 @@ class _FakeSharedRuntimeModule:
         parser.add_argument("--profile-pipeline", action="store_true")
         parser.add_argument("--profile-visualization", action="store_true")
         parser.add_argument("--render-micro-profile", action="store_true")
+        parser.add_argument("--object-point-control")
+        parser.add_argument("--object-volume-voxel-m", type=float)
+        parser.add_argument("--object-volume-origin")
+        parser.add_argument("--object-volume-adaptive", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--object-volume-min-voxel-m", type=float)
+        parser.add_argument("--object-volume-max-voxel-m", type=float)
+        parser.add_argument("--object-volume-target-ms", type=float)
+        parser.add_argument("--object-volume-emergency-max-points", type=int)
+        parser.add_argument("--object-volume-points-per-voxel", type=int)
         parser.add_argument("--debug-color-by-camera", action="store_true")
         parser.add_argument("--debug-save-per-camera-pcd", action="store_true")
         parser.add_argument("--debug-save-mask-overlays", action="store_true")
@@ -315,6 +324,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "--gpu-sampling",
                 "--point-size",
                 "1.5",
+                "--object-volume-points-per-voxel",
+                "3",
             ]
         )
 
@@ -336,6 +347,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(shared_args.gpu_sampling)
         self.assertEqual(shared_args.gpu_sampling_device_indexes, (0, 1))
         self.assertEqual(shared_args.point_size, 1.5)
+        self.assertEqual(shared_args.object_point_control, "phystwin-volume")
+        self.assertEqual(shared_args.object_volume_voxel_m, 0.005)
+        self.assertEqual(shared_args.object_volume_points_per_voxel, 3)
         self.assertEqual(shared_args.depth_source, "realsense")
         self.assertTrue(shared_args.edgetam_batch_vision_encoder)
 

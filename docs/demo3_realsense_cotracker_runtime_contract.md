@@ -126,10 +126,23 @@ The second fails because Demo 3 does not support FFS.
 - `--overlay-max-points-per-camera 30`
 - `--overlay-trail-len 16`
 - `--overlay-stale-timeout-ms 500`
+- render object PCD filter defaults to FuturePhysTwin-style volume sampling:
+  `--object-point-control phystwin-volume`,
+  `--object-volume-voxel-m 0.005`, and
+  `--object-volume-points-per-voxel 1`
 
 Demo 3 also exposes the shared three-view runtime diagnostics used by Demo 2.3:
 
 ```text
+--object-point-control fixed-cap|phystwin-volume
+--object-volume-voxel-m
+--object-volume-origin world|frame-min|first-stable-frame-min
+--object-volume-adaptive / --no-object-volume-adaptive
+--object-volume-min-voxel-m
+--object-volume-max-voxel-m
+--object-volume-target-ms
+--object-volume-emergency-max-points
+--object-volume-points-per-voxel
 --debug-color-by-camera
 --debug-save-per-camera-pcd
 --debug-save-mask-overlays
@@ -169,6 +182,14 @@ torch `randperm(seed + camera_idx)`. Default seed is 42.
 Default live visualization caps the displayed overlay at 30 visible points per
 camera. This display cap does not reduce the raw CoTracker query count.
 
+The rendered object point cloud is filtered independently from CoTracker
+queries. By default Demo 3 keeps up to one representative point per occupied
+5mm world voxel, matching the FuturePhysTwin `object_points` volume-sampling
+semantics. `--object-volume-points-per-voxel N` can retain more local surface
+density per occupied voxel without switching back to arbitrary fixed point
+counts. Fixed point caps remain available only through
+`--object-point-control fixed-cap` for ablation/debug.
+
 If an early EdgeTAM result contains only object or only controller, Demo 3 does
 not initialize CoTracker for that camera yet. The stream initializes only after
 both object and controller masks are non-empty, so the first query set cannot
@@ -191,6 +212,10 @@ cotracker_e2e_ms_median
 cotracker_e2e_ms_p95
 overlay_ms_median
 overlay_ms_p95
+object_volume_ms
+object_volume_occupied_voxels
+object_volume_output_points
+object_volume_points_per_voxel
 pcd_fusion_ms_median
 pcd_render_ms_median
 render_waited_for_cotracker = false

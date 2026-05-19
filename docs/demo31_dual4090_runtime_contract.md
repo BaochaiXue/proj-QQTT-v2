@@ -24,6 +24,12 @@ The renderer uses fresh RealSense depth, latest non-stale masks when
 `fusion_mask_policy = latest-reuse`, and latest non-stale tracking overlays.
 Rendering never waits for CoTracker.
 
+The rendered object PCD uses FuturePhysTwin-style world-volume sampling by
+default: one representative point per occupied 5mm voxel. This is independent
+from CoTracker query sampling and the overlay display cap. Use
+`--object-volume-points-per-voxel N` to keep more representatives inside each
+occupied voxel when local surface density is more important than render cost.
+
 ## Contract Fields
 
 ```text
@@ -100,6 +106,10 @@ cotracker_e2e_ms_median
 cotracker_e2e_ms_p95
 overlay_age_ms_median
 overlay_age_ms_p95
+object_volume_ms
+object_volume_occupied_voxels
+object_volume_output_points
+object_volume_points_per_voxel
 gpu0_util_median
 gpu0_util_p95
 gpu0_mem_used_gb
@@ -134,6 +144,15 @@ Demo 3.1 exposes the Demo 2.3 fusion and renderer diagnostics through its public
 CLI and forwards them to the shared three-view runtime:
 
 ```text
+--object-point-control fixed-cap|phystwin-volume
+--object-volume-voxel-m
+--object-volume-origin world|frame-min|first-stable-frame-min
+--object-volume-adaptive / --no-object-volume-adaptive
+--object-volume-min-voxel-m
+--object-volume-max-voxel-m
+--object-volume-target-ms
+--object-volume-emergency-max-points
+--object-volume-points-per-voxel
 --debug-color-by-camera
 --debug-save-per-camera-pcd
 --debug-save-mask-overlays

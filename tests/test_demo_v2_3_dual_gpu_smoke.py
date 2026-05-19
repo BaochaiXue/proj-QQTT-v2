@@ -75,6 +75,7 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertIn("--gpu-sampling-device-indexes", help_text)
         self.assertIn("--edgetam-batch-vision", help_text)
         self.assertIn("--render-micro-profile", help_text)
+        self.assertIn("--object-volume-points-per-voxel", help_text)
         self.assertIn("--depth-source", help_text)
         self.assertIn("--debug-color-by-camera", help_text)
         self.assertIn("--debug-save-per-camera-pcd", help_text)
@@ -121,6 +122,8 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
                 "1",
                 "--debug-fusion-max-saved-groups",
                 "2",
+                "--object-volume-points-per-voxel",
+                "3",
             ]
         )
 
@@ -149,6 +152,8 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertIn("1", argv)
         self.assertIn("--debug-fusion-max-saved-groups", argv)
         self.assertIn("2", argv)
+        self.assertIn("--object-volume-points-per-voxel", argv)
+        self.assertIn("3", argv)
 
     def test_demo23_dry_run_contract_is_dual_gpu_split_batch3(self) -> None:
         parser = demo23.build_arg_parser()
@@ -172,6 +177,9 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertEqual(contract["controller_prompt"], "towel")
         self.assertEqual(contract["object_prompt"], "stuffed animal")
         self.assertFalse(contract["fusion_debug"]["color_by_camera"])
+        self.assertEqual(contract["filter_scheduler"]["object"]["point_control"], "phystwin-volume")
+        self.assertEqual(contract["filter_scheduler"]["object"]["volume"]["voxel_m"], 0.005)
+        self.assertEqual(contract["filter_scheduler"]["object"]["volume"]["points_per_voxel"], 1)
 
     def test_demo23_explicit_fps_drives_capture_group_default(self) -> None:
         parser = demo23.build_arg_parser()

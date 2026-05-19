@@ -47,6 +47,9 @@ Live contract defaults:
 - `edgetam_batch_vision_encoder = true`
 - `cotracker_backend = cotracker3_online`
 - `overlay_max_points_per_camera = 30`
+- `render_object_filter.point_control = phystwin-volume`
+- `render_object_filter.voxel_m = 0.005`
+- `render_object_filter.points_per_voxel = 1`
 - `input_source = live_realsense`
 - `offline_mode_available = false`
 - `render_waited_for_cotracker = false`
@@ -58,6 +61,7 @@ Recommended live validation order:
 2. injected/fake CoTracker overlay in tests
 3. real CoTracker with default `--cotracker-query-count auto`
 4. optional readability tuning through `--overlay-max-points-per-camera`
+5. optional object render density tuning through `--object-volume-points-per-voxel`
 
 Rendered FPS profiling must use `--render-mode pointcloud`; no-render runs are
 upstream isolation only. For finite-duration rendered profiles, the shared
