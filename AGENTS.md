@@ -31,6 +31,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `docs/SCOPE.md`: exact in-scope vs out-of-scope boundary
 - `docs/WORKFLOWS.md`: canonical operator workflows
 - `docs/ARCHITECTURE.md`: kept package/file structure
+- `docs/HARNESS_ENGINEERING.md`: agent-first harness engineering map and Demo 2.3 failure-packet contract
 - `docs/HARDWARE_VALIDATION.md`: manual real-hardware checklist
 - `docs/external-deps.md`: external repo / checkpoint source of truth
 - `docs/envs.md`: validated local conda environments
@@ -40,6 +41,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `scripts/harness/check_visual_architecture.py`: visualization layering / file-size guard
 - `scripts/harness/check_experiment_boundaries.py`: guard that keeps experiment-only modules out of formal runtime code
 - `scripts/harness/README.md`: grouped harness CLI/probe/check map and retention policy
+- `scripts/harness/summarize_demo23_failure_packet.py`: compact Demo 2.3 FPS/fused-PCD failure-packet builder
 - `tests/test_record_data_align_smoke.py`: smoke test for aligned-case generation
 - `scripts/harness/visual_compare_depth_panels.py`: per-camera aligned native-vs-FFS depth panels
 - `scripts/harness/visual_compare_reprojection.py`: aligned native-vs-FFS reprojection compare
@@ -101,6 +103,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 
 - Scope boundary: `docs/SCOPE.md`
 - Architecture: `docs/ARCHITECTURE.md`
+- Harness engineering: `docs/HARNESS_ENGINEERING.md`, `scripts/harness/README.md`
 - User workflows: `docs/WORKFLOWS.md`
 - Manual validation: `docs/HARDWARE_VALIDATION.md`
 - Active/completed execution plans: `docs/exec-plans/`

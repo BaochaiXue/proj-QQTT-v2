@@ -19,6 +19,7 @@ architecture in the source-of-truth docs below, keep generated evidence under
 | Repo charter | `AGENTS.md` | Short injected map for agents: scope, defaults, invariants, and where to look next. |
 | Scope | `docs/SCOPE.md` | In-scope vs out-of-scope boundary for recording, alignment, demos, proxy, tracking, and visualization. |
 | Architecture | `docs/ARCHITECTURE.md` | Package and entrypoint layering, dependency direction, and formal data-product boundaries. |
+| Harness engineering | `docs/HARNESS_ENGINEERING.md` | Agent-first operating model, stable harness interfaces, and Demo 2.3 failure-packet contract. |
 | Workflows | `docs/WORKFLOWS.md` | Operator commands and expected manual procedures. |
 | Harness catalog | `scripts/harness/_catalog.py` | Machine-checkable list of public harness entrypoints, categories, summaries, and help coverage. |
 | Harness guards | `scripts/harness/check_*.py` | Mechanical enforcement for scope, catalog coverage, visual architecture, experiments, and Demo 2.2 boundaries. |
@@ -45,25 +46,42 @@ repository-local and link it from one of these layers.
 
 ## Current Catalog Shape
 
-`_catalog.py` currently contains 72 entries.
+`_catalog.py` currently contains 74 entries.
 
 | Category | Count | Meaning |
 | --- | ---: | --- |
-| `checks` | 6 | Repo, scope, architecture, experiment-boundary, Demo 2.2 boundary, and catalog guards. |
+| `checks` | 7 | Repo, scope, architecture, experiment-boundary, Demo 2.2 boundary, harness-engineering, and catalog guards. |
 | `hardware_external` | 13 | RealSense, FFS, SAM, TensorRT, WSLg/Open3D, and static replay probes. |
 | `mask_support` | 4 | SAM mask generation, helper code, object-case registry, and reprojection support. |
 | `formal_cleanup` | 1 | Downstream cleanup for `data/different_types/`. |
 | `current_compare` | 12 | In-scope aligned RealSense/native-vs-FFS comparison visualizations. |
 | `experiments` | 31 | Experiment-only workflows under `scripts/harness/experiments/`. |
-| `focused_diagnostics` | 5 | Narrow audits, overlays, render probes, and source diagnostics. |
+| `focused_diagnostics` | 6 | Narrow audits, overlays, render probes, source diagnostics, and Demo 2.3 failure packets. |
 
 Help coverage:
 
 | Profile | Entries | Use |
 | --- | ---: | --- |
-| `quick` | 8 | Fast help checks included in default `check_all.py`. |
+| `quick` | 9 | Fast help checks included in default `check_all.py`. |
 | `full` | 53 | Additional help checks included by `check_all.py --full`. |
-| none | 11 | Guards, helpers, or shell scripts without direct argparse help coverage. |
+| none | 12 | Guards, helpers, or shell scripts without direct argparse help coverage. |
+
+## Demo 2.3 Failure Packet
+
+For Demo 2.3 FPS or fused-PCD debugging, build a compact packet before changing
+runtime code:
+
+```bash
+conda run -n demo_2_max --no-capture-output python scripts/harness/summarize_demo23_failure_packet.py \
+  --output-json docs/generated/demo23_failure_packet.json \
+  --output-md docs/generated/demo23_failure_packet.md
+```
+
+The packet pulls together profile JSON, runtime summaries, debug-fusion
+calibration reports, and calibration preflight reports. It highlights the
+batch-3 builderOptimizationLevel=5 FFS contract, queue/drop pressure, temporal
+skew, no-render metric caveats, and calibration risks so future agents begin
+from the same evidence.
 
 ## Add Or Change A Harness Entrypoint
 

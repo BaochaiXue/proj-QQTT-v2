@@ -32,6 +32,11 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "Guard that every harness Python file is categorized here.",
     ),
     HarnessEntry(
+        "scripts/harness/check_harness_engineering.py",
+        "checks",
+        "Guard agent-first harness engineering map and Demo 2.3 failure-packet wiring.",
+    ),
+    HarnessEntry(
         "scripts/harness/check_demo22_boundaries.py",
         "checks",
         "Guard Demo 2.2 dependency separation and render replay harness cataloging.",
@@ -74,6 +79,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "scripts/harness/visualize_demo3_tracking_pcd_overlay.py",
         "focused_diagnostics",
         "Offline Demo 3 fused PCD overlay export for lifted tracking anchors and trails.",
+        "quick",
+    ),
+    HarnessEntry(
+        "scripts/harness/summarize_demo23_failure_packet.py",
+        "focused_diagnostics",
+        "Build a compact Demo 2.3 FPS/fused-PCD failure packet from generated evidence.",
         "quick",
     ),
     HarnessEntry(

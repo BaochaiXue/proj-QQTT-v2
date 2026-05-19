@@ -17,7 +17,7 @@ class CheckAllSmokeTest(unittest.TestCase):
 
     def test_quick_profile_uses_curated_batched_commands(self) -> None:
         commands = check_all.build_commands(python="python", profile="quick")
-        self.assertEqual(len(commands), 19)
+        self.assertEqual(len(commands), 21)
         self.assertIn(["python", "cameras_viewer.py", "--help"], commands)
         self.assertIn(["python", "record_data_realtime_align.py", "--help"], commands)
         self.assertIn(["python", "data_process/record_data_align.py", "--help"], commands)
@@ -29,70 +29,27 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertIn(["python", "scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/run_demo3_onnx_trt_probe.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visualize_demo3_tracking_pcd_overlay.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/summarize_demo23_failure_packet.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/check_harness_catalog.py"], commands)
+        self.assertIn(["python", "scripts/harness/check_harness_engineering.py"], commands)
         self.assertIn(["python", "scripts/harness/check_demo22_boundaries.py"], commands)
         self.assertIn(["python", "scripts/harness/check_experiment_boundaries.py"], commands)
         self.assertIn(["python", "scripts/harness/check_visual_architecture.py"], commands)
-        self.assertIn(
-            [
-                "python",
-                "-m",
-                "unittest",
-                "-v",
-                "tests.test_agents_scope_contract_smoke",
-                "tests.test_recording_metadata_schema_v2",
-                "tests.test_cameras_viewer_fps_smoke",
-                "tests.test_camera_color_controls",
-                "tests.test_record_preflight_policy_smoke",
-                "tests.test_record_data_preflight_message_smoke",
-                "tests.test_record_data_realtime_align_smoke",
-                "tests.test_calibration_metadata_smoke",
-                "tests.test_calibration_board_profiles",
-                "tests.test_robopil_calibration_converter",
-                "tests.test_multi_realsense_order_smoke",
-                "tests.test_calibrate_loader_smoke",
-                "tests.test_aligned_metadata_loader_smoke",
-                "tests.test_experiment_boundary_smoke",
-                "tests.test_record_data_align_smoke",
-                "tests.test_depth_backend_contract_smoke",
-                "tests.test_ffs_intrinsic_file_format",
-                "tests.test_ffs_reprojection_smoke",
-                "tests.test_ffs_remove_invisible_mask_smoke",
-                "tests.test_sam31_still_object_benchmark_smoke",
-                "tests.test_sam21_checkpoint_ladder_panel_smoke",
-                "tests.test_demo_v03_prepare_ir_triplets_smoke",
-                "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
-                "tests.test_demo_v2_3_dual_gpu_smoke",
-                "tests.test_demo3_tracking_contract_smoke",
-                "tests.test_demo3_tracking_sampling_smoke",
-                "tests.test_demo3_tracking_io_smoke",
-                "tests.test_demo3_tracking_lift_smoke",
-                "tests.test_demo3_tracking_registry_smoke",
-                "tests.test_demo3_tracking_harness_smoke",
-                "tests.test_demo3_tracking_backend_availability_smoke",
-                "tests.test_demo3_tracking_onnx_trt_config_smoke",
-                "tests.test_demo3_tracking_nvofa_stub_smoke",
-                "tests.test_demo3_tracking_vpi_stub_smoke",
-                "tests.test_demo3_tracking_backend_benchmark_fake_smoke",
-                "tests.test_demo3_contract",
-                "tests.test_demo3_cotracker_worker",
-                "tests.test_demo3_overlay_lift",
-                "tests.test_demo31_dual_gpu_contract",
-                "tests.test_demo31_ipc_latest_wins",
-                "tests.test_demo31_cotracker_process_config",
-                "tests.test_check_all_smoke",
-            ],
-            commands,
-        )
+        unittest_commands = [cmd for cmd in commands if cmd[1:4] == ["-m", "unittest", "-v"]]
+        self.assertEqual(unittest_commands, [["python", "-m", "unittest", "-v", *check_all.QUICK_UNITTEST_MODULES]])
         flat_items = [item for command in commands for item in command]
         self.assertFalse(any(cmd[:3] == ["python", "-m", "pytest"] for cmd in commands))
         self.assertNotIn("tests.test_visual_compare_depth_panels_smoke", flat_items)
         self.assertNotIn("tests.test_visual_compare_reprojection_smoke", flat_items)
         self.assertNotIn("tests.test_visual_compare_turntable_smoke", flat_items)
+        self.assertNotIn("tests.test_demo_v2_1_three_view_fused_pcd_smoke", flat_items)
+        self.assertIn("tests.test_demo23_harness_engineering_smoke", flat_items)
 
     def test_full_profile_keeps_pytest_and_broader_command_surface(self) -> None:
         commands = check_all.build_commands(python="python", profile="full")
         self.assertGreater(len(commands), len(check_all.build_commands(python="python", profile="quick")))
+        self.assertEqual(len(check_all.FULL_UNITTEST_MODULES), len(set(check_all.FULL_UNITTEST_MODULES)))
+        self.assertTrue(set(check_all.QUICK_UNITTEST_MODULES).issubset(check_all.FULL_UNITTEST_MODULES))
         self.assertIn(["python", "cameras_viewer_FFS.py", "--help"], commands)
         self.assertIn(["python", "demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "demo_v2_3/realtime_three_view_dual_gpu_async_filtered_fused_pcd.py", "--help"], commands)

@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 from scripts.harness._catalog import help_scripts
 
 
-QUICK_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
+BASE_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
     "cameras_viewer.py",
     "cameras_calibrate.py",
     "record_data.py",
@@ -21,13 +21,8 @@ QUICK_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
     "data_process/record_data_align.py",
 )
 
-FULL_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
-    "cameras_viewer.py",
+FULL_ONLY_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
     "cameras_viewer_FFS.py",
-    "cameras_calibrate.py",
-    "record_data.py",
-    "record_data_realtime_align.py",
-    "data_process/record_data_align.py",
 )
 
 DEMO_HELP_SCRIPTS: tuple[str, ...] = (
@@ -38,65 +33,76 @@ DEMO_HELP_SCRIPTS: tuple[str, ...] = (
     "demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py",
 )
 
-QUICK_HELP_SCRIPTS: tuple[str, ...] = (*QUICK_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))
-FULL_HELP_SCRIPTS: tuple[str, ...] = (*FULL_FORMAL_HELP_SCRIPTS, *DEMO_HELP_SCRIPTS, *help_scripts("full"))
-
-QUICK_UNITTEST_BATCHES: tuple[tuple[str, ...], ...] = (
-    (
-        "tests.test_agents_scope_contract_smoke",
-        "tests.test_recording_metadata_schema_v2",
-        "tests.test_cameras_viewer_fps_smoke",
-        "tests.test_camera_color_controls",
-        "tests.test_record_preflight_policy_smoke",
-        "tests.test_record_data_preflight_message_smoke",
-        "tests.test_record_data_realtime_align_smoke",
-        "tests.test_calibration_metadata_smoke",
-        "tests.test_calibration_board_profiles",
-        "tests.test_robopil_calibration_converter",
-        "tests.test_multi_realsense_order_smoke",
-        "tests.test_calibrate_loader_smoke",
-        "tests.test_aligned_metadata_loader_smoke",
-        "tests.test_experiment_boundary_smoke",
-        "tests.test_record_data_align_smoke",
-        "tests.test_depth_backend_contract_smoke",
-        "tests.test_ffs_intrinsic_file_format",
-        "tests.test_ffs_reprojection_smoke",
-        "tests.test_ffs_remove_invisible_mask_smoke",
-        "tests.test_sam31_still_object_benchmark_smoke",
-        "tests.test_sam21_checkpoint_ladder_panel_smoke",
-        "tests.test_demo_v03_prepare_ir_triplets_smoke",
-        "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
-        "tests.test_demo_v2_3_dual_gpu_smoke",
-        "tests.test_demo3_tracking_contract_smoke",
-        "tests.test_demo3_tracking_sampling_smoke",
-        "tests.test_demo3_tracking_io_smoke",
-        "tests.test_demo3_tracking_lift_smoke",
-        "tests.test_demo3_tracking_registry_smoke",
-        "tests.test_demo3_tracking_harness_smoke",
-        "tests.test_demo3_tracking_backend_availability_smoke",
-        "tests.test_demo3_tracking_onnx_trt_config_smoke",
-        "tests.test_demo3_tracking_nvofa_stub_smoke",
-        "tests.test_demo3_tracking_vpi_stub_smoke",
-        "tests.test_demo3_tracking_backend_benchmark_fake_smoke",
-        "tests.test_demo3_contract",
-        "tests.test_demo3_cotracker_worker",
-        "tests.test_demo3_overlay_lift",
-        "tests.test_demo31_dual_gpu_contract",
-        "tests.test_demo31_ipc_latest_wins",
-        "tests.test_demo31_cotracker_process_config",
-        "tests.test_check_all_smoke",
-    ),
+QUICK_HELP_SCRIPTS: tuple[str, ...] = (*BASE_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))
+FULL_HELP_SCRIPTS: tuple[str, ...] = (
+    *BASE_FORMAL_HELP_SCRIPTS,
+    *FULL_ONLY_FORMAL_HELP_SCRIPTS,
+    *DEMO_HELP_SCRIPTS,
+    *help_scripts("full"),
 )
 
-FULL_UNITTEST_MODULES: tuple[str, ...] = (
+
+def _unique(items: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        unique.append(item)
+    return tuple(unique)
+
+
+QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_agents_scope_contract_smoke",
-    "tests.test_experiment_boundary_smoke",
+    "tests.test_recording_metadata_schema_v2",
     "tests.test_cameras_viewer_fps_smoke",
-    "tests.test_cameras_viewer_ffs_smoke",
     "tests.test_camera_color_controls",
-    "tests.test_record_data_align_smoke",
+    "tests.test_record_preflight_policy_smoke",
+    "tests.test_record_data_preflight_message_smoke",
     "tests.test_record_data_realtime_align_smoke",
+    "tests.test_calibration_metadata_smoke",
+    "tests.test_calibration_board_profiles",
+    "tests.test_robopil_calibration_converter",
+    "tests.test_multi_realsense_order_smoke",
+    "tests.test_calibrate_loader_smoke",
+    "tests.test_aligned_metadata_loader_smoke",
+    "tests.test_experiment_boundary_smoke",
+    "tests.test_record_data_align_smoke",
+    "tests.test_depth_backend_contract_smoke",
     "tests.test_ffs_intrinsic_file_format",
+    "tests.test_ffs_reprojection_smoke",
+    "tests.test_ffs_remove_invisible_mask_smoke",
+    "tests.test_sam31_still_object_benchmark_smoke",
+    "tests.test_sam21_checkpoint_ladder_panel_smoke",
+    "tests.test_demo_v03_prepare_ir_triplets_smoke",
+    "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
+    "tests.test_demo_v2_3_dual_gpu_smoke",
+    "tests.test_demo23_harness_engineering_smoke",
+    "tests.test_demo3_tracking_contract_smoke",
+    "tests.test_demo3_tracking_sampling_smoke",
+    "tests.test_demo3_tracking_io_smoke",
+    "tests.test_demo3_tracking_lift_smoke",
+    "tests.test_demo3_tracking_registry_smoke",
+    "tests.test_demo3_tracking_harness_smoke",
+    "tests.test_demo3_tracking_backend_availability_smoke",
+    "tests.test_demo3_tracking_onnx_trt_config_smoke",
+    "tests.test_demo3_tracking_nvofa_stub_smoke",
+    "tests.test_demo3_tracking_vpi_stub_smoke",
+    "tests.test_demo3_tracking_backend_benchmark_fake_smoke",
+    "tests.test_demo3_contract",
+    "tests.test_demo3_cotracker_worker",
+    "tests.test_demo3_overlay_lift",
+    "tests.test_demo31_dual_gpu_contract",
+    "tests.test_demo31_ipc_latest_wins",
+    "tests.test_demo31_cotracker_process_config",
+    "tests.test_check_all_smoke",
+)
+
+QUICK_UNITTEST_BATCHES: tuple[tuple[str, ...], ...] = (QUICK_UNITTEST_MODULES,)
+
+FULL_ONLY_UNITTEST_MODULES: tuple[str, ...] = (
+    "tests.test_cameras_viewer_ffs_smoke",
     "tests.test_ffs_confidence_filtering_smoke",
     "tests.test_ffs_confidence_filter_pcd_compare_smoke",
     "tests.test_ffs_confidence_threshold_sweep_pcd_compare_smoke",
@@ -104,7 +110,6 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_ffs_mask_erode_sweep_pcd_compare_smoke",
     "tests.test_still_object_orbit_gif_smoke",
     "tests.test_native_ffs_fused_pcd_compare_smoke",
-    "tests.test_ffs_reprojection_smoke",
     "tests.test_depth_quantization_smoke",
     "tests.test_depth_colormap_consistency_smoke",
     "tests.test_depth_panel_layout_smoke",
@@ -116,22 +121,10 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_original_camera_view_config_smoke",
     "tests.test_masked_camera_view_compare_smoke",
     "tests.test_sam31_mask_helper_smoke",
-    "tests.test_sam31_still_object_benchmark_smoke",
-    "tests.test_sam21_checkpoint_ladder_panel_smoke",
-    "tests.test_demo_v03_prepare_ir_triplets_smoke",
-    "tests.test_recording_metadata_schema_v2",
-    "tests.test_calibration_metadata_smoke",
-    "tests.test_calibration_board_profiles",
-    "tests.test_robopil_calibration_converter",
     "tests.test_camera_system_partial_stall_smoke",
-    "tests.test_multi_realsense_order_smoke",
     "tests.test_single_realsense_recovery_smoke",
-    "tests.test_record_preflight_policy_smoke",
-    "tests.test_record_data_preflight_message_smoke",
-    "tests.test_depth_backend_contract_smoke",
     "tests.test_enhanced_phystwin_postprocess_pcd_compare_smoke",
     "tests.test_enhanced_phystwin_removed_overlay_smoke",
-    "tests.test_ffs_remove_invisible_mask_smoke",
     "tests.test_ffs_native_like_depth_postprocess_smoke",
     "tests.test_ffs_radius_outlier_filter_smoke",
     "tests.test_ffs_tensorrt_single_engine_smoke",
@@ -140,7 +133,6 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_ffs_static_replay_matrix_smoke",
     "tests.test_record_data_align_ffs_smoke",
     "tests.test_record_data_align_both_smoke",
-    "tests.test_calibrate_loader_smoke",
     "tests.test_calibration_contract_hardening",
     "tests.test_camera_pose_view_config_smoke",
     "tests.test_camera_frusta_smoke",
@@ -177,7 +169,6 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_object_first_sampling_smoke",
     "tests.test_object_debug_artifacts_smoke",
     "tests.test_pointcloud_fusion_smoke",
-    "tests.test_aligned_metadata_loader_smoke",
     "tests.test_io_case_ffs_native_like_loader_smoke",
     "tests.test_io_case_ffs_raw_loader_smoke",
     "tests.test_grid_2x3_label_layout_smoke",
@@ -216,27 +207,9 @@ FULL_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_visual_make_professor_triptych_smoke",
     "tests.test_visual_make_match_board_smoke",
     "tests.test_cleanup_different_types_cases_smoke",
-    "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
-    "tests.test_demo_v2_3_dual_gpu_smoke",
-    "tests.test_demo3_tracking_contract_smoke",
-    "tests.test_demo3_tracking_sampling_smoke",
-    "tests.test_demo3_tracking_io_smoke",
-    "tests.test_demo3_tracking_lift_smoke",
-    "tests.test_demo3_tracking_registry_smoke",
-    "tests.test_demo3_tracking_harness_smoke",
-    "tests.test_demo3_tracking_backend_availability_smoke",
-    "tests.test_demo3_tracking_onnx_trt_config_smoke",
-    "tests.test_demo3_tracking_nvofa_stub_smoke",
-    "tests.test_demo3_tracking_vpi_stub_smoke",
-    "tests.test_demo3_tracking_backend_benchmark_fake_smoke",
-    "tests.test_demo3_contract",
-    "tests.test_demo3_cotracker_worker",
-    "tests.test_demo3_overlay_lift",
-    "tests.test_demo31_dual_gpu_contract",
-    "tests.test_demo31_ipc_latest_wins",
-    "tests.test_demo31_cotracker_process_config",
-    "tests.test_check_all_smoke",
 )
+
+FULL_UNITTEST_MODULES: tuple[str, ...] = _unique((*QUICK_UNITTEST_MODULES, *FULL_ONLY_UNITTEST_MODULES))
 
 PYTEST_BATCHES: tuple[tuple[str, ...], ...] = (
     (
@@ -247,6 +220,7 @@ PYTEST_BATCHES: tuple[tuple[str, ...], ...] = (
 
 CHECK_COMMANDS: tuple[tuple[str, ...], ...] = (
     ("scripts/harness/check_harness_catalog.py",),
+    ("scripts/harness/check_harness_engineering.py",),
     ("scripts/harness/check_demo22_boundaries.py",),
     ("scripts/harness/check_experiment_boundaries.py",),
     ("scripts/harness/check_visual_architecture.py",),
