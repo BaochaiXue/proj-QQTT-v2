@@ -220,6 +220,41 @@ export TORCH_CUDA_ARCH_LIST=12.0
     CoTracker3 visualization overlay on the native Ubuntu RTX 4090 machine
   - not an FFS environment target and not a WSL RTX 5090 install target
 
+## `demo_3_1_max`
+
+- Purpose: isolated Demo 3.1 environment for comparing point-tracker backends
+  in the GPU1 child process while preserving the validated Demo 3 stack.
+- Created from:
+  - `scripts/env/create_demo_3_1_max.sh`
+  - equivalent base command: `conda create --name demo_3_1_max --clone demo_3_max`
+  - the helper script falls back to the documented legacy local env name `demo3-max`
+- Current policy:
+  - keep external tracker repos and weights outside this repository
+  - do not silently replace the core PyTorch stack from `demo3-max`
+  - use `--cotracker-backend cotracker3_online|trackon2|litetracker` from the
+    Demo 3.1 entrypoint
+- Track-On2 notes:
+  - expected repo checkout: `third_party/track_on` or another documented
+    external path
+  - pass `--trackon2-repo-dir`, `--trackon2-checkpoint`, and optionally
+    `--trackon2-config`
+  - DINOv3/Hugging Face access may be required by the external project
+  - RTX 4090 mmcv CUDA ops may require `TORCH_CUDA_ARCH_LIST=8.9` and a source
+    build if prebuilt wheels do not match the local CUDA/PyTorch stack
+- LiteTracker notes:
+  - expected repo checkout: `third_party/lite-tracker` or another documented
+    external path
+  - pass `--litetracker-repo-dir` and `--litetracker-weights`
+  - upstream workflow may prefer `uv sync`; keep that external repo workflow
+    separate from the base QQTT conda env
+- Validation commands:
+  - `conda run --no-capture-output -n demo_3_1_max python demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py --dry-run --camera-ids 0,1,2 --mask-gpu 0 --cotracker-gpu 1`
+  - `conda run --no-capture-output -n demo_3_1_max python -m unittest -v tests.test_point_tracker_adapters tests.test_demo31_dual_gpu_contract`
+- Expected use:
+  - rendered Demo 3.1 profiling with `cotracker3_online` serial vs batch-views
+  - external Track-On2 / LiteTracker adapter bring-up without destabilizing
+    the default `demo3-max` environment
+
 ## `FFS-max-sam31-rs`
 
 - Purpose: cloned `FFS-max` environment for FFS max torch/CUDA/TensorRT experiments that also need QQTT RealSense entrypoints and SAM 3.1 masks

@@ -17,6 +17,7 @@ from qqtt.demo.cotracker3_overlay_worker import (
     TrackingOverlayInputPacket,
     TrackingOverlayPacket,
 )
+from qqtt.tracking.backends.point_tracker_adapter import TRACKER_BATCH_QUERY_COUNT_POLICY_MIN_COMMON
 from qqtt.tracking.base import TrackingResult
 
 
@@ -229,6 +230,35 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
         self.assertTrue(overlay.mask_reused)  # type: ignore[union-attr]
         self.assertEqual(overlay.mask_source_group_id, 6)  # type: ignore[union-attr]
         self.assertEqual(worker.snapshot()["cotracker_batch_update_count"], 1)
+
+    def test_batch_min_common_query_policy_truncates_each_camera(self) -> None:
+        backend = _FakeBatchBackend()
+        samples_by_camera = {
+            0: np.array([[0, 0], [1, 1], [2, 2], [3, 3]], dtype=np.float32),
+            1: np.array([[0, 0], [1, 1], [2, 2]], dtype=np.float32),
+            2: np.array([[0, 0], [1, 1]], dtype=np.float32),
+        }
+
+        def sample_side_effect(*_args, **kwargs):
+            return samples_by_camera[int(kwargs["camera_idx"])]
+
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0, 1, 2),
+            backend_factory=lambda camera_idx: backend,
+            query_count=4,
+            overlay_max_points_per_camera=0,
+            update_mode=COTRACKER_UPDATE_MODE_BATCH,
+            tracker_batch_query_count_policy=TRACKER_BATCH_QUERY_COUNT_POLICY_MIN_COMMON,
+        )
+        with mock.patch("qqtt.demo.cotracker3_overlay_worker.sample_phystwin_dense", side_effect=sample_side_effect):
+            overlay = worker.process_group(self._three_camera_packet(9))
+
+        self.assertIsNotNone(overlay)
+        self.assertEqual(overlay.tracker_batch_query_count_policy, "min-common")  # type: ignore[union-attr]
+        self.assertEqual(overlay.tracking_backend_effective_query_count, 2)  # type: ignore[union-attr]
+        self.assertEqual(overlay.tracking_backend_query_count_truncated_by_camera, {0: 2, 1: 1, 2: 0})  # type: ignore[union-attr]
+        self.assertEqual({idx: len(points) for idx, points in backend.query_points_yx_by_camera.items()}, {0: 2, 1: 2, 2: 2})
+        self.assertEqual({idx: tracks.shape[0] for idx, tracks in overlay.camera_tracks_yx.items()}, {0: 2, 1: 2, 2: 2})  # type: ignore[union-attr]
 
     def test_auto_mode_falls_back_to_serial_when_backend_lacks_batch_api(self) -> None:
         backends = {idx: _FakeOnlineBackend(window_len=1, step=1) for idx in (-1, 0, 1, 2)}

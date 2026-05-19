@@ -1,25 +1,28 @@
-# Demo 3.1 Dual-4090 RealSense CoTracker Overlay
+# Demo 3.1 Dual-4090 RealSense Point-Tracker Overlay
 
 Demo 3.1 is a dual-GPU high-FPS visualization runtime cloned from the Demo 3
-RealSense CoTracker overlay lineage.
+RealSense tracking-overlay lineage.
 
 - GPU0 owns three RealSense capture, SAM3.1/HF EdgeTAM masks, RealSense-depth
   fusion, and Open3D/render.
-- GPU1 owns CoTracker3 online in a separate child process.
-- CoTracker receives CPU RGB/mask latest-wins packets only.
-- CoTracker returns small CPU 2D track/visibility packets.
+- GPU1 owns a point-tracker backend in a separate child process.
+- Supported backend names are `cotracker3_online`, `trackon2`, and
+  `litetracker`; `cotracker3_online` is the default and currently the validated
+  live backend.
+- The point tracker receives CPU RGB/mask latest-wins packets only.
+- The point tracker returns small CPU 2D track/visibility packets.
 - The main process lifts tracks to world with group-aligned cached RealSense depth,
   intrinsics, and camera-to-world transforms.
 - Camera/mask/PCD work stays asynchronous, but rendered results are gated by
-  CoTracker: a PCD packet is published only when the matching CoTracker result
-  for that group can be lifted into red tracking points.
+  the point tracker: a PCD packet is published only when the matching tracking
+  result for that group can be lifted into red tracking points.
 - Demo 3.1 does not use FFS.
 - Demo 3.1 inherits Demo 3.0's online-only FuturePhysTwin-compatible tracking
-  semantics: `--mode exp|demo`, object/controller union masks, CoTracker3
-  online, `phystwin_dense` query sampling, and default query count `auto`
+  semantics: `--mode exp|demo`, object/controller union masks,
+  `phystwin_dense` query sampling, and default query count `auto`
   (`min(union_mask_pixels, 5000)` per camera).
-- Raw tracked queries are separate from display overlays. CoTracker may track up
-  to 5000 union points per camera while first-frame mask labels decide what is
+- Raw tracked queries are separate from display overlays. The backend may track
+  up to 5000 union points per camera while first-frame mask labels decide what is
   rendered. The default overlay scope is `controller`; Demo 3.1 renders all
   visible controller-labeled tracks by default with
   `--overlay-max-points-per-camera 0`, shown as high-contrast red tracking
@@ -63,6 +66,9 @@ hangs or crashes during teardown on the local workstation, run through
 Useful rendered/debug profiling flags:
 
 ```bash
+--cotracker-backend cotracker3_online \
+--tracking-backend-execution-mode auto \
+--tracker-batch-query-count-policy fixed \
 --gpu-sampling \
 --gpu-sampling-device-indexes 0,1 \
 --overlay-display-scope controller \
@@ -75,3 +81,10 @@ Useful rendered/debug profiling flags:
 
 If `--gpu-sampling` is enabled without explicit indexes, Demo 3.1 samples the
 configured mask and CoTracker physical GPUs, `0,1` by default.
+
+Track-On2 and LiteTracker are exposed through the same child-process contract,
+but their external repos/weights stay outside this repository. Use
+`scripts/env/create_demo_3_1_max.sh` to clone the current Demo 3 environment,
+then install external tracker dependencies into `demo_3_1_max` before live
+profiling those backends. The adapter layer fails early with a clear message if
+the required external repo/checkpoint is not configured.

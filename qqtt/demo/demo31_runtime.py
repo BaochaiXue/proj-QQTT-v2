@@ -27,6 +27,21 @@ from qqtt.demo.demo31_dual_gpu_ipc import (
 )
 from qqtt.demo.demo31_profile import build_empty_dual_gpu_profile_summary, percentile_summary
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world
+from qqtt.tracking.backends.point_tracker_adapter import (
+    TRACKER_BACKEND_COTRACKER3,
+    TRACKER_BACKENDS,
+    TRACKER_BATCH_QUERY_COUNT_POLICIES,
+    TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
+    TRACKER_EXECUTION_MODE_AUTO,
+    TRACKER_EXECUTION_MODE_BATCH_VIEWS,
+    TRACKER_EXECUTION_MODE_SERIAL,
+    TRACKER_EXECUTION_MODES,
+    effective_legacy_update_mode,
+    normalize_tracker_backend,
+    normalize_tracker_batch_query_count_policy,
+    normalize_tracker_execution_mode,
+    tracker_backend_spec,
+)
 
 
 PRESET_DEMO31_DUAL4090_HIGHFPS = "demo3.1-dual4090-highfps"
@@ -53,6 +68,10 @@ DEFAULT_DEMO31_OVERLAY_MAX_POINTS_PER_CAMERA = 0
 PCD_COLOR_MODE_RGB = "rgb"
 PCD_COLOR_MODE_CLASS = "class"
 PCD_COLOR_MODES = (PCD_COLOR_MODE_RGB, PCD_COLOR_MODE_CLASS)
+TRACKING_BACKEND_EXECUTION_MODES = TRACKER_EXECUTION_MODES
+TRACKING_BACKEND_EXECUTION_MODE_AUTO = TRACKER_EXECUTION_MODE_AUTO
+TRACKING_BACKEND_EXECUTION_MODE_SERIAL = TRACKER_EXECUTION_MODE_SERIAL
+TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS = TRACKER_EXECUTION_MODE_BATCH_VIEWS
 
 ConnectedSerialsProvider = Callable[[], Sequence[str]]
 CudaDeviceCountProvider = Callable[[], int]
@@ -222,7 +241,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mode", choices=demo3_runtime.MODES, default=demo3_runtime.DEFAULT_MODE)
     parser.add_argument("--object-prompt", default=demo3_runtime.DEFAULT_OBJECT_PROMPT)
-    parser.add_argument("--cotracker-backend", default=demo3_runtime.COTRACKER3_ONLINE)
+    parser.add_argument(
+        "--cotracker-backend",
+        choices=TRACKER_BACKENDS,
+        default=TRACKER_BACKEND_COTRACKER3,
+        help="Legacy flag name for the Demo 3.1 point-tracker backend.",
+    )
+    parser.add_argument(
+        "--tracking-backend-execution-mode",
+        choices=TRACKING_BACKEND_EXECUTION_MODES,
+        default=TRACKING_BACKEND_EXECUTION_MODE_AUTO,
+        help="Run tracker views serially, as a camera-view batch, or auto-select the best supported mode.",
+    )
+    parser.add_argument(
+        "--tracker-batch-query-count-policy",
+        choices=TRACKER_BATCH_QUERY_COUNT_POLICIES,
+        default=TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
+        help="Policy used by batch-capable tracker adapters when camera query counts differ.",
+    )
+    parser.add_argument("--trackon2-checkpoint", default=None)
+    parser.add_argument("--trackon2-config", default=None)
+    parser.add_argument("--trackon2-repo-dir", default=None)
+    parser.add_argument("--litetracker-weights", default=None)
+    parser.add_argument("--litetracker-repo-dir", default=None)
     parser.add_argument("--cotracker-query-mode", choices=(demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,), default=demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE)
     parser.add_argument("--cotracker-query-count", default=demo3_runtime.DEFAULT_COTRACKER_QUERY_COUNT_REQUEST)
     parser.add_argument("--cotracker-seed", type=int, default=demo3_runtime.DEFAULT_COTRACKER_SEED)
@@ -351,6 +392,16 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
     return args
 
 
+def effective_tracking_backend_execution_mode(args: argparse.Namespace) -> str:
+    mode = normalize_tracker_execution_mode(
+        getattr(args, "tracking_backend_execution_mode", TRACKING_BACKEND_EXECUTION_MODE_AUTO)
+    )
+    legacy_update_mode = str(getattr(args, "cotracker_update_mode", "auto")).strip().lower().replace("_", "-")
+    if mode == TRACKING_BACKEND_EXECUTION_MODE_AUTO and legacy_update_mode in {"batch", "serial"}:
+        return TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS if legacy_update_mode == "batch" else TRACKING_BACKEND_EXECUTION_MODE_SERIAL
+    return mode
+
+
 def validate_args(
     args: argparse.Namespace,
     *,
@@ -368,8 +419,9 @@ def validate_args(
     if depth_source != demo3_runtime.DEPTH_SOURCE_REALSENSE:
         raise ValueError("Demo 3.1 depth source must be realsense.")
     _normalize_mask_source(str(args.mask_source))
-    if str(args.cotracker_backend) != demo3_runtime.COTRACKER3_ONLINE:
-        raise ValueError("Demo 3.1 currently supports only --cotracker-backend cotracker3_online.")
+    normalize_tracker_backend(args.cotracker_backend)
+    normalize_tracker_execution_mode(args.tracking_backend_execution_mode)
+    normalize_tracker_batch_query_count_policy(args.tracker_batch_query_count_policy)
     if str(args.cotracker_query_mode) != demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError("Demo 3.1 currently supports only --cotracker-query-mode phystwin_dense.")
     demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
@@ -420,10 +472,12 @@ def validate_args(
 
 
 def build_cotracker_process_config(args: argparse.Namespace) -> CoTrackerProcessConfig:
+    execution_mode = effective_tracking_backend_execution_mode(args)
     return CoTrackerProcessConfig(
         camera_ids=demo3_runtime.parse_camera_ids(args.camera_ids),
         cotracker_gpu=str(args.cotracker_gpu),
-        cotracker_backend=str(args.cotracker_backend),
+        cotracker_backend=normalize_tracker_backend(args.cotracker_backend),
+        backend_execution_mode=execution_mode,
         query_mode=str(args.cotracker_query_mode),
         query_count_request=demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count),
         seed=int(args.cotracker_seed),
@@ -435,7 +489,15 @@ def build_cotracker_process_config(args: argparse.Namespace) -> CoTrackerProcess
         process_mode=str(args.cotracker_process_mode),
         device="cuda",
         prewarm_backends=bool(args.cotracker_prewarm_backends),
-        update_mode=str(args.cotracker_update_mode),
+        update_mode=effective_legacy_update_mode(execution_mode),
+        trackon2_checkpoint=args.trackon2_checkpoint,
+        trackon2_config=args.trackon2_config,
+        trackon2_repo_dir=args.trackon2_repo_dir,
+        litetracker_weights=args.litetracker_weights,
+        litetracker_repo_dir=args.litetracker_repo_dir,
+        tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
+            args.tracker_batch_query_count_policy
+        ),
     )
 
 
@@ -448,6 +510,14 @@ def build_contract(
     render_waited_for_mask = str(args.fusion_mask_policy) == FUSION_MASK_POLICY_STRICT
     mode = demo3_runtime.resolve_demo3_mode(str(args.mode))
     query_count_request = demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
+    tracker_backend = normalize_tracker_backend(args.cotracker_backend)
+    tracker_spec = tracker_backend_spec(tracker_backend)
+    execution_mode = effective_tracking_backend_execution_mode(args)
+    legacy_update_mode = effective_legacy_update_mode(execution_mode)
+    batch_enabled_by_contract = bool(
+        tracker_spec.supports_batch_views
+        and execution_mode in {TRACKING_BACKEND_EXECUTION_MODE_AUTO, TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS}
+    )
     contract: dict[str, Any] = {
         "demo": "demo3.1",
         "preset": str(args.preset),
@@ -485,13 +555,33 @@ def build_contract(
         "controller_prompt": str(mode["controller_prompt"]),
         "tracking_controller_label": str(mode["controller_label"]),
         "cotracker_enabled": not bool(args.disable_cotracker),
-        "cotracker_backend": demo3_runtime.COTRACKER3_ONLINE,
+        "cotracker_backend": tracker_backend,
+        "tracker_backend": tracker_backend,
+        "tracker_backend_family": tracker_spec.family,
+        "tracking_backend_spec": tracker_spec.to_dict(),
+        "tracking_backend_execution_mode": execution_mode,
+        "tracking_backend_batch_dimension": "camera" if batch_enabled_by_contract else "none",
+        "tracking_backend_batch_size": int(len(camera_ids) if batch_enabled_by_contract else 1),
+        "tracking_backend_batch_supported": bool(tracker_spec.supports_batch_views),
+        "tracking_backend_batch_support_status": str(tracker_spec.batch_support_status),
+        "tracking_backend_batch_auto_selected": bool(
+            execution_mode == TRACKING_BACKEND_EXECUTION_MODE_AUTO and tracker_spec.supports_batch_views
+        ),
+        "tracker_batch_query_count_policy": normalize_tracker_batch_query_count_policy(
+            args.tracker_batch_query_count_policy
+        ),
+        "trackon2_checkpoint": args.trackon2_checkpoint,
+        "trackon2_config": args.trackon2_config,
+        "trackon2_repo_dir": args.trackon2_repo_dir,
+        "litetracker_weights": args.litetracker_weights,
+        "litetracker_repo_dir": args.litetracker_repo_dir,
+        "tracker_env_name": "demo_3_1_max",
         "cotracker_owner": "process",
         "cotracker_process_mode": str(args.cotracker_process_mode),
         "cotracker_prewarm_backends": bool(args.cotracker_prewarm_backends),
-        "cotracker_update_mode": str(args.cotracker_update_mode),
+        "cotracker_update_mode": legacy_update_mode,
         "cotracker_batch_size_target": int(len(camera_ids)),
-        "cotracker_batch_fallback_enabled": str(args.cotracker_update_mode) == demo3_runtime.COTRACKER_UPDATE_MODE_AUTO,
+        "cotracker_batch_fallback_enabled": execution_mode == TRACKING_BACKEND_EXECUTION_MODE_AUTO,
         "cotracker_input_fps": float(args.cotracker_input_fps),
         "cotracker_input_max_age_ms": float(args.cotracker_input_max_age_ms),
         "cotracker_result_stale_timeout_ms": float(args.cotracker_result_stale_timeout_ms),
@@ -615,6 +705,13 @@ def format_contract(contract: dict[str, Any]) -> str:
         "overlay_display_scope",
         "phystwin_dense_compatible",
         "cotracker_backend",
+        "tracker_backend",
+        "tracker_backend_family",
+        "tracking_backend_execution_mode",
+        "tracking_backend_batch_dimension",
+        "tracking_backend_batch_size",
+        "tracking_backend_batch_supported",
+        "tracker_batch_query_count_policy",
         "cotracker_owner",
         "cotracker_process_mode",
         "cotracker_prewarm_backends",
@@ -1236,6 +1333,24 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "overlay_display_object_count_by_camera": dict(result.overlay_display_object_count_by_camera),
                 "overlay_display_controller_count_by_camera": dict(result.overlay_display_controller_count_by_camera),
                 "cotracker_update_mode": str(result.cotracker_update_mode),
+                "tracker_backend": str(getattr(result, "tracker_backend", self.demo31_contract.get("tracker_backend", TRACKER_BACKEND_COTRACKER3))),
+                "tracking_backend_execution_mode": str(
+                    getattr(result, "tracking_backend_execution_mode", self.demo31_contract.get("tracking_backend_execution_mode", TRACKING_BACKEND_EXECUTION_MODE_AUTO))
+                ),
+                "tracker_batch_query_count_policy": str(
+                    getattr(result, "tracker_batch_query_count_policy", self.demo31_contract.get("tracker_batch_query_count_policy", TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED))
+                ),
+                "tracking_backend_effective_query_count": int(
+                    getattr(result, "tracking_backend_effective_query_count", 0)
+                ),
+                "tracking_backend_query_count_truncated_by_camera": dict(
+                    getattr(result, "tracking_backend_query_count_truncated_by_camera", {})
+                ),
+                "tracking_backend_batch_fallback_reason": getattr(
+                    result,
+                    "tracking_backend_batch_fallback_reason",
+                    result.cotracker_batch_disabled_reason,
+                ),
                 "cotracker_batch_size": int(result.cotracker_batch_size),
                 "cotracker_batch_update_count": int(result.cotracker_batch_update_count),
                 "cotracker_serial_group_update_count": int(result.cotracker_serial_group_update_count),
@@ -1436,6 +1551,37 @@ class Demo31Runtime:
                     ),
                     "cotracker_update_mode": str(
                         tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "auto"))
+                    ),
+                    "tracker_backend": str(
+                        tracking_stats.get("tracker_backend", self.contract.get("tracker_backend", TRACKER_BACKEND_COTRACKER3))
+                    ),
+                    "tracker_backend_family": str(self.contract.get("tracker_backend_family", "cotracker")),
+                    "tracking_backend_execution_mode": str(
+                        tracking_stats.get(
+                            "tracking_backend_execution_mode",
+                            self.contract.get("tracking_backend_execution_mode", TRACKING_BACKEND_EXECUTION_MODE_AUTO),
+                        )
+                    ),
+                    "tracker_batch_query_count_policy": str(
+                        tracking_stats.get(
+                            "tracker_batch_query_count_policy",
+                            self.contract.get("tracker_batch_query_count_policy", TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED),
+                        )
+                    ),
+                    "tracking_backend_batch_enabled": bool(
+                        str(tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "auto")))
+                        == "batch"
+                    ),
+                    "tracking_backend_batch_size": int(tracking_stats.get("cotracker_batch_size", 0) or 0),
+                    "tracking_backend_effective_query_count": int(
+                        tracking_stats.get("tracking_backend_effective_query_count", 0) or 0
+                    ),
+                    "tracking_backend_query_count_truncated_by_camera": dict(
+                        tracking_stats.get("tracking_backend_query_count_truncated_by_camera", {})
+                    ),
+                    "tracking_backend_batch_fallback_reason": tracking_stats.get(
+                        "tracking_backend_batch_fallback_reason",
+                        tracking_stats.get("cotracker_batch_disabled_reason"),
                     ),
                     "cotracker_update_mode_effective": str(
                         tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "auto"))

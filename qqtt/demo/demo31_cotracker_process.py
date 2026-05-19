@@ -15,6 +15,17 @@ from qqtt.demo.demo31_dual_gpu_ipc import (
     TrackingInputLitePacket,
     TrackingResultLitePacket,
 )
+from qqtt.tracking.backends.point_tracker_adapter import (
+    TRACKER_BACKEND_COTRACKER3,
+    TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
+    TRACKER_EXECUTION_MODE_AUTO,
+    PointTrackerAdapterConfig,
+    build_point_tracker_adapter_factory,
+    effective_legacy_update_mode,
+    normalize_tracker_backend,
+    normalize_tracker_batch_query_count_policy,
+    normalize_tracker_execution_mode,
+)
 
 
 PROCESS_MODE_SUBPROCESS = "subprocess"
@@ -27,7 +38,8 @@ COTRACKER_UPDATE_MODE_AUTO = "auto"
 class CoTrackerProcessConfig:
     camera_ids: tuple[int, ...] = (0, 1, 2)
     cotracker_gpu: str = "1"
-    cotracker_backend: str = "cotracker3_online"
+    cotracker_backend: str = TRACKER_BACKEND_COTRACKER3
+    backend_execution_mode: str = TRACKER_EXECUTION_MODE_AUTO
     query_mode: str = "phystwin_dense"
     query_count_request: str = "auto"
     seed: int = 42
@@ -41,12 +53,25 @@ class CoTrackerProcessConfig:
     device: str = "cuda"
     prewarm_backends: bool = True
     update_mode: str = COTRACKER_UPDATE_MODE_AUTO
+    trackon2_checkpoint: str | None = None
+    trackon2_config: str | None = None
+    trackon2_repo_dir: str | None = None
+    litetracker_weights: str | None = None
+    litetracker_repo_dir: str | None = None
+    tracker_batch_query_count_policy: str = TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED
 
     def to_json_dict(self) -> dict[str, Any]:
+        tracker_backend = normalize_tracker_backend(self.cotracker_backend)
+        execution_mode = normalize_tracker_execution_mode(self.backend_execution_mode)
+        legacy_update = str(self.update_mode).strip().lower().replace("_", "-")
+        if execution_mode == TRACKER_EXECUTION_MODE_AUTO and legacy_update in {"batch", "serial"}:
+            execution_mode = "batch-views" if legacy_update == "batch" else "serial"
         return {
             "camera_ids": [int(item) for item in self.camera_ids],
             "cotracker_gpu": str(self.cotracker_gpu),
-            "cotracker_backend": str(self.cotracker_backend),
+            "cotracker_backend": str(tracker_backend),
+            "tracker_backend": str(tracker_backend),
+            "backend_execution_mode": str(execution_mode),
             "query_mode": str(self.query_mode),
             "query_count_request": str(self.query_count_request),
             "seed": int(self.seed),
@@ -59,15 +84,31 @@ class CoTrackerProcessConfig:
             "process_mode": str(self.process_mode),
             "device": str(self.device),
             "prewarm_backends": bool(self.prewarm_backends),
-            "update_mode": str(self.update_mode),
+            "update_mode": str(effective_legacy_update_mode(execution_mode)),
+            "trackon2_checkpoint": self.trackon2_checkpoint,
+            "trackon2_config": self.trackon2_config,
+            "trackon2_repo_dir": self.trackon2_repo_dir,
+            "litetracker_weights": self.litetracker_weights,
+            "litetracker_repo_dir": self.litetracker_repo_dir,
+            "tracker_batch_query_count_policy": normalize_tracker_batch_query_count_policy(
+                self.tracker_batch_query_count_policy
+            ),
         }
 
     @classmethod
     def from_json_dict(cls, payload: dict[str, Any]) -> "CoTrackerProcessConfig":
+        backend = normalize_tracker_backend(payload.get("tracker_backend", payload.get("cotracker_backend", TRACKER_BACKEND_COTRACKER3)))
+        execution_mode = normalize_tracker_execution_mode(
+            payload.get("backend_execution_mode", payload.get("tracking_backend_execution_mode", payload.get("update_mode", TRACKER_EXECUTION_MODE_AUTO)))
+        )
+        legacy_update = str(payload.get("update_mode", "")).strip().lower().replace("_", "-")
+        if execution_mode == TRACKER_EXECUTION_MODE_AUTO and legacy_update in {"batch", "serial"}:
+            execution_mode = "batch-views" if legacy_update == "batch" else "serial"
         return cls(
             camera_ids=tuple(int(item) for item in payload.get("camera_ids", (0, 1, 2))),
             cotracker_gpu=str(payload.get("cotracker_gpu", "1")),
-            cotracker_backend=str(payload.get("cotracker_backend", "cotracker3_online")),
+            cotracker_backend=backend,
+            backend_execution_mode=execution_mode,
             query_mode=str(payload.get("query_mode", "phystwin_dense")),
             query_count_request=str(payload.get("query_count_request", payload.get("query_count", "auto"))),
             seed=int(payload.get("seed", 42)),
@@ -80,7 +121,15 @@ class CoTrackerProcessConfig:
             process_mode=str(payload.get("process_mode", PROCESS_MODE_SUBPROCESS)),
             device=str(payload.get("device", "cuda")),
             prewarm_backends=bool(payload.get("prewarm_backends", True)),
-            update_mode=str(payload.get("update_mode", COTRACKER_UPDATE_MODE_AUTO)),
+            update_mode=str(effective_legacy_update_mode(execution_mode)),
+            trackon2_checkpoint=payload.get("trackon2_checkpoint"),
+            trackon2_config=payload.get("trackon2_config"),
+            trackon2_repo_dir=payload.get("trackon2_repo_dir"),
+            litetracker_weights=payload.get("litetracker_weights"),
+            litetracker_repo_dir=payload.get("litetracker_repo_dir"),
+            tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
+                payload.get("tracker_batch_query_count_policy", TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED)
+            ),
         )
 
     @classmethod
@@ -99,12 +148,14 @@ def build_cotracker_process_env(
     env = dict(os.environ if base_env is None else base_env)
     env["CUDA_VISIBLE_DEVICES"] = str(config.cotracker_gpu)
     env["QQTT_DEMO31_COTRACKER_PROCESS"] = "1"
+    env["QQTT_DEMO31_POINT_TRACKER_PROCESS"] = "1"
     return env
 
 
 def configure_cotracker_cuda_environment(config: CoTrackerProcessConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = str(config.cotracker_gpu)
     os.environ["QQTT_DEMO31_COTRACKER_PROCESS"] = "1"
+    os.environ["QQTT_DEMO31_POINT_TRACKER_PROCESS"] = "1"
 
 
 def build_cotracker_subprocess_argv(
@@ -233,17 +284,29 @@ def run_cotracker_worker_loop(
     process_start_s = time.perf_counter()
     configure_cotracker_cuda_environment(config)
 
-    from qqtt.demo.cotracker3_overlay_worker import (  # noqa: PLC0415
-        CoTracker3OverlayWorker,
+    from qqtt.demo.point_tracker_overlay_worker import (  # noqa: PLC0415
         LatestTrackingOverlaySlot,
+        PointTrackerOverlayWorker,
     )
 
     input_endpoint = LatestWinsQueue(input_queue)
     output_endpoint = LatestWinsQueue(output_queue)
     output_slot = LatestTrackingOverlaySlot()
-    worker = CoTracker3OverlayWorker(
+    adapter_factory = backend_factory or build_point_tracker_adapter_factory(
+        PointTrackerAdapterConfig(
+            backend=normalize_tracker_backend(config.cotracker_backend),
+            device=str(config.device),
+            trackon2_checkpoint=config.trackon2_checkpoint,
+            trackon2_config=config.trackon2_config,
+            trackon2_repo_dir=config.trackon2_repo_dir,
+            litetracker_weights=config.litetracker_weights,
+            litetracker_repo_dir=config.litetracker_repo_dir,
+        )
+    )
+    update_mode = effective_legacy_update_mode(config.backend_execution_mode)
+    worker = PointTrackerOverlayWorker(
         camera_ids=tuple(int(item) for item in config.camera_ids),
-        backend_factory=backend_factory,
+        backend_factory=adapter_factory,
         output_slot=output_slot,
         query_mode=str(config.query_mode),
         query_count_request=str(config.query_count_request),
@@ -253,7 +316,12 @@ def run_cotracker_worker_loop(
         overlay_max_points_per_camera=int(config.overlay_max_points_per_camera),
         overlay_display_scope=str(config.overlay_display_scope),
         device=str(config.device),
-        update_mode=str(config.update_mode),
+        update_mode=str(update_mode),
+        tracker_backend=normalize_tracker_backend(config.cotracker_backend),
+        backend_execution_mode=normalize_tracker_execution_mode(config.backend_execution_mode),
+        tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
+            config.tracker_batch_query_count_policy
+        ),
     )
     warmup_profile: dict[str, Any] = {}
     if bool(config.prewarm_backends):
@@ -280,9 +348,12 @@ def run_cotracker_worker_loop(
                 {
                     "type": "ready",
                     "stage": "cotracker",
+                    "process_kind": "point_tracker_child",
                     "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                    "tracker_backend": normalize_tracker_backend(config.cotracker_backend),
+                    "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "prewarm_backends": bool(config.prewarm_backends),
-                    "update_mode": str(config.update_mode),
+                    "update_mode": str(update_mode),
                     "warmup_profile": warmup_profile,
                     "total_init_ms": float((time.perf_counter() - process_start_s) * 1000.0),
                     "ready_perf_s": time.perf_counter(),
@@ -331,7 +402,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     "cotracker_process": True,
+                    "point_tracker_process": True,
+                    "process_kind": "point_tracker_child",
                     "cotracker_backend": config.cotracker_backend,
+                    "tracker_backend": normalize_tracker_backend(config.cotracker_backend),
+                    "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "cotracker_cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
                     "tracking_query_mode": config.query_mode,
                     "tracking_query_count_requested": config.query_count_request,
@@ -340,7 +415,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "overlay_max_points_per_camera": config.overlay_max_points_per_camera,
                     "overlay_display_scope": config.overlay_display_scope,
                     "prewarm_backends": config.prewarm_backends,
-                    "update_mode": config.update_mode,
+                    "update_mode": effective_legacy_update_mode(config.backend_execution_mode),
+                    "tracker_batch_query_count_policy": normalize_tracker_batch_query_count_policy(
+                        config.tracker_batch_query_count_policy
+                    ),
                     "cross_gpu_cuda_tensor_transfer": False,
                     "ipc_payload": "cpu_numpy_latest_wins",
                 },

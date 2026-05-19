@@ -2,15 +2,17 @@
 
 Demo 3.1 is a dual-4090 realtime visualization runtime cloned from Demo 3.0.
 GPU0 owns the shared three-RealSense capture, SAM3.1/HF EdgeTAM mask,
-RealSense-depth fusion, and render path. GPU1 owns CoTracker3 online in a
-separate child process.
+RealSense-depth fusion, and render path. GPU1 owns a point-tracker backend in a
+separate child process. The default validated backend is `cotracker3_online`;
+the contract also accepts `trackon2` and `litetracker` so the same Demo 3.1
+pipeline can profile alternative online trackers.
 
-No CUDA tensors are transferred between processes. CoTracker receives CPU
-RGB plus live object/controller union-mask latest-wins packets and returns
-small CPU 2D track/visibility packets. It does not receive offline video,
-saved masks, depth, intrinsics, or camera-to-world transforms. The main process
-lifts tracks to world using group-aligned cached RealSense depth, intrinsics,
-and camera-to-world transforms.
+No CUDA tensors are transferred between processes. The tracker receives CPU RGB
+plus live object/controller union-mask latest-wins packets and returns small CPU
+2D track/visibility packets. It does not receive offline video, saved masks,
+depth, intrinsics, or camera-to-world transforms. The main process lifts tracks
+to world using group-aligned cached RealSense depth, intrinsics, and
+camera-to-world transforms.
 
 Demo 3.1 inherits Demo 3.0's online-only FuturePhysTwin-compatible tracking
 semantics. The only public semantic switch is `--mode exp|demo`; both modes
@@ -79,6 +81,14 @@ overlay_max_points_per_camera = 0
 overlay_display_scope = controller
 overlay_display_classification = first_frame_mask_membership
 cotracker_backend = cotracker3_online
+tracker_backend = cotracker3_online
+tracker_backend_family = cotracker
+tracking_backend_execution_mode = auto
+tracking_backend_batch_dimension = camera
+tracking_backend_batch_size = 3
+tracking_backend_batch_supported = true
+tracking_backend_batch_auto_selected = true
+tracker_batch_query_count_policy = fixed
 cotracker_owner = process
 cotracker_process_mode = subprocess
 cross_gpu_cuda_tensor_transfer = false
@@ -120,6 +130,16 @@ cotracker_input_queue_replace_count
 cotracker_publish_fps
 cotracker_update_mode
 cotracker_update_mode_effective
+tracker_backend
+tracker_backend_family
+tracking_backend_execution_mode
+tracking_backend_batch_dimension
+tracking_backend_batch_size
+tracking_backend_batch_enabled
+tracking_backend_batch_supported
+tracking_backend_batch_support_status
+tracking_backend_batch_auto_selected
+tracker_batch_query_count_policy
 cotracker_batch_size
 cotracker_batch_update_count
 cotracker_serial_camera_update_count

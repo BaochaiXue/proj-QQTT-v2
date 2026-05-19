@@ -21,7 +21,14 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
             init_requires_object_and_controller=True,
             overlay_max_points_per_camera=15,
             overlay_display_scope="controller",
+            backend_execution_mode="batch-views",
             update_mode="batch",
+            trackon2_checkpoint="/tmp/trackon2.pth",
+            trackon2_config="/tmp/trackon2.yaml",
+            trackon2_repo_dir="/tmp/track_on",
+            litetracker_weights="/tmp/litetracker.pth",
+            litetracker_repo_dir="/tmp/lite-tracker",
+            tracker_batch_query_count_policy="min-common",
         )
 
         restored = process_mod.CoTrackerProcessConfig.from_json(config.to_json())
@@ -34,6 +41,7 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
 
         self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "1")
         self.assertEqual(env["QQTT_DEMO31_COTRACKER_PROCESS"], "1")
+        self.assertEqual(env["QQTT_DEMO31_POINT_TRACKER_PROCESS"], "1")
 
     def test_subprocess_argv_targets_process_module(self) -> None:
         config = process_mod.CoTrackerProcessConfig(cotracker_gpu="1")
@@ -46,7 +54,7 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         source = inspect.getsource(process_mod.run_cotracker_worker_loop)
 
         env_idx = source.index("configure_cotracker_cuda_environment(config)")
-        import_idx = source.index("from qqtt.demo.cotracker3_overlay_worker import")
+        import_idx = source.index("from qqtt.demo.point_tracker_overlay_worker import")
         self.assertLess(env_idx, import_idx)
         module_source = inspect.getsource(process_mod)
         self.assertNotIn("\nimport torch", module_source)
@@ -64,6 +72,9 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         self.assertIn("cpu_numpy_latest_wins", output)
         self.assertIn("phystwin_dense", output)
         self.assertIn('"tracking_query_count_requested": "auto"', output)
+        self.assertIn('"point_tracker_process": true', output)
+        self.assertIn('"tracker_backend": "cotracker3_online"', output)
+        self.assertIn('"backend_execution_mode": "auto"', output)
         self.assertIn('"overlay_display_scope": "controller"', output)
         self.assertIn('"update_mode": "auto"', output)
         if old_value is None:

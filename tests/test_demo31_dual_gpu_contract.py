@@ -196,6 +196,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["overlay_display_classification"], "first_frame_mask_membership")
         self.assertTrue(contract["phystwin_dense_compatible"])
         self.assertEqual(contract["cotracker_backend"], "cotracker3_online")
+        self.assertEqual(contract["tracker_backend"], "cotracker3_online")
+        self.assertEqual(contract["tracker_backend_family"], "cotracker")
+        self.assertEqual(contract["tracking_backend_execution_mode"], "auto")
+        self.assertEqual(contract["tracking_backend_batch_dimension"], "camera")
+        self.assertEqual(contract["tracking_backend_batch_size"], 3)
+        self.assertTrue(contract["tracking_backend_batch_supported"])
+        self.assertTrue(contract["tracking_backend_batch_auto_selected"])
+        self.assertEqual(contract["tracker_batch_query_count_policy"], "fixed")
         self.assertEqual(contract["cotracker_owner"], "process")
         self.assertEqual(contract["cotracker_process_mode"], "subprocess")
         self.assertEqual(contract["cotracker_update_mode"], "auto")
@@ -236,6 +244,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("overlay_display_scope = controller", output)
         self.assertIn("phystwin_dense_compatible = true", output)
         self.assertIn("cotracker_owner = process", output)
+        self.assertIn("tracker_backend = cotracker3_online", output)
+        self.assertIn("tracking_backend_execution_mode = auto", output)
+        self.assertIn("tracking_backend_batch_dimension = camera", output)
         self.assertIn("cross_gpu_cuda_tensor_transfer = false", output)
         self.assertIn("pcd_color_mode = rgb", output)
         self.assertIn("render_waited_for_cotracker = true", output)
@@ -295,12 +306,73 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(config.cotracker_gpu, "1")
         self.assertEqual(config.camera_ids, (0, 1, 2))
         self.assertEqual(config.cotracker_backend, "cotracker3_online")
+        self.assertEqual(config.backend_execution_mode, "auto")
+        self.assertEqual(config.tracker_batch_query_count_policy, "fixed")
         self.assertEqual(config.query_mode, "phystwin_dense")
         self.assertEqual(config.query_count_request, "auto")
         self.assertEqual(config.seed, 42)
         self.assertEqual(config.update_mode, "auto")
         self.assertTrue(config.init_requires_object_and_controller)
         self.assertEqual(config.overlay_display_scope, "controller")
+
+    def test_trackon2_backend_contract_is_accepted(self) -> None:
+        args = self._parse(
+            [
+                "--dry-run",
+                "--camera-ids",
+                "0,1,2",
+                "--mask-gpu",
+                "0",
+                "--cotracker-gpu",
+                "1",
+                "--cotracker-backend",
+                "trackon2",
+                "--tracking-backend-execution-mode",
+                "batch-views",
+                "--tracker-batch-query-count-policy",
+                "min-common",
+                "--trackon2-checkpoint",
+                "/tmp/trackon2.pth",
+                "--trackon2-repo-dir",
+                "/tmp/track_on",
+            ]
+        )
+        demo31_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+        config = demo31_runtime.build_cotracker_process_config(args)
+
+        self.assertEqual(contract["cotracker_backend"], "trackon2")
+        self.assertEqual(contract["tracker_backend"], "trackon2")
+        self.assertEqual(contract["tracker_backend_family"], "trackon")
+        self.assertEqual(contract["tracking_backend_execution_mode"], "batch-views")
+        self.assertEqual(contract["tracker_batch_query_count_policy"], "min-common")
+        self.assertEqual(config.cotracker_backend, "trackon2")
+        self.assertEqual(config.backend_execution_mode, "batch-views")
+        self.assertEqual(config.tracker_batch_query_count_policy, "min-common")
+
+    def test_litetracker_auto_contract_marks_batch_support_unknown(self) -> None:
+        args = self._parse(
+            [
+                "--dry-run",
+                "--camera-ids",
+                "0,1,2",
+                "--mask-gpu",
+                "0",
+                "--cotracker-gpu",
+                "1",
+                "--cotracker-backend",
+                "litetracker",
+                "--litetracker-weights",
+                "/tmp/litetracker.pth",
+            ]
+        )
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+
+        self.assertEqual(contract["tracker_backend"], "litetracker")
+        self.assertEqual(contract["tracker_backend_family"], "litetracker")
+        self.assertFalse(contract["tracking_backend_batch_supported"])
+        self.assertEqual(contract["tracking_backend_batch_support_status"], "unknown")
+        self.assertEqual(contract["tracking_backend_batch_dimension"], "none")
 
     def test_mode_demo_uses_hand_controller_without_changing_gpu_split(self) -> None:
         args = self._parse(

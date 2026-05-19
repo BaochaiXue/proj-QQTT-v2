@@ -10,6 +10,15 @@ import numpy as np
 
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world, select_overlay_point_indices
 from qqtt.tracking.backends.cotracker3_online import CoTracker3OnlineBackend
+from qqtt.tracking.backends.point_tracker_adapter import (
+    TRACKER_BACKEND_COTRACKER3,
+    TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
+    TRACKER_BATCH_QUERY_COUNT_POLICY_MIN_COMMON,
+    TRACKER_EXECUTION_MODE_AUTO,
+    normalize_tracker_backend,
+    normalize_tracker_batch_query_count_policy,
+    normalize_tracker_execution_mode,
+)
 from qqtt.tracking.sampling import (
     PHYSTWIN_DENSE_QUERY_POINTS,
     sample_phystwin_dense,
@@ -97,6 +106,12 @@ class TrackingOverlayPacket:
     overlay_display_count_by_camera: dict[int, int] = field(default_factory=dict)
     overlay_display_object_count_by_camera: dict[int, int] = field(default_factory=dict)
     overlay_display_controller_count_by_camera: dict[int, int] = field(default_factory=dict)
+    tracker_backend: str = TRACKER_BACKEND_COTRACKER3
+    tracking_backend_execution_mode: str = TRACKER_EXECUTION_MODE_AUTO
+    tracker_batch_query_count_policy: str = TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED
+    tracking_backend_effective_query_count: int = 0
+    tracking_backend_query_count_truncated_by_camera: dict[int, int] = field(default_factory=dict)
+    tracking_backend_batch_fallback_reason: str | None = None
 
     @property
     def seq(self) -> int:
@@ -276,6 +291,9 @@ class CoTracker3OverlayWorker:
         sampling_device: str = "cpu",
         init_requires_object_and_controller: bool = True,
         update_mode: str = COTRACKER_UPDATE_MODE_AUTO,
+        tracker_backend: str = TRACKER_BACKEND_COTRACKER3,
+        backend_execution_mode: str = TRACKER_EXECUTION_MODE_AUTO,
+        tracker_batch_query_count_policy: str = TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
     ) -> None:
         self.camera_ids = tuple(int(camera_id) for camera_id in camera_ids)
         self.backend_factory = backend_factory or (
@@ -288,6 +306,11 @@ class CoTracker3OverlayWorker:
         self.overlay_max_points_per_camera = int(overlay_max_points_per_camera)
         self.overlay_display_scope = self._normalize_overlay_display_scope(overlay_display_scope)
         self.update_mode = self._normalize_update_mode(update_mode)
+        self.tracker_backend = normalize_tracker_backend(tracker_backend)
+        self.backend_execution_mode = normalize_tracker_execution_mode(backend_execution_mode)
+        self.tracker_batch_query_count_policy = normalize_tracker_batch_query_count_policy(
+            tracker_batch_query_count_policy
+        )
         self.seed = int(seed)
         self.sampling_device = str(sampling_device)
         self.init_requires_object_and_controller = bool(init_requires_object_and_controller)
@@ -316,6 +339,8 @@ class CoTracker3OverlayWorker:
         self._last_batch_error: str | None = None
         self._last_update_mode = COTRACKER_UPDATE_MODE_SERIAL
         self._last_batch_size = 0
+        self._last_batch_effective_query_count = 0
+        self._last_batch_truncated_by_camera: dict[int, int] = {}
         if self.query_mode != "phystwin_dense":
             raise ValueError("CoTracker3OverlayWorker currently supports only query_mode='phystwin_dense'.")
         # Non-positive means "render all selected visible tracks". Demo 3.1 uses
@@ -408,25 +433,27 @@ class CoTracker3OverlayWorker:
         else:
             label = self._query_is_controller.get(int(camera_idx), np.zeros_like(vis, dtype=bool))
         label_bool = np.asarray(label, dtype=bool).reshape(-1)
-        if label_bool.shape[0] != vis.shape[0]:
-            label_bool = np.zeros_like(vis, dtype=bool)
+        if label_bool.shape[0] > vis.shape[0]:
+            label_bool = label_bool[: vis.shape[0]]
+        elif label_bool.shape[0] < vis.shape[0]:
+            fitted = np.zeros_like(vis, dtype=bool)
+            fitted[: label_bool.shape[0]] = label_bool
+            label_bool = fitted
         return np.where(label_bool, vis, 0.0).astype(np.float32)
 
     def _query_labels_for_camera(self, *, camera_idx: int, query_count: int) -> tuple[np.ndarray, np.ndarray]:
         count = int(query_count)
-        object_labels = np.asarray(
-            self._query_is_object.get(int(camera_idx), np.zeros(count, dtype=bool)),
-            dtype=bool,
-        ).reshape(-1)
-        controller_labels = np.asarray(
-            self._query_is_controller.get(int(camera_idx), np.zeros(count, dtype=bool)),
-            dtype=bool,
-        ).reshape(-1)
-        if object_labels.shape[0] != count:
-            object_labels = np.zeros(count, dtype=bool)
-        if controller_labels.shape[0] != count:
-            controller_labels = np.zeros(count, dtype=bool)
-        return object_labels, controller_labels
+        object_labels = np.asarray(self._query_is_object.get(int(camera_idx), ()), dtype=bool).reshape(-1)
+        controller_labels = np.asarray(self._query_is_controller.get(int(camera_idx), ()), dtype=bool).reshape(-1)
+
+        def fit(labels: np.ndarray) -> np.ndarray:
+            if labels.shape[0] >= count:
+                return labels[:count].astype(bool, copy=False)
+            fitted = np.zeros(count, dtype=bool)
+            fitted[: labels.shape[0]] = labels
+            return fitted
+
+        return fit(object_labels), fit(controller_labels)
 
     def _record_sampling_stats(
         self,
@@ -632,6 +659,37 @@ class CoTracker3OverlayWorker:
         self._last_batch_size = int(len(active_inputs))
         return {int(camera_idx): result for camera_idx, result in results.items()}
 
+    def _batch_policy_inputs(
+        self,
+        active_inputs: Mapping[int, dict[str, Any]],
+    ) -> dict[int, dict[str, Any]]:
+        counts = {
+            int(camera_idx): int(len(np.asarray(payload["query_points"], dtype=np.float32).reshape(-1, 2)))
+            for camera_idx, payload in active_inputs.items()
+        }
+        if not counts:
+            self._last_batch_effective_query_count = 0
+            self._last_batch_truncated_by_camera = {}
+            return {int(camera_idx): dict(payload) for camera_idx, payload in active_inputs.items()}
+        if self.tracker_batch_query_count_policy != TRACKER_BATCH_QUERY_COUNT_POLICY_MIN_COMMON:
+            self._last_batch_effective_query_count = max(counts.values())
+            self._last_batch_truncated_by_camera = {int(camera_idx): 0 for camera_idx in counts}
+            return {int(camera_idx): dict(payload) for camera_idx, payload in active_inputs.items()}
+
+        effective = min(counts.values())
+        self._last_batch_effective_query_count = int(effective)
+        truncated: dict[int, int] = {}
+        policy_inputs: dict[int, dict[str, Any]] = {}
+        for camera_idx, payload in active_inputs.items():
+            idx = int(camera_idx)
+            points = np.asarray(payload["query_points"], dtype=np.float32).reshape(-1, 2)
+            truncated[idx] = max(0, int(len(points) - effective))
+            copied = dict(payload)
+            copied["query_points"] = points[:effective]
+            policy_inputs[idx] = copied
+        self._last_batch_truncated_by_camera = truncated
+        return policy_inputs
+
     def _process_serial_updates(
         self,
         active_inputs: Mapping[int, dict[str, Any]],
@@ -695,8 +753,11 @@ class CoTracker3OverlayWorker:
         batch_attempt_failed = False
         if self._batch_preferred() and self._batch_backend_disabled_reason is None:
             if len(active_inputs) == len(self.camera_ids):
+                batch_inputs = self._batch_policy_inputs(active_inputs)
                 try:
-                    results = self._process_batch_updates(active_inputs)
+                    results = self._process_batch_updates(batch_inputs)
+                    if results is not None:
+                        active_inputs = batch_inputs
                 except BaseException as exc:
                     batch_attempt_failed = True
                     self._batch_error_count += 1
@@ -846,6 +907,12 @@ class CoTracker3OverlayWorker:
             overlay_display_count_by_camera=dict(self._overlay_display_count_by_camera),
             overlay_display_object_count_by_camera=dict(self._overlay_display_object_count_by_camera),
             overlay_display_controller_count_by_camera=dict(self._overlay_display_controller_count_by_camera),
+            tracker_backend=str(self.tracker_backend),
+            tracking_backend_execution_mode=str(self.backend_execution_mode),
+            tracker_batch_query_count_policy=str(self.tracker_batch_query_count_policy),
+            tracking_backend_effective_query_count=int(self._last_batch_effective_query_count),
+            tracking_backend_query_count_truncated_by_camera=dict(self._last_batch_truncated_by_camera),
+            tracking_backend_batch_fallback_reason=self._batch_backend_disabled_reason,
         )
         self.output_slot.publish(overlay)
         self._published_packets += 1
@@ -864,6 +931,12 @@ class CoTracker3OverlayWorker:
         }
         return {
             "camera_ids": list(self.camera_ids),
+            "tracker_backend": str(self.tracker_backend),
+            "tracking_backend_execution_mode": str(self.backend_execution_mode),
+            "tracker_batch_query_count_policy": str(self.tracker_batch_query_count_policy),
+            "tracking_backend_effective_query_count": int(self._last_batch_effective_query_count),
+            "tracking_backend_query_count_truncated_by_camera": dict(self._last_batch_truncated_by_camera),
+            "tracking_backend_batch_fallback_reason": self._batch_backend_disabled_reason,
             "query_mode": str(self.query_mode),
             "query_count_request": str(self.query_count),
             "query_count": int(PHYSTWIN_DENSE_QUERY_POINTS if self.query_count == "auto" else self.query_count),

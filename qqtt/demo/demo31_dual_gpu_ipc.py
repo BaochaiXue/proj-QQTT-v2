@@ -94,6 +94,12 @@ class TrackingResultLitePacket:
     overlay_display_count_by_camera: dict[int, int] = field(default_factory=dict)
     overlay_display_object_count_by_camera: dict[int, int] = field(default_factory=dict)
     overlay_display_controller_count_by_camera: dict[int, int] = field(default_factory=dict)
+    tracker_backend: str = "cotracker3_online"
+    tracking_backend_execution_mode: str = "auto"
+    tracker_batch_query_count_policy: str = "fixed"
+    tracking_backend_effective_query_count: int = 0
+    tracking_backend_query_count_truncated_by_camera: dict[int, int] = field(default_factory=dict)
+    tracking_backend_batch_fallback_reason: str | None = None
 
     @property
     def seq(self) -> int:
@@ -194,6 +200,19 @@ class TrackingResultLitePacket:
                 int(camera_idx): int(count)
                 for camera_idx, count in getattr(packet, "overlay_display_controller_count_by_camera", {}).items()
             },
+            tracker_backend=str(getattr(packet, "tracker_backend", "cotracker3_online")),
+            tracking_backend_execution_mode=str(getattr(packet, "tracking_backend_execution_mode", "auto")),
+            tracker_batch_query_count_policy=str(getattr(packet, "tracker_batch_query_count_policy", "fixed")),
+            tracking_backend_effective_query_count=int(getattr(packet, "tracking_backend_effective_query_count", 0)),
+            tracking_backend_query_count_truncated_by_camera={
+                int(camera_idx): int(count)
+                for camera_idx, count in getattr(
+                    packet,
+                    "tracking_backend_query_count_truncated_by_camera",
+                    {},
+                ).items()
+            },
+            tracking_backend_batch_fallback_reason=getattr(packet, "tracking_backend_batch_fallback_reason", None),
         )
 
     def mark_stale(self) -> "TrackingResultLitePacket":
@@ -234,6 +253,14 @@ class TrackingResultLitePacket:
             overlay_display_count_by_camera=self.overlay_display_count_by_camera,
             overlay_display_object_count_by_camera=self.overlay_display_object_count_by_camera,
             overlay_display_controller_count_by_camera=self.overlay_display_controller_count_by_camera,
+            tracker_backend=self.tracker_backend,
+            tracking_backend_execution_mode=self.tracking_backend_execution_mode,
+            tracker_batch_query_count_policy=self.tracker_batch_query_count_policy,
+            tracking_backend_effective_query_count=self.tracking_backend_effective_query_count,
+            tracking_backend_query_count_truncated_by_camera=dict(
+                self.tracking_backend_query_count_truncated_by_camera
+            ),
+            tracking_backend_batch_fallback_reason=self.tracking_backend_batch_fallback_reason,
         )
 
 
