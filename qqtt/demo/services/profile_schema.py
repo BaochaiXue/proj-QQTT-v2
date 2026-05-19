@@ -19,10 +19,15 @@ class ProfileKeys:
     OBJECT_POINT_CONTROL = "object_point_control"
     OBJECT_VOLUME_MS = "object_volume_ms"
     OBJECT_VOLUME_MS_P50 = "object_volume_ms_p50"
+    OBJECT_VOLUME_TOTAL_MS = "object_volume_total_ms"
+    OBJECT_VOLUME_KEY_MS = "object_volume_key_ms"
+    OBJECT_VOLUME_UNIQUE_MS = "object_volume_unique_ms"
+    OBJECT_VOLUME_GATHER_MS = "object_volume_gather_ms"
     OBJECT_VOLUME_OCCUPIED_VOXELS = "object_volume_occupied_voxels"
     OBJECT_VOLUME_OUTPUT_POINTS = "object_volume_output_points"
     OBJECT_VOLUME_INPUT_POINTS = "object_volume_input_points"
     OBJECT_VOLUME_TARGET_MS = "object_volume_target_ms"
+    OBJECT_VOLUME_EXACT = "object_volume_exact"
     OBJECT_VOLUME_SAFETY_CAP_TRIGGERED = "object_volume_safety_cap_triggered"
     COTRACKER_PUBLISH_FPS = "cotracker_publish_fps"
     COTRACKER_INPUT_FPS = "cotracker_input_fps"
@@ -47,6 +52,15 @@ DEMO31_REQUIRED_PROFILE_KEYS = (
     ProfileKeys.CAPTURE_GROUP_FPS,
     ProfileKeys.FRESH_MASK_FPS,
     ProfileKeys.MASK_REUSE_RATIO,
+    ProfileKeys.OBJECT_POINT_CONTROL,
+    ProfileKeys.OBJECT_VOLUME_MS,
+    ProfileKeys.OBJECT_VOLUME_TOTAL_MS,
+    ProfileKeys.OBJECT_VOLUME_KEY_MS,
+    ProfileKeys.OBJECT_VOLUME_UNIQUE_MS,
+    ProfileKeys.OBJECT_VOLUME_GATHER_MS,
+    ProfileKeys.OBJECT_VOLUME_EXACT,
+    ProfileKeys.OBJECT_VOLUME_OCCUPIED_VOXELS,
+    ProfileKeys.OBJECT_VOLUME_OUTPUT_POINTS,
     ProfileKeys.COTRACKER_INPUT_FPS,
     ProfileKeys.COTRACKER_PUBLISH_FPS,
     ProfileKeys.GPU0_UTIL_MEDIAN,
@@ -68,6 +82,11 @@ DEMO23_REQUIRED_PROFILE_KEYS = (
     "render_fps",
     ProfileKeys.OBJECT_POINT_CONTROL,
     ProfileKeys.OBJECT_VOLUME_MS,
+    ProfileKeys.OBJECT_VOLUME_TOTAL_MS,
+    ProfileKeys.OBJECT_VOLUME_KEY_MS,
+    ProfileKeys.OBJECT_VOLUME_UNIQUE_MS,
+    ProfileKeys.OBJECT_VOLUME_GATHER_MS,
+    ProfileKeys.OBJECT_VOLUME_EXACT,
     ProfileKeys.OBJECT_VOLUME_OCCUPIED_VOXELS,
     ProfileKeys.OBJECT_VOLUME_OUTPUT_POINTS,
 )
@@ -143,6 +162,25 @@ def build_empty_demo31_profile_summary(contract: Mapping[str, Any]) -> dict[str,
         ProfileKeys.RENDER_LOOP_FPS: 0.0,
         ProfileKeys.RENDERED_FPS: 0.0,
         ProfileKeys.NEW_FUSED_PCD_FPS: 0.0,
+        "render_waited_for_object_volume_filter": False,
+        "object_volume_filter_source_counts": {},
+        "object_volume_worker_fps": 0.0,
+        "object_volume_age_ms_p50": 0.0,
+        "object_volume_age_ms_p95": 0.0,
+        ProfileKeys.OBJECT_POINT_CONTROL: "phystwin-volume",
+        ProfileKeys.OBJECT_VOLUME_MS: 0.0,
+        ProfileKeys.OBJECT_VOLUME_TOTAL_MS: 0.0,
+        ProfileKeys.OBJECT_VOLUME_KEY_MS: 0.0,
+        ProfileKeys.OBJECT_VOLUME_UNIQUE_MS: 0.0,
+        ProfileKeys.OBJECT_VOLUME_GATHER_MS: 0.0,
+        ProfileKeys.OBJECT_VOLUME_INPUT_POINTS: 0,
+        ProfileKeys.OBJECT_VOLUME_OCCUPIED_VOXELS: 0,
+        ProfileKeys.OBJECT_VOLUME_OUTPUT_POINTS: 0,
+        ProfileKeys.OBJECT_VOLUME_TARGET_MS: 8.0,
+        ProfileKeys.OBJECT_VOLUME_EXACT: False,
+        "object_volume_adaptive_active": False,
+        "object_volume_sampler_impl": "",
+        ProfileKeys.OBJECT_VOLUME_SAFETY_CAP_TRIGGERED: False,
         ProfileKeys.CAPTURE_GROUP_FPS: 0.0,
         ProfileKeys.FRESH_MASK_FPS: 0.0,
         ProfileKeys.MASK_REUSE_RATIO: 0.0,

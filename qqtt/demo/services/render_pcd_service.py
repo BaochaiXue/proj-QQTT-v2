@@ -104,6 +104,7 @@ class RenderPcdService:
             "render_fast_exit_used": bool(self.fast_exit_used),
             "rendered_fps": rendered_fps,
             "render_loop_fps": rendered_fps,
+            "render_waited_for_object_volume_filter": False,
             "render_buffer": self.buffer.snapshot(),
             "render_micro_profile": summary,
         }

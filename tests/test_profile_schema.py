@@ -35,6 +35,7 @@ class ProfileSchemaTests(unittest.TestCase):
 
     def test_demo23_required_keys_include_object_volume_fields(self) -> None:
         self.assertIn(ProfileKeys.OBJECT_VOLUME_MS, DEMO23_REQUIRED_PROFILE_KEYS)
+        self.assertIn(ProfileKeys.OBJECT_VOLUME_EXACT, DEMO23_REQUIRED_PROFILE_KEYS)
         self.assertIn(ProfileKeys.OBJECT_VOLUME_OCCUPIED_VOXELS, DEMO23_REQUIRED_PROFILE_KEYS)
         self.assertIn(ProfileKeys.OBJECT_VOLUME_OUTPUT_POINTS, DEMO23_REQUIRED_PROFILE_KEYS)
 

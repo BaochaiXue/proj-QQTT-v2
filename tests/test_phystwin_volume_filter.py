@@ -7,6 +7,7 @@ import numpy as np
 from qqtt.demo.phystwin_volume_filter import (
     ObjectVoxelBudgetController,
     phystwin_volume_sample_indices,
+    phystwin_volume_sample_indices_fast,
     phystwin_volume_sample_points,
 )
 
@@ -26,6 +27,23 @@ class PhysTwinVolumeFilterTests(unittest.TestCase):
         idx = phystwin_volume_sample_indices(points, voxel_size_m=0.005, origin_world=np.zeros(3))
 
         self.assertEqual(idx.tolist(), [0, 2, 3])
+
+    def test_fast_indices_match_contract_indices(self) -> None:
+        rng = np.random.default_rng(7)
+        points = rng.uniform(-0.05, 0.05, size=(200, 3)).astype(np.float32)
+
+        expected = phystwin_volume_sample_indices(
+            points,
+            voxel_size_m=0.005,
+            origin_world=np.zeros(3, dtype=np.float32),
+        )
+        actual = phystwin_volume_sample_indices_fast(
+            points,
+            voxel_size_m=0.005,
+            origin_world=np.zeros(3, dtype=np.float32),
+        )
+
+        np.testing.assert_array_equal(actual, expected)
 
     def test_output_count_equals_occupied_voxels_for_default(self) -> None:
         points = np.array(
@@ -47,6 +65,11 @@ class PhysTwinVolumeFilterTests(unittest.TestCase):
         self.assertEqual(stats["occupied_voxel_count"], 3)
         self.assertEqual(sampled.shape[0], stats["occupied_voxel_count"])
         self.assertEqual(stats["output_point_count"], 3)
+        self.assertIn("object_volume_key_ms", stats)
+        self.assertIn("object_volume_unique_ms", stats)
+        self.assertIn("object_volume_gather_ms", stats)
+        self.assertIn("object_volume_total_ms", stats)
+        self.assertEqual(stats["object_volume_sampler_impl"], "numpy-unique")
 
     def test_points_per_voxel_keeps_multiple_representatives(self) -> None:
         points = np.array(
