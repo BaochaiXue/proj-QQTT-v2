@@ -76,6 +76,8 @@ depth_source = realsense
 uses_ffs = false
 mask_source = hf_edgetam
 edgetam_batch_vision_encoder = true
+edgetam_live_session_keep_frames = 64
+edgetam_live_session_pruning = true
 input_source = live_realsense
 offline_mode_available = false
 offline_tracking_available = false
@@ -112,6 +114,7 @@ The second fails because Demo 3 does not support FFS.
 - `--depth-source realsense`
 - `--mask-source hf-edgetam`
 - HF EdgeTAM batch vision encoder enabled
+- `--edgetam-live-session-keep-frames 64`
 - `--mode exp`
 - `--object-prompt "stuffed animal"`
 - controller prompt resolved by mode: `towel` for `exp`, `hand` for `demo`
@@ -175,6 +178,8 @@ uses_ffs = false
 depth_source = realsense
 mask_source = hf_edgetam
 edgetam_batch_vision_encoder = true
+edgetam_live_session_keep_frames = 64
+edgetam_live_session_pruning = true
 num_realsense_cameras = 3
 calibrate_pkl_loaded = true
 cotracker_backend = cotracker3_online

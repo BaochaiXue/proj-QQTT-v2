@@ -190,6 +190,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=int, default=demo3_runtime.DEFAULT_FPS)
     parser.add_argument("--depth-source", default=demo3_runtime.DEPTH_SOURCE_REALSENSE)
     parser.add_argument("--mask-source", default=demo3_runtime.MASK_SOURCE_HF_EDGETAM_CLI)
+    parser.add_argument(
+        "--edgetam-live-session-keep-frames",
+        type=int,
+        default=demo3_runtime.DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES,
+        help=(
+            "Maximum recent HF EdgeTAM live-session frames kept per camera in "
+            "the shared live runtime. This bounds long-run GPU memory growth."
+        ),
+    )
     parser.add_argument("--mode", choices=demo3_runtime.MODES, default=demo3_runtime.DEFAULT_MODE)
     parser.add_argument("--object-prompt", default=demo3_runtime.DEFAULT_OBJECT_PROMPT)
     parser.add_argument("--cotracker-backend", default=demo3_runtime.COTRACKER3_ONLINE)
@@ -251,6 +260,8 @@ def validate_args(
     if str(args.cotracker_query_mode) != demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError("Demo 3.1 currently supports only --cotracker-query-mode phystwin_dense.")
     demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
+    if int(args.edgetam_live_session_keep_frames) < 1:
+        raise ValueError("--edgetam-live-session-keep-frames must be >= 1.")
     if int(args.overlay_max_points_per_camera) <= 0:
         raise ValueError("--overlay-max-points-per-camera must be positive.")
     if float(args.cotracker_input_fps) < 0.0:
@@ -318,6 +329,8 @@ def build_contract(
         "uses_ffs": False,
         "mask_source": demo3_runtime.MASK_SOURCE_HF_EDGETAM,
         "edgetam_batch_vision_encoder": True,
+        "edgetam_live_session_keep_frames": int(args.edgetam_live_session_keep_frames),
+        "edgetam_live_session_pruning": True,
         "semantic_mode": str(mode["semantic_mode"]),
         "shared_experiment_mode": str(mode["experiment_mode"]),
         "shared_runtime_track_mode": demo3_runtime.SHARED_TRACK_MODE_CONTROLLER_OBJECT,
@@ -392,6 +405,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "uses_ffs",
         "mask_source",
         "edgetam_batch_vision_encoder",
+        "edgetam_live_session_keep_frames",
+        "edgetam_live_session_pruning",
         "init_mode",
         "mask_propagation",
         "semantic_mode",

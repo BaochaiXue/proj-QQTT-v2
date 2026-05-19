@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 from dataclasses import dataclass
 import io
@@ -56,6 +57,51 @@ class _FakeProcessClient:
 
 
 class _FakeSharedRuntimeModule:
+    @staticmethod
+    def build_arg_parser():
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--preset")
+        parser.add_argument("--profile")
+        parser.add_argument("--fps", type=int)
+        parser.add_argument("--fusion-target-fps", type=float)
+        parser.add_argument("--capture-group-target-fps", type=float)
+        parser.add_argument("--camera-ids", type=demo31_runtime.demo3_runtime.parse_camera_ids)
+        parser.add_argument("--calibrate-path")
+        parser.add_argument("--serials", nargs="*")
+        parser.add_argument("--calibration-reference-serials", nargs="*")
+        parser.add_argument("--depth-source")
+        parser.add_argument("--edgetam-batch-vision-encoder", action="store_true")
+        parser.add_argument("--edgetam-live-session-keep-frames", type=int)
+        parser.add_argument("--render-mode")
+        parser.add_argument("--track-mode")
+        parser.add_argument("--object-prompt")
+        parser.add_argument("--controller-prompt")
+        parser.add_argument("--experiment-mode")
+        parser.add_argument("--duration-s", type=float)
+        parser.add_argument("--output-root")
+        parser.add_argument("--profile-pipeline", action="store_true")
+        parser.add_argument("--profile-visualization", action="store_true")
+        parser.add_argument("--render-micro-profile", action="store_true")
+        parser.add_argument("--tracking-backend")
+        parser.add_argument("--tracking-source")
+        parser.add_argument("--tracking-num-points", type=int)
+        parser.add_argument("--tracking-overlay-max-points", type=int)
+        parser.add_argument("--tracking-trail-len", type=int)
+        parser.add_argument("--tracking-depth-source")
+        parser.add_argument("--profile-json-output")
+        parser.add_argument("--debug", action="store_true")
+        parser.add_argument("--show-tracking-overlay", action="store_true")
+        return parser
+
+    @staticmethod
+    def apply_preset_defaults(args, *, explicit_options=None):
+        _ = explicit_options
+        return args
+
+    @staticmethod
+    def _explicit_cli_options(argv):
+        return {item for item in argv if str(item).startswith("--")}
+
     class Demo21Runtime:
         def __init__(self, args: object) -> None:
             self.args = args
@@ -94,6 +140,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(contract["uses_ffs"])
         self.assertEqual(contract["mask_source"], "hf_edgetam")
         self.assertTrue(contract["edgetam_batch_vision_encoder"])
+        self.assertEqual(contract["edgetam_live_session_keep_frames"], 64)
+        self.assertTrue(contract["edgetam_live_session_pruning"])
         self.assertEqual(contract["input_source"], "live_realsense")
         self.assertFalse(contract["offline_mode_available"])
         self.assertFalse(contract["offline_tracking_available"])
@@ -132,6 +180,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("main_cuda_visible_devices = 0", output)
         self.assertIn("cotracker_cuda_visible_devices = 1", output)
         self.assertIn("uses_ffs = false", output)
+        self.assertIn("edgetam_live_session_keep_frames = 64", output)
+        self.assertIn("edgetam_live_session_pruning = true", output)
         self.assertIn("input_source = live_realsense", output)
         self.assertIn("offline_mode_available = false", output)
         self.assertIn("semantic_mode = exp", output)
@@ -224,6 +274,34 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["controller_prompt"], "hand")
         self.assertEqual(contract["main_cuda_visible_devices"], "0")
         self.assertEqual(contract["cotracker_cuda_visible_devices"], "1")
+
+    def test_shared_runtime_args_forward_edgetam_session_limit(self) -> None:
+        args = self._parse(
+            [
+                "--camera-ids",
+                "0,1,2",
+                "--mask-gpu",
+                "0",
+                "--cotracker-gpu",
+                "1",
+                "--edgetam-live-session-keep-frames",
+                "32",
+            ]
+        )
+
+        shared_args = demo31_runtime.build_shared_runtime_args(
+            args,
+            shared_runtime_module=_FakeSharedRuntimeModule,
+            live_validation={
+                "active_serials": ["s0", "s1", "s2"],
+                "calibration_reference_serials": ["s0", "s1", "s2"],
+            },
+            shared_profile_path=None,
+        )
+
+        self.assertEqual(shared_args.edgetam_live_session_keep_frames, 32)
+        self.assertEqual(shared_args.depth_source, "realsense")
+        self.assertTrue(shared_args.edgetam_batch_vision_encoder)
 
     def test_track_mode_is_not_public_cli(self) -> None:
         parser = demo31_runtime.build_arg_parser()

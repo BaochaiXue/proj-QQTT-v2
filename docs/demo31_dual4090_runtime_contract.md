@@ -41,6 +41,8 @@ uses_ffs = false
 depth_source = realsense
 mask_source = hf_edgetam
 edgetam_batch_vision_encoder = true
+edgetam_live_session_keep_frames = 64
+edgetam_live_session_pruning = true
 init_mode = sam31_first_frame
 mask_propagation = hf_edgetam_online
 semantic_mode = exp
@@ -80,6 +82,8 @@ rendered_fps
 new_fused_pcd_fps
 capture_group_fps
 fresh_mask_fps
+edgetam_live_session_keep_frames
+edgetam_live_session_pruning
 mask_reuse_ratio
 mask_age_ms_median
 mask_age_ms_p95

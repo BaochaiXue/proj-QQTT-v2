@@ -69,6 +69,7 @@ DEFAULT_OVERLAY_STALE_TIMEOUT_MS = 500.0
 DEFAULT_COTRACKER_WINDOW_LEN = 16
 DEFAULT_COTRACKER_PUBLISH_STEP = 8
 DEFAULT_OUTPUT_ROOT = Path("result/demo3_realsense_cotracker")
+DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
 EDGETAM_BATCH_VISION_ENCODER_REQUIRED = True
 OVERLAY_COLOR_RGB = np.array([255, 230, 32], dtype=np.uint8)
 
@@ -164,6 +165,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--depth-source", default=DEPTH_SOURCE_REALSENSE)
     parser.add_argument("--mask-source", default=MASK_SOURCE_HF_EDGETAM_CLI)
+    parser.add_argument(
+        "--edgetam-live-session-keep-frames",
+        type=int,
+        default=DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES,
+        help=(
+            "Maximum recent HF EdgeTAM live-session frames kept per camera in "
+            "the shared live runtime. This bounds long-run GPU memory growth."
+        ),
+    )
     parser.add_argument("--mode", choices=MODES, default=DEFAULT_MODE)
     parser.add_argument("--object-prompt", default=DEFAULT_OBJECT_PROMPT)
     parser.add_argument("--cotracker-backend", default=COTRACKER3_ONLINE)
@@ -213,6 +223,8 @@ def validate_args(args: argparse.Namespace, *, require_calibration: bool = False
     if str(args.cotracker_query_mode) != TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError("Demo 3 currently supports only --cotracker-query-mode phystwin_dense.")
     normalize_cotracker_query_count_request(args.cotracker_query_count)
+    if int(args.edgetam_live_session_keep_frames) < 1:
+        raise ValueError("--edgetam-live-session-keep-frames must be >= 1.")
     if int(args.overlay_max_points_per_camera) <= 0:
         raise ValueError("--overlay-max-points-per-camera must be positive.")
     if require_calibration and not Path(args.calibrate_path).is_file():
@@ -243,6 +255,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "uses_ffs": False,
         "mask_source": MASK_SOURCE_HF_EDGETAM,
         "edgetam_batch_vision_encoder": EDGETAM_BATCH_VISION_ENCODER_REQUIRED,
+        "edgetam_live_session_keep_frames": int(args.edgetam_live_session_keep_frames),
+        "edgetam_live_session_pruning": True,
         "edgetam_sessions_per_camera": 1,
         "semantic_mode": str(mode["semantic_mode"]),
         "shared_experiment_mode": str(mode["experiment_mode"]),
@@ -308,6 +322,10 @@ def build_empty_profile_summary(contract: dict[str, Any]) -> dict[str, Any]:
         "depth_source": DEPTH_SOURCE_REALSENSE,
         "mask_source": MASK_SOURCE_HF_EDGETAM,
         "edgetam_batch_vision_encoder": EDGETAM_BATCH_VISION_ENCODER_REQUIRED,
+        "edgetam_live_session_keep_frames": int(
+            contract.get("edgetam_live_session_keep_frames", DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES)
+        ),
+        "edgetam_live_session_pruning": bool(contract.get("edgetam_live_session_pruning", True)),
         "num_realsense_cameras": int(contract.get("num_realsense_cameras", 3)),
         "calibrate_pkl_loaded": bool(contract.get("calibrate_pkl_loaded", False)),
         "cotracker_backend": COTRACKER3_ONLINE,
@@ -345,6 +363,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "uses_ffs",
         "mask_source",
         "edgetam_batch_vision_encoder",
+        "edgetam_live_session_keep_frames",
+        "edgetam_live_session_pruning",
         "init_mode",
         "mask_propagation",
         "semantic_mode",
@@ -498,6 +518,8 @@ def build_shared_runtime_argv(
         "--depth-source",
         DEPTH_SOURCE_REALSENSE,
         "--edgetam-batch-vision-encoder",
+        "--edgetam-live-session-keep-frames",
+        str(int(args.edgetam_live_session_keep_frames)),
         "--render-mode",
         render_mode,
         "--track-mode",
