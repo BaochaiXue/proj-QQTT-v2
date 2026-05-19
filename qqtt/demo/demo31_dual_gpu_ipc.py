@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-import queue
 import time
 from typing import Any
 
 import numpy as np
+
+from qqtt.demo.services.latest_wins import LatestWinsQueue
 
 
 @dataclass(frozen=True)
@@ -187,64 +188,6 @@ class TrackingResultLitePacket:
             overlay_display_object_count_by_camera=self.overlay_display_object_count_by_camera,
             overlay_display_controller_count_by_camera=self.overlay_display_controller_count_by_camera,
         )
-
-
-class LatestWinsQueue:
-    """CPU latest-wins queue wrapper for non-blocking process IPC."""
-
-    def __init__(self, queue_obj: Any | None = None) -> None:
-        self.queue = queue_obj if queue_obj is not None else queue.Queue(maxsize=1)
-        self.published = 0
-        self.taken = 0
-        self.replaced = 0
-        self.put_failures = 0
-
-    def publish_latest(self, item: Any) -> int:
-        replaced = self._drain()
-        try:
-            self.queue.put_nowait(item)
-        except queue.Full:
-            replaced += self._drain()
-            try:
-                self.queue.put_nowait(item)
-            except queue.Full:
-                self.put_failures += 1
-                return replaced
-        self.published += 1
-        self.replaced += replaced
-        return replaced
-
-    def take_latest(self) -> Any | None:
-        latest = None
-        drained = 0
-        while True:
-            try:
-                latest = self.queue.get_nowait()
-                drained += 1
-            except queue.Empty:
-                break
-        if drained:
-            self.taken += 1
-            self.replaced += max(0, drained - 1)
-        return latest
-
-    def snapshot(self) -> dict[str, int]:
-        return {
-            "published": int(self.published),
-            "taken": int(self.taken),
-            "replaced": int(self.replaced),
-            "put_failures": int(self.put_failures),
-        }
-
-    def _drain(self) -> int:
-        count = 0
-        while True:
-            try:
-                self.queue.get_nowait()
-                count += 1
-            except queue.Empty:
-                break
-        return count
 
 
 def should_publish_tracking_input(

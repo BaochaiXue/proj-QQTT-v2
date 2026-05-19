@@ -67,8 +67,10 @@ from qqtt.demo.phystwin_volume_filter import (  # noqa: E402
     PHYSTWIN_VOLUME_ORIGIN_FRAME_MIN,
     PHYSTWIN_VOLUME_ORIGIN_WORLD,
     PHYSTWIN_VOLUME_ORIGINS,
-    ObjectVoxelBudgetController,
-    phystwin_volume_sample_points,
+)
+from qqtt.demo.services.object_volume_filter_service import (  # noqa: E402
+    ObjectVolumeFilterConfig,
+    ObjectVolumeFilterService,
 )
 from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     CameraIntrinsics,
@@ -3410,16 +3412,34 @@ class Demo21Runtime:
         self._debug_effective_c2w_mapping_mode = "calibrate-c2w"
         self._summary_write_lock = threading.Lock()
         self._summary_written = False
-        self._object_volume_stable_origin_world: np.ndarray | None = None
-        self._object_volume_budget = ObjectVoxelBudgetController(
-            target_ms=float(getattr(args, "object_volume_target_ms", DEFAULT_PHYSTWIN_OBJECT_VOLUME_TARGET_MS)),
-            base_voxel_m=float(getattr(args, "object_volume_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M)),
-            min_voxel_m=float(
-                getattr(args, "object_volume_min_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_MIN_VOXEL_M)
-            ),
-            max_voxel_m=float(
-                getattr(args, "object_volume_max_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_MAX_VOXEL_M)
-            ),
+        self._object_volume_filter_service = ObjectVolumeFilterService(
+            ObjectVolumeFilterConfig(
+                point_control=OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME,
+                base_voxel_m=float(getattr(args, "object_volume_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M)),
+                origin_policy=str(getattr(args, "object_volume_origin", PHYSTWIN_VOLUME_ORIGIN_WORLD)),
+                adaptive=bool(getattr(args, "object_volume_adaptive", True)),
+                min_voxel_m=float(
+                    getattr(args, "object_volume_min_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_MIN_VOXEL_M)
+                ),
+                max_voxel_m=float(
+                    getattr(args, "object_volume_max_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_MAX_VOXEL_M)
+                ),
+                target_ms=float(getattr(args, "object_volume_target_ms", DEFAULT_PHYSTWIN_OBJECT_VOLUME_TARGET_MS)),
+                emergency_max_points=int(
+                    getattr(
+                        args,
+                        "object_volume_emergency_max_points",
+                        DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
+                    )
+                ),
+                points_per_voxel=int(
+                    getattr(
+                        args,
+                        "object_volume_points_per_voxel",
+                        DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
+                    )
+                ),
+            )
         )
         self._last_debug_s = 0.0
         self._render_request: Callable[[], None] = lambda: None
@@ -8099,42 +8119,18 @@ class Demo21Runtime:
                 phystwin_nb_points=int(self.args.phystwin_nb_points),
                 enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
                 enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
-            )
+        )
 
         points = _as_points(layer.points_m)
         colors = _as_colors(layer.colors_rgb)
-        voxel_m = (
-            float(self._object_volume_budget.current_voxel_m)
-            if bool(getattr(self.args, "object_volume_adaptive", True))
-            else float(getattr(self.args, "object_volume_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M))
-        )
-        sampled_points, sampled_colors_or_none, stats = phystwin_volume_sample_points(
+        sampled_points, sampled_colors, stats, _service_filter_ms = self._object_volume_filter_service.filter_points(
             points,
             colors,
-            voxel_size_m=voxel_m,
-            origin_world=self._object_volume_origin_for_points(points),
-            origin_policy=str(getattr(self.args, "object_volume_origin", PHYSTWIN_VOLUME_ORIGIN_WORLD)),
-            points_per_voxel=int(
-                getattr(
-                    self.args,
-                    "object_volume_points_per_voxel",
-                    DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
-                )
-            ),
-            emergency_max_points=int(
-                getattr(
-                    self.args,
-                    "object_volume_emergency_max_points",
-                    DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
-                )
-            ),
         )
         stats["enabled"] = True
         stats["point_control"] = OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME
         stats["postprocess_bypassed"] = str(layer.postprocess_mode)
-        sampled_colors = _as_colors(
-            np.empty((0, 3), dtype=np.uint8) if sampled_colors_or_none is None else sampled_colors_or_none
-        )
+        sampled_colors = _as_colors(sampled_colors)
         return sampled_points, sampled_colors, stats
 
     def _filter_raw_fused_packet(self, raw: RawFusedPcdPacket) -> FusedPcdPacket:
@@ -8148,12 +8144,6 @@ class Demo21Runtime:
             object_points, object_colors, stats = self._filter_object_layer(raw.raw_object)
             object_filter_ms = _elapsed_ms(object_filter_start_s, time.perf_counter())
             object_filter_stats = stats if isinstance(stats, dict) else {}
-            if (
-                str(getattr(self.args, "object_point_control", OBJECT_POINT_CONTROL_FIXED_CAP))
-                == OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME
-                and bool(getattr(self.args, "object_volume_adaptive", True))
-            ):
-                self._object_volume_budget.update(object_filter_ms)
         else:
             object_points = np.empty((0, 3), dtype=np.float32)
             object_colors = np.empty((0, 3), dtype=np.uint8)
@@ -8416,12 +8406,6 @@ class Demo21Runtime:
             object_points, object_colors, object_stats = self._filter_object_layer(raw_object)
             object_filter_ms = _elapsed_ms(object_filter_start_s, time.perf_counter())
             object_filter_stats = object_stats if isinstance(object_stats, dict) else {}
-            if (
-                str(getattr(self.args, "object_point_control", OBJECT_POINT_CONTROL_FIXED_CAP))
-                == OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME
-                and bool(getattr(self.args, "object_volume_adaptive", True))
-            ):
-                self._object_volume_budget.update(object_filter_ms)
         else:
             object_points = np.empty((0, 3), dtype=np.float32)
             object_colors = np.empty((0, 3), dtype=np.uint8)

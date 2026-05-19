@@ -770,6 +770,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             cotracker_enabled: bool = True,
         ) -> None:
             super().__init__(args)
+            if not hasattr(self, "_summary"):
+                self._summary = {}
+            if not hasattr(self, "_init_profile_update"):
+                self._init_profile_update = lambda *_args, **_kwargs: None
+            if not hasattr(self, "_profile_rel_s"):
+                self._profile_rel_s = lambda *_args, **_kwargs: 0.0
             self.demo31_contract = dict(demo31_contract)
             self.demo31_cotracker_enabled = bool(cotracker_enabled)
             self.demo31_cotracker_config = cotracker_process_config
