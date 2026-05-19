@@ -746,8 +746,13 @@ Default behavior is `dry-run`. Add `--execute` to apply the cleanup in place.
 The cleanup keeps the formal downstream layout minimal, but it may also preserve optional `color/0.mp4`, `color/1.mp4`, and `color/2.mp4` sidecars for consumers that require per-camera RGB videos.
 If those RGB sidecars are missing, execute mode auto-generates them from `color/<camera>/*.png` before removing non-formal extras.
 
-When `record_data_align.py` writes directly under `data/different_types/<case_name>/`, it now auto-generates those `color/<camera>.mp4` sidecars even if `--write_mp4` was not passed, because downstream formal consumers depend on them.
-For the same old-downstream compatibility reason, those formal exports also normalize `calibrate.pkl` into the case camera order (`color/0`, `1`, `2`) instead of preserving a separate calibration-reference order.
+All `record_data_align.py` outputs normalize `calibrate.pkl` into the case
+camera order (`color/0`, `1`, `2`) instead of preserving a separate
+calibration-reference order, so direct PhysTwin-style `c2ws[camera_idx]` reads
+the matching pose. When `record_data_align.py` writes directly under
+`data/different_types/<case_name>/`, it also auto-generates those
+`color/<camera>.mp4` sidecars even if `--write_mp4` was not passed, because
+downstream formal consumers depend on them.
 
 After cleanup, each case keeps only:
 

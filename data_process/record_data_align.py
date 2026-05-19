@@ -153,22 +153,15 @@ def find_ffmpeg() -> str | None:
     return None
 
 
-def is_formal_different_types_export(output_case_dir: Path) -> bool:
-    return output_case_dir.parent.name == "different_types"
-
-
 def write_aligned_calibration_file(*, case_dir: Path, output_case_dir: Path, metadata: dict[str, Any]) -> None:
     output_path = output_case_dir / "calibrate.pkl"
-    if is_formal_different_types_export(output_case_dir):
-        transforms = load_calibration_transforms(
-            case_dir / "calibrate.pkl",
-            serial_numbers=list(metadata["serial_numbers"]),
-            calibration_reference_serials=metadata.get("calibration_reference_serials", metadata["serial_numbers"]),
-        )
-        with output_path.open("wb") as handle:
-            pickle.dump(transforms, handle)
-        return
-    shutil.copy2(case_dir / "calibrate.pkl", output_path)
+    transforms = load_calibration_transforms(
+        case_dir / "calibrate.pkl",
+        serial_numbers=list(metadata["serial_numbers"]),
+        calibration_reference_serials=metadata.get("calibration_reference_serials", metadata["serial_numbers"]),
+    )
+    with output_path.open("wb") as handle:
+        pickle.dump(transforms, handle)
 
 
 def load_metadata(case_dir: Path) -> dict[str, Any]:

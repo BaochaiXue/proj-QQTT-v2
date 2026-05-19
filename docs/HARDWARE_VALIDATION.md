@@ -89,6 +89,8 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 - aligned `metadata_ext.json` exists for QQTT extension fields
 - aligned `color/` exists
 - aligned `depth/` exists for `realsense` and `ffs`
+- aligned `calibrate.pkl` is normalized to aligned case camera order, so
+  `c2ws[camera_idx]` matches `metadata["serial_numbers"][camera_idx]`
 - aligned `depth_ffs/` exists only for `both`
 - optional `--write_mp4` produces per-camera mp4 files if ffmpeg is installed
 

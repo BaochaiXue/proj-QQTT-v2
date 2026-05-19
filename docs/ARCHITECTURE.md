@@ -178,8 +178,11 @@ Downstream-facing formal exports under `data/different_types/` may be narrowed f
   - preserves the minimal downstream structure expected by external consumers, plus optional `color/<camera>.mp4` RGB sidecars
   - execute mode backfills missing color mp4 sidecars from `color/<camera>/*.png` before cleanup
 
-Aligned exports written directly under `data/different_types/<case_name>/` auto-generate `color/0.mp4`, `1.mp4`, and `2.mp4` sidecars because downstream formal pipelines consume them.
-Those formal exports also rewrite `calibrate.pkl` into case camera order so old downstream code that indexes `c2ws[cam_idx]` remains compatible.
+All aligned exports rewrite `calibrate.pkl` into case camera order so downstream
+and PhysTwin-style code that indexes `c2ws[camera_idx]` receives the pose for
+`metadata["serial_numbers"][camera_idx]`. Aligned exports written directly
+under `data/different_types/<case_name>/` also auto-generate `color/0.mp4`,
+`1.mp4`, and `2.mp4` sidecars because downstream formal pipelines consume them.
 
 Harness scripts for FFS proof-of-life now reuse `data_process/depth_backends/*` instead of maintaining a second geometry implementation.
 
@@ -507,7 +510,9 @@ Important selection/artifact-contract distinction:
 - product-vs-debug output sets are now built through `io_artifacts.py` helpers and typed artifact contracts
 - this does not force every workflow to emit the same files, but it does stop each workflow from inventing its own implicit output schema from scratch
 
-Aligned cases rely on `metadata["calibration_reference_serials"]` whenever the case serial order differs from the calibration order, including same-length captures whose camera order changed and true subset captures.
+Aligned cases still carry `metadata["calibration_reference_serials"]` for
+traceability, but their emitted `calibrate.pkl` is normalized to case camera
+order for direct `c2ws[camera_idx]` compatibility.
 
 ## Architectural Invariants
 

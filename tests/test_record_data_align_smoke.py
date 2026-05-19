@@ -71,7 +71,7 @@ class RecordDataAlignSmokeTest(unittest.TestCase):
                 self.assertTrue((depth_dir / "0.npy").is_file())
                 self.assertTrue((depth_dir / "1.npy").is_file())
 
-    def test_formal_different_types_export_reorders_calibrate_to_case_serial_order(self) -> None:
+    def test_aligned_export_reorders_calibrate_to_case_serial_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             base_path = tmp_root / "data_collect"
@@ -84,7 +84,7 @@ class RecordDataAlignSmokeTest(unittest.TestCase):
             metadata["calibration_reference_serials"] = ["cam0", "cam1", "cam2"]
             metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
-            output_path = tmp_root / "data" / "different_types"
+            output_path = tmp_root / "data"
             args = mock.Mock(
                 base_path=base_path,
                 case_name="sample_case",
