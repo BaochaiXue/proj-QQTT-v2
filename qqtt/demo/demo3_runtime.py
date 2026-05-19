@@ -53,6 +53,7 @@ PHYSTWIN_DENSE_MAX_POINTS = 5000
 RENDER_MODE_POINTCLOUD = "pointcloud"
 RENDER_MODE_NONE = "none"
 RENDER_MODES = (RENDER_MODE_POINTCLOUD, RENDER_MODE_NONE)
+GPU_SAMPLING_BACKENDS = ("nvml",)
 
 DEFAULT_WIDTH = 848
 DEFAULT_HEIGHT = 480
@@ -83,6 +84,20 @@ def parse_camera_ids(value: str | Sequence[int]) -> tuple[int, ...]:
         items = [item.strip() for item in value.split(",") if item.strip()]
         return tuple(int(item) for item in items)
     return tuple(int(item) for item in value)
+
+
+def parse_gpu_sampling_device_indexes(value: str | Sequence[int]) -> tuple[int, ...]:
+    if isinstance(value, str):
+        indexes = tuple(int(part.strip()) for part in value.split(",") if part.strip())
+    else:
+        indexes = tuple(int(item) for item in value)
+    if not indexes:
+        raise argparse.ArgumentTypeError("GPU sampling indexes must look like 0 or 0,1")
+    if any(index < 0 for index in indexes):
+        raise argparse.ArgumentTypeError(f"GPU sampling indexes must be non-negative: {indexes}")
+    if len(set(indexes)) != len(indexes):
+        raise argparse.ArgumentTypeError(f"GPU sampling indexes must be unique: {indexes}")
+    return indexes
 
 
 def _explicit_cli_options(argv: Sequence[str] | None) -> set[str]:
@@ -182,6 +197,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cotracker-seed", type=int, default=DEFAULT_COTRACKER_SEED)
     parser.add_argument("--disable-cotracker", action="store_true")
     parser.add_argument("--render-mode", choices=RENDER_MODES, default=RENDER_MODE_POINTCLOUD)
+    parser.add_argument("--point-size", type=float, default=None)
+    parser.add_argument("--render-every-n", type=int, default=None)
+    parser.add_argument("--render-backend", default=None)
+    parser.add_argument("--render-layer-mode", default=None)
+    parser.add_argument("--render-copy-mode", default=None)
+    parser.add_argument("--no-render-async-latest-only", action="store_true")
+    parser.add_argument("--render-micro-profile", action="store_true")
+    parser.add_argument("--debug-color-by-camera", action="store_true")
+    parser.add_argument("--debug-save-per-camera-pcd", action="store_true")
+    parser.add_argument("--debug-save-mask-overlays", action="store_true")
+    parser.add_argument("--debug-identity-c2w", action="store_true")
+    parser.add_argument("--debug-invert-c2w", action="store_true")
+    parser.add_argument("--debug-only-camera-idx", type=int, choices=DEFAULT_CAMERA_IDS, default=None)
+    parser.add_argument("--debug-fusion-max-saved-groups", type=int, default=None)
+    parser.add_argument("--gpu-sampling", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--gpu-sampling-interval-s", type=float, default=0.5)
+    parser.add_argument("--gpu-sampling-backend", choices=GPU_SAMPLING_BACKENDS, default="nvml")
+    parser.add_argument("--gpu-sampling-device-index", type=int, default=0)
+    parser.add_argument("--gpu-sampling-device-indexes", type=parse_gpu_sampling_device_indexes, default=None)
     parser.add_argument("--overlay-max-points-per-camera", type=int, default=DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
     parser.add_argument("--overlay-trail-len", type=int, default=DEFAULT_OVERLAY_TRAIL_LEN)
     parser.add_argument("--overlay-stale-timeout-ms", type=float, default=DEFAULT_OVERLAY_STALE_TIMEOUT_MS)
@@ -225,6 +259,16 @@ def validate_args(args: argparse.Namespace, *, require_calibration: bool = False
     normalize_cotracker_query_count_request(args.cotracker_query_count)
     if int(args.edgetam_live_session_keep_frames) < 1:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 1.")
+    if bool(args.debug_identity_c2w) and bool(args.debug_invert_c2w):
+        raise ValueError("Demo 3 accepts only one of --debug-identity-c2w or --debug-invert-c2w.")
+    if args.debug_only_camera_idx is not None and int(args.debug_only_camera_idx) not in set(camera_ids):
+        raise ValueError(f"--debug-only-camera-idx {args.debug_only_camera_idx} is not in --camera-ids {camera_ids}.")
+    if int(args.gpu_sampling_device_index) < 0:
+        raise ValueError("--gpu-sampling-device-index must be >= 0.")
+    if args.gpu_sampling_device_indexes is not None and any(int(index) < 0 for index in args.gpu_sampling_device_indexes):
+        raise ValueError("--gpu-sampling-device-indexes must be >= 0.")
+    if float(args.gpu_sampling_interval_s) <= 0.0:
+        raise ValueError("--gpu-sampling-interval-s must be > 0.")
     if int(args.overlay_max_points_per_camera) <= 0:
         raise ValueError("--overlay-max-points-per-camera must be positive.")
     if require_calibration and not Path(args.calibrate_path).is_file():
@@ -284,6 +328,28 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "render_mode": str(args.render_mode),
         "render_latest_wins": True,
         "render_waited_for_cotracker": False,
+        "render_backend": None if args.render_backend is None else str(args.render_backend),
+        "render_layer_mode": None if args.render_layer_mode is None else str(args.render_layer_mode),
+        "render_copy_mode": None if args.render_copy_mode is None else str(args.render_copy_mode),
+        "render_micro_profile": True,
+        "debug_fusion": {
+            "color_by_camera": bool(args.debug_color_by_camera),
+            "save_per_camera_pcd": bool(args.debug_save_per_camera_pcd),
+            "save_mask_overlays": bool(args.debug_save_mask_overlays),
+            "identity_c2w": bool(args.debug_identity_c2w),
+            "invert_c2w": bool(args.debug_invert_c2w),
+            "only_camera_idx": None if args.debug_only_camera_idx is None else int(args.debug_only_camera_idx),
+            "max_saved_groups": (
+                None if args.debug_fusion_max_saved_groups is None else int(args.debug_fusion_max_saved_groups)
+            ),
+        },
+        "gpu_sampling": {
+            "enabled": bool(args.gpu_sampling),
+            "interval_s": float(args.gpu_sampling_interval_s),
+            "backend": str(args.gpu_sampling_backend),
+            "device_index": int(args.gpu_sampling_device_index),
+            "device_indexes": None if args.gpu_sampling_device_indexes is None else list(args.gpu_sampling_device_indexes),
+        },
         "width": int(args.width),
         "height": int(args.height),
         "fps": int(args.fps),
@@ -489,6 +555,21 @@ def _shared_profile_path(args: argparse.Namespace) -> Path | None:
     return path.with_name(f"{path.stem}_shared_runtime{path.suffix or '.json'}")
 
 
+def _shared_runtime_label_for_args(args: argparse.Namespace) -> tuple[str, str]:
+    if str(getattr(args, "preset", "")).startswith("demo3.1"):
+        return "demo3.1", "Demo 3.1"
+    return "demo3", "Demo 3"
+
+
+def _gpu_sampling_device_indexes_for_args(args: argparse.Namespace) -> tuple[int, ...] | None:
+    indexes = getattr(args, "gpu_sampling_device_indexes", None)
+    if indexes is not None:
+        return tuple(int(index) for index in indexes)
+    if str(getattr(args, "preset", "")).startswith("demo3.1") and hasattr(args, "mask_gpu") and hasattr(args, "cotracker_gpu"):
+        return tuple(dict.fromkeys((int(args.mask_gpu), int(args.cotracker_gpu))))
+    return None
+
+
 def build_shared_runtime_argv(
     args: argparse.Namespace,
     *,
@@ -498,9 +579,15 @@ def build_shared_runtime_argv(
 ) -> list[str]:
     render_mode = RENDER_MODE_NONE if str(args.render_mode) == RENDER_MODE_NONE else RENDER_MODE_POINTCLOUD
     mode = resolve_demo3_mode(str(args.mode))
+    shared_demo_version, shared_display_name = _shared_runtime_label_for_args(args)
+    gpu_sampling_device_indexes = _gpu_sampling_device_indexes_for_args(args)
     argv = [
         "--preset",
         "demo2.1.5-live-fast-native",
+        "--demo-version-override",
+        shared_demo_version,
+        "--demo-display-name-override",
+        shared_display_name,
         "--profile",
         f"{int(args.width)}x{int(args.height)}",
         "--fps",
@@ -549,13 +636,48 @@ def build_shared_runtime_argv(
         str(int(args.overlay_trail_len)),
         "--tracking-depth-source",
         "native",
+        "--gpu-sampling-interval-s",
+        str(float(args.gpu_sampling_interval_s)),
+        "--gpu-sampling-backend",
+        str(args.gpu_sampling_backend),
+        "--gpu-sampling-device-index",
+        str(int(args.gpu_sampling_device_index)),
     ]
+    for flag, value in (
+        ("--point-size", getattr(args, "point_size", None)),
+        ("--render-every-n", getattr(args, "render_every_n", None)),
+        ("--render-backend", getattr(args, "render_backend", None)),
+        ("--render-layer-mode", getattr(args, "render_layer_mode", None)),
+        ("--render-copy-mode", getattr(args, "render_copy_mode", None)),
+        ("--debug-only-camera-idx", getattr(args, "debug_only_camera_idx", None)),
+        ("--debug-fusion-max-saved-groups", getattr(args, "debug_fusion_max_saved_groups", None)),
+    ):
+        if value is not None:
+            argv.extend([flag, str(value)])
+    if gpu_sampling_device_indexes is not None:
+        argv.extend(["--gpu-sampling-device-indexes", ",".join(str(index) for index in gpu_sampling_device_indexes)])
     if calibration_reference_serials:
         argv.extend(["--calibration-reference-serials", *[str(serial) for serial in calibration_reference_serials]])
     if shared_profile_path is not None:
         argv.extend(["--profile-json-output", str(shared_profile_path)])
     if bool(args.debug):
         argv.append("--debug")
+    if bool(args.gpu_sampling):
+        argv.append("--gpu-sampling")
+    if bool(args.render_micro_profile):
+        argv.append("--render-micro-profile")
+    if bool(args.no_render_async_latest_only):
+        argv.append("--no-render-async-latest-only")
+    if bool(args.debug_color_by_camera):
+        argv.append("--debug-color-by-camera")
+    if bool(args.debug_save_per_camera_pcd):
+        argv.append("--debug-save-per-camera-pcd")
+    if bool(args.debug_save_mask_overlays):
+        argv.append("--debug-save-mask-overlays")
+    if bool(args.debug_identity_c2w):
+        argv.append("--debug-identity-c2w")
+    if bool(args.debug_invert_c2w):
+        argv.append("--debug-invert-c2w")
     return argv
 
 

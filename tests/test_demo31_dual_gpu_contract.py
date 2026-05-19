@@ -61,6 +61,8 @@ class _FakeSharedRuntimeModule:
     def build_arg_parser():
         parser = argparse.ArgumentParser()
         parser.add_argument("--preset")
+        parser.add_argument("--demo-version-override")
+        parser.add_argument("--demo-display-name-override")
         parser.add_argument("--profile")
         parser.add_argument("--fps", type=int)
         parser.add_argument("--fusion-target-fps", type=float)
@@ -73,6 +75,12 @@ class _FakeSharedRuntimeModule:
         parser.add_argument("--edgetam-batch-vision-encoder", action="store_true")
         parser.add_argument("--edgetam-live-session-keep-frames", type=int)
         parser.add_argument("--render-mode")
+        parser.add_argument("--point-size", type=float)
+        parser.add_argument("--render-every-n", type=int)
+        parser.add_argument("--render-backend")
+        parser.add_argument("--render-layer-mode")
+        parser.add_argument("--render-copy-mode")
+        parser.add_argument("--no-render-async-latest-only", action="store_true")
         parser.add_argument("--track-mode")
         parser.add_argument("--object-prompt")
         parser.add_argument("--controller-prompt")
@@ -82,6 +90,18 @@ class _FakeSharedRuntimeModule:
         parser.add_argument("--profile-pipeline", action="store_true")
         parser.add_argument("--profile-visualization", action="store_true")
         parser.add_argument("--render-micro-profile", action="store_true")
+        parser.add_argument("--debug-color-by-camera", action="store_true")
+        parser.add_argument("--debug-save-per-camera-pcd", action="store_true")
+        parser.add_argument("--debug-save-mask-overlays", action="store_true")
+        parser.add_argument("--debug-identity-c2w", action="store_true")
+        parser.add_argument("--debug-invert-c2w", action="store_true")
+        parser.add_argument("--debug-only-camera-idx", type=int)
+        parser.add_argument("--debug-fusion-max-saved-groups", type=int)
+        parser.add_argument("--gpu-sampling", action="store_true")
+        parser.add_argument("--gpu-sampling-interval-s", type=float)
+        parser.add_argument("--gpu-sampling-backend")
+        parser.add_argument("--gpu-sampling-device-index", type=int)
+        parser.add_argument("--gpu-sampling-device-indexes", type=demo31_runtime.demo3_runtime.parse_gpu_sampling_device_indexes)
         parser.add_argument("--tracking-backend")
         parser.add_argument("--tracking-source")
         parser.add_argument("--tracking-num-points", type=int)
@@ -142,6 +162,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(contract["edgetam_batch_vision_encoder"])
         self.assertEqual(contract["edgetam_live_session_keep_frames"], 64)
         self.assertTrue(contract["edgetam_live_session_pruning"])
+        self.assertFalse(contract["debug_fusion"]["color_by_camera"])
+        self.assertFalse(contract["gpu_sampling"]["enabled"])
+        self.assertEqual(contract["gpu_sampling"]["device_indexes"], [0, 1])
         self.assertEqual(contract["input_source"], "live_realsense")
         self.assertFalse(contract["offline_mode_available"])
         self.assertFalse(contract["offline_tracking_available"])
@@ -286,6 +309,12 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "1",
                 "--edgetam-live-session-keep-frames",
                 "32",
+                "--debug-color-by-camera",
+                "--debug-only-camera-idx",
+                "1",
+                "--gpu-sampling",
+                "--point-size",
+                "1.5",
             ]
         )
 
@@ -300,8 +329,55 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
 
         self.assertEqual(shared_args.edgetam_live_session_keep_frames, 32)
+        self.assertEqual(shared_args.demo_version_override, "demo3.1")
+        self.assertEqual(shared_args.demo_display_name_override, "Demo 3.1")
+        self.assertTrue(shared_args.debug_color_by_camera)
+        self.assertEqual(shared_args.debug_only_camera_idx, 1)
+        self.assertTrue(shared_args.gpu_sampling)
+        self.assertEqual(shared_args.gpu_sampling_device_indexes, (0, 1))
+        self.assertEqual(shared_args.point_size, 1.5)
         self.assertEqual(shared_args.depth_source, "realsense")
         self.assertTrue(shared_args.edgetam_batch_vision_encoder)
+
+    def test_summary_extracts_shared_gpu_sampling_by_physical_device(self) -> None:
+        args = self._parse(["--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"])
+        runtime = demo31_runtime.Demo31Runtime(
+            args,
+            cuda_device_count_provider=lambda: 2,
+            connected_serials_provider=lambda: ["s0", "s1", "s2"],
+        )
+
+        summary = runtime._build_summary(
+            runtime=SimpleNamespace(_summary={"final": {}}),
+            exit_code=0,
+            snapshot=None,
+            shared_payload={
+                "summary_after_warmup": {"render_fps": 12.0, "fusion_fps": 11.0, "capture_group_fps": 30.0},
+                "gpu_sampling": {
+                    "summary_by_device_after_warmup": {
+                        "0": {
+                            "metrics": {
+                                "gpu_util_pct": {"median": 55.0, "p95": 75.0},
+                                "memory_used_mb": {"median": 6144.0},
+                            }
+                        },
+                        "1": {
+                            "metrics": {
+                                "gpu_util_pct": {"median": 66.0, "p95": 88.0},
+                                "memory_used_mb": {"median": 8192.0},
+                            }
+                        },
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(summary["gpu0_util_median"], 55.0)
+        self.assertEqual(summary["gpu0_util_p95"], 75.0)
+        self.assertEqual(summary["gpu0_mem_used_gb"], 6.0)
+        self.assertEqual(summary["gpu1_util_median"], 66.0)
+        self.assertEqual(summary["gpu1_util_p95"], 88.0)
+        self.assertEqual(summary["gpu1_mem_used_gb"], 8.0)
 
     def test_track_mode_is_not_public_cli(self) -> None:
         parser = demo31_runtime.build_arg_parser()

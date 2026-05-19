@@ -66,6 +66,9 @@ world_lift_owner = main_process
 fusion_mask_policy = latest-reuse
 render_waited_for_cotracker = false
 render_waited_for_mask = false
+debug_fusion.color_by_camera = false
+gpu_sampling.enabled = false
+gpu_sampling.device_indexes = [0, 1]
 ```
 
 `strict` mask policy is available for comparison. In strict mode,
@@ -126,6 +129,31 @@ through `scripts/harness/run_wslg_open3d.sh` or set
 `QQTT_WSLG_OPEN3D_FAST_EXIT=1`. If fast exit is used, the shared runtime profile
 is the durable source of truth; wrapper-level summary output may be bypassed by
 the direct process exit.
+
+Demo 3.1 exposes the Demo 2.3 fusion and renderer diagnostics through its public
+CLI and forwards them to the shared three-view runtime:
+
+```text
+--debug-color-by-camera
+--debug-save-per-camera-pcd
+--debug-save-mask-overlays
+--debug-identity-c2w
+--debug-invert-c2w
+--debug-only-camera-idx
+--debug-fusion-max-saved-groups
+--gpu-sampling
+--gpu-sampling-device-indexes
+--point-size
+--render-every-n
+--render-backend
+--render-layer-mode
+--render-copy-mode
+```
+
+When `--gpu-sampling` is enabled and `--gpu-sampling-device-indexes` is omitted,
+Demo 3.1 samples the physical mask and CoTracker GPU indexes, which are `0,1`
+for the default dual-4090 split. The wrapper summary copies the shared runtime
+per-device utilization and memory summaries into `gpu0_*` and `gpu1_*` fields.
 
 ## Boundaries
 

@@ -115,6 +115,7 @@ The second fails because Demo 3 does not support FFS.
 - `--mask-source hf-edgetam`
 - HF EdgeTAM batch vision encoder enabled
 - `--edgetam-live-session-keep-frames 64`
+- shared runtime label override: `Demo 3`
 - `--mode exp`
 - `--object-prompt "stuffed animal"`
 - controller prompt resolved by mode: `towel` for `exp`, `hand` for `demo`
@@ -125,6 +126,25 @@ The second fails because Demo 3 does not support FFS.
 - `--overlay-max-points-per-camera 30`
 - `--overlay-trail-len 16`
 - `--overlay-stale-timeout-ms 500`
+
+Demo 3 also exposes the shared three-view runtime diagnostics used by Demo 2.3:
+
+```text
+--debug-color-by-camera
+--debug-save-per-camera-pcd
+--debug-save-mask-overlays
+--debug-identity-c2w
+--debug-invert-c2w
+--debug-only-camera-idx
+--debug-fusion-max-saved-groups
+--gpu-sampling
+--gpu-sampling-device-indexes
+--point-size
+--render-every-n
+--render-backend
+--render-layer-mode
+--render-copy-mode
+```
 
 ## CoTracker Overlay Contract
 

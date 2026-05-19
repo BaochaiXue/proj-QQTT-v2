@@ -49,6 +49,8 @@ class Demo3RuntimeContractTest(unittest.TestCase):
         self.assertEqual(contract["cotracker_backend"], "cotracker3_online")
         self.assertTrue(contract["cotracker_async"])
         self.assertTrue(contract["render_latest_wins"])
+        self.assertFalse(contract["debug_fusion"]["color_by_camera"])
+        self.assertFalse(contract["gpu_sampling"]["enabled"])
 
     def test_mode_demo_uses_hand_controller(self) -> None:
         args = self._parse(["--dry-run", "--camera-ids", "0,1,2", "--mode", "demo"])
@@ -180,6 +182,8 @@ class Demo3RuntimeContractTest(unittest.TestCase):
             def build_arg_parser():
                 parser = argparse.ArgumentParser()
                 parser.add_argument("--preset")
+                parser.add_argument("--demo-version-override")
+                parser.add_argument("--demo-display-name-override")
                 parser.add_argument("--profile")
                 parser.add_argument("--fps", type=int)
                 parser.add_argument("--fusion-target-fps", type=float)
@@ -192,6 +196,12 @@ class Demo3RuntimeContractTest(unittest.TestCase):
                 parser.add_argument("--edgetam-batch-vision-encoder", action="store_true")
                 parser.add_argument("--edgetam-live-session-keep-frames", type=int)
                 parser.add_argument("--render-mode")
+                parser.add_argument("--point-size", type=float)
+                parser.add_argument("--render-every-n", type=int)
+                parser.add_argument("--render-backend")
+                parser.add_argument("--render-layer-mode")
+                parser.add_argument("--render-copy-mode")
+                parser.add_argument("--no-render-async-latest-only", action="store_true")
                 parser.add_argument("--track-mode")
                 parser.add_argument("--object-prompt")
                 parser.add_argument("--controller-prompt")
@@ -201,6 +211,18 @@ class Demo3RuntimeContractTest(unittest.TestCase):
                 parser.add_argument("--profile-pipeline", action="store_true")
                 parser.add_argument("--profile-visualization", action="store_true")
                 parser.add_argument("--render-micro-profile", action="store_true")
+                parser.add_argument("--debug-color-by-camera", action="store_true")
+                parser.add_argument("--debug-save-per-camera-pcd", action="store_true")
+                parser.add_argument("--debug-save-mask-overlays", action="store_true")
+                parser.add_argument("--debug-identity-c2w", action="store_true")
+                parser.add_argument("--debug-invert-c2w", action="store_true")
+                parser.add_argument("--debug-only-camera-idx", type=int)
+                parser.add_argument("--debug-fusion-max-saved-groups", type=int)
+                parser.add_argument("--gpu-sampling", action="store_true")
+                parser.add_argument("--gpu-sampling-interval-s", type=float)
+                parser.add_argument("--gpu-sampling-backend")
+                parser.add_argument("--gpu-sampling-device-index", type=int)
+                parser.add_argument("--gpu-sampling-device-indexes", type=demo3_runtime.parse_gpu_sampling_device_indexes)
                 parser.add_argument("--tracking-backend")
                 parser.add_argument("--tracking-source")
                 parser.add_argument("--tracking-num-points", type=int)
@@ -242,6 +264,14 @@ class Demo3RuntimeContractTest(unittest.TestCase):
                     str(calibrate_path),
                     "--duration-s",
                     "0.01",
+                    "--debug-color-by-camera",
+                    "--debug-only-camera-idx",
+                    "1",
+                    "--gpu-sampling",
+                    "--gpu-sampling-device-indexes",
+                    "0,1",
+                    "--point-size",
+                    "1.5",
                 ]
             )
             runtime = demo3_runtime.Demo3Runtime(
@@ -264,6 +294,13 @@ class Demo3RuntimeContractTest(unittest.TestCase):
             self.assertEqual(_FakeSharedRuntime.last_args.depth_source, "realsense")
             self.assertTrue(_FakeSharedRuntime.last_args.edgetam_batch_vision_encoder)
             self.assertEqual(_FakeSharedRuntime.last_args.edgetam_live_session_keep_frames, 64)
+            self.assertEqual(_FakeSharedRuntime.last_args.demo_version_override, "demo3")
+            self.assertEqual(_FakeSharedRuntime.last_args.demo_display_name_override, "Demo 3")
+            self.assertTrue(_FakeSharedRuntime.last_args.debug_color_by_camera)
+            self.assertEqual(_FakeSharedRuntime.last_args.debug_only_camera_idx, 1)
+            self.assertTrue(_FakeSharedRuntime.last_args.gpu_sampling)
+            self.assertEqual(_FakeSharedRuntime.last_args.gpu_sampling_device_indexes, (0, 1))
+            self.assertEqual(_FakeSharedRuntime.last_args.point_size, 1.5)
             self.assertEqual(_FakeSharedRuntime.last_args.track_mode, "controller-object")
             self.assertEqual(_FakeSharedRuntime.last_args.experiment_mode, "controller-object-exp")
             self.assertEqual(_FakeSharedRuntime.last_args.controller_prompt, "towel")

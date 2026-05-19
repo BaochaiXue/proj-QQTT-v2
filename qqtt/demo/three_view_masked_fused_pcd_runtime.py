@@ -301,6 +301,9 @@ def canonical_preset_name(preset: str) -> str:
 
 
 def demo_version_for_args(args: argparse.Namespace) -> str:
+    override = str(getattr(args, "demo_version_override", "") or "").strip()
+    if override:
+        return override
     preset = canonical_preset_name(str(getattr(args, "preset_canonical", None) or getattr(args, "preset", PRESET_NONE)))
     if preset == PRESET_DEMO23_DUAL4090_MAXFPS:
         return "demo2.3"
@@ -323,6 +326,9 @@ def demo_version_for_args(args: argparse.Namespace) -> str:
 
 
 def demo_display_name_for_args(args: argparse.Namespace) -> str:
+    override = str(getattr(args, "demo_display_name_override", "") or "").strip()
+    if override:
+        return override
     return f"Demo {demo_version_for_args(args).removeprefix('demo')}"
 
 
@@ -8594,6 +8600,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dtype", choices=("bfloat16", "float16", "float32"), default="bfloat16")
     parser.add_argument("--duration-s", type=float, default=0.0)
+    parser.add_argument("--demo-version-override", default=None)
+    parser.add_argument("--demo-display-name-override", default=None)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
         "--debug-color-by-camera",

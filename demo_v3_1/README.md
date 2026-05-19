@@ -19,6 +19,9 @@ RealSense CoTracker overlay lineage.
 - Raw tracked queries are separate from display overlays. CoTracker may track up
   to 5000 points per camera while the rendered overlay remains capped at 30
   points per camera by default.
+- The shared Open3D window/profile label is overridden to `Demo 3.1`.
+- Demo 3.1 forwards Demo 2.3 fusion diagnostics and GPU sampling flags to the
+  shared three-view runtime.
 
 Dry-run:
 
@@ -41,3 +44,16 @@ upstream isolation only. For finite-duration rendered profiles, the shared
 three-view runtime writes its profile before Open3D teardown. If the GUI still
 hangs or crashes during teardown on the local workstation, run through
 `scripts/harness/run_wslg_open3d.sh` or set `QQTT_WSLG_OPEN3D_FAST_EXIT=1`.
+
+Useful rendered/debug profiling flags:
+
+```bash
+--gpu-sampling \
+--gpu-sampling-device-indexes 0,1 \
+--debug-color-by-camera \
+--debug-save-per-camera-pcd \
+--debug-save-mask-overlays
+```
+
+If `--gpu-sampling` is enabled without explicit indexes, Demo 3.1 samples the
+configured mask and CoTracker physical GPUs, `0,1` by default.

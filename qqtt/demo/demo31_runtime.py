@@ -207,6 +207,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cotracker-seed", type=int, default=demo3_runtime.DEFAULT_COTRACKER_SEED)
     parser.add_argument("--disable-cotracker", action="store_true")
     parser.add_argument("--render-mode", choices=demo3_runtime.RENDER_MODES, default=demo3_runtime.RENDER_MODE_POINTCLOUD)
+    parser.add_argument("--point-size", type=float, default=None)
+    parser.add_argument("--render-every-n", type=int, default=None)
+    parser.add_argument("--render-backend", default=None)
+    parser.add_argument("--render-layer-mode", default=None)
+    parser.add_argument("--render-copy-mode", default=None)
+    parser.add_argument("--no-render-async-latest-only", action="store_true")
+    parser.add_argument("--render-micro-profile", action="store_true")
+    parser.add_argument("--debug-color-by-camera", action="store_true")
+    parser.add_argument("--debug-save-per-camera-pcd", action="store_true")
+    parser.add_argument("--debug-save-mask-overlays", action="store_true")
+    parser.add_argument("--debug-identity-c2w", action="store_true")
+    parser.add_argument("--debug-invert-c2w", action="store_true")
+    parser.add_argument("--debug-only-camera-idx", type=int, choices=demo3_runtime.DEFAULT_CAMERA_IDS, default=None)
+    parser.add_argument("--debug-fusion-max-saved-groups", type=int, default=None)
+    parser.add_argument("--gpu-sampling", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--gpu-sampling-interval-s", type=float, default=0.5)
+    parser.add_argument("--gpu-sampling-backend", choices=demo3_runtime.GPU_SAMPLING_BACKENDS, default="nvml")
+    parser.add_argument("--gpu-sampling-device-index", type=int, default=0)
+    parser.add_argument("--gpu-sampling-device-indexes", type=demo3_runtime.parse_gpu_sampling_device_indexes, default=None)
     parser.add_argument("--overlay-max-points-per-camera", type=int, default=demo3_runtime.DEFAULT_OVERLAY_MAX_POINTS_PER_CAMERA)
     parser.add_argument("--overlay-trail-len", type=int, default=demo3_runtime.DEFAULT_OVERLAY_TRAIL_LEN)
     parser.add_argument("--overlay-stale-timeout-ms", type=float, default=demo3_runtime.DEFAULT_OVERLAY_STALE_TIMEOUT_MS)
@@ -262,6 +281,16 @@ def validate_args(
     demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
     if int(args.edgetam_live_session_keep_frames) < 1:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 1.")
+    if bool(args.debug_identity_c2w) and bool(args.debug_invert_c2w):
+        raise ValueError("Demo 3.1 accepts only one of --debug-identity-c2w or --debug-invert-c2w.")
+    if args.debug_only_camera_idx is not None and int(args.debug_only_camera_idx) not in set(camera_ids):
+        raise ValueError(f"--debug-only-camera-idx {args.debug_only_camera_idx} is not in --camera-ids {camera_ids}.")
+    if int(args.gpu_sampling_device_index) < 0:
+        raise ValueError("--gpu-sampling-device-index must be >= 0.")
+    if args.gpu_sampling_device_indexes is not None and any(int(index) < 0 for index in args.gpu_sampling_device_indexes):
+        raise ValueError("--gpu-sampling-device-indexes must be >= 0.")
+    if float(args.gpu_sampling_interval_s) <= 0.0:
+        raise ValueError("--gpu-sampling-interval-s must be > 0.")
     if int(args.overlay_max_points_per_camera) <= 0:
         raise ValueError("--overlay-max-points-per-camera must be positive.")
     if float(args.cotracker_input_fps) < 0.0:
@@ -369,9 +398,35 @@ def build_contract(
         "render_mode": str(args.render_mode),
         "render_target_fps": float(args.render_target_fps),
         "render_resample_latest": bool(args.render_resample_latest),
+        "render_backend": None if args.render_backend is None else str(args.render_backend),
+        "render_layer_mode": None if args.render_layer_mode is None else str(args.render_layer_mode),
+        "render_copy_mode": None if args.render_copy_mode is None else str(args.render_copy_mode),
+        "render_micro_profile": True,
         "render_latest_wins": True,
         "render_waited_for_cotracker": False,
         "render_waited_for_mask": bool(render_waited_for_mask),
+        "debug_fusion": {
+            "color_by_camera": bool(args.debug_color_by_camera),
+            "save_per_camera_pcd": bool(args.debug_save_per_camera_pcd),
+            "save_mask_overlays": bool(args.debug_save_mask_overlays),
+            "identity_c2w": bool(args.debug_identity_c2w),
+            "invert_c2w": bool(args.debug_invert_c2w),
+            "only_camera_idx": None if args.debug_only_camera_idx is None else int(args.debug_only_camera_idx),
+            "max_saved_groups": (
+                None if args.debug_fusion_max_saved_groups is None else int(args.debug_fusion_max_saved_groups)
+            ),
+        },
+        "gpu_sampling": {
+            "enabled": bool(args.gpu_sampling),
+            "interval_s": float(args.gpu_sampling_interval_s),
+            "backend": str(args.gpu_sampling_backend),
+            "device_index": int(args.gpu_sampling_device_index),
+            "device_indexes": (
+                list(demo3_runtime._gpu_sampling_device_indexes_for_args(args))
+                if demo3_runtime._gpu_sampling_device_indexes_for_args(args) is not None
+                else None
+            ),
+        },
         "width": int(args.width),
         "height": int(args.height),
         "fps": int(args.fps),
@@ -916,6 +971,17 @@ class Demo31Runtime:
         summary = build_empty_dual_gpu_profile_summary(self.contract)
         final = getattr(runtime, "_summary", {}).get("final", {}) if hasattr(runtime, "_summary") else {}
         warm = (shared_payload or {}).get("summary_after_warmup", {})
+        gpu_by_device = (shared_payload or {}).get("gpu_sampling", {}).get("summary_by_device_after_warmup", {})
+
+        def _gpu_metric(device_index: int, metric: str, stat: str) -> float:
+            if not isinstance(gpu_by_device, dict):
+                return 0.0
+            device_summary = gpu_by_device.get(str(int(device_index)), {})
+            if not isinstance(device_summary, dict):
+                return 0.0
+            value = demo3_runtime._nested_get(device_summary, ("metrics", metric, stat), 0.0)
+            return float(value or 0.0)
+
         summary.update(
             {
                 "exit_code": int(exit_code),
@@ -923,6 +989,12 @@ class Demo31Runtime:
                 "render_loop_fps": float(final.get("render_fps", warm.get("render_fps", 0.0)) or 0.0),
                 "new_fused_pcd_fps": float(final.get("fusion_fps", warm.get("fusion_fps", 0.0)) or 0.0),
                 "capture_group_fps": float(final.get("capture_group_fps", warm.get("capture_group_fps", 0.0)) or 0.0),
+                "gpu0_util_median": _gpu_metric(0, "gpu_util_pct", "median"),
+                "gpu0_util_p95": _gpu_metric(0, "gpu_util_pct", "p95"),
+                "gpu0_mem_used_gb": _gpu_metric(0, "memory_used_mb", "median") / 1024.0,
+                "gpu1_util_median": _gpu_metric(1, "gpu_util_pct", "median"),
+                "gpu1_util_p95": _gpu_metric(1, "gpu_util_pct", "p95"),
+                "gpu1_mem_used_gb": _gpu_metric(1, "memory_used_mb", "median") / 1024.0,
                 "main_process_pid": int(os.getpid()),
             }
         )
