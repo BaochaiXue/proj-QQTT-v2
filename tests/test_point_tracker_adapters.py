@@ -130,6 +130,44 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(tuple(queries.shape), (3, 2, 3))
         self.assertTrue(queries.is_contiguous())
 
+    def test_cotracker_online_batch_results_preserve_camera_order_and_xy_yx_round_trip(self) -> None:
+        backend = CoTracker3OnlineBackend(device="cpu", model=object())
+        query_points_by_camera = {
+            0: np.array([[100.0, 200.0]], dtype=np.float32),
+            1: np.array([[110.0, 210.0]], dtype=np.float32),
+            2: np.array([[120.0, 220.0]], dtype=np.float32),
+        }
+        backend._batch_camera_ids = (0, 1, 2)
+        backend._batch_query_points_yx_by_camera = query_points_by_camera
+        backend._batch_query_counts_by_camera = {0: 1, 1: 1, 2: 1}
+        backend._batch_total_frames = 1
+
+        tracks_xy = np.array(
+            [
+                [[[200.0, 100.0]]],
+                [[[210.0, 110.0]]],
+                [[[220.0, 120.0]]],
+            ],
+            dtype=np.float32,
+        )
+        visibility = np.ones((3, 1, 1), dtype=np.float32)
+
+        results = backend._tracks_to_batch_results(
+            tracks_xy=tracks_xy,
+            visibility=visibility,
+            run_ms=1.0,
+            step=1,
+            window_len=2,
+        )
+
+        self.assertEqual(tuple(results), (0, 1, 2))
+        for camera_idx, expected_yx in query_points_by_camera.items():
+            result = results[camera_idx]
+            self.assertEqual(result.camera_idx, camera_idx)
+            np.testing.assert_allclose(result.tracks_yx[0, 0], expected_yx[0])
+            np.testing.assert_allclose(result.query_points_yx[0], expected_yx[0])
+            self.assertEqual(result.stats["batch_camera_ids"], [0, 1, 2])
+
     def test_cotracker_online_forward_window_patch_makes_expanded_coords_contiguous(self) -> None:
         import torch
 

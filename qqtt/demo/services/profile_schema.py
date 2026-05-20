@@ -305,6 +305,13 @@ def build_empty_demo31_profile_summary(contract: Mapping[str, Any]) -> dict[str,
         "overlay_display_classification": str(
             contract.get("overlay_display_classification", "first_frame_mask_membership")
         ),
+        "overlay_bbox_filter_enabled": bool(contract.get("overlay_bbox_filter_enabled", True)),
+        "overlay_bbox_filter_scope": str(contract.get("overlay_bbox_filter_scope", "controller")),
+        "overlay_bbox_filter_margin_m": float(contract.get("overlay_bbox_filter_margin_m", 0.15)),
+        "overlay_bbox_input_points_by_camera": {},
+        "overlay_bbox_kept_points_by_camera": {},
+        "overlay_bbox_rejected_by_camera": {},
+        "overlay_world_centroid_by_camera_before_bbox": {},
         "overlay_display_count_by_camera": {},
         "overlay_display_object_count_by_camera": {},
         "overlay_display_controller_count_by_camera": {},

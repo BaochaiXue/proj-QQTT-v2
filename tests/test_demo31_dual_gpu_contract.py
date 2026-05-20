@@ -209,6 +209,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["overlay_max_points_per_camera"], 0)
         self.assertEqual(contract["overlay_display_scope"], "controller")
         self.assertEqual(contract["overlay_display_classification"], "first_frame_mask_membership")
+        self.assertTrue(contract["overlay_bbox_filter_enabled"])
+        self.assertEqual(contract["overlay_bbox_filter_scope"], "controller")
+        self.assertEqual(contract["overlay_bbox_filter_margin_m"], 0.15)
         self.assertFalse(contract["phystwin_dense_compatible"])
         self.assertEqual(contract["cotracker_backend"], "cotracker3_online")
         self.assertEqual(contract["tracker_backend"], "cotracker3_online")
@@ -262,6 +265,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("render_requires_new_cotracker_result = true", output)
         self.assertIn("render_reuses_cached_cotracker_result = false", output)
         self.assertIn("overlay_display_scope = controller", output)
+        self.assertIn("overlay_bbox_filter_enabled = true", output)
+        self.assertIn("overlay_bbox_filter_margin_m = 0.15", output)
         self.assertIn("phystwin_dense_compatible = false", output)
         self.assertIn("cotracker_owner = process", output)
         self.assertIn("tracker_backend = cotracker3_online", output)
@@ -824,6 +829,68 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["overlay_input_points_by_camera"], {0: 2})
         self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 1})
         self.assertEqual(overlay_profile["overlay_rejected_by_scope_mask_by_camera"], {0: 1})
+
+    def test_controller_overlay_rejects_lifted_outliers_outside_semantic_bbox(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0], [0.0, 9.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0, 1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0], [0.0, 9.0]], dtype=np.float32)},
+            publish_range=(1, 1),
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(
+                camera_ids=(0,),
+                overlay_display_scope="controller",
+                overlay_reject_outside_semantic_bbox=True,
+                overlay_max_distance_from_controller_m=0.05,
+            ),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime.demo31_lift_input_cache.publish(
+            group_id=1,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 10), 1.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 10), dtype=bool)},
+            controller_mask_by_camera={0: np.ones((1, 10), dtype=bool)},
+        )
+        packet = _FakeRenderPacket(
+            group_id=1,
+            controller_points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+            controller_colors_rgb=np.array([[200, 200, 200]], dtype=np.uint8),
+        )
+
+        runtime._publish_render_packet(packet)
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        published = runtime.published_packet
+        self.assertIsNotNone(published)
+        self.assertEqual(len(published.controller_points_m), 2)  # type: ignore[arg-type]
+        np.testing.assert_allclose(  # type: ignore[union-attr]
+            published.controller_points_m[-1],
+            np.array([0.0, 0.0, 1.0], dtype=np.float32),
+        )
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertEqual(overlay_profile["overlay_rejected_by_scope_mask_by_camera"], {0: 0})
+        self.assertEqual(overlay_profile["overlay_bbox_rejected_by_camera"], {0: 1})
+        self.assertEqual(overlay_profile["overlay_bbox_kept_points_by_camera"], {0: 1})
+        self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 1})
+        self.assertEqual(overlay_profile["overlay_world_centroid_by_camera"], {0: [0.0, 0.0, 1.0]})
 
     def test_renderer_does_not_reuse_old_tracking_result_as_new_render_result(self) -> None:
         now_s = demo31_runtime.time.perf_counter()

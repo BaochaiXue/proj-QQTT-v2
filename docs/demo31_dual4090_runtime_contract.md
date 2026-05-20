@@ -40,7 +40,10 @@ alignment debugging, `--overlay-debug-color-by-camera` colors lifted overlay
 points by source camera while keeping `overlay_display_scope=controller`.
 The 3D lift mask follows the display scope: controller overlays are lifted only
 through the current controller mask, object overlays through the current object
-mask, and union overlays through the current object/controller union.
+mask, and union overlays through the current object/controller union. After
+lift, Demo 3.1 rejects overlay outliers outside the current semantic 3D bbox
+plus a configurable margin; this keeps occasional tracker drift or camera-order
+bugs from being rendered as detached controller points.
 
 Camera/mask/PCD work remains asynchronous, but rendered result publication is
 gated by CoTracker by default. The main process stores pending PCD packets by
@@ -102,6 +105,9 @@ overlay_lift_mask_scope = controller
 overlay_max_points_per_camera = 0
 overlay_display_scope = controller
 overlay_display_classification = first_frame_mask_membership
+overlay_bbox_filter_enabled = true
+overlay_bbox_filter_scope = controller
+overlay_bbox_filter_margin_m = 0.15
 cotracker_backend = cotracker3_online
 tracker_backend = cotracker3_online
 tracker_backend_family = cotracker
@@ -228,6 +234,13 @@ overlay_display_controller_count_by_camera
 overlay_input_points_by_camera
 overlay_points_by_camera
 overlay_rejected_by_scope_mask_by_camera
+overlay_bbox_filter_enabled
+overlay_bbox_filter_scope
+overlay_bbox_filter_margin_m
+overlay_bbox_input_points_by_camera
+overlay_bbox_kept_points_by_camera
+overlay_bbox_rejected_by_camera
+overlay_world_centroid_by_camera_before_bbox
 overlay_world_centroid_by_camera
 ```
 
@@ -266,6 +279,8 @@ CLI and forwards them to the shared three-view runtime:
 --gpu-sampling-device-indexes
 --overlay-display-scope controller|object|union
 --overlay-debug-color-by-camera
+--overlay-reject-outside-semantic-bbox / --no-overlay-reject-outside-semantic-bbox
+--overlay-max-distance-from-controller-m
 --wait-for-tracking-overlay / --no-wait-for-tracking-overlay
 --point-size
 --render-every-n

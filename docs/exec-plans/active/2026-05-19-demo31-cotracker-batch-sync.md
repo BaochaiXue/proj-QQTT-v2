@@ -29,6 +29,9 @@ Fix Demo 3.1 CoTracker throughput and sync observability issues:
 - Make batch-view execution the default for Demo 3.0 / Demo 3.1 so three
   RealSense views are sent through one backend batch call instead of silently
   publishing serial CoTracker results.
+- Add a camera-order / xy-yx round-trip regression for batch output unpacking.
+- Add a semantic bbox outlier gate for lifted overlay points so tracker drift
+  cannot be appended as detached controller-layer geometry.
 
 ## Validation
 
@@ -63,3 +66,7 @@ Fix Demo 3.1 CoTracker throughput and sync observability issues:
 - Full `scripts/harness/check_all.py --full` still fails on the pre-existing
   `scripts/harness/realtime_single_camera_pointcloud.py` wrapper importing a
   missing `demo_v2` package; that failure is outside this CoTracker change.
+- Added batch camera-order / xy-yx round-trip coverage for
+  `CoTracker3OnlineBackend._tracks_to_batch_results`.
+- Added Demo 3.1 overlay semantic bbox filtering with profile fields for input,
+  kept, rejected, and pre/post-filter centroids.

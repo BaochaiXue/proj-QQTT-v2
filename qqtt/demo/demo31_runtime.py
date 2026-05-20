@@ -65,8 +65,12 @@ DEFAULT_MASK_GPU = "0"
 DEFAULT_COTRACKER_GPU = "1"
 DEFAULT_DEMO31_COTRACKER_QUERY_COUNT_REQUEST = "4096"
 DEFAULT_LIFT_INPUT_CACHE_GROUPS = 128
+DEFAULT_PENDING_RENDER_PACKET_GROUPS = 128
+TRACKING_RENDER_PACKET_MATCH_POLICY = "exact-then-nearest-pending-pcd-by-group-id"
 DEFAULT_WAIT_FOR_TRACKING_OVERLAY = True
 DEFAULT_DEMO31_OVERLAY_MAX_POINTS_PER_CAMERA = 0
+DEFAULT_OVERLAY_REJECT_OUTSIDE_SEMANTIC_BBOX = True
+DEFAULT_OVERLAY_MAX_DISTANCE_FROM_CONTROLLER_M = 0.15
 OVERLAY_DEBUG_CAMERA_COLORS_RGB = {
     0: (255, 0, 0),
     1: (0, 255, 0),
@@ -106,6 +110,48 @@ def _point_centroid(points: np.ndarray) -> list[float] | None:
         return None
     centroid = pts.mean(axis=0)
     return [float(item) for item in centroid]
+
+
+def _packet_points(packet: object, attr: str) -> np.ndarray:
+    value = getattr(packet, attr, None)
+    if value is None:
+        return np.empty((0, 3), dtype=np.float32)
+    points = np.asarray(value, dtype=np.float32)
+    if points.size == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    return points.reshape(-1, 3)
+
+
+def _semantic_bbox_reference_points(*, scope: str, render_packet: object) -> np.ndarray:
+    controller_points = _packet_points(render_packet, "controller_points_m")
+    object_points = _packet_points(render_packet, "object_points_m")
+    if str(scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_CONTROLLER:
+        return controller_points
+    if str(scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_OBJECT:
+        return object_points
+    candidates = [points for points in (object_points, controller_points) if len(points) > 0]
+    if not candidates:
+        return np.empty((0, 3), dtype=np.float32)
+    return np.concatenate(candidates, axis=0).astype(np.float32, copy=False)
+
+
+def _semantic_bbox_keep_mask(
+    points: np.ndarray,
+    reference_points: np.ndarray,
+    *,
+    margin_m: float,
+) -> np.ndarray:
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    if len(pts) == 0:
+        return np.zeros((0,), dtype=bool)
+    refs = np.asarray(reference_points, dtype=np.float32).reshape(-1, 3)
+    finite_refs = refs[np.isfinite(refs).all(axis=1)]
+    if len(finite_refs) == 0:
+        return np.ones((len(pts),), dtype=bool)
+    margin = max(float(margin_m), 0.0)
+    lower = finite_refs.min(axis=0) - margin
+    upper = finite_refs.max(axis=0) + margin
+    return np.isfinite(pts).all(axis=1) & np.all(pts >= lower[None, :], axis=1) & np.all(pts <= upper[None, :], axis=1)
 
 
 def _lift_mask_for_overlay_scope(
@@ -156,6 +202,7 @@ class Demo31LiftInputCache:
     def __init__(self, *, max_groups: int = DEFAULT_LIFT_INPUT_CACHE_GROUPS) -> None:
         self.max_groups = int(max_groups)
         self._snapshots: dict[int, Demo31LiftInputSnapshot] = {}
+        self._lock = threading.Lock()
         self.published = 0
         self.evicted = 0
         self.hit_count = 0
@@ -175,7 +222,7 @@ class Demo31LiftInputCache:
     ) -> None:
         object_masks = object_mask_by_camera or {}
         controller_masks = controller_mask_by_camera or {}
-        self._snapshots[int(group_id)] = Demo31LiftInputSnapshot(
+        snapshot = Demo31LiftInputSnapshot(
             group_id=int(group_id),
             timestamp_s=float(timestamp_s),
             depth_by_camera={
@@ -203,30 +250,38 @@ class Demo31LiftInputCache:
                 for camera_idx, mask in controller_masks.items()
             },
         )
-        self.published += 1
-        self._prune()
+        with self._lock:
+            self._snapshots[int(group_id)] = snapshot
+            self.published += 1
+            self._prune_locked()
 
     def get(self, group_id: int) -> Demo31LiftInputSnapshot | None:
-        snapshot = self._snapshots.get(int(group_id))
-        if snapshot is None:
-            self.miss_count += 1
-            return None
-        self.hit_count += 1
-        return snapshot
+        with self._lock:
+            snapshot = self._snapshots.get(int(group_id))
+            if snapshot is None:
+                self.miss_count += 1
+                return None
+            self.hit_count += 1
+            return snapshot
+
+    def cached_group_ids(self) -> set[int]:
+        with self._lock:
+            return {int(group_id) for group_id in self._snapshots}
 
     def snapshot(self) -> dict[str, Any]:
-        return {
-            "max_groups": int(self.max_groups),
-            "cached_groups": int(len(self._snapshots)),
-            "oldest_group_id": int(min(self._snapshots)) if self._snapshots else None,
-            "newest_group_id": int(max(self._snapshots)) if self._snapshots else None,
-            "published": int(self.published),
-            "evicted": int(self.evicted),
-            "hit_count": int(self.hit_count),
-            "miss_count": int(self.miss_count),
-        }
+        with self._lock:
+            return {
+                "max_groups": int(self.max_groups),
+                "cached_groups": int(len(self._snapshots)),
+                "oldest_group_id": int(min(self._snapshots)) if self._snapshots else None,
+                "newest_group_id": int(max(self._snapshots)) if self._snapshots else None,
+                "published": int(self.published),
+                "evicted": int(self.evicted),
+                "hit_count": int(self.hit_count),
+                "miss_count": int(self.miss_count),
+            }
 
-    def _prune(self) -> None:
+    def _prune_locked(self) -> None:
         while len(self._snapshots) > max(1, int(self.max_groups)):
             oldest = min(self._snapshots)
             self._snapshots.pop(oldest, None)
@@ -429,6 +484,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Color lifted CoTracker overlay points by source camera for live alignment debugging.",
     )
+    parser.add_argument(
+        "--overlay-reject-outside-semantic-bbox",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_OVERLAY_REJECT_OUTSIDE_SEMANTIC_BBOX,
+        help="Reject lifted overlay points outside the current semantic point-cloud bbox plus margin.",
+    )
+    parser.add_argument(
+        "--overlay-max-distance-from-controller-m",
+        type=float,
+        default=DEFAULT_OVERLAY_MAX_DISTANCE_FROM_CONTROLLER_M,
+        help="Semantic bbox margin, in meters, for controller-scope overlay outlier rejection.",
+    )
     parser.add_argument("--overlay-trail-len", type=int, default=demo3_runtime.DEFAULT_OVERLAY_TRAIL_LEN)
     parser.add_argument("--overlay-stale-timeout-ms", type=float, default=demo3_runtime.DEFAULT_OVERLAY_STALE_TIMEOUT_MS)
     parser.add_argument("--mask-gpu", default=DEFAULT_MASK_GPU)
@@ -542,6 +609,8 @@ def validate_args(
         raise ValueError("--overlay-max-points-per-camera must be >= 0; use 0 for all selected visible tracks.")
     if str(args.overlay_display_scope) not in demo3_runtime.OVERLAY_DISPLAY_SCOPES:
         raise ValueError(f"--overlay-display-scope must be one of {demo3_runtime.OVERLAY_DISPLAY_SCOPES}.")
+    if float(args.overlay_max_distance_from_controller_m) < 0.0:
+        raise ValueError("--overlay-max-distance-from-controller-m must be non-negative.")
     if float(args.cotracker_input_fps) < 0.0:
         raise ValueError("--cotracker-input-fps must be non-negative.")
     if str(args.cotracker_update_mode) not in demo3_runtime.COTRACKER_UPDATE_MODES:
@@ -703,6 +772,9 @@ def build_contract(
         "overlay_max_points_per_camera": int(args.overlay_max_points_per_camera),
         "overlay_display_scope": str(args.overlay_display_scope),
         "overlay_display_classification": "first_frame_mask_membership",
+        "overlay_bbox_filter_enabled": bool(args.overlay_reject_outside_semantic_bbox),
+        "overlay_bbox_filter_scope": str(args.overlay_display_scope),
+        "overlay_bbox_filter_margin_m": float(args.overlay_max_distance_from_controller_m),
         "overlay_trail_len": int(args.overlay_trail_len),
         "overlay_stale_timeout_ms": float(args.overlay_stale_timeout_ms),
         "fusion_mask_policy": str(args.fusion_mask_policy),
@@ -720,6 +792,8 @@ def build_contract(
         "render_waited_for_fresh_cotracker_result": not bool(args.disable_cotracker),
         "render_driver": "cotracker_child_output",
         "render_trigger": "new_cotracker_result",
+        "tracking_pending_render_packet_max_groups": int(DEFAULT_PENDING_RENDER_PACKET_GROUPS),
+        "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
         "render_waited_for_mask": bool(render_waited_for_mask),
         "render_object_filter": {
             "point_control": str(args.object_point_control),
@@ -807,6 +881,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracking_overlay_color_mode",
         "overlay_max_points_per_camera",
         "overlay_display_scope",
+        "overlay_bbox_filter_enabled",
+        "overlay_bbox_filter_margin_m",
         "phystwin_dense_compatible",
         "cotracker_backend",
         "tracker_backend",
@@ -828,6 +904,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "render_waited_for_fresh_cotracker_result",
         "render_driver",
         "render_trigger",
+        "tracking_pending_render_packet_max_groups",
+        "tracking_render_packet_match_policy",
         "render_waited_for_mask",
     )
     lines = []
@@ -1118,8 +1196,20 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_tracking_input_drop_count = 0
             self.demo31_pending_render_packets: dict[int, Any] = {}
             self.demo31_pending_render_lock = threading.Lock()
+            self.demo31_pending_render_packet_max_groups = max(
+                1,
+                int(
+                    self.demo31_contract.get(
+                        "tracking_pending_render_packet_max_groups",
+                        DEFAULT_PENDING_RENDER_PACKET_GROUPS,
+                    )
+                ),
+            )
             self.demo31_pending_render_packet_drop_count = 0
             self.demo31_tracking_result_without_render_packet_count = 0
+            self.demo31_tracking_result_exact_render_packet_count = 0
+            self.demo31_tracking_result_nearest_render_packet_count = 0
+            self.demo31_tracking_result_without_lift_input_count = 0
             self.demo31_overlay_age_ms_samples: list[float] = []
             self.demo31_overlay_model_ms_samples: list[float] = []
             self.demo31_overlay_e2e_ms_samples: list[float] = []
@@ -1329,6 +1419,16 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "render_reuses_cached_cotracker_result": False,
                     "overlay_lift_cache_hit": False,
                     "tracking_result_has_matching_render_packet": False,
+                    "tracking_result_used_render_packet": False,
+                    "tracking_result_used_nearest_render_packet": False,
+                    "tracking_render_packet_match_mode": "pending",
+                    "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
+                    "tracking_render_packet_group_id": None,
+                    "tracking_render_packet_group_delta": None,
+                    "tracking_nearest_render_packet_abs_delta": None,
+                    "tracking_pending_render_packet_count_before_match": None,
+                    "tracking_pending_render_packet_max_groups": int(self.demo31_pending_render_packet_max_groups),
+                    "tracking_pending_render_packet_had_lift_candidate": False,
                     "cotracker_model_ms": None,
                     "cotracker_e2e_ms": None,
                     "render_waited_for_cotracker": True,
@@ -1350,36 +1450,126 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self._publish_tracker_driven_render(overlay, overlay_start_s=now_s)
             return True
 
+        def _take_render_packet_for_tracking_result(self, group_id: int) -> tuple[Any | None, dict[str, Any]]:
+            requested_group_id = int(group_id)
+            lift_group_ids = self.demo31_lift_input_cache.cached_group_ids()
+            with self.demo31_pending_render_lock:
+                pending_ids_before = sorted(int(item) for item in self.demo31_pending_render_packets)
+                render_packet = self.demo31_pending_render_packets.pop(requested_group_id, None)
+                if render_packet is not None:
+                    self.demo31_tracking_result_exact_render_packet_count += 1
+                    return render_packet, {
+                        "tracking_render_packet_match_mode": "exact",
+                        "tracking_result_has_matching_render_packet": True,
+                        "tracking_result_used_render_packet": True,
+                        "tracking_result_used_nearest_render_packet": False,
+                        "tracking_render_packet_group_id": int(render_packet.group_id),
+                        "tracking_render_packet_group_delta": 0,
+                        "tracking_nearest_render_packet_abs_delta": 0,
+                        "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
+                        "tracking_pending_render_packet_had_lift_candidate": requested_group_id in lift_group_ids,
+                    }
+                if not pending_ids_before:
+                    self.demo31_tracking_result_without_render_packet_count += 1
+                    return None, {
+                        "tracking_render_packet_match_mode": "missing",
+                        "tracking_result_has_matching_render_packet": False,
+                        "tracking_result_used_render_packet": False,
+                        "tracking_result_used_nearest_render_packet": False,
+                        "tracking_render_packet_group_id": None,
+                        "tracking_render_packet_group_delta": None,
+                        "tracking_nearest_render_packet_abs_delta": None,
+                        "tracking_pending_render_packet_count_before_match": 0,
+                        "tracking_pending_render_packet_had_lift_candidate": False,
+                    }
+                lift_candidate_ids = [group for group in pending_ids_before if group in lift_group_ids]
+                candidate_ids = lift_candidate_ids or pending_ids_before
+                nearest_group_id = min(
+                    candidate_ids,
+                    key=lambda candidate: (
+                        abs(int(candidate) - requested_group_id),
+                        0 if int(candidate) >= requested_group_id else 1,
+                        int(candidate),
+                    ),
+                )
+                render_packet = self.demo31_pending_render_packets.pop(nearest_group_id, None)
+                if render_packet is None:
+                    self.demo31_tracking_result_without_render_packet_count += 1
+                    return None, {
+                        "tracking_render_packet_match_mode": "missing",
+                        "tracking_result_has_matching_render_packet": False,
+                        "tracking_result_used_render_packet": False,
+                        "tracking_result_used_nearest_render_packet": False,
+                        "tracking_render_packet_group_id": None,
+                        "tracking_render_packet_group_delta": None,
+                        "tracking_nearest_render_packet_abs_delta": None,
+                        "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
+                        "tracking_pending_render_packet_had_lift_candidate": bool(lift_candidate_ids),
+                    }
+                delta = int(render_packet.group_id) - requested_group_id
+                self.demo31_tracking_result_nearest_render_packet_count += 1
+                return render_packet, {
+                    "tracking_render_packet_match_mode": "nearest",
+                    "tracking_result_has_matching_render_packet": False,
+                    "tracking_result_used_render_packet": True,
+                    "tracking_result_used_nearest_render_packet": True,
+                    "tracking_render_packet_group_id": int(render_packet.group_id),
+                    "tracking_render_packet_group_delta": int(delta),
+                    "tracking_nearest_render_packet_abs_delta": int(abs(delta)),
+                    "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
+                    "tracking_pending_render_packet_had_lift_candidate": int(render_packet.group_id) in lift_group_ids,
+                }
+
         def _publish_tracker_driven_render(self, overlay: TrackingResultLitePacket, *, overlay_start_s: float) -> None:
             render_requires_new_tracker = bool(self.demo31_cotracker_enabled)
             overlay_points = np.empty((0, 3), dtype=np.float32)
             overlay_colors = np.empty((0, 3), dtype=np.uint8)
             overlay_input_points_by_camera: dict[int, int] = {}
+            overlay_lifted_points_by_camera: dict[int, int] = {}
             overlay_points_by_camera: dict[int, int] = {}
             overlay_centroid_by_camera: dict[int, list[float] | None] = {}
+            overlay_centroid_before_bbox_by_camera: dict[int, list[float] | None] = {}
+            overlay_bbox_input_points_by_camera: dict[int, int] = {}
+            overlay_bbox_kept_points_by_camera: dict[int, int] = {}
+            overlay_bbox_rejected_by_camera: dict[int, int] = {}
             overlay_lift_cache_hit = False
             overlay_group_id: int | None = None
             overlay_render_group_delta: int | None = None
             render_packet = None
             overlay_group_id = int(overlay.group_id)
-            with self.demo31_pending_render_lock:
-                render_packet = self.demo31_pending_render_packets.pop(overlay_group_id, None)
-            if render_packet is None:
-                self.demo31_tracking_result_without_render_packet_count += 1
-            overlay_render_group_delta = (
-                None if render_packet is None else int(render_packet.group_id) - int(overlay.group_id)
-            )
+            render_packet, render_match_profile = self._take_render_packet_for_tracking_result(overlay_group_id)
+            overlay_render_group_delta = render_match_profile["tracking_render_packet_group_delta"]
             if overlay_render_group_delta is not None:
                 self.demo31_overlay_render_group_delta_samples.append(float(abs(overlay_render_group_delta)))
                 if overlay_render_group_delta != 0:
                     self.demo31_overlay_render_group_mismatch_count += 1
-            lift_inputs = None if render_packet is None else self.demo31_lift_input_cache.get(overlay_group_id)
+            lift_inputs = None if render_packet is None else self.demo31_lift_input_cache.get(int(render_packet.group_id))
+            if render_packet is not None and lift_inputs is None:
+                self.demo31_tracking_result_without_lift_input_count += 1
             if render_packet is not None and lift_inputs is not None:
                 overlay_lift_cache_hit = True
                 lifted_points = []
                 lifted_colors = []
                 color_by_camera = bool(getattr(self.args, "overlay_debug_color_by_camera", False))
                 lift_mask_scope = str(getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE))
+                bbox_filter_enabled = bool(
+                    getattr(
+                        self.args,
+                        "overlay_reject_outside_semantic_bbox",
+                        DEFAULT_OVERLAY_REJECT_OUTSIDE_SEMANTIC_BBOX,
+                    )
+                )
+                bbox_margin_m = float(
+                    getattr(
+                        self.args,
+                        "overlay_max_distance_from_controller_m",
+                        DEFAULT_OVERLAY_MAX_DISTANCE_FROM_CONTROLLER_M,
+                    )
+                )
+                bbox_reference_points = _semantic_bbox_reference_points(
+                    scope=lift_mask_scope,
+                    render_packet=render_packet,
+                )
                 for camera_idx, tracks_yx in overlay.camera_tracks_yx.items():
                     idx = int(camera_idx)
                     if (
@@ -1405,6 +1595,26 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     )
                     if lifted.points_world.size:
                         points = lifted.points_world.astype(np.float32, copy=False)
+                        overlay_lifted_points_by_camera[idx] = int(len(points))
+                        overlay_centroid_before_bbox_by_camera[idx] = _point_centroid(points)
+                        overlay_bbox_input_points_by_camera[idx] = int(len(points))
+                        if bbox_filter_enabled:
+                            bbox_keep = _semantic_bbox_keep_mask(
+                                points,
+                                bbox_reference_points,
+                                margin_m=bbox_margin_m,
+                            )
+                            kept = int(np.count_nonzero(bbox_keep))
+                            overlay_bbox_kept_points_by_camera[idx] = kept
+                            overlay_bbox_rejected_by_camera[idx] = int(len(points)) - kept
+                            points = points[bbox_keep]
+                        else:
+                            overlay_bbox_kept_points_by_camera[idx] = int(len(points))
+                            overlay_bbox_rejected_by_camera[idx] = 0
+                        if len(points) == 0:
+                            overlay_points_by_camera[idx] = 0
+                            overlay_centroid_by_camera[idx] = None
+                            continue
                         lifted_points.append(points)
                         overlay_points_by_camera[idx] = int(len(points))
                         overlay_centroid_by_camera[idx] = _point_centroid(points)
@@ -1476,9 +1686,30 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_input_points_by_camera": dict(overlay_input_points_by_camera),
                     "overlay_points_by_camera": dict(overlay_points_by_camera),
                     "overlay_rejected_by_scope_mask_by_camera": {
-                        int(camera_idx): int(input_count) - int(overlay_points_by_camera.get(int(camera_idx), 0))
+                        int(camera_idx): int(input_count) - int(overlay_lifted_points_by_camera.get(int(camera_idx), 0))
                         for camera_idx, input_count in overlay_input_points_by_camera.items()
                     },
+                    "overlay_bbox_filter_enabled": bool(
+                        getattr(
+                            self.args,
+                            "overlay_reject_outside_semantic_bbox",
+                            DEFAULT_OVERLAY_REJECT_OUTSIDE_SEMANTIC_BBOX,
+                        )
+                    ),
+                    "overlay_bbox_filter_scope": str(
+                        getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE)
+                    ),
+                    "overlay_bbox_filter_margin_m": float(
+                        getattr(
+                            self.args,
+                            "overlay_max_distance_from_controller_m",
+                            DEFAULT_OVERLAY_MAX_DISTANCE_FROM_CONTROLLER_M,
+                        )
+                    ),
+                    "overlay_bbox_input_points_by_camera": dict(overlay_bbox_input_points_by_camera),
+                    "overlay_bbox_kept_points_by_camera": dict(overlay_bbox_kept_points_by_camera),
+                    "overlay_bbox_rejected_by_camera": dict(overlay_bbox_rejected_by_camera),
+                    "overlay_world_centroid_by_camera_before_bbox": dict(overlay_centroid_before_bbox_by_camera),
                     "overlay_world_centroid_by_camera": dict(overlay_centroid_by_camera),
                     "overlay_ms": overlay_ms,
                     "overlay_group_id": overlay_group_id,
@@ -1500,7 +1731,31 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "tracking_mask_age_ms": 0.0 if overlay is None else float(overlay.mask_age_ms),
                     "tracking_mask_reused": False if overlay is None else bool(overlay.mask_reused),
                     "overlay_lift_cache_hit": bool(overlay_lift_cache_hit),
-                    "tracking_result_has_matching_render_packet": bool(render_packet is not None),
+                    "tracking_result_has_matching_render_packet": bool(
+                        render_match_profile["tracking_result_has_matching_render_packet"]
+                    ),
+                    "tracking_result_used_render_packet": bool(
+                        render_match_profile["tracking_result_used_render_packet"]
+                    ),
+                    "tracking_result_used_nearest_render_packet": bool(
+                        render_match_profile["tracking_result_used_nearest_render_packet"]
+                    ),
+                    "tracking_render_packet_match_mode": str(
+                        render_match_profile["tracking_render_packet_match_mode"]
+                    ),
+                    "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
+                    "tracking_render_packet_group_id": render_match_profile["tracking_render_packet_group_id"],
+                    "tracking_render_packet_group_delta": render_match_profile["tracking_render_packet_group_delta"],
+                    "tracking_nearest_render_packet_abs_delta": render_match_profile[
+                        "tracking_nearest_render_packet_abs_delta"
+                    ],
+                    "tracking_pending_render_packet_count_before_match": render_match_profile[
+                        "tracking_pending_render_packet_count_before_match"
+                    ],
+                    "tracking_pending_render_packet_max_groups": int(self.demo31_pending_render_packet_max_groups),
+                    "tracking_pending_render_packet_had_lift_candidate": bool(
+                        render_match_profile["tracking_pending_render_packet_had_lift_candidate"]
+                    ),
                     "cotracker_model_ms": None if overlay is None else float(overlay.model_ms),
                     "cotracker_e2e_ms": None if overlay is None else float(overlay.e2e_ms),
                     "cotracker_publish_to_render_ms": (
