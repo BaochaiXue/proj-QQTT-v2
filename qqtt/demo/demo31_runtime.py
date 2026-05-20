@@ -100,6 +100,7 @@ DEFAULT_DEMO32_CONTROLLER_TRACKABLE_MAX_POINTS_PER_CAMERA = 4999
 DEFAULT_CONTROLLER_MASK_ERODE_PX = 0
 DEFAULT_DEMO_MODE_CONTROLLER_MASK_ERODE_PX = 1
 DEFAULT_CONTROLLER_RENDER_VOXEL_M = 0.003
+DEFAULT_CONTROLLER_RENDER_MAX_POINTS = 10_000
 DEFAULT_LIFT_INPUT_CACHE_GROUPS = 128
 DEFAULT_PENDING_RENDER_PACKET_GROUPS = 128
 TRACKING_RENDER_PACKET_MATCH_POLICY = "exact-then-nearest-pending-pcd-by-group-id"
@@ -1029,6 +1030,15 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
             "Use 0 to disable; tracker/control markers are rendered separately."
         ),
     )
+    parser.add_argument(
+        "--controller-render-max-points",
+        type=int,
+        default=DEFAULT_CONTROLLER_RENDER_MAX_POINTS,
+        help=(
+            "Render-only maximum controller body PCD points after controller render voxel downsampling. "
+            "Use 0 to disable; tracker queries and tracker/control markers are not affected."
+        ),
+    )
     parser.add_argument("--debug-color-by-camera", action="store_true")
     parser.add_argument("--debug-save-per-camera-pcd", action="store_true")
     parser.add_argument("--debug-save-mask-overlays", action="store_true")
@@ -1281,6 +1291,8 @@ def validate_args(
         raise ValueError("--object-volume-points-per-voxel must be >= 1.")
     if float(args.controller_render_voxel_m) < 0.0:
         raise ValueError("--controller-render-voxel-m must be >= 0.")
+    if int(args.controller_render_max_points) < 0:
+        raise ValueError("--controller-render-max-points must be >= 0.")
     if int(args.edgetam_live_session_keep_frames) < 1:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 1.")
     if bool(args.debug_identity_c2w) and bool(args.debug_invert_c2w):
@@ -1701,6 +1713,8 @@ def build_contract(
         "render_controller_filter": {
             "render_voxel_m": float(args.controller_render_voxel_m),
             "render_voxel_downsample": float(args.controller_render_voxel_m) > 0.0,
+            "render_max_points": int(args.controller_render_max_points),
+            "render_cap_enabled": int(args.controller_render_max_points) > 0,
             "render_only": True,
             "affects_tracking_markers": False,
         },
@@ -2014,6 +2028,7 @@ def build_shared_runtime_args(
     shared_args.controller_trackable_max_points_per_camera = int(args.controller_trackable_max_points_per_camera)
     shared_args.controller_mask_erode_px = resolved_controller_mask_erode_px(args)
     shared_args.controller_render_voxel_m = float(args.controller_render_voxel_m)
+    shared_args.controller_render_max_points = int(args.controller_render_max_points)
     shared_args.sam31_init_quick_fail_empty_masks = bool(args.sam31_init_quick_fail_empty_masks)
     shared_args.sam31_init_min_mask_pixels = int(args.sam31_init_min_mask_pixels)
     return shared_args

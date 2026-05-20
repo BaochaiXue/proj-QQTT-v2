@@ -134,6 +134,7 @@ class _FakeSharedRuntimeModule:
         parser.add_argument("--object-volume-emergency-max-points", type=int)
         parser.add_argument("--object-volume-points-per-voxel", type=int)
         parser.add_argument("--controller-render-voxel-m", type=float)
+        parser.add_argument("--controller-render-max-points", type=int)
         parser.add_argument("--debug-color-by-camera", action="store_true")
         parser.add_argument("--debug-save-per-camera-pcd", action="store_true")
         parser.add_argument("--debug-save-mask-overlays", action="store_true")
@@ -572,6 +573,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["controller_mask_erode_applies_to"], "tracking_input_and_anchor_masks")
         self.assertEqual(contract["render_controller_filter"]["render_voxel_m"], 0.003)
         self.assertTrue(contract["render_controller_filter"]["render_voxel_downsample"])
+        self.assertEqual(contract["render_controller_filter"]["render_max_points"], 10000)
+        self.assertTrue(contract["render_controller_filter"]["render_cap_enabled"])
         self.assertTrue(contract["render_controller_filter"]["render_only"])
         self.assertFalse(contract["render_controller_filter"]["affects_tracking_markers"])
         self.assertEqual(contract["tracker_visualization_mode"], "all-tracks-3d-lift")
@@ -914,6 +917,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(shared_args.enable_pcd_filter)
         self.assertEqual(shared_args.pcd_filter_mode, "async")
         self.assertEqual(shared_args.controller_render_voxel_m, 0.003)
+        self.assertEqual(shared_args.controller_render_max_points, 10000)
 
     def test_demo32_main_dry_run_prints_ffs_litetracker_contract(self) -> None:
         stdout = io.StringIO()
@@ -948,6 +952,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("tracker_query_source = union_trackable_mask", output)
         self.assertIn("controller_mask_erode_px = 0", output)
         self.assertIn("render_controller_filter = {'render_voxel_m': 0.003", output)
+        self.assertIn("'render_max_points': 10000", output)
         self.assertIn("tracker_visualization_mode = all-tracks-3d-lift", output)
         self.assertIn("tracker_3d_marker_mode = all-tracks-3d-lift", output)
         self.assertIn("tracker_all_tracks_anchor_mode = true", output)

@@ -34,8 +34,9 @@ needed and the tracker backend/memory budget can support it. The optional
 tracking union and anchor/trackable-mask path; its implicit default is `1` in
 `--mode demo` (human-hand controller prompt) and `0` otherwise. Controller body points are
 render-voxel downsampled before Open3D display with
-`--controller-render-voxel-m`; this render-only reduction does not touch
-LiteTracker input or the red tracking/control markers. Overlay display selection is
+`--controller-render-voxel-m` and capped by
+`--controller-render-max-points` (default `10000`); these render-only reductions
+do not touch LiteTracker input or the red tracking/control markers. Overlay display selection is
 separate: raw CoTracker tracks still come from the capped union, but each query
 is labeled by first-frame object/controller mask membership and the default
 rendered overlay shows controller-labeled tracks only. The display cap is
@@ -115,7 +116,7 @@ tracking_sampling = controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx
 controller_mask_erode_px = 0
 controller_mask_erode_stage = before_tracking_union_and_trackable_filter
 controller_mask_erode_applies_to = tracking_input_and_anchor_masks
-render_controller_filter = {'render_voxel_m': 0.003, 'render_voxel_downsample': true, 'render_only': true, 'affects_tracking_markers': false}
+render_controller_filter = {'render_voxel_m': 0.003, 'render_voxel_downsample': true, 'render_max_points': 10000, 'render_cap_enabled': true, 'render_only': true, 'affects_tracking_markers': false}
 controller_pcd_max_points_per_camera = 4999
 controller_pcd_cap_stage = before_tracking_query_and_fusion
 controller_pcd_cap_sampling = stable_coordinate_hash_seed_plus_camera_idx
@@ -341,6 +342,7 @@ CLI and forwards them to the shared three-view runtime:
 --object-volume-emergency-max-points
 --object-volume-points-per-voxel
 --controller-render-voxel-m
+--controller-render-max-points
 --debug-color-by-camera
 --debug-save-per-camera-pcd
 --debug-save-mask-overlays

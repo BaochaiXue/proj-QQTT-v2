@@ -290,6 +290,7 @@ DEFAULT_CONTROLLER_FILTER_CAP = 20_000
 DEFAULT_OBJECT_FILTER_VOXEL_M = 0.004
 DEFAULT_CONTROLLER_FILTER_VOXEL_M = 0.003
 DEFAULT_CONTROLLER_RENDER_VOXEL_M = DEFAULT_CONTROLLER_FILTER_VOXEL_M
+DEFAULT_CONTROLLER_RENDER_MAX_POINTS = 10_000
 DEFAULT_FILTER_EVERY_N = 3
 DEFAULT_FILTER_BUDGET_MS = 12.0
 DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
@@ -3488,6 +3489,13 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                     getattr(args, "controller_render_voxel_m", DEFAULT_CONTROLLER_RENDER_VOXEL_M)
                 )
                 > 0.0,
+                "render_max_points": int(
+                    getattr(args, "controller_render_max_points", DEFAULT_CONTROLLER_RENDER_MAX_POINTS)
+                ),
+                "render_cap_enabled": int(
+                    getattr(args, "controller_render_max_points", DEFAULT_CONTROLLER_RENDER_MAX_POINTS)
+                )
+                > 0,
                 "render_only": True,
                 "affects_tracking_markers": False,
             },
@@ -4342,6 +4350,8 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 filter voxel sizes must be positive")
         if float(getattr(self.args, "controller_render_voxel_m", DEFAULT_CONTROLLER_RENDER_VOXEL_M)) < 0:
             raise RuntimeError("Demo 2.1 --controller-render-voxel-m must be >= 0")
+        if int(getattr(self.args, "controller_render_max_points", DEFAULT_CONTROLLER_RENDER_MAX_POINTS)) < 0:
+            raise RuntimeError("Demo 2.1 --controller-render-max-points must be >= 0")
         if self.args.object_point_control not in OBJECT_POINT_CONTROLS:
             raise RuntimeError(f"Demo 2.1 unsupported --object-point-control {self.args.object_point_control}")
         if self.args.object_volume_origin not in PHYSTWIN_VOLUME_ORIGINS:
@@ -8362,6 +8372,28 @@ class Demo21Runtime:
             "controller_render_voxel_affects_tracking_markers": bool(
                 stats.get("controller_render_voxel_affects_tracking_markers", False)
             ),
+            "controller_render_cap_enabled": bool(
+                stats.get(
+                    "controller_render_cap_enabled",
+                    int(getattr(self.args, "controller_render_max_points", DEFAULT_CONTROLLER_RENDER_MAX_POINTS)) > 0,
+                )
+            ),
+            "controller_render_max_points": int(
+                stats.get(
+                    "controller_render_max_points",
+                    getattr(self.args, "controller_render_max_points", DEFAULT_CONTROLLER_RENDER_MAX_POINTS),
+                )
+            ),
+            "controller_render_cap_input_points": int(stats.get("controller_render_cap_input_points", 0)),
+            "controller_render_cap_output_points": int(stats.get("controller_render_cap_output_points", 0)),
+            "controller_render_cap_removed_points": int(stats.get("controller_render_cap_removed_points", 0)),
+            "controller_render_cap_ms": float(stats.get("controller_render_cap_ms", 0.0)),
+            "controller_render_cap_stage": str(
+                stats.get("controller_render_cap_stage", "render_pcd_only_after_controller_render_voxel")
+            ),
+            "controller_render_cap_affects_tracking_markers": bool(
+                stats.get("controller_render_cap_affects_tracking_markers", False)
+            ),
         }
 
     def _filter_object_layer(self, layer: FusedLayerCloud) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
@@ -8438,6 +8470,43 @@ class Demo21Runtime:
                     "controller_render_voxel_affects_tracking_markers": False,
                 }
             )
+        render_max_points = int(
+            getattr(self.args, "controller_render_max_points", DEFAULT_CONTROLLER_RENDER_MAX_POINTS)
+        )
+        cap_input_count = int(len(points))
+        cap_ms = 0.0
+        cap_voxel_m = (
+            float(render_voxel_m)
+            if float(render_voxel_m) > 0.0
+            else float(getattr(self.args, "controller_filter_voxel_m", DEFAULT_CONTROLLER_FILTER_VOXEL_M))
+        )
+        if render_max_points > 0 and cap_input_count > render_max_points:
+            cap_start_s = time.perf_counter()
+            capped_points, capped_colors_or_none = voxel_cap_points(
+                points,
+                colors,
+                max_points=int(render_max_points),
+                voxel_size_m=max(float(cap_voxel_m), 1e-6),
+                rng=np.random.default_rng(0),
+            )
+            cap_ms = _elapsed_ms(cap_start_s, time.perf_counter())
+            points = _as_points(capped_points)
+            colors = _as_colors(
+                np.empty((0, 3), dtype=np.uint8) if capped_colors_or_none is None else capped_colors_or_none
+            )
+        cap_output_count = int(len(points))
+        stats.update(
+            {
+                "controller_render_cap_enabled": bool(render_max_points > 0),
+                "controller_render_max_points": int(render_max_points),
+                "controller_render_cap_input_points": int(cap_input_count),
+                "controller_render_cap_output_points": int(cap_output_count),
+                "controller_render_cap_removed_points": int(max(0, cap_input_count - cap_output_count)),
+                "controller_render_cap_ms": float(cap_ms),
+                "controller_render_cap_stage": "render_pcd_only_after_controller_render_voxel",
+                "controller_render_cap_affects_tracking_markers": False,
+            }
+        )
         return points, colors, stats
 
     def _filter_raw_fused_packet(self, raw: RawFusedPcdPacket) -> FusedPcdPacket:
@@ -9431,6 +9500,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Render-only controller PCD voxel downsample size in meters. "
             "Use 0 to disable. This does not affect external tracker/control markers."
+        ),
+    )
+    parser.add_argument(
+        "--controller-render-max-points",
+        type=int,
+        default=DEFAULT_CONTROLLER_RENDER_MAX_POINTS,
+        help=(
+            "Render-only maximum controller body PCD points after controller render voxel downsampling. "
+            "Use 0 to disable. This does not affect tracker queries or external tracker/control markers."
         ),
     )
     parser.add_argument("--object-point-control", choices=OBJECT_POINT_CONTROLS, default=OBJECT_POINT_CONTROL_FIXED_CAP)

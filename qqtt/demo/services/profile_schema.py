@@ -266,6 +266,22 @@ def build_empty_demo31_profile_summary(contract: Mapping[str, Any]) -> dict[str,
         "controller_render_voxel_ms": 0.0,
         "controller_render_voxel_stage": "render_pcd_only_after_controller_postprocess",
         "controller_render_voxel_affects_tracking_markers": False,
+        "controller_render_cap_enabled": bool(
+            contract.get("render_controller_filter", {}).get("render_cap_enabled", False)
+            if isinstance(contract.get("render_controller_filter"), dict)
+            else False
+        ),
+        "controller_render_max_points": int(
+            contract.get("render_controller_filter", {}).get("render_max_points", 0)
+            if isinstance(contract.get("render_controller_filter"), dict)
+            else 0
+        ),
+        "controller_render_cap_input_points": 0,
+        "controller_render_cap_output_points": 0,
+        "controller_render_cap_removed_points": 0,
+        "controller_render_cap_ms": 0.0,
+        "controller_render_cap_stage": "render_pcd_only_after_controller_render_voxel",
+        "controller_render_cap_affects_tracking_markers": False,
         ProfileKeys.CAPTURE_GROUP_FPS: 0.0,
         ProfileKeys.FRESH_MASK_FPS: 0.0,
         ProfileKeys.MASK_REUSE_RATIO: 0.0,

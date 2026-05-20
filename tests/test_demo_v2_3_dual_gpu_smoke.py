@@ -77,6 +77,7 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertIn("--render-micro-profile", help_text)
         self.assertIn("--object-volume-points-per-voxel", help_text)
         self.assertIn("--controller-render-voxel-m", help_text)
+        self.assertIn("--controller-render-max-points", help_text)
         self.assertIn("--depth-source", help_text)
         self.assertIn("--debug-color-by-camera", help_text)
         self.assertIn("--debug-save-per-camera-pcd", help_text)
@@ -238,6 +239,8 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertEqual(contract["filter_scheduler"]["object"]["volume"]["points_per_voxel"], 1)
         self.assertEqual(contract["filter_scheduler"]["controller"]["render_voxel_m"], 0.003)
         self.assertTrue(contract["filter_scheduler"]["controller"]["render_voxel_downsample"])
+        self.assertEqual(contract["filter_scheduler"]["controller"]["render_max_points"], 10000)
+        self.assertTrue(contract["filter_scheduler"]["controller"]["render_cap_enabled"])
         self.assertTrue(contract["filter_scheduler"]["controller"]["render_only"])
         self.assertFalse(contract["filter_scheduler"]["controller"]["affects_tracking_markers"])
 
@@ -247,6 +250,7 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
             controller_filter_cap=0,
             controller_filter_voxel_m=0.003,
             controller_render_voxel_m=0.01,
+            controller_render_max_points=10000,
             phystwin_radius_m=0.01,
             phystwin_nb_points=1,
             enhanced_component_voxel_size_m=0.006,
@@ -284,6 +288,48 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertEqual(stats["controller_render_voxel_output_points"], 2)
         self.assertEqual(stats["controller_render_voxel_removed_points"], 1)
         self.assertFalse(stats["controller_render_voxel_affects_tracking_markers"])
+        self.assertTrue(stats["controller_render_cap_enabled"])
+        self.assertEqual(stats["controller_render_max_points"], 10000)
+        self.assertEqual(stats["controller_render_cap_input_points"], 2)
+        self.assertEqual(stats["controller_render_cap_output_points"], 2)
+        self.assertFalse(stats["controller_render_cap_affects_tracking_markers"])
+
+    def test_controller_render_cap_limits_body_points_after_voxel(self) -> None:
+        runtime = object.__new__(shared_runtime.Demo21Runtime)
+        runtime.args = types.SimpleNamespace(
+            controller_filter_cap=0,
+            controller_filter_voxel_m=0.003,
+            controller_render_voxel_m=0.001,
+            controller_render_max_points=3,
+            phystwin_radius_m=0.01,
+            phystwin_nb_points=1,
+            enhanced_component_voxel_size_m=0.006,
+            enhanced_keep_near_main_gap_m=0.035,
+        )
+        points = np.asarray([[float(idx) * 0.01, 0.0, 0.0] for idx in range(8)], dtype=np.float32)
+        colors = np.asarray([[idx, 0, 255 - idx] for idx in range(8)], dtype=np.uint8)
+        layer = shared_runtime.FusedLayerCloud(
+            obj_id=shared_runtime.CONTROLLER_ID,
+            label="hand",
+            postprocess_mode=shared_runtime.POSTPROCESS_NONE,
+            points_m=points,
+            colors_rgb=colors,
+            per_camera=(),
+        )
+
+        filtered_points, filtered_colors, stats = runtime._filter_controller_layer(layer)
+
+        self.assertLessEqual(filtered_points.shape[0], 3)
+        self.assertEqual(filtered_colors.shape[0], filtered_points.shape[0])
+        self.assertTrue(stats["controller_render_voxel_enabled"])
+        self.assertTrue(stats["controller_render_cap_enabled"])
+        self.assertEqual(stats["controller_render_max_points"], 3)
+        self.assertEqual(stats["controller_render_cap_input_points"], 8)
+        self.assertLessEqual(stats["controller_render_cap_output_points"], 3)
+        self.assertEqual(
+            stats["controller_render_cap_removed_points"],
+            stats["controller_render_cap_input_points"] - stats["controller_render_cap_output_points"],
+        )
 
     def test_startup_hud_text_is_pipeline_aware_for_demo32_litetracker(self) -> None:
         args = types.SimpleNamespace(
