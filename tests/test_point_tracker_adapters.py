@@ -105,6 +105,78 @@ class _FakeLiteTrackerWrapper:
         self.is_first_frame = True
 
 
+class _FakeLiteTrackerBatchPatchModel:
+    def __init__(self) -> None:
+        import torch
+
+        self.corr_levels = 1
+        self.corr_radius = 0
+        self.stride = 1
+        self.model_resolution = (8, 8)
+        self.latent_dim = 2
+        self.inv_sigmoid_true_val = 4.6
+        self.iters = 1
+        self.online_ind = 0
+        self.track_feat_cache = [torch.empty(0)]
+        self.ema_flow_buffer = torch.empty(0)
+        self.coords_buffer = torch.empty(0)
+        self.vis_buffer = torch.empty(0)
+        self.conf_buffer = torch.empty(0)
+        self.forward_window_coords_shapes: list[tuple[int, ...]] = []
+
+    def fnet(self, frame):
+        import torch
+
+        batch_size = int(frame.shape[0])
+        return torch.ones(
+            (batch_size, self.latent_dim, self.model_resolution[0], self.model_resolution[1]),
+            device=frame.device,
+            dtype=frame.dtype,
+        )
+
+    def get_track_feat(self, fmaps, queried_coords, support_radius: int = 0):
+        import torch
+
+        _ = fmaps, support_radius
+        batch_size, query_count, _coord_dim = queried_coords.shape
+        support = torch.ones(
+            (batch_size, 1, query_count, self.latent_dim),
+            device=queried_coords.device,
+            dtype=queried_coords.dtype,
+        )
+        return support[:, None, 0], support
+
+    def forward_window(
+        self,
+        *,
+        fmaps_pyramid,
+        coords,
+        track_feat_support_pyramid,
+        queried_frames,
+        vis,
+        conf,
+        is_track_previsouly_initialized,
+        iters,
+    ):
+        _ = fmaps_pyramid, track_feat_support_pyramid, queried_frames, is_track_previsouly_initialized, iters
+        self.forward_window_coords_shapes.append(tuple(coords.shape))
+        if self.online_ind == 0:
+            self.coords_buffer = coords
+            self.vis_buffer = vis
+            self.conf_buffer = conf
+        else:
+            self.coords_buffer = np_concat_torch_time(self.coords_buffer, coords)
+            self.vis_buffer = np_concat_torch_time(self.vis_buffer, vis)
+            self.conf_buffer = np_concat_torch_time(self.conf_buffer, conf)
+        return coords, vis[..., 0], conf[..., 0]
+
+
+def np_concat_torch_time(left, right):
+    import torch
+
+    return torch.cat([left, right], dim=1)
+
+
 class PointTrackerAdaptersTest(unittest.TestCase):
     def test_backend_normalization_and_specs(self) -> None:
         self.assertEqual(normalize_tracker_backend("co-tracker3"), "cotracker3_online")
@@ -299,6 +371,23 @@ class PointTrackerAdaptersTest(unittest.TestCase):
                     1: np.array([[11.0, 21.0]], dtype=np.float32),
                 }
             )
+
+    def test_litetracker_batch_forward_patch_keeps_time_axis_for_b_greater_than_one(self) -> None:
+        import torch
+
+        model = _FakeLiteTrackerBatchPatchModel()
+        LiteTrackerAdapter._patch_model_for_batch_views(model)
+        frame = torch.zeros((3, 3, 8, 8), dtype=torch.float32)
+        queries = torch.zeros((3, 2, 3), dtype=torch.float32)
+        queries[..., 1] = 2.0
+        queries[..., 2] = 3.0
+
+        model.forward(frame, queries)
+        model.forward(frame, queries)
+
+        self.assertTrue(getattr(model, "_qqtt_batch_view_forward_patch", False))
+        self.assertEqual(model.forward_window_coords_shapes, [(3, 1, 2, 2), (3, 1, 2, 2)])
+        self.assertEqual(tuple(model.coords_buffer.shape), (3, 2, 2, 2))
 
 
 if __name__ == "__main__":

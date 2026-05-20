@@ -16,10 +16,15 @@ path is strict `batch-views`; operators can still explicitly choose `auto` or
    mode so LiteTracker runs camera-view batch=3 by default.
 4. Use `min-common` query count policy for Demo 3.2 batch safety.
 5. Update Demo 3.2 contract/docs/tests to report `litetracker_batch3`.
+6. Patch LiteTracker's online forward at adapter load time so B>1 previous
+   frame buffers keep their time axis and do not broadcast from `[B,1,N,2]`
+   into `[B,B,N,2]` on the second update.
 
 ## Validation
 
 - Focused adapter tests for batch camera ordering, xy/yx conversion, unequal
   query rejection, and fake-model shapes.
+- Real LiteTracker smoke with `B=3`, `N=4096`, two updates, matching the live
+  crash shape.
 - Demo 3.2 dry-run/contract tests.
 - `scripts/harness/check_all.py` quick profile if the focused tests pass.

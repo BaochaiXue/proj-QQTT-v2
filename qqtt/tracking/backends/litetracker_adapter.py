@@ -5,6 +5,7 @@ from contextlib import nullcontext
 from pathlib import Path
 import time
 from typing import Any
+import types
 
 import numpy as np
 
@@ -92,11 +93,182 @@ class LiteTrackerAdapter:
 
         started_s = time.perf_counter()
         tracker = LiteTrackerWrapper(Path(str(self.weights)), return_vis=True)
+        self._patch_model_for_batch_views(getattr(tracker, "model", None))
         if str(self.device).startswith("cuda") and torch.cuda.is_available():
             torch.cuda.synchronize()
         self._model_load_ms = float((time.perf_counter() - started_s) * 1000.0)
         self._tracker = tracker
         return tracker
+
+    @staticmethod
+    def _with_time_axis(value: Any, reference: Any) -> Any:
+        """Keep LiteTracker online buffers broadcastable for B>1 camera batches."""
+        if getattr(value, "ndim", None) == getattr(reference, "ndim", None) - 1:
+            return value[:, None]
+        return value
+
+    @classmethod
+    def _patch_model_for_batch_views(cls, model: Any | None) -> None:
+        if model is None or bool(getattr(model, "_qqtt_batch_view_forward_patch", False)):
+            return
+        required = ("fnet", "forward_window", "get_track_feat", "corr_levels", "stride", "model_resolution")
+        if not all(hasattr(model, name) for name in required):
+            return
+
+        def patched_forward(self: Any, frame: Any, queries: Any):  # type: ignore[no-untyped-def]
+            import torch
+            import torch.nn.functional as F
+
+            original_shape = frame.shape
+            frame = F.interpolate(
+                frame, size=self.model_resolution, mode="bilinear", align_corners=True
+            )
+            queries_scaled = queries.clone()
+            queries_scaled[:, :, 1] *= (self.model_resolution[1] - 1) / (original_shape[3] - 1)
+            queries_scaled[:, :, 2] *= (self.model_resolution[0] - 1) / (original_shape[2] - 1)
+
+            batch_size, _channels, height, width = frame.shape
+            device = queries_scaled.device
+            batch_size, query_count, _ = queries_scaled.shape
+            frame = 2 * (frame / 255.0) - 1.0
+            window_size = 1
+            dtype = frame.dtype
+
+            queried_frames = queries_scaled[:, :, 0].long()
+            queried_coords = queries_scaled[..., 1:3].clone() / self.stride
+
+            fmaps = self.fnet(frame)
+            fmaps = fmaps.permute(0, 2, 3, 1)
+            fmaps = fmaps / torch.sqrt(
+                torch.maximum(
+                    torch.sum(torch.square(fmaps), dim=-1, keepdim=True),
+                    torch.tensor(1e-12, device=fmaps.device),
+                )
+            )
+            fmaps = fmaps.permute(0, 3, 1, 2).reshape(
+                batch_size,
+                -1,
+                self.latent_dim,
+                height // self.stride,
+                width // self.stride,
+            )
+            fmaps = fmaps.to(dtype)
+
+            fmaps_pyramid = [fmaps]
+            track_feat_support_pyramid = []
+            for _level in range(self.corr_levels - 1):
+                pooled = fmaps.reshape(
+                    batch_size * window_size,
+                    self.latent_dim,
+                    fmaps.shape[-2],
+                    fmaps.shape[-1],
+                )
+                pooled = F.avg_pool2d(pooled, 2, stride=2)
+                fmaps = pooled.reshape(
+                    batch_size,
+                    window_size,
+                    self.latent_dim,
+                    pooled.shape[-2],
+                    pooled.shape[-1],
+                )
+                fmaps_pyramid.append(fmaps)
+
+            initialized_now = (queried_frames == self.online_ind)[:, None, :, None]
+            for level in range(self.corr_levels):
+                if self.online_ind == 0:
+                    _, track_feat_support = self.get_track_feat(
+                        fmaps_pyramid[level],
+                        queried_coords / 2**level,
+                        support_radius=self.corr_radius,
+                    )
+                    self.track_feat_cache[level] = torch.zeros_like(track_feat_support, device=device)
+                    self.track_feat_cache[level] += track_feat_support * initialized_now
+                elif initialized_now.any():
+                    _, track_feat_support = self.get_track_feat(
+                        fmaps_pyramid[level],
+                        queried_coords / 2**level,
+                        support_radius=self.corr_radius,
+                    )
+                    self.track_feat_cache[level] += track_feat_support * initialized_now
+                track_feat_support_pyramid.append(self.track_feat_cache[level].unsqueeze(1))
+
+            vis_init = torch.zeros((batch_size, window_size, query_count, 1), device=device).float()
+            conf_init = torch.zeros((batch_size, window_size, query_count, 1), device=device).float()
+            coords_init = queried_coords.reshape(batch_size, window_size, query_count, 2).float()
+
+            vis_init = torch.where(
+                initialized_now.expand_as(vis_init),
+                self.inv_sigmoid_true_val,
+                vis_init,
+            )
+            conf_init = torch.where(
+                initialized_now.expand_as(conf_init),
+                self.inv_sigmoid_true_val,
+                conf_init,
+            )
+
+            if self.online_ind == 0:
+                self.ema_flow_buffer = torch.zeros_like(coords_init)
+
+            previously_initialized = (queried_frames < self.online_ind)[:, None, :, None]
+            if self.online_ind > 0:
+                previous_vis = cls._with_time_axis(self.vis_buffer[:, -1], vis_init)
+                previous_conf = cls._with_time_axis(self.conf_buffer[:, -1], conf_init)
+                vis_init = torch.where(
+                    previously_initialized.expand_as(vis_init),
+                    previous_vis,
+                    vis_init,
+                )
+                conf_init = torch.where(
+                    previously_initialized.expand_as(conf_init),
+                    previous_conf,
+                    conf_init,
+                )
+                if self.online_ind == 1:
+                    previous_coords = cls._with_time_axis(self.coords_buffer[:, -1], coords_init)
+                    coords_init = torch.where(
+                        previously_initialized.expand_as(coords_init),
+                        previous_coords,
+                        coords_init,
+                    )
+                else:
+                    last_flow = cls._with_time_axis(
+                        self.coords_buffer[:, -1] - self.coords_buffer[:, -2],
+                        coords_init,
+                    )
+                    cached_flow = cls._with_time_axis(self.ema_flow_buffer, coords_init)
+                    alpha = 0.8
+                    accumulated_flow = alpha * last_flow + (1 - alpha) * cached_flow
+                    self.ema_flow_buffer = accumulated_flow
+                    previous_coords = cls._with_time_axis(self.coords_buffer[:, -1], coords_init)
+                    coords_init = torch.where(
+                        previously_initialized.expand_as(coords_init),
+                        previous_coords + accumulated_flow,
+                        coords_init,
+                    )
+
+            coords, viss, confs = self.forward_window(
+                fmaps_pyramid=fmaps_pyramid,
+                coords=coords_init,
+                track_feat_support_pyramid=track_feat_support_pyramid,
+                queried_frames=queried_frames,
+                vis=vis_init,
+                conf=conf_init,
+                iters=self.iters,
+                is_track_previsouly_initialized=previously_initialized,
+            )
+
+            coords[:, :, :, 0] *= (original_shape[3] - 1) / (self.model_resolution[1] - 1)
+            coords[:, :, :, 1] *= (original_shape[2] - 1) / (self.model_resolution[0] - 1)
+
+            viss = torch.sigmoid(viss)
+            confs = torch.sigmoid(confs)
+            viss = (viss * confs) > 0.6
+            self.online_ind += 1
+            return coords, viss, confs
+
+        model.forward = types.MethodType(patched_forward, model)
+        model._qqtt_batch_view_forward_patch = True
 
     def warmup(self) -> dict[str, Any]:
         started_s = time.perf_counter()
