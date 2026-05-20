@@ -390,10 +390,10 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
 
         self.assertEqual(contract["experiment_mode"], demo.EXPERIMENT_MODE_DEMO)
         self.assertEqual(contract["controller_semantic"], demo.DEMO_MODE_CONTROLLER_LABEL)
-        self.assertEqual(contract["controller_prompt"], demo.DEMO_MODE_CONTROLLER_LABEL)
-        self.assertEqual(contract["controller_prompt_expected"], demo.DEMO_MODE_CONTROLLER_LABEL)
+        self.assertEqual(contract["controller_prompt"], demo.DEMO_MODE_CONTROLLER_PROMPT)
+        self.assertEqual(contract["controller_prompt_expected"], demo.DEMO_MODE_CONTROLLER_PROMPT)
         self.assertTrue(contract["controller_prompt_matches_experiment_mode"])
-        self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], ["hand", "stuffed animal"])
+        self.assertEqual([layer["label"] for layer in contract["semantic_layers"]], [demo.DEMO_MODE_CONTROLLER_PROMPT, "stuffed animal"])
 
     def test_demo22_controller_only_contract_tracks_controller_layer(self) -> None:
         parser = demo.build_arg_parser()

@@ -139,13 +139,14 @@ OBJECT_POINT_CONTROLS = (OBJECT_POINT_CONTROL_FIXED_CAP, OBJECT_POINT_CONTROL_PH
 DEFAULT_CAMERA_IDS = (0, 1, 2)
 DEFAULT_OBJECT_LABEL = "object"
 DEFAULT_CONTROLLER_LABEL = "hand"
+DEMO_MODE_CONTROLLER_PROMPT = "human hand"
+DEMO_MODE_CONTROLLER_LABEL = DEFAULT_CONTROLLER_LABEL
 DEFAULT_SAM31_INIT_QUICK_FAIL_EMPTY_MASKS = True
 DEFAULT_SAM31_INIT_MIN_MASK_PIXELS = 1
 EXPERIMENT_MODE_CONTROLLER_OBJECT = "controller-object-exp"
 EXPERIMENT_MODE_DEMO = "demo-mode"
 EXPERIMENT_MODES = (EXPERIMENT_MODE_CONTROLLER_OBJECT, EXPERIMENT_MODE_DEMO)
 DEFAULT_EXPERIMENT_MODE = EXPERIMENT_MODE_DEMO
-DEMO_MODE_CONTROLLER_LABEL = DEFAULT_CONTROLLER_LABEL
 CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL = "towel"
 DEFAULT_MODEL_ID = "yonigozlan/EdgeTAM-hf"
 EDGETAM_BACKEND_HF_SEQ_SESSION = "hf_seq_session"
@@ -1630,6 +1631,14 @@ def controller_prompt_for_experiment_mode(experiment_mode: str) -> str:
     if experiment_mode == EXPERIMENT_MODE_CONTROLLER_OBJECT:
         return CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL
     if experiment_mode == EXPERIMENT_MODE_DEMO:
+        return DEMO_MODE_CONTROLLER_PROMPT
+    raise ValueError(f"Unsupported experiment mode: {experiment_mode}")
+
+
+def controller_label_for_experiment_mode(experiment_mode: str) -> str:
+    if experiment_mode == EXPERIMENT_MODE_CONTROLLER_OBJECT:
+        return CONTROLLER_OBJECT_EXP_CONTROLLER_LABEL
+    if experiment_mode == EXPERIMENT_MODE_DEMO:
         return DEMO_MODE_CONTROLLER_LABEL
     raise ValueError(f"Unsupported experiment mode: {experiment_mode}")
 
@@ -1648,7 +1657,7 @@ def controller_prompt_matches_experiment_mode(args: argparse.Namespace) -> bool:
 
 def is_controller_label(label: str) -> bool:
     normalized = _normalize_label(label)
-    return normalized in {"controller", "hand", "hands", "left hand", "right hand", "hand a", "hand b"}
+    return normalized in {"controller", "hand", "human hand", "hands", "left hand", "right hand", "hand a", "hand b"}
 
 
 def resolve_postprocess_mode(
@@ -3120,6 +3129,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     }
     experiment_mode = resolved_experiment_mode(args)
     expected_controller_prompt = controller_prompt_for_experiment_mode(experiment_mode)
+    expected_controller_label = controller_label_for_experiment_mode(experiment_mode)
     stage_scheduler_mode = str(getattr(args, "stage_scheduler_mode", STAGE_SCHEDULER_MODE_MASK_GATED))
     full_batched_validation = getattr(args, "_edgetam_batched_report_validation", {}) or {}
     batchtam_trt_validation = getattr(args, "_batchtam_trt_report_validation", {}) or {}
@@ -3143,7 +3153,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "fps": int(args.fps),
         "track_mode": args.track_mode,
         "experiment_mode": experiment_mode,
-        "controller_semantic": expected_controller_prompt,
+        "controller_semantic": expected_controller_label,
         "object_prompt": str(getattr(args, "object_prompt", "")),
         "controller_prompt": str(getattr(args, "controller_prompt", "")),
         "controller_prompt_expected": expected_controller_prompt,
@@ -9134,7 +9144,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--experiment-mode",
         choices=EXPERIMENT_MODES,
         default=DEFAULT_EXPERIMENT_MODE,
-        help="Controller semantic mode: demo-mode uses hand; controller-object-exp uses towel.",
+        help="Controller semantic mode: demo-mode uses the human hand prompt; controller-object-exp uses towel.",
     )
     parser.add_argument("--object-prompt", default="stuffed animal")
     parser.add_argument("--controller-prompt", default=DEFAULT_CONTROLLER_LABEL)

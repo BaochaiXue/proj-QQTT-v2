@@ -6,6 +6,7 @@ import numpy as np
 
 from qqtt.tracking.backends.cotracker3_adapter import CoTracker3Adapter
 from qqtt.tracking.backends.cotracker3_online import CoTracker3OnlineBackend
+from qqtt.tracking.backends.litetracker_adapter import LiteTrackerAdapter
 from qqtt.tracking.backends.point_tracker_adapter import (
     PointTrackerAdapterConfig,
     build_point_tracker_adapter_factory,
@@ -69,6 +70,41 @@ class _FakeCoTrackerBackend:
         }
 
 
+class _FakeLiteTrackerModel:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.reset_calls = 0
+        self.last_frame_shape: tuple[int, ...] | None = None
+        self.last_queries = None
+
+    def init_video_online_processing(self) -> None:
+        self.reset_calls += 1
+
+    def __call__(self, frame, queries):
+        import torch
+
+        self.calls += 1
+        self.last_frame_shape = tuple(frame.shape)
+        self.last_queries = queries.detach().cpu()
+        batch_size, query_count, _ = queries.shape
+        batch_offsets = torch.arange(batch_size, device=queries.device, dtype=queries.dtype).reshape(batch_size, 1, 1)
+        coords_xy = queries[..., 1:3] + batch_offsets
+        visibility = torch.ones((batch_size, 1, query_count), device=queries.device, dtype=queries.dtype)
+        confidence = torch.full((batch_size, 1, query_count), 0.75, device=queries.device, dtype=queries.dtype)
+        return coords_xy[:, None], visibility, confidence
+
+
+class _FakeLiteTrackerWrapper:
+    def __init__(self) -> None:
+        import torch
+
+        self.device = "cpu"
+        self.dtype = torch.float32
+        self.model = _FakeLiteTrackerModel()
+        self.queries = None
+        self.is_first_frame = True
+
+
 class PointTrackerAdaptersTest(unittest.TestCase):
     def test_backend_normalization_and_specs(self) -> None:
         self.assertEqual(normalize_tracker_backend("co-tracker3"), "cotracker3_online")
@@ -76,8 +112,8 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(normalize_tracker_backend("lite-tracker"), "litetracker")
         self.assertTrue(tracker_backend_spec("cotracker3_online").supports_batch_views)
         self.assertTrue(tracker_backend_spec("trackon2").supports_batch_views)
-        self.assertFalse(tracker_backend_spec("litetracker").supports_batch_views)
-        self.assertEqual(tracker_backend_spec("litetracker").batch_support_status, "serial_only")
+        self.assertTrue(tracker_backend_spec("litetracker").supports_batch_views)
+        self.assertEqual(tracker_backend_spec("litetracker").batch_support_status, "experimental_batch_views")
 
     def test_execution_mode_and_policy_normalization(self) -> None:
         self.assertEqual(normalize_tracker_execution_mode("batch"), "batch-views")
@@ -225,6 +261,44 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertTrue(CoTracker3OnlineBackend._is_cuda_oom_error(RuntimeError("CUDA out of memory.")))
         self.assertTrue(CoTracker3OnlineBackend._is_cuda_oom_error(RuntimeError("CUBLAS out of memory.")))
         self.assertFalse(CoTracker3OnlineBackend._is_cuda_oom_error(RuntimeError("shape mismatch")))
+
+    def test_litetracker_batch_views_preserve_camera_order_and_xy_yx_round_trip(self) -> None:
+        fake = _FakeLiteTrackerWrapper()
+        adapter = LiteTrackerAdapter()
+        adapter._tracker = fake
+        query_points = {
+            0: np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32),
+            1: np.array([[11.0, 21.0], [31.0, 41.0]], dtype=np.float32),
+            2: np.array([[12.0, 22.0], [32.0, 42.0]], dtype=np.float32),
+        }
+        adapter.initialize_batch(query_points)
+        frames = {idx: np.zeros((4, 5, 3), dtype=np.uint8) for idx in query_points}
+
+        results = adapter.update_batch(frames)
+
+        self.assertEqual(tuple(results), (0, 1, 2))
+        self.assertEqual(fake.model.reset_calls, 1)
+        self.assertEqual(fake.model.calls, 2)
+        self.assertEqual(fake.model.last_frame_shape, (3, 3, 4, 5))
+        self.assertEqual(tuple(fake.model.last_queries.shape), (3, 2, 3))
+        np.testing.assert_allclose(fake.model.last_queries[1, 0].numpy(), np.array([0.0, 21.0, 11.0], dtype=np.float32))
+        np.testing.assert_allclose(results[0].tracks_yx[0], query_points[0])
+        np.testing.assert_allclose(results[1].tracks_yx[0], query_points[1] + 1.0)
+        np.testing.assert_allclose(results[2].tracks_yx[0], query_points[2] + 2.0)
+        self.assertEqual(results[2].stats["update_mode"], "batch")
+        self.assertEqual(results[2].stats["lite_batch_size"], 3)
+        self.assertEqual(results[2].stats["lite_effective_query_count"], 2)
+
+    def test_litetracker_batch_views_rejects_unequal_query_count(self) -> None:
+        adapter = LiteTrackerAdapter()
+        adapter._tracker = _FakeLiteTrackerWrapper()
+        with self.assertRaisesRegex(ValueError, "requires equal query counts"):
+            adapter.initialize_batch(
+                {
+                    0: np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32),
+                    1: np.array([[11.0, 21.0]], dtype=np.float32),
+                }
+            )
 
 
 if __name__ == "__main__":

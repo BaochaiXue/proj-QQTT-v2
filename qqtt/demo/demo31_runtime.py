@@ -52,6 +52,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (
     TRACKER_BACKENDS,
     TRACKER_BATCH_QUERY_COUNT_POLICIES,
     TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
+    TRACKER_BATCH_QUERY_COUNT_POLICY_MIN_COMMON,
     TRACKER_EXECUTION_MODE_AUTO,
     TRACKER_EXECUTION_MODE_BATCH_VIEWS,
     TRACKER_EXECUTION_MODE_SERIAL,
@@ -1155,9 +1156,11 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         if "--cotracker-backend" not in explicit:
             args.cotracker_backend = TRACKER_BACKEND_LITETRACKER
         if "--tracking-backend-execution-mode" not in explicit:
-            args.tracking_backend_execution_mode = TRACKING_BACKEND_EXECUTION_MODE_SERIAL
+            args.tracking_backend_execution_mode = TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS
         if "--cotracker-update-mode" not in explicit:
-            args.cotracker_update_mode = "serial"
+            args.cotracker_update_mode = "batch"
+        if "--tracker-batch-query-count-policy" not in explicit:
+            args.tracker_batch_query_count_policy = TRACKER_BATCH_QUERY_COUNT_POLICY_MIN_COMMON
         if "--cotracker-prewarm-backends" not in explicit and "--no-cotracker-prewarm-backends" not in explicit:
             args.cotracker_prewarm_backends = False
         if "--cotracker-input-fps" not in explicit:
@@ -1218,8 +1221,6 @@ def validate_args(
     normalize_tracker_batch_query_count_policy(args.tracker_batch_query_count_policy)
     if demo32 and tracker_backend != TRACKER_BACKEND_LITETRACKER:
         raise ValueError("Demo 3.2 requires --cotracker-backend litetracker.")
-    if demo32 and effective_legacy_update_mode(effective_execution_mode) != "serial":
-        raise ValueError("Demo 3.2 requires LiteTracker serial execution.")
     if str(args.cotracker_query_mode) != demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError(f"{demo_label} currently supports only --cotracker-query-mode phystwin_dense.")
     demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
@@ -1368,11 +1369,18 @@ def build_contract(
     )
     demo32 = is_demo32_preset(args)
     depth_source = demo3_runtime.DEPTH_SOURCE_FFS if demo32 else demo3_runtime.DEPTH_SOURCE_REALSENSE
+    demo32_tracker_stage = (
+        "litetracker_batch3_auto_fallback"
+        if demo32 and execution_mode == TRACKING_BACKEND_EXECUTION_MODE_AUTO
+        else "litetracker_batch3"
+        if demo32 and legacy_update_mode == "batch"
+        else "litetracker_serial"
+    )
     pipeline_order = (
         "capture",
         "ffs_batch3_opt5_depth",
         "edgetam",
-        "litetracker_serial",
+        demo32_tracker_stage,
         "render_and_diagnostics",
     ) if demo32 else (
         "capture",

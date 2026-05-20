@@ -69,7 +69,7 @@ class Demo3RuntimeContractTest(unittest.TestCase):
 
         self.assertEqual(contract["semantic_mode"], "demo")
         self.assertEqual(contract["shared_experiment_mode"], "demo-mode")
-        self.assertEqual(contract["controller_prompt"], "hand")
+        self.assertEqual(contract["controller_prompt"], "human hand")
         self.assertEqual(contract["tracking_controller_label"], "hand")
 
     def test_track_mode_is_not_public_cli(self) -> None:

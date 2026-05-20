@@ -485,7 +485,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(validation["active_serials"], ["s0", "s1", "s2"])
         self.assertEqual(validation["calibration_transform_count"], 3)
 
-    def test_litetracker_auto_contract_marks_serial_only_batch_support(self) -> None:
+    def test_litetracker_auto_contract_marks_experimental_batch_support(self) -> None:
         args = self._parse(
             [
                 "--dry-run",
@@ -505,11 +505,11 @@ class Demo31DualGpuContractTest(unittest.TestCase):
 
         self.assertEqual(contract["tracker_backend"], "litetracker")
         self.assertEqual(contract["tracker_backend_family"], "litetracker")
-        self.assertFalse(contract["tracking_backend_batch_supported"])
-        self.assertEqual(contract["tracking_backend_batch_support_status"], "serial_only")
-        self.assertEqual(contract["tracking_backend_batch_dimension"], "none")
+        self.assertTrue(contract["tracking_backend_batch_supported"])
+        self.assertEqual(contract["tracking_backend_batch_support_status"], "experimental_batch_views")
+        self.assertEqual(contract["tracking_backend_batch_dimension"], "camera")
 
-    def test_demo32_defaults_to_ffs_batch3_litetracker_serial(self) -> None:
+    def test_demo32_defaults_to_ffs_batch3_litetracker_batch3(self) -> None:
         args = self._parse(
             ["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
             default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
@@ -525,7 +525,13 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(contract["async_depth_pipeline"])
         self.assertEqual(
             contract["pipeline_order"],
-            ["capture", "ffs_batch3_opt5_depth", "edgetam", "litetracker_serial", "render_and_diagnostics"],
+            [
+                "capture",
+                "ffs_batch3_opt5_depth",
+                "edgetam",
+                "litetracker_batch3",
+                "render_and_diagnostics",
+            ],
         )
         self.assertEqual(contract["shared_runtime_preset"], "demo2.3-dual4090-maxfps")
         self.assertEqual(contract["shared_runtime_gpu_pipeline_mode"], "dual-gpu-split")
@@ -537,8 +543,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(contract["ffs_edgetam_same_gpu"])
         self.assertEqual(contract["cotracker_backend"], "litetracker")
         self.assertEqual(contract["tracker_backend"], "litetracker")
-        self.assertEqual(contract["tracking_backend_execution_mode"], "serial")
-        self.assertEqual(contract["cotracker_update_mode"], "serial")
+        self.assertEqual(contract["tracking_backend_execution_mode"], "batch-views")
+        self.assertEqual(contract["cotracker_update_mode"], "batch")
         self.assertFalse(contract["cotracker_prewarm_backends"])
         self.assertFalse(contract["tracker_prewarm_backends"])
         self.assertEqual(contract["tracker_prewarm_mode"], "lazy_query_init")
@@ -575,8 +581,12 @@ class Demo31DualGpuContractTest(unittest.TestCase):
             "all_visible_depth_valid_tracks_no_surface_or_bbox_gate",
         )
         self.assertEqual(contract["tracker_env_name"], "demo_3_1_max")
-        self.assertEqual(contract["tracking_backend_batch_dimension"], "none")
-        self.assertFalse(contract["tracking_backend_batch_supported"])
+        self.assertEqual(contract["tracking_backend_batch_dimension"], "camera")
+        self.assertTrue(contract["tracking_backend_batch_supported"])
+        self.assertEqual(contract["tracking_backend_batch_size"], 3)
+        self.assertEqual(contract["tracking_backend_batch_support_status"], "experimental_batch_views")
+        self.assertFalse(contract["tracking_backend_batch_auto_selected"])
+        self.assertEqual(contract["tracker_batch_query_count_policy"], "min-common")
         self.assertNotIn("ffs", contract["hot_path_forbids"])
         self.assertNotIn("ffs_tensorrt", contract["hot_path_forbids"])
         self.assertEqual(contract["ffs_contract"]["builderOptimizationLevel"], 5)
@@ -586,8 +596,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(contract["profile_summary_fields"]["uses_ffs"])
         self.assertEqual(contract["profile_summary_fields"]["depth_source"], "ffs")
         self.assertEqual(config.cotracker_backend, "litetracker")
-        self.assertEqual(config.backend_execution_mode, "serial")
-        self.assertEqual(config.update_mode, "serial")
+        self.assertEqual(config.backend_execution_mode, "batch-views")
+        self.assertEqual(config.update_mode, "batch")
+        self.assertEqual(config.tracker_batch_query_count_policy, "min-common")
         self.assertFalse(config.prewarm_backends)
         self.assertEqual(config.tracker_prewarm_mode, "lazy_query_init")
         self.assertTrue(config.tracker_query_dependent_init)
@@ -603,6 +614,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
 
         self.assertEqual(args.controller_mask_erode_px, 1)
         self.assertEqual(contract["semantic_mode"], "demo")
+        self.assertEqual(contract["controller_prompt"], "human hand")
         self.assertEqual(contract["tracking_controller_label"], "hand")
         self.assertEqual(contract["controller_mask_erode_px"], 1)
 
@@ -865,8 +877,10 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("overlay_bbox_filter_enabled = false", output)
         self.assertIn("tracking_overlay_lift_method = all_tracks_depth_lift", output)
         self.assertIn("tracking_control_point_count_requested = 0", output)
-        self.assertIn("tracking_backend_execution_mode = serial", output)
-        self.assertIn("cotracker_update_mode = serial", output)
+        self.assertIn("tracking_backend_execution_mode = batch-views", output)
+        self.assertIn("tracking_backend_batch_size = 3", output)
+        self.assertIn("tracker_batch_query_count_policy = min-common", output)
+        self.assertIn("cotracker_update_mode = batch", output)
         self.assertIn("output_root = result/demo32_ffs_litetracker", output)
         self.assertIn("'trt_batch_size': 3", output)
 
@@ -888,7 +902,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
 
         self.assertEqual(contract["semantic_mode"], "demo")
         self.assertEqual(contract["shared_experiment_mode"], "demo-mode")
-        self.assertEqual(contract["controller_prompt"], "hand")
+        self.assertEqual(contract["controller_prompt"], "human hand")
+        self.assertEqual(contract["tracking_controller_label"], "hand")
         self.assertEqual(contract["main_cuda_visible_devices"], "0")
         self.assertEqual(contract["cotracker_cuda_visible_devices"], "1")
 

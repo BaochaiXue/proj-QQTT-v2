@@ -82,7 +82,8 @@ DEFAULT_FPS = 30
 DEFAULT_CAMERA_IDS = (0, 1, 2)
 DEFAULT_OBJECT_PROMPT = "stuffed animal"
 EXP_CONTROLLER_PROMPT = "towel"
-DEMO_CONTROLLER_PROMPT = "hand"
+DEMO_CONTROLLER_PROMPT = "human hand"
+DEMO_CONTROLLER_LABEL = "hand"
 DEFAULT_MODE = MODE_EXP
 DEFAULT_COTRACKER_QUERY_COUNT_REQUEST = TRACKING_QUERY_COUNT_AUTO
 DEFAULT_COTRACKER_UPDATE_MODE = COTRACKER_UPDATE_MODE_BATCH
@@ -154,7 +155,7 @@ def resolve_demo3_mode(mode: str) -> dict[str, str]:
             "semantic_mode": MODE_DEMO,
             "experiment_mode": SHARED_EXPERIMENT_MODE_DEMO,
             "controller_prompt": DEMO_CONTROLLER_PROMPT,
-            "controller_label": DEMO_CONTROLLER_PROMPT,
+            "controller_label": DEMO_CONTROLLER_LABEL,
         }
     raise ValueError(f"Unsupported Demo 3 mode: {mode}")
 

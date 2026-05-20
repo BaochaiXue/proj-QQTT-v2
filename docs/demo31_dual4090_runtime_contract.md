@@ -18,7 +18,8 @@ backprojection convention used by the fused PCD path.
 Demo 3.1 inherits Demo 3.0's online-only object/controller union tracking
 semantics. The only public semantic switch is `--mode exp|demo`; both modes
 track `object_mask | controller_mask`. `exp` uses controller `towel`, while
-`demo` uses controller `hand`. CoTracker query sampling uses
+`demo` uses controller prompt `human hand` for SAM3.1 while the controller
+semantic remains a hand. CoTracker query sampling uses
 `phystwin_dense`, but Demo 3.1 defaults to `--cotracker-query-count 4096`
 per camera for the batch=3 RTX 4090 path. A full `auto` / 5000-per-view
 three-camera batch exceeds the 24GB 4090 memory budget in live profiling. The
@@ -31,7 +32,7 @@ torch `randperm(seed + camera_idx)` with seed 42. Use
 needed and the tracker backend/memory budget can support it. The optional
 `--controller-mask-erode-px` parameter shrinks the controller mask before the
 tracking union and anchor/trackable-mask path; its implicit default is `1` in
-`--mode demo` (hand controller) and `0` otherwise. Controller body points are
+`--mode demo` (human-hand controller prompt) and `0` otherwise. Controller body points are
 render-voxel downsampled before Open3D display with
 `--controller-render-voxel-m`; this render-only reduction does not touch
 LiteTracker input or the red tracking/control markers. Overlay display selection is

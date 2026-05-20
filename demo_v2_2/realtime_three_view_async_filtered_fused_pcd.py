@@ -64,7 +64,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--experiment-mode",
         choices=runtime.EXPERIMENT_MODES,
         default=None,
-        help="Semantic mode: controller-object-exp uses towel; demo-mode uses hand.",
+        help="Semantic mode: controller-object-exp uses towel; demo-mode uses the human hand prompt.",
     )
     tracking.add_argument("--object-prompt", default=None, help="SAM3.1 first-frame object prompt.")
     tracking.add_argument("--controller-prompt", default=None, help="SAM3.1 first-frame controller prompt.")

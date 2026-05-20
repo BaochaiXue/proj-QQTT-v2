@@ -14,7 +14,8 @@ and final controller point selection are out of scope for Demo 3.
 Demo 3 tracks the object/controller union. It does not expose object-only or
 controller-only live tracking. The only public semantic switch is
 `--mode exp|demo`: `exp` uses controller `towel` for the current lab setup and
-`demo` uses controller `hand` for the formal live demo.
+`demo` uses the SAM3.1 controller prompt `human hand` for the formal live demo
+while the controller semantic remains a hand.
 
 The rendered overlay is label-filtered after dense tracking. CoTracker samples
 and tracks the raw object/controller union, then each query is labeled by its
@@ -129,7 +130,7 @@ The second fails because Demo 3 does not support FFS.
 - shared runtime label override: `Demo 3`
 - `--mode exp`
 - `--object-prompt "stuffed animal"`
-- controller prompt resolved by mode: `towel` for `exp`, `hand` for `demo`
+- controller prompt resolved by mode: `towel` for `exp`, `human hand` for `demo`
 - `--cotracker-backend cotracker3_online`
 - `--cotracker-query-mode phystwin_dense`
 - `--cotracker-query-count auto`

@@ -7,8 +7,13 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
 - depth is FFS TensorRT `builderOptimizationLevel=5`, static batch `3`
 - FFS TensorRT depth and SAM3.1/HF EdgeTAM masks share GPU0
 - LiteTracker remains isolated in the child tracker process on GPU1
-- the intended order is capture -> FFS depth -> EdgeTAM masks -> LiteTracker serial -> render/diagnostics
-- the tracker backend defaults to `litetracker` with serial execution
+- the intended order is capture -> FFS depth -> EdgeTAM masks -> LiteTracker
+  batch=3 camera views -> render/diagnostics
+- the tracker backend defaults to `litetracker` with experimental batch-view
+  execution: `--tracking-backend-execution-mode batch-views` and
+  `--cotracker-update-mode batch`
+- Demo 3.2 uses `--tracker-batch-query-count-policy min-common` by default so
+  all three camera views have the same query count for the batch tensor
 - LiteTracker uses lazy query initialization by default: the child process is
   ready to receive inputs immediately, and query-dependent tracker state is
   initialized from the first valid RGB + mask packet
@@ -21,9 +26,11 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
   `controller_trackable_mask`
 - controller trackable pixels are capped after standard filtering, default
   `--controller-trackable-max-points-per-camera 4999`
+- `--mode demo` uses the SAM3.1 controller prompt `human hand` while the
+  controller semantic remains a hand
 - `--controller-mask-erode-px` shrinks the controller mask before building the
   tracking union, trackable masks, and anchor inputs; the implicit default is
-  `1` in `--mode demo` (hand controller) and `0` in `--mode exp`
+  `1` in `--mode demo` (human-hand controller prompt) and `0` in `--mode exp`
 - controller body points are voxel-downsampled before Open3D render with
   `--controller-render-voxel-m 0.003`; this is render-only and does not affect
   LiteTracker input or red tracking/control markers
