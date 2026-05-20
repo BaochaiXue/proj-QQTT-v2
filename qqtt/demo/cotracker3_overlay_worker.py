@@ -83,8 +83,8 @@ class TrackingOverlayPacket:
     model_ms: float = 0.0
     e2e_ms: float = 0.0
     stale: bool = False
-    cotracker_update_mode: str = COTRACKER_UPDATE_MODE_SERIAL
-    cotracker_batch_size: int = 1
+    cotracker_update_mode: str = COTRACKER_UPDATE_MODE_BATCH
+    cotracker_batch_size: int = 3
     cotracker_batch_update_count: int = 0
     cotracker_serial_group_update_count: int = 0
     cotracker_serial_camera_update_count: int = 0

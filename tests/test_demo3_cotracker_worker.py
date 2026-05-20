@@ -7,6 +7,7 @@ from unittest import mock
 import numpy as np
 
 from qqtt.demo.cotracker3_overlay_worker import (
+    COTRACKER_UPDATE_MODE_AUTO,
     COTRACKER_UPDATE_MODE_BATCH,
     CoTracker3OverlayThread,
     CoTracker3OverlayWorker,
@@ -269,6 +270,7 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
             backend_factory=lambda camera_idx: backends[int(camera_idx)],
             query_count=4,
             overlay_max_points_per_camera=2,
+            update_mode=COTRACKER_UPDATE_MODE_AUTO,
         )
         with mock.patch("qqtt.demo.cotracker3_overlay_worker.sample_phystwin_dense", return_value=sampled):
             overlay = worker.process_group(self._three_camera_packet(8))

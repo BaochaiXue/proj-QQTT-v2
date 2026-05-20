@@ -51,9 +51,9 @@ class Demo3RuntimeContractTest(unittest.TestCase):
         self.assertTrue(contract["phystwin_dense_compatible"])
         self.assertEqual(contract["cotracker_backend"], "cotracker3_online")
         self.assertTrue(contract["cotracker_async"])
-        self.assertEqual(contract["cotracker_update_mode"], "auto")
+        self.assertEqual(contract["cotracker_update_mode"], "batch")
         self.assertEqual(contract["cotracker_batch_size_target"], 3)
-        self.assertTrue(contract["cotracker_batch_fallback_enabled"])
+        self.assertFalse(contract["cotracker_batch_fallback_enabled"])
         self.assertTrue(contract["render_latest_wins"])
         self.assertFalse(contract["debug_fusion"]["color_by_camera"])
         self.assertFalse(contract["gpu_sampling"]["enabled"])
@@ -122,7 +122,7 @@ class Demo3RuntimeContractTest(unittest.TestCase):
         self.assertIn("phystwin_dense_compatible = true", output)
         self.assertIn("cotracker_backend = cotracker3_online", output)
         self.assertIn("cotracker_async = true", output)
-        self.assertIn("cotracker_update_mode = auto", output)
+        self.assertIn("cotracker_update_mode = batch", output)
         self.assertIn("render_latest_wins = true", output)
 
     def test_mask_only_preset_disables_cotracker(self) -> None:

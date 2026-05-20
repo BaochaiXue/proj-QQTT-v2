@@ -74,9 +74,9 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         self.assertIn('"tracking_query_count_requested": "auto"', output)
         self.assertIn('"point_tracker_process": true', output)
         self.assertIn('"tracker_backend": "cotracker3_online"', output)
-        self.assertIn('"backend_execution_mode": "auto"', output)
+        self.assertIn('"backend_execution_mode": "batch-views"', output)
         self.assertIn('"overlay_display_scope": "controller"', output)
-        self.assertIn('"update_mode": "auto"', output)
+        self.assertIn('"update_mode": "batch"', output)
         if old_value is None:
             os.environ.pop("CUDA_VISIBLE_DEVICES", None)
         else:

@@ -19,6 +19,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (
     TRACKER_BACKEND_COTRACKER3,
     TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
     TRACKER_EXECUTION_MODE_AUTO,
+    TRACKER_EXECUTION_MODE_BATCH_VIEWS,
     PointTrackerAdapterConfig,
     build_point_tracker_adapter_factory,
     effective_legacy_update_mode,
@@ -32,6 +33,7 @@ PROCESS_MODE_SUBPROCESS = "subprocess"
 PROCESS_MODE_SPAWN = "spawn"
 PROCESS_MODES = (PROCESS_MODE_SUBPROCESS, PROCESS_MODE_SPAWN)
 COTRACKER_UPDATE_MODE_AUTO = "auto"
+COTRACKER_UPDATE_MODE_BATCH = "batch"
 
 
 @dataclass(frozen=True)
@@ -39,7 +41,7 @@ class CoTrackerProcessConfig:
     camera_ids: tuple[int, ...] = (0, 1, 2)
     cotracker_gpu: str = "1"
     cotracker_backend: str = TRACKER_BACKEND_COTRACKER3
-    backend_execution_mode: str = TRACKER_EXECUTION_MODE_AUTO
+    backend_execution_mode: str = TRACKER_EXECUTION_MODE_BATCH_VIEWS
     query_mode: str = "phystwin_dense"
     query_count_request: str = "auto"
     seed: int = 42
@@ -52,7 +54,7 @@ class CoTrackerProcessConfig:
     process_mode: str = PROCESS_MODE_SUBPROCESS
     device: str = "cuda"
     prewarm_backends: bool = True
-    update_mode: str = COTRACKER_UPDATE_MODE_AUTO
+    update_mode: str = COTRACKER_UPDATE_MODE_BATCH
     trackon2_checkpoint: str | None = None
     trackon2_config: str | None = None
     trackon2_repo_dir: str | None = None
@@ -99,7 +101,7 @@ class CoTrackerProcessConfig:
     def from_json_dict(cls, payload: dict[str, Any]) -> "CoTrackerProcessConfig":
         backend = normalize_tracker_backend(payload.get("tracker_backend", payload.get("cotracker_backend", TRACKER_BACKEND_COTRACKER3)))
         execution_mode = normalize_tracker_execution_mode(
-            payload.get("backend_execution_mode", payload.get("tracking_backend_execution_mode", payload.get("update_mode", TRACKER_EXECUTION_MODE_AUTO)))
+            payload.get("backend_execution_mode", payload.get("tracking_backend_execution_mode", payload.get("update_mode", TRACKER_EXECUTION_MODE_BATCH_VIEWS)))
         )
         legacy_update = str(payload.get("update_mode", "")).strip().lower().replace("_", "-")
         if execution_mode == TRACKER_EXECUTION_MODE_AUTO and legacy_update in {"batch", "serial"}:

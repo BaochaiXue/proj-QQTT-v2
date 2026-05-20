@@ -99,6 +99,8 @@ cotracker_seed = 42
 phystwin_dense_compatible = true
 cotracker_backend = cotracker3_online
 cotracker_async = true
+cotracker_update_mode = batch
+cotracker_batch_fallback_enabled = false
 render_latest_wins = true
 render_waited_for_cotracker = false
 ```
@@ -129,6 +131,7 @@ The second fails because Demo 3 does not support FFS.
 - `--cotracker-query-mode phystwin_dense`
 - `--cotracker-query-count auto`
 - `--cotracker-seed 42`
+- `--cotracker-update-mode batch`
 - `--overlay-max-points-per-camera 30`
 - `--overlay-display-scope controller`
 - `--overlay-trail-len 16`

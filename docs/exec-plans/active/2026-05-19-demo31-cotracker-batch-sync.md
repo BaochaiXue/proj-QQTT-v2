@@ -19,6 +19,9 @@ Fix Demo 3.1 CoTracker throughput and sync observability issues:
 - Add profile/snapshot fields that distinguish strict same-group data from
   latest-reuse mask and latest overlay lifting.
 - Add tests for batch dispatch, serial fallback, and freshness fields.
+- Make batch-view execution the default for Demo 3.0 / Demo 3.1 so three
+  RealSense views are sent through one backend batch call instead of silently
+  publishing serial CoTracker results.
 
 ## Validation
 
@@ -29,6 +32,9 @@ Fix Demo 3.1 CoTracker throughput and sync observability issues:
 ## Results
 
 - Added batch-first CoTracker dispatch with serial fallback and profile fields.
+- Switched the public default from auto/serial fallback to explicit
+  `batch` / `batch-views`; serial and auto remain available as explicit
+  debugging overrides.
 - Added latest-reuse mask/source group freshness reporting for Demo 3.1.
 - Passed touched-module `py_compile`.
 - Passed focused conda unittest modules for Demo 3 / Demo 3.1 tracking paths.

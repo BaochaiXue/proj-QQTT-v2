@@ -67,7 +67,8 @@ Useful rendered/debug profiling flags:
 
 ```bash
 --cotracker-backend cotracker3_online \
---tracking-backend-execution-mode auto \
+--tracking-backend-execution-mode batch-views \
+--cotracker-update-mode batch \
 --tracker-batch-query-count-policy fixed \
 --gpu-sampling \
 --gpu-sampling-device-indexes 0,1 \

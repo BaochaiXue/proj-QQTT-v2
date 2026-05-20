@@ -72,6 +72,7 @@ TRACKING_BACKEND_EXECUTION_MODES = TRACKER_EXECUTION_MODES
 TRACKING_BACKEND_EXECUTION_MODE_AUTO = TRACKER_EXECUTION_MODE_AUTO
 TRACKING_BACKEND_EXECUTION_MODE_SERIAL = TRACKER_EXECUTION_MODE_SERIAL
 TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS = TRACKER_EXECUTION_MODE_BATCH_VIEWS
+DEFAULT_TRACKING_BACKEND_EXECUTION_MODE = TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS
 
 ConnectedSerialsProvider = Callable[[], Sequence[str]]
 CudaDeviceCountProvider = Callable[[], int]
@@ -250,7 +251,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tracking-backend-execution-mode",
         choices=TRACKING_BACKEND_EXECUTION_MODES,
-        default=TRACKING_BACKEND_EXECUTION_MODE_AUTO,
+        default=DEFAULT_TRACKING_BACKEND_EXECUTION_MODE,
         help="Run tracker views serially, as a camera-view batch, or auto-select the best supported mode.",
     )
     parser.add_argument(
@@ -396,7 +397,9 @@ def effective_tracking_backend_execution_mode(args: argparse.Namespace) -> str:
     mode = normalize_tracker_execution_mode(
         getattr(args, "tracking_backend_execution_mode", TRACKING_BACKEND_EXECUTION_MODE_AUTO)
     )
-    legacy_update_mode = str(getattr(args, "cotracker_update_mode", "auto")).strip().lower().replace("_", "-")
+    legacy_update_mode = str(
+        getattr(args, "cotracker_update_mode", demo3_runtime.DEFAULT_COTRACKER_UPDATE_MODE)
+    ).strip().lower().replace("_", "-")
     if mode == TRACKING_BACKEND_EXECUTION_MODE_AUTO and legacy_update_mode in {"batch", "serial"}:
         return TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS if legacy_update_mode == "batch" else TRACKING_BACKEND_EXECUTION_MODE_SERIAL
     return mode
@@ -1550,7 +1553,7 @@ class Demo31Runtime:
                         warmup_profile.get("per_camera", {}) if isinstance(warmup_profile, dict) else {}
                     ),
                     "cotracker_update_mode": str(
-                        tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "auto"))
+                        tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "batch"))
                     ),
                     "tracker_backend": str(
                         tracking_stats.get("tracker_backend", self.contract.get("tracker_backend", TRACKER_BACKEND_COTRACKER3))
@@ -1559,7 +1562,7 @@ class Demo31Runtime:
                     "tracking_backend_execution_mode": str(
                         tracking_stats.get(
                             "tracking_backend_execution_mode",
-                            self.contract.get("tracking_backend_execution_mode", TRACKING_BACKEND_EXECUTION_MODE_AUTO),
+                            self.contract.get("tracking_backend_execution_mode", DEFAULT_TRACKING_BACKEND_EXECUTION_MODE),
                         )
                     ),
                     "tracker_batch_query_count_policy": str(
@@ -1569,7 +1572,7 @@ class Demo31Runtime:
                         )
                     ),
                     "tracking_backend_batch_enabled": bool(
-                        str(tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "auto")))
+                        str(tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "batch")))
                         == "batch"
                     ),
                     "tracking_backend_batch_size": int(tracking_stats.get("cotracker_batch_size", 0) or 0),
@@ -1584,7 +1587,7 @@ class Demo31Runtime:
                         tracking_stats.get("cotracker_batch_disabled_reason"),
                     ),
                     "cotracker_update_mode_effective": str(
-                        tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "auto"))
+                        tracking_stats.get("cotracker_update_mode", self.contract.get("cotracker_update_mode", "batch"))
                     ),
                     "cotracker_batch_size": int(tracking_stats.get("cotracker_batch_size", 0) or 0),
                     "cotracker_batch_update_count": int(tracking_stats.get("cotracker_batch_update_count", 0) or 0),

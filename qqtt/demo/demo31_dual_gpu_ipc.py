@@ -71,8 +71,8 @@ class TrackingResultLitePacket:
     model_ms: float = 0.0
     e2e_ms: float = 0.0
     stale: bool = False
-    cotracker_update_mode: str = "serial"
-    cotracker_batch_size: int = 1
+    cotracker_update_mode: str = "batch"
+    cotracker_batch_size: int = 3
     cotracker_batch_update_count: int = 0
     cotracker_serial_group_update_count: int = 0
     cotracker_serial_camera_update_count: int = 0
@@ -95,7 +95,7 @@ class TrackingResultLitePacket:
     overlay_display_object_count_by_camera: dict[int, int] = field(default_factory=dict)
     overlay_display_controller_count_by_camera: dict[int, int] = field(default_factory=dict)
     tracker_backend: str = "cotracker3_online"
-    tracking_backend_execution_mode: str = "auto"
+    tracking_backend_execution_mode: str = "batch-views"
     tracker_batch_query_count_policy: str = "fixed"
     tracking_backend_effective_query_count: int = 0
     tracking_backend_query_count_truncated_by_camera: dict[int, int] = field(default_factory=dict)
@@ -136,7 +136,7 @@ class TrackingResultLitePacket:
             model_ms=float(packet.model_ms),
             e2e_ms=float(packet.e2e_ms),
             stale=bool(getattr(packet, "stale", False)),
-            cotracker_update_mode=str(getattr(packet, "cotracker_update_mode", "serial")),
+            cotracker_update_mode=str(getattr(packet, "cotracker_update_mode", "batch")),
             cotracker_batch_size=int(getattr(packet, "cotracker_batch_size", 1) or 1),
             cotracker_batch_update_count=int(getattr(packet, "cotracker_batch_update_count", 0) or 0),
             cotracker_serial_group_update_count=int(
@@ -201,7 +201,7 @@ class TrackingResultLitePacket:
                 for camera_idx, count in getattr(packet, "overlay_display_controller_count_by_camera", {}).items()
             },
             tracker_backend=str(getattr(packet, "tracker_backend", "cotracker3_online")),
-            tracking_backend_execution_mode=str(getattr(packet, "tracking_backend_execution_mode", "auto")),
+            tracking_backend_execution_mode=str(getattr(packet, "tracking_backend_execution_mode", "batch-views")),
             tracker_batch_query_count_policy=str(getattr(packet, "tracker_batch_query_count_policy", "fixed")),
             tracking_backend_effective_query_count=int(getattr(packet, "tracking_backend_effective_query_count", 0)),
             tracking_backend_query_count_truncated_by_camera={

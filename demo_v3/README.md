@@ -51,6 +51,7 @@ Live contract defaults:
 - `cotracker_seed = 42`
 - `edgetam_batch_vision_encoder = true`
 - `cotracker_backend = cotracker3_online`
+- `cotracker_update_mode = batch`
 - `overlay_max_points_per_camera = 30`
 - `overlay_display_scope = controller`
 - `overlay_display_classification = first_frame_mask_membership`
