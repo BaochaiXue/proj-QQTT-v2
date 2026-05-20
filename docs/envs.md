@@ -245,6 +245,12 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - expected repo checkout: `third_party/lite-tracker` or another documented
     external path
   - pass `--litetracker-repo-dir` and `--litetracker-weights`
+  - serial ONNX-CUDA profiling additionally needs `onnxruntime-gpu` and
+    `onnxscript`; current local validation used `onnxruntime-gpu==1.26.0`
+    with `CUDAExecutionProvider`
+  - PyTorch 2.11 exports LiteTracker ONNX submodules with effective opset 18
+    even when the requested CLI opset is 17; Demo 3.2 records both requested
+    and actual ONNX opsets
   - upstream workflow may prefer `uv sync`; keep that external repo workflow
     separate from the base QQTT conda env
 - Validation commands:

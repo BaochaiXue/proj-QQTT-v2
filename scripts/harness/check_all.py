@@ -94,6 +94,7 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_demo3_contract",
     "tests.test_demo3_cotracker_worker",
     "tests.test_demo3_overlay_lift",
+    "tests.test_litetracker_onnx_adapter_contract",
     "tests.test_phystwin_volume_filter",
     "tests.test_object_volume_filter_service",
     "tests.test_semantic_fusion_service",

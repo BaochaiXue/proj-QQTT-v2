@@ -47,6 +47,9 @@ from qqtt.demo.trackable_mask_filter import (
 )
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world
 from qqtt.tracking.backends.point_tracker_adapter import (
+    LITETRACKER_RUNTIME_ONNX_CUDA,
+    LITETRACKER_RUNTIME_PYTORCH,
+    LITETRACKER_RUNTIMES,
     TRACKER_BACKEND_COTRACKER3,
     TRACKER_BACKEND_LITETRACKER,
     TRACKER_BACKENDS,
@@ -58,6 +61,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (
     TRACKER_EXECUTION_MODE_SERIAL,
     TRACKER_EXECUTION_MODES,
     effective_legacy_update_mode,
+    normalize_litetracker_runtime,
     normalize_tracker_backend,
     normalize_tracker_batch_query_count_policy,
     normalize_tracker_execution_mode,
@@ -893,6 +897,21 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
     parser.add_argument("--litetracker-weights", default=None)
     parser.add_argument("--litetracker-repo-dir", default=None)
     parser.add_argument(
+        "--litetracker-runtime",
+        choices=LITETRACKER_RUNTIMES,
+        default=LITETRACKER_RUNTIME_PYTORCH,
+        help="LiteTracker runtime. onnx-cuda is serial-only for Demo 3.2 A/B profiling.",
+    )
+    parser.add_argument("--litetracker-onnx-dir", default=None)
+    parser.add_argument("--litetracker-export-onnx", action="store_true")
+    parser.add_argument("--litetracker-onnx-opset", type=int, default=17)
+    parser.add_argument(
+        "--litetracker-onnx-optimization-level",
+        type=int,
+        default=5,
+        help="Requested ONNX Runtime graph optimization level; 5 maps to ORT_ENABLE_ALL when available.",
+    )
+    parser.add_argument(
         "--cotracker-query-mode",
         choices=(demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,),
         default=demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,
@@ -1216,11 +1235,20 @@ def validate_args(
         raise ValueError("Demo 3.1 depth source must be realsense.")
     _normalize_mask_source(str(args.mask_source))
     tracker_backend = normalize_tracker_backend(args.cotracker_backend)
+    litetracker_runtime = normalize_litetracker_runtime(args.litetracker_runtime)
     normalize_tracker_execution_mode(args.tracking_backend_execution_mode)
     effective_execution_mode = effective_tracking_backend_execution_mode(args)
     normalize_tracker_batch_query_count_policy(args.tracker_batch_query_count_policy)
     if demo32 and tracker_backend != TRACKER_BACKEND_LITETRACKER:
         raise ValueError("Demo 3.2 requires --cotracker-backend litetracker.")
+    if litetracker_runtime == LITETRACKER_RUNTIME_ONNX_CUDA and tracker_backend != TRACKER_BACKEND_LITETRACKER:
+        raise ValueError("--litetracker-runtime onnx-cuda requires --cotracker-backend litetracker.")
+    if litetracker_runtime == LITETRACKER_RUNTIME_ONNX_CUDA and effective_execution_mode != TRACKING_BACKEND_EXECUTION_MODE_SERIAL:
+        raise ValueError("--litetracker-runtime onnx-cuda is serial-only; pass --tracking-backend-execution-mode serial.")
+    if int(args.litetracker_onnx_opset) < 1:
+        raise ValueError("--litetracker-onnx-opset must be positive.")
+    if int(args.litetracker_onnx_optimization_level) < 0:
+        raise ValueError("--litetracker-onnx-optimization-level must be >= 0.")
     if str(args.cotracker_query_mode) != demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError(f"{demo_label} currently supports only --cotracker-query-mode phystwin_dense.")
     demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
@@ -1323,6 +1351,11 @@ def build_cotracker_process_config(args: argparse.Namespace) -> CoTrackerProcess
         trackon2_repo_dir=args.trackon2_repo_dir,
         litetracker_weights=args.litetracker_weights,
         litetracker_repo_dir=args.litetracker_repo_dir,
+        litetracker_runtime=normalize_litetracker_runtime(args.litetracker_runtime),
+        litetracker_onnx_dir=args.litetracker_onnx_dir,
+        litetracker_export_onnx=bool(args.litetracker_export_onnx),
+        litetracker_onnx_opset=int(args.litetracker_onnx_opset),
+        litetracker_onnx_optimization_level=int(args.litetracker_onnx_optimization_level),
         tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
             args.tracker_batch_query_count_policy
         ),
@@ -1340,6 +1373,7 @@ def build_contract(
     query_count_request = demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
     tracker_backend = normalize_tracker_backend(args.cotracker_backend)
     tracker_spec = tracker_backend_spec(tracker_backend)
+    litetracker_runtime = normalize_litetracker_runtime(args.litetracker_runtime)
     execution_mode = effective_tracking_backend_execution_mode(args)
     legacy_update_mode = effective_legacy_update_mode(execution_mode)
     tracker_visualization_mode = str(args.tracker_visualization_mode)
@@ -1475,6 +1509,12 @@ def build_contract(
         "trackon2_repo_dir": args.trackon2_repo_dir,
         "litetracker_weights": args.litetracker_weights,
         "litetracker_repo_dir": args.litetracker_repo_dir,
+        "litetracker_runtime": litetracker_runtime,
+        "litetracker_onnx_dir": args.litetracker_onnx_dir,
+        "litetracker_export_onnx": bool(args.litetracker_export_onnx),
+        "litetracker_onnx_opset": int(args.litetracker_onnx_opset),
+        "litetracker_onnx_opset_actual": max(int(args.litetracker_onnx_opset), 18),
+        "litetracker_onnx_optimization_level": int(args.litetracker_onnx_optimization_level),
         "tracker_env_name": "demo_3_1_max",
         "ffs_contract": (
             {
@@ -1777,6 +1817,12 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracker_backend",
         "tracker_backend_family",
         "tracker_env_name",
+        "litetracker_runtime",
+        "litetracker_onnx_dir",
+        "litetracker_export_onnx",
+        "litetracker_onnx_opset",
+        "litetracker_onnx_opset_actual",
+        "litetracker_onnx_optimization_level",
         "tracking_backend_execution_mode",
         "tracking_backend_batch_dimension",
         "tracking_backend_batch_size",

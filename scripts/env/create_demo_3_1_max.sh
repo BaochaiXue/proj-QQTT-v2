@@ -21,6 +21,7 @@ else
 fi
 
 "${CONDA_BIN}" run -n "${TARGET_ENV}" --no-capture-output python -m pip install -U pip
+"${CONDA_BIN}" run -n "${TARGET_ENV}" --no-capture-output python -m pip install onnx onnxruntime-gpu onnxscript
 
 cat <<'MSG'
 
@@ -33,6 +34,8 @@ Track-On2:
 LiteTracker:
   git clone https://github.com/ImFusionGmbH/lite-tracker.git third_party/lite-tracker
   cd third_party/lite-tracker && uv sync
+  # Optional serial ONNX-CUDA profiling path:
+  conda run -n demo_3_1_max --no-capture-output python -m pip install onnx onnxruntime-gpu onnxscript
 
 Notes:
   - Do not replace the core PyTorch stack unless a tracker repo explicitly requires it.

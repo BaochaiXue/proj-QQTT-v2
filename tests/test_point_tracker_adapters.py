@@ -11,6 +11,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (
     PointTrackerAdapterConfig,
     build_point_tracker_adapter_factory,
     effective_legacy_update_mode,
+    normalize_litetracker_runtime,
     normalize_tracker_backend,
     normalize_tracker_batch_query_count_policy,
     normalize_tracker_execution_mode,
@@ -191,6 +192,8 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(normalize_tracker_execution_mode("batch"), "batch-views")
         self.assertEqual(effective_legacy_update_mode("batch-views"), "batch")
         self.assertEqual(normalize_tracker_batch_query_count_policy("min_common"), "min-common")
+        self.assertEqual(normalize_litetracker_runtime("onnx_cuda"), "onnx-cuda")
+        self.assertEqual(normalize_litetracker_runtime("torch"), "pytorch")
 
     def test_factory_returns_external_adapter_shells(self) -> None:
         trackon = build_point_tracker_adapter_factory(PointTrackerAdapterConfig(backend="trackon2"))(-1)
@@ -201,6 +204,13 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(lite.name, "litetracker")
         self.assertFalse(lite.availability().available)
         self.assertIn("--litetracker-weights", lite.availability().reason)
+
+        lite_onnx = build_point_tracker_adapter_factory(
+            PointTrackerAdapterConfig(backend="litetracker", litetracker_runtime="onnx-cuda")
+        )(-1)
+        self.assertEqual(type(lite_onnx).__name__, "OnnxLiteTrackerAdapter")
+        self.assertFalse(lite_onnx.availability().available)
+        self.assertIn("--litetracker-onnx-dir", lite_onnx.availability().reason)
 
     def test_cotracker_adapter_serial_and_batch_shapes(self) -> None:
         adapter = CoTracker3Adapter(backend=_FakeCoTrackerBackend())

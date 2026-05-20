@@ -16,6 +16,7 @@ from qqtt.demo.demo31_dual_gpu_ipc import (
     TrackingResultLitePacket,
 )
 from qqtt.tracking.backends.point_tracker_adapter import (
+    LITETRACKER_RUNTIME_PYTORCH,
     TRACKER_BACKEND_COTRACKER3,
     TRACKER_BACKEND_LITETRACKER,
     TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
@@ -24,6 +25,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (
     PointTrackerAdapterConfig,
     build_point_tracker_adapter_factory,
     effective_legacy_update_mode,
+    normalize_litetracker_runtime,
     normalize_tracker_backend,
     normalize_tracker_batch_query_count_policy,
     normalize_tracker_execution_mode,
@@ -62,6 +64,11 @@ class CoTrackerProcessConfig:
     trackon2_repo_dir: str | None = None
     litetracker_weights: str | None = None
     litetracker_repo_dir: str | None = None
+    litetracker_runtime: str = LITETRACKER_RUNTIME_PYTORCH
+    litetracker_onnx_dir: str | None = None
+    litetracker_export_onnx: bool = False
+    litetracker_onnx_opset: int = 17
+    litetracker_onnx_optimization_level: int = 5
     tracker_batch_query_count_policy: str = TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED
 
     @property
@@ -112,6 +119,11 @@ class CoTrackerProcessConfig:
             "trackon2_repo_dir": self.trackon2_repo_dir,
             "litetracker_weights": self.litetracker_weights,
             "litetracker_repo_dir": self.litetracker_repo_dir,
+            "litetracker_runtime": normalize_litetracker_runtime(self.litetracker_runtime),
+            "litetracker_onnx_dir": self.litetracker_onnx_dir,
+            "litetracker_export_onnx": bool(self.litetracker_export_onnx),
+            "litetracker_onnx_opset": int(self.litetracker_onnx_opset),
+            "litetracker_onnx_optimization_level": int(self.litetracker_onnx_optimization_level),
             "tracker_batch_query_count_policy": normalize_tracker_batch_query_count_policy(
                 self.tracker_batch_query_count_policy
             ),
@@ -149,6 +161,13 @@ class CoTrackerProcessConfig:
             trackon2_repo_dir=payload.get("trackon2_repo_dir"),
             litetracker_weights=payload.get("litetracker_weights"),
             litetracker_repo_dir=payload.get("litetracker_repo_dir"),
+            litetracker_runtime=normalize_litetracker_runtime(
+                payload.get("litetracker_runtime", LITETRACKER_RUNTIME_PYTORCH)
+            ),
+            litetracker_onnx_dir=payload.get("litetracker_onnx_dir"),
+            litetracker_export_onnx=bool(payload.get("litetracker_export_onnx", False)),
+            litetracker_onnx_opset=int(payload.get("litetracker_onnx_opset", 17)),
+            litetracker_onnx_optimization_level=int(payload.get("litetracker_onnx_optimization_level", 5)),
             tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
                 payload.get("tracker_batch_query_count_policy", TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED)
             ),
@@ -325,6 +344,11 @@ def run_cotracker_worker_loop(
             trackon2_repo_dir=config.trackon2_repo_dir,
             litetracker_weights=config.litetracker_weights,
             litetracker_repo_dir=config.litetracker_repo_dir,
+            litetracker_runtime=config.litetracker_runtime,
+            litetracker_onnx_dir=config.litetracker_onnx_dir,
+            litetracker_export_onnx=config.litetracker_export_onnx,
+            litetracker_onnx_opset=config.litetracker_onnx_opset,
+            litetracker_onnx_optimization_level=config.litetracker_onnx_optimization_level,
         )
     )
     update_mode = effective_legacy_update_mode(config.backend_execution_mode)
@@ -397,6 +421,11 @@ def run_cotracker_worker_loop(
                     "cotracker_backend": tracker_backend,
                     "tracker_backend": tracker_backend,
                     "tracker_family": config.tracker_family,
+                    "litetracker_runtime": normalize_litetracker_runtime(config.litetracker_runtime),
+                    "litetracker_onnx_dir": config.litetracker_onnx_dir,
+                    "litetracker_export_onnx": bool(config.litetracker_export_onnx),
+                    "litetracker_onnx_opset": int(config.litetracker_onnx_opset),
+                    "litetracker_onnx_optimization_level": int(config.litetracker_onnx_optimization_level),
                     "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "prewarm_backends": bool(config.prewarm_backends),
                     "tracker_prewarm_mode": tracker_prewarm_mode,
@@ -457,6 +486,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "cotracker_backend": config.cotracker_backend,
                     "tracker_backend": normalize_tracker_backend(config.cotracker_backend),
                     "tracker_family": config.tracker_family,
+                    "litetracker_runtime": normalize_litetracker_runtime(config.litetracker_runtime),
+                    "litetracker_onnx_dir": config.litetracker_onnx_dir,
+                    "litetracker_export_onnx": bool(config.litetracker_export_onnx),
+                    "litetracker_onnx_opset": int(config.litetracker_onnx_opset),
+                    "litetracker_onnx_optimization_level": int(config.litetracker_onnx_optimization_level),
                     "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "cotracker_cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
                     "tracking_query_mode": config.query_mode,

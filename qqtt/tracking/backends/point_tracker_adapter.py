@@ -36,6 +36,13 @@ TRACKER_BATCH_QUERY_COUNT_POLICIES = (
     TRACKER_BATCH_QUERY_COUNT_POLICY_MIN_COMMON,
 )
 
+LITETRACKER_RUNTIME_PYTORCH = "pytorch"
+LITETRACKER_RUNTIME_ONNX_CUDA = "onnx-cuda"
+LITETRACKER_RUNTIMES = (
+    LITETRACKER_RUNTIME_PYTORCH,
+    LITETRACKER_RUNTIME_ONNX_CUDA,
+)
+
 
 @dataclass(frozen=True)
 class PointTrackerBackendSpec:
@@ -130,6 +137,20 @@ def normalize_tracker_batch_query_count_policy(value: str) -> str:
     return normalized
 
 
+def normalize_litetracker_runtime(value: str) -> str:
+    normalized = str(value).strip().lower().replace("_", "-")
+    aliases = {
+        "torch": LITETRACKER_RUNTIME_PYTORCH,
+        "onnx": LITETRACKER_RUNTIME_ONNX_CUDA,
+        "onnx_cuda": LITETRACKER_RUNTIME_ONNX_CUDA,
+        "cuda": LITETRACKER_RUNTIME_ONNX_CUDA,
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in LITETRACKER_RUNTIMES:
+        raise ValueError(f"unsupported LiteTracker runtime {value!r}; expected one of {LITETRACKER_RUNTIMES}")
+    return normalized
+
+
 def tracker_backend_spec(backend: str) -> PointTrackerBackendSpec:
     normalized = normalize_tracker_backend(backend)
     if normalized == TRACKER_BACKEND_COTRACKER3:
@@ -174,6 +195,11 @@ class PointTrackerAdapterConfig:
     config_path: str | None = None
     litetracker_weights: str | None = None
     litetracker_repo_dir: str | None = None
+    litetracker_runtime: str = LITETRACKER_RUNTIME_PYTORCH
+    litetracker_onnx_dir: str | None = None
+    litetracker_export_onnx: bool = False
+    litetracker_onnx_opset: int = 17
+    litetracker_onnx_optimization_level: int = 5
     trackon2_checkpoint: str | None = None
     trackon2_config: str | None = None
     trackon2_repo_dir: str | None = None
@@ -206,9 +232,24 @@ def build_point_tracker_adapter_factory(config: PointTrackerAdapterConfig) -> Ca
                 config_path=config.trackon2_config or config.config_path,
                 repo_dir=config.trackon2_repo_dir or config.repo_dir,
             )
+        _prepend_repo_dir(config.litetracker_repo_dir or config.repo_dir)
+        runtime = normalize_litetracker_runtime(config.litetracker_runtime)
+        if runtime == LITETRACKER_RUNTIME_ONNX_CUDA:
+            from qqtt.tracking.backends.litetracker_onnx_adapter import OnnxLiteTrackerAdapter
+
+            return OnnxLiteTrackerAdapter(
+                device=str(config.device),
+                camera_idx=None if int(camera_idx) < 0 else int(camera_idx),
+                weights=config.litetracker_weights or config.checkpoint,
+                repo_dir=config.litetracker_repo_dir or config.repo_dir,
+                onnx_dir=config.litetracker_onnx_dir,
+                export_onnx=bool(config.litetracker_export_onnx),
+                opset=int(config.litetracker_onnx_opset),
+                optimization_level=int(config.litetracker_onnx_optimization_level),
+            )
+
         from qqtt.tracking.backends.litetracker_adapter import LiteTrackerAdapter
 
-        _prepend_repo_dir(config.litetracker_repo_dir or config.repo_dir)
         return LiteTrackerAdapter(
             device=str(config.device),
             camera_idx=None if int(camera_idx) < 0 else int(camera_idx),
@@ -276,6 +317,9 @@ __all__ = [
     "PointTrackerAdapterConfig",
     "PointTrackerBackendSpec",
     "PointTrackerBatchResult",
+    "LITETRACKER_RUNTIME_ONNX_CUDA",
+    "LITETRACKER_RUNTIME_PYTORCH",
+    "LITETRACKER_RUNTIMES",
     "TRACKER_BACKEND_COTRACKER3",
     "TRACKER_BACKEND_LITETRACKER",
     "TRACKER_BACKEND_TRACKON2",
@@ -290,6 +334,7 @@ __all__ = [
     "UnavailableExternalPointTrackerAdapter",
     "build_point_tracker_adapter_factory",
     "effective_legacy_update_mode",
+    "normalize_litetracker_runtime",
     "normalize_tracker_backend",
     "normalize_tracker_batch_query_count_policy",
     "normalize_tracker_execution_mode",

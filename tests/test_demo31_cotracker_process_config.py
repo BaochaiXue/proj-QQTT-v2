@@ -28,6 +28,11 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
             trackon2_repo_dir="/tmp/track_on",
             litetracker_weights="/tmp/litetracker.pth",
             litetracker_repo_dir="/tmp/lite-tracker",
+            litetracker_runtime="onnx-cuda",
+            litetracker_onnx_dir="/tmp/litetracker_onnx",
+            litetracker_export_onnx=True,
+            litetracker_onnx_opset=17,
+            litetracker_onnx_optimization_level=5,
             tracker_batch_query_count_policy="min-common",
         )
 
@@ -101,9 +106,35 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         output = stdout.getvalue()
         self.assertIn('"tracker_backend": "litetracker"', output)
+        self.assertIn('"litetracker_runtime": "pytorch"', output)
         self.assertIn('"tracker_prewarm_mode": "lazy_query_init"', output)
         self.assertIn('"tracker_query_dependent_init": true', output)
         self.assertIn('"ready_state": "ready_to_receive_inputs"', output)
+
+    def test_litetracker_onnx_config_prints_runtime_fields(self) -> None:
+        config = process_mod.CoTrackerProcessConfig(
+            cotracker_backend="litetracker",
+            backend_execution_mode="serial",
+            litetracker_runtime="onnx-cuda",
+            litetracker_onnx_dir="/tmp/litetracker_onnx",
+            litetracker_export_onnx=True,
+            litetracker_onnx_opset=17,
+            litetracker_onnx_optimization_level=5,
+        )
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = process_mod.main(["--config-json", config.to_json(), "--print-contract"])
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn('"tracker_backend": "litetracker"', output)
+        self.assertIn('"backend_execution_mode": "serial"', output)
+        self.assertIn('"litetracker_runtime": "onnx-cuda"', output)
+        self.assertIn('"litetracker_onnx_dir": "/tmp/litetracker_onnx"', output)
+        self.assertIn('"litetracker_export_onnx": true', output)
+        self.assertIn('"litetracker_onnx_opset": 17', output)
+        self.assertIn('"litetracker_onnx_optimization_level": 5', output)
 
 
 if __name__ == "__main__":

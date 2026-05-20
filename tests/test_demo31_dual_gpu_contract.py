@@ -543,6 +543,12 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(contract["ffs_edgetam_same_gpu"])
         self.assertEqual(contract["cotracker_backend"], "litetracker")
         self.assertEqual(contract["tracker_backend"], "litetracker")
+        self.assertEqual(contract["litetracker_runtime"], "pytorch")
+        self.assertIsNone(contract["litetracker_onnx_dir"])
+        self.assertFalse(contract["litetracker_export_onnx"])
+        self.assertEqual(contract["litetracker_onnx_opset"], 17)
+        self.assertEqual(contract["litetracker_onnx_opset_actual"], 18)
+        self.assertEqual(contract["litetracker_onnx_optimization_level"], 5)
         self.assertEqual(contract["tracking_backend_execution_mode"], "batch-views")
         self.assertEqual(contract["cotracker_update_mode"], "batch")
         self.assertFalse(contract["cotracker_prewarm_backends"])
@@ -604,6 +610,78 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(config.tracker_query_dependent_init)
         self.assertEqual(config.litetracker_repo_dir, "/home/xinjie/external/lite-tracker")
         self.assertEqual(config.litetracker_weights, "/home/xinjie/external/weights/cotracker3/scaled_online.pth")
+        self.assertEqual(config.litetracker_runtime, "pytorch")
+        self.assertIsNone(config.litetracker_onnx_dir)
+        self.assertFalse(config.litetracker_export_onnx)
+        self.assertEqual(config.litetracker_onnx_opset, 17)
+        self.assertEqual(config.litetracker_onnx_optimization_level, 5)
+
+    def test_demo32_accepts_litetracker_serial_onnx_runtime(self) -> None:
+        args = self._parse(
+            [
+                "--dry-run",
+                "--camera-ids",
+                "0,1,2",
+                "--mask-gpu",
+                "0",
+                "--cotracker-gpu",
+                "1",
+                "--tracking-backend-execution-mode",
+                "serial",
+                "--litetracker-runtime",
+                "onnx-cuda",
+                "--litetracker-onnx-dir",
+                "result/litetracker_onnx",
+                "--litetracker-export-onnx",
+            ],
+            default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+        )
+        demo31_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+        config = demo31_runtime.build_cotracker_process_config(args)
+
+        self.assertEqual(contract["pipeline_order"][3], "litetracker_serial")
+        self.assertEqual(contract["tracking_backend_execution_mode"], "serial")
+        self.assertEqual(contract["cotracker_update_mode"], "serial")
+        self.assertEqual(contract["tracking_backend_batch_dimension"], "none")
+        self.assertEqual(contract["tracking_backend_batch_size"], 1)
+        self.assertEqual(contract["litetracker_runtime"], "onnx-cuda")
+        self.assertEqual(contract["litetracker_onnx_dir"], "result/litetracker_onnx")
+        self.assertTrue(contract["litetracker_export_onnx"])
+        self.assertEqual(contract["litetracker_onnx_opset"], 17)
+        self.assertEqual(contract["litetracker_onnx_opset_actual"], 18)
+        self.assertEqual(contract["litetracker_onnx_optimization_level"], 5)
+        self.assertEqual(contract["profile_summary_fields"]["litetracker_runtime"], "onnx-cuda")
+        self.assertEqual(contract["profile_summary_fields"]["litetracker_onnx_dir"], "result/litetracker_onnx")
+        self.assertEqual(contract["profile_summary_fields"]["litetracker_onnx_opset_actual"], 18)
+        self.assertEqual(config.backend_execution_mode, "serial")
+        self.assertEqual(config.update_mode, "serial")
+        self.assertEqual(config.litetracker_runtime, "onnx-cuda")
+        self.assertEqual(config.litetracker_onnx_dir, "result/litetracker_onnx")
+        self.assertTrue(config.litetracker_export_onnx)
+        self.assertEqual(config.litetracker_onnx_opset, 17)
+        self.assertEqual(config.litetracker_onnx_optimization_level, 5)
+
+    def test_demo32_rejects_litetracker_onnx_batch_runtime(self) -> None:
+        args = self._parse(
+            [
+                "--dry-run",
+                "--camera-ids",
+                "0,1,2",
+                "--mask-gpu",
+                "0",
+                "--cotracker-gpu",
+                "1",
+                "--litetracker-runtime",
+                "onnx-cuda",
+                "--litetracker-onnx-dir",
+                "result/litetracker_onnx",
+            ],
+            default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+        )
+
+        with self.assertRaisesRegex(ValueError, "serial-only"):
+            demo31_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
 
     def test_controller_mask_erode_defaults_to_one_in_demo_mode(self) -> None:
         args = self._parse(
