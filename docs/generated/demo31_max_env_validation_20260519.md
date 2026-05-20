@@ -90,7 +90,34 @@ All dry-run contracts report tracker_env_name = demo_3_1_max and fps = 30.
 - `mmcv==2.2.0` was built from source in `demo_3_1_max` with CUDA ops enabled for RTX 4090 capability `8.9`.
 - Track-On2 Python import and `mmcv.ops.MultiScaleDeformableAttention` import both pass.
 - LiteTracker source import passes and the CoTracker3 scaled online checkpoint loads into `LiteTracker` with zero missing and zero unexpected keys.
-- Track-On2 full `Predictor` construction is blocked by Hugging Face gated access to `facebook/dinov3-vits16plus-pretrain-lvd1689m`. The authenticated account receives HTTP 403 for that gated backbone repo. The Track-On2 checkpoint itself is downloaded locally.
+- DINOv3 plus backbone was downloaded through Hugging Face after access was granted:
+  `/home/xinjie/.cache/huggingface/hub/models--facebook--dinov3-vits16plus-pretrain-lvd1689m/snapshots/c93d816fc9e567563bc068f01475bec89cc634a6`
+- Track-On2 full `Predictor` construction now passes with the downloaded backbone and checkpoint.
+- Local Track-On2 repo compatibility note: current `transformers` exposes DINOv3 transformer blocks as `DINOv3ViTModel.model.layer`, while the checked-out Track-On2 code expected `DINOv3ViTModel.layer`. The external repo at `/home/xinjie/external/track_on` was patched to support both locations without registering a duplicate PyTorch module alias. The reproducibility patch is recorded in `docs/generated/trackon2_dinov3_transformers_compat_20260519.patch`.
+
+Track-On2 Predictor validation command:
+
+```bash
+conda run -n demo_3_1_max --no-capture-output python - <<'PY'
+from model.trackon_predictor import Predictor
+ckpt = "/home/xinjie/external/weights/track_on2/trackon2_dinov3_checkpoint.pt"
+model = Predictor(checkpoint_path=ckpt, support_grid_size=5)
+param_count = sum(p.numel() for p in model.parameters())
+print("trackon2 Predictor init ok")
+print("param_count", param_count)
+print("checkpoint", ckpt)
+PY
+```
+
+Outcome:
+
+```text
+Loaded model weights from /home/xinjie/external/weights/track_on2/trackon2_dinov3_checkpoint.pt
+Info: missing (allowed) weights: 235 keys under {'backbone.vit_encoder.dinov3'}
+trackon2 Predictor init ok
+param_count 52131867
+checkpoint /home/xinjie/external/weights/track_on2/trackon2_dinov3_checkpoint.pt
+```
 
 ## Known Inherited Check
 
