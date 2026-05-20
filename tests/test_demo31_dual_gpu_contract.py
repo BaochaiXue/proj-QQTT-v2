@@ -67,6 +67,11 @@ class _FakeProcessClient:
 
 
 class _FakeSharedRuntimeModule:
+    PRESET_DEMO23_DUAL4090_MAXFPS = "demo2.3-dual4090-maxfps"
+    DEPTH_SOURCE_FFS = "ffs"
+    GPU_PIPELINE_MODE_DUAL_GPU_SPLIT = "dual-gpu-split"
+    DEFAULT_DEMO22_DEPTH_MIN_M = 0.15
+
     @staticmethod
     def build_arg_parser():
         parser = argparse.ArgumentParser()
@@ -158,8 +163,8 @@ class _FakeSharedRuntimeModule:
 
 
 class Demo31DualGpuContractTest(unittest.TestCase):
-    def _parse(self, argv: list[str]):
-        parser = demo31_runtime.build_arg_parser()
+    def _parse(self, argv: list[str], *, default_preset: str = demo31_runtime.PRESET_DEMO31_DUAL4090_HIGHFPS):
+        parser = demo31_runtime.build_arg_parser(default_preset=default_preset)
         args = parser.parse_args(argv)
         return demo31_runtime.apply_preset_defaults(args, explicit_options=set(argv))
 
@@ -465,6 +470,124 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(contract["tracking_backend_batch_supported"])
         self.assertEqual(contract["tracking_backend_batch_support_status"], "serial_only")
         self.assertEqual(contract["tracking_backend_batch_dimension"], "none")
+
+    def test_demo32_defaults_to_ffs_batch3_litetracker_serial(self) -> None:
+        args = self._parse(
+            ["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
+            default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+        )
+        demo31_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+        config = demo31_runtime.build_cotracker_process_config(args)
+
+        self.assertEqual(contract["demo"], "demo3.2")
+        self.assertEqual(contract["preset"], "demo3.2-ffs-litetracker")
+        self.assertEqual(contract["depth_source"], "ffs")
+        self.assertTrue(contract["uses_ffs"])
+        self.assertTrue(contract["async_depth_pipeline"])
+        self.assertEqual(
+            contract["pipeline_order"],
+            ["capture", "ffs_batch3_opt5_depth", "edgetam", "litetracker_serial", "render_and_diagnostics"],
+        )
+        self.assertEqual(contract["shared_runtime_preset"], "demo2.3-dual4090-maxfps")
+        self.assertEqual(contract["shared_runtime_gpu_pipeline_mode"], "dual-gpu-split")
+        self.assertEqual(contract["cotracker_backend"], "litetracker")
+        self.assertEqual(contract["tracker_backend"], "litetracker")
+        self.assertEqual(contract["tracking_backend_execution_mode"], "serial")
+        self.assertEqual(contract["cotracker_update_mode"], "serial")
+        self.assertEqual(contract["tracker_env_name"], "demo_3_1_max")
+        self.assertEqual(contract["tracking_backend_batch_dimension"], "none")
+        self.assertFalse(contract["tracking_backend_batch_supported"])
+        self.assertNotIn("ffs", contract["hot_path_forbids"])
+        self.assertNotIn("ffs_tensorrt", contract["hot_path_forbids"])
+        self.assertEqual(contract["ffs_contract"]["builderOptimizationLevel"], 5)
+        self.assertEqual(contract["ffs_contract"]["trt_batch_size"], 3)
+        self.assertTrue(contract["ffs_contract"]["batch3_isolated_artifact"])
+        self.assertIn("batch3", contract["ffs_contract"]["trt_model_dir"])
+        self.assertTrue(contract["profile_summary_fields"]["uses_ffs"])
+        self.assertEqual(contract["profile_summary_fields"]["depth_source"], "ffs")
+        self.assertEqual(config.cotracker_backend, "litetracker")
+        self.assertEqual(config.backend_execution_mode, "serial")
+        self.assertEqual(config.update_mode, "serial")
+        self.assertEqual(config.litetracker_repo_dir, "/home/xinjie/external/lite-tracker")
+        self.assertEqual(config.litetracker_weights, "/home/xinjie/external/weights/cotracker3/scaled_online.pth")
+
+    def test_demo32_explicit_preset_uses_demo32_default_output_root(self) -> None:
+        args = self._parse(
+            ["--dry-run", "--preset", demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER, "--camera-ids", "0,1,2"],
+        )
+        self.assertEqual(str(args.output_root), "result/demo32_ffs_litetracker")
+
+    def test_demo32_rejects_non_litetracker_or_non_ffs(self) -> None:
+        realsense_args = self._parse(
+            ["--dry-run", "--camera-ids", "0,1,2", "--depth-source", "realsense"],
+            default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+        )
+        with self.assertRaisesRegex(ValueError, "requires FFS depth"):
+            demo31_runtime.validate_args(realsense_args, cuda_device_count_provider=lambda: 2)
+
+        cotracker_args = self._parse(
+            ["--dry-run", "--camera-ids", "0,1,2", "--cotracker-backend", "cotracker3_online"],
+            default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+        )
+        with self.assertRaisesRegex(ValueError, "requires --cotracker-backend litetracker"):
+            demo31_runtime.validate_args(cotracker_args, cuda_device_count_provider=lambda: 2)
+
+    def test_demo32_shared_runtime_args_use_demo23_ffs_batch3(self) -> None:
+        args = self._parse(
+            ["--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
+            default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+        )
+
+        shared_args = demo31_runtime.build_shared_runtime_args(
+            args,
+            shared_runtime_module=_FakeSharedRuntimeModule,
+            live_validation={
+                "active_serials": ["s0", "s1", "s2"],
+                "calibration_reference_serials": ["s0", "s1", "s2"],
+            },
+            shared_profile_path=None,
+        )
+
+        self.assertEqual(shared_args.preset, "demo2.3-dual4090-maxfps")
+        self.assertEqual(shared_args.preset_canonical, "demo2.3-dual4090-maxfps")
+        self.assertEqual(shared_args.demo_version_override, "demo3.2")
+        self.assertEqual(shared_args.demo_display_name_override, "Demo 3.2")
+        self.assertEqual(shared_args.depth_source, "ffs")
+        self.assertEqual(shared_args.ffs_trt_batch_size, 3)
+        self.assertIn("batch3", str(shared_args.ffs_trt_model_dir))
+        self.assertEqual(shared_args.gpu_pipeline_mode, "dual-gpu-split")
+        self.assertEqual(shared_args.ffs_schedule, "strict3-latest")
+        self.assertEqual(shared_args.ffs_device, "cuda:0")
+        self.assertEqual(shared_args.edgetam_device, "cuda:1")
+        self.assertEqual(shared_args.sam31_device, "cuda:1")
+        self.assertTrue(shared_args.dual_gpu_processes)
+        self.assertTrue(shared_args.enable_pcd_filter)
+        self.assertEqual(shared_args.pcd_filter_mode, "async")
+
+    def test_demo32_main_dry_run_prints_ffs_litetracker_contract(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = demo31_runtime.main(
+                ["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
+                cuda_device_count_provider=lambda: 2,
+                default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+            )
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("demo = demo3.2", output)
+        self.assertIn("depth_source = ffs", output)
+        self.assertIn("uses_ffs = true", output)
+        self.assertIn("async_depth_pipeline = true", output)
+        self.assertIn("shared_runtime_preset = demo2.3-dual4090-maxfps", output)
+        self.assertIn("shared_runtime_gpu_pipeline_mode = dual-gpu-split", output)
+        self.assertIn("tracker_backend = litetracker", output)
+        self.assertIn("tracker_env_name = demo_3_1_max", output)
+        self.assertIn("tracking_backend_execution_mode = serial", output)
+        self.assertIn("cotracker_update_mode = serial", output)
+        self.assertIn("output_root = result/demo32_ffs_litetracker", output)
+        self.assertIn("'trt_batch_size': 3", output)
 
     def test_mode_demo_uses_hand_controller_without_changing_gpu_split(self) -> None:
         args = self._parse(

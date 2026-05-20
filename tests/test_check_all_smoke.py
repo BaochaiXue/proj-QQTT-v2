@@ -55,6 +55,7 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertIn(["python", "demo_v2_3/realtime_three_view_dual_gpu_async_filtered_fused_pcd.py", "--help"], commands)
         self.assertIn(["python", "demo_v3/realtime_three_view_cotracker3_realsense_overlay.py", "--help"], commands)
         self.assertIn(["python", "demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py", "--help"], commands)
+        self.assertIn(["python", "demo_v3_2/realtime_three_view_litetracker_ffs_dual4090.py", "--help"], commands)
         self.assertIn(["python", "scripts/demo_v0_3/prepare_ir_triplet_100kits.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/realtime_single_camera_pointcloud.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py", "--help"], commands)

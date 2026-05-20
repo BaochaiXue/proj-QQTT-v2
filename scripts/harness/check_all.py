@@ -31,6 +31,7 @@ DEMO_HELP_SCRIPTS: tuple[str, ...] = (
     "demo_v2_3/realtime_three_view_dual_gpu_async_filtered_fused_pcd.py",
     "demo_v3/realtime_three_view_cotracker3_realsense_overlay.py",
     "demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py",
+    "demo_v3_2/realtime_three_view_litetracker_ffs_dual4090.py",
 )
 
 QUICK_HELP_SCRIPTS: tuple[str, ...] = (*BASE_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))

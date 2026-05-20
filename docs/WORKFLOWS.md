@@ -113,19 +113,21 @@ when you want denser or larger splats for inspection.
 
 The single-camera coordinate contract above applies only to
 `demo_v2/realtime_single_camera_pointcloud.py`. Demo 2.1, Demo 2.1.5, Demo 2.2,
-Demo 3.0, and Demo 3.1 keep their public entrypoints under their versioned
+Demo 3.0, Demo 3.1, and Demo 3.2 keep their public entrypoints under their versioned
 folders, but shared three-camera fused-PCD runtime code lives under
 `qqtt/demo/`. These demos require `calibrate.pkl` when world fusion is enabled,
 load camera-to-world transforms after `CameraSystem` startup, transform each
 camera's backprojected masked RGB-D points into the shared world frame, then
 fuse object/controller semantic PCDs. Demo 3.1 adds a dual-4090 visualization
 contract where GPU0 owns capture/mask/fusion/render and GPU1 owns CoTracker3 in
-a latest-wins child process. Demo 3.0 and Demo 3.1 expose only `--mode exp|demo`
+a latest-wins child process. Demo 3.2 reuses that tracker/render contract but
+switches depth to the Demo 2.3 FFS TensorRT builderOptimizationLevel=5 batch=3
+path and defaults to LiteTracker serial. Demo 3.0, Demo 3.1, and Demo 3.2 expose only `--mode exp|demo`
 for live semantics; both modes track the object/controller union with
 FuturePhysTwin-compatible dense CoTracker queries while keeping the rendered
 overlay cap separate.
 
-For Demo 2.2, Demo 2.3, Demo 3.0, and Demo 3.1 performance claims, use the
+For Demo 2.2, Demo 2.3, Demo 3.0, Demo 3.1, and Demo 3.2 performance claims, use the
 rendered point-cloud path when reporting rendered FPS. A `--render-mode none`
 run is useful for upstream isolation, but it must not be described as rendered
 FPS. Finite-duration Open3D runs now stop workers and write summary/profile
@@ -171,6 +173,13 @@ scripts/harness/run_wslg_open3d.sh \
   --duration-s 120 \
   --render-mode pointcloud \
   --profile-json-output docs/generated/demo31_rendered_pointcloud_profile.json
+
+scripts/harness/run_wslg_open3d.sh \
+  conda run --no-capture-output -n demo_3_1_max \
+  python demo_v3_2/realtime_three_view_litetracker_ffs_dual4090.py \
+  --duration-s 120 \
+  --render-mode pointcloud \
+  --profile-json-output docs/generated/demo32_rendered_pointcloud_profile.json
 ```
 
 When interpreting those profiles, check `render_backpressure_count`,

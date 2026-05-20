@@ -90,6 +90,7 @@ data product.
 - `demo_v2_3/**`
 - `demo_v3/**`
 - `demo_v3_1/**`
+- `demo_v3_2/**`
 - `qqtt/demo/**`
 - `services/ffs_remote/**`
 - `qqtt/tracking/**`

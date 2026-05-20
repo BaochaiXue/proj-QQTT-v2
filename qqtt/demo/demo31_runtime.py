@@ -13,6 +13,13 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
+from data_process.depth_backends.ffs_defaults import (
+    DEFAULT_FFS_MODEL_NAME,
+    DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR,
+    DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL,
+    DEFAULT_FFS_VALID_ITERS,
+    DEFAULT_FFS_MAX_DISP,
+)
 from data_process.depth_backends.geometry import transform_points
 from qqtt.demo import demo3_runtime
 from qqtt.demo.demo31_cotracker_process import (
@@ -31,6 +38,7 @@ from qqtt.demo.demo31_profile import build_empty_dual_gpu_profile_summary, event
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world
 from qqtt.tracking.backends.point_tracker_adapter import (
     TRACKER_BACKEND_COTRACKER3,
+    TRACKER_BACKEND_LITETRACKER,
     TRACKER_BACKENDS,
     TRACKER_BATCH_QUERY_COUNT_POLICIES,
     TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
@@ -47,7 +55,8 @@ from qqtt.tracking.backends.point_tracker_adapter import (
 
 
 PRESET_DEMO31_DUAL4090_HIGHFPS = "demo3.1-dual4090-highfps"
-PRESETS = (PRESET_DEMO31_DUAL4090_HIGHFPS,)
+PRESET_DEMO32_FFS_LITETRACKER = "demo3.2-ffs-litetracker"
+PRESETS = (PRESET_DEMO31_DUAL4090_HIGHFPS, PRESET_DEMO32_FFS_LITETRACKER)
 
 FUSION_MASK_POLICY_STRICT = "strict"
 FUSION_MASK_POLICY_LATEST_REUSE = "latest-reuse"
@@ -57,6 +66,7 @@ GPU_PLAN_SPLIT_MASK0_TRACK1 = "split-mask0-track1"
 GPU_PLANS = (GPU_PLAN_SPLIT_MASK0_TRACK1,)
 
 DEFAULT_OUTPUT_ROOT = Path("result/demo31_dual4090_realsense_cotracker")
+DEFAULT_DEMO32_OUTPUT_ROOT = Path("result/demo32_ffs_litetracker")
 DEFAULT_RENDER_TARGET_FPS = 60.0
 DEFAULT_COTRACKER_INPUT_FPS = 10.0
 DEFAULT_COTRACKER_INPUT_MAX_AGE_MS = 250.0
@@ -65,6 +75,8 @@ DEFAULT_MASK_STALE_TIMEOUT_MS = 250.0
 DEFAULT_MASK_GPU = "0"
 DEFAULT_COTRACKER_GPU = "1"
 DEFAULT_DEMO31_COTRACKER_QUERY_COUNT_REQUEST = "4096"
+DEFAULT_DEMO32_LITETRACKER_REPO_DIR = "/home/xinjie/external/lite-tracker"
+DEFAULT_DEMO32_LITETRACKER_WEIGHTS = "/home/xinjie/external/weights/cotracker3/scaled_online.pth"
 DEFAULT_LIFT_INPUT_CACHE_GROUPS = 128
 DEFAULT_PENDING_RENDER_PACKET_GROUPS = 128
 TRACKING_RENDER_PACKET_MATCH_POLICY = "exact-then-nearest-pending-pcd-by-group-id"
@@ -130,6 +142,18 @@ DEFAULT_TRACKING_BACKEND_EXECUTION_MODE = TRACKING_BACKEND_EXECUTION_MODE_BATCH_
 ConnectedSerialsProvider = Callable[[], Sequence[str]]
 CudaDeviceCountProvider = Callable[[], int]
 ProcessClientFactory = Callable[[CoTrackerProcessConfig], Any]
+
+
+def is_demo32_preset(args: argparse.Namespace) -> bool:
+    return str(getattr(args, "preset", "")) == PRESET_DEMO32_FFS_LITETRACKER
+
+
+def demo_label_for_args(args: argparse.Namespace) -> str:
+    return "Demo 3.2" if is_demo32_preset(args) else "Demo 3.1"
+
+
+def demo_name_for_args(args: argparse.Namespace) -> str:
+    return "demo3.2" if is_demo32_preset(args) else "demo3.1"
 
 
 def _merge_cotracker_process_snapshot_metrics(
@@ -734,21 +758,24 @@ def _cuda_count(provider: CudaDeviceCountProvider | None = None) -> int:
     return _physical_cuda_device_count_from_nvidia_smi()
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
+def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) -> argparse.ArgumentParser:
+    if default_preset not in PRESETS:
+        raise ValueError(f"Unsupported Demo 3.x preset default: {default_preset}")
     parser = argparse.ArgumentParser(
         description=(
-            "Demo 3.1 dual-4090 realtime visualization: GPU0 owns RealSense, "
-            "HF EdgeTAM masks, RealSense-depth fusion, and render; GPU1 owns "
-            "CoTracker3 online in an isolated latest-wins process."
+            "Demo 3.1/3.2 dual-4090 realtime visualization. Demo 3.1 uses "
+            "RealSense depth plus a point-tracker child process; Demo 3.2 "
+            "uses FFS TensorRT batch=3 opt=5 depth and LiteTracker serial."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--preset", choices=PRESETS, default=PRESET_DEMO31_DUAL4090_HIGHFPS)
-    parser.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 3.1 runtime contract and exit.")
+    parser.add_argument("--preset", choices=PRESETS, default=default_preset)
+    parser.add_argument("--dry-run", action="store_true", help="Print the resolved Demo 3.x runtime contract and exit.")
     parser.add_argument("--duration-s", type=float, default=120.0)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--profile-json-output", type=Path, default=None)
-    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    default_output_root = DEFAULT_DEMO32_OUTPUT_ROOT if default_preset == PRESET_DEMO32_FFS_LITETRACKER else DEFAULT_OUTPUT_ROOT
+    parser.add_argument("--output-root", type=Path, default=default_output_root)
     parser.add_argument("--camera-ids", type=demo3_runtime.parse_camera_ids, default=demo3_runtime.DEFAULT_CAMERA_IDS)
     parser.add_argument("--serials", nargs="*", default=None)
     parser.add_argument("--calibrate-path", type=Path, default=Path("calibrate.pkl"))
@@ -1002,6 +1029,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str] | None = None) -> argparse.Namespace:
     explicit = explicit_options or set()
+    if "--output-root" not in explicit:
+        args.output_root = DEFAULT_DEMO32_OUTPUT_ROOT if args.preset == PRESET_DEMO32_FFS_LITETRACKER else DEFAULT_OUTPUT_ROOT
     if args.preset == PRESET_DEMO31_DUAL4090_HIGHFPS:
         if "--fusion-mask-policy" not in explicit:
             args.fusion_mask_policy = FUSION_MASK_POLICY_LATEST_REUSE
@@ -1009,6 +1038,25 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             args.cotracker_input_fps = DEFAULT_COTRACKER_INPUT_FPS
         if "--render-target-fps" not in explicit:
             args.render_target_fps = DEFAULT_RENDER_TARGET_FPS
+    elif args.preset == PRESET_DEMO32_FFS_LITETRACKER:
+        if "--depth-source" not in explicit:
+            args.depth_source = demo3_runtime.DEPTH_SOURCE_FFS
+        if "--fusion-mask-policy" not in explicit:
+            args.fusion_mask_policy = FUSION_MASK_POLICY_LATEST_REUSE
+        if "--cotracker-backend" not in explicit:
+            args.cotracker_backend = TRACKER_BACKEND_LITETRACKER
+        if "--tracking-backend-execution-mode" not in explicit:
+            args.tracking_backend_execution_mode = TRACKING_BACKEND_EXECUTION_MODE_SERIAL
+        if "--cotracker-update-mode" not in explicit:
+            args.cotracker_update_mode = "serial"
+        if "--cotracker-input-fps" not in explicit:
+            args.cotracker_input_fps = DEFAULT_COTRACKER_INPUT_FPS
+        if "--render-target-fps" not in explicit:
+            args.render_target_fps = DEFAULT_RENDER_TARGET_FPS
+        if "--litetracker-repo-dir" not in explicit:
+            args.litetracker_repo_dir = DEFAULT_DEMO32_LITETRACKER_REPO_DIR
+        if "--litetracker-weights" not in explicit:
+            args.litetracker_weights = DEFAULT_DEMO32_LITETRACKER_WEIGHTS
     return args
 
 
@@ -1030,28 +1078,37 @@ def validate_args(
     require_calibration: bool = False,
     cuda_device_count_provider: CudaDeviceCountProvider | None = None,
 ) -> None:
+    demo_label = demo_label_for_args(args)
+    demo32 = is_demo32_preset(args)
     camera_ids = demo3_runtime.parse_camera_ids(args.camera_ids)
     if len(camera_ids) != 3:
-        raise ValueError("Demo 3.1 requires exactly three RealSense cameras.")
+        raise ValueError(f"{demo_label} requires exactly three RealSense cameras.")
     if len(set(camera_ids)) != 3:
-        raise ValueError("Demo 3.1 requires exactly three distinct RealSense cameras.")
+        raise ValueError(f"{demo_label} requires exactly three distinct RealSense cameras.")
     depth_source = str(args.depth_source).strip().lower()
-    if depth_source == demo3_runtime.DEPTH_SOURCE_FFS or depth_source.startswith("ffs"):
+    if not demo32 and (depth_source == demo3_runtime.DEPTH_SOURCE_FFS or depth_source.startswith("ffs")):
         raise ValueError("Demo 3.1 does not support FFS. Use --depth-source realsense.")
-    if depth_source != demo3_runtime.DEPTH_SOURCE_REALSENSE:
+    if demo32 and depth_source != demo3_runtime.DEPTH_SOURCE_FFS:
+        raise ValueError("Demo 3.2 requires FFS depth. Use --depth-source ffs.")
+    if not demo32 and depth_source != demo3_runtime.DEPTH_SOURCE_REALSENSE:
         raise ValueError("Demo 3.1 depth source must be realsense.")
     _normalize_mask_source(str(args.mask_source))
-    normalize_tracker_backend(args.cotracker_backend)
+    tracker_backend = normalize_tracker_backend(args.cotracker_backend)
     normalize_tracker_execution_mode(args.tracking_backend_execution_mode)
+    effective_execution_mode = effective_tracking_backend_execution_mode(args)
     normalize_tracker_batch_query_count_policy(args.tracker_batch_query_count_policy)
+    if demo32 and tracker_backend != TRACKER_BACKEND_LITETRACKER:
+        raise ValueError("Demo 3.2 requires --cotracker-backend litetracker.")
+    if demo32 and effective_legacy_update_mode(effective_execution_mode) != "serial":
+        raise ValueError("Demo 3.2 requires LiteTracker serial execution.")
     if str(args.cotracker_query_mode) != demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
-        raise ValueError("Demo 3.1 currently supports only --cotracker-query-mode phystwin_dense.")
+        raise ValueError(f"{demo_label} currently supports only --cotracker-query-mode phystwin_dense.")
     demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
     demo3_runtime.normalize_controller_pcd_max_points_per_camera(args.controller_pcd_max_points_per_camera)
     if str(args.object_point_control) not in demo3_runtime.OBJECT_POINT_CONTROLS:
-        raise ValueError(f"Demo 3.1 unsupported --object-point-control {args.object_point_control}")
+        raise ValueError(f"{demo_label} unsupported --object-point-control {args.object_point_control}")
     if str(args.object_volume_origin) not in demo3_runtime.PHYSTWIN_VOLUME_ORIGINS:
-        raise ValueError(f"Demo 3.1 unsupported --object-volume-origin {args.object_volume_origin}")
+        raise ValueError(f"{demo_label} unsupported --object-volume-origin {args.object_volume_origin}")
     if float(args.object_volume_voxel_m) <= 0.0:
         raise ValueError("--object-volume-voxel-m must be positive.")
     if float(args.object_volume_min_voxel_m) <= 0.0 or float(args.object_volume_max_voxel_m) <= 0.0:
@@ -1067,7 +1124,7 @@ def validate_args(
     if int(args.edgetam_live_session_keep_frames) < 1:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 1.")
     if bool(args.debug_identity_c2w) and bool(args.debug_invert_c2w):
-        raise ValueError("Demo 3.1 accepts only one of --debug-identity-c2w or --debug-invert-c2w.")
+        raise ValueError(f"{demo_label} accepts only one of --debug-identity-c2w or --debug-invert-c2w.")
     if args.debug_only_camera_idx is not None and int(args.debug_only_camera_idx) not in set(camera_ids):
         raise ValueError(f"--debug-only-camera-idx {args.debug_only_camera_idx} is not in --camera-ids {camera_ids}.")
     if int(args.gpu_sampling_device_index) < 0:
@@ -1101,13 +1158,13 @@ def validate_args(
     if str(args.cotracker_update_mode) not in demo3_runtime.COTRACKER_UPDATE_MODES:
         raise ValueError(f"--cotracker-update-mode must be one of {demo3_runtime.COTRACKER_UPDATE_MODES}.")
     if str(args.mask_gpu) == str(args.cotracker_gpu) and not bool(args.allow_single_gpu_debug):
-        raise ValueError("Demo 3.1 requires distinct --mask-gpu and --cotracker-gpu unless --allow-single-gpu-debug is passed.")
+        raise ValueError(f"{demo_label} requires distinct --mask-gpu and --cotracker-gpu unless --allow-single-gpu-debug is passed.")
     if bool(args.require_two_cuda) and not bool(args.allow_single_gpu_debug):
         count = _cuda_count(cuda_device_count_provider)
         if count < 2:
-            raise RuntimeError(f"Demo 3.1 requires at least two CUDA devices before process isolation; found {count}.")
+            raise RuntimeError(f"{demo_label} requires at least two CUDA devices before process isolation; found {count}.")
     if require_calibration and not Path(args.calibrate_path).is_file():
-        raise FileNotFoundError(f"Demo 3.1 requires calibrate.pkl for three-camera world fusion: {args.calibrate_path}")
+        raise FileNotFoundError(f"{demo_label} requires calibrate.pkl for three-camera world fusion: {args.calibrate_path}")
 
 
 def build_cotracker_process_config(args: argparse.Namespace) -> CoTrackerProcessConfig:
@@ -1169,8 +1226,32 @@ def build_contract(
         tracker_spec.supports_batch_views
         and execution_mode in {TRACKING_BACKEND_EXECUTION_MODE_AUTO, TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS}
     )
+    demo32 = is_demo32_preset(args)
+    depth_source = demo3_runtime.DEPTH_SOURCE_FFS if demo32 else demo3_runtime.DEPTH_SOURCE_REALSENSE
+    pipeline_order = (
+        "capture",
+        "ffs_batch3_opt5_depth",
+        "edgetam",
+        "litetracker_serial",
+        "render_and_diagnostics",
+    ) if demo32 else (
+        "capture",
+        "realsense_depth",
+        "edgetam",
+        "point_tracker",
+        "render_and_diagnostics",
+    )
+    hot_path_forbids = [
+        "ffs_remote",
+        "ffs_ir_alignment",
+        "track_process_data.pkl",
+        "inverse_physics",
+        "cross_gpu_cuda_tensor_transfer",
+    ]
+    if not demo32:
+        hot_path_forbids = ["ffs", "ffs_tensorrt", *hot_path_forbids]
     contract: dict[str, Any] = {
-        "demo": "demo3.1",
+        "demo": demo_name_for_args(args),
         "preset": str(args.preset),
         "input_source": "live_realsense",
         "offline_mode_available": False,
@@ -1189,11 +1270,19 @@ def build_contract(
         "calibrate_pkl_loaded": bool(Path(args.calibrate_path).is_file()),
         "mask_gpu_physical": int(args.mask_gpu),
         "cotracker_gpu_physical": int(args.cotracker_gpu),
+        "ffs_gpu_physical": 0 if demo32 else None,
+        "edgetam_gpu_physical": 1 if demo32 else int(args.mask_gpu),
         "main_cuda_visible_devices": str(args.mask_gpu),
         "cotracker_cuda_visible_devices": str(args.cotracker_gpu),
         "gpu_plan": str(args.gpu_plan),
-        "depth_source": demo3_runtime.DEPTH_SOURCE_REALSENSE,
-        "uses_ffs": False,
+        "depth_source": depth_source,
+        "uses_ffs": bool(demo32),
+        "async_depth_pipeline": bool(demo32),
+        "pipeline_order": list(pipeline_order),
+        "shared_runtime_preset": (
+            "demo2.3-dual4090-maxfps" if demo32 else "demo2.1.5-live-fast-native"
+        ),
+        "shared_runtime_gpu_pipeline_mode": "dual-gpu-split" if demo32 else "single-owner",
         "mask_source": demo3_runtime.MASK_SOURCE_HF_EDGETAM,
         "edgetam_batch_vision_encoder": True,
         "edgetam_live_session_keep_frames": int(args.edgetam_live_session_keep_frames),
@@ -1227,6 +1316,22 @@ def build_contract(
         "litetracker_weights": args.litetracker_weights,
         "litetracker_repo_dir": args.litetracker_repo_dir,
         "tracker_env_name": "demo_3_1_max",
+        "ffs_contract": (
+            {
+                "checkpoint": DEFAULT_FFS_MODEL_NAME,
+                "valid_iters": DEFAULT_FFS_VALID_ITERS,
+                "max_disp": DEFAULT_FFS_MAX_DISP,
+                "builderOptimizationLevel": DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL,
+                "trt_batch_size": 3,
+                "trt_model_dir": str(DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR),
+                "worker_mode": "dual-gpu-split-ffs-worker",
+                "schedule": "strict3-latest",
+                "depth_stage": "before_edgetam",
+                "batch3_isolated_artifact": True,
+            }
+            if demo32
+            else None
+        ),
         "cotracker_owner": "process",
         "cotracker_process_mode": str(args.cotracker_process_mode),
         "cotracker_prewarm_backends": bool(args.cotracker_prewarm_backends),
@@ -1358,15 +1463,7 @@ def build_contract(
         "height": int(args.height),
         "fps": int(args.fps),
         "output_root": str(args.output_root),
-        "hot_path_forbids": [
-            "ffs",
-            "ffs_tensorrt",
-            "ffs_remote",
-            "ffs_ir_alignment",
-            "track_process_data.pkl",
-            "inverse_physics",
-            "cross_gpu_cuda_tensor_transfer",
-        ],
+        "hot_path_forbids": hot_path_forbids,
     }
     contract["profile_summary_fields"] = build_empty_dual_gpu_profile_summary(contract)
     return contract
@@ -1385,6 +1482,11 @@ def format_contract(contract: dict[str, Any]) -> str:
         "cotracker_cuda_visible_devices",
         "depth_source",
         "uses_ffs",
+        "async_depth_pipeline",
+        "shared_runtime_preset",
+        "shared_runtime_gpu_pipeline_mode",
+        "pipeline_order",
+        "ffs_contract",
         "mask_source",
         "edgetam_batch_vision_encoder",
         "edgetam_live_session_keep_frames",
@@ -1425,6 +1527,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "cotracker_backend",
         "tracker_backend",
         "tracker_backend_family",
+        "tracker_env_name",
         "tracking_backend_execution_mode",
         "tracking_backend_batch_dimension",
         "tracking_backend_batch_size",
@@ -1445,6 +1548,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracking_pending_render_packet_max_groups",
         "tracking_render_packet_match_policy",
         "render_waited_for_mask",
+        "output_root",
     )
     lines = []
     for key in keys:
@@ -1483,20 +1587,21 @@ def validate_live_realsense_contract(
     cuda_device_count_provider: CudaDeviceCountProvider | None = None,
 ) -> dict[str, Any]:
     validate_args(args, require_calibration=True, cuda_device_count_provider=cuda_device_count_provider)
+    demo_label = demo_label_for_args(args)
     provider = connected_serials_provider or demo3_runtime._get_connected_realsense_serials
     connected_serials = list(provider())
     requested_serials = list(args.serials or [])
     if requested_serials:
         if len(requested_serials) != 3:
-            raise RuntimeError("Demo 3.1 requires exactly three requested RealSense serials when --serials is used.")
+            raise RuntimeError(f"{demo_label} requires exactly three requested RealSense serials when --serials is used.")
         missing = [serial for serial in requested_serials if serial not in connected_serials]
         if missing:
-            raise RuntimeError(f"Demo 3.1 requested RealSense serials are not connected: {missing}")
+            raise RuntimeError(f"{demo_label} requested RealSense serials are not connected: {missing}")
         active_serials = requested_serials
     else:
         if len(connected_serials) != 3:
             raise RuntimeError(
-                "Demo 3.1 requires exactly three connected RealSense cameras when --serials is not provided. "
+                f"{demo_label} requires exactly three connected RealSense cameras when --serials is not provided. "
                 f"connected={len(connected_serials)}"
             )
         active_serials = connected_serials
@@ -1507,22 +1612,22 @@ def validate_live_realsense_contract(
     if calibration_reference_serials is not None:
         if len(calibration_reference_serials) != 3:
             raise RuntimeError(
-                "Demo 3.1 requires calibrate.pkl metadata for exactly three cameras. "
+                f"{demo_label} requires calibrate.pkl metadata for exactly three cameras. "
                 f"calibration_reference_serials={len(calibration_reference_serials)}"
             )
         missing_from_calibration = [serial for serial in active_serials if serial not in calibration_reference_serials]
         if missing_from_calibration:
             raise RuntimeError(
-                "Demo 3.1 active RealSense serials are not covered by calibrate.pkl metadata. "
+                f"{demo_label} active RealSense serials are not covered by calibrate.pkl metadata. "
                 f"missing={missing_from_calibration}"
             )
     try:
         calibration_transform_count = demo3_runtime._calibration_transform_count(args.calibrate_path)
     except Exception as exc:
-        raise RuntimeError(f"Demo 3.1 calibration validation failed: {exc}") from exc
+        raise RuntimeError(f"{demo_label} calibration validation failed: {exc}") from exc
     if calibration_transform_count != 3:
         raise RuntimeError(
-            "Demo 3.1 requires calibrate.pkl to contain exactly three camera-to-world transforms. "
+            f"{demo_label} requires calibrate.pkl to contain exactly three camera-to-world transforms. "
             f"transform_count={calibration_transform_count}"
         )
     return {
@@ -1550,7 +1655,29 @@ def build_shared_runtime_args(
     shared_args.tracking_backend = "none"
     shared_args.tracking_source = "cached"
     shared_args.show_tracking_overlay = False
-    shared_args.depth_source = demo3_runtime.DEPTH_SOURCE_REALSENSE
+    if is_demo32_preset(args):
+        shared_args.preset = shared.PRESET_DEMO23_DUAL4090_MAXFPS
+        shared_args.preset_canonical = shared.PRESET_DEMO23_DUAL4090_MAXFPS
+        shared_args.demo_version_override = "demo3.2"
+        shared_args.demo_display_name_override = "Demo 3.2"
+        shared_args.depth_source = shared.DEPTH_SOURCE_FFS
+        shared_args.ffs_trt_batch_size = 3
+        shared_args.ffs_trt_model_dir = str(DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR)
+        shared_args.gpu_pipeline_mode = shared.GPU_PIPELINE_MODE_DUAL_GPU_SPLIT
+        shared_args.ffs_worker_mode = "shared"
+        shared_args.ffs_schedule = "strict3-latest"
+        shared_args.ffs_device = "cuda:0"
+        shared_args.edgetam_device = "cuda:1"
+        shared_args.sam31_device = "cuda:1"
+        shared_args.dual_gpu_queue_size = 2
+        shared_args.dual_gpu_transport = "pickle"
+        shared_args.dual_gpu_start_method = "spawn"
+        shared_args.dual_gpu_processes = True
+        shared_args.enable_pcd_filter = True
+        shared_args.pcd_filter_mode = "async"
+        shared_args.depth_min_m = shared.DEFAULT_DEMO22_DEPTH_MIN_M
+    else:
+        shared_args.depth_source = demo3_runtime.DEPTH_SOURCE_REALSENSE
     shared_args.edgetam_batch_vision_encoder = True
     if hasattr(shared_args, "render_target_fps"):
         shared_args.render_target_fps = float(args.render_target_fps)
@@ -3229,8 +3356,9 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     cuda_device_count_provider: CudaDeviceCountProvider | None = None,
+    default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS,
 ) -> int:
-    parser = build_arg_parser()
+    parser = build_arg_parser(default_preset=default_preset)
     try:
         args = parser.parse_args(argv)
         args = apply_preset_defaults(args, explicit_options=demo3_runtime._explicit_cli_options(argv))
@@ -3253,6 +3381,7 @@ __all__ = [
     "FUSION_MASK_POLICY_LATEST_REUSE",
     "FUSION_MASK_POLICY_STRICT",
     "PRESET_DEMO31_DUAL4090_HIGHFPS",
+    "PRESET_DEMO32_FFS_LITETRACKER",
     "apply_preset_defaults",
     "build_arg_parser",
     "build_contract",

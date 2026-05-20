@@ -23,6 +23,7 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `demo_v0_2/`, `demo_v0_3/`: remote FFS replay / proxy experiments
 - `demo_v1/`, `demo_v2/`: single-camera realtime point-cloud demo lineage
 - `demo_v2_1/`, `demo_v2_1_5/`, `demo_v2_2/`: three-camera semantic fused-PCD demo lineage
+- `demo_v3_2/`: Demo 3.2 FFS batch=3 opt=5 depth plus LiteTracker serial tracking overlay
 - `services/ffs_remote/`: remote FFS request/response and staged proxy services for demo/profiling use
 - `qqtt/env/camera/`: shared RealSense camera runtime
 - `qqtt/env/camera/preflight.py`: record-time probe/preflight decision table
