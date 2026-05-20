@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 
 from qqtt.tracking.backends.cotracker3_adapter import CoTracker3Adapter
+from qqtt.tracking.backends.cotracker3_online import CoTracker3OnlineBackend
 from qqtt.tracking.backends.point_tracker_adapter import (
     PointTrackerAdapterConfig,
     build_point_tracker_adapter_factory,
@@ -107,6 +108,27 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(set(results), {0, 1})
         self.assertEqual(results[0].backend, "cotracker3_online")
         self.assertEqual(results[1].tracks_yx.shape, (1, 1, 2))
+
+    def test_cotracker_online_batch_tensors_are_contiguous(self) -> None:
+        frames = [
+            np.zeros((3, 4, 5, 3), dtype=np.uint8),
+            np.ones((3, 4, 5, 3), dtype=np.uint8),
+        ]
+        video = CoTracker3OnlineBackend._batch_frames_to_torch_video(frames, device="cpu")
+        queries = CoTracker3OnlineBackend._batch_queries_yx_to_torch(
+            {
+                0: np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+                1: np.array([[5.0, 6.0]], dtype=np.float32),
+                2: np.array([[7.0, 8.0]], dtype=np.float32),
+            },
+            camera_ids=(0, 1, 2),
+            device="cpu",
+        )
+
+        self.assertEqual(tuple(video.shape), (3, 2, 3, 4, 5))
+        self.assertTrue(video.is_contiguous())
+        self.assertEqual(tuple(queries.shape), (3, 2, 3))
+        self.assertTrue(queries.is_contiguous())
 
 
 if __name__ == "__main__":

@@ -35,6 +35,9 @@ Fix Demo 3.1 CoTracker throughput and sync observability issues:
 - Switched the public default from auto/serial fallback to explicit
   `batch` / `batch-views`; serial and auto remain available as explicit
   debugging overrides.
+- Fixed the CoTracker3 online batch adapter to pass contiguous batched video
+  and query tensors into the upstream model; the first 120s profiling attempt
+  exposed an upstream `.view(...)` stride requirement in batched mode.
 - Added latest-reuse mask/source group freshness reporting for Demo 3.1.
 - Passed touched-module `py_compile`.
 - Passed focused conda unittest modules for Demo 3 / Demo 3.1 tracking paths.

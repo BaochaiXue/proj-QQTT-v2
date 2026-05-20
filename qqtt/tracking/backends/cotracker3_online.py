@@ -91,7 +91,7 @@ class CoTracker3OnlineBackend:
         arr = np.stack([np.asarray(frame, dtype=np.uint8) for frame in frames], axis=0)
         if arr.ndim != 4 or arr.shape[-1] != 3:
             raise ValueError(f"frames_rgb must be HxWx3 RGB arrays; got {arr.shape}")
-        return torch.from_numpy(arr).permute(0, 3, 1, 2)[None].float().to(device)
+        return torch.from_numpy(arr).permute(0, 3, 1, 2)[None].contiguous().float().to(device)
 
     @staticmethod
     def _batch_frames_to_torch_video(frames: Sequence[np.ndarray], *, device: str):
@@ -102,7 +102,7 @@ class CoTracker3OnlineBackend:
         arr = np.stack([np.asarray(frame_stack, dtype=np.uint8) for frame_stack in frames], axis=1)
         if arr.ndim != 5 or arr.shape[-1] != 3:
             raise ValueError(f"batch frame stacks must be BxHxWx3 RGB arrays; got {arr.shape}")
-        return torch.from_numpy(arr).permute(0, 1, 4, 2, 3).float().to(device)
+        return torch.from_numpy(arr).permute(0, 1, 4, 2, 3).contiguous().float().to(device)
 
     @staticmethod
     def _queries_yx_to_torch(query_points_yx: np.ndarray, *, device: str):
@@ -136,7 +136,7 @@ class CoTracker3OnlineBackend:
             queries[batch_idx, : len(points_yx), 1:] = points_yx[:, ::-1]
             if len(points_yx) < max_count:
                 queries[batch_idx, len(points_yx) :, 1:] = points_yx[-1, ::-1]
-        return torch.from_numpy(queries).to(device)
+        return torch.from_numpy(queries).contiguous().to(device)
 
     @staticmethod
     def _extract_prediction(output: Any) -> tuple[Any, Any]:
