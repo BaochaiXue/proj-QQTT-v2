@@ -23,6 +23,8 @@ Fix Demo 3.1 CoTracker throughput and sync observability issues:
 - Make Demo 3.1 rendering tracker-result-driven: incoming PCD packets are
   cached, and a newly published CoTracker batch result selects the matching
   pending PCD group to render.
+- Keep the pending PCD window bounded and use nearest pending PCD fallback when
+  the exact tracker group has already been evicted.
 - Show depth/FFS, HF EdgeTAM, and CoTracker batch inference/e2e timing in the
   Open3D HUD for each rendered tracking frame.
 - Add tests for batch dispatch, serial fallback, and freshness fields.
@@ -70,3 +72,6 @@ Fix Demo 3.1 CoTracker throughput and sync observability issues:
   `CoTracker3OnlineBackend._tracks_to_batch_results`.
 - Added Demo 3.1 overlay semantic bbox filtering with profile fields for input,
   kept, rejected, and pre/post-filter centroids.
+- Added a bounded pending-render PCD window with exact-then-nearest group-id
+  matching and summary/profile counters for exact, nearest, missing PCD, and
+  missing lift input cases.

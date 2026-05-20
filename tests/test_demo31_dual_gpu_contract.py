@@ -212,6 +212,11 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(contract["overlay_bbox_filter_enabled"])
         self.assertEqual(contract["overlay_bbox_filter_scope"], "controller")
         self.assertEqual(contract["overlay_bbox_filter_margin_m"], 0.15)
+        self.assertEqual(contract["tracking_pending_render_packet_max_groups"], 128)
+        self.assertEqual(
+            contract["tracking_render_packet_match_policy"],
+            "exact-then-nearest-pending-pcd-by-group-id",
+        )
         self.assertFalse(contract["phystwin_dense_compatible"])
         self.assertEqual(contract["cotracker_backend"], "cotracker3_online")
         self.assertEqual(contract["tracker_backend"], "cotracker3_online")
@@ -267,6 +272,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("overlay_display_scope = controller", output)
         self.assertIn("overlay_bbox_filter_enabled = true", output)
         self.assertIn("overlay_bbox_filter_margin_m = 0.15", output)
+        self.assertIn("tracking_pending_render_packet_max_groups = 128", output)
+        self.assertIn("tracking_render_packet_match_policy = exact-then-nearest-pending-pcd-by-group-id", output)
         self.assertIn("phystwin_dense_compatible = false", output)
         self.assertIn("cotracker_owner = process", output)
         self.assertIn("tracker_backend = cotracker3_online", output)
@@ -710,6 +717,11 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["render_group_id"], 1)
         self.assertTrue(overlay_profile["overlay_lift_cache_hit"])
         self.assertTrue(overlay_profile["tracking_result_has_matching_render_packet"])
+        self.assertTrue(overlay_profile["tracking_result_used_render_packet"])
+        self.assertFalse(overlay_profile["tracking_result_used_nearest_render_packet"])
+        self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "exact")
+        self.assertEqual(overlay_profile["tracking_render_packet_group_id"], 1)
+        self.assertEqual(overlay_profile["tracking_render_packet_group_delta"], 0)
         self.assertEqual(overlay_profile["overlay_lift_method"], "semantic_projection_grid")
         self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 1})
         self.assertEqual(overlay_profile["overlay_color_mode"], "solid")
@@ -967,7 +979,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(second_profile["tracking_overlay_render_blocked"])
         self.assertEqual(runtime.demo31_tracking_overlay_render_blocked_count, 0)
 
-    def test_renderer_skips_tracking_result_without_matching_pending_pcd(self) -> None:
+    def test_renderer_blocks_nearest_pending_pcd_when_matching_lift_input_is_missing(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
         result = TrackingResultLitePacket(
             group_id=1,
@@ -1011,11 +1023,111 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         runtime._publish_next_tracker_driven_render_once(now_s=now_s)
 
         self.assertIsNone(runtime.published_packet)
-        self.assertEqual(runtime.demo31_tracking_result_without_render_packet_count, 1)
+        self.assertEqual(runtime.demo31_tracking_result_without_render_packet_count, 0)
+        self.assertEqual(runtime.demo31_tracking_result_nearest_render_packet_count, 1)
+        self.assertEqual(runtime.demo31_tracking_result_without_lift_input_count, 1)
         overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
         self.assertTrue(overlay_profile["overlay_available"])
         self.assertFalse(overlay_profile["tracking_result_has_matching_render_packet"])
+        self.assertTrue(overlay_profile["tracking_result_used_render_packet"])
+        self.assertTrue(overlay_profile["tracking_result_used_nearest_render_packet"])
+        self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "nearest")
+        self.assertEqual(overlay_profile["tracking_render_packet_group_id"], 2)
+        self.assertEqual(overlay_profile["tracking_render_packet_group_delta"], 1)
+        self.assertEqual(overlay_profile["tracking_nearest_render_packet_abs_delta"], 1)
         self.assertTrue(overlay_profile["tracking_overlay_render_blocked"])
+
+    def test_renderer_uses_nearest_pending_pcd_when_exact_group_was_evicted(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            publish_range=(1, 1),
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime.demo31_lift_input_cache.publish(
+            group_id=2,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 1), 2.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+        )
+
+        runtime._publish_render_packet(
+            _FakeRenderPacket(
+                group_id=2,
+                controller_points_m=np.empty((0, 3), dtype=np.float32),
+                controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+            )
+        )
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        published = runtime.published_packet
+        self.assertIsNotNone(published)
+        np.testing.assert_allclose(  # type: ignore[union-attr]
+            published.controller_points_m[-1],
+            np.array([0.0, 0.0, 2.0], dtype=np.float32),
+        )
+        self.assertEqual(runtime.demo31_tracking_result_exact_render_packet_count, 0)
+        self.assertEqual(runtime.demo31_tracking_result_nearest_render_packet_count, 1)
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertFalse(overlay_profile["tracking_result_has_matching_render_packet"])
+        self.assertTrue(overlay_profile["tracking_result_used_render_packet"])
+        self.assertTrue(overlay_profile["tracking_result_used_nearest_render_packet"])
+        self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "nearest")
+        self.assertEqual(overlay_profile["tracking_render_packet_group_id"], 2)
+        self.assertEqual(overlay_profile["tracking_render_packet_group_delta"], 1)
+        self.assertEqual(overlay_profile["render_group_id"], 2)
+        self.assertFalse(overlay_profile["tracking_overlay_render_blocked"])
+
+    def test_pending_render_packet_cache_is_bounded(self) -> None:
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(None),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "tracking_pending_render_packet_max_groups": 2,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+
+        for group_id in (1, 2, 3):
+            runtime._publish_render_packet(
+                _FakeRenderPacket(
+                    group_id=group_id,
+                    controller_points_m=np.empty((0, 3), dtype=np.float32),
+                    controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+                )
+            )
+
+        with runtime.demo31_pending_render_lock:
+            pending_ids = sorted(runtime.demo31_pending_render_packets)
+        self.assertEqual(pending_ids, [2, 3])
+        self.assertEqual(runtime.demo31_pending_render_packet_drop_count, 1)
+        self.assertEqual(runtime.demo31_snapshot()["tracking_pending_render_packet_max_groups"], 2)
 
     def test_renderer_warmup_blocks_first_frame_until_tracking_overlay_points_exist(self) -> None:
         runtime_cls = demo31_runtime.make_demo31_live_runtime_class(

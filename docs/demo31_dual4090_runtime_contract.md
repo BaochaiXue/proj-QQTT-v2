@@ -47,10 +47,13 @@ bugs from being rendered as detached controller points.
 
 Camera/mask/PCD work remains asynchronous, but rendered result publication is
 gated by CoTracker by default. The main process stores pending PCD packets by
-`group_id`; when a fresh CoTracker result arrives, Demo 3.1 renders only the
-matching PCD packet after the result can be lifted into red tracking points. If
-CoTracker is not ready, or the matching PCD/lift inputs are no longer available,
-no new rendered result is published and Open3D keeps the previous valid frame.
+`group_id` in a bounded latest window. When a fresh CoTracker result arrives,
+Demo 3.1 first renders the exact matching PCD packet. If that exact packet was
+already evicted, it falls back to the nearest pending PCD group by absolute
+`group_id` delta and marks the frame as `nearest` in the profile. If CoTracker
+is not ready, no pending PCD is available, or the selected PCD has no lift
+inputs, no new rendered result is published and Open3D keeps the previous valid
+frame.
 Rendered FPS therefore measures track-ready results, not semantic-only PCD
 throughput. Use `--no-wait-for-tracking-overlay` only for debugging the semantic
 PCD before tracking is available.
@@ -108,6 +111,8 @@ overlay_display_classification = first_frame_mask_membership
 overlay_bbox_filter_enabled = true
 overlay_bbox_filter_scope = controller
 overlay_bbox_filter_margin_m = 0.15
+tracking_pending_render_packet_max_groups = 128
+tracking_render_packet_match_policy = exact-then-nearest-pending-pcd-by-group-id
 cotracker_backend = cotracker3_online
 tracker_backend = cotracker3_online
 tracker_backend_family = cotracker
@@ -201,8 +206,13 @@ tracking_overlay_warmup_skipped_render_count
 tracking_overlay_first_render_group_id
 tracking_overlay_render_blocked_count
 tracking_pending_render_packets
+tracking_pending_render_packet_max_groups
 tracking_pending_render_packet_drop_count
+tracking_render_packet_match_policy
+tracking_result_exact_render_packet_count
+tracking_result_nearest_render_packet_count
 tracking_result_without_render_packet_count
+tracking_result_without_lift_input_count
 tracking_input_mask_reuse_ratio
 tracking_input_mask_age_ms_median
 tracking_input_mask_age_ms_p95

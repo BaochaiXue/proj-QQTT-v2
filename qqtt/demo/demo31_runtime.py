@@ -1819,7 +1819,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
         def _remember_pending_render_packet(self, packet: Any) -> None:
             with self.demo31_pending_render_lock:
                 self.demo31_pending_render_packets[int(packet.group_id)] = packet
-                while len(self.demo31_pending_render_packets) > max(1, int(DEFAULT_LIFT_INPUT_CACHE_GROUPS)):
+                while len(self.demo31_pending_render_packets) > int(self.demo31_pending_render_packet_max_groups):
                     oldest = min(self.demo31_pending_render_packets)
                     self.demo31_pending_render_packets.pop(oldest, None)
                     self.demo31_pending_render_packet_drop_count += 1
@@ -1925,10 +1925,19 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "tracking_input_queue_replace_count": int(self.demo31_tracking_input_queue_replace_count),
                 "tracking_input_drop_count": int(self.demo31_tracking_input_drop_count),
                 "tracking_pending_render_packets": pending_render_count,
+                "tracking_pending_render_packet_max_groups": int(self.demo31_pending_render_packet_max_groups),
                 "tracking_pending_render_packet_drop_count": int(self.demo31_pending_render_packet_drop_count),
                 "tracking_result_without_render_packet_count": int(
                     self.demo31_tracking_result_without_render_packet_count
                 ),
+                "tracking_result_exact_render_packet_count": int(
+                    self.demo31_tracking_result_exact_render_packet_count
+                ),
+                "tracking_result_nearest_render_packet_count": int(
+                    self.demo31_tracking_result_nearest_render_packet_count
+                ),
+                "tracking_result_without_lift_input_count": int(self.demo31_tracking_result_without_lift_input_count),
+                "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
                 "overlay_age_ms_median": float(age["median"]),
                 "overlay_age_ms_p95": float(age["p95"]),
                 "cotracker_model_ms_median": float(model["median"]),
@@ -2166,11 +2175,29 @@ class Demo31Runtime:
                     ),
                     "tracking_overlay_first_render_group_id": snapshot.get("tracking_overlay_first_render_group_id"),
                     "tracking_pending_render_packets": int(snapshot.get("tracking_pending_render_packets", 0) or 0),
+                    "tracking_pending_render_packet_max_groups": int(
+                        snapshot.get("tracking_pending_render_packet_max_groups", 0) or 0
+                    ),
                     "tracking_pending_render_packet_drop_count": int(
                         snapshot.get("tracking_pending_render_packet_drop_count", 0) or 0
                     ),
                     "tracking_result_without_render_packet_count": int(
                         snapshot.get("tracking_result_without_render_packet_count", 0) or 0
+                    ),
+                    "tracking_result_exact_render_packet_count": int(
+                        snapshot.get("tracking_result_exact_render_packet_count", 0) or 0
+                    ),
+                    "tracking_result_nearest_render_packet_count": int(
+                        snapshot.get("tracking_result_nearest_render_packet_count", 0) or 0
+                    ),
+                    "tracking_result_without_lift_input_count": int(
+                        snapshot.get("tracking_result_without_lift_input_count", 0) or 0
+                    ),
+                    "tracking_render_packet_match_policy": str(
+                        snapshot.get(
+                            "tracking_render_packet_match_policy",
+                            self.contract.get("tracking_render_packet_match_policy", TRACKING_RENDER_PACKET_MATCH_POLICY),
+                        )
                     ),
                     "mask_reuse_ratio": float(mask_cache.get("mask_reuse_ratio", 0.0) or 0.0),
                     "mask_age_ms_median": float(mask_cache.get("mask_age_ms_median", 0.0) or 0.0),
