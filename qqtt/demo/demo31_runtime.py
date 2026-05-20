@@ -828,7 +828,7 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         description=(
             "Demo 3.1/3.2 dual-4090 realtime visualization. Demo 3.1 uses "
             "RealSense depth plus a point-tracker child process; Demo 3.2 "
-            "uses FFS TensorRT batch=3 opt=5 depth and LiteTracker serial."
+            "uses FFS TensorRT batch=3 opt=5 depth and LiteTracker batch-views by default."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

@@ -248,6 +248,9 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - serial ONNX-CUDA profiling additionally needs `onnxruntime-gpu` and
     `onnxscript`; current local validation used `onnxruntime-gpu==1.26.0`
     with `CUDAExecutionProvider`
+  - ONNX-CUDA serial is an explicit A/B profiling path only; Demo 3.2 keeps
+    LiteTracker PyTorch batch-views as the default because local profiling made
+    the ONNX serial path slower
   - PyTorch 2.11 exports LiteTracker ONNX submodules with effective opset 18
     even when the requested CLI opset is 17; Demo 3.2 records both requested
     and actual ONNX opsets

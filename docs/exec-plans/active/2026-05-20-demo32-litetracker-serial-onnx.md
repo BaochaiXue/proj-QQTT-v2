@@ -5,6 +5,11 @@
 Add a serial-only LiteTracker ONNX-CUDA runtime for Demo 3.2 A/B profiling
 against the existing PyTorch serial path.
 
+Follow-up profiling note: ONNX-CUDA serial is slower than the existing
+LiteTracker batch-view PyTorch path in local Demo 3.2 testing, so Demo 3.2
+keeps `batch-views` / legacy `batch` as the default. The ONNX path remains an
+explicit profiling/runtime experiment only.
+
 ## Scope
 
 - Add `--litetracker-runtime pytorch|onnx-cuda`.
@@ -15,7 +20,7 @@ against the existing PyTorch serial path.
   local PyTorch 2.11 validation requires effective opset 18 for a loadable
   `updateformer.onnx`.
 - Implement only serial `OnnxLiteTrackerAdapter.initialize()` and `update()`.
-- Keep PyTorch `LiteTrackerAdapter` as the default baseline.
+- Keep PyTorch `LiteTrackerAdapter` batch-views as the default live path.
 - Do not implement ONNX batch-views, TensorRT, renderer changes, marker changes,
   surface filtering changes, or query-manager changes.
 

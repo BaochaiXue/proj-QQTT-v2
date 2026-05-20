@@ -12,6 +12,9 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
 - the tracker backend defaults to `litetracker` with experimental batch-view
   execution: `--tracking-backend-execution-mode batch-views` and
   `--cotracker-update-mode batch`
+- LiteTracker ONNX-CUDA is retained as an explicit serial A/B profiling path,
+  not the default live path; local live profiling showed ONNX serial slower
+  than the batch-view PyTorch runtime
 - Demo 3.2 uses `--tracker-batch-query-count-policy min-common` by default so
   all three camera views have the same query count for the batch tensor
 - LiteTracker uses lazy query initialization by default: the child process is
