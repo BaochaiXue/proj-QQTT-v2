@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from dataclasses import dataclass
 import io
 from pathlib import Path
 import pickle
 import tempfile
 import unittest
+
+import numpy as np
 
 from qqtt.demo import demo3_runtime
 from qqtt.env.camera.calibration_metadata import build_calibration_metadata, write_calibration_metadata
@@ -42,8 +45,10 @@ class Demo3RuntimeContractTest(unittest.TestCase):
         self.assertEqual(contract["tracking_mask_scope"], "object_controller_union")
         self.assertEqual(contract["tracking_query_mode"], "phystwin_dense")
         self.assertEqual(contract["tracking_query_count_requested"], "auto")
-        self.assertEqual(contract["tracking_query_count_rule"], "min(union_mask_pixels, 5000)")
-        self.assertEqual(contract["tracking_sampling"], "torch_randperm_seed_plus_camera_idx")
+        self.assertEqual(contract["tracking_query_count_rule"], "min(capped_object_controller_union_pixels, 5000)")
+        self.assertEqual(contract["tracking_sampling"], "controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx")
+        self.assertEqual(contract["controller_pcd_max_points_per_camera"], 4999)
+        self.assertEqual(contract["controller_pcd_cap_stage"], "before_tracking_query_and_fusion")
         self.assertEqual(contract["cotracker_seed"], 42)
         self.assertEqual(contract["overlay_max_points_per_camera"], 30)
         self.assertEqual(contract["overlay_display_scope"], "controller")
@@ -117,7 +122,9 @@ class Demo3RuntimeContractTest(unittest.TestCase):
         self.assertIn("tracking_mask_scope = object_controller_union", output)
         self.assertIn("tracking_query_mode = phystwin_dense", output)
         self.assertIn("tracking_query_count_requested = auto", output)
-        self.assertIn("tracking_sampling = torch_randperm_seed_plus_camera_idx", output)
+        self.assertIn("tracking_sampling = controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx", output)
+        self.assertIn("controller_pcd_max_points_per_camera = 4999", output)
+        self.assertIn("controller_pcd_cap_stage = before_tracking_query_and_fusion", output)
         self.assertIn("overlay_display_scope = controller", output)
         self.assertIn("phystwin_dense_compatible = true", output)
         self.assertIn("cotracker_backend = cotracker3_online", output)
@@ -130,6 +137,42 @@ class Demo3RuntimeContractTest(unittest.TestCase):
         contract = demo3_runtime.build_contract(args)
         self.assertFalse(contract["cotracker_enabled"])
         self.assertFalse(contract["uses_ffs"])
+
+    def test_controller_pcd_cap_limits_mask_before_query_and_fusion(self) -> None:
+        @dataclass(frozen=True)
+        class _MaskPacket:
+            controller_mask: np.ndarray
+            object_mask: np.ndarray
+
+        controller_mask = np.ones((20, 20), dtype=bool)
+        object_mask = np.zeros((20, 20), dtype=bool)
+        object_mask[:2, :2] = True
+        capped, profile = demo3_runtime.cap_controller_pcd_masks(
+            {0: _MaskPacket(controller_mask=controller_mask, object_mask=object_mask)},
+            camera_ids=(0,),
+            max_points_per_camera=123,
+            seed=42,
+        )
+
+        self.assertEqual(int(np.count_nonzero(controller_mask)), 400)
+        self.assertEqual(int(np.count_nonzero(capped[0].controller_mask)), 123)
+        self.assertLess(int(np.count_nonzero(capped[0].controller_mask)), 5000)
+        self.assertEqual(profile["raw_controller_pixels_by_camera"][0], 400)
+        self.assertEqual(profile["capped_controller_pixels_by_camera"][0], 123)
+        self.assertEqual(profile["stage"], "before_tracking_query_and_fusion")
+
+    def test_controller_pcd_cap_must_be_below_full_query_budget(self) -> None:
+        args = self._parse(
+            [
+                "--dry-run",
+                "--camera-ids",
+                "0,1,2",
+                "--controller-pcd-max-points-per-camera",
+                "5000",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "must be < 5000"):
+            demo3_runtime.validate_args(args)
 
     def test_live_realsense_validation_checks_connected_count_and_calibration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

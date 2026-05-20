@@ -60,10 +60,13 @@ SHARED_TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_SCOPE_OBJECT_CONTROLLER_UNION = "object_controller_union"
 TRACKING_QUERY_MODE_PHYSTWIN_DENSE = "phystwin_dense"
 TRACKING_QUERY_COUNT_AUTO = "auto"
-TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE = "min(union_mask_pixels, 5000)"
-TRACKING_SAMPLING_TORCH_RANDPERM = "torch_randperm_seed_plus_camera_idx"
+TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE = "min(capped_object_controller_union_pixels, 5000)"
+TRACKING_SAMPLING_TORCH_RANDPERM = "controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx"
 DEFAULT_COTRACKER_SEED = 42
 PHYSTWIN_DENSE_MAX_POINTS = 5000
+DEFAULT_CONTROLLER_PCD_MAX_POINTS_PER_CAMERA = PHYSTWIN_DENSE_MAX_POINTS - 1
+CONTROLLER_PCD_CAP_STAGE = "before_tracking_query_and_fusion"
+CONTROLLER_PCD_CAP_SAMPLING = "stable_coordinate_hash_seed_plus_camera_idx"
 
 RENDER_MODE_POINTCLOUD = "pointcloud"
 RENDER_MODE_NONE = "none"
@@ -169,13 +172,113 @@ def normalize_cotracker_query_count_request(value: Any) -> str:
     return str(count)
 
 
+def normalize_controller_pcd_max_points_per_camera(value: Any) -> int:
+    count = int(value)
+    if count < 0:
+        raise ValueError("--controller-pcd-max-points-per-camera must be >= 0.")
+    if count >= PHYSTWIN_DENSE_MAX_POINTS:
+        raise ValueError(
+            "--controller-pcd-max-points-per-camera must be < "
+            f"{PHYSTWIN_DENSE_MAX_POINTS} so controller cannot fill the full per-view query budget."
+        )
+    return count
+
+
 def phystwin_dense_compatible_for_args(args: argparse.Namespace) -> bool:
     return (
         str(args.cotracker_query_mode) == TRACKING_QUERY_MODE_PHYSTWIN_DENSE
         and normalize_cotracker_query_count_request(args.cotracker_query_count) == TRACKING_QUERY_COUNT_AUTO
+        and normalize_controller_pcd_max_points_per_camera(
+            getattr(args, "controller_pcd_max_points_per_camera", DEFAULT_CONTROLLER_PCD_MAX_POINTS_PER_CAMERA)
+        )
+        == DEFAULT_CONTROLLER_PCD_MAX_POINTS_PER_CAMERA
         and int(args.cotracker_seed) == DEFAULT_COTRACKER_SEED
         and str(args.cotracker_backend) == COTRACKER3_ONLINE
     )
+
+
+def _stable_hash_cap_mask(
+    mask: np.ndarray,
+    *,
+    max_pixels: int,
+    seed: int,
+    camera_idx: int,
+) -> np.ndarray:
+    mask_bool = np.asarray(mask, dtype=bool)
+    count = int(np.count_nonzero(mask_bool))
+    cap = int(max_pixels)
+    if count <= cap:
+        return mask_bool.copy()
+    capped = np.zeros(mask_bool.shape, dtype=bool)
+    if cap <= 0:
+        return capped
+    coords = np.argwhere(mask_bool)
+    y = coords[:, 0].astype(np.uint64, copy=False)
+    x = coords[:, 1].astype(np.uint64, copy=False)
+    salt = np.uint64((int(seed) + 1) * 1000003 + (int(camera_idx) + 1) * 9176)
+    keys = (
+        (y * np.uint64(11400714819323198485))
+        ^ (x * np.uint64(14029467366897019727))
+        ^ salt
+    )
+    selected_idx = np.argpartition(keys, cap - 1)[:cap]
+    selected = coords[selected_idx]
+    capped[selected[:, 0], selected[:, 1]] = True
+    return capped
+
+
+def cap_controller_pcd_masks(
+    masks: dict[int, Any],
+    *,
+    camera_ids: Sequence[int],
+    max_points_per_camera: int,
+    seed: int,
+) -> tuple[dict[int, Any], dict[str, Any]]:
+    cap = normalize_controller_pcd_max_points_per_camera(max_points_per_camera)
+    capped_masks: dict[int, Any] = dict(masks)
+    by_camera: dict[int, dict[str, int]] = {}
+    for camera_idx in camera_ids:
+        idx = int(camera_idx)
+        packet = masks.get(idx)
+        if packet is None:
+            continue
+        controller_mask = np.asarray(packet.controller_mask, dtype=bool)
+        capped_controller = _stable_hash_cap_mask(
+            controller_mask,
+            max_pixels=cap,
+            seed=int(seed),
+            camera_idx=idx,
+        )
+        raw_count = int(np.count_nonzero(controller_mask))
+        capped_count = int(np.count_nonzero(capped_controller))
+        by_camera[idx] = {
+            "raw_controller_pixels": raw_count,
+            "capped_controller_pixels": capped_count,
+            "dropped_controller_pixels": max(0, raw_count - capped_count),
+            "cap": int(cap),
+        }
+        if capped_count != raw_count:
+            capped_masks[idx] = replace(packet, controller_mask=capped_controller)
+    profile = {
+        "enabled": True,
+        "stage": CONTROLLER_PCD_CAP_STAGE,
+        "sampling": CONTROLLER_PCD_CAP_SAMPLING,
+        "max_points_per_camera": int(cap),
+        "raw_controller_pixels_by_camera": {
+            int(idx): int(stats["raw_controller_pixels"])
+            for idx, stats in by_camera.items()
+        },
+        "capped_controller_pixels_by_camera": {
+            int(idx): int(stats["capped_controller_pixels"])
+            for idx, stats in by_camera.items()
+        },
+        "dropped_controller_pixels_by_camera": {
+            int(idx): int(stats["dropped_controller_pixels"])
+            for idx, stats in by_camera.items()
+        },
+        "by_camera": by_camera,
+    }
+    return capped_masks, profile
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -214,6 +317,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cotracker-backend", default=COTRACKER3_ONLINE)
     parser.add_argument("--cotracker-query-mode", choices=(TRACKING_QUERY_MODE_PHYSTWIN_DENSE,), default=TRACKING_QUERY_MODE_PHYSTWIN_DENSE)
     parser.add_argument("--cotracker-query-count", default=DEFAULT_COTRACKER_QUERY_COUNT_REQUEST)
+    parser.add_argument(
+        "--controller-pcd-max-points-per-camera",
+        type=int,
+        default=DEFAULT_CONTROLLER_PCD_MAX_POINTS_PER_CAMERA,
+        help=(
+            "Maximum controller/towel mask pixels kept per camera before CoTracker query "
+            "selection and before fused PCD construction. Must be < 5000."
+        ),
+    )
     parser.add_argument("--cotracker-seed", type=int, default=DEFAULT_COTRACKER_SEED)
     parser.add_argument("--cotracker-update-mode", choices=COTRACKER_UPDATE_MODES, default=DEFAULT_COTRACKER_UPDATE_MODE)
     parser.add_argument("--disable-cotracker", action="store_true")
@@ -301,6 +413,7 @@ def validate_args(args: argparse.Namespace, *, require_calibration: bool = False
     if str(args.cotracker_query_mode) != TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError("Demo 3 currently supports only --cotracker-query-mode phystwin_dense.")
     normalize_cotracker_query_count_request(args.cotracker_query_count)
+    normalize_controller_pcd_max_points_per_camera(args.controller_pcd_max_points_per_camera)
     if str(args.cotracker_update_mode) not in COTRACKER_UPDATE_MODES:
         raise ValueError(f"--cotracker-update-mode must be one of {COTRACKER_UPDATE_MODES}.")
     if str(args.object_point_control) not in OBJECT_POINT_CONTROLS:
@@ -385,6 +498,11 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "tracking_query_count_rule": TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE,
         "tracking_sampling": TRACKING_SAMPLING_TORCH_RANDPERM,
         "tracking_max_query_points_per_camera": PHYSTWIN_DENSE_MAX_POINTS,
+        "controller_pcd_max_points_per_camera": normalize_controller_pcd_max_points_per_camera(
+            args.controller_pcd_max_points_per_camera
+        ),
+        "controller_pcd_cap_stage": CONTROLLER_PCD_CAP_STAGE,
+        "controller_pcd_cap_sampling": CONTROLLER_PCD_CAP_SAMPLING,
         "cotracker_seed": int(args.cotracker_seed),
         "phystwin_dense_compatible": bool(phystwin_dense_compatible_for_args(args)),
         "cotracker_window_len": DEFAULT_COTRACKER_WINDOW_LEN,
@@ -488,6 +606,16 @@ def build_empty_profile_summary(contract: dict[str, Any]) -> dict[str, Any]:
         "tracking_query_count_requested": str(contract.get("tracking_query_count_requested", TRACKING_QUERY_COUNT_AUTO)),
         "tracking_query_count_rule": TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE,
         "tracking_sampling": TRACKING_SAMPLING_TORCH_RANDPERM,
+        "controller_pcd_max_points_per_camera": int(
+            contract.get(
+                "controller_pcd_max_points_per_camera",
+                DEFAULT_CONTROLLER_PCD_MAX_POINTS_PER_CAMERA,
+            )
+        ),
+        "controller_pcd_cap_stage": str(contract.get("controller_pcd_cap_stage", CONTROLLER_PCD_CAP_STAGE)),
+        "controller_pcd_cap_sampling": str(
+            contract.get("controller_pcd_cap_sampling", CONTROLLER_PCD_CAP_SAMPLING)
+        ),
         "cotracker_seed": int(contract.get("cotracker_seed", DEFAULT_COTRACKER_SEED)),
         "cotracker_update_mode": str(contract.get("cotracker_update_mode", DEFAULT_COTRACKER_UPDATE_MODE)),
         "cotracker_update_mode_effective": str(contract.get("cotracker_update_mode", DEFAULT_COTRACKER_UPDATE_MODE)),
@@ -536,6 +664,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracking_query_count_requested",
         "tracking_query_count_rule",
         "tracking_sampling",
+        "controller_pcd_max_points_per_camera",
+        "controller_pcd_cap_stage",
         "cotracker_seed",
         "cotracker_update_mode",
         "overlay_max_points_per_camera",
@@ -1021,6 +1151,22 @@ def make_demo3_live_runtime_class(shared_runtime_module: Any):
             super().stop()
 
         def _build_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
+            capped_masks, controller_cap_profile = cap_controller_pcd_masks(
+                masks,
+                camera_ids=tuple(int(item) for item in self.args.camera_ids),
+                max_points_per_camera=int(
+                    self.demo3_contract.get(
+                        "controller_pcd_max_points_per_camera",
+                        DEFAULT_CONTROLLER_PCD_MAX_POINTS_PER_CAMERA,
+                    )
+                ),
+                seed=int(self.demo3_contract.get("cotracker_seed", DEFAULT_COTRACKER_SEED)),
+            )
+            if hasattr(self, "_profile_update"):
+                self._profile_update(
+                    int(depth_group.group_id),
+                    controller_pcd_mask_cap=controller_cap_profile,
+                )
             if self.demo3_tracking_input_slot is not None:
                 rgb_by_camera: dict[int, np.ndarray] = {}
                 mask_by_camera: dict[int, np.ndarray] = {}
@@ -1031,9 +1177,9 @@ def make_demo3_live_runtime_class(shared_runtime_module: Any):
                 c2w_by_camera: dict[int, np.ndarray] = {}
                 for camera_idx in self.args.camera_ids:
                     idx = int(camera_idx)
-                    if idx not in masks or idx not in depth_group.depths:
+                    if idx not in capped_masks or idx not in depth_group.depths:
                         continue
-                    mask_packet = masks[idx]
+                    mask_packet = capped_masks[idx]
                     rgb_by_camera[idx] = np.ascontiguousarray(np.asarray(mask_packet.color_bgr)[..., ::-1])
                     union_mask, object_mask, controller_mask = _phystwin_union_tracking_masks(mask_packet)
                     mask_by_camera[idx] = union_mask
@@ -1060,7 +1206,7 @@ def make_demo3_live_runtime_class(shared_runtime_module: Any):
                             depth_scale_m_per_unit=1.0,
                         )
                     )
-            return super()._build_fused_packet(depth_group=depth_group, masks=masks, ray_cache=ray_cache, rng=rng)
+            return super()._build_fused_packet(depth_group=depth_group, masks=capped_masks, ray_cache=ray_cache, rng=rng)
 
         def _publish_render_packet(self, packet: Any) -> None:
             overlay_start_s = time.perf_counter()

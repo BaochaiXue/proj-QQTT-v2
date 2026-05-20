@@ -12,21 +12,35 @@ plus live object/controller union-mask latest-wins packets and returns small CPU
 2D track/visibility packets. It does not receive offline video, saved masks,
 depth, intrinsics, or camera-to-world transforms. The main process lifts tracks
 to world using group-aligned cached RealSense depth, intrinsics, and
-camera-to-world transforms.
+camera-to-world transforms through the same semantic projection-grid
+backprojection convention used by the fused PCD path.
 
-Demo 3.1 inherits Demo 3.0's online-only FuturePhysTwin-compatible tracking
+Demo 3.1 inherits Demo 3.0's online-only object/controller union tracking
 semantics. The only public semantic switch is `--mode exp|demo`; both modes
 track `object_mask | controller_mask`. `exp` uses controller `towel`, while
-`demo` uses controller `hand`. CoTracker query sampling defaults to
-`phystwin_dense`: `min(union_mask_pixels, 5000)` query points per camera,
-sampled by torch `randperm(seed + camera_idx)` with seed 42. Overlay display
-selection is separate: raw CoTracker tracks still come from the union, but each
-query is labeled by first-frame object/controller mask membership and the
-default rendered overlay shows controller-labeled tracks only. The display cap
-is disabled by default for Demo 3.1: `overlay_max_points_per_camera = 0`
+`demo` uses controller `hand`. CoTracker query sampling uses
+`phystwin_dense`, but Demo 3.1 defaults to `--cotracker-query-count 4096`
+per camera for the batch=3 RTX 4090 path. A full `auto` / 5000-per-view
+three-camera batch exceeds the 24GB 4090 memory budget in live profiling. The
+controller/towel mask is first capped to
+`controller_pcd_max_points_per_camera = 4999` per camera, before both tracking
+query selection and fused PCD construction. Query points are then sampled from
+the capped object/controller union with the requested per-view budget using
+torch `randperm(seed + camera_idx)` with seed 42. Use
+`--cotracker-query-count auto` only when exact 5000-per-view dense sampling is
+needed and the tracker backend/memory budget can support it. Overlay display selection is
+separate: raw CoTracker tracks still come from the capped union, but each query
+is labeled by first-frame object/controller mask membership and the default
+rendered overlay shows controller-labeled tracks only. The display cap is
+disabled by default for Demo 3.1: `overlay_max_points_per_camera = 0`
 means render all visible controller-labeled tracks selected from the CoTracker
 union queries. The visible CoTracker tracking overlay color is high-contrast
-red, separate from the semantic PCD object/controller colors.
+red by default, separate from the semantic PCD object/controller colors. For
+alignment debugging, `--overlay-debug-color-by-camera` colors lifted overlay
+points by source camera while keeping `overlay_display_scope=controller`.
+The 3D lift mask follows the display scope: controller overlays are lifted only
+through the current controller mask, object overlays through the current object
+mask, and union overlays through the current object/controller union.
 
 Camera/mask/PCD work remains asynchronous, but rendered result publication is
 gated by CoTracker by default. The main process stores pending PCD packets by
@@ -68,15 +82,21 @@ mask_propagation = hf_edgetam_online
 semantic_mode = exp
 tracking_mask_scope = object_controller_union
 tracking_query_mode = phystwin_dense
-tracking_query_count_requested = auto
-tracking_query_count_rule = min(union_mask_pixels, 5000)
-tracking_sampling = torch_randperm_seed_plus_camera_idx
+tracking_query_count_requested = 4096
+tracking_query_count_rule = min(capped_object_controller_union_pixels, 5000)
+tracking_sampling = controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx
+controller_pcd_max_points_per_camera = 4999
+controller_pcd_cap_stage = before_tracking_query_and_fusion
+controller_pcd_cap_sampling = stable_coordinate_hash_seed_plus_camera_idx
 cotracker_seed = 42
-phystwin_dense_compatible = true
+phystwin_dense_compatible = false
 wait_for_tracking_overlay = true
 tracking_overlay_required_before_first_render = true
 tracking_overlay_required_for_render = true
 tracking_overlay_color_rgb = [255, 0, 0]
+tracking_overlay_color_mode = solid
+tracking_overlay_lift_method = semantic_projection_grid
+overlay_lift_mask_scope = controller
 overlay_max_points_per_camera = 0
 overlay_display_scope = controller
 overlay_display_classification = first_frame_mask_membership
@@ -188,6 +208,10 @@ tracking_sample_background_hits_by_camera
 overlay_display_count_by_camera
 overlay_display_object_count_by_camera
 overlay_display_controller_count_by_camera
+overlay_input_points_by_camera
+overlay_points_by_camera
+overlay_rejected_by_scope_mask_by_camera
+overlay_world_centroid_by_camera
 ```
 
 Rendered FPS claims must come from `--render-mode pointcloud` runs. A
@@ -224,6 +248,7 @@ CLI and forwards them to the shared three-view runtime:
 --gpu-sampling
 --gpu-sampling-device-indexes
 --overlay-display-scope controller|object|union
+--overlay-debug-color-by-camera
 --wait-for-tracking-overlay / --no-wait-for-tracking-overlay
 --point-size
 --render-every-n

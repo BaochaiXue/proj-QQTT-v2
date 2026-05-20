@@ -47,6 +47,7 @@ class CoTracker3OnlineBackend:
 
     def _load_model(self):
         if self._model is not None:
+            self._patch_online_model_for_batch_views(self._model)
             return self._model
         availability = self.availability()
         if not availability.available:
@@ -59,9 +60,37 @@ class CoTracker3OnlineBackend:
             model = model.to(self.device)
         if hasattr(model, "eval"):
             model = model.eval()
+        self._patch_online_model_for_batch_views(model)
         self._model = model
         self._model_load_ms = (time.perf_counter() - start) * 1000.0
         return model
+
+    @staticmethod
+    def _patch_online_model_for_batch_views(model: Any) -> None:
+        core_model = getattr(model, "model", None)
+        forward_window = getattr(core_model, "forward_window", None)
+        if core_model is None or forward_window is None:
+            return
+        if bool(getattr(core_model, "_qqtt_forward_window_contiguous_patch", False)):
+            return
+
+        def _contiguous(value: Any) -> Any:
+            return value.contiguous() if hasattr(value, "contiguous") else value
+
+        def forward_window_with_contiguous_batch_tensors(*args: Any, **kwargs: Any) -> Any:
+            if "coords" in kwargs:
+                kwargs["coords"] = _contiguous(kwargs["coords"])
+            if "track_feat_support_pyramid" in kwargs:
+                kwargs["track_feat_support_pyramid"] = [
+                    _contiguous(item) for item in kwargs["track_feat_support_pyramid"]
+                ]
+            for name in ("vis", "conf", "attention_mask"):
+                if name in kwargs and kwargs[name] is not None:
+                    kwargs[name] = _contiguous(kwargs[name])
+            return forward_window(*args, **kwargs)
+
+        setattr(core_model, "forward_window", forward_window_with_contiguous_batch_tensors)
+        setattr(core_model, "_qqtt_forward_window_contiguous_patch", True)
 
     def warmup(self) -> dict[str, float]:
         start = time.perf_counter()
@@ -544,6 +573,8 @@ class CoTracker3OnlineBackend:
         import torch
 
         video = self._batch_frames_to_torch_video(self._batch_stream_frames, device=self.device)
+        if str(self.device).startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
         run_start = time.perf_counter()
         with torch.no_grad():
             if not self._batch_initialized:

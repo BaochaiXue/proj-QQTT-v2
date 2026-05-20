@@ -29,6 +29,19 @@ class Demo3OverlayLiftTest(unittest.TestCase):
         np.testing.assert_allclose(lifted.points_world, np.array([[13.0, 2.0, 1.0]], dtype=np.float32))
         np.testing.assert_array_equal(lifted.source_indices, np.array([0]))
 
+    def test_fractional_tracks_use_semantic_projection_grid_pixel(self) -> None:
+        depth = np.full((2, 2), 2000, dtype=np.uint16)
+        lifted = lift_tracks_yx_to_world(
+            tracks_yx=np.array([[0.49, 1.49]], dtype=np.float32),
+            visibility=np.array([1.0], dtype=np.float32),
+            depth=depth,
+            intrinsics=np.eye(3, dtype=np.float32),
+            c2w=np.eye(4, dtype=np.float32),
+            depth_scale_m_per_unit=0.001,
+        )
+
+        np.testing.assert_allclose(lifted.points_world, np.array([[2.0, 0.0, 2.0]], dtype=np.float32))
+
     def test_invisible_tracks_are_skipped(self) -> None:
         depth = np.full((3, 3), 1000, dtype=np.uint16)
         lifted = lift_tracks_yx_to_world(

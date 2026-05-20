@@ -130,6 +130,57 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(tuple(queries.shape), (3, 2, 3))
         self.assertTrue(queries.is_contiguous())
 
+    def test_cotracker_online_forward_window_patch_makes_expanded_coords_contiguous(self) -> None:
+        import torch
+
+        class _Core:
+            def __init__(self) -> None:
+                self.contiguous_seen: dict[str, bool] = {}
+
+            def forward_window(self, *, coords, track_feat_support_pyramid, vis=None, conf=None, attention_mask=None):
+                self.contiguous_seen = {
+                    "coords": bool(coords.is_contiguous()),
+                    "track_feat_support": bool(track_feat_support_pyramid[0].is_contiguous()),
+                    "vis": bool(vis.is_contiguous()),
+                    "conf": bool(conf.is_contiguous()),
+                    "attention_mask": bool(attention_mask.is_contiguous()),
+                }
+                return "ok"
+
+        class _Predictor:
+            def __init__(self) -> None:
+                self.model = _Core()
+
+        predictor = _Predictor()
+        CoTracker3OnlineBackend._patch_online_model_for_batch_views(predictor)
+        coords = torch.zeros((2, 1, 3, 2)).expand(2, 4, 3, 2)
+        track_feat = torch.zeros((2, 4, 3, 5)).transpose(1, 2)
+        vis = torch.zeros((2, 1, 3, 1)).expand(2, 4, 3, 1)
+        conf = torch.zeros((2, 1, 3, 1)).expand(2, 4, 3, 1)
+        attention_mask = torch.zeros((2, 1, 3)).expand(2, 4, 3)
+
+        self.assertFalse(coords.is_contiguous())
+        self.assertEqual(
+            predictor.model.forward_window(
+                coords=coords,
+                track_feat_support_pyramid=[track_feat],
+                vis=vis,
+                conf=conf,
+                attention_mask=attention_mask,
+            ),
+            "ok",
+        )
+        self.assertEqual(
+            predictor.model.contiguous_seen,
+            {
+                "coords": True,
+                "track_feat_support": True,
+                "vis": True,
+                "conf": True,
+                "attention_mask": True,
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

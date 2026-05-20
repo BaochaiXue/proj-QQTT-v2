@@ -12,8 +12,9 @@ implementation details out of demo-specific runtimes.
 - Demo 3.1 keeps CPU-only latest-wins IPC and does not transfer CUDA tensors
   across processes.
 - Demo 3.0 and Demo 3.1 keep FuturePhysTwin dense tracking semantics:
-  object/controller union, `phystwin_dense`, `auto = min(union_pixels, 5000)`,
-  and torch `randperm(seed + camera_idx)`.
+  controller/towel mask cap before query/fusion, object/controller capped union,
+  `phystwin_dense`, `auto = min(capped_union_pixels, 5000)`, and torch
+  `randperm(seed + camera_idx)`.
 
 ## Phase Order
 

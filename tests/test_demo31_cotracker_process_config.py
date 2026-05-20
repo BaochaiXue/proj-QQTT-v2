@@ -42,6 +42,7 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "1")
         self.assertEqual(env["QQTT_DEMO31_COTRACKER_PROCESS"], "1")
         self.assertEqual(env["QQTT_DEMO31_POINT_TRACKER_PROCESS"], "1")
+        self.assertEqual(env["PYTORCH_CUDA_ALLOC_CONF"], "expandable_segments:True")
 
     def test_subprocess_argv_targets_process_module(self) -> None:
         config = process_mod.CoTrackerProcessConfig(cotracker_gpu="1")

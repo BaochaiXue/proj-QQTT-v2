@@ -25,9 +25,10 @@ dependency-gated probes for high-performance candidates.
 - The Demo 3 `cotracker3_online` live path uses CoTracker3's online rolling
   buffer contract: `window_len=16`, `step=8`, first publish at 16 frames, then
   one publish every 8 new frames. Demo 3 live now uses the FuturePhysTwin dense
-  query rule by default: object/controller union masks, up to 5000 query points
-  per camera, and torch `randperm(seed + camera_idx)`. The rendered overlay cap
-  remains separate from the raw tracked query count.
+  query rule by default: controller/towel masks are capped first to fewer than
+  5000 pixels per camera, then query points come from the capped
+  object/controller union with torch `randperm(seed + camera_idx)`. The rendered
+  overlay cap remains separate from the raw tracked query count.
 
 ## PhysTwin-Compatible CoTracker Export
 

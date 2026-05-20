@@ -12,21 +12,30 @@ RealSense tracking-overlay lineage.
 - The point tracker receives CPU RGB/mask latest-wins packets only.
 - The point tracker returns small CPU 2D track/visibility packets.
 - The main process lifts tracks to world with group-aligned cached RealSense depth,
-  intrinsics, and camera-to-world transforms.
+  intrinsics, and camera-to-world transforms using the same projection-grid
+  backprojection convention as the semantic PCD fusion path.
 - Camera/mask/PCD work stays asynchronous, but rendered results are gated by
   the point tracker: a PCD packet is published only when the matching tracking
   result for that group can be lifted into red tracking points.
 - Demo 3.1 does not use FFS.
-- Demo 3.1 inherits Demo 3.0's online-only FuturePhysTwin-compatible tracking
+- Demo 3.1 inherits Demo 3.0's online-only object/controller union tracking
   semantics: `--mode exp|demo`, object/controller union masks,
-  `phystwin_dense` query sampling, and default query count `auto`
-  (`min(union_mask_pixels, 5000)` per camera).
+  and `phystwin_dense` query sampling. The Demo 3.1 dual-4090 batch path
+  defaults to `--cotracker-query-count 4096` per camera; live profiling showed
+  that full batch=3 at 5000/view exceeds the RTX 4090 24GB memory budget. The
+  controller/towel mask is capped first with
+  `--controller-pcd-max-points-per-camera 4999`; query points and fused PCD
+  then use the requested per-view query budget from the capped
+  object/controller union.
 - Raw tracked queries are separate from display overlays. The backend may track
-  up to 5000 union points per camera while first-frame mask labels decide what is
-  rendered. The default overlay scope is `controller`; Demo 3.1 renders all
-  visible controller-labeled tracks by default with
+  up to 4096 capped-union points per camera by default while first-frame mask labels decide
+  what is rendered. The default overlay scope is `controller`; Demo 3.1 renders
+  all visible controller-labeled tracks by default with
   `--overlay-max-points-per-camera 0`, shown as high-contrast red tracking
-  points.
+  points. Use `--overlay-debug-color-by-camera` to color those lifted controller
+  overlay points by source camera when diagnosing alignment. The lift mask
+  follows the display scope, so controller overlays must land inside the current
+  controller mask rather than the broader object/controller union.
 - When CoTracker is not ready, the Open3D window keeps the last valid rendered
   result instead of publishing a new semantic-only PCD frame. Rendered FPS
   therefore measures track-ready results, not camera/mask-only throughput.
@@ -74,6 +83,7 @@ Useful rendered/debug profiling flags:
 --gpu-sampling-device-indexes 0,1 \
 --overlay-display-scope controller \
 --overlay-max-points-per-camera 0 \
+--overlay-debug-color-by-camera \
 --wait-for-tracking-overlay \
 --debug-color-by-camera \
 --debug-save-per-camera-pcd \

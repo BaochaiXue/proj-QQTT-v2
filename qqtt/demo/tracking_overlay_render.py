@@ -6,6 +6,9 @@ from typing import Any
 
 import numpy as np
 
+from data_process.depth_backends.geometry import transform_points
+from qqtt.demo.realtime_single_camera_pointcloud import build_projection_grid_from_matrix
+
 
 @dataclass(frozen=True)
 class OverlayLiftResult:
@@ -115,13 +118,15 @@ def lift_tracks_yx_to_world(
         )
 
     K = _intrinsics_to_matrix(intrinsics)
+    ray_x, ray_y = build_projection_grid_from_matrix(width=width, height=height, K=K)
     transform = np.asarray(c2w, dtype=np.float32).reshape(4, 4)
     z = sampled_depth[source_indices]
-    x_cam = (tracks[source_indices, 1] - float(K[0, 2])) * z / float(K[0, 0])
-    y_cam = (tracks[source_indices, 0] - float(K[1, 2])) * z / float(K[1, 1])
+    rows = yy[source_indices]
+    cols = xx[source_indices]
+    x_cam = ray_x[rows, cols].astype(np.float32, copy=False) * z
+    y_cam = ray_y[rows, cols].astype(np.float32, copy=False) * z
     points_camera = np.stack([x_cam, y_cam, z], axis=1).astype(np.float32)
-    hom = np.concatenate([points_camera, np.ones((len(points_camera), 1), dtype=np.float32)], axis=1)
-    points_world = (hom @ transform.T)[:, :3].astype(np.float32)
+    points_world = transform_points(points_camera, transform).astype(np.float32)
     return OverlayLiftResult(
         points_world=points_world,
         source_indices=source_indices,

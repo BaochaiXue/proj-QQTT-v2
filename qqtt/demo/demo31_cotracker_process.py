@@ -151,6 +151,7 @@ def build_cotracker_process_env(
     env["CUDA_VISIBLE_DEVICES"] = str(config.cotracker_gpu)
     env["QQTT_DEMO31_COTRACKER_PROCESS"] = "1"
     env["QQTT_DEMO31_POINT_TRACKER_PROCESS"] = "1"
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     return env
 
 
@@ -158,6 +159,7 @@ def configure_cotracker_cuda_environment(config: CoTrackerProcessConfig) -> None
     os.environ["CUDA_VISIBLE_DEVICES"] = str(config.cotracker_gpu)
     os.environ["QQTT_DEMO31_COTRACKER_PROCESS"] = "1"
     os.environ["QQTT_DEMO31_POINT_TRACKER_PROCESS"] = "1"
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 
 def build_cotracker_subprocess_argv(

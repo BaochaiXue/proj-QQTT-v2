@@ -46,8 +46,10 @@ Live contract defaults:
 - `tracking_mask_scope = object_controller_union`
 - `tracking_query_mode = phystwin_dense`
 - `tracking_query_count_requested = auto`
-- `tracking_query_count_rule = min(union_mask_pixels, 5000)`
-- `tracking_sampling = torch_randperm_seed_plus_camera_idx`
+- `tracking_query_count_rule = min(capped_object_controller_union_pixels, 5000)`
+- `tracking_sampling = controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx`
+- `controller_pcd_max_points_per_camera = 4999`
+- `controller_pcd_cap_stage = before_tracking_query_and_fusion`
 - `cotracker_seed = 42`
 - `edgetam_batch_vision_encoder = true`
 - `cotracker_backend = cotracker3_online`

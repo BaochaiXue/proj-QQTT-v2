@@ -70,6 +70,8 @@ DEMO31_REQUIRED_PROFILE_KEYS = (
     "tracking_mask_scope",
     "tracking_query_mode",
     "tracking_query_count_requested",
+    "controller_pcd_max_points_per_camera",
+    "controller_pcd_cap_stage",
     "overlay_max_points_per_camera",
     "wait_for_tracking_overlay",
     "tracking_overlay_required_before_first_render",
@@ -251,8 +253,17 @@ def build_empty_demo31_profile_summary(contract: Mapping[str, Any]) -> dict[str,
         "tracking_controller_label": str(contract.get("tracking_controller_label", "towel")),
         "tracking_query_mode": str(contract.get("tracking_query_mode", "phystwin_dense")),
         "tracking_query_count_requested": str(contract.get("tracking_query_count_requested", "auto")),
-        "tracking_query_count_rule": str(contract.get("tracking_query_count_rule", "min(union_mask_pixels, 5000)")),
-        "tracking_sampling": str(contract.get("tracking_sampling", "torch_randperm_seed_plus_camera_idx")),
+        "tracking_query_count_rule": str(
+            contract.get("tracking_query_count_rule", "min(capped_object_controller_union_pixels, 5000)")
+        ),
+        "tracking_sampling": str(
+            contract.get("tracking_sampling", "controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx")
+        ),
+        "controller_pcd_max_points_per_camera": int(contract.get("controller_pcd_max_points_per_camera", 4999)),
+        "controller_pcd_cap_stage": str(contract.get("controller_pcd_cap_stage", "before_tracking_query_and_fusion")),
+        "controller_pcd_cap_sampling": str(
+            contract.get("controller_pcd_cap_sampling", "stable_coordinate_hash_seed_plus_camera_idx")
+        ),
         "cotracker_seed": int(contract.get("cotracker_seed", 42)),
         "phystwin_dense_compatible": bool(contract.get("phystwin_dense_compatible", False)),
         "tracking_query_count_actual_by_camera": {},

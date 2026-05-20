@@ -62,9 +62,15 @@ DEFAULT_COTRACKER_RESULT_STALE_TIMEOUT_MS = 1500.0
 DEFAULT_MASK_STALE_TIMEOUT_MS = 250.0
 DEFAULT_MASK_GPU = "0"
 DEFAULT_COTRACKER_GPU = "1"
+DEFAULT_DEMO31_COTRACKER_QUERY_COUNT_REQUEST = "4096"
 DEFAULT_LIFT_INPUT_CACHE_GROUPS = 128
 DEFAULT_WAIT_FOR_TRACKING_OVERLAY = True
 DEFAULT_DEMO31_OVERLAY_MAX_POINTS_PER_CAMERA = 0
+OVERLAY_DEBUG_CAMERA_COLORS_RGB = {
+    0: (255, 0, 0),
+    1: (0, 255, 0),
+    2: (0, 0, 255),
+}
 PCD_COLOR_MODE_RGB = "rgb"
 PCD_COLOR_MODE_CLASS = "class"
 PCD_COLOR_MODES = (PCD_COLOR_MODE_RGB, PCD_COLOR_MODE_CLASS)
@@ -79,6 +85,42 @@ CudaDeviceCountProvider = Callable[[], int]
 ProcessClientFactory = Callable[[CoTrackerProcessConfig], Any]
 
 
+def _overlay_debug_color_rgb(camera_idx: int) -> tuple[int, int, int]:
+    color = OVERLAY_DEBUG_CAMERA_COLORS_RGB.get(int(camera_idx))
+    if color is not None:
+        return color
+    palette = tuple(OVERLAY_DEBUG_CAMERA_COLORS_RGB.values())
+    return palette[int(camera_idx) % len(palette)]
+
+
+def _overlay_color_array(point_count: int, color_rgb: tuple[int, int, int] | np.ndarray) -> np.ndarray:
+    if int(point_count) <= 0:
+        return np.empty((0, 3), dtype=np.uint8)
+    return np.repeat(np.asarray(color_rgb, dtype=np.uint8).reshape(1, 3), int(point_count), axis=0)
+
+
+def _point_centroid(points: np.ndarray) -> list[float] | None:
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    if len(pts) == 0:
+        return None
+    centroid = pts.mean(axis=0)
+    return [float(item) for item in centroid]
+
+
+def _lift_mask_for_overlay_scope(
+    *,
+    scope: str,
+    camera_idx: int,
+    lift_inputs: "Demo31LiftInputSnapshot",
+) -> np.ndarray | None:
+    idx = int(camera_idx)
+    if str(scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_CONTROLLER:
+        return lift_inputs.controller_mask_by_camera.get(idx, lift_inputs.mask_by_camera.get(idx))
+    if str(scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_OBJECT:
+        return lift_inputs.object_mask_by_camera.get(idx, lift_inputs.mask_by_camera.get(idx))
+    return lift_inputs.mask_by_camera.get(idx)
+
+
 @dataclass(frozen=True)
 class Demo31LiftInputSnapshot:
     group_id: int
@@ -87,6 +129,8 @@ class Demo31LiftInputSnapshot:
     intrinsics_by_camera: dict[int, np.ndarray]
     c2w_by_camera: dict[int, np.ndarray]
     mask_by_camera: dict[int, np.ndarray]
+    object_mask_by_camera: dict[int, np.ndarray]
+    controller_mask_by_camera: dict[int, np.ndarray]
 
 
 @dataclass(frozen=True)
@@ -125,7 +169,11 @@ class Demo31LiftInputCache:
         intrinsics_by_camera: dict[int, np.ndarray],
         c2w_by_camera: dict[int, np.ndarray],
         mask_by_camera: dict[int, np.ndarray],
+        object_mask_by_camera: dict[int, np.ndarray] | None = None,
+        controller_mask_by_camera: dict[int, np.ndarray] | None = None,
     ) -> None:
+        object_masks = object_mask_by_camera or {}
+        controller_masks = controller_mask_by_camera or {}
         self._snapshots[int(group_id)] = Demo31LiftInputSnapshot(
             group_id=int(group_id),
             timestamp_s=float(timestamp_s),
@@ -144,6 +192,14 @@ class Demo31LiftInputCache:
             mask_by_camera={
                 int(camera_idx): np.ascontiguousarray(np.asarray(mask, dtype=bool)).copy()
                 for camera_idx, mask in mask_by_camera.items()
+            },
+            object_mask_by_camera={
+                int(camera_idx): np.ascontiguousarray(np.asarray(mask, dtype=bool)).copy()
+                for camera_idx, mask in object_masks.items()
+            },
+            controller_mask_by_camera={
+                int(camera_idx): np.ascontiguousarray(np.asarray(mask, dtype=bool)).copy()
+                for camera_idx, mask in controller_masks.items()
             },
         )
         self.published += 1
@@ -266,7 +322,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--litetracker-weights", default=None)
     parser.add_argument("--litetracker-repo-dir", default=None)
     parser.add_argument("--cotracker-query-mode", choices=(demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,), default=demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE)
-    parser.add_argument("--cotracker-query-count", default=demo3_runtime.DEFAULT_COTRACKER_QUERY_COUNT_REQUEST)
+    parser.add_argument(
+        "--cotracker-query-count",
+        default=DEFAULT_DEMO31_COTRACKER_QUERY_COUNT_REQUEST,
+        help=(
+            "Raw CoTracker query points per camera. Demo 3.1 defaults to 4096 "
+            "because full batch=3 at 5000/view exceeds RTX 4090 24GB memory."
+        ),
+    )
+    parser.add_argument(
+        "--controller-pcd-max-points-per-camera",
+        type=int,
+        default=demo3_runtime.DEFAULT_CONTROLLER_PCD_MAX_POINTS_PER_CAMERA,
+        help=(
+            "Maximum controller/towel mask pixels kept per camera before CoTracker query "
+            "selection and before fused PCD construction. Must be < 5000."
+        ),
+    )
     parser.add_argument("--cotracker-seed", type=int, default=demo3_runtime.DEFAULT_COTRACKER_SEED)
     parser.add_argument("--disable-cotracker", action="store_true")
     parser.add_argument("--render-mode", choices=demo3_runtime.RENDER_MODES, default=demo3_runtime.RENDER_MODE_POINTCLOUD)
@@ -351,6 +423,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=demo3_runtime.OVERLAY_DISPLAY_SCOPES,
         default=demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE,
     )
+    parser.add_argument(
+        "--overlay-debug-color-by-camera",
+        action="store_true",
+        help="Color lifted CoTracker overlay points by source camera for live alignment debugging.",
+    )
     parser.add_argument("--overlay-trail-len", type=int, default=demo3_runtime.DEFAULT_OVERLAY_TRAIL_LEN)
     parser.add_argument("--overlay-stale-timeout-ms", type=float, default=demo3_runtime.DEFAULT_OVERLAY_STALE_TIMEOUT_MS)
     parser.add_argument("--mask-gpu", default=DEFAULT_MASK_GPU)
@@ -428,6 +505,7 @@ def validate_args(
     if str(args.cotracker_query_mode) != demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError("Demo 3.1 currently supports only --cotracker-query-mode phystwin_dense.")
     demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
+    demo3_runtime.normalize_controller_pcd_max_points_per_camera(args.controller_pcd_max_points_per_camera)
     if str(args.object_point_control) not in demo3_runtime.OBJECT_POINT_CONTROLS:
         raise ValueError(f"Demo 3.1 unsupported --object-point-control {args.object_point_control}")
     if str(args.object_volume_origin) not in demo3_runtime.PHYSTWIN_VOLUME_ORIGINS:
@@ -592,11 +670,19 @@ def build_contract(
         "tracking_overlay_required_before_first_render": bool(args.wait_for_tracking_overlay),
         "tracking_overlay_required_for_render": bool(args.wait_for_tracking_overlay),
         "tracking_overlay_color_rgb": [int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist()],
+        "tracking_overlay_color_mode": "by_camera" if bool(args.overlay_debug_color_by_camera) else "solid",
+        "tracking_overlay_debug_color_by_camera": bool(args.overlay_debug_color_by_camera),
+        "tracking_overlay_lift_method": "semantic_projection_grid",
         "tracking_query_mode": demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,
         "tracking_query_count_requested": str(query_count_request),
         "tracking_query_count_rule": demo3_runtime.TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE,
         "tracking_sampling": demo3_runtime.TRACKING_SAMPLING_TORCH_RANDPERM,
         "tracking_max_query_points_per_camera": demo3_runtime.PHYSTWIN_DENSE_MAX_POINTS,
+        "controller_pcd_max_points_per_camera": demo3_runtime.normalize_controller_pcd_max_points_per_camera(
+            args.controller_pcd_max_points_per_camera
+        ),
+        "controller_pcd_cap_stage": demo3_runtime.CONTROLLER_PCD_CAP_STAGE,
+        "controller_pcd_cap_sampling": demo3_runtime.CONTROLLER_PCD_CAP_SAMPLING,
         "cotracker_seed": int(args.cotracker_seed),
         "phystwin_dense_compatible": bool(demo3_runtime.phystwin_dense_compatible_for_args(args)),
         "cotracker_window_len": demo3_runtime.DEFAULT_COTRACKER_WINDOW_LEN,
@@ -702,8 +788,12 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracking_query_count_requested",
         "tracking_query_count_rule",
         "tracking_sampling",
+        "controller_pcd_max_points_per_camera",
+        "controller_pcd_cap_stage",
         "cotracker_seed",
         "wait_for_tracking_overlay",
+        "tracking_overlay_lift_method",
+        "tracking_overlay_color_mode",
         "overlay_max_points_per_camera",
         "overlay_display_scope",
         "phystwin_dense_compatible",
@@ -777,6 +867,8 @@ def build_shared_runtime_args(
     shared_args.edgetam_batch_vision_encoder = True
     if hasattr(shared_args, "render_target_fps"):
         shared_args.render_target_fps = float(args.render_target_fps)
+    shared_args.demo31_top_level_profile_json_output = args.profile_json_output
+    shared_args.overlay_debug_color_by_camera = bool(args.overlay_debug_color_by_camera)
     return shared_args
 
 
@@ -1034,7 +1126,29 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             if self.demo31_process_client is not None:
                 self.demo31_process_client.stop(timeout_s=2.0)
                 self._drain_demo31_process_status()
+            self._write_demo31_pre_teardown_profile()
             super().stop()
+
+        def _write_demo31_pre_teardown_profile(self) -> None:
+            path = getattr(self.args, "demo31_top_level_profile_json_output", None)
+            if path is None:
+                return
+            snapshot = self.demo31_snapshot()
+            payload = {
+                "contract": dict(self.demo31_contract),
+                "cotracker_process_snapshot": snapshot,
+                "shared_runtime_profile": (
+                    None
+                    if getattr(self.args, "profile_json_output", None) is None
+                    else str(getattr(self.args, "profile_json_output"))
+                ),
+                "runtime_note": (
+                    "Pre-teardown Demo 3.1 profile written before legacy Open3D "
+                    "cleanup so live profiling survives workstation teardown crashes."
+                ),
+                "pre_teardown_profile": True,
+            }
+            _write_profile(Path(path), payload)
 
         def _drain_demo31_process_status(self) -> list[dict[str, Any]]:
             if self.demo31_process_client is None or not hasattr(self.demo31_process_client, "drain_status_events"):
@@ -1073,6 +1187,22 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
 
         def _build_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
             now_s = time.perf_counter()
+            capped_masks, controller_cap_profile = demo3_runtime.cap_controller_pcd_masks(
+                masks,
+                camera_ids=tuple(int(item) for item in self.args.camera_ids),
+                max_points_per_camera=int(
+                    self.demo31_contract.get(
+                        "controller_pcd_max_points_per_camera",
+                        demo3_runtime.DEFAULT_CONTROLLER_PCD_MAX_POINTS_PER_CAMERA,
+                    )
+                ),
+                seed=int(self.demo31_contract.get("cotracker_seed", demo3_runtime.DEFAULT_COTRACKER_SEED)),
+            )
+            if hasattr(self, "_profile_update"):
+                self._profile_update(
+                    int(depth_group.group_id),
+                    controller_pcd_mask_cap=controller_cap_profile,
+                )
             rgb_by_camera: dict[int, np.ndarray] = {}
             mask_by_camera: dict[int, np.ndarray] = {}
             object_mask_by_camera: dict[int, np.ndarray] = {}
@@ -1090,9 +1220,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             mask_reused = bool(mask_selection.get("reused", False)) if mask_selection else False
             for camera_idx in self.args.camera_ids:
                 idx = int(camera_idx)
-                if idx not in masks or idx not in depth_group.depths:
+                if idx not in capped_masks or idx not in depth_group.depths:
                     continue
-                mask_packet = masks[idx]
+                mask_packet = capped_masks[idx]
                 rgb_by_camera[idx] = np.ascontiguousarray(np.asarray(mask_packet.color_bgr)[..., ::-1])
                 union_mask, object_mask, controller_mask = _phystwin_union_tracking_masks(mask_packet)
                 mask_by_camera[idx] = union_mask
@@ -1126,6 +1256,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         intrinsics_by_camera=intrinsics_by_camera,
                         c2w_by_camera=c2w_by_camera,
                         mask_by_camera=mask_by_camera,
+                        object_mask_by_camera=object_mask_by_camera,
+                        controller_mask_by_camera=controller_mask_by_camera,
                     )
                     replaced_count = self.demo31_process_client.publish_input(
                         TrackingInputLitePacket(
@@ -1145,13 +1277,17 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     self.demo31_last_tracking_input_s = now_s
                 else:
                     self.demo31_tracking_input_skip_count += 1
-            return super()._build_fused_packet(depth_group=depth_group, masks=masks, ray_cache=ray_cache, rng=rng)
+            return super()._build_fused_packet(depth_group=depth_group, masks=capped_masks, ray_cache=ray_cache, rng=rng)
 
         def _publish_render_packet(self, packet: Any) -> None:
             overlay_start_s = time.perf_counter()
             self._remember_pending_render_packet(packet)
             overlay = self._take_fresh_tracking_result(now_s=overlay_start_s)
             overlay_points = np.empty((0, 3), dtype=np.float32)
+            overlay_colors = np.empty((0, 3), dtype=np.uint8)
+            overlay_input_points_by_camera: dict[int, int] = {}
+            overlay_points_by_camera: dict[int, int] = {}
+            overlay_centroid_by_camera: dict[int, list[float] | None] = {}
             overlay_lift_cache_hit = False
             overlay_group_id: int | None = None
             overlay_render_group_delta: int | None = None
@@ -1171,6 +1307,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 if render_packet is not None and lift_inputs is not None:
                     overlay_lift_cache_hit = True
                     lifted_points = []
+                    lifted_colors = []
+                    color_by_camera = bool(getattr(self.args, "overlay_debug_color_by_camera", False))
+                    lift_mask_scope = str(getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE))
                     for camera_idx, tracks_yx in overlay.camera_tracks_yx.items():
                         idx = int(camera_idx)
                         if (
@@ -1179,6 +1318,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             or idx not in lift_inputs.c2w_by_camera
                         ):
                             continue
+                        overlay_input_points_by_camera[idx] = int(len(np.asarray(tracks_yx).reshape(-1, 2)))
+                        lift_mask = _lift_mask_for_overlay_scope(
+                            scope=lift_mask_scope,
+                            camera_idx=idx,
+                            lift_inputs=lift_inputs,
+                        )
                         lifted = lift_tracks_yx_to_world(
                             tracks_yx=tracks_yx,
                             visibility=overlay.camera_visibility[idx],
@@ -1186,13 +1331,22 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             intrinsics=lift_inputs.intrinsics_by_camera[idx],
                             c2w=lift_inputs.c2w_by_camera[idx],
                             depth_scale_m_per_unit=1.0,
-                            mask=lift_inputs.mask_by_camera.get(idx),
+                            mask=lift_mask,
                         )
                         if lifted.points_world.size:
-                            lifted_points.append(lifted.points_world)
+                            points = lifted.points_world.astype(np.float32, copy=False)
+                            lifted_points.append(points)
+                            overlay_points_by_camera[idx] = int(len(points))
+                            overlay_centroid_by_camera[idx] = _point_centroid(points)
+                            color = (
+                                _overlay_debug_color_rgb(idx)
+                                if color_by_camera
+                                else tuple(int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist())
+                            )
+                            lifted_colors.append(_overlay_color_array(len(points), color))
                     if lifted_points:
                         overlay_points = np.concatenate(lifted_points, axis=0).astype(np.float32)
-                        overlay_colors = np.repeat(demo3_runtime.OVERLAY_COLOR_RGB[None, :], len(overlay_points), axis=0)
+                        overlay_colors = np.concatenate(lifted_colors, axis=0).astype(np.uint8)
                         render_packet = replace(
                             render_packet,
                             controller_points_m=np.concatenate([render_packet.controller_points_m, overlay_points], axis=0),
@@ -1210,6 +1364,20 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_available": bool(overlay is not None),
                     "overlay_points": int(len(overlay_points)),
                     "overlay_color_rgb": [int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist()],
+                    "overlay_color_mode": (
+                        "by_camera" if bool(getattr(self.args, "overlay_debug_color_by_camera", False)) else "solid"
+                    ),
+                    "overlay_lift_method": "semantic_projection_grid",
+                    "overlay_lift_mask_scope": str(
+                        getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE)
+                    ),
+                    "overlay_input_points_by_camera": dict(overlay_input_points_by_camera),
+                    "overlay_points_by_camera": dict(overlay_points_by_camera),
+                    "overlay_rejected_by_scope_mask_by_camera": {
+                        int(camera_idx): int(input_count) - int(overlay_points_by_camera.get(int(camera_idx), 0))
+                        for camera_idx, input_count in overlay_input_points_by_camera.items()
+                    },
+                    "overlay_world_centroid_by_camera": dict(overlay_centroid_by_camera),
                     "overlay_ms": overlay_ms,
                     "overlay_group_id": overlay_group_id,
                     "incoming_render_group_id": int(packet.group_id),
