@@ -76,6 +76,7 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertIn("--edgetam-batch-vision", help_text)
         self.assertIn("--render-micro-profile", help_text)
         self.assertIn("--object-volume-points-per-voxel", help_text)
+        self.assertIn("--controller-render-voxel-m", help_text)
         self.assertIn("--depth-source", help_text)
         self.assertIn("--debug-color-by-camera", help_text)
         self.assertIn("--debug-save-per-camera-pcd", help_text)
@@ -84,6 +85,57 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertIn("--debug-invert-c2w", help_text)
         self.assertIn("--debug-only-camera-idx", help_text)
         self.assertNotIn("--experimental-overlapped-stages", help_text)
+
+    def test_sam31_empty_required_mask_quick_fails_before_edgetam(self) -> None:
+        args = types.SimpleNamespace(
+            init_mode="sam31-first-frame",
+            track_mode=shared_runtime.TRACK_MODE_CONTROLLER_OBJECT,
+            object_prompt="stuffed animal",
+            controller_prompt="towel",
+            sam31_init_quick_fail_empty_masks=True,
+            sam31_init_min_mask_pixels=1,
+        )
+        frame = types.SimpleNamespace(camera_idx=2, group_id=17)
+        object_mask = np.ones((3, 3), dtype=bool)
+        controller_mask = np.zeros((3, 3), dtype=bool)
+
+        with self.assertRaisesRegex(shared_runtime.Sam31InitialMaskQuickFail, "towel"):
+            shared_runtime.validate_sam31_initial_mask_counts(
+                frame,
+                args,
+                controller_mask=controller_mask,
+                object_mask=object_mask,
+            )
+
+    def test_sam31_quick_fail_can_be_disabled_for_debug(self) -> None:
+        args = types.SimpleNamespace(
+            init_mode="sam31-first-frame",
+            track_mode=shared_runtime.TRACK_MODE_CONTROLLER_OBJECT,
+            object_prompt="stuffed animal",
+            controller_prompt="towel",
+            sam31_init_quick_fail_empty_masks=False,
+            sam31_init_min_mask_pixels=1,
+        )
+        frame = types.SimpleNamespace(camera_idx=0, group_id=4)
+
+        stats = shared_runtime.validate_sam31_initial_mask_counts(
+            frame,
+            args,
+            controller_mask=np.zeros((2, 2), dtype=bool),
+            object_mask=np.zeros((2, 2), dtype=bool),
+        )
+
+        self.assertFalse(stats["sam31_init_quick_fail_empty_masks"])
+
+    def test_sam31_missing_label_exception_is_quick_fail(self) -> None:
+        args = types.SimpleNamespace(sam31_init_quick_fail_empty_masks=True)
+
+        self.assertTrue(
+            shared_runtime.sam31_init_failure_is_quick_fail(
+                RuntimeError("SAM3.1 did not produce a mask for label 'towel'"),
+                args,
+            )
+        )
 
     def test_demo23_entrypoint_uses_dedicated_runtime_boundary(self) -> None:
         source = Path(demo23_entry.__file__).read_text(encoding="utf-8")
@@ -124,6 +176,8 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
                 "2",
                 "--object-volume-points-per-voxel",
                 "3",
+                "--controller-render-voxel-m",
+                "0.004",
             ]
         )
 
@@ -154,6 +208,8 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertIn("2", argv)
         self.assertIn("--object-volume-points-per-voxel", argv)
         self.assertIn("3", argv)
+        self.assertIn("--controller-render-voxel-m", argv)
+        self.assertIn("0.004", argv)
 
     def test_demo23_dry_run_contract_is_dual_gpu_split_batch3(self) -> None:
         parser = demo23.build_arg_parser()
@@ -180,6 +236,95 @@ class DemoV23DualGpuSmoke(unittest.TestCase):
         self.assertEqual(contract["filter_scheduler"]["object"]["point_control"], "phystwin-volume")
         self.assertEqual(contract["filter_scheduler"]["object"]["volume"]["voxel_m"], 0.005)
         self.assertEqual(contract["filter_scheduler"]["object"]["volume"]["points_per_voxel"], 1)
+        self.assertEqual(contract["filter_scheduler"]["controller"]["render_voxel_m"], 0.003)
+        self.assertTrue(contract["filter_scheduler"]["controller"]["render_voxel_downsample"])
+        self.assertTrue(contract["filter_scheduler"]["controller"]["render_only"])
+        self.assertFalse(contract["filter_scheduler"]["controller"]["affects_tracking_markers"])
+
+    def test_controller_render_voxel_downsamples_body_points_only(self) -> None:
+        runtime = object.__new__(shared_runtime.Demo21Runtime)
+        runtime.args = types.SimpleNamespace(
+            controller_filter_cap=0,
+            controller_filter_voxel_m=0.003,
+            controller_render_voxel_m=0.01,
+            phystwin_radius_m=0.01,
+            phystwin_nb_points=1,
+            enhanced_component_voxel_size_m=0.006,
+            enhanced_keep_near_main_gap_m=0.035,
+        )
+        layer = shared_runtime.FusedLayerCloud(
+            obj_id=shared_runtime.CONTROLLER_ID,
+            label="hand",
+            postprocess_mode=shared_runtime.POSTPROCESS_NONE,
+            points_m=np.asarray(
+                [
+                    [0.000, 0.0, 0.0],
+                    [0.002, 0.0, 0.0],
+                    [0.025, 0.0, 0.0],
+                ],
+                dtype=np.float32,
+            ),
+            colors_rgb=np.asarray(
+                [
+                    [255, 0, 0],
+                    [0, 255, 0],
+                    [0, 0, 255],
+                ],
+                dtype=np.uint8,
+            ),
+            per_camera=(),
+        )
+
+        points, colors, stats = runtime._filter_controller_layer(layer)
+
+        self.assertEqual(points.shape[0], 2)
+        self.assertEqual(colors.shape[0], 2)
+        self.assertTrue(stats["controller_render_voxel_enabled"])
+        self.assertEqual(stats["controller_render_voxel_input_points"], 3)
+        self.assertEqual(stats["controller_render_voxel_output_points"], 2)
+        self.assertEqual(stats["controller_render_voxel_removed_points"], 1)
+        self.assertFalse(stats["controller_render_voxel_affects_tracking_markers"])
+
+    def test_startup_hud_text_is_pipeline_aware_for_demo32_litetracker(self) -> None:
+        args = types.SimpleNamespace(
+            demo_display_name_override="Demo 3.2",
+            depth_source=shared_runtime.DEPTH_SOURCE_FFS,
+            ffs_trt_batch_size=3,
+            edgetam_batch_vision_encoder=True,
+            init_mode="sam31-first-frame",
+            external_tracker_backend="litetracker",
+            external_tracker_update_mode="serial",
+            external_tracker_prewarm_mode="lazy_query_init",
+            external_tracker_marker_required=True,
+        )
+
+        text = shared_runtime.render_startup_hud_text(args)
+
+        self.assertIn("Demo 3.2 warming up", text)
+        self.assertIn("FFS batch=3", text)
+        self.assertIn("EdgeTAM batch-vision", text)
+        self.assertIn("SAM3.1", text)
+        self.assertIn("LiteTracker serial query-init", text)
+        self.assertIn("3D anchors", text)
+        self.assertNotIn("per-camera EdgeTAM", text)
+
+    def test_startup_hud_text_does_not_invent_tracker_for_demo23(self) -> None:
+        args = types.SimpleNamespace(
+            demo_display_name_override="Demo 2.3",
+            depth_source=shared_runtime.DEPTH_SOURCE_FFS,
+            ffs_trt_batch_size=3,
+            edgetam_batch_vision_encoder=False,
+            edgetam_worker_mode="per-camera",
+            init_mode="sam31-first-frame",
+            external_tracker_backend="none",
+        )
+
+        text = shared_runtime.render_startup_hud_text(args)
+
+        self.assertIn("Demo 2.3 warming up", text)
+        self.assertIn("FFS batch=3", text)
+        self.assertIn("per-camera EdgeTAM", text)
+        self.assertNotIn("LiteTracker", text)
 
     def test_demo23_explicit_fps_drives_capture_group_default(self) -> None:
         parser = demo23.build_arg_parser()

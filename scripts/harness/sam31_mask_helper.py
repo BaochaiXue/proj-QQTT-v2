@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ast
+import contextlib
 import inspect
+import io
 import json
 import os
 import platform
@@ -9,6 +12,7 @@ import shutil
 import tempfile
 import threading
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -24,6 +28,16 @@ _CUDA_AUTOCAST_CONTEXT = None
 _CUDA_AUTOCAST_CONTEXTS_BY_THREAD: dict[int, Any] = {}
 _CUDA_AUTOCAST_CONTEXT_LOCK = threading.Lock()
 _IMAGE_PROCESSOR_CACHE: dict[tuple[str, str | None, bool, float, str], tuple[Any, Any]] = {}
+_SAM31_OPTIONAL_IMAGE_MODEL_MISSING_KEYS = (
+    "backbone.vision_backbone.convs.3.conv_1x1.weight",
+    "backbone.vision_backbone.convs.3.conv_1x1.bias",
+    "backbone.vision_backbone.convs.3.conv_3x3.weight",
+    "backbone.vision_backbone.convs.3.conv_3x3.bias",
+)
+_SAM31_MISSING_KEYS_PRINT_RE = re.compile(
+    r"loaded .+? and found missing and/or unexpected keys:\nmissing_keys=(\[[^\n]*\])\n?",
+    re.DOTALL,
+)
 
 
 @dataclass(slots=True)
@@ -41,6 +55,55 @@ def parse_text_prompts(text_prompt: str) -> list[str]:
         if normalized and normalized not in prompts:
             prompts.append(normalized)
     return prompts
+
+
+def _apply_sam31_warning_filters() -> None:
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Importing from timm\.models\.layers is deprecated, please import via timm\.layers",
+        category=FutureWarning,
+        module=r"timm\.models\.layers",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"pkg_resources is deprecated as an API\..*",
+        category=UserWarning,
+        module=r"sam3\.model_builder",
+    )
+
+
+@contextlib.contextmanager
+def _sam31_known_noise_filters():
+    with warnings.catch_warnings():
+        _apply_sam31_warning_filters()
+        yield
+
+
+def _is_known_sam31_optional_missing_keys(keys_literal: str) -> bool:
+    try:
+        keys = ast.literal_eval(keys_literal)
+    except (SyntaxError, ValueError):
+        return False
+    if not isinstance(keys, list):
+        return False
+    return tuple(str(key) for key in keys) == _SAM31_OPTIONAL_IMAGE_MODEL_MISSING_KEYS
+
+
+def _filter_sam31_builder_stdout(text: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        return "" if _is_known_sam31_optional_missing_keys(match.group(1)) else match.group(0)
+
+    return _SAM31_MISSING_KEYS_PRINT_RE.sub(_replace, text)
+
+
+def _call_sam31_builder_quietly(builder: Any, /, *args: Any, **kwargs: Any) -> Any:
+    buffer = io.StringIO()
+    with _sam31_known_noise_filters(), contextlib.redirect_stdout(buffer):
+        result = builder(*args, **kwargs)
+    remaining_stdout = _filter_sam31_builder_stdout(buffer.getvalue())
+    if remaining_stdout:
+        print(remaining_stdout, end="")
+    return result
 
 
 def _frame_sort_key(path: Path) -> tuple[int, str]:
@@ -160,7 +223,8 @@ def resolve_sam31_bpe_path(checkpoint_path: str | Path | None = None) -> str | N
         candidates.append(checkpoint_dir / BPE_VOCAB_NAME)
 
     try:
-        import sam3  # noqa: PLC0415
+        with _sam31_known_noise_filters():
+            import sam3  # noqa: PLC0415
 
         sam3_root = Path(sam3.__file__).resolve().parent
         candidates.append(sam3_root / "assets" / BPE_VOCAB_NAME)
@@ -191,7 +255,8 @@ def _load_runtime_deps():
     cv2 = _load_cv2()
     np = _load_numpy()
     import torch  # noqa: PLC0415
-    import sam3.model_builder as sam3_model_builder  # noqa: PLC0415
+    with _sam31_known_noise_filters():
+        import sam3.model_builder as sam3_model_builder  # noqa: PLC0415
 
     build_video_predictor, builder_name = _resolve_sam3_video_predictor_builder(sam3_model_builder)
     download_ckpt_from_hf = sam3_model_builder.download_ckpt_from_hf
@@ -311,7 +376,8 @@ def build_sam31_video_predictor(
     _configure_torch_inference(torch_module)
     resolved_checkpoint = resolve_sam31_checkpoint_path(checkpoint_path)
     resolved_bpe_path = resolve_sam31_bpe_path(resolved_checkpoint)
-    predictor = build_video_predictor(
+    predictor = _call_sam31_builder_quietly(
+        build_video_predictor,
         **_build_sam31_builder_kwargs(
             builder_name,
             checkpoint_path=resolved_checkpoint,
@@ -368,8 +434,9 @@ def _build_sam31_image_processor(
         raise RuntimeError("The upstream SAM 3.1 image model currently requires CUDA.")
 
     import_start_s = time.perf_counter()
-    from sam3.model.sam3_image_processor import Sam3Processor  # noqa: PLC0415
-    from sam3.model_builder import build_sam3_image_model  # noqa: PLC0415
+    with _sam31_known_noise_filters():
+        from sam3.model.sam3_image_processor import Sam3Processor  # noqa: PLC0415
+        from sam3.model_builder import build_sam3_image_model  # noqa: PLC0415
     import_ms = float((time.perf_counter() - import_start_s) * 1000.0)
 
     configure_start_s = time.perf_counter()
@@ -400,7 +467,8 @@ def _build_sam31_image_processor(
         }
 
     model_start_s = time.perf_counter()
-    model = build_sam3_image_model(
+    model = _call_sam31_builder_quietly(
+        build_sam3_image_model,
         bpe_path=resolved_bpe_path,
         checkpoint_path=resolved_checkpoint,
         load_from_HF=False,

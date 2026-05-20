@@ -90,6 +90,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     view.add_argument("--object-volume-target-ms", type=float, default=None, help="Object volume filter target milliseconds.")
     view.add_argument("--object-volume-emergency-max-points", type=int, default=None, help="Safety cap applied after object voxel sampling.")
     view.add_argument("--object-volume-points-per-voxel", type=int, default=None, help="Representatives kept per occupied object voxel.")
+    view.add_argument("--controller-render-voxel-m", type=float, default=None, help="Render-only controller PCD voxel downsample size.")
     view.add_argument("--output-root", default=None, help="Output root for runtime artifacts.")
 
     diagnostics = parser.add_argument_group("Fusion Diagnostics")
@@ -205,6 +206,7 @@ def _to_demo23_argv(argv: Sequence[str] | None) -> list[str]:
     _append_option(translated, "--object-volume-target-ms", parsed.object_volume_target_ms)
     _append_option(translated, "--object-volume-emergency-max-points", parsed.object_volume_emergency_max_points)
     _append_option(translated, "--object-volume-points-per-voxel", parsed.object_volume_points_per_voxel)
+    _append_option(translated, "--controller-render-voxel-m", parsed.controller_render_voxel_m)
     _append_option(translated, "--output-root", parsed.output_root)
     _append_option(translated, "--debug-only-camera-idx", parsed.debug_only_camera_idx)
     _append_option(translated, "--debug-fusion-max-saved-groups", parsed.debug_fusion_max_saved_groups)

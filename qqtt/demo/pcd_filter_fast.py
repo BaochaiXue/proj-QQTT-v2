@@ -81,6 +81,28 @@ def voxel_cap_points(
     return points[keep_idx], None if colors is None else np.asarray(colors)[keep_idx]
 
 
+def voxel_downsample_points(
+    xyz: np.ndarray,
+    colors: np.ndarray | None = None,
+    *,
+    voxel_size_m: float = 0.004,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Keep one representative point per occupied voxel without a fixed cap."""
+
+    points = np.asarray(xyz)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("xyz must be an Nx3 array")
+    if colors is not None and int(np.asarray(colors).shape[0]) != int(points.shape[0]):
+        raise ValueError("colors must have the same first dimension as xyz")
+    if points.shape[0] == 0:
+        return _empty_like_points(points), _empty_like_colors(colors)
+
+    keys = _voxel_keys(points, voxel_size_m=float(voxel_size_m))
+    _unused_unique, first_idx = np.unique(keys, return_index=True)
+    keep_idx = np.sort(first_idx)
+    return points[keep_idx], None if colors is None else np.asarray(colors)[keep_idx]
+
+
 def voxel_density_filter(
     xyz: np.ndarray,
     colors: np.ndarray | None = None,

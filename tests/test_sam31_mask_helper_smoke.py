@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,8 +15,10 @@ import numpy as np
 from scripts.harness.sam31_mask_helper import (
     _build_sam31_builder_kwargs,
     _call_download_ckpt_from_hf,
+    _call_sam31_builder_quietly,
     _as_numpy_array,
     _collect_image_prompt_masks,
+    _filter_sam31_builder_stdout,
     _merge_initial_frame_segments,
     _patch_sam31_init_state_kwarg_compat,
     _prepare_session_frames,
@@ -142,6 +146,43 @@ class Sam31MaskHelperSmokeTest(unittest.TestCase):
                 "async_loading_frames": True,
             },
         )
+
+    def test_sam31_builder_stdout_filter_removes_known_optional_conv_keys(self) -> None:
+        text = (
+            "loaded /tmp/sam3.1_multiplex.pt and found missing and/or unexpected keys:\n"
+            "missing_keys=['backbone.vision_backbone.convs.3.conv_1x1.weight', "
+            "'backbone.vision_backbone.convs.3.conv_1x1.bias', "
+            "'backbone.vision_backbone.convs.3.conv_3x3.weight', "
+            "'backbone.vision_backbone.convs.3.conv_3x3.bias']\n"
+        )
+
+        self.assertEqual(_filter_sam31_builder_stdout(text), "")
+
+    def test_sam31_builder_stdout_filter_preserves_unknown_missing_keys(self) -> None:
+        text = (
+            "loaded /tmp/sam3.1_multiplex.pt and found missing and/or unexpected keys:\n"
+            "missing_keys=['backbone.unexpected.weight']\n"
+        )
+
+        self.assertEqual(_filter_sam31_builder_stdout(text), text)
+
+    def test_call_sam31_builder_quietly_returns_result_and_suppresses_known_noise(self) -> None:
+        def _builder() -> str:
+            print(
+                "loaded /tmp/sam3.1_multiplex.pt and found missing and/or unexpected keys:\n"
+                "missing_keys=['backbone.vision_backbone.convs.3.conv_1x1.weight', "
+                "'backbone.vision_backbone.convs.3.conv_1x1.bias', "
+                "'backbone.vision_backbone.convs.3.conv_3x3.weight', "
+                "'backbone.vision_backbone.convs.3.conv_3x3.bias']"
+            )
+            return "ok"
+
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            result = _call_sam31_builder_quietly(_builder)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(captured.getvalue(), "")
 
     def test_init_state_kwarg_compat_filters_new_session_kwargs(self) -> None:
         calls: list[dict[str, object]] = []

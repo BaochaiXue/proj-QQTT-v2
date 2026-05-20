@@ -133,6 +133,7 @@ class _FakeSharedRuntimeModule:
         parser.add_argument("--object-volume-target-ms", type=float)
         parser.add_argument("--object-volume-emergency-max-points", type=int)
         parser.add_argument("--object-volume-points-per-voxel", type=int)
+        parser.add_argument("--controller-render-voxel-m", type=float)
         parser.add_argument("--debug-color-by-camera", action="store_true")
         parser.add_argument("--debug-save-per-camera-pcd", action="store_true")
         parser.add_argument("--debug-save-mask-overlays", action="store_true")
@@ -544,6 +545,35 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracker_ready_state"], "ready_to_receive_inputs")
         self.assertTrue(contract["tracker_query_dependent_init"])
         self.assertTrue(contract["tracker_query_dependent_init_pending_until_first_input"])
+        self.assertTrue(contract["sam31_init_quick_fail_empty_masks"])
+        self.assertEqual(contract["sam31_init_min_mask_pixels"], 1)
+        self.assertEqual(contract["sam31_init_required_masks"], ["stuffed animal", "towel"])
+        self.assertEqual(contract["trackable_mask_build_policy"], "init-only")
+        self.assertEqual(contract["trackable_query_init_strategy"], "standard-filter-init")
+        self.assertEqual(contract["trackable_mask_source"], "standard_filter_survivors")
+        self.assertEqual(contract["tracking_input_mask_semantics"], "standard_filter_trackable_masks")
+        self.assertEqual(contract["tracker_query_source"], "union_trackable_mask")
+        self.assertEqual(contract["controller_trackable_max_points_per_camera"], 4999)
+        self.assertEqual(contract["controller_trackable_cap_stage"], "after_standard_filter")
+        self.assertEqual(contract["controller_mask_erode_px"], 0)
+        self.assertEqual(contract["controller_mask_erode_stage"], "before_tracking_union_and_trackable_filter")
+        self.assertEqual(contract["controller_mask_erode_applies_to"], "tracking_input_and_anchor_masks")
+        self.assertEqual(contract["render_controller_filter"]["render_voxel_m"], 0.003)
+        self.assertTrue(contract["render_controller_filter"]["render_voxel_downsample"])
+        self.assertTrue(contract["render_controller_filter"]["render_only"])
+        self.assertFalse(contract["render_controller_filter"]["affects_tracking_markers"])
+        self.assertEqual(contract["tracker_visualization_mode"], "all-tracks-3d-lift")
+        self.assertEqual(contract["tracker_3d_marker_mode"], "all-tracks-3d-lift")
+        self.assertTrue(contract["tracker_direct_depth_lift_used"])
+        self.assertTrue(contract["tracker_all_tracks_anchor_mode"])
+        self.assertFalse(contract["tracker_surface_gate_enabled"])
+        self.assertFalse(contract["overlay_bbox_filter_enabled"])
+        self.assertEqual(contract["tracking_overlay_lift_method"], "all_tracks_depth_lift")
+        self.assertEqual(contract["tracking_control_point_count_requested"], 0)
+        self.assertEqual(
+            contract["tracking_control_point_sampling"],
+            "all_visible_depth_valid_tracks_no_surface_or_bbox_gate",
+        )
         self.assertEqual(contract["tracker_env_name"], "demo_3_1_max")
         self.assertEqual(contract["tracking_backend_batch_dimension"], "none")
         self.assertFalse(contract["tracking_backend_batch_supported"])
@@ -563,6 +593,65 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(config.tracker_query_dependent_init)
         self.assertEqual(config.litetracker_repo_dir, "/home/xinjie/external/lite-tracker")
         self.assertEqual(config.litetracker_weights, "/home/xinjie/external/weights/cotracker3/scaled_online.pth")
+
+    def test_controller_mask_erode_defaults_to_one_in_demo_mode(self) -> None:
+        args = self._parse(
+            ["--dry-run", "--mode", "demo", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
+            default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+        )
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+
+        self.assertEqual(args.controller_mask_erode_px, 1)
+        self.assertEqual(contract["semantic_mode"], "demo")
+        self.assertEqual(contract["tracking_controller_label"], "hand")
+        self.assertEqual(contract["controller_mask_erode_px"], 1)
+
+    def test_controller_mask_erode_explicit_override_wins_in_demo_mode(self) -> None:
+        args = self._parse(
+            [
+                "--dry-run",
+                "--mode",
+                "demo",
+                "--controller-mask-erode-px",
+                "0",
+                "--camera-ids",
+                "0,1,2",
+                "--mask-gpu",
+                "0",
+                "--cotracker-gpu",
+                "1",
+            ],
+            default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+        )
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+
+        self.assertEqual(args.controller_mask_erode_px, 0)
+        self.assertEqual(contract["semantic_mode"], "demo")
+        self.assertEqual(contract["controller_mask_erode_px"], 0)
+
+    def test_controller_mask_erode_happens_before_tracking_union(self) -> None:
+        object_mask = np.zeros((5, 5), dtype=bool)
+        object_mask[0, 0] = True
+        controller_mask = np.zeros((5, 5), dtype=bool)
+        controller_mask[1:4, 1:4] = True
+        packet = _FakePacket(
+            group_id=1,
+            camera_idx=0,
+            object_mask=object_mask,
+            controller_mask=controller_mask,
+            color_bgr=np.zeros((5, 5, 3), dtype=np.uint8),
+        )
+
+        union_mask, returned_object, eroded_controller = demo31_runtime._phystwin_union_tracking_masks(
+            packet,
+            controller_mask_erode_px=1,
+        )
+
+        expected_controller = np.zeros((5, 5), dtype=bool)
+        expected_controller[2, 2] = True
+        np.testing.assert_array_equal(returned_object, object_mask)
+        np.testing.assert_array_equal(eroded_controller, expected_controller)
+        np.testing.assert_array_equal(union_mask, object_mask | expected_controller)
 
     def test_demo32_has_independent_runtime_contract(self) -> None:
         parser = demo32_runtime.build_arg_parser()
@@ -593,6 +682,16 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 camera_ids=(0, 1),
                 depth_min_m=0.0,
                 depth_max_m=3.0,
+                object_point_control="none",
+                object_postprocess="none",
+                controller_postprocess="none",
+                object_volume_voxel_m=0.005,
+                object_volume_origin="world",
+                object_volume_points_per_voxel=1,
+                phystwin_radius_m=0.01,
+                phystwin_nb_points=1,
+                enhanced_component_voxel_size_m=0.006,
+                enhanced_keep_near_main_gap_m=0.035,
             ),
             demo31_contract={
                 "fusion_mask_policy": "latest-reuse",
@@ -600,6 +699,10 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "cotracker_result_stale_timeout_ms": 1500.0,
                 "cotracker_input_fps": 10.0,
                 "controller_pcd_max_points_per_camera": 100,
+                "controller_trackable_max_points_per_camera": 100,
+                "trackable_mask_build_policy": "init-only",
+                "trackable_query_init_strategy": "standard-filter-init",
+                "demo": "demo3.2",
                 "cotracker_seed": 42,
                 "wait_for_tracking_overlay": True,
             },
@@ -680,6 +783,13 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires --cotracker-backend litetracker"):
             demo31_runtime.validate_args(cotracker_args, cuda_device_count_provider=lambda: 2)
 
+    def test_demo32_rejects_removed_query_init_choices(self) -> None:
+        parser = demo31_runtime.build_arg_parser(default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER)
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--dry-run", "--trackable-mask-build-policy", "every-n"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--dry-run", "--trackable-query-init-strategy", "minimal-latency"])
+
     def test_demo32_shared_runtime_args_use_demo23_ffs_batch3(self) -> None:
         args = self._parse(
             ["--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
@@ -713,6 +823,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(shared_args.dual_gpu_processes)
         self.assertTrue(shared_args.enable_pcd_filter)
         self.assertEqual(shared_args.pcd_filter_mode, "async")
+        self.assertEqual(shared_args.controller_render_voxel_m, 0.003)
 
     def test_demo32_main_dry_run_prints_ffs_litetracker_contract(self) -> None:
         stdout = io.StringIO()
@@ -735,10 +846,25 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("ffs_gpu_physical = 0", output)
         self.assertIn("edgetam_gpu_physical = 0", output)
         self.assertIn("sam31_gpu_physical = 0", output)
+        self.assertIn("sam31_init_quick_fail_empty_masks = true", output)
+        self.assertIn("sam31_init_min_mask_pixels = 1", output)
         self.assertIn("litetracker_gpu_physical = 1", output)
         self.assertIn("ffs_edgetam_same_gpu = true", output)
         self.assertIn("tracker_backend = litetracker", output)
         self.assertIn("tracker_env_name = demo_3_1_max", output)
+        self.assertIn("trackable_mask_build_policy = init-only", output)
+        self.assertIn("trackable_query_init_strategy = standard-filter-init", output)
+        self.assertIn("trackable_mask_source = standard_filter_survivors", output)
+        self.assertIn("tracker_query_source = union_trackable_mask", output)
+        self.assertIn("controller_mask_erode_px = 0", output)
+        self.assertIn("render_controller_filter = {'render_voxel_m': 0.003", output)
+        self.assertIn("tracker_visualization_mode = all-tracks-3d-lift", output)
+        self.assertIn("tracker_3d_marker_mode = all-tracks-3d-lift", output)
+        self.assertIn("tracker_all_tracks_anchor_mode = true", output)
+        self.assertIn("tracker_surface_gate_enabled = false", output)
+        self.assertIn("overlay_bbox_filter_enabled = false", output)
+        self.assertIn("tracking_overlay_lift_method = all_tracks_depth_lift", output)
+        self.assertIn("tracking_control_point_count_requested = 0", output)
         self.assertIn("tracking_backend_execution_mode = serial", output)
         self.assertIn("cotracker_update_mode = serial", output)
         self.assertIn("output_root = result/demo32_ffs_litetracker", output)
@@ -1386,6 +1512,84 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["overlay_bbox_kept_points_by_camera"], {0: 1})
         self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 1})
         self.assertEqual(overlay_profile["overlay_world_centroid_by_camera"], {0: [0.0, 0.0, 1.0]})
+
+    def test_all_tracks_anchor_mode_disables_surface_mask_and_bbox_gates(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0, 1.0, 1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]], dtype=np.float32)},
+            publish_range=(1, 1),
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(
+                camera_ids=(0,),
+                tracker_visualization_mode="all-tracks-3d-lift",
+                tracker_3d_marker_radius_m=0.006,
+                overlay_display_scope="controller",
+                overlay_reject_outside_semantic_bbox=True,
+                overlay_max_distance_from_controller_m=0.0,
+            ),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        controller_mask = np.array([[True, False, False]], dtype=bool)
+        runtime.demo31_lift_input_cache.publish(
+            group_id=1,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 3), 1.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: controller_mask},
+            controller_mask_by_camera={0: controller_mask},
+        )
+        packet = _FakeRenderPacket(
+            group_id=1,
+            controller_points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+            controller_colors_rgb=np.array([[200, 200, 200]], dtype=np.uint8),
+        )
+
+        runtime._publish_render_packet(packet)
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        published = runtime.published_packet
+        self.assertIsNotNone(published)
+        marker_vertices = len(demo31_runtime._SPHERE_MARKER_OFFSETS)
+        self.assertEqual(len(published.controller_points_m), 1 + 3 * marker_vertices)  # type: ignore[arg-type]
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertEqual(overlay_profile["tracker_visualization_mode"], "all-tracks-3d-lift")
+        self.assertEqual(overlay_profile["tracker_3d_marker_mode"], "all-tracks-3d-lift")
+        self.assertTrue(overlay_profile["tracker_direct_depth_lift_used"])
+        self.assertTrue(overlay_profile["tracker_all_tracks_anchor_mode"])
+        self.assertFalse(overlay_profile["tracker_surface_gate_enabled"])
+        self.assertEqual(overlay_profile["overlay_lift_method"], "all_tracks_depth_lift")
+        self.assertEqual(overlay_profile["overlay_lift_mask_scope"], "none")
+        self.assertFalse(overlay_profile["overlay_bbox_filter_enabled"])
+        self.assertEqual(overlay_profile["overlay_input_points_by_camera"], {0: 3})
+        self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 3})
+        self.assertEqual(overlay_profile["overlay_rejected_by_scope_mask_by_camera"], {0: 0})
+        self.assertEqual(overlay_profile["overlay_bbox_rejected_by_camera"], {0: 0})
+        self.assertEqual(overlay_profile["tracker_marker_accepted_by_camera"], {0: 3})
+        self.assertEqual(overlay_profile["tracker_marker_rejected_by_camera"], {0: 0})
+        self.assertEqual(overlay_profile["tracker_marker_layer_by_camera"], {0: "all-tracks"})
+        self.assertEqual(overlay_profile["tracking_control_point_count"], 3)
+        self.assertEqual(overlay_profile["tracking_control_marker_points"], 3 * marker_vertices)
+        self.assertEqual(
+            overlay_profile["tracking_control_point_sampling"],
+            "all_visible_depth_valid_tracks_no_surface_or_bbox_gate",
+        )
 
     def test_renderer_marks_sampled_tracking_control_points_as_3d_marker_cloud(self) -> None:
         now_s = demo31_runtime.time.perf_counter()

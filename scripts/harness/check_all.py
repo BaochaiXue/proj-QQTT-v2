@@ -98,6 +98,7 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_object_volume_filter_service",
     "tests.test_semantic_fusion_service",
     "tests.test_demo31_dual_gpu_contract",
+    "tests.test_demo32_trackable_mask_filter",
     "tests.test_demo31_ipc_latest_wins",
     "tests.test_demo31_cotracker_process_config",
     "tests.test_check_all_smoke",

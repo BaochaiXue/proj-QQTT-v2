@@ -55,7 +55,7 @@ from qqtt.demo.realtime_masked_edgetam_pcd import (  # noqa: E402
     release_sam31_runtime_resources,
     resolve_initial_masks,
 )
-from qqtt.demo.pcd_filter_fast import voxel_cap_points  # noqa: E402
+from qqtt.demo.pcd_filter_fast import voxel_cap_points, voxel_downsample_points  # noqa: E402
 from qqtt.demo.phystwin_volume_filter import (  # noqa: E402
     DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
     DEFAULT_PHYSTWIN_OBJECT_VOLUME_MAX_VOXEL_M,
@@ -139,6 +139,8 @@ OBJECT_POINT_CONTROLS = (OBJECT_POINT_CONTROL_FIXED_CAP, OBJECT_POINT_CONTROL_PH
 DEFAULT_CAMERA_IDS = (0, 1, 2)
 DEFAULT_OBJECT_LABEL = "object"
 DEFAULT_CONTROLLER_LABEL = "hand"
+DEFAULT_SAM31_INIT_QUICK_FAIL_EMPTY_MASKS = True
+DEFAULT_SAM31_INIT_MIN_MASK_PIXELS = 1
 EXPERIMENT_MODE_CONTROLLER_OBJECT = "controller-object-exp"
 EXPERIMENT_MODE_DEMO = "demo-mode"
 EXPERIMENT_MODES = (EXPERIMENT_MODE_CONTROLLER_OBJECT, EXPERIMENT_MODE_DEMO)
@@ -286,6 +288,7 @@ DEFAULT_OBJECT_FILTER_CAP = 20_000
 DEFAULT_CONTROLLER_FILTER_CAP = 20_000
 DEFAULT_OBJECT_FILTER_VOXEL_M = 0.004
 DEFAULT_CONTROLLER_FILTER_VOXEL_M = 0.003
+DEFAULT_CONTROLLER_RENDER_VOXEL_M = DEFAULT_CONTROLLER_FILTER_VOXEL_M
 DEFAULT_FILTER_EVERY_N = 3
 DEFAULT_FILTER_BUDGET_MS = 12.0
 DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
@@ -349,6 +352,79 @@ def demo_display_name_for_args(args: argparse.Namespace) -> str:
     if override:
         return override
     return f"Demo {demo_version_for_args(args).removeprefix('demo')}"
+
+
+def tracker_backend_display_name(backend: str | None) -> str:
+    normalized = str(backend or "").strip().lower().replace("-", "_")
+    labels = {
+        "cotracker3_online": "CoTracker3",
+        "cotracker3": "CoTracker3",
+        "cotracker": "CoTracker3",
+        "trackon2": "TrackOn2",
+        "track_on2": "TrackOn2",
+        "litetracker": "LiteTracker",
+        "lite_tracker": "LiteTracker",
+        "none": "",
+        "": "",
+    }
+    if normalized in labels:
+        return labels[normalized]
+    return str(backend or "tracker").strip() or "tracker"
+
+
+def render_startup_hud_text(args: argparse.Namespace, *, demo_display_name: str | None = None) -> str:
+    display_name = demo_display_name or demo_display_name_for_args(args)
+    stages: list[str] = ["capture"]
+
+    depth_source = str(getattr(args, "depth_source", "") or "").strip().lower()
+    if depth_source == DEPTH_SOURCE_FFS:
+        batch = int(getattr(args, "ffs_trt_batch_size", 0) or 0)
+        if batch > 1:
+            stages.append(f"FFS batch={batch}")
+        elif str(getattr(args, "ffs_worker_mode", "") or "") == "shared":
+            stages.append("shared FFS")
+        else:
+            stages.append("FFS")
+    elif depth_source == DEPTH_SOURCE_REALSENSE:
+        stages.append("RealSense depth")
+    elif depth_source == DEPTH_SOURCE_FFS_REMOTE:
+        stages.append("remote FFS")
+    elif depth_source and depth_source != DEPTH_SOURCE_NONE:
+        stages.append(f"{depth_source} depth")
+
+    edge_parts: list[str] = []
+    if bool(getattr(args, "edgetam_batch_vision_encoder", False)):
+        edge_parts.append("EdgeTAM batch-vision")
+    elif str(getattr(args, "edgetam_worker_mode", "") or "") == "per-camera":
+        edge_parts.append("per-camera EdgeTAM")
+    else:
+        edge_parts.append("EdgeTAM")
+    if str(getattr(args, "init_mode", "") or "") == "sam31-first-frame":
+        edge_parts.append("SAM3.1")
+    stages.append(" + ".join(edge_parts))
+
+    tracker_backend = str(
+        getattr(
+            args,
+            "external_tracker_backend",
+            getattr(args, "tracking_backend", "none"),
+        )
+        or "none"
+    )
+    tracker_label = tracker_backend_display_name(tracker_backend)
+    if tracker_label:
+        tracker_stage = tracker_label
+        tracker_mode = str(getattr(args, "external_tracker_update_mode", "") or "").strip()
+        if tracker_mode and tracker_mode not in {"auto", "none"}:
+            tracker_stage += f" {tracker_mode}"
+        prewarm_mode = str(getattr(args, "external_tracker_prewarm_mode", "") or "").strip()
+        if prewarm_mode == "lazy_query_init":
+            tracker_stage += " query-init"
+        if bool(getattr(args, "external_tracker_marker_required", False)):
+            tracker_stage += " + 3D anchors"
+        stages.append(tracker_stage)
+
+    return f"{display_name} warming up: {' + '.join(stages)}"
 
 
 def resolved_capture_group_target_fps(args: argparse.Namespace) -> float:
@@ -2824,6 +2900,81 @@ def _load_saved_mask_from_root(mask_root: str | Path | None, *, camera_idx: int,
     raise FileNotFoundError(f"no saved mask for cam{camera_idx} under {root}")
 
 
+class Sam31InitialMaskQuickFail(RuntimeError):
+    """Raised when live SAM3.1 init returns masks too empty to start a demo."""
+
+    def __init__(
+        self,
+        *,
+        camera_idx: int,
+        group_id: int,
+        object_pixels: int,
+        controller_pixels: int,
+        min_pixels: int,
+        missing_labels: Sequence[str],
+    ) -> None:
+        self.camera_idx = int(camera_idx)
+        self.group_id = int(group_id)
+        self.object_pixels = int(object_pixels)
+        self.controller_pixels = int(controller_pixels)
+        self.min_pixels = int(min_pixels)
+        self.missing_labels = tuple(str(label) for label in missing_labels)
+        labels = ", ".join(self.missing_labels) if self.missing_labels else "none"
+        super().__init__(
+            "SAM3.1 quick-fail: live first-frame masks are below the required "
+            f"{self.min_pixels} px for cam{self.camera_idx} group={self.group_id}; "
+            f"missing={labels}; object_px={self.object_pixels}; controller_px={self.controller_pixels}"
+        )
+
+
+def validate_sam31_initial_mask_counts(
+    frame: CameraFramePacket,
+    args: argparse.Namespace,
+    *,
+    controller_mask: np.ndarray,
+    object_mask: np.ndarray,
+) -> dict[str, Any]:
+    object_pixels = int(np.count_nonzero(np.asarray(object_mask, dtype=bool)))
+    controller_pixels = int(np.count_nonzero(np.asarray(controller_mask, dtype=bool)))
+    min_pixels = max(1, int(getattr(args, "sam31_init_min_mask_pixels", DEFAULT_SAM31_INIT_MIN_MASK_PIXELS)))
+    quick_fail_enabled = bool(
+        getattr(args, "sam31_init_quick_fail_empty_masks", DEFAULT_SAM31_INIT_QUICK_FAIL_EMPTY_MASKS)
+    )
+    stats = {
+        "sam31_init_quick_fail_empty_masks": quick_fail_enabled,
+        "sam31_init_min_mask_pixels": int(min_pixels),
+        "object_pixels": int(object_pixels),
+        "controller_pixels": int(controller_pixels),
+        "object_required": bool(object_tracking_enabled(args.track_mode)),
+        "controller_required": bool(controller_tracking_enabled(args.track_mode)),
+    }
+    if str(getattr(args, "init_mode", "")) != "sam31-first-frame" or not quick_fail_enabled:
+        return stats
+    missing: list[str] = []
+    if object_tracking_enabled(args.track_mode) and object_pixels < min_pixels:
+        missing.append(str(getattr(args, "object_prompt", "object")))
+    if controller_tracking_enabled(args.track_mode) and controller_pixels < min_pixels:
+        missing.append(str(getattr(args, "controller_prompt", "controller")))
+    if missing:
+        raise Sam31InitialMaskQuickFail(
+            camera_idx=int(frame.camera_idx),
+            group_id=int(frame.group_id),
+            object_pixels=object_pixels,
+            controller_pixels=controller_pixels,
+            min_pixels=min_pixels,
+            missing_labels=missing,
+        )
+    return stats
+
+
+def sam31_init_failure_is_quick_fail(exc: BaseException, args: argparse.Namespace) -> bool:
+    if isinstance(exc, Sam31InitialMaskQuickFail):
+        return True
+    if not bool(getattr(args, "sam31_init_quick_fail_empty_masks", DEFAULT_SAM31_INIT_QUICK_FAIL_EMPTY_MASKS)):
+        return False
+    return "SAM3.1 did not produce a mask for label" in str(exc)
+
+
 def resolve_initial_masks_for_camera(
     frame: CameraFramePacket,
     args: argparse.Namespace,
@@ -2862,7 +3013,14 @@ def resolve_initial_masks_for_camera(
         # SAM3.1 initialization is intentionally serialized across cameras to
         # avoid three first-frame segmentation jobs fighting for the same GPU.
         with sam31_lock:
-            return resolve_initial_masks(frame, args)
+            controller_mask, object_mask = resolve_initial_masks(frame, args)
+        validate_sam31_initial_mask_counts(
+            frame,
+            args,
+            controller_mask=controller_mask,
+            object_mask=object_mask,
+        )
+        return controller_mask, object_mask
     raise ValueError(f"unsupported init mode: {args.init_mode}")
 
 
@@ -3037,6 +3195,20 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "controller_init_mask_root": args.controller_init_mask_root,
             "sam31_retry_interval_s": float(args.sam31_init_retry_interval_s),
             "sam31_max_attempts": int(args.sam31_init_max_attempts),
+            "sam31_quick_fail_empty_masks": bool(
+                getattr(args, "sam31_init_quick_fail_empty_masks", DEFAULT_SAM31_INIT_QUICK_FAIL_EMPTY_MASKS)
+            ),
+            "sam31_min_mask_pixels": int(
+                getattr(args, "sam31_init_min_mask_pixels", DEFAULT_SAM31_INIT_MIN_MASK_PIXELS)
+            ),
+            "sam31_required_masks": [
+                label
+                for enabled, label in (
+                    (object_tracking_enabled(args.track_mode), str(args.object_prompt)),
+                    (controller_tracking_enabled(args.track_mode), str(args.controller_prompt)),
+                )
+                if enabled
+            ],
             "sam31_cache_init_model": bool(getattr(args, "sam31_cache_init_model", False)),
             "sam31_keep_runtime_until_all_cameras_init": bool(
                 getattr(args, "sam31_keep_runtime_until_all_cameras_init", False)
@@ -3301,6 +3473,13 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                 "postprocess": args.controller_postprocess,
                 "cap": int(args.controller_filter_cap),
                 "voxel_size_m": float(args.controller_filter_voxel_m),
+                "render_voxel_m": float(getattr(args, "controller_render_voxel_m", DEFAULT_CONTROLLER_RENDER_VOXEL_M)),
+                "render_voxel_downsample": float(
+                    getattr(args, "controller_render_voxel_m", DEFAULT_CONTROLLER_RENDER_VOXEL_M)
+                )
+                > 0.0,
+                "render_only": True,
+                "affects_tracking_markers": False,
             },
         },
         "semantic_layers": [
@@ -4151,6 +4330,8 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 filter caps must be >= 0")
         if float(self.args.object_filter_voxel_m) <= 0 or float(self.args.controller_filter_voxel_m) <= 0:
             raise RuntimeError("Demo 2.1 filter voxel sizes must be positive")
+        if float(getattr(self.args, "controller_render_voxel_m", DEFAULT_CONTROLLER_RENDER_VOXEL_M)) < 0:
+            raise RuntimeError("Demo 2.1 --controller-render-voxel-m must be >= 0")
         if self.args.object_point_control not in OBJECT_POINT_CONTROLS:
             raise RuntimeError(f"Demo 2.1 unsupported --object-point-control {self.args.object_point_control}")
         if self.args.object_volume_origin not in PHYSTWIN_VOLUME_ORIGINS:
@@ -4196,6 +4377,8 @@ class Demo21Runtime:
             raise RuntimeError("Demo 2.1 --sam31-init-retry-interval-s must be >= 0")
         if int(self.args.sam31_init_max_attempts) < 0:
             raise RuntimeError("Demo 2.1 --sam31-init-max-attempts must be >= 0")
+        if int(getattr(self.args, "sam31_init_min_mask_pixels", DEFAULT_SAM31_INIT_MIN_MASK_PIXELS)) < 1:
+            raise RuntimeError("Demo 2.1 --sam31-init-min-mask-pixels must be >= 1")
         if self.args.gpu_gate_mode != GPU_GATE_MODE_OFF and int(self.args.gpu_gate_max_concurrent) < 1:
             raise RuntimeError("Demo 2.1 --gpu-gate-max-concurrent must be >= 1 unless --gpu-gate-mode off")
         if self.args.gpu_gate_mode == GPU_GATE_MODE_SERIALIZED and int(self.args.gpu_gate_max_concurrent) != 1:
@@ -6823,11 +7006,27 @@ class Demo21Runtime:
                             key = f"sam31_init_failures_cam{int(camera_idx)}"
                             self._summary[key] = int(self._summary.get(key, 0)) + 1
                             self._profile_mark_drop(group.group_id, f"sam31_init_failed_cam{int(camera_idx)}")
+                            quick_fail = sam31_init_failure_is_quick_fail(exc, self.args)
+                            if quick_fail:
+                                self._summary[f"sam31_init_quick_fail_cam{int(camera_idx)}"] = True
+                                self._summary[f"sam31_init_quick_fail_reason_cam{int(camera_idx)}"] = str(exc)
+                            if isinstance(exc, Sam31InitialMaskQuickFail):
+                                self._summary[f"sam31_init_object_pixels_cam{int(camera_idx)}"] = int(exc.object_pixels)
+                                self._summary[f"sam31_init_controller_pixels_cam{int(camera_idx)}"] = int(
+                                    exc.controller_pixels
+                                )
+                                self._summary[f"sam31_init_min_mask_pixels_cam{int(camera_idx)}"] = int(exc.min_pixels)
                             now_s = time.perf_counter()
                             max_attempts = int(self.args.sam31_init_max_attempts)
-                            will_retry = max_attempts == 0 or init_attempts < max_attempts
+                            will_retry = (not quick_fail) and (max_attempts == 0 or init_attempts < max_attempts)
                             if self.args.debug and now_s - last_init_failure_log_s >= 2.0:
-                                action = "retrying on the latest live frame" if will_retry else "failing without fallback"
+                                action = (
+                                    "retrying on the latest live frame"
+                                    if will_retry
+                                    else "terminating early because SAM3.1 did not segment every required label"
+                                    if quick_fail
+                                    else "failing without fallback"
+                                )
                                 print(
                                     "[demo2.1-sam31-init] "
                                     f"cam={camera_idx} attempt={init_attempts} group={group.group_id} "
@@ -6960,11 +7159,25 @@ class Demo21Runtime:
             key = f"sam31_init_failures_cam{int(camera_idx)}"
             self._summary[key] = int(self._summary.get(key, 0)) + 1
             self._profile_mark_drop(frame.group_id, f"sam31_init_failed_cam{int(camera_idx)}")
+            quick_fail = sam31_init_failure_is_quick_fail(exc, self.args)
+            if quick_fail:
+                self._summary[f"sam31_init_quick_fail_cam{int(camera_idx)}"] = True
+                self._summary[f"sam31_init_quick_fail_reason_cam{int(camera_idx)}"] = str(exc)
+            if isinstance(exc, Sam31InitialMaskQuickFail):
+                self._summary[f"sam31_init_object_pixels_cam{int(camera_idx)}"] = int(exc.object_pixels)
+                self._summary[f"sam31_init_controller_pixels_cam{int(camera_idx)}"] = int(exc.controller_pixels)
+                self._summary[f"sam31_init_min_mask_pixels_cam{int(camera_idx)}"] = int(exc.min_pixels)
             now_s = time.perf_counter()
             max_attempts = int(self.args.sam31_init_max_attempts)
-            will_retry = max_attempts == 0 or int(state["init_attempts"]) < max_attempts
+            will_retry = (not quick_fail) and (max_attempts == 0 or int(state["init_attempts"]) < max_attempts)
             if self.args.debug and now_s - float(state["last_init_failure_log_s"]) >= 2.0:
-                action = "retrying on the latest live frame" if will_retry else "failing without fallback"
+                action = (
+                    "retrying on the latest live frame"
+                    if will_retry
+                    else "terminating early because SAM3.1 did not segment every required label"
+                    if quick_fail
+                    else "failing without fallback"
+                )
                 print(
                     "[demo2.1-sam31-init] "
                     f"single-owner cam={camera_idx} attempt={int(state['init_attempts'])} group={frame.group_id} "
@@ -6993,6 +7206,12 @@ class Demo21Runtime:
                 "call_wall_ms": float(sam31_call_ms),
                 "object_pixels": int(np.count_nonzero(object_mask)),
                 "controller_pixels": int(np.count_nonzero(controller_mask)),
+                "quick_fail_empty_masks": bool(
+                    getattr(self.args, "sam31_init_quick_fail_empty_masks", DEFAULT_SAM31_INIT_QUICK_FAIL_EMPTY_MASKS)
+                ),
+                "min_mask_pixels": int(
+                    getattr(self.args, "sam31_init_min_mask_pixels", DEFAULT_SAM31_INIT_MIN_MASK_PIXELS)
+                ),
                 "group_id": int(frame.group_id),
                 "attempts": int(state["init_attempts"]),
             },
@@ -8114,6 +8333,27 @@ class Demo21Runtime:
             "object_volume_adaptive_enabled": bool(getattr(self.args, "object_volume_adaptive", True)),
         }
 
+    def _controller_render_voxel_profile_fields(self, stats: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "controller_render_voxel_enabled": bool(stats.get("controller_render_voxel_enabled", False)),
+            "controller_render_voxel_m": float(
+                stats.get(
+                    "controller_render_voxel_m",
+                    getattr(self.args, "controller_render_voxel_m", DEFAULT_CONTROLLER_RENDER_VOXEL_M),
+                )
+            ),
+            "controller_render_voxel_input_points": int(stats.get("controller_render_voxel_input_points", 0)),
+            "controller_render_voxel_output_points": int(stats.get("controller_render_voxel_output_points", 0)),
+            "controller_render_voxel_removed_points": int(stats.get("controller_render_voxel_removed_points", 0)),
+            "controller_render_voxel_ms": float(stats.get("controller_render_voxel_ms", 0.0)),
+            "controller_render_voxel_stage": str(
+                stats.get("controller_render_voxel_stage", "render_pcd_only_after_controller_postprocess")
+            ),
+            "controller_render_voxel_affects_tracking_markers": bool(
+                stats.get("controller_render_voxel_affects_tracking_markers", False)
+            ),
+        }
+
     def _filter_object_layer(self, layer: FusedLayerCloud) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
         point_control = str(getattr(self.args, "object_point_control", OBJECT_POINT_CONTROL_FIXED_CAP))
         if point_control != OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME:
@@ -8139,6 +8379,57 @@ class Demo21Runtime:
         sampled_colors = _as_colors(sampled_colors)
         return sampled_points, sampled_colors, stats
 
+    def _filter_controller_layer(self, layer: FusedLayerCloud) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+        points, colors, stats = apply_semantic_postprocess(
+            layer,
+            filter_cap=int(self.args.controller_filter_cap),
+            filter_voxel_size_m=float(self.args.controller_filter_voxel_m),
+            phystwin_radius_m=float(self.args.phystwin_radius_m),
+            phystwin_nb_points=int(self.args.phystwin_nb_points),
+            enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
+            enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
+        )
+        stats = dict(stats) if isinstance(stats, dict) else {}
+        render_voxel_m = float(getattr(self.args, "controller_render_voxel_m", DEFAULT_CONTROLLER_RENDER_VOXEL_M))
+        before_count = int(len(points))
+        if render_voxel_m > 0.0:
+            voxel_start_s = time.perf_counter()
+            downsampled_points, downsampled_colors_or_none = voxel_downsample_points(
+                points,
+                colors,
+                voxel_size_m=render_voxel_m,
+            )
+            voxel_ms = _elapsed_ms(voxel_start_s, time.perf_counter())
+            points = _as_points(downsampled_points)
+            colors = _as_colors(np.empty((0, 3), dtype=np.uint8) if downsampled_colors_or_none is None else downsampled_colors_or_none)
+            after_count = int(len(points))
+            stats.update(
+                {
+                    "controller_render_voxel_enabled": True,
+                    "controller_render_voxel_m": float(render_voxel_m),
+                    "controller_render_voxel_input_points": int(before_count),
+                    "controller_render_voxel_output_points": int(after_count),
+                    "controller_render_voxel_removed_points": int(max(0, before_count - after_count)),
+                    "controller_render_voxel_ms": float(voxel_ms),
+                    "controller_render_voxel_stage": "render_pcd_only_after_controller_postprocess",
+                    "controller_render_voxel_affects_tracking_markers": False,
+                }
+            )
+        else:
+            stats.update(
+                {
+                    "controller_render_voxel_enabled": False,
+                    "controller_render_voxel_m": float(render_voxel_m),
+                    "controller_render_voxel_input_points": int(before_count),
+                    "controller_render_voxel_output_points": int(before_count),
+                    "controller_render_voxel_removed_points": 0,
+                    "controller_render_voxel_ms": 0.0,
+                    "controller_render_voxel_stage": "disabled",
+                    "controller_render_voxel_affects_tracking_markers": False,
+                }
+            )
+        return points, colors, stats
+
     def _filter_raw_fused_packet(self, raw: RawFusedPcdPacket) -> FusedPcdPacket:
         filter_start_s = time.perf_counter()
         object_filter_ms = 0.0
@@ -8155,15 +8446,7 @@ class Demo21Runtime:
             object_colors = np.empty((0, 3), dtype=np.uint8)
         if raw.raw_controller is not None:
             controller_filter_start_s = time.perf_counter()
-            controller_points, controller_colors, stats = apply_semantic_postprocess(
-                raw.raw_controller,
-                filter_cap=int(self.args.controller_filter_cap),
-                filter_voxel_size_m=float(self.args.controller_filter_voxel_m),
-                phystwin_radius_m=float(self.args.phystwin_radius_m),
-                phystwin_nb_points=int(self.args.phystwin_nb_points),
-                enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
-                enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
-            )
+            controller_points, controller_colors, stats = self._filter_controller_layer(raw.raw_controller)
             controller_filter_ms = _elapsed_ms(controller_filter_start_s, time.perf_counter())
             controller_filter_stats = stats if isinstance(stats, dict) else {}
         else:
@@ -8183,6 +8466,7 @@ class Demo21Runtime:
         profile_filter.update(
             self._object_volume_filter_profile_fields(object_filter_stats, object_filter_ms=object_filter_ms)
         )
+        profile_filter.update(self._controller_render_voxel_profile_fields(controller_filter_stats))
         if self.args.profile_filter_detail:
             profile_filter["object_filter_detail"] = object_filter_stats
             profile_filter["controller_filter_detail"] = controller_filter_stats
@@ -8205,6 +8489,7 @@ class Demo21Runtime:
                 "total_ms": float(raw.raw_fusion_ms + filter_ms),
                 "publish_s": self._profile_rel_s(),
                 **object_volume_profile,
+                **self._controller_render_voxel_profile_fields(controller_filter_stats),
             },
             points={
                 "object_raw": int(raw.object_raw_points),
@@ -8212,6 +8497,12 @@ class Demo21Runtime:
                 "object_volume_occupied_voxels": int(object_filter_stats.get("occupied_voxel_count", 0)),
                 "controller_raw": int(raw.controller_raw_points),
                 "controller_filtered": int(len(controller_points)),
+                "controller_render_voxel_input": int(
+                    controller_filter_stats.get("controller_render_voxel_input_points", len(controller_points))
+                ),
+                "controller_render_voxel_output": int(
+                    controller_filter_stats.get("controller_render_voxel_output_points", len(controller_points))
+                ),
             },
             complete=True,
             drop_reason=None,
@@ -8414,15 +8705,7 @@ class Demo21Runtime:
             object_colors = np.empty((0, 3), dtype=np.uint8)
         if raw_controller is not None:
             controller_filter_start_s = time.perf_counter()
-            controller_points, controller_colors, _ = apply_semantic_postprocess(
-                raw_controller,
-                filter_cap=int(self.args.controller_filter_cap),
-                filter_voxel_size_m=float(self.args.controller_filter_voxel_m),
-                phystwin_radius_m=float(self.args.phystwin_radius_m),
-                phystwin_nb_points=int(self.args.phystwin_nb_points),
-                enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
-                enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
-            )
+            controller_points, controller_colors, _ = self._filter_controller_layer(raw_controller)
             controller_filter_ms = _elapsed_ms(controller_filter_start_s, time.perf_counter())
             controller_filter_stats = _ if isinstance(_, dict) else {}
         else:
@@ -8444,6 +8727,7 @@ class Demo21Runtime:
         profile_fusion.update(
             self._object_volume_filter_profile_fields(object_filter_stats, object_filter_ms=object_filter_ms)
         )
+        profile_fusion.update(self._controller_render_voxel_profile_fields(controller_filter_stats))
         profile_fusion.update(fusion_debug)
         if self.args.profile_filter_detail:
             profile_fusion["object_filter_detail"] = object_filter_stats
@@ -8457,6 +8741,12 @@ class Demo21Runtime:
                 "object_volume_occupied_voxels": int(object_filter_stats.get("occupied_voxel_count", 0)),
                 "controller_raw": int(controller_raw_count),
                 "controller_filtered": int(len(controller_points)),
+                "controller_render_voxel_input": int(
+                    controller_filter_stats.get("controller_render_voxel_input_points", len(controller_points))
+                ),
+                "controller_render_voxel_output": int(
+                    controller_filter_stats.get("controller_render_voxel_output_points", len(controller_points))
+                ),
             },
             complete=True,
             drop_reason=None,
@@ -8542,7 +8832,7 @@ class Demo21Runtime:
         scene_widget = gui.SceneWidget()
         scene_widget.scene = rendering.Open3DScene(window.renderer)
         scene_widget.scene.set_background([0.02, 0.02, 0.02, 1.0])
-        hud_label = gui.Label(f"{demo_display_name} warming up: capture + shared FFS + per-camera EdgeTAM")
+        hud_label = gui.Label(render_startup_hud_text(self.args, demo_display_name=demo_display_name))
         hud_label.text_color = gui.Color(1.0, 1.0, 1.0)
         hud_panel = gui.Vert(0, gui.Margins(8, 8, 8, 8))
         hud_panel.add_child(hud_label)
@@ -8670,8 +8960,9 @@ class Demo21Runtime:
                 if tracker_model_ms is not None:
                     tracker_batch = getattr(packet, "tracker_batch_size", None)
                     tracker_mode = getattr(packet, "tracker_update_mode", None) or "tracker"
+                    tracker_label = tracker_backend_display_name(getattr(packet, "tracker_backend", None)) or "tracker"
                     tracker_text = (
-                        f" | tracker({tracker_mode},B={0 if tracker_batch is None else int(tracker_batch)})="
+                        f" | {tracker_label}({tracker_mode},B={0 if tracker_batch is None else int(tracker_batch)})="
                         f"{float(tracker_model_ms):.1f} ms"
                     )
                     if tracker_e2e_ms is not None:
@@ -8973,6 +9264,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Maximum SAM3.1 live init attempts per camera. Default 1 is fail-fast for the formal demo.",
     )
     parser.add_argument(
+        "--sam31-init-quick-fail-empty-masks",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_SAM31_INIT_QUICK_FAIL_EMPTY_MASKS,
+        help=(
+            "Fail before EdgeTAM/LiteTracker warmup if live SAM3.1 first-frame init "
+            "does not produce every required semantic mask."
+        ),
+    )
+    parser.add_argument(
+        "--sam31-init-min-mask-pixels",
+        type=int,
+        default=DEFAULT_SAM31_INIT_MIN_MASK_PIXELS,
+        help="Minimum pixels required for each enabled SAM3.1 first-frame object/controller mask.",
+    )
+    parser.add_argument(
         "--sam31-cache-init-model",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -9108,6 +9414,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--controller-filter-cap", type=int, default=DEFAULT_CONTROLLER_FILTER_CAP)
     parser.add_argument("--object-filter-voxel-m", type=float, default=DEFAULT_OBJECT_FILTER_VOXEL_M)
     parser.add_argument("--controller-filter-voxel-m", type=float, default=DEFAULT_CONTROLLER_FILTER_VOXEL_M)
+    parser.add_argument(
+        "--controller-render-voxel-m",
+        type=float,
+        default=DEFAULT_CONTROLLER_RENDER_VOXEL_M,
+        help=(
+            "Render-only controller PCD voxel downsample size in meters. "
+            "Use 0 to disable. This does not affect external tracker/control markers."
+        ),
+    )
     parser.add_argument("--object-point-control", choices=OBJECT_POINT_CONTROLS, default=OBJECT_POINT_CONTROL_FIXED_CAP)
     parser.add_argument("--object-volume-voxel-m", type=float, default=DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M)
     parser.add_argument("--object-volume-origin", choices=PHYSTWIN_VOLUME_ORIGINS, default=PHYSTWIN_VOLUME_ORIGIN_WORLD)

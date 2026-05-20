@@ -28,7 +28,13 @@ query selection and fused PCD construction. Query points are then sampled from
 the capped object/controller union with the requested per-view budget using
 torch `randperm(seed + camera_idx)` with seed 42. Use
 `--cotracker-query-count auto` only when exact 5000-per-view dense sampling is
-needed and the tracker backend/memory budget can support it. Overlay display selection is
+needed and the tracker backend/memory budget can support it. The optional
+`--controller-mask-erode-px` parameter shrinks the controller mask before the
+tracking union and anchor/trackable-mask path; its implicit default is `1` in
+`--mode demo` (hand controller) and `0` otherwise. Controller body points are
+render-voxel downsampled before Open3D display with
+`--controller-render-voxel-m`; this render-only reduction does not touch
+LiteTracker input or the red tracking/control markers. Overlay display selection is
 separate: raw CoTracker tracks still come from the capped union, but each query
 is labeled by first-frame object/controller mask membership and the default
 rendered overlay shows controller-labeled tracks only. The display cap is
@@ -39,7 +45,14 @@ control-handle rule: select up to 16 visible tracking controls per camera,
 snap each control to the nearest same-camera, same-semantic fused surface point
 within 4 pixels, then draw a red 3D sphere marker with radius 6mm. Direct
 2D-track/depth/intrinsics/c2w lifting is disabled by default and is available
-only under `--tracker-visualization-mode legacy-3d-lift` for debugging.
+under `--tracker-visualization-mode legacy-3d-lift` for debugging. Demo 3.2
+uses `--tracker-visualization-mode all-tracks-3d-lift` by default: every
+visible LiteTracker point with valid depth becomes a red 3D control marker,
+without surface-snap matching, semantic scope-mask rejection, or semantic bbox
+rejection.
+The Open3D warmup HUD is pipeline-aware: Demo 3.2 reports the FFS/EdgeTAM
+path plus LiteTracker query-init and 3D anchors instead of the older fixed
+FFS/EdgeTAM-only message.
 `--overlay-render-raw-track-points` only affects that legacy debug mode. For
 alignment debugging, `--overlay-debug-color-by-camera` colors snapped
 overlay/control points by source camera while keeping
@@ -98,6 +111,10 @@ tracking_query_mode = phystwin_dense
 tracking_query_count_requested = 4096
 tracking_query_count_rule = min(capped_object_controller_union_pixels, 5000)
 tracking_sampling = controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx
+controller_mask_erode_px = 0
+controller_mask_erode_stage = before_tracking_union_and_trackable_filter
+controller_mask_erode_applies_to = tracking_input_and_anchor_masks
+render_controller_filter = {'render_voxel_m': 0.003, 'render_voxel_downsample': true, 'render_only': true, 'affects_tracking_markers': false}
 controller_pcd_max_points_per_camera = 4999
 controller_pcd_cap_stage = before_tracking_query_and_fusion
 controller_pcd_cap_sampling = stable_coordinate_hash_seed_plus_camera_idx
@@ -322,6 +339,7 @@ CLI and forwards them to the shared three-view runtime:
 --object-volume-target-ms
 --object-volume-emergency-max-points
 --object-volume-points-per-voxel
+--controller-render-voxel-m
 --debug-color-by-camera
 --debug-save-per-camera-pcd
 --debug-save-mask-overlays
@@ -335,7 +353,7 @@ CLI and forwards them to the shared three-view runtime:
 --overlay-debug-color-by-camera
 --overlay-reject-outside-semantic-bbox / --no-overlay-reject-outside-semantic-bbox
 --overlay-max-distance-from-controller-m
---tracker-visualization-mode none|3d-surface-markers|2d-debug|legacy-3d-lift
+--tracker-visualization-mode none|3d-surface-markers|2d-debug|legacy-3d-lift|all-tracks-3d-lift
 --tracker-3d-snap-radius-px
 --tracker-3d-marker-radius-m
 --tracker-control-points-per-camera
