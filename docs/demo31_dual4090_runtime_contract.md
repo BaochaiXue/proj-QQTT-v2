@@ -93,6 +93,8 @@ phystwin_dense_compatible = false
 wait_for_tracking_overlay = true
 tracking_overlay_required_before_first_render = true
 tracking_overlay_required_for_render = true
+render_requires_new_cotracker_result = true
+render_reuses_cached_cotracker_result = false
 tracking_overlay_color_rgb = [255, 0, 0]
 tracking_overlay_color_mode = solid
 tracking_overlay_lift_method = semantic_projection_grid
@@ -121,6 +123,9 @@ tracking_input_contains_c2w = false
 world_lift_owner = main_process
 fusion_mask_policy = latest-reuse
 render_waited_for_cotracker = true
+render_waited_for_fresh_cotracker_result = true
+render_driver = cotracker_child_output
+render_trigger = new_cotracker_result
 render_waited_for_mask = false
 debug_fusion.color_by_camera = false
 gpu_sampling.enabled = false
@@ -134,6 +139,12 @@ gpu_sampling.device_indexes = [0, 1]
 
 Demo 3.1 reports render, fusion, mask reuse, tracking, and GPU ownership
 separately so rendered FPS is not confused with true fresh-mask FPS:
+
+Rendered groups are gated on a newly published CoTracker child-process result.
+The renderer must not reuse an old CoTracker result as a new rendered tracking
+frame. The Open3D HUD shows the displayed depth/FFS cycle time, HF EdgeTAM
+inference timing, and the CoTracker batch inference/e2e timing for the rendered
+tracking frame.
 
 ```text
 render_loop_fps
@@ -170,6 +181,12 @@ cotracker_model_ms_median
 cotracker_model_ms_p95
 cotracker_e2e_ms_median
 cotracker_e2e_ms_p95
+render_requires_new_cotracker_result
+render_reuses_cached_cotracker_result
+render_waited_for_fresh_cotracker_result
+render_driver
+render_trigger
+rendered_on_new_cotracker_result
 overlay_age_ms_median
 overlay_age_ms_p95
 overlay_render_group_delta_median

@@ -1276,6 +1276,14 @@ class FusedPcdPacket:
     capture_temporal_skew_ms: float
     capture_time_offsets_ms_by_camera: dict[int, float]
     timestamp_source: str
+    tracker_backend: str | None = None
+    tracker_update_mode: str | None = None
+    tracker_batch_size: int | None = None
+    tracker_model_ms: float | None = None
+    tracker_e2e_ms: float | None = None
+    tracker_publish_to_render_ms: float | None = None
+    tracker_source_to_render_ms: float | None = None
+    tracker_overlay_group_id: int | None = None
 
     @property
     def seq(self) -> int:
@@ -8657,12 +8665,31 @@ class Demo21Runtime:
                     camera_ready["value"] = True
                 now = time.perf_counter()
                 self.render_stats.record_render(render_time_s=now, latency_ms=_elapsed_ms(packet.created_perf_s, now))
+                depth_label = "ffs" if str(getattr(self.args, "depth_source", "")) == DEPTH_SOURCE_FFS else "depth"
+                edgetam_values = [float(value) for value in packet.edgetam_ms_by_camera.values()]
+                edgetam_max_ms = max(edgetam_values) if edgetam_values else 0.0
+                edgetam_sum_ms = sum(edgetam_values)
+                tracker_model_ms = getattr(packet, "tracker_model_ms", None)
+                tracker_e2e_ms = getattr(packet, "tracker_e2e_ms", None)
+                tracker_text = ""
+                if tracker_model_ms is not None:
+                    tracker_batch = getattr(packet, "tracker_batch_size", None)
+                    tracker_mode = getattr(packet, "tracker_update_mode", None) or "tracker"
+                    tracker_text = (
+                        f" | tracker({tracker_mode},B={0 if tracker_batch is None else int(tracker_batch)})="
+                        f"{float(tracker_model_ms):.1f} ms"
+                    )
+                    if tracker_e2e_ms is not None:
+                        tracker_text += f" e2e={float(tracker_e2e_ms):.1f} ms"
                 hud_label.text = (
                     f"{render_label} | group={packet.group_id} | "
                     f"object={packet.object_point_count} pts | controller={packet.controller_point_count} pts | "
                     f"skew={packet.capture_temporal_skew_ms:.1f} ms | "
+                    f"{depth_label}={packet.ffs_cycle_ms:.1f} ms | "
+                    f"hf_edgetam=max {edgetam_max_ms:.1f}/sum {edgetam_sum_ms:.1f} ms | "
                     f"fusion={packet.fusion_ms:.1f} ms | filter={packet.filter_ms:.1f} ms | "
                     f"render_fps={self.render_stats.render_fps:.1f}"
+                    f"{tracker_text}"
                 )
                 if self.args.debug:
                     self._print_debug()

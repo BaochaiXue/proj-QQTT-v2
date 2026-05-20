@@ -40,6 +40,14 @@ class _FakeRenderPacket:
     group_id: int
     controller_points_m: np.ndarray
     controller_colors_rgb: np.ndarray
+    tracker_backend: str | None = None
+    tracker_update_mode: str | None = None
+    tracker_batch_size: int | None = None
+    tracker_model_ms: float | None = None
+    tracker_e2e_ms: float | None = None
+    tracker_publish_to_render_ms: float | None = None
+    tracker_source_to_render_ms: float | None = None
+    tracker_overlay_group_id: int | None = None
 
 
 class _FakeProcessClient:
@@ -192,6 +200,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(contract["wait_for_tracking_overlay"])
         self.assertTrue(contract["tracking_overlay_required_before_first_render"])
         self.assertTrue(contract["tracking_overlay_required_for_render"])
+        self.assertTrue(contract["render_requires_new_cotracker_result"])
+        self.assertFalse(contract["render_reuses_cached_cotracker_result"])
         self.assertEqual(contract["tracking_overlay_color_rgb"], [255, 0, 0])
         self.assertEqual(contract["tracking_overlay_color_mode"], "solid")
         self.assertFalse(contract["tracking_overlay_debug_color_by_camera"])
@@ -219,6 +229,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(contract["tracking_input_contains_depth"])
         self.assertEqual(contract["shared_runtime_tracking_backend"], "none")
         self.assertTrue(contract["render_waited_for_cotracker"])
+        self.assertTrue(contract["render_waited_for_fresh_cotracker_result"])
         self.assertFalse(contract["render_waited_for_mask"])
         self.assertEqual(contract["pcd_color_mode"], "rgb")
 
@@ -248,6 +259,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("controller_pcd_max_points_per_camera = 4999", output)
         self.assertIn("controller_pcd_cap_stage = before_tracking_query_and_fusion", output)
         self.assertIn("wait_for_tracking_overlay = true", output)
+        self.assertIn("render_requires_new_cotracker_result = true", output)
+        self.assertIn("render_reuses_cached_cotracker_result = false", output)
         self.assertIn("overlay_display_scope = controller", output)
         self.assertIn("phystwin_dense_compatible = false", output)
         self.assertIn("cotracker_owner = process", output)
@@ -258,6 +271,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("cross_gpu_cuda_tensor_transfer = false", output)
         self.assertIn("pcd_color_mode = rgb", output)
         self.assertIn("render_waited_for_cotracker = true", output)
+        self.assertIn("render_waited_for_fresh_cotracker_result = true", output)
 
     def test_requires_two_cuda_unless_debug_override(self) -> None:
         args = self._parse(["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"])
@@ -677,10 +691,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
 
         runtime._publish_render_packet(packet)
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
 
         published = runtime.published_packet
         self.assertIsNotNone(published)
         np.testing.assert_allclose(published.controller_points_m[-1], np.array([0.0, 0.0, 1.0], dtype=np.float32))  # type: ignore[union-attr]
+        self.assertEqual(published.tracker_update_mode, "batch")  # type: ignore[union-attr]
+        self.assertEqual(published.tracker_batch_size, 3)  # type: ignore[union-attr]
+        self.assertEqual(published.tracker_model_ms, 0.0)  # type: ignore[union-attr]
         overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
         self.assertEqual(overlay_profile["overlay_group_id"], 1)
         self.assertEqual(overlay_profile["incoming_render_group_id"], 1)
@@ -690,6 +708,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["overlay_lift_method"], "semantic_projection_grid")
         self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 1})
         self.assertEqual(overlay_profile["overlay_color_mode"], "solid")
+        self.assertTrue(overlay_profile["render_requires_new_cotracker_result"])
+        self.assertFalse(overlay_profile["render_reuses_cached_cotracker_result"])
 
     def test_renderer_lifts_overlay_with_semantic_projection_grid_and_camera_debug_color(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
@@ -731,6 +751,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
 
         runtime._publish_render_packet(packet)
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
 
         published = runtime.published_packet
         self.assertIsNotNone(published)
@@ -789,6 +810,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
 
         runtime._publish_render_packet(packet)
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
 
         published = runtime.published_packet
         self.assertIsNotNone(published)
@@ -851,6 +873,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
             )
         )
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
         first = runtime.published_packet
         self.assertIsNotNone(first)
         np.testing.assert_allclose(  # type: ignore[union-attr]
@@ -870,11 +893,12 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
             )
         )
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
         self.assertIsNone(runtime.published_packet)
         second_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
         self.assertFalse(second_profile["overlay_available"])
         self.assertTrue(second_profile["tracking_overlay_render_blocked"])
-        self.assertEqual(runtime.demo31_tracking_overlay_render_blocked_count, 1)
+        self.assertEqual(runtime.demo31_tracking_overlay_render_blocked_count, 0)
 
     def test_renderer_skips_tracking_result_without_matching_pending_pcd(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
@@ -917,6 +941,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
             )
         )
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
 
         self.assertIsNone(runtime.published_packet)
         self.assertEqual(runtime.demo31_tracking_result_without_render_packet_count, 1)
@@ -950,14 +975,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
 
         self.assertIsNone(runtime.published_packet)
-        self.assertEqual(runtime.demo31_tracking_overlay_warmup_skipped_render_count, 1)
-        self.assertEqual(runtime.demo31_tracking_overlay_render_blocked_count, 1)
+        self.assertEqual(runtime.demo31_tracking_overlay_warmup_skipped_render_count, 0)
+        self.assertEqual(runtime.demo31_tracking_overlay_render_blocked_count, 0)
         overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
         self.assertTrue(overlay_profile["tracking_overlay_warmup_blocked"])
         self.assertTrue(overlay_profile["tracking_overlay_render_blocked"])
         self.assertFalse(overlay_profile["overlay_available"])
 
-    def test_renderer_can_disable_tracking_overlay_warmup_gate(self) -> None:
+    def test_renderer_does_not_publish_pcd_only_when_legacy_wait_flag_is_false(self) -> None:
         runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
             _FakeSharedRuntimeModule,
             process_client_factory=lambda _config: _FakeProcessClient(None),
@@ -980,9 +1005,11 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
         runtime._publish_render_packet(packet)
 
-        self.assertIs(runtime.published_packet, packet)
+        self.assertIsNone(runtime.published_packet)
         overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
-        self.assertFalse(overlay_profile["tracking_overlay_warmup_blocked"])
+        self.assertTrue(overlay_profile["tracking_overlay_warmup_blocked"])
+        self.assertTrue(overlay_profile["tracking_overlay_render_blocked"])
+        self.assertTrue(overlay_profile["render_requires_new_cotracker_result"])
 
 
 if __name__ == "__main__":

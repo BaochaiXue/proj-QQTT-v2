@@ -18,6 +18,13 @@ Fix Demo 3.1 CoTracker throughput and sync observability issues:
 - Preserve per-camera backend initialization and serial update as fallback.
 - Add profile/snapshot fields that distinguish strict same-group data from
   latest-reuse mask and latest overlay lifting.
+- Keep rendered-window updates gated on newly published CoTracker results;
+  rendered FPS must not count PCD-only frames or cached tracker overlays.
+- Make Demo 3.1 rendering tracker-result-driven: incoming PCD packets are
+  cached, and a newly published CoTracker batch result selects the matching
+  pending PCD group to render.
+- Show depth/FFS, HF EdgeTAM, and CoTracker batch inference/e2e timing in the
+  Open3D HUD for each rendered tracking frame.
 - Add tests for batch dispatch, serial fallback, and freshness fields.
 - Make batch-view execution the default for Demo 3.0 / Demo 3.1 so three
   RealSense views are sent through one backend batch call instead of silently
@@ -46,6 +53,10 @@ Fix Demo 3.1 CoTracker throughput and sync observability issues:
   Demo 3.1 default query request to `4096` per view; this ran successfully with
   `cotracker_batch_size=3` and no serial fallback.
 - Added latest-reuse mask/source group freshness reporting for Demo 3.1.
+- Kept Demo 3.1 rendered updates tied to fresh CoTracker child-process results
+  and marked cached tracker-overlay reuse as unsupported for rendered FPS.
+- Added HUD/profile plumbing so rendered frames can display depth/FFS cycle
+  time, HF EdgeTAM timing, and CoTracker batch/e2e timing together.
 - Passed touched-module `py_compile`.
 - Passed focused conda unittest modules for Demo 3 / Demo 3.1 tracking paths.
 - Passed quick `scripts/harness/check_all.py`.

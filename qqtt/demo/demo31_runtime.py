@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 from typing import Any, Callable, Sequence
 
@@ -449,7 +450,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--wait-for-tracking-overlay",
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_WAIT_FOR_TRACKING_OVERLAY,
-        help="Treat first non-empty CoTracker overlay as rendered-demo warmup completion.",
+        help=(
+            "Legacy compatibility flag. Demo 3.1 rendered profiling remains "
+            "gated on fresh CoTracker results whenever tracking is enabled."
+        ),
     )
     parser.add_argument("--fusion-mask-policy", choices=FUSION_MASK_POLICIES, default=FUSION_MASK_POLICY_LATEST_REUSE)
     parser.add_argument("--mask-stale-timeout-ms", type=float, default=DEFAULT_MASK_STALE_TIMEOUT_MS)
@@ -667,8 +671,10 @@ def build_contract(
         "cotracker_input_max_age_ms": float(args.cotracker_input_max_age_ms),
         "cotracker_result_stale_timeout_ms": float(args.cotracker_result_stale_timeout_ms),
         "wait_for_tracking_overlay": bool(args.wait_for_tracking_overlay),
-        "tracking_overlay_required_before_first_render": bool(args.wait_for_tracking_overlay),
-        "tracking_overlay_required_for_render": bool(args.wait_for_tracking_overlay),
+        "tracking_overlay_required_before_first_render": not bool(args.disable_cotracker),
+        "tracking_overlay_required_for_render": not bool(args.disable_cotracker),
+        "render_requires_new_cotracker_result": not bool(args.disable_cotracker),
+        "render_reuses_cached_cotracker_result": False,
         "tracking_overlay_color_rgb": [int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist()],
         "tracking_overlay_color_mode": "by_camera" if bool(args.overlay_debug_color_by_camera) else "solid",
         "tracking_overlay_debug_color_by_camera": bool(args.overlay_debug_color_by_camera),
@@ -710,7 +716,10 @@ def build_contract(
         "pcd_color_mode": str(args.pcd_color_mode),
         "render_micro_profile": True,
         "render_latest_wins": True,
-        "render_waited_for_cotracker": bool(args.wait_for_tracking_overlay),
+        "render_waited_for_cotracker": not bool(args.disable_cotracker),
+        "render_waited_for_fresh_cotracker_result": not bool(args.disable_cotracker),
+        "render_driver": "cotracker_child_output",
+        "render_trigger": "new_cotracker_result",
         "render_waited_for_mask": bool(render_waited_for_mask),
         "render_object_filter": {
             "point_control": str(args.object_point_control),
@@ -792,6 +801,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "controller_pcd_cap_stage",
         "cotracker_seed",
         "wait_for_tracking_overlay",
+        "render_requires_new_cotracker_result",
+        "render_reuses_cached_cotracker_result",
         "tracking_overlay_lift_method",
         "tracking_overlay_color_mode",
         "overlay_max_points_per_camera",
@@ -814,6 +825,9 @@ def format_contract(contract: dict[str, Any]) -> str:
         "fusion_mask_policy",
         "pcd_color_mode",
         "render_waited_for_cotracker",
+        "render_waited_for_fresh_cotracker_result",
+        "render_driver",
+        "render_trigger",
         "render_waited_for_mask",
     )
     lines = []
@@ -1103,6 +1117,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_tracking_input_queue_replace_count = 0
             self.demo31_tracking_input_drop_count = 0
             self.demo31_pending_render_packets: dict[int, Any] = {}
+            self.demo31_pending_render_lock = threading.Lock()
             self.demo31_pending_render_packet_drop_count = 0
             self.demo31_tracking_result_without_render_packet_count = 0
             self.demo31_overlay_age_ms_samples: list[float] = []
@@ -1122,12 +1137,19 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_tracking_stats: dict[str, dict[int, int]] = {}
 
         def stop(self) -> None:
+            self.stop_event.set()
             self._drain_demo31_process_status()
             if self.demo31_process_client is not None:
                 self.demo31_process_client.stop(timeout_s=2.0)
                 self._drain_demo31_process_status()
             self._write_demo31_pre_teardown_profile()
             super().stop()
+
+        def _thread_specs(self) -> list[tuple[str, Callable[[], None]]]:
+            specs = list(super()._thread_specs())
+            if self.demo31_cotracker_enabled:
+                specs.append(("demo31-tracker-render", self._tracker_driven_render_worker))
+            return specs
 
         def _write_demo31_pre_teardown_profile(self) -> None:
             path = getattr(self.args, "demo31_top_level_profile_json_output", None)
@@ -1280,9 +1302,56 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             return super()._build_fused_packet(depth_group=depth_group, masks=capped_masks, ray_cache=ray_cache, rng=rng)
 
         def _publish_render_packet(self, packet: Any) -> None:
-            overlay_start_s = time.perf_counter()
             self._remember_pending_render_packet(packet)
-            overlay = self._take_fresh_tracking_result(now_s=overlay_start_s)
+            if not self.demo31_cotracker_enabled:
+                super()._publish_render_packet(packet)
+                return
+            tracking_overlay_warmup_blocked = self.demo31_tracking_overlay_first_render_group_id is None
+            self._profile_update(
+                int(packet.group_id),
+                demo31_tracking_overlay={
+                    "overlay_available": False,
+                    "overlay_points": 0,
+                    "overlay_points_by_camera": {},
+                    "overlay_ms": 0.0,
+                    "overlay_group_id": None,
+                    "incoming_render_group_id": int(packet.group_id),
+                    "render_group_id": int(packet.group_id),
+                    "overlay_render_group_delta": None,
+                    "render_driver": "cotracker_child_output",
+                    "render_trigger": "pcd_packet_cached_until_tracker",
+                    "rendered_on_new_cotracker_result": False,
+                    "tracking_overlay_render_blocked": True,
+                    "tracking_overlay_warmup_blocked": bool(tracking_overlay_warmup_blocked),
+                    "tracking_overlay_required_before_first_render": True,
+                    "tracking_overlay_required_for_render": True,
+                    "render_requires_new_cotracker_result": True,
+                    "render_reuses_cached_cotracker_result": False,
+                    "overlay_lift_cache_hit": False,
+                    "tracking_result_has_matching_render_packet": False,
+                    "cotracker_model_ms": None,
+                    "cotracker_e2e_ms": None,
+                    "render_waited_for_cotracker": True,
+                    "render_waited_for_fresh_cotracker_result": True,
+                    "cross_gpu_cuda_tensor_transfer": False,
+                },
+            )
+
+        def _tracker_driven_render_worker(self) -> None:
+            while not self.stop_event.is_set():
+                handled = self._publish_next_tracker_driven_render_once(now_s=time.perf_counter())
+                if not handled:
+                    time.sleep(0.001)
+
+        def _publish_next_tracker_driven_render_once(self, *, now_s: float) -> bool:
+            overlay = self._take_fresh_tracking_result(now_s=now_s)
+            if overlay is None:
+                return False
+            self._publish_tracker_driven_render(overlay, overlay_start_s=now_s)
+            return True
+
+        def _publish_tracker_driven_render(self, overlay: TrackingResultLitePacket, *, overlay_start_s: float) -> None:
+            render_requires_new_tracker = bool(self.demo31_cotracker_enabled)
             overlay_points = np.empty((0, 3), dtype=np.float32)
             overlay_colors = np.empty((0, 3), dtype=np.uint8)
             overlay_input_points_by_camera: dict[int, int] = {}
@@ -1292,76 +1361,109 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             overlay_group_id: int | None = None
             overlay_render_group_delta: int | None = None
             render_packet = None
-            if overlay is not None:
-                overlay_group_id = int(overlay.group_id)
+            overlay_group_id = int(overlay.group_id)
+            with self.demo31_pending_render_lock:
                 render_packet = self.demo31_pending_render_packets.pop(overlay_group_id, None)
-                if render_packet is None:
-                    self.demo31_tracking_result_without_render_packet_count += 1
-                overlay_render_group_delta = (
-                    int(packet.group_id if render_packet is None else render_packet.group_id) - int(overlay.group_id)
-                )
+            if render_packet is None:
+                self.demo31_tracking_result_without_render_packet_count += 1
+            overlay_render_group_delta = (
+                None if render_packet is None else int(render_packet.group_id) - int(overlay.group_id)
+            )
+            if overlay_render_group_delta is not None:
                 self.demo31_overlay_render_group_delta_samples.append(float(abs(overlay_render_group_delta)))
                 if overlay_render_group_delta != 0:
                     self.demo31_overlay_render_group_mismatch_count += 1
-                lift_inputs = None if render_packet is None else self.demo31_lift_input_cache.get(overlay_group_id)
-                if render_packet is not None and lift_inputs is not None:
-                    overlay_lift_cache_hit = True
-                    lifted_points = []
-                    lifted_colors = []
-                    color_by_camera = bool(getattr(self.args, "overlay_debug_color_by_camera", False))
-                    lift_mask_scope = str(getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE))
-                    for camera_idx, tracks_yx in overlay.camera_tracks_yx.items():
-                        idx = int(camera_idx)
-                        if (
-                            idx not in lift_inputs.depth_by_camera
-                            or idx not in lift_inputs.intrinsics_by_camera
-                            or idx not in lift_inputs.c2w_by_camera
-                        ):
-                            continue
-                        overlay_input_points_by_camera[idx] = int(len(np.asarray(tracks_yx).reshape(-1, 2)))
-                        lift_mask = _lift_mask_for_overlay_scope(
-                            scope=lift_mask_scope,
-                            camera_idx=idx,
-                            lift_inputs=lift_inputs,
+            lift_inputs = None if render_packet is None else self.demo31_lift_input_cache.get(overlay_group_id)
+            if render_packet is not None and lift_inputs is not None:
+                overlay_lift_cache_hit = True
+                lifted_points = []
+                lifted_colors = []
+                color_by_camera = bool(getattr(self.args, "overlay_debug_color_by_camera", False))
+                lift_mask_scope = str(getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE))
+                for camera_idx, tracks_yx in overlay.camera_tracks_yx.items():
+                    idx = int(camera_idx)
+                    if (
+                        idx not in lift_inputs.depth_by_camera
+                        or idx not in lift_inputs.intrinsics_by_camera
+                        or idx not in lift_inputs.c2w_by_camera
+                    ):
+                        continue
+                    overlay_input_points_by_camera[idx] = int(len(np.asarray(tracks_yx).reshape(-1, 2)))
+                    lift_mask = _lift_mask_for_overlay_scope(
+                        scope=lift_mask_scope,
+                        camera_idx=idx,
+                        lift_inputs=lift_inputs,
+                    )
+                    lifted = lift_tracks_yx_to_world(
+                        tracks_yx=tracks_yx,
+                        visibility=overlay.camera_visibility[idx],
+                        depth=lift_inputs.depth_by_camera[idx],
+                        intrinsics=lift_inputs.intrinsics_by_camera[idx],
+                        c2w=lift_inputs.c2w_by_camera[idx],
+                        depth_scale_m_per_unit=1.0,
+                        mask=lift_mask,
+                    )
+                    if lifted.points_world.size:
+                        points = lifted.points_world.astype(np.float32, copy=False)
+                        lifted_points.append(points)
+                        overlay_points_by_camera[idx] = int(len(points))
+                        overlay_centroid_by_camera[idx] = _point_centroid(points)
+                        color = (
+                            _overlay_debug_color_rgb(idx)
+                            if color_by_camera
+                            else tuple(int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist())
                         )
-                        lifted = lift_tracks_yx_to_world(
-                            tracks_yx=tracks_yx,
-                            visibility=overlay.camera_visibility[idx],
-                            depth=lift_inputs.depth_by_camera[idx],
-                            intrinsics=lift_inputs.intrinsics_by_camera[idx],
-                            c2w=lift_inputs.c2w_by_camera[idx],
-                            depth_scale_m_per_unit=1.0,
-                            mask=lift_mask,
+                        lifted_colors.append(_overlay_color_array(len(points), color))
+                if lifted_points:
+                    overlay_points = np.concatenate(lifted_points, axis=0).astype(np.float32)
+                    overlay_colors = np.concatenate(lifted_colors, axis=0).astype(np.uint8)
+                    render_replace_kwargs: dict[str, Any] = {
+                        "controller_points_m": np.concatenate(
+                            [render_packet.controller_points_m, overlay_points],
+                            axis=0,
+                        ),
+                        "controller_colors_rgb": np.concatenate(
+                            [render_packet.controller_colors_rgb, overlay_colors],
+                            axis=0,
+                        ),
+                    }
+                    if hasattr(render_packet, "tracker_model_ms"):
+                        render_replace_kwargs.update(
+                            {
+                                "tracker_backend": str(
+                                    getattr(
+                                        overlay,
+                                        "tracker_backend",
+                                        self.demo31_contract.get("tracker_backend", TRACKER_BACKEND_COTRACKER3),
+                                    )
+                                ),
+                                "tracker_update_mode": str(overlay.cotracker_update_mode),
+                                "tracker_batch_size": int(overlay.cotracker_batch_size),
+                                "tracker_model_ms": float(overlay.model_ms),
+                                "tracker_e2e_ms": float(overlay.e2e_ms),
+                                "tracker_publish_to_render_ms": float(
+                                    (overlay_start_s - float(overlay.publish_timestamp_s)) * 1000.0
+                                ),
+                                "tracker_source_to_render_ms": float(
+                                    (overlay_start_s - float(overlay.source_timestamp_s)) * 1000.0
+                                ),
+                                "tracker_overlay_group_id": int(overlay.group_id),
+                            }
                         )
-                        if lifted.points_world.size:
-                            points = lifted.points_world.astype(np.float32, copy=False)
-                            lifted_points.append(points)
-                            overlay_points_by_camera[idx] = int(len(points))
-                            overlay_centroid_by_camera[idx] = _point_centroid(points)
-                            color = (
-                                _overlay_debug_color_rgb(idx)
-                                if color_by_camera
-                                else tuple(int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist())
-                            )
-                            lifted_colors.append(_overlay_color_array(len(points), color))
-                    if lifted_points:
-                        overlay_points = np.concatenate(lifted_points, axis=0).astype(np.float32)
-                        overlay_colors = np.concatenate(lifted_colors, axis=0).astype(np.uint8)
-                        render_packet = replace(
-                            render_packet,
-                            controller_points_m=np.concatenate([render_packet.controller_points_m, overlay_points], axis=0),
-                            controller_colors_rgb=np.concatenate([render_packet.controller_colors_rgb, overlay_colors], axis=0),
-                        )
-            tracking_overlay_render_blocked = bool(self.demo31_wait_for_tracking_overlay and len(overlay_points) == 0)
+                    render_packet = replace(
+                        render_packet,
+                        **render_replace_kwargs,
+                    )
+            tracking_overlay_render_blocked = bool(render_requires_new_tracker and len(overlay_points) == 0)
             tracking_overlay_warmup_blocked = bool(
                 tracking_overlay_render_blocked and self.demo31_tracking_overlay_first_render_group_id is None
             )
             overlay_ms = float((time.perf_counter() - overlay_start_s) * 1000.0)
-            profile_group_id = int(packet.group_id if render_packet is None else render_packet.group_id)
+            profile_group_id = int(overlay_group_id if render_packet is None else render_packet.group_id)
             self._profile_update(
                 profile_group_id,
                 demo31_tracking_overlay={
-                    "overlay_available": bool(overlay is not None),
+                    "overlay_available": True,
                     "overlay_points": int(len(overlay_points)),
                     "overlay_color_rgb": [int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist()],
                     "overlay_color_mode": (
@@ -1380,13 +1482,18 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_world_centroid_by_camera": dict(overlay_centroid_by_camera),
                     "overlay_ms": overlay_ms,
                     "overlay_group_id": overlay_group_id,
-                    "incoming_render_group_id": int(packet.group_id),
+                    "incoming_render_group_id": int(overlay_group_id),
                     "render_group_id": profile_group_id,
                     "overlay_render_group_delta": overlay_render_group_delta,
+                    "render_driver": "cotracker_child_output",
+                    "render_trigger": "new_cotracker_result",
+                    "rendered_on_new_cotracker_result": bool(render_packet is not None and len(overlay_points) > 0),
                     "tracking_overlay_render_blocked": tracking_overlay_render_blocked,
                     "tracking_overlay_warmup_blocked": tracking_overlay_warmup_blocked,
-                    "tracking_overlay_required_before_first_render": bool(self.demo31_wait_for_tracking_overlay),
-                    "tracking_overlay_required_for_render": bool(self.demo31_wait_for_tracking_overlay),
+                    "tracking_overlay_required_before_first_render": bool(render_requires_new_tracker),
+                    "tracking_overlay_required_for_render": bool(render_requires_new_tracker),
+                    "render_requires_new_cotracker_result": bool(render_requires_new_tracker),
+                    "render_reuses_cached_cotracker_result": False,
                     "tracking_mask_source_group_id": (
                         None if overlay is None or overlay.mask_source_group_id is None else int(overlay.mask_source_group_id)
                     ),
@@ -1435,7 +1542,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_display_object_count_by_camera": (
                         {} if overlay is None else dict(overlay.overlay_display_object_count_by_camera)
                     ),
-                    "render_waited_for_cotracker": bool(self.demo31_wait_for_tracking_overlay),
+                    "render_waited_for_cotracker": bool(render_requires_new_tracker),
+                    "render_waited_for_fresh_cotracker_result": bool(render_requires_new_tracker),
                     "cross_gpu_cuda_tensor_transfer": False,
                 },
             )
@@ -1445,8 +1553,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     self.demo31_tracking_overlay_warmup_skipped_render_count += 1
                 return
             if render_packet is None:
-                if not self.demo31_wait_for_tracking_overlay:
-                    super()._publish_render_packet(packet)
+                if not render_requires_new_tracker:
+                    return
                 return
             self._drop_pending_render_packets_through(int(render_packet.group_id))
             if self.demo31_tracking_overlay_first_render_group_id is None:
@@ -1454,16 +1562,18 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             super()._publish_render_packet(render_packet)
 
         def _remember_pending_render_packet(self, packet: Any) -> None:
-            self.demo31_pending_render_packets[int(packet.group_id)] = packet
-            while len(self.demo31_pending_render_packets) > max(1, int(DEFAULT_LIFT_INPUT_CACHE_GROUPS)):
-                oldest = min(self.demo31_pending_render_packets)
-                self.demo31_pending_render_packets.pop(oldest, None)
-                self.demo31_pending_render_packet_drop_count += 1
+            with self.demo31_pending_render_lock:
+                self.demo31_pending_render_packets[int(packet.group_id)] = packet
+                while len(self.demo31_pending_render_packets) > max(1, int(DEFAULT_LIFT_INPUT_CACHE_GROUPS)):
+                    oldest = min(self.demo31_pending_render_packets)
+                    self.demo31_pending_render_packets.pop(oldest, None)
+                    self.demo31_pending_render_packet_drop_count += 1
 
         def _drop_pending_render_packets_through(self, group_id: int) -> None:
-            stale_ids = [key for key in self.demo31_pending_render_packets if int(key) <= int(group_id)]
-            for key in stale_ids:
-                self.demo31_pending_render_packets.pop(key, None)
+            with self.demo31_pending_render_lock:
+                stale_ids = [key for key in self.demo31_pending_render_packets if int(key) <= int(group_id)]
+                for key in stale_ids:
+                    self.demo31_pending_render_packets.pop(key, None)
 
         def _take_fresh_tracking_result(self, *, now_s: float) -> TrackingResultLitePacket | None:
             if self.demo31_process_client is None:
@@ -1548,6 +1658,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             e2e = percentile_summary(self.demo31_overlay_e2e_ms_samples)
             overlay_delta = percentile_summary(self.demo31_overlay_render_group_delta_samples)
             tracking_mask_age = percentile_summary(self.demo31_tracking_mask_age_ms_samples)
+            with self.demo31_pending_render_lock:
+                pending_render_count = int(len(self.demo31_pending_render_packets))
             return {
                 "process": process_snapshot,
                 "process_status_events": list(self.demo31_process_status_events),
@@ -1557,7 +1669,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "tracking_input_skip_count": int(self.demo31_tracking_input_skip_count),
                 "tracking_input_queue_replace_count": int(self.demo31_tracking_input_queue_replace_count),
                 "tracking_input_drop_count": int(self.demo31_tracking_input_drop_count),
-                "tracking_pending_render_packets": int(len(self.demo31_pending_render_packets)),
+                "tracking_pending_render_packets": pending_render_count,
                 "tracking_pending_render_packet_drop_count": int(self.demo31_pending_render_packet_drop_count),
                 "tracking_result_without_render_packet_count": int(
                     self.demo31_tracking_result_without_render_packet_count
