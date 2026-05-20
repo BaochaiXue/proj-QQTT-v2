@@ -33,17 +33,22 @@ separate: raw CoTracker tracks still come from the capped union, but each query
 is labeled by first-frame object/controller mask membership and the default
 rendered overlay shows controller-labeled tracks only. The display cap is
 disabled by default for Demo 3.1: `overlay_max_points_per_camera = 0`
-means render all visible controller-labeled tracks selected from the CoTracker
-union queries. The visible CoTracker tracking overlay color is high-contrast
-red by default, separate from the semantic PCD object/controller colors. For
-alignment debugging, `--overlay-debug-color-by-camera` colors lifted overlay
-points by source camera while keeping `overlay_display_scope=controller`.
-The 3D lift mask follows the display scope: controller overlays are lifted only
-through the current controller mask, object overlays through the current object
-mask, and union overlays through the current object/controller union. After
-lift, Demo 3.1 rejects overlay outliers outside the current semantic 3D bbox
-plus a configurable margin; this keeps occasional tracker drift or camera-order
-bugs from being rendered as detached controller points.
+means all visible controller-labeled tracks remain eligible for control-point
+selection. The default rendered tracking mark follows a PhysTwin-style anchored
+control-handle rule: select up to 16 visible tracking controls per camera,
+snap each control to the nearest same-camera, same-semantic fused surface point
+within 4 pixels, then draw a red 3D sphere marker with radius 6mm. Direct
+2D-track/depth/intrinsics/c2w lifting is disabled by default and is available
+only under `--tracker-visualization-mode legacy-3d-lift` for debugging.
+`--overlay-render-raw-track-points` only affects that legacy debug mode. For
+alignment debugging, `--overlay-debug-color-by-camera` colors snapped
+overlay/control points by source camera while keeping
+`overlay_display_scope=controller`.
+The surface-anchor layer follows the display scope: controller overlays snap
+only to current controller surface anchors, object overlays to object anchors,
+and union overlays to object/controller union anchors. If no same-group surface
+anchor is available, or the nearest anchor is outside the pixel snap radius,
+the marker is rejected rather than rendered as a detached 3D point.
 
 Camera/mask/PCD work remains asynchronous, but rendered result publication is
 gated by CoTracker by default. The main process stores pending PCD packets by
@@ -51,12 +56,14 @@ gated by CoTracker by default. The main process stores pending PCD packets by
 Demo 3.1 first renders the exact matching PCD packet. If that exact packet was
 already evicted, it falls back to the nearest pending PCD group by absolute
 `group_id` delta and marks the frame as `nearest` in the profile. If CoTracker
-is not ready, no pending PCD is available, or the selected PCD has no lift
-inputs, no new rendered result is published and Open3D keeps the previous valid
-frame.
+is not ready, no pending PCD is available, or the selected PCD has no matching
+surface anchors, no new rendered result is published and Open3D keeps the
+previous valid frame.
 Rendered FPS therefore measures track-ready results, not semantic-only PCD
-throughput. Use `--no-wait-for-tracking-overlay` only for debugging the semantic
-PCD before tracking is available.
+throughput. Because the tracker result is already the render clock, Demo 3.1
+does not expose a render stride option and renders every tracker-ready group.
+Use `--no-wait-for-tracking-overlay` only for debugging the semantic PCD before
+tracking is available.
 
 The rendered object PCD uses FuturePhysTwin-style world-volume sampling by
 default: one representative point per occupied 5mm voxel. This is independent
@@ -103,7 +110,15 @@ render_requires_new_cotracker_result = true
 render_reuses_cached_cotracker_result = false
 tracking_overlay_color_rgb = [255, 0, 0]
 tracking_overlay_color_mode = solid
-tracking_overlay_lift_method = semantic_projection_grid
+tracker_visualization_mode = 3d-surface-markers
+tracker_3d_marker_mode = surface_snap
+tracker_3d_marker_shape = sphere
+tracker_legacy_lift_used = false
+tracker_3d_snap_radius_px = 4.0
+tracker_3d_marker_radius_m = 0.006
+tracker_control_points_per_camera = 16
+tracker_control_point_selection = visible-spread
+tracking_overlay_lift_method = surface_snap
 overlay_lift_mask_scope = controller
 overlay_max_points_per_camera = 0
 overlay_display_scope = controller
@@ -111,6 +126,12 @@ overlay_display_classification = first_frame_mask_membership
 overlay_bbox_filter_enabled = true
 overlay_bbox_filter_scope = controller
 overlay_bbox_filter_margin_m = 0.15
+tracking_control_point_markers = true
+tracking_control_point_count_requested = 48
+tracking_control_points_per_camera = 16
+tracking_control_point_radius_m = 0.006
+tracking_control_point_sampling = visible-spread_surface_snap
+overlay_render_raw_track_points = false
 tracking_pending_render_packet_max_groups = 128
 tracking_render_packet_match_policy = exact-then-nearest-pending-pcd-by-group-id
 cotracker_backend = cotracker3_online
@@ -252,6 +273,29 @@ overlay_bbox_kept_points_by_camera
 overlay_bbox_rejected_by_camera
 overlay_world_centroid_by_camera_before_bbox
 overlay_world_centroid_by_camera
+overlay_track_points
+tracker_visualization_mode
+tracker_3d_marker_mode
+tracker_3d_marker_shape
+tracker_legacy_lift_used
+tracker_surface_anchor_cache_hit
+tracker_surface_anchor_group_id
+tracker_marker_accepted_by_camera
+tracker_marker_rejected_by_camera
+tracker_marker_pixel_error_median_by_camera
+tracker_marker_pixel_error_p95_by_camera
+tracker_marker_layer_by_camera
+tracker_marker_points_rendered
+tracking_control_point_markers
+tracking_control_point_count_requested
+tracking_control_points_per_camera
+tracking_control_point_count
+tracking_control_points_by_camera
+tracking_control_point_radius_m
+tracking_control_point_sampling
+tracking_control_marker_points
+tracking_control_point_centroid
+overlay_render_raw_track_points
 ```
 
 Rendered FPS claims must come from `--render-mode pointcloud` runs. A
@@ -291,6 +335,15 @@ CLI and forwards them to the shared three-view runtime:
 --overlay-debug-color-by-camera
 --overlay-reject-outside-semantic-bbox / --no-overlay-reject-outside-semantic-bbox
 --overlay-max-distance-from-controller-m
+--tracker-visualization-mode none|3d-surface-markers|2d-debug|legacy-3d-lift
+--tracker-3d-snap-radius-px
+--tracker-3d-marker-radius-m
+--tracker-control-points-per-camera
+--tracker-control-point-selection visible-spread|top-visible|mask-stratified
+--overlay-control-point-markers / --no-overlay-control-point-markers
+--overlay-control-point-count
+--overlay-control-point-radius-m
+--overlay-render-raw-track-points / --no-overlay-render-raw-track-points
 --wait-for-tracking-overlay / --no-wait-for-tracking-overlay
 --point-size
 --render-backend

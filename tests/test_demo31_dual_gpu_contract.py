@@ -206,13 +206,26 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracking_overlay_color_rgb"], [255, 0, 0])
         self.assertEqual(contract["tracking_overlay_color_mode"], "solid")
         self.assertFalse(contract["tracking_overlay_debug_color_by_camera"])
-        self.assertEqual(contract["tracking_overlay_lift_method"], "semantic_projection_grid")
+        self.assertEqual(contract["tracker_visualization_mode"], "3d-surface-markers")
+        self.assertEqual(contract["tracker_3d_marker_mode"], "surface_snap")
+        self.assertEqual(contract["tracker_3d_marker_shape"], "sphere")
+        self.assertFalse(contract["tracker_legacy_lift_used"])
+        self.assertEqual(contract["tracker_3d_snap_radius_px"], 4.0)
+        self.assertEqual(contract["tracker_3d_marker_radius_m"], 0.006)
+        self.assertEqual(contract["tracker_control_points_per_camera"], 16)
+        self.assertEqual(contract["tracker_control_point_selection"], "visible-spread")
+        self.assertEqual(contract["tracking_overlay_lift_method"], "surface_snap")
         self.assertEqual(contract["overlay_max_points_per_camera"], 0)
         self.assertEqual(contract["overlay_display_scope"], "controller")
         self.assertEqual(contract["overlay_display_classification"], "first_frame_mask_membership")
         self.assertTrue(contract["overlay_bbox_filter_enabled"])
         self.assertEqual(contract["overlay_bbox_filter_scope"], "controller")
         self.assertEqual(contract["overlay_bbox_filter_margin_m"], 0.15)
+        self.assertTrue(contract["tracking_control_point_markers"])
+        self.assertEqual(contract["tracking_control_point_count_requested"], 48)
+        self.assertEqual(contract["tracking_control_points_per_camera"], 16)
+        self.assertEqual(contract["tracking_control_point_radius_m"], 0.006)
+        self.assertFalse(contract["overlay_render_raw_track_points"])
         self.assertEqual(contract["tracking_pending_render_packet_max_groups"], 128)
         self.assertEqual(
             contract["tracking_render_packet_match_policy"],
@@ -270,9 +283,20 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("wait_for_tracking_overlay = true", output)
         self.assertIn("render_requires_new_cotracker_result = true", output)
         self.assertIn("render_reuses_cached_cotracker_result = false", output)
+        self.assertIn("tracker_visualization_mode = 3d-surface-markers", output)
+        self.assertIn("tracker_3d_marker_mode = surface_snap", output)
+        self.assertIn("tracker_3d_marker_shape = sphere", output)
+        self.assertIn("tracker_legacy_lift_used = false", output)
+        self.assertIn("tracker_3d_snap_radius_px = 4.0", output)
+        self.assertIn("tracker_3d_marker_radius_m = 0.006", output)
+        self.assertIn("tracker_control_points_per_camera = 16", output)
         self.assertIn("overlay_display_scope = controller", output)
         self.assertIn("overlay_bbox_filter_enabled = true", output)
         self.assertIn("overlay_bbox_filter_margin_m = 0.15", output)
+        self.assertIn("tracking_control_point_markers = true", output)
+        self.assertIn("tracking_control_point_count_requested = 48", output)
+        self.assertIn("tracking_control_point_radius_m = 0.006", output)
+        self.assertIn("overlay_render_raw_track_points = false", output)
         self.assertIn("tracking_pending_render_packet_max_groups = 128", output)
         self.assertIn("tracking_render_packet_match_policy = exact-then-nearest-pending-pcd-by-group-id", output)
         self.assertIn("phystwin_dense_compatible = false", output)
@@ -722,6 +746,120 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIsNotNone(cache.get(2))
         self.assertEqual(cache.snapshot()["evicted"], 1)
 
+    def test_surface_snap_accepts_existing_anchor_and_rejects_outside_radius(self) -> None:
+        layer = demo31_runtime.SurfaceAnchorLayer(
+            camera_idx=0,
+            label="controller",
+            yx=np.array([[0.0, 0.0], [0.0, 10.0]], dtype=np.float32),
+            points_world=np.array([[1.0, 2.0, 3.0], [9.0, 9.0, 9.0]], dtype=np.float32),
+        )
+
+        points, stats = demo31_runtime.snap_tracks_to_surface(
+            tracks_yx=np.array([[0.5, 0.5], [0.0, 7.0]], dtype=np.float32),
+            visibility=np.array([1.0, 1.0], dtype=np.float32),
+            surface_layer=layer,
+            radius_px=1.0,
+            max_points=2,
+            selection="top-visible",
+        )
+
+        np.testing.assert_allclose(points, np.array([[1.0, 2.0, 3.0]], dtype=np.float32))
+        self.assertEqual(stats["accepted"], 1)
+        self.assertEqual(stats["rejected"], 1)
+
+    def test_surface_marker_mode_snaps_to_surface_without_legacy_lift(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.25, 0.25], [0.0, 8.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0, 1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.25, 0.25], [0.0, 8.0]], dtype=np.float32)},
+            publish_range=(1, 1),
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(
+                camera_ids=(0,),
+                tracker_visualization_mode="3d-surface-markers",
+                tracker_3d_snap_radius_px=1.0,
+                tracker_3d_marker_radius_m=0.006,
+                tracker_control_points_per_camera=2,
+                tracker_control_point_selection="top-visible",
+                overlay_display_scope="controller",
+                overlay_debug_color_by_camera=False,
+                overlay_reject_outside_semantic_bbox=False,
+            ),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "tracker_visualization_mode": "3d-surface-markers",
+                "tracking_control_point_markers": True,
+                "tracking_control_points_per_camera": 2,
+                "tracking_control_point_count_requested": 2,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime.demo31_surface_anchor_cache.publish(
+            demo31_runtime.SurfaceAnchorIndexSnapshot(
+                group_id=1,
+                timestamp_s=now_s,
+                layers={
+                    (0, "controller"): demo31_runtime.SurfaceAnchorLayer(
+                        camera_idx=0,
+                        label="controller",
+                        yx=np.array([[0.0, 0.0], [0.0, 10.0]], dtype=np.float32),
+                        points_world=np.array([[1.0, 2.0, 3.0], [9.0, 9.0, 9.0]], dtype=np.float32),
+                    )
+                },
+            )
+        )
+        packet = _FakeRenderPacket(
+            group_id=1,
+            controller_points_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+        )
+        original_lift = demo31_runtime.lift_tracks_yx_to_world
+
+        def _fail_lift(**_kwargs):
+            raise AssertionError("legacy lift must not be called in surface marker mode")
+
+        try:
+            demo31_runtime.lift_tracks_yx_to_world = _fail_lift
+            runtime._publish_render_packet(packet)
+            runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+        finally:
+            demo31_runtime.lift_tracks_yx_to_world = original_lift
+
+        published = runtime.published_packet
+        self.assertIsNotNone(published)
+        marker_vertices = len(demo31_runtime._SPHERE_MARKER_OFFSETS)
+        self.assertEqual(len(published.controller_points_m), marker_vertices)  # type: ignore[arg-type]
+        np.testing.assert_allclose(published.controller_points_m[0], np.array([1.0, 2.0, 3.0], dtype=np.float32))  # type: ignore[index]
+        np.testing.assert_array_equal(  # type: ignore[union-attr]
+            np.unique(published.controller_colors_rgb, axis=0),
+            np.array([[255, 0, 0]], dtype=np.uint8),
+        )
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertEqual(overlay_profile["tracker_visualization_mode"], "3d-surface-markers")
+        self.assertEqual(overlay_profile["tracker_3d_marker_mode"], "surface_snap")
+        self.assertEqual(overlay_profile["tracker_3d_marker_shape"], "sphere")
+        self.assertFalse(overlay_profile["tracker_legacy_lift_used"])
+        self.assertTrue(overlay_profile["tracker_surface_anchor_cache_hit"])
+        self.assertEqual(overlay_profile["tracker_surface_anchor_group_id"], 1)
+        self.assertEqual(overlay_profile["tracker_marker_accepted_by_camera"], {0: 1})
+        self.assertEqual(overlay_profile["tracker_marker_rejected_by_camera"], {0: 1})
+        self.assertEqual(overlay_profile["tracker_marker_layer_by_camera"], {0: "controller"})
+        self.assertEqual(overlay_profile["tracking_control_point_count"], 1)
+        self.assertEqual(overlay_profile["tracking_control_marker_points"], marker_vertices)
+        self.assertEqual(overlay_profile["tracker_marker_points_rendered"], marker_vertices)
+
     def test_renderer_lifts_overlay_with_matching_group_depth_not_latest_depth(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
         result = TrackingResultLitePacket(
@@ -970,6 +1108,75 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["overlay_bbox_kept_points_by_camera"], {0: 1})
         self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 1})
         self.assertEqual(overlay_profile["overlay_world_centroid_by_camera"], {0: [0.0, 0.0, 1.0]})
+
+    def test_renderer_marks_sampled_tracking_control_points_as_3d_marker_cloud(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0, 1.0, 1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]], dtype=np.float32)},
+            publish_range=(1, 1),
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(
+                camera_ids=(0,),
+                overlay_control_point_markers=True,
+                overlay_control_point_count=2,
+                overlay_control_point_radius_m=0.01,
+                overlay_render_raw_track_points=False,
+            ),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "tracking_control_point_markers": True,
+                "tracking_control_point_count_requested": 2,
+                "tracking_control_point_radius_m": 0.01,
+                "overlay_render_raw_track_points": False,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime.demo31_lift_input_cache.publish(
+            group_id=1,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 3), 1.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 3), dtype=bool)},
+            controller_mask_by_camera={0: np.ones((1, 3), dtype=bool)},
+        )
+        packet = _FakeRenderPacket(
+            group_id=1,
+            controller_points_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+        )
+
+        runtime._publish_render_packet(packet)
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        published = runtime.published_packet
+        self.assertIsNotNone(published)
+        marker_vertices = len(demo31_runtime._SPHERE_MARKER_OFFSETS)
+        self.assertEqual(len(published.controller_points_m), 2 * marker_vertices)  # type: ignore[arg-type]
+        np.testing.assert_array_equal(  # type: ignore[union-attr]
+            np.unique(published.controller_colors_rgb, axis=0),
+            np.array([[255, 0, 0]], dtype=np.uint8),
+        )
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertEqual(overlay_profile["overlay_track_points"], 3)
+        self.assertEqual(overlay_profile["overlay_points"], 2 * marker_vertices)
+        self.assertEqual(overlay_profile["tracking_control_point_count"], 2)
+        self.assertEqual(overlay_profile["tracking_control_points_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["tracking_control_marker_points"], 2 * marker_vertices)
+        self.assertFalse(overlay_profile["overlay_render_raw_track_points"])
 
     def test_renderer_does_not_reuse_old_tracking_result_as_new_render_result(self) -> None:
         now_s = demo31_runtime.time.perf_counter()

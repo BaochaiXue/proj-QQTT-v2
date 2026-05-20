@@ -13,6 +13,7 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
+from data_process.depth_backends.geometry import transform_points
 from qqtt.demo import demo3_runtime
 from qqtt.demo.demo31_cotracker_process import (
     CoTrackerProcessConfig,
@@ -71,6 +72,47 @@ DEFAULT_WAIT_FOR_TRACKING_OVERLAY = True
 DEFAULT_DEMO31_OVERLAY_MAX_POINTS_PER_CAMERA = 0
 DEFAULT_OVERLAY_REJECT_OUTSIDE_SEMANTIC_BBOX = True
 DEFAULT_OVERLAY_MAX_DISTANCE_FROM_CONTROLLER_M = 0.15
+DEFAULT_OVERLAY_CONTROL_POINT_MARKERS = True
+DEFAULT_OVERLAY_CONTROL_POINT_COUNT = 30
+DEFAULT_OVERLAY_CONTROL_POINT_RADIUS_M = 0.01
+DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB = (255, 0, 0)
+DEFAULT_OVERLAY_RENDER_RAW_TRACK_POINTS = False
+TRACKER_VISUALIZATION_MODE_NONE = "none"
+TRACKER_VISUALIZATION_MODE_SURFACE_MARKERS = "3d-surface-markers"
+TRACKER_VISUALIZATION_MODE_2D_DEBUG = "2d-debug"
+TRACKER_VISUALIZATION_MODE_LEGACY_3D_LIFT = "legacy-3d-lift"
+TRACKER_VISUALIZATION_MODES = (
+    TRACKER_VISUALIZATION_MODE_NONE,
+    TRACKER_VISUALIZATION_MODE_SURFACE_MARKERS,
+    TRACKER_VISUALIZATION_MODE_2D_DEBUG,
+    TRACKER_VISUALIZATION_MODE_LEGACY_3D_LIFT,
+)
+DEFAULT_TRACKER_VISUALIZATION_MODE = TRACKER_VISUALIZATION_MODE_SURFACE_MARKERS
+DEFAULT_TRACKER_3D_SNAP_RADIUS_PX = 4.0
+DEFAULT_TRACKER_3D_MARKER_RADIUS_M = 0.006
+DEFAULT_TRACKER_CONTROL_POINTS_PER_CAMERA = 16
+TRACKER_CONTROL_POINT_SELECTION_VISIBLE_SPREAD = "visible-spread"
+TRACKER_CONTROL_POINT_SELECTION_TOP_VISIBLE = "top-visible"
+TRACKER_CONTROL_POINT_SELECTION_MASK_STRATIFIED = "mask-stratified"
+TRACKER_CONTROL_POINT_SELECTIONS = (
+    TRACKER_CONTROL_POINT_SELECTION_VISIBLE_SPREAD,
+    TRACKER_CONTROL_POINT_SELECTION_TOP_VISIBLE,
+    TRACKER_CONTROL_POINT_SELECTION_MASK_STRATIFIED,
+)
+DEFAULT_TRACKER_CONTROL_POINT_SELECTION = TRACKER_CONTROL_POINT_SELECTION_VISIBLE_SPREAD
+SURFACE_ANCHOR_LABEL_OBJECT = "object"
+SURFACE_ANCHOR_LABEL_CONTROLLER = "controller"
+SURFACE_ANCHOR_LABEL_UNION = "union"
+SURFACE_ANCHOR_LABELS = (
+    SURFACE_ANCHOR_LABEL_OBJECT,
+    SURFACE_ANCHOR_LABEL_CONTROLLER,
+    SURFACE_ANCHOR_LABEL_UNION,
+)
+TRACKER_MARKER_LABEL_COLORS_RGB = {
+    SURFACE_ANCHOR_LABEL_OBJECT: DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB,
+    SURFACE_ANCHOR_LABEL_CONTROLLER: DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB,
+    SURFACE_ANCHOR_LABEL_UNION: (255, 0, 0),
+}
 OVERLAY_DEBUG_CAMERA_COLORS_RGB = {
     0: (255, 0, 0),
     1: (0, 255, 0),
@@ -161,7 +203,7 @@ def _semantic_bbox_reference_points(*, scope: str, render_packet: object) -> np.
     object_points = _packet_points(render_packet, "object_points_m")
     if str(scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_CONTROLLER:
         return controller_points
-    if str(scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_OBJECT:
+    if str(scope) == SURFACE_ANCHOR_LABEL_OBJECT:
         return object_points
     candidates = [points for points in (object_points, controller_points) if len(points) > 0]
     if not candidates:
@@ -188,6 +230,278 @@ def _semantic_bbox_keep_mask(
     return np.isfinite(pts).all(axis=1) & np.all(pts >= lower[None, :], axis=1) & np.all(pts <= upper[None, :], axis=1)
 
 
+def _farthest_point_sample_indices(points: np.ndarray, count: int) -> np.ndarray:
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    target = min(max(int(count), 0), len(pts))
+    if target == 0:
+        return np.empty((0,), dtype=np.int64)
+    finite_mask = np.isfinite(pts).all(axis=1)
+    finite_indices = np.flatnonzero(finite_mask)
+    if len(finite_indices) == 0:
+        return np.empty((0,), dtype=np.int64)
+    finite_pts = pts[finite_indices]
+    selected_local = [0]
+    min_dist2 = np.sum((finite_pts - finite_pts[0]) ** 2, axis=1)
+    for _ in range(1, min(target, len(finite_pts))):
+        next_local = int(np.argmax(min_dist2))
+        selected_local.append(next_local)
+        dist2 = np.sum((finite_pts - finite_pts[next_local]) ** 2, axis=1)
+        min_dist2 = np.minimum(min_dist2, dist2)
+    return finite_indices[np.asarray(selected_local, dtype=np.int64)]
+
+
+def _farthest_point_sample_indices_2d(points_yx: np.ndarray, count: int) -> np.ndarray:
+    pts = np.asarray(points_yx, dtype=np.float32).reshape(-1, 2)
+    target = min(max(int(count), 0), len(pts))
+    if target == 0:
+        return np.empty((0,), dtype=np.int64)
+    finite_mask = np.isfinite(pts).all(axis=1)
+    finite_indices = np.flatnonzero(finite_mask)
+    if len(finite_indices) == 0:
+        return np.empty((0,), dtype=np.int64)
+    finite_pts = pts[finite_indices]
+    selected_local = [0]
+    min_dist2 = np.sum((finite_pts - finite_pts[0]) ** 2, axis=1)
+    for _ in range(1, min(target, len(finite_pts))):
+        next_local = int(np.argmax(min_dist2))
+        selected_local.append(next_local)
+        dist2 = np.sum((finite_pts - finite_pts[next_local]) ** 2, axis=1)
+        min_dist2 = np.minimum(min_dist2, dist2)
+    return finite_indices[np.asarray(selected_local, dtype=np.int64)]
+
+
+def _sphere_marker_offsets() -> np.ndarray:
+    offsets = [np.zeros((3,), dtype=np.float32)]
+    for x in np.linspace(-1.0, 1.0, 5, dtype=np.float32):
+        for y in np.linspace(-1.0, 1.0, 5, dtype=np.float32):
+            for z in np.linspace(-1.0, 1.0, 5, dtype=np.float32):
+                vec = np.asarray([x, y, z], dtype=np.float32)
+                if float(np.linalg.norm(vec)) > 0.0 and float(np.linalg.norm(vec)) <= 1.0001:
+                    offsets.append(vec)
+    return np.asarray(offsets, dtype=np.float32)
+
+
+_SPHERE_MARKER_OFFSETS = _sphere_marker_offsets()
+
+
+def _control_point_marker_cloud(
+    centers: np.ndarray,
+    colors: np.ndarray,
+    *,
+    radius_m: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    ctrs = np.asarray(centers, dtype=np.float32).reshape(-1, 3)
+    if len(ctrs) == 0:
+        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
+    color_arr = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
+    if len(color_arr) != len(ctrs):
+        color_arr = _overlay_color_array(len(ctrs), DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB)
+    radius = max(float(radius_m), 0.0)
+    offsets = _SPHERE_MARKER_OFFSETS * radius
+    marker_points = (ctrs[:, None, :] + offsets[None, :, :]).reshape(-1, 3).astype(np.float32)
+    marker_colors = np.repeat(color_arr, len(offsets), axis=0).astype(np.uint8)
+    return marker_points, marker_colors
+
+
+def _overlay_scope_to_surface_label(scope: str) -> str:
+    if str(scope) == SURFACE_ANCHOR_LABEL_OBJECT:
+        return SURFACE_ANCHOR_LABEL_OBJECT
+    if str(scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_CONTROLLER:
+        return SURFACE_ANCHOR_LABEL_CONTROLLER
+    return SURFACE_ANCHOR_LABEL_UNION
+
+
+def _surface_marker_color(label: str, camera_idx: int, *, color_by_camera: bool) -> tuple[int, int, int]:
+    if color_by_camera:
+        return _overlay_debug_color_rgb(int(camera_idx))
+    return TRACKER_MARKER_LABEL_COLORS_RGB.get(str(label), TRACKER_MARKER_LABEL_COLORS_RGB[SURFACE_ANCHOR_LABEL_UNION])
+
+
+def _select_visible_control_indices(
+    tracks_yx: np.ndarray,
+    visibility: np.ndarray,
+    *,
+    max_points: int,
+    selection: str,
+) -> np.ndarray:
+    tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+    vis = np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0
+    if vis.shape[0] != tracks.shape[0]:
+        raise ValueError("visibility length must match tracks_yx.")
+    visible_indices = np.flatnonzero(vis)
+    limit = int(max_points)
+    if limit < 0 or len(visible_indices) <= limit:
+        return visible_indices.astype(np.int64)
+    if limit == 0:
+        return np.empty((0,), dtype=np.int64)
+    mode = str(selection)
+    if mode == TRACKER_CONTROL_POINT_SELECTION_TOP_VISIBLE:
+        return visible_indices[:limit].astype(np.int64)
+    # mask-stratified currently has the same spread behavior after semantic
+    # scope filtering; the name is kept for the public contract.
+    local = _farthest_point_sample_indices_2d(tracks[visible_indices], limit)
+    return visible_indices[local].astype(np.int64)
+
+
+@dataclass(frozen=True)
+class SurfaceAnchorLayer:
+    camera_idx: int
+    label: str
+    yx: np.ndarray
+    points_world: np.ndarray
+
+
+@dataclass(frozen=True)
+class SurfaceAnchorIndexSnapshot:
+    group_id: int
+    timestamp_s: float
+    layers: dict[tuple[int, str], SurfaceAnchorLayer]
+
+
+@dataclass(frozen=True)
+class SurfaceSnapResult:
+    points_world: np.ndarray
+    source_indices: np.ndarray
+    tracks_yx: np.ndarray
+    pixel_errors: np.ndarray
+    accepted: int
+    rejected: int
+
+
+def snap_tracks_to_surface(
+    *,
+    tracks_yx: np.ndarray,
+    visibility: np.ndarray,
+    surface_layer: SurfaceAnchorLayer,
+    radius_px: float,
+    max_points: int = -1,
+    selection: str = DEFAULT_TRACKER_CONTROL_POINT_SELECTION,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    result = _snap_tracks_to_surface_result(
+        tracks_yx=tracks_yx,
+        visibility=visibility,
+        surface_layer=surface_layer,
+        radius_px=radius_px,
+        max_points=max_points,
+        selection=selection,
+    )
+    return result.points_world, {
+        "accepted": int(result.accepted),
+        "rejected": int(result.rejected),
+        "pixel_error_median": float(np.median(result.pixel_errors)) if len(result.pixel_errors) else 0.0,
+        "pixel_error_p95": float(np.percentile(result.pixel_errors, 95)) if len(result.pixel_errors) else 0.0,
+    }
+
+
+def _snap_tracks_to_surface_result(
+    *,
+    tracks_yx: np.ndarray,
+    visibility: np.ndarray,
+    surface_layer: SurfaceAnchorLayer,
+    radius_px: float,
+    max_points: int,
+    selection: str,
+) -> SurfaceSnapResult:
+    tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+    vis = np.asarray(visibility, dtype=np.float32).reshape(-1)
+    selected_indices = _select_visible_control_indices(
+        tracks,
+        vis,
+        max_points=int(max_points),
+        selection=str(selection),
+    )
+    anchors_yx = np.asarray(surface_layer.yx, dtype=np.float32).reshape(-1, 2)
+    anchors_xyz = np.asarray(surface_layer.points_world, dtype=np.float32).reshape(-1, 3)
+    if len(selected_indices) == 0 or len(anchors_yx) == 0 or len(anchors_xyz) == 0:
+        return SurfaceSnapResult(
+            points_world=np.empty((0, 3), dtype=np.float32),
+            source_indices=np.empty((0,), dtype=np.int64),
+            tracks_yx=np.empty((0, 2), dtype=np.float32),
+            pixel_errors=np.empty((0,), dtype=np.float32),
+            accepted=0,
+            rejected=int(len(selected_indices)),
+        )
+
+    accepted_points: list[np.ndarray] = []
+    accepted_indices: list[int] = []
+    accepted_tracks: list[np.ndarray] = []
+    errors: list[float] = []
+    radius = max(float(radius_px), 0.0)
+    radius2 = radius * radius
+    for source_idx in selected_indices:
+        track_yx = tracks[int(source_idx)]
+        d2 = np.sum((anchors_yx - track_yx[None, :]) ** 2, axis=1)
+        nearest = int(np.argmin(d2))
+        if float(d2[nearest]) <= radius2:
+            accepted_points.append(anchors_xyz[nearest])
+            accepted_indices.append(int(source_idx))
+            accepted_tracks.append(track_yx)
+            errors.append(float(np.sqrt(float(d2[nearest]))))
+
+    accepted = len(accepted_points)
+    rejected = int(len(selected_indices)) - accepted
+    return SurfaceSnapResult(
+        points_world=(
+            np.asarray(accepted_points, dtype=np.float32).reshape(-1, 3)
+            if accepted_points
+            else np.empty((0, 3), dtype=np.float32)
+        ),
+        source_indices=np.asarray(accepted_indices, dtype=np.int64),
+        tracks_yx=(
+            np.asarray(accepted_tracks, dtype=np.float32).reshape(-1, 2)
+            if accepted_tracks
+            else np.empty((0, 2), dtype=np.float32)
+        ),
+        pixel_errors=np.asarray(errors, dtype=np.float32),
+        accepted=int(accepted),
+        rejected=int(rejected),
+    )
+
+
+def _surface_anchor_layer_from_mask(
+    *,
+    camera_idx: int,
+    label: str,
+    mask: np.ndarray,
+    depth_m: np.ndarray,
+    intrinsics: np.ndarray,
+    c2w: np.ndarray,
+    depth_min_m: float,
+    depth_max_m: float,
+) -> SurfaceAnchorLayer:
+    depth = np.asarray(depth_m, dtype=np.float32)
+    mask_bool = np.asarray(mask, dtype=bool)
+    if depth.shape[:2] != mask_bool.shape[:2]:
+        raise ValueError("surface anchor mask and depth shapes must match.")
+    valid = np.isfinite(depth) & (depth > np.float32(depth_min_m)) & mask_bool
+    if float(depth_max_m) > 0.0:
+        valid &= depth < np.float32(depth_max_m)
+    rows, cols = np.nonzero(valid)
+    if rows.size == 0:
+        return SurfaceAnchorLayer(
+            camera_idx=int(camera_idx),
+            label=str(label),
+            yx=np.empty((0, 2), dtype=np.float32),
+            points_world=np.empty((0, 3), dtype=np.float32),
+        )
+    K = np.asarray(intrinsics, dtype=np.float32).reshape(3, 3)
+    fx = max(float(K[0, 0]), 1e-6)
+    fy = max(float(K[1, 1]), 1e-6)
+    cx = float(K[0, 2])
+    cy = float(K[1, 2])
+    z = depth[rows, cols].astype(np.float32, copy=False)
+    x = ((cols.astype(np.float32) - cx) / fx) * z
+    y = ((rows.astype(np.float32) - cy) / fy) * z
+    points_camera = np.stack([x, y, z], axis=1).astype(np.float32)
+    points_world = transform_points(points_camera, np.asarray(c2w, dtype=np.float32).reshape(4, 4)).astype(np.float32)
+    return SurfaceAnchorLayer(
+        camera_idx=int(camera_idx),
+        label=str(label),
+        yx=np.stack([rows, cols], axis=1).astype(np.float32),
+        points_world=np.ascontiguousarray(points_world, dtype=np.float32),
+    )
+
+
 def _lift_mask_for_overlay_scope(
     *,
     scope: str,
@@ -197,7 +511,7 @@ def _lift_mask_for_overlay_scope(
     idx = int(camera_idx)
     if str(scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_CONTROLLER:
         return lift_inputs.controller_mask_by_camera.get(idx, lift_inputs.mask_by_camera.get(idx))
-    if str(scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_OBJECT:
+    if str(scope) == SURFACE_ANCHOR_LABEL_OBJECT:
         return lift_inputs.object_mask_by_camera.get(idx, lift_inputs.mask_by_camera.get(idx))
     return lift_inputs.mask_by_camera.get(idx)
 
@@ -322,6 +636,72 @@ class Demo31LiftInputCache:
             self.evicted += 1
 
 
+class Demo31SurfaceAnchorCache:
+    """Bounded main-process cache for surface-snapped tracking markers."""
+
+    def __init__(self, *, max_groups: int = DEFAULT_PENDING_RENDER_PACKET_GROUPS) -> None:
+        self.max_groups = int(max_groups)
+        self._snapshots: dict[int, SurfaceAnchorIndexSnapshot] = {}
+        self._lock = threading.Lock()
+        self.published = 0
+        self.evicted = 0
+        self.hit_count = 0
+        self.miss_count = 0
+
+    def publish(self, snapshot: SurfaceAnchorIndexSnapshot) -> None:
+        copied_layers: dict[tuple[int, str], SurfaceAnchorLayer] = {}
+        for (camera_idx, label), layer in snapshot.layers.items():
+            copied_layers[(int(camera_idx), str(label))] = SurfaceAnchorLayer(
+                camera_idx=int(layer.camera_idx),
+                label=str(layer.label),
+                yx=np.ascontiguousarray(np.asarray(layer.yx, dtype=np.float32).reshape(-1, 2)).copy(),
+                points_world=np.ascontiguousarray(
+                    np.asarray(layer.points_world, dtype=np.float32).reshape(-1, 3)
+                ).copy(),
+            )
+        copied = SurfaceAnchorIndexSnapshot(
+            group_id=int(snapshot.group_id),
+            timestamp_s=float(snapshot.timestamp_s),
+            layers=copied_layers,
+        )
+        with self._lock:
+            self._snapshots[int(copied.group_id)] = copied
+            self.published += 1
+            self._prune_locked()
+
+    def get(self, group_id: int) -> SurfaceAnchorIndexSnapshot | None:
+        with self._lock:
+            snapshot = self._snapshots.get(int(group_id))
+            if snapshot is None:
+                self.miss_count += 1
+                return None
+            self.hit_count += 1
+            return snapshot
+
+    def cached_group_ids(self) -> set[int]:
+        with self._lock:
+            return {int(group_id) for group_id in self._snapshots}
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "max_groups": int(self.max_groups),
+                "cached_groups": int(len(self._snapshots)),
+                "oldest_group_id": int(min(self._snapshots)) if self._snapshots else None,
+                "newest_group_id": int(max(self._snapshots)) if self._snapshots else None,
+                "published": int(self.published),
+                "evicted": int(self.evicted),
+                "hit_count": int(self.hit_count),
+                "miss_count": int(self.miss_count),
+            }
+
+    def _prune_locked(self) -> None:
+        while len(self._snapshots) > max(1, int(self.max_groups)):
+            oldest = min(self._snapshots)
+            self._snapshots.pop(oldest, None)
+            self.evicted += 1
+
+
 def _normalize_mask_source(value: str) -> str:
     normalized = str(value).strip().lower().replace("-", "_")
     if normalized != demo3_runtime.MASK_SOURCE_HF_EDGETAM:
@@ -411,7 +791,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trackon2-repo-dir", default=None)
     parser.add_argument("--litetracker-weights", default=None)
     parser.add_argument("--litetracker-repo-dir", default=None)
-    parser.add_argument("--cotracker-query-mode", choices=(demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,), default=demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE)
+    parser.add_argument(
+        "--cotracker-query-mode",
+        choices=(demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,),
+        default=demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,
+    )
     parser.add_argument(
         "--cotracker-query-count",
         default=DEFAULT_DEMO31_COTRACKER_QUERY_COUNT_REQUEST,
@@ -529,6 +913,60 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_OVERLAY_MAX_DISTANCE_FROM_CONTROLLER_M,
         help="Semantic bbox margin, in meters, for controller-scope overlay outlier rejection.",
     )
+    parser.add_argument(
+        "--overlay-control-point-markers",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_OVERLAY_CONTROL_POINT_MARKERS,
+        help="Legacy-lift debug flag for rendering sampled 3D control point markers.",
+    )
+    parser.add_argument(
+        "--overlay-control-point-count",
+        type=int,
+        default=DEFAULT_OVERLAY_CONTROL_POINT_COUNT,
+        help="Number of rendered tracking control points after lift/filter; defaults to FuturePhysTwin's 30.",
+    )
+    parser.add_argument(
+        "--overlay-control-point-radius-m",
+        type=float,
+        default=DEFAULT_OVERLAY_CONTROL_POINT_RADIUS_M,
+        help="Radius of the 3D control point marker cloud in meters.",
+    )
+    parser.add_argument(
+        "--overlay-render-raw-track-points",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_OVERLAY_RENDER_RAW_TRACK_POINTS,
+        help="Also render every lifted track point after filtering; disabled by default to show only control points.",
+    )
+    parser.add_argument(
+        "--tracker-visualization-mode",
+        choices=TRACKER_VISUALIZATION_MODES,
+        default=DEFAULT_TRACKER_VISUALIZATION_MODE,
+        help="How tracking controls are visualized in the 3D PCD.",
+    )
+    parser.add_argument(
+        "--tracker-3d-snap-radius-px",
+        type=float,
+        default=DEFAULT_TRACKER_3D_SNAP_RADIUS_PX,
+        help="Maximum 2D pixel distance from a track to a same-camera semantic surface anchor.",
+    )
+    parser.add_argument(
+        "--tracker-3d-marker-radius-m",
+        type=float,
+        default=DEFAULT_TRACKER_3D_MARKER_RADIUS_M,
+        help="Radius of the rendered 3D tracking control marker sphere.",
+    )
+    parser.add_argument(
+        "--tracker-control-points-per-camera",
+        type=int,
+        default=DEFAULT_TRACKER_CONTROL_POINTS_PER_CAMERA,
+        help="Maximum sparse tracking control handles to render per camera.",
+    )
+    parser.add_argument(
+        "--tracker-control-point-selection",
+        choices=TRACKER_CONTROL_POINT_SELECTIONS,
+        default=DEFAULT_TRACKER_CONTROL_POINT_SELECTION,
+        help="Policy for choosing sparse visible tracking controls before surface snapping.",
+    )
     parser.add_argument("--overlay-trail-len", type=int, default=demo3_runtime.DEFAULT_OVERLAY_TRAIL_LEN)
     parser.add_argument("--overlay-stale-timeout-ms", type=float, default=demo3_runtime.DEFAULT_OVERLAY_STALE_TIMEOUT_MS)
     parser.add_argument("--mask-gpu", default=DEFAULT_MASK_GPU)
@@ -644,6 +1082,20 @@ def validate_args(
         raise ValueError(f"--overlay-display-scope must be one of {demo3_runtime.OVERLAY_DISPLAY_SCOPES}.")
     if float(args.overlay_max_distance_from_controller_m) < 0.0:
         raise ValueError("--overlay-max-distance-from-controller-m must be non-negative.")
+    if int(args.overlay_control_point_count) < 0:
+        raise ValueError("--overlay-control-point-count must be >= 0.")
+    if float(args.overlay_control_point_radius_m) < 0.0:
+        raise ValueError("--overlay-control-point-radius-m must be non-negative.")
+    if str(args.tracker_visualization_mode) not in TRACKER_VISUALIZATION_MODES:
+        raise ValueError(f"--tracker-visualization-mode must be one of {TRACKER_VISUALIZATION_MODES}.")
+    if float(args.tracker_3d_snap_radius_px) < 0.0:
+        raise ValueError("--tracker-3d-snap-radius-px must be non-negative.")
+    if float(args.tracker_3d_marker_radius_m) < 0.0:
+        raise ValueError("--tracker-3d-marker-radius-m must be non-negative.")
+    if int(args.tracker_control_points_per_camera) < 0:
+        raise ValueError("--tracker-control-points-per-camera must be >= 0.")
+    if str(args.tracker_control_point_selection) not in TRACKER_CONTROL_POINT_SELECTIONS:
+        raise ValueError(f"--tracker-control-point-selection must be one of {TRACKER_CONTROL_POINT_SELECTIONS}.")
     if float(args.cotracker_input_fps) < 0.0:
         raise ValueError("--cotracker-input-fps must be non-negative.")
     if str(args.cotracker_update_mode) not in demo3_runtime.COTRACKER_UPDATE_MODES:
@@ -701,6 +1153,18 @@ def build_contract(
     tracker_spec = tracker_backend_spec(tracker_backend)
     execution_mode = effective_tracking_backend_execution_mode(args)
     legacy_update_mode = effective_legacy_update_mode(execution_mode)
+    tracker_visualization_mode = str(args.tracker_visualization_mode)
+    tracker_surface_mode = tracker_visualization_mode == TRACKER_VISUALIZATION_MODE_SURFACE_MARKERS
+    tracker_legacy_mode = tracker_visualization_mode == TRACKER_VISUALIZATION_MODE_LEGACY_3D_LIFT
+    overlay_scope_label = _overlay_scope_to_surface_label(str(args.overlay_display_scope))
+    tracker_marker_color = (
+        TRACKER_MARKER_LABEL_COLORS_RGB[SURFACE_ANCHOR_LABEL_UNION]
+        if tracker_legacy_mode
+        else TRACKER_MARKER_LABEL_COLORS_RGB.get(
+            overlay_scope_label,
+            TRACKER_MARKER_LABEL_COLORS_RGB[SURFACE_ANCHOR_LABEL_UNION],
+        )
+    )
     batch_enabled_by_contract = bool(
         tracker_spec.supports_batch_views
         and execution_mode in {TRACKING_BACKEND_EXECUTION_MODE_AUTO, TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS}
@@ -777,10 +1241,18 @@ def build_contract(
         "tracking_overlay_required_for_render": not bool(args.disable_cotracker),
         "render_requires_new_cotracker_result": not bool(args.disable_cotracker),
         "render_reuses_cached_cotracker_result": False,
-        "tracking_overlay_color_rgb": [int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist()],
+        "tracking_overlay_color_rgb": [int(v) for v in tracker_marker_color],
         "tracking_overlay_color_mode": "by_camera" if bool(args.overlay_debug_color_by_camera) else "solid",
         "tracking_overlay_debug_color_by_camera": bool(args.overlay_debug_color_by_camera),
-        "tracking_overlay_lift_method": "semantic_projection_grid",
+        "tracker_visualization_mode": tracker_visualization_mode,
+        "tracker_3d_marker_mode": "surface_snap" if tracker_surface_mode else tracker_visualization_mode,
+        "tracker_3d_marker_shape": "sphere",
+        "tracker_legacy_lift_used": bool(tracker_legacy_mode),
+        "tracker_3d_snap_radius_px": float(args.tracker_3d_snap_radius_px),
+        "tracker_3d_marker_radius_m": float(args.tracker_3d_marker_radius_m),
+        "tracker_control_points_per_camera": int(args.tracker_control_points_per_camera),
+        "tracker_control_point_selection": str(args.tracker_control_point_selection),
+        "tracking_overlay_lift_method": "surface_snap" if tracker_surface_mode else "semantic_projection_grid",
         "tracking_query_mode": demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,
         "tracking_query_count_requested": str(query_count_request),
         "tracking_query_count_rule": demo3_runtime.TRACKING_QUERY_COUNT_RULE_PHYSTWIN_DENSE,
@@ -808,6 +1280,27 @@ def build_contract(
         "overlay_bbox_filter_enabled": bool(args.overlay_reject_outside_semantic_bbox),
         "overlay_bbox_filter_scope": str(args.overlay_display_scope),
         "overlay_bbox_filter_margin_m": float(args.overlay_max_distance_from_controller_m),
+        "tracking_control_point_markers": bool(
+            tracker_surface_mode or (tracker_legacy_mode and bool(args.overlay_control_point_markers))
+        ),
+        "tracking_control_point_count_requested": (
+            int(args.tracker_control_points_per_camera) * len(camera_ids)
+            if tracker_surface_mode
+            else int(args.overlay_control_point_count)
+        ),
+        "tracking_control_points_per_camera": int(args.tracker_control_points_per_camera),
+        "tracking_control_point_radius_m": (
+            float(args.tracker_3d_marker_radius_m)
+            if tracker_surface_mode
+            else float(args.overlay_control_point_radius_m)
+        ),
+        "tracking_control_point_color_rgb": [int(v) for v in tracker_marker_color],
+        "tracking_control_point_sampling": (
+            f"{args.tracker_control_point_selection}_surface_snap"
+            if tracker_surface_mode
+            else "farthest_point_sample_after_lift_scope_and_bbox"
+        ),
+        "overlay_render_raw_track_points": bool(args.overlay_render_raw_track_points and tracker_legacy_mode),
         "overlay_trail_len": int(args.overlay_trail_len),
         "overlay_stale_timeout_ms": float(args.overlay_stale_timeout_ms),
         "fusion_mask_policy": str(args.fusion_mask_policy),
@@ -910,12 +1403,24 @@ def format_contract(contract: dict[str, Any]) -> str:
         "wait_for_tracking_overlay",
         "render_requires_new_cotracker_result",
         "render_reuses_cached_cotracker_result",
+        "tracker_visualization_mode",
+        "tracker_3d_marker_mode",
+        "tracker_3d_marker_shape",
+        "tracker_legacy_lift_used",
+        "tracker_3d_snap_radius_px",
+        "tracker_3d_marker_radius_m",
+        "tracker_control_points_per_camera",
+        "tracker_control_point_selection",
         "tracking_overlay_lift_method",
         "tracking_overlay_color_mode",
         "overlay_max_points_per_camera",
         "overlay_display_scope",
         "overlay_bbox_filter_enabled",
         "overlay_bbox_filter_margin_m",
+        "tracking_control_point_markers",
+        "tracking_control_point_count_requested",
+        "tracking_control_point_radius_m",
+        "overlay_render_raw_track_points",
         "phystwin_dense_compatible",
         "cotracker_backend",
         "tracker_backend",
@@ -1051,6 +1556,18 @@ def build_shared_runtime_args(
         shared_args.render_target_fps = float(args.render_target_fps)
     shared_args.demo31_top_level_profile_json_output = args.profile_json_output
     shared_args.overlay_debug_color_by_camera = bool(args.overlay_debug_color_by_camera)
+    shared_args.tracker_visualization_mode = str(args.tracker_visualization_mode)
+    shared_args.tracker_3d_snap_radius_px = float(args.tracker_3d_snap_radius_px)
+    shared_args.tracker_3d_marker_radius_m = float(args.tracker_3d_marker_radius_m)
+    shared_args.tracker_control_points_per_camera = int(args.tracker_control_points_per_camera)
+    shared_args.tracker_control_point_selection = str(args.tracker_control_point_selection)
+    shared_args.overlay_control_point_markers = bool(args.overlay_control_point_markers)
+    shared_args.overlay_control_point_count = int(args.overlay_control_point_count)
+    shared_args.overlay_control_point_radius_m = float(args.overlay_control_point_radius_m)
+    shared_args.overlay_render_raw_track_points = bool(args.overlay_render_raw_track_points)
+    shared_args.overlay_display_scope = str(args.overlay_display_scope)
+    shared_args.overlay_reject_outside_semantic_bbox = bool(args.overlay_reject_outside_semantic_bbox)
+    shared_args.overlay_max_distance_from_controller_m = float(args.overlay_max_distance_from_controller_m)
     return shared_args
 
 
@@ -1279,6 +1796,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 stale_timeout_ms=float(self.demo31_contract["mask_stale_timeout_ms"]),
             )
             self.demo31_lift_input_cache = Demo31LiftInputCache()
+            self.demo31_surface_anchor_cache = Demo31SurfaceAnchorCache(
+                max_groups=int(
+                    self.demo31_contract.get(
+                        "tracking_pending_render_packet_max_groups",
+                        DEFAULT_PENDING_RENDER_PACKET_GROUPS,
+                    )
+                )
+            )
             self.demo31_mask_cache = LatestMaskCache()
             self.demo31_last_tracking_input_s: float | None = None
             self.demo31_tracking_input_publish_times_s: list[float] = []
@@ -1392,6 +1917,49 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 )
             return events
 
+        def _build_surface_anchor_snapshot(
+            self,
+            *,
+            group_id: int,
+            timestamp_s: float,
+            depth_by_camera: dict[int, np.ndarray],
+            intrinsics_by_camera: dict[int, np.ndarray],
+            c2w_by_camera: dict[int, np.ndarray],
+            mask_by_camera: dict[int, np.ndarray],
+            object_mask_by_camera: dict[int, np.ndarray],
+            controller_mask_by_camera: dict[int, np.ndarray],
+        ) -> SurfaceAnchorIndexSnapshot:
+            layers: dict[tuple[int, str], SurfaceAnchorLayer] = {}
+            depth_min_m = float(getattr(self.args, "depth_min_m", 0.0))
+            depth_max_m = float(getattr(self.args, "depth_max_m", 0.0))
+            for camera_idx in sorted(mask_by_camera):
+                idx = int(camera_idx)
+                if idx not in depth_by_camera or idx not in intrinsics_by_camera or idx not in c2w_by_camera:
+                    continue
+                label_masks = {
+                    SURFACE_ANCHOR_LABEL_OBJECT: object_mask_by_camera.get(idx),
+                    SURFACE_ANCHOR_LABEL_CONTROLLER: controller_mask_by_camera.get(idx),
+                    SURFACE_ANCHOR_LABEL_UNION: mask_by_camera.get(idx),
+                }
+                for label, mask in label_masks.items():
+                    if mask is None:
+                        continue
+                    layers[(idx, str(label))] = _surface_anchor_layer_from_mask(
+                        camera_idx=idx,
+                        label=str(label),
+                        mask=np.asarray(mask, dtype=bool),
+                        depth_m=depth_by_camera[idx],
+                        intrinsics=intrinsics_by_camera[idx],
+                        c2w=c2w_by_camera[idx],
+                        depth_min_m=depth_min_m,
+                        depth_max_m=depth_max_m,
+                    )
+            return SurfaceAnchorIndexSnapshot(
+                group_id=int(group_id),
+                timestamp_s=float(timestamp_s),
+                layers=layers,
+            )
+
         def _build_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
             now_s = time.perf_counter()
             capped_masks, controller_cap_profile = demo3_runtime.cap_controller_pcd_masks(
@@ -1465,6 +2033,18 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         mask_by_camera=mask_by_camera,
                         object_mask_by_camera=object_mask_by_camera,
                         controller_mask_by_camera=controller_mask_by_camera,
+                    )
+                    self.demo31_surface_anchor_cache.publish(
+                        self._build_surface_anchor_snapshot(
+                            group_id=int(depth_group.group_id),
+                            timestamp_s=now_s,
+                            depth_by_camera=depth_by_camera,
+                            intrinsics_by_camera=intrinsics_by_camera,
+                            c2w_by_camera=c2w_by_camera,
+                            mask_by_camera=mask_by_camera,
+                            object_mask_by_camera=object_mask_by_camera,
+                            controller_mask_by_camera=controller_mask_by_camera,
+                        )
                     )
                     replaced_count = self.demo31_process_client.publish_input(
                         TrackingInputLitePacket(
@@ -1546,9 +2126,19 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self._publish_tracker_driven_render(overlay, overlay_start_s=now_s)
             return True
 
-        def _take_render_packet_for_tracking_result(self, group_id: int) -> tuple[Any | None, dict[str, Any]]:
+        def _take_render_packet_for_tracking_result(
+            self,
+            group_id: int,
+            *,
+            cached_group_ids: set[int] | None = None,
+            require_exact: bool = False,
+        ) -> tuple[Any | None, dict[str, Any]]:
             requested_group_id = int(group_id)
-            lift_group_ids = self.demo31_lift_input_cache.cached_group_ids()
+            lift_group_ids = (
+                set(int(group_id) for group_id in cached_group_ids)
+                if cached_group_ids is not None
+                else self.demo31_lift_input_cache.cached_group_ids()
+            )
             with self.demo31_pending_render_lock:
                 pending_ids_before = sorted(int(item) for item in self.demo31_pending_render_packets)
                 render_packet = self.demo31_pending_render_packets.pop(requested_group_id, None)
@@ -1562,6 +2152,19 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         "tracking_render_packet_group_id": int(render_packet.group_id),
                         "tracking_render_packet_group_delta": 0,
                         "tracking_nearest_render_packet_abs_delta": 0,
+                        "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
+                        "tracking_pending_render_packet_had_lift_candidate": requested_group_id in lift_group_ids,
+                    }
+                if bool(require_exact):
+                    self.demo31_tracking_result_without_render_packet_count += 1
+                    return None, {
+                        "tracking_render_packet_match_mode": "missing-exact",
+                        "tracking_result_has_matching_render_packet": False,
+                        "tracking_result_used_render_packet": False,
+                        "tracking_result_used_nearest_render_packet": False,
+                        "tracking_render_packet_group_id": None,
+                        "tracking_render_packet_group_delta": None,
+                        "tracking_nearest_render_packet_abs_delta": None,
                         "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
                         "tracking_pending_render_packet_had_lift_candidate": requested_group_id in lift_group_ids,
                     }
@@ -1628,24 +2231,141 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             overlay_bbox_input_points_by_camera: dict[int, int] = {}
             overlay_bbox_kept_points_by_camera: dict[int, int] = {}
             overlay_bbox_rejected_by_camera: dict[int, int] = {}
+            tracking_control_points_by_camera: dict[int, int] = {}
+            tracking_control_point_count = 0
+            tracking_control_marker_points = 0
+            overlay_track_points = np.empty((0, 3), dtype=np.float32)
+            overlay_control_point_centroid: list[float] | None = None
+            tracker_visualization_mode = str(
+                getattr(
+                    self.args,
+                    "tracker_visualization_mode",
+                    self.demo31_contract.get("tracker_visualization_mode", TRACKER_VISUALIZATION_MODE_LEGACY_3D_LIFT),
+                )
+            )
+            surface_marker_mode = tracker_visualization_mode == TRACKER_VISUALIZATION_MODE_SURFACE_MARKERS
+            legacy_lift_mode = tracker_visualization_mode == TRACKER_VISUALIZATION_MODE_LEGACY_3D_LIFT
+            inert_visualization_mode = tracker_visualization_mode in {
+                TRACKER_VISUALIZATION_MODE_NONE,
+                TRACKER_VISUALIZATION_MODE_2D_DEBUG,
+            }
+            control_markers_enabled = bool(
+                getattr(
+                    self.args,
+                    "overlay_control_point_markers",
+                    bool(self.demo31_contract.get("tracking_control_point_markers", surface_marker_mode)),
+                )
+            )
+            if surface_marker_mode:
+                control_markers_enabled = True
+            if inert_visualization_mode:
+                control_markers_enabled = False
+            render_raw_tracks = bool(
+                getattr(
+                    self.args,
+                    "overlay_render_raw_track_points",
+                    bool(
+                        self.demo31_contract.get(
+                            "overlay_render_raw_track_points",
+                            legacy_lift_mode and not control_markers_enabled,
+                        )
+                    ),
+                )
+                and legacy_lift_mode
+            )
+            control_point_count_requested = int(
+                getattr(
+                    self.args,
+                    "overlay_control_point_count",
+                    int(
+                        self.demo31_contract.get(
+                            "tracking_control_point_count_requested",
+                            DEFAULT_OVERLAY_CONTROL_POINT_COUNT,
+                        )
+                    ),
+                )
+            )
+            tracker_control_points_per_camera = int(
+                getattr(
+                    self.args,
+                    "tracker_control_points_per_camera",
+                    int(self.demo31_contract.get("tracker_control_points_per_camera", DEFAULT_TRACKER_CONTROL_POINTS_PER_CAMERA)),
+                )
+            )
+            tracker_control_point_selection = str(
+                getattr(
+                    self.args,
+                    "tracker_control_point_selection",
+                    self.demo31_contract.get("tracker_control_point_selection", DEFAULT_TRACKER_CONTROL_POINT_SELECTION),
+                )
+            )
+            control_point_radius_m = float(
+                getattr(
+                    self.args,
+                    "overlay_control_point_radius_m",
+                    float(
+                        self.demo31_contract.get(
+                            "tracking_control_point_radius_m",
+                            DEFAULT_OVERLAY_CONTROL_POINT_RADIUS_M,
+                        )
+                    ),
+                )
+            )
+            if surface_marker_mode:
+                control_point_radius_m = float(
+                    getattr(
+                        self.args,
+                        "tracker_3d_marker_radius_m",
+                        float(self.demo31_contract.get("tracker_3d_marker_radius_m", DEFAULT_TRACKER_3D_MARKER_RADIUS_M)),
+                    )
+                )
+                control_point_count_requested = max(0, tracker_control_points_per_camera) * len(
+                    tuple(getattr(self.args, "camera_ids", ()))
+                )
+            tracker_snap_radius_px = float(
+                getattr(
+                    self.args,
+                    "tracker_3d_snap_radius_px",
+                    float(self.demo31_contract.get("tracker_3d_snap_radius_px", DEFAULT_TRACKER_3D_SNAP_RADIUS_PX)),
+                )
+            )
+            tracker_surface_anchor_cache_hit = False
+            tracker_surface_anchor_group_id: int | None = None
+            tracker_marker_accepted_by_camera: dict[int, int] = {}
+            tracker_marker_rejected_by_camera: dict[int, int] = {}
+            tracker_marker_pixel_error_median_by_camera: dict[int, float] = {}
+            tracker_marker_pixel_error_p95_by_camera: dict[int, float] = {}
+            tracker_marker_layer_by_camera: dict[int, str] = {}
             overlay_lift_cache_hit = False
             overlay_group_id: int | None = None
             overlay_render_group_delta: int | None = None
             render_packet = None
             overlay_group_id = int(overlay.group_id)
-            render_packet, render_match_profile = self._take_render_packet_for_tracking_result(overlay_group_id)
+            render_packet, render_match_profile = self._take_render_packet_for_tracking_result(
+                overlay_group_id,
+                cached_group_ids=(
+                    self.demo31_surface_anchor_cache.cached_group_ids()
+                    if surface_marker_mode
+                    else None
+                ),
+                require_exact=bool(surface_marker_mode),
+            )
             overlay_render_group_delta = render_match_profile["tracking_render_packet_group_delta"]
             if overlay_render_group_delta is not None:
                 self.demo31_overlay_render_group_delta_samples.append(float(abs(overlay_render_group_delta)))
                 if overlay_render_group_delta != 0:
                     self.demo31_overlay_render_group_mismatch_count += 1
-            lift_inputs = None if render_packet is None else self.demo31_lift_input_cache.get(int(render_packet.group_id))
-            if render_packet is not None and lift_inputs is None:
+            lift_inputs = None
+            surface_snapshot = None
+            if surface_marker_mode and render_packet is not None and int(render_packet.group_id) == int(overlay_group_id):
+                surface_snapshot = self.demo31_surface_anchor_cache.get(int(overlay_group_id))
+                tracker_surface_anchor_cache_hit = surface_snapshot is not None
+                tracker_surface_anchor_group_id = None if surface_snapshot is None else int(surface_snapshot.group_id)
+            elif legacy_lift_mode and render_packet is not None:
+                lift_inputs = self.demo31_lift_input_cache.get(int(render_packet.group_id))
+            if legacy_lift_mode and render_packet is not None and lift_inputs is None:
                 self.demo31_tracking_result_without_lift_input_count += 1
-            if render_packet is not None and lift_inputs is not None:
-                overlay_lift_cache_hit = True
-                lifted_points = []
-                lifted_colors = []
+            if render_packet is not None:
                 color_by_camera = bool(getattr(self.args, "overlay_debug_color_by_camera", False))
                 lift_mask_scope = str(getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE))
                 bbox_filter_enabled = bool(
@@ -1666,40 +2386,51 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     scope=lift_mask_scope,
                     render_packet=render_packet,
                 )
-                for camera_idx, tracks_yx in overlay.camera_tracks_yx.items():
-                    idx = int(camera_idx)
-                    if (
-                        idx not in lift_inputs.depth_by_camera
-                        or idx not in lift_inputs.intrinsics_by_camera
-                        or idx not in lift_inputs.c2w_by_camera
-                    ):
-                        continue
-                    overlay_input_points_by_camera[idx] = int(len(np.asarray(tracks_yx).reshape(-1, 2)))
-                    lift_mask = _lift_mask_for_overlay_scope(
-                        scope=lift_mask_scope,
-                        camera_idx=idx,
-                        lift_inputs=lift_inputs,
-                    )
-                    lifted = lift_tracks_yx_to_world(
-                        tracks_yx=tracks_yx,
-                        visibility=overlay.camera_visibility[idx],
-                        depth=lift_inputs.depth_by_camera[idx],
-                        intrinsics=lift_inputs.intrinsics_by_camera[idx],
-                        c2w=lift_inputs.c2w_by_camera[idx],
-                        depth_scale_m_per_unit=1.0,
-                        mask=lift_mask,
-                    )
-                    if lifted.points_world.size:
-                        points = lifted.points_world.astype(np.float32, copy=False)
+                marker_parts: list[np.ndarray] = []
+                marker_color_parts: list[np.ndarray] = []
+                if surface_marker_mode and surface_snapshot is not None:
+                    surface_label = _overlay_scope_to_surface_label(lift_mask_scope)
+                    snapped_point_chunks: list[np.ndarray] = []
+                    snapped_color_chunks: list[np.ndarray] = []
+                    snapped_camera_id_chunks: list[np.ndarray] = []
+                    for camera_idx, tracks_yx in overlay.camera_tracks_yx.items():
+                        idx = int(camera_idx)
+                        tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+                        visibility = np.asarray(
+                            overlay.camera_visibility.get(idx, np.zeros((len(tracks),), dtype=np.float32)),
+                            dtype=np.float32,
+                        ).reshape(-1)
+                        overlay_input_points_by_camera[idx] = int(len(tracks))
+                        layer = surface_snapshot.layers.get((idx, surface_label))
+                        tracker_marker_layer_by_camera[idx] = surface_label
+                        if layer is None:
+                            visible_count = int(np.count_nonzero(visibility > 0.0))
+                            tracker_marker_accepted_by_camera[idx] = 0
+                            tracker_marker_rejected_by_camera[idx] = visible_count
+                            overlay_points_by_camera[idx] = 0
+                            continue
+                        snapped = _snap_tracks_to_surface_result(
+                            tracks_yx=tracks,
+                            visibility=visibility,
+                            surface_layer=layer,
+                            radius_px=tracker_snap_radius_px,
+                            max_points=tracker_control_points_per_camera,
+                            selection=tracker_control_point_selection,
+                        )
+                        points = snapped.points_world.astype(np.float32, copy=False)
+                        tracker_marker_accepted_by_camera[idx] = int(snapped.accepted)
+                        tracker_marker_rejected_by_camera[idx] = int(snapped.rejected)
+                        if len(snapped.pixel_errors):
+                            tracker_marker_pixel_error_median_by_camera[idx] = float(np.median(snapped.pixel_errors))
+                            tracker_marker_pixel_error_p95_by_camera[idx] = float(np.percentile(snapped.pixel_errors, 95))
+                        else:
+                            tracker_marker_pixel_error_median_by_camera[idx] = 0.0
+                            tracker_marker_pixel_error_p95_by_camera[idx] = 0.0
                         overlay_lifted_points_by_camera[idx] = int(len(points))
                         overlay_centroid_before_bbox_by_camera[idx] = _point_centroid(points)
                         overlay_bbox_input_points_by_camera[idx] = int(len(points))
-                        if bbox_filter_enabled:
-                            bbox_keep = _semantic_bbox_keep_mask(
-                                points,
-                                bbox_reference_points,
-                                margin_m=bbox_margin_m,
-                            )
+                        if bbox_filter_enabled and len(points):
+                            bbox_keep = _semantic_bbox_keep_mask(points, bbox_reference_points, margin_m=bbox_margin_m)
                             kept = int(np.count_nonzero(bbox_keep))
                             overlay_bbox_kept_points_by_camera[idx] = kept
                             overlay_bbox_rejected_by_camera[idx] = int(len(points)) - kept
@@ -1707,22 +2438,134 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         else:
                             overlay_bbox_kept_points_by_camera[idx] = int(len(points))
                             overlay_bbox_rejected_by_camera[idx] = 0
-                        if len(points) == 0:
-                            overlay_points_by_camera[idx] = 0
-                            overlay_centroid_by_camera[idx] = None
-                            continue
-                        lifted_points.append(points)
                         overlay_points_by_camera[idx] = int(len(points))
                         overlay_centroid_by_camera[idx] = _point_centroid(points)
-                        color = (
-                            _overlay_debug_color_rgb(idx)
-                            if color_by_camera
-                            else tuple(int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist())
+                        if len(points) == 0:
+                            continue
+                        snapped_point_chunks.append(points)
+                        snapped_camera_id_chunks.append(np.full((len(points),), idx, dtype=np.int32))
+                        color = _surface_marker_color(surface_label, idx, color_by_camera=color_by_camera)
+                        snapped_color_chunks.append(_overlay_color_array(len(points), color))
+                    if snapped_point_chunks:
+                        overlay_track_points = np.concatenate(snapped_point_chunks, axis=0).astype(np.float32)
+                        overlay_track_colors = np.concatenate(snapped_color_chunks, axis=0).astype(np.uint8)
+                        overlay_track_camera_ids = np.concatenate(snapped_camera_id_chunks, axis=0)
+                        control_points = overlay_track_points
+                        control_camera_ids = overlay_track_camera_ids
+                        tracking_control_point_count = int(len(control_points))
+                        overlay_control_point_centroid = _point_centroid(control_points)
+                        for camera_idx in sorted(set(int(item) for item in control_camera_ids.tolist())):
+                            tracking_control_points_by_camera[int(camera_idx)] = int(
+                                np.count_nonzero(control_camera_ids == int(camera_idx))
+                            )
+                        control_marker_points, control_marker_colors = _control_point_marker_cloud(
+                            control_points,
+                            overlay_track_colors,
+                            radius_m=control_point_radius_m,
                         )
-                        lifted_colors.append(_overlay_color_array(len(points), color))
-                if lifted_points:
-                    overlay_points = np.concatenate(lifted_points, axis=0).astype(np.float32)
-                    overlay_colors = np.concatenate(lifted_colors, axis=0).astype(np.uint8)
+                        tracking_control_marker_points = int(len(control_marker_points))
+                        if len(control_marker_points):
+                            marker_parts.append(control_marker_points)
+                            marker_color_parts.append(control_marker_colors)
+                elif legacy_lift_mode and lift_inputs is not None:
+                    overlay_lift_cache_hit = True
+                    lifted_points = []
+                    lifted_colors = []
+                    lifted_camera_id_chunks = []
+                    for camera_idx, tracks_yx in overlay.camera_tracks_yx.items():
+                        idx = int(camera_idx)
+                        if (
+                            idx not in lift_inputs.depth_by_camera
+                            or idx not in lift_inputs.intrinsics_by_camera
+                            or idx not in lift_inputs.c2w_by_camera
+                        ):
+                            continue
+                        overlay_input_points_by_camera[idx] = int(len(np.asarray(tracks_yx).reshape(-1, 2)))
+                        lift_mask = _lift_mask_for_overlay_scope(
+                            scope=lift_mask_scope,
+                            camera_idx=idx,
+                            lift_inputs=lift_inputs,
+                        )
+                        lifted = lift_tracks_yx_to_world(
+                            tracks_yx=tracks_yx,
+                            visibility=overlay.camera_visibility[idx],
+                            depth=lift_inputs.depth_by_camera[idx],
+                            intrinsics=lift_inputs.intrinsics_by_camera[idx],
+                            c2w=lift_inputs.c2w_by_camera[idx],
+                            depth_scale_m_per_unit=1.0,
+                            mask=lift_mask,
+                        )
+                        if lifted.points_world.size:
+                            points = lifted.points_world.astype(np.float32, copy=False)
+                            overlay_lifted_points_by_camera[idx] = int(len(points))
+                            overlay_centroid_before_bbox_by_camera[idx] = _point_centroid(points)
+                            overlay_bbox_input_points_by_camera[idx] = int(len(points))
+                            if bbox_filter_enabled:
+                                bbox_keep = _semantic_bbox_keep_mask(points, bbox_reference_points, margin_m=bbox_margin_m)
+                                kept = int(np.count_nonzero(bbox_keep))
+                                overlay_bbox_kept_points_by_camera[idx] = kept
+                                overlay_bbox_rejected_by_camera[idx] = int(len(points)) - kept
+                                points = points[bbox_keep]
+                            else:
+                                overlay_bbox_kept_points_by_camera[idx] = int(len(points))
+                                overlay_bbox_rejected_by_camera[idx] = 0
+                            if len(points) == 0:
+                                overlay_points_by_camera[idx] = 0
+                                overlay_centroid_by_camera[idx] = None
+                                continue
+                            lifted_points.append(points)
+                            lifted_camera_id_chunks.append(np.full((len(points),), idx, dtype=np.int32))
+                            overlay_points_by_camera[idx] = int(len(points))
+                            overlay_centroid_by_camera[idx] = _point_centroid(points)
+                            color = (
+                                _overlay_debug_color_rgb(idx)
+                                if color_by_camera
+                                else tuple(int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist())
+                            )
+                            lifted_colors.append(_overlay_color_array(len(points), color))
+                    if lifted_points:
+                        overlay_track_points = np.concatenate(lifted_points, axis=0).astype(np.float32)
+                        overlay_track_colors = np.concatenate(lifted_colors, axis=0).astype(np.uint8)
+                        overlay_track_camera_ids = np.concatenate(lifted_camera_id_chunks, axis=0)
+                        if render_raw_tracks:
+                            marker_parts.append(overlay_track_points)
+                            marker_color_parts.append(overlay_track_colors)
+                        if control_markers_enabled:
+                            control_indices = _farthest_point_sample_indices(
+                                overlay_track_points,
+                                control_point_count_requested,
+                            )
+                            control_points = overlay_track_points[control_indices]
+                            control_camera_ids = overlay_track_camera_ids[control_indices]
+                            tracking_control_point_count = int(len(control_points))
+                            overlay_control_point_centroid = _point_centroid(control_points)
+                            for camera_idx in sorted(set(int(item) for item in control_camera_ids.tolist())):
+                                tracking_control_points_by_camera[int(camera_idx)] = int(
+                                    np.count_nonzero(control_camera_ids == int(camera_idx))
+                                )
+                            if bool(getattr(self.args, "overlay_debug_color_by_camera", False)):
+                                control_colors = np.asarray(
+                                    [_overlay_debug_color_rgb(int(camera_idx)) for camera_idx in control_camera_ids],
+                                    dtype=np.uint8,
+                                )
+                            else:
+                                control_colors = _overlay_color_array(
+                                    len(control_points),
+                                    DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB,
+                                )
+                            control_marker_points, control_marker_colors = _control_point_marker_cloud(
+                                control_points,
+                                control_colors,
+                                radius_m=control_point_radius_m,
+                            )
+                            tracking_control_marker_points = int(len(control_marker_points))
+                            if len(control_marker_points):
+                                marker_parts.append(control_marker_points)
+                                marker_color_parts.append(control_marker_colors)
+                if marker_parts:
+                    overlay_points = np.concatenate(marker_parts, axis=0).astype(np.float32)
+                    overlay_colors = np.concatenate(marker_color_parts, axis=0).astype(np.uint8)
+                if len(overlay_points) or inert_visualization_mode:
                     render_replace_kwargs: dict[str, Any] = {
                         "controller_points_m": np.concatenate(
                             [render_packet.controller_points_m, overlay_points],
@@ -1760,7 +2603,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         render_packet,
                         **render_replace_kwargs,
                     )
-            tracking_overlay_render_blocked = bool(render_requires_new_tracker and len(overlay_points) == 0)
+            tracking_overlay_render_blocked = bool(
+                render_requires_new_tracker and len(overlay_points) == 0 and not inert_visualization_mode
+            )
             tracking_overlay_warmup_blocked = bool(
                 tracking_overlay_render_blocked and self.demo31_tracking_overlay_first_render_group_id is None
             )
@@ -1771,11 +2616,35 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 demo31_tracking_overlay={
                     "overlay_available": True,
                     "overlay_points": int(len(overlay_points)),
-                    "overlay_color_rgb": [int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist()],
+                    "overlay_track_points": int(len(overlay_track_points)),
+                    "overlay_color_rgb": [
+                        int(v)
+                        for v in self.demo31_contract.get(
+                            "tracking_control_point_color_rgb",
+                            list(DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB),
+                        )
+                    ],
                     "overlay_color_mode": (
                         "by_camera" if bool(getattr(self.args, "overlay_debug_color_by_camera", False)) else "solid"
                     ),
-                    "overlay_lift_method": "semantic_projection_grid",
+                    "tracker_visualization_mode": str(tracker_visualization_mode),
+                    "tracker_3d_marker_mode": "surface_snap" if surface_marker_mode else str(tracker_visualization_mode),
+                    "tracker_3d_marker_shape": "sphere",
+                    "tracker_legacy_lift_used": bool(legacy_lift_mode),
+                    "tracker_3d_snap_radius_px": float(tracker_snap_radius_px),
+                    "tracker_3d_marker_radius_m": float(control_point_radius_m),
+                    "tracker_control_points_per_camera": int(tracker_control_points_per_camera),
+                    "tracker_control_point_selection": str(tracker_control_point_selection),
+                    "tracker_surface_anchor_cache_hit": bool(tracker_surface_anchor_cache_hit),
+                    "tracker_surface_anchor_group_id": tracker_surface_anchor_group_id,
+                    "tracker_marker_accepted_by_camera": dict(tracker_marker_accepted_by_camera),
+                    "tracker_marker_rejected_by_camera": dict(tracker_marker_rejected_by_camera),
+                    "tracker_marker_pixel_error_median_by_camera": dict(tracker_marker_pixel_error_median_by_camera),
+                    "tracker_marker_pixel_error_p95_by_camera": dict(tracker_marker_pixel_error_p95_by_camera),
+                    "tracker_marker_layer_by_camera": dict(tracker_marker_layer_by_camera),
+                    "tracker_marker_points_rendered": int(len(overlay_points)),
+                    "tracker_marker_points_appended": bool(len(overlay_points) > 0),
+                    "overlay_lift_method": "surface_snap" if surface_marker_mode else "semantic_projection_grid",
                     "overlay_lift_mask_scope": str(
                         getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE)
                     ),
@@ -1807,6 +2676,19 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_bbox_rejected_by_camera": dict(overlay_bbox_rejected_by_camera),
                     "overlay_world_centroid_by_camera_before_bbox": dict(overlay_centroid_before_bbox_by_camera),
                     "overlay_world_centroid_by_camera": dict(overlay_centroid_by_camera),
+                    "tracking_control_point_markers": bool(control_markers_enabled),
+                    "tracking_control_point_count_requested": int(control_point_count_requested),
+                    "tracking_control_point_count": int(tracking_control_point_count),
+                    "tracking_control_points_by_camera": dict(tracking_control_points_by_camera),
+                    "tracking_control_point_radius_m": float(control_point_radius_m),
+                    "tracking_control_point_sampling": (
+                        f"{tracker_control_point_selection}_surface_snap"
+                        if surface_marker_mode
+                        else "farthest_point_sample_after_lift_scope_and_bbox"
+                    ),
+                    "tracking_control_marker_points": int(tracking_control_marker_points),
+                    "tracking_control_point_centroid": overlay_control_point_centroid,
+                    "overlay_render_raw_track_points": bool(render_raw_tracks),
                     "overlay_ms": overlay_ms,
                     "overlay_group_id": overlay_group_id,
                     "incoming_render_group_id": int(overlay_group_id),
@@ -2062,6 +2944,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "tracking_input_mask_age_ms_p95": float(tracking_mask_age["p95"]),
                 "mask_cache": self.demo31_mask_cache.snapshot(),
                 "lift_input_cache": self.demo31_lift_input_cache.snapshot(),
+                "surface_anchor_cache": self.demo31_surface_anchor_cache.snapshot(),
                 "tracking_stats": dict(self.demo31_tracking_stats),
             }
 
