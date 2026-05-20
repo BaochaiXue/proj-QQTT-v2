@@ -76,6 +76,19 @@ class _FakeOnlineBackend:
         )
 
 
+class _FakePrewarmedBackend(_FakeOnlineBackend):
+    def warmup(self) -> dict[str, float]:
+        return {"total_ms": 1.0}
+
+    def is_initialized(self) -> bool:
+        return len(self.query_points_yx) > 0
+
+    def update(self, frame) -> TrackingResult:
+        if not self.is_initialized():
+            raise RuntimeError("backend update called before initialize")
+        return super().update(frame)
+
+
 class _FakeBatchBackend:
     name = "fake_cotracker3_online_batch"
 
@@ -284,6 +297,28 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
         self.assertEqual(snapshot["cotracker_serial_group_update_count"], 1)
         self.assertEqual(snapshot["cotracker_serial_camera_update_count"], 3)
         self.assertEqual(snapshot["cotracker_serial_fallback_count"], 1)
+
+    def test_serial_prewarmed_backend_is_initialized_before_update(self) -> None:
+        backend = _FakePrewarmedBackend(window_len=1, step=1)
+        sampled = np.array([[0, 0], [1, 1]], dtype=np.float32)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0,),
+            backend_factory=lambda _camera_idx: backend,
+            query_count=2,
+            overlay_max_points_per_camera=0,
+            update_mode="serial",
+        )
+
+        profile = worker.warmup_backends()
+        self.assertFalse(backend.is_initialized())
+
+        with mock.patch("qqtt.demo.cotracker3_overlay_worker.sample_phystwin_dense", return_value=sampled):
+            overlay = worker.process_group(self._packet(11))
+
+        self.assertIsNotNone(overlay)
+        self.assertTrue(backend.is_initialized())
+        self.assertEqual(profile["update_mode"], "serial")
+        np.testing.assert_allclose(backend.query_points_yx, sampled)
 
     def test_later_publish_occurs_every_step_frames(self) -> None:
         backend = _FakeOnlineBackend()

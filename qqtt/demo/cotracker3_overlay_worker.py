@@ -595,10 +595,14 @@ class CoTracker3OverlayWorker:
 
     def _ensure_serial_backend(self, camera_idx: int, query_points: np.ndarray) -> Any:
         backend = self._backends.get(int(camera_idx))
+        created = False
         if backend is None:
             backend = self.backend_factory(int(camera_idx))
-            backend.initialize([], query_points)
             self._backends[int(camera_idx)] = backend
+            created = True
+        is_initialized = getattr(backend, "is_initialized", None)
+        if created or (callable(is_initialized) and not bool(is_initialized())):
+            backend.initialize([], query_points)
         return backend
 
     def _supports_batch_backend(self, backend: Any) -> bool:

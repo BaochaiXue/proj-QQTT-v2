@@ -47,6 +47,10 @@ class CoTracker3Adapter:
     def availability_reason(self) -> str:
         return self.backend.availability_reason()
 
+    def is_initialized(self) -> bool:
+        is_initialized = getattr(self.backend, "is_initialized", None)
+        return bool(is_initialized()) if callable(is_initialized) else False
+
     def warmup(self) -> dict[str, Any]:
         result = self.backend.warmup()
         result.update({"tracker_backend": self.name, "adapter": type(self).__name__})

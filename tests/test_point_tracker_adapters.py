@@ -77,6 +77,7 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertTrue(tracker_backend_spec("cotracker3_online").supports_batch_views)
         self.assertTrue(tracker_backend_spec("trackon2").supports_batch_views)
         self.assertFalse(tracker_backend_spec("litetracker").supports_batch_views)
+        self.assertEqual(tracker_backend_spec("litetracker").batch_support_status, "serial_only")
 
     def test_execution_mode_and_policy_normalization(self) -> None:
         self.assertEqual(normalize_tracker_execution_mode("batch"), "batch-views")
@@ -91,6 +92,7 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertFalse(trackon.availability().available)
         self.assertEqual(lite.name, "litetracker")
         self.assertFalse(lite.availability().available)
+        self.assertIn("--litetracker-weights", lite.availability().reason)
 
     def test_cotracker_adapter_serial_and_batch_shapes(self) -> None:
         adapter = CoTracker3Adapter(backend=_FakeCoTrackerBackend())

@@ -45,6 +45,9 @@ class CoTracker3OnlineBackend:
     def availability_reason(self) -> str:
         return self.availability().reason
 
+    def is_initialized(self) -> bool:
+        return self._stream_query_points_yx is not None
+
     def _load_model(self):
         if self._model is not None:
             self._patch_online_model_for_batch_views(self._model)

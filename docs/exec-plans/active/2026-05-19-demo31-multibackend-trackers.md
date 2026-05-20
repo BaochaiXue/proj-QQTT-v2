@@ -45,6 +45,8 @@ GPU1 owns the latest-wins point-tracker child process.
   `batch-views`.
 - Track-On2 and LiteTracker adapters fail clearly when their external repos or
   checkpoints are not configured.
+- LiteTracker serial adapter can load the external LiteTracker wrapper with
+  CoTracker3 scaled online weights and publish Demo 3.1 live tracking packets.
 - Demo 3.1 live RealSense preflight uses Demo 3.1 backend validation, so
   `trackon2` and `litetracker` are not rejected by the older Demo 3
   `cotracker3_online`-only guard.

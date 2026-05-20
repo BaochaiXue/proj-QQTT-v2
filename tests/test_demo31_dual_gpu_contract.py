@@ -419,7 +419,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(validation["active_serials"], ["s0", "s1", "s2"])
         self.assertEqual(validation["calibration_transform_count"], 3)
 
-    def test_litetracker_auto_contract_marks_batch_support_unknown(self) -> None:
+    def test_litetracker_auto_contract_marks_serial_only_batch_support(self) -> None:
         args = self._parse(
             [
                 "--dry-run",
@@ -440,7 +440,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracker_backend"], "litetracker")
         self.assertEqual(contract["tracker_backend_family"], "litetracker")
         self.assertFalse(contract["tracking_backend_batch_supported"])
-        self.assertEqual(contract["tracking_backend_batch_support_status"], "unknown")
+        self.assertEqual(contract["tracking_backend_batch_support_status"], "serial_only")
         self.assertEqual(contract["tracking_backend_batch_dimension"], "none")
 
     def test_mode_demo_uses_hand_controller_without_changing_gpu_split(self) -> None:

@@ -101,6 +101,9 @@ class TrackOn2Adapter:
     def availability_reason(self) -> str:
         return self.availability().reason
 
+    def is_initialized(self) -> bool:
+        return self._stream_query_points_yx is not None
+
     def _load_model(self) -> Any:
         if self._model is not None:
             return self._model

@@ -150,7 +150,7 @@ def tracker_backend_spec(backend: str) -> PointTrackerBackendSpec:
         name=TRACKER_BACKEND_LITETRACKER,
         family="litetracker",
         supports_batch_views=False,
-        batch_support_status="unknown",
+        batch_support_status="serial_only",
     )
 
 
