@@ -248,7 +248,6 @@ class Demo3RuntimeContractTest(unittest.TestCase):
                 parser.add_argument("--edgetam-live-session-keep-frames", type=int)
                 parser.add_argument("--render-mode")
                 parser.add_argument("--point-size", type=float)
-                parser.add_argument("--render-every-n", type=int)
                 parser.add_argument("--render-backend")
                 parser.add_argument("--render-layer-mode")
                 parser.add_argument("--render-copy-mode")

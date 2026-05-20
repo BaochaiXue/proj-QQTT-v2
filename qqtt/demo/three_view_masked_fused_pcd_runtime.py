@@ -2514,7 +2514,6 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             )
             _set_if_not_explicit(args, explicit, flag="--pcd-max-points-per-camera", attr="pcd_max_points_per_camera", value=8000)
             _set_if_not_explicit(args, explicit, flag="--pcd-color-mode", attr="pcd_color_mode", value="class")
-            _set_if_not_explicit(args, explicit, flag="--render-every-n", attr="render_every_n", value=2)
             _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=False)
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="none")
             _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
@@ -2543,7 +2542,6 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             )
             _set_if_not_explicit(args, explicit, flag="--pcd-max-points-per-camera", attr="pcd_max_points_per_camera", value=10000)
             _set_if_not_explicit(args, explicit, flag="--pcd-color-mode", attr="pcd_color_mode", value="rgb")
-            _set_if_not_explicit(args, explicit, flag="--render-every-n", attr="render_every_n", value=2)
             _set_if_not_explicit(args, explicit, flag="--enable-pcd-filter", attr="enable_pcd_filter", value=True)
             _set_if_not_explicit(args, explicit, flag="--pcd-filter-mode", attr="pcd_filter_mode", value="async")
             _set_if_not_explicit(args, explicit, flag="--parallel-init", attr="parallel_init", value=True)
@@ -8247,15 +8245,12 @@ class Demo21Runtime:
         self._summary["raw_fusion_groups"] = int(self._summary.get("raw_fusion_groups", 0)) + 1
 
     def _publish_render_packet(self, packet: FusedPcdPacket) -> None:
-        if packet.group_id % int(self.args.render_every_n) != 0:
-            return
         publish_s = self._profile_rel_s()
         self.render_buffer.publish(packet)
         self._profile_update(
             packet.group_id,
             render_publish={
                 "publish_s": float(publish_s),
-                "render_every_n": int(self.args.render_every_n),
                 "render_buffer": self.render_buffer.snapshot(),
             },
         )
@@ -9054,7 +9049,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pcd-color-mode", choices=("rgb", "class"), default="rgb")
     parser.add_argument("--object-color", nargs=3, type=int, default=list(OBJECT_COLOR_RGB))
     parser.add_argument("--controller-color", nargs=3, type=int, default=list(CONTROLLER_COLOR_RGB))
-    parser.add_argument("--render-every-n", type=int, default=1)
     parser.add_argument(
         "--render-backend",
         choices=RENDER_BACKENDS,

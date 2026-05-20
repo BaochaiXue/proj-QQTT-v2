@@ -576,7 +576,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--enhanced-component-voxel-size-m", type=float, default=DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M)
     parser.add_argument("--enhanced-keep-near-main-gap-m", type=float, default=DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M)
     parser.add_argument("--point-size", type=float, default=2.0, help="Open3D point size.")
-    parser.add_argument("--render-every-n", type=int, default=1, help="Render every Nth PCD packet.")
     parser.add_argument("--latency-target-ms", type=float, default=80.0, help="HUD latency target.")
     parser.add_argument("--duration-s", type=float, default=0.0, help="Optional auto-stop duration. Use 0 to run until closed.")
     parser.add_argument("--controller-color", type=_parse_rgb_triplet, default=CONTROLLER_COLOR_RGB, help="Controller RGB color.")
@@ -628,8 +627,6 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pcd-max-points must be >= 0")
     if args.pcd_stride < 1:
         raise ValueError("--pcd-stride must be >= 1")
-    if args.render_every_n < 1:
-        raise ValueError("--render-every-n must be >= 1")
     if args.point_size <= 0:
         raise ValueError("--point-size must be positive")
     if args.pcd_filter_mode not in PCD_FILTER_MODES:
@@ -1619,7 +1616,6 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "filter_every_n": int(self.args.filter_every_n),
             "filter_budget_ms": float(self.args.filter_budget_ms),
             "render_mode": self.args.render_mode,
-            "render_every_n": int(self.args.render_every_n),
         }
         print(
             "[edgetam] "
@@ -2066,8 +2062,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                         continue
                     self.render_slot.put(packet)
                     self.pcd_stats.record(packet.process_done_perf_s)
-                    if packet.seq % int(self.args.render_every_n) == 0:
-                        self._request_render_update()
+                    self._request_render_update()
                     continue
                 try:
                     (
@@ -2265,8 +2260,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             )
             self.render_slot.put(packet)
             self.pcd_stats.record(done_s)
-            if packet.seq % int(self.args.render_every_n) == 0:
-                self._request_render_update()
+            self._request_render_update()
 
     def _depth_profile_worker(self) -> None:
         last_seq = -1

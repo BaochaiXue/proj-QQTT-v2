@@ -293,7 +293,6 @@ CLI and forwards them to the shared three-view runtime:
 --overlay-max-distance-from-controller-m
 --wait-for-tracking-overlay / --no-wait-for-tracking-overlay
 --point-size
---render-every-n
 --render-backend
 --render-layer-mode
 --render-copy-mode

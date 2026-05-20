@@ -166,7 +166,6 @@ Demo 3 also exposes the shared three-view runtime diagnostics used by Demo 2.3:
 --gpu-sampling
 --gpu-sampling-device-indexes
 --point-size
---render-every-n
 --render-backend
 --render-layer-mode
 --render-copy-mode

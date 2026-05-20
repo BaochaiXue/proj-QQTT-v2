@@ -105,7 +105,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn("--min-depth-m", help_text)
         self.assertIn("--render-backend", help_text)
         self.assertIn("--render-layer-mode", help_text)
-        self.assertIn("--render-every-n", help_text)
+        self.assertNotIn("--render-every-n", help_text)
         self.assertIn("--render-copy-mode", help_text)
         self.assertIn("--edgetam-batch-vision", help_text)
         self.assertIn("--no-edgetam-batch-vision", help_text)
@@ -181,8 +181,6 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
                 demo.DEFAULT_RENDER_LAYER_MODE,
                 "--render-copy-mode",
                 demo.DEFAULT_RENDER_COPY_MODE,
-                "--render-every-n",
-                "1",
                 "--render-micro-profile",
             ]
         )
@@ -219,7 +217,7 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
         self.assertIn(demo.DEFAULT_RENDER_LAYER_MODE, argv)
         self.assertIn("--render-copy-mode", argv)
         self.assertIn(demo.DEFAULT_RENDER_COPY_MODE, argv)
-        self.assertIn("--render-every-n", argv)
+        self.assertNotIn("--render-every-n", argv)
         self.assertIn("--render-micro-profile", argv)
 
     def test_demo22_public_cli_can_disable_preset_batch_vision(self) -> None:
@@ -766,8 +764,8 @@ class DemoV22AsyncFilteredFusedPcdSmoke(unittest.TestCase):
 
     def test_filter_output_is_the_only_render_packet(self) -> None:
         parser = demo.build_arg_parser()
-        args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS, "--render-every-n", "1"])
-        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset", "--render-every-n"})
+        args = parser.parse_args(["--dry-run", "--preset", demo.PRESET_DEMO22_ASYNC_FILTER_5FPS])
+        args = demo.apply_preset_defaults(args, explicit_options={"--dry-run", "--preset"})
         runtime = demo.Demo22Runtime(args)
         raw = _raw_packet(2)
 

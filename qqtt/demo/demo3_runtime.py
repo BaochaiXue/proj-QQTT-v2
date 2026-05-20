@@ -331,7 +331,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-cotracker", action="store_true")
     parser.add_argument("--render-mode", choices=RENDER_MODES, default=RENDER_MODE_POINTCLOUD)
     parser.add_argument("--point-size", type=float, default=None)
-    parser.add_argument("--render-every-n", type=int, default=None)
     parser.add_argument("--render-backend", default=None)
     parser.add_argument("--render-layer-mode", default=None)
     parser.add_argument("--render-copy-mode", default=None)
@@ -876,7 +875,6 @@ def build_shared_runtime_argv(
     ]
     for flag, value in (
         ("--point-size", getattr(args, "point_size", None)),
-        ("--render-every-n", getattr(args, "render_every_n", None)),
         ("--render-backend", getattr(args, "render_backend", None)),
         ("--render-layer-mode", getattr(args, "render_layer_mode", None)),
         ("--render-copy-mode", getattr(args, "render_copy_mode", None)),

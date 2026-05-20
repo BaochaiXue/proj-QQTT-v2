@@ -433,7 +433,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-cotracker", action="store_true")
     parser.add_argument("--render-mode", choices=demo3_runtime.RENDER_MODES, default=demo3_runtime.RENDER_MODE_POINTCLOUD)
     parser.add_argument("--point-size", type=float, default=None)
-    parser.add_argument("--render-every-n", type=int, default=None)
     parser.add_argument("--render-backend", default=None)
     parser.add_argument("--render-layer-mode", default=None)
     parser.add_argument("--render-copy-mode", default=None)
