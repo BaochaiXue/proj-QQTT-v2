@@ -179,13 +179,21 @@ def _merge_cotracker_process_snapshot_metrics(
     summary.update(
         {
             "cotracker_input_fps": _float_value("cotracker_input_fps", worker_key="input_fps"),
+            "tracker_input_fps": _float_value("cotracker_input_fps", worker_key="input_fps"),
             "cotracker_publish_fps": _float_value("cotracker_publish_fps", worker_key="publish_fps"),
+            "tracker_publish_fps": _float_value("cotracker_publish_fps", worker_key="publish_fps"),
             "cotracker_input_count": _int_value("cotracker_input_count", worker_key="input_count"),
+            "tracker_input_count": _int_value("cotracker_input_count", worker_key="input_count"),
             "cotracker_result_count": _int_value("cotracker_result_count", worker_key="published_packets"),
+            "tracker_result_count": _int_value("cotracker_result_count", worker_key="published_packets"),
             "cotracker_model_ms_median": _float_value("cotracker_model_ms_median", worker_key="model_ms_median"),
+            "tracker_model_ms_median": _float_value("cotracker_model_ms_median", worker_key="model_ms_median"),
             "cotracker_model_ms_p95": _float_value("cotracker_model_ms_p95", worker_key="model_ms_p95"),
+            "tracker_model_ms_p95": _float_value("cotracker_model_ms_p95", worker_key="model_ms_p95"),
             "cotracker_e2e_ms_median": _float_value("cotracker_e2e_ms_median", worker_key="e2e_ms_median"),
+            "tracker_e2e_ms_median": _float_value("cotracker_e2e_ms_median", worker_key="e2e_ms_median"),
             "cotracker_e2e_ms_p95": _float_value("cotracker_e2e_ms_p95", worker_key="e2e_ms_p95"),
+            "tracker_e2e_ms_p95": _float_value("cotracker_e2e_ms_p95", worker_key="e2e_ms_p95"),
         }
     )
 
@@ -1049,6 +1057,8 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             args.tracking_backend_execution_mode = TRACKING_BACKEND_EXECUTION_MODE_SERIAL
         if "--cotracker-update-mode" not in explicit:
             args.cotracker_update_mode = "serial"
+        if "--cotracker-prewarm-backends" not in explicit and "--no-cotracker-prewarm-backends" not in explicit:
+            args.cotracker_prewarm_backends = False
         if "--cotracker-input-fps" not in explicit:
             args.cotracker_input_fps = DEFAULT_COTRACKER_INPUT_FPS
         if "--render-target-fps" not in explicit:
@@ -1222,6 +1232,12 @@ def build_contract(
             TRACKER_MARKER_LABEL_COLORS_RGB[SURFACE_ANCHOR_LABEL_UNION],
         )
     )
+    tracker_prewarm_mode = (
+        ("model_load_only" if bool(args.cotracker_prewarm_backends) else "lazy_query_init")
+        if tracker_backend == TRACKER_BACKEND_LITETRACKER
+        else ("backend_model_prewarm" if bool(args.cotracker_prewarm_backends) else "disabled")
+    )
+    tracker_query_dependent_init = tracker_backend == TRACKER_BACKEND_LITETRACKER
     batch_enabled_by_contract = bool(
         tracker_spec.supports_batch_views
         and execution_mode in {TRACKING_BACKEND_EXECUTION_MODE_AUTO, TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS}
@@ -1271,7 +1287,13 @@ def build_contract(
         "mask_gpu_physical": int(args.mask_gpu),
         "cotracker_gpu_physical": int(args.cotracker_gpu),
         "ffs_gpu_physical": 0 if demo32 else None,
-        "edgetam_gpu_physical": 1 if demo32 else int(args.mask_gpu),
+        "edgetam_gpu_physical": 0 if demo32 else int(args.mask_gpu),
+        "sam31_gpu_physical": 0 if demo32 else int(args.mask_gpu),
+        "litetracker_gpu_physical": int(args.cotracker_gpu) if demo32 else None,
+        "ffs_edgetam_same_gpu": bool(demo32),
+        "shared_runtime_gpu_placement": (
+            "ffs_edgetam_gpu0_litetracker_gpu1" if demo32 else "mask_gpu0_track_gpu1"
+        ),
         "main_cuda_visible_devices": str(args.mask_gpu),
         "cotracker_cuda_visible_devices": str(args.cotracker_gpu),
         "gpu_plan": str(args.gpu_plan),
@@ -1335,6 +1357,11 @@ def build_contract(
         "cotracker_owner": "process",
         "cotracker_process_mode": str(args.cotracker_process_mode),
         "cotracker_prewarm_backends": bool(args.cotracker_prewarm_backends),
+        "tracker_prewarm_backends": bool(args.cotracker_prewarm_backends),
+        "tracker_prewarm_mode": tracker_prewarm_mode,
+        "tracker_ready_state": "ready_to_receive_inputs",
+        "tracker_query_dependent_init": bool(tracker_query_dependent_init),
+        "tracker_query_dependent_init_pending_until_first_input": bool(tracker_query_dependent_init),
         "cotracker_update_mode": legacy_update_mode,
         "cotracker_batch_size_target": int(len(camera_ids)),
         "cotracker_batch_fallback_enabled": execution_mode == TRACKING_BACKEND_EXECUTION_MODE_AUTO,
@@ -1478,6 +1505,12 @@ def format_contract(contract: dict[str, Any]) -> str:
         "required_cuda_devices",
         "mask_gpu_physical",
         "cotracker_gpu_physical",
+        "ffs_gpu_physical",
+        "edgetam_gpu_physical",
+        "sam31_gpu_physical",
+        "litetracker_gpu_physical",
+        "ffs_edgetam_same_gpu",
+        "shared_runtime_gpu_placement",
         "main_cuda_visible_devices",
         "cotracker_cuda_visible_devices",
         "depth_source",
@@ -1533,6 +1566,9 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracking_backend_batch_size",
         "tracking_backend_batch_supported",
         "tracker_batch_query_count_policy",
+        "tracker_prewarm_mode",
+        "tracker_ready_state",
+        "tracker_query_dependent_init",
         "cotracker_owner",
         "cotracker_process_mode",
         "cotracker_prewarm_backends",
@@ -1667,8 +1703,10 @@ def build_shared_runtime_args(
         shared_args.ffs_worker_mode = "shared"
         shared_args.ffs_schedule = "strict3-latest"
         shared_args.ffs_device = "cuda:0"
-        shared_args.edgetam_device = "cuda:1"
-        shared_args.sam31_device = "cuda:1"
+        shared_args.edgetam_device = "cuda:0"
+        shared_args.sam31_device = "cuda:0"
+        shared_args.demo32_ffs_edgetam_same_gpu = True
+        shared_args.demo32_gpu_placement = "ffs_edgetam_gpu0_litetracker_gpu1"
         shared_args.dual_gpu_queue_size = 2
         shared_args.dual_gpu_transport = "pickle"
         shared_args.dual_gpu_start_method = "spawn"
@@ -2020,16 +2058,32 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 self.demo31_process_status_events.append(event)
                 if str(event.get("type")) == "error":
                     self._summary["demo31_cotracker_process_error"] = str(event.get("error", "unknown"))
+                    self._summary["demo31_tracker_process_error"] = str(event.get("error", "unknown"))
                     self._summary["demo31_cotracker_process_error_stage"] = str(event.get("stage", "cotracker"))
+                    self._summary["demo31_tracker_process_error_stage"] = str(event.get("stage", "tracker"))
                     self._init_profile_update(("demo31", "cotracker_process", "error"), event)
+                    self._init_profile_update(("demo31", "tracker_process", "error"), event)
                     continue
                 if str(event.get("type")) != "ready":
                     continue
+                ready_to_receive = bool(event.get("ready_to_receive_inputs", True))
                 self._summary["demo31_cotracker_process_ready"] = True
+                self._summary["demo31_tracker_process_ready"] = True
+                self._summary["demo31_tracker_ready_to_receive_inputs"] = ready_to_receive
+                self._summary["demo31_tracker_ready_state"] = str(event.get("ready_state", "ready_to_receive_inputs"))
                 self._summary["demo31_cotracker_process_init_ms"] = float(event.get("total_init_ms", 0.0) or 0.0)
+                self._summary["demo31_tracker_process_init_ms"] = float(event.get("total_init_ms", 0.0) or 0.0)
                 self._summary["demo31_cotracker_prewarm_backends"] = bool(event.get("prewarm_backends", False))
+                self._summary["demo31_tracker_prewarm_backends"] = bool(event.get("prewarm_backends", False))
+                self._summary["demo31_tracker_prewarm_mode"] = str(event.get("tracker_prewarm_mode", "unknown"))
+                self._summary["demo31_tracker_query_dependent_init_pending"] = bool(
+                    event.get("tracker_query_dependent_init_pending", False)
+                )
                 warmup_profile = event.get("warmup_profile") if isinstance(event.get("warmup_profile"), dict) else {}
                 self._summary["demo31_cotracker_backend_warmup_ms"] = float(
+                    warmup_profile.get("total_ms", 0.0) if isinstance(warmup_profile, dict) else 0.0
+                )
+                self._summary["demo31_tracker_backend_warmup_ms"] = float(
                     warmup_profile.get("total_ms", 0.0) if isinstance(warmup_profile, dict) else 0.0
                 )
                 self._init_profile_update(
@@ -2037,11 +2091,18 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     {
                         "cuda_visible_devices": event.get("cuda_visible_devices"),
                         "prewarm_backends": bool(event.get("prewarm_backends", False)),
+                        "tracker_prewarm_mode": event.get("tracker_prewarm_mode"),
+                        "ready_state": event.get("ready_state", "ready_to_receive_inputs"),
+                        "ready_to_receive_inputs": ready_to_receive,
+                        "tracker_query_dependent_init_pending": bool(
+                            event.get("tracker_query_dependent_init_pending", False)
+                        ),
                         "total_init_ms": float(event.get("total_init_ms", 0.0) or 0.0),
                         "warmup_profile": warmup_profile,
                         "ready_receive_s": self._profile_rel_s(),
                     },
                 )
+                self._init_profile_update(("demo31", "tracker_process", "ready"), event)
             return events
 
         def _build_surface_anchor_snapshot(
@@ -2087,8 +2148,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 layers=layers,
             )
 
-        def _build_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
-            now_s = time.perf_counter()
+        def _cap_demo31_controller_masks(
+            self,
+            *,
+            depth_group: Any,
+            masks: dict[int, Any],
+        ) -> dict[int, Any]:
             capped_masks, controller_cap_profile = demo3_runtime.cap_controller_pcd_masks(
                 masks,
                 camera_ids=tuple(int(item) for item in self.args.camera_ids),
@@ -2105,6 +2170,16 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     int(depth_group.group_id),
                     controller_pcd_mask_cap=controller_cap_profile,
                 )
+            return capped_masks
+
+        def _publish_demo31_tracking_input(
+            self,
+            *,
+            depth_group: Any,
+            masks: dict[int, Any],
+            publish_hook: str,
+        ) -> None:
+            now_s = time.perf_counter()
             rgb_by_camera: dict[int, np.ndarray] = {}
             mask_by_camera: dict[int, np.ndarray] = {}
             object_mask_by_camera: dict[int, np.ndarray] = {}
@@ -2122,9 +2197,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             mask_reused = bool(mask_selection.get("reused", False)) if mask_selection else False
             for camera_idx in self.args.camera_ids:
                 idx = int(camera_idx)
-                if idx not in capped_masks or idx not in depth_group.depths:
+                if idx not in masks or idx not in depth_group.depths:
                     continue
-                mask_packet = capped_masks[idx]
+                mask_packet = masks[idx]
                 rgb_by_camera[idx] = np.ascontiguousarray(np.asarray(mask_packet.color_bgr)[..., ::-1])
                 union_mask, object_mask, controller_mask = _phystwin_union_tracking_masks(mask_packet)
                 mask_by_camera[idx] = union_mask
@@ -2144,54 +2219,100 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     timestamp_s=now_s,
                     mask_by_camera=mask_by_camera,
                 )
-            if self.demo31_process_client is not None and rgb_by_camera and mask_by_camera:
-                if should_publish_tracking_input(
-                    now_s=now_s,
-                    last_publish_s=self.demo31_last_tracking_input_s,
-                    target_fps=float(self.demo31_contract["cotracker_input_fps"]),
-                ):
-                    frame_idx = int(max(depth_group.per_camera_frame_seq.values()) if depth_group.per_camera_frame_seq else depth_group.group_id)
-                    self.demo31_lift_input_cache.publish(
-                        group_id=int(depth_group.group_id),
-                        timestamp_s=now_s,
-                        depth_by_camera=depth_by_camera,
-                        intrinsics_by_camera=intrinsics_by_camera,
-                        c2w_by_camera=c2w_by_camera,
-                        mask_by_camera=mask_by_camera,
-                        object_mask_by_camera=object_mask_by_camera,
-                        controller_mask_by_camera=controller_mask_by_camera,
-                    )
-                    self.demo31_surface_anchor_cache.publish(
-                        self._build_surface_anchor_snapshot(
-                            group_id=int(depth_group.group_id),
-                            timestamp_s=now_s,
-                            depth_by_camera=depth_by_camera,
-                            intrinsics_by_camera=intrinsics_by_camera,
-                            c2w_by_camera=c2w_by_camera,
-                            mask_by_camera=mask_by_camera,
-                            object_mask_by_camera=object_mask_by_camera,
-                            controller_mask_by_camera=controller_mask_by_camera,
-                        )
-                    )
-                    replaced_count = self.demo31_process_client.publish_input(
-                        TrackingInputLitePacket(
-                            group_id=int(depth_group.group_id),
-                            frame_idx=frame_idx,
-                            timestamp_s=now_s,
-                            rgb_by_camera=rgb_by_camera,
-                            mask_by_camera=mask_by_camera,
-                            object_mask_by_camera=object_mask_by_camera,
-                            controller_mask_by_camera=controller_mask_by_camera,
-                            mask_source_group_id=mask_source_group_id,
-                            mask_age_ms=mask_age_ms,
-                            mask_reused=mask_reused,
-                        )
-                    )
-                    self.demo31_tracking_input_queue_replace_count += int(replaced_count)
-                    self.demo31_last_tracking_input_s = now_s
-                    self.demo31_tracking_input_publish_times_s.append(float(now_s))
-                else:
-                    self.demo31_tracking_input_skip_count += 1
+            profile_payload: dict[str, Any] = {
+                "publish_hook": str(publish_hook),
+                "published": False,
+                "skipped": False,
+                "process_enabled": self.demo31_process_client is not None,
+                "camera_count": int(len(mask_by_camera)),
+                "mask_source_group_id": int(mask_source_group_id),
+                "mask_age_ms": float(mask_age_ms),
+                "mask_reused": bool(mask_reused),
+                "surface_anchor_cache_published": False,
+            }
+            if self.demo31_process_client is None or not rgb_by_camera or not mask_by_camera:
+                if hasattr(self, "_profile_update"):
+                    self._profile_update(int(depth_group.group_id), demo31_tracking_input=profile_payload)
+                return
+            if not should_publish_tracking_input(
+                now_s=now_s,
+                last_publish_s=self.demo31_last_tracking_input_s,
+                target_fps=float(self.demo31_contract["cotracker_input_fps"]),
+            ):
+                self.demo31_tracking_input_skip_count += 1
+                profile_payload["skipped"] = True
+                if hasattr(self, "_profile_update"):
+                    self._profile_update(int(depth_group.group_id), demo31_tracking_input=profile_payload)
+                return
+
+            frame_idx = int(max(depth_group.per_camera_frame_seq.values()) if depth_group.per_camera_frame_seq else depth_group.group_id)
+            self.demo31_lift_input_cache.publish(
+                group_id=int(depth_group.group_id),
+                timestamp_s=now_s,
+                depth_by_camera=depth_by_camera,
+                intrinsics_by_camera=intrinsics_by_camera,
+                c2w_by_camera=c2w_by_camera,
+                mask_by_camera=mask_by_camera,
+                object_mask_by_camera=object_mask_by_camera,
+                controller_mask_by_camera=controller_mask_by_camera,
+            )
+            self.demo31_surface_anchor_cache.publish(
+                self._build_surface_anchor_snapshot(
+                    group_id=int(depth_group.group_id),
+                    timestamp_s=now_s,
+                    depth_by_camera=depth_by_camera,
+                    intrinsics_by_camera=intrinsics_by_camera,
+                    c2w_by_camera=c2w_by_camera,
+                    mask_by_camera=mask_by_camera,
+                    object_mask_by_camera=object_mask_by_camera,
+                    controller_mask_by_camera=controller_mask_by_camera,
+                )
+            )
+            replaced_count = self.demo31_process_client.publish_input(
+                TrackingInputLitePacket(
+                    group_id=int(depth_group.group_id),
+                    frame_idx=frame_idx,
+                    timestamp_s=now_s,
+                    rgb_by_camera=rgb_by_camera,
+                    mask_by_camera=mask_by_camera,
+                    object_mask_by_camera=object_mask_by_camera,
+                    controller_mask_by_camera=controller_mask_by_camera,
+                    mask_source_group_id=mask_source_group_id,
+                    mask_age_ms=mask_age_ms,
+                    mask_reused=mask_reused,
+                )
+            )
+            self.demo31_tracking_input_queue_replace_count += int(replaced_count or 0)
+            self.demo31_last_tracking_input_s = now_s
+            self.demo31_tracking_input_publish_times_s.append(float(now_s))
+            profile_payload.update(
+                {
+                    "published": True,
+                    "queue_replaced_count": int(replaced_count or 0),
+                    "frame_idx": int(frame_idx),
+                    "surface_anchor_cache_published": True,
+                    "lift_input_cache_published": True,
+                }
+            )
+            if hasattr(self, "_profile_update"):
+                self._profile_update(int(depth_group.group_id), demo31_tracking_input=profile_payload)
+
+        def _build_raw_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
+            capped_masks = self._cap_demo31_controller_masks(depth_group=depth_group, masks=masks)
+            self._publish_demo31_tracking_input(
+                depth_group=depth_group,
+                masks=capped_masks,
+                publish_hook="raw_fused_async",
+            )
+            return super()._build_raw_fused_packet(depth_group=depth_group, masks=capped_masks, ray_cache=ray_cache, rng=rng)
+
+        def _build_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
+            capped_masks = self._cap_demo31_controller_masks(depth_group=depth_group, masks=masks)
+            self._publish_demo31_tracking_input(
+                depth_group=depth_group,
+                masks=capped_masks,
+                publish_hook="fused_packet",
+            )
             return super()._build_fused_packet(depth_group=depth_group, masks=capped_masks, ray_cache=ray_cache, rng=rng)
 
         def _publish_render_packet(self, packet: Any) -> None:
@@ -3194,7 +3315,22 @@ class Demo31Runtime:
                 {
                     "cotracker_process_pid": int(process.get("pid", 0) or 0),
                     "cotracker_process_ready": bool(process_ready),
+                    "tracker_process_pid": int(process.get("pid", 0) or 0),
+                    "tracker_process_ready": bool(process_ready),
+                    "tracker_ready_to_receive_inputs": bool(
+                        process_ready.get("ready_to_receive_inputs", bool(process_ready))
+                        if isinstance(process_ready, dict)
+                        else False
+                    ),
+                    "tracker_ready_state": str(
+                        process_ready.get("ready_state", self.contract.get("tracker_ready_state", "ready_to_receive_inputs"))
+                        if isinstance(process_ready, dict)
+                        else self.contract.get("tracker_ready_state", "ready_to_receive_inputs")
+                    ),
                     "cotracker_process_total_init_ms": float(
+                        process_ready.get("total_init_ms", 0.0) if isinstance(process_ready, dict) else 0.0
+                    ),
+                    "tracker_process_total_init_ms": float(
                         process_ready.get("total_init_ms", 0.0) if isinstance(process_ready, dict) else 0.0
                     ),
                     "cotracker_prewarm_backends": bool(
@@ -3202,10 +3338,42 @@ class Demo31Runtime:
                         if isinstance(process_ready, dict)
                         else self.contract.get("cotracker_prewarm_backends", True)
                     ),
+                    "tracker_prewarm_backends": bool(
+                        process_ready.get("prewarm_backends", self.contract.get("tracker_prewarm_backends", True))
+                        if isinstance(process_ready, dict)
+                        else self.contract.get("tracker_prewarm_backends", True)
+                    ),
+                    "tracker_prewarm_mode": str(
+                        process_ready.get("tracker_prewarm_mode", self.contract.get("tracker_prewarm_mode", "unknown"))
+                        if isinstance(process_ready, dict)
+                        else self.contract.get("tracker_prewarm_mode", "unknown")
+                    ),
+                    "tracker_query_dependent_init": bool(
+                        process_ready.get(
+                            "tracker_query_dependent_init",
+                            self.contract.get("tracker_query_dependent_init", False),
+                        )
+                        if isinstance(process_ready, dict)
+                        else self.contract.get("tracker_query_dependent_init", False)
+                    ),
+                    "tracker_query_dependent_init_pending": bool(
+                        process_ready.get(
+                            "tracker_query_dependent_init_pending",
+                            self.contract.get("tracker_query_dependent_init_pending_until_first_input", False),
+                        )
+                        if isinstance(process_ready, dict)
+                        else self.contract.get("tracker_query_dependent_init_pending_until_first_input", False)
+                    ),
                     "cotracker_backend_warmup_ms": float(
                         warmup_profile.get("total_ms", 0.0) if isinstance(warmup_profile, dict) else 0.0
                     ),
+                    "tracker_backend_warmup_ms": float(
+                        warmup_profile.get("total_ms", 0.0) if isinstance(warmup_profile, dict) else 0.0
+                    ),
                     "cotracker_backend_warmup_by_camera": (
+                        warmup_profile.get("per_camera", {}) if isinstance(warmup_profile, dict) else {}
+                    ),
+                    "tracker_backend_warmup_by_camera": (
                         warmup_profile.get("per_camera", {}) if isinstance(warmup_profile, dict) else {}
                     ),
                     "cotracker_update_mode": str(

@@ -83,6 +83,28 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         else:
             os.environ["CUDA_VISIBLE_DEVICES"] = old_value
 
+    def test_litetracker_config_uses_lazy_query_init_semantics(self) -> None:
+        config = process_mod.CoTrackerProcessConfig(
+            cotracker_backend="litetracker",
+            backend_execution_mode="serial",
+            prewarm_backends=False,
+        )
+
+        self.assertEqual(config.tracker_family, "litetracker")
+        self.assertEqual(config.tracker_prewarm_mode, "lazy_query_init")
+        self.assertTrue(config.tracker_query_dependent_init)
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = process_mod.main(["--config-json", config.to_json(), "--print-contract"])
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn('"tracker_backend": "litetracker"', output)
+        self.assertIn('"tracker_prewarm_mode": "lazy_query_init"', output)
+        self.assertIn('"tracker_query_dependent_init": true', output)
+        self.assertIn('"ready_state": "ready_to_receive_inputs"', output)
+
 
 if __name__ == "__main__":
     unittest.main()

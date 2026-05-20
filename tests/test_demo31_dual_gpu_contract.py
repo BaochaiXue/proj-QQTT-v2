@@ -11,8 +11,8 @@ import unittest
 
 import numpy as np
 
-from qqtt.demo import demo31_runtime
-from qqtt.demo.demo31_dual_gpu_ipc import TrackingResultLitePacket
+from qqtt.demo import demo31_runtime, demo32_runtime
+from qqtt.demo.demo31_dual_gpu_ipc import TrackingInputLitePacket, TrackingResultLitePacket
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,20 @@ class _FakePacket:
     camera_idx: int
     object_mask: object | None = None
     controller_mask: object | None = None
+    color_bgr: object | None = None
+
+
+@dataclass(frozen=True)
+class _FakeDepthFrame:
+    group_id: int
+    depth_m: np.ndarray
+
+
+@dataclass(frozen=True)
+class _FakeDepthGroup:
+    group_id: int
+    depths: dict[int, _FakeDepthFrame]
+    per_camera_frame_seq: dict[int, int]
 
 
 @dataclass(frozen=True)
@@ -55,9 +69,14 @@ class _FakeRenderPacket:
 class _FakeProcessClient:
     def __init__(self, result: TrackingResultLitePacket | None) -> None:
         self.result = result
+        self.inputs: list[TrackingInputLitePacket] = []
 
     def get_result(self) -> TrackingResultLitePacket | None:
         return self.result
+
+    def publish_input(self, packet: TrackingInputLitePacket) -> int:
+        self.inputs.append(packet)
+        return 0
 
     def snapshot(self) -> dict[str, int]:
         return {}
@@ -157,6 +176,24 @@ class _FakeSharedRuntimeModule:
 
         def _publish_render_packet(self, packet: object) -> None:
             self.published_packet = packet
+
+        def _build_raw_fused_packet(self, *, depth_group: object, masks: dict[int, object], ray_cache: dict[int, object], rng: object) -> object:
+            self.raw_fused_call = {
+                "depth_group": depth_group,
+                "masks": masks,
+                "ray_cache": ray_cache,
+                "rng": rng,
+            }
+            return SimpleNamespace(group_id=getattr(depth_group, "group_id", 0), masks=masks)
+
+        def _build_fused_packet(self, *, depth_group: object, masks: dict[int, object], ray_cache: dict[int, object], rng: object) -> object:
+            self.fused_call = {
+                "depth_group": depth_group,
+                "masks": masks,
+                "ray_cache": ray_cache,
+                "rng": rng,
+            }
+            return SimpleNamespace(group_id=getattr(depth_group, "group_id", 0), masks=masks)
 
         def stop(self) -> None:
             return None
@@ -491,10 +528,22 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
         self.assertEqual(contract["shared_runtime_preset"], "demo2.3-dual4090-maxfps")
         self.assertEqual(contract["shared_runtime_gpu_pipeline_mode"], "dual-gpu-split")
+        self.assertEqual(contract["shared_runtime_gpu_placement"], "ffs_edgetam_gpu0_litetracker_gpu1")
+        self.assertEqual(contract["ffs_gpu_physical"], 0)
+        self.assertEqual(contract["edgetam_gpu_physical"], 0)
+        self.assertEqual(contract["sam31_gpu_physical"], 0)
+        self.assertEqual(contract["litetracker_gpu_physical"], 1)
+        self.assertTrue(contract["ffs_edgetam_same_gpu"])
         self.assertEqual(contract["cotracker_backend"], "litetracker")
         self.assertEqual(contract["tracker_backend"], "litetracker")
         self.assertEqual(contract["tracking_backend_execution_mode"], "serial")
         self.assertEqual(contract["cotracker_update_mode"], "serial")
+        self.assertFalse(contract["cotracker_prewarm_backends"])
+        self.assertFalse(contract["tracker_prewarm_backends"])
+        self.assertEqual(contract["tracker_prewarm_mode"], "lazy_query_init")
+        self.assertEqual(contract["tracker_ready_state"], "ready_to_receive_inputs")
+        self.assertTrue(contract["tracker_query_dependent_init"])
+        self.assertTrue(contract["tracker_query_dependent_init_pending_until_first_input"])
         self.assertEqual(contract["tracker_env_name"], "demo_3_1_max")
         self.assertEqual(contract["tracking_backend_batch_dimension"], "none")
         self.assertFalse(contract["tracking_backend_batch_supported"])
@@ -509,8 +558,106 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(config.cotracker_backend, "litetracker")
         self.assertEqual(config.backend_execution_mode, "serial")
         self.assertEqual(config.update_mode, "serial")
+        self.assertFalse(config.prewarm_backends)
+        self.assertEqual(config.tracker_prewarm_mode, "lazy_query_init")
+        self.assertTrue(config.tracker_query_dependent_init)
         self.assertEqual(config.litetracker_repo_dir, "/home/xinjie/external/lite-tracker")
         self.assertEqual(config.litetracker_weights, "/home/xinjie/external/weights/cotracker3/scaled_online.pth")
+
+    def test_demo32_has_independent_runtime_contract(self) -> None:
+        parser = demo32_runtime.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"])
+        args = demo32_runtime.apply_preset_defaults(args, explicit_options={"--dry-run", "--camera-ids", "--mask-gpu", "--cotracker-gpu"})
+        contract = demo32_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+
+        self.assertEqual(contract["demo"], "demo3.2")
+        self.assertEqual(contract["runtime_module"], "qqtt.demo.demo32_runtime")
+        self.assertEqual(contract["runtime_owner"], "demo32_litetracker_ffs")
+        self.assertTrue(contract["independent_demo_runtime"])
+        self.assertFalse(contract["derived_from_demo31_preset"])
+        self.assertFalse(contract["delegates_to_demo23_entrypoint"])
+        self.assertTrue(contract["tracker_result_required_for_render"])
+        self.assertTrue(contract["tracker_marker_required_for_render"])
+        self.assertIn("raw_fused_async", contract["tracker_input_publish_hooks"])
+        self.assertEqual(contract["tracker_prewarm_mode"], "lazy_query_init")
+        self.assertEqual(contract["tracker_ready_state"], "ready_to_receive_inputs")
+
+    def test_demo32_raw_async_path_publishes_litetracker_input_and_surface_anchors(self) -> None:
+        client = _FakeProcessClient(None)
+        runtime_cls = demo32_runtime.make_demo32_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: client,
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(
+                camera_ids=(0, 1),
+                depth_min_m=0.0,
+                depth_max_m=3.0,
+            ),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "cotracker_input_fps": 10.0,
+                "controller_pcd_max_points_per_camera": 100,
+                "cotracker_seed": 42,
+                "wait_for_tracking_overlay": True,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime._stream_metadata = [
+            {"K_color": np.eye(3, dtype=np.float32)},
+            {"K_color": np.eye(3, dtype=np.float32)},
+        ]
+        runtime._c2w_by_camera = {
+            0: np.eye(4, dtype=np.float32),
+            1: np.eye(4, dtype=np.float32),
+        }
+        depth_group = _FakeDepthGroup(
+            group_id=7,
+            depths={
+                0: _FakeDepthFrame(7, np.ones((2, 2), dtype=np.float32)),
+                1: _FakeDepthFrame(7, np.ones((2, 2), dtype=np.float32) * 2.0),
+            },
+            per_camera_frame_seq={0: 70, 1: 71},
+        )
+        object0 = np.array([[True, False], [False, False]])
+        controller0 = np.array([[False, True], [False, False]])
+        object1 = np.array([[False, False], [True, False]])
+        controller1 = np.array([[False, False], [False, True]])
+        color = np.zeros((2, 2, 3), dtype=np.uint8)
+        masks = {
+            0: _FakePacket(7, 0, object0, controller0, color),
+            1: _FakePacket(7, 1, object1, controller1, color),
+        }
+
+        raw_packet = runtime._build_raw_fused_packet(
+            depth_group=depth_group,
+            masks=masks,
+            ray_cache={},
+            rng=np.random.default_rng(0),
+        )
+
+        self.assertEqual(raw_packet.group_id, 7)
+        self.assertEqual(len(client.inputs), 1)
+        tracking_input = client.inputs[0]
+        self.assertEqual(tracking_input.group_id, 7)
+        self.assertEqual(tracking_input.frame_idx, 71)
+        np.testing.assert_array_equal(tracking_input.object_mask_by_camera[0], object0)
+        np.testing.assert_array_equal(tracking_input.controller_mask_by_camera[1], controller1)
+        np.testing.assert_array_equal(tracking_input.mask_by_camera[0], object0 | controller0)
+        self.assertEqual(runtime.demo31_lift_input_cache.snapshot()["published"], 1)
+        self.assertEqual(runtime.demo31_surface_anchor_cache.snapshot()["published"], 1)
+        self.assertIn(7, runtime.demo31_surface_anchor_cache.cached_group_ids())
+        hook_profiles = [
+            update["demo31_tracking_input"]
+            for _group_id, update in runtime.profile_updates
+            if "demo31_tracking_input" in update
+        ]
+        self.assertTrue(hook_profiles)
+        self.assertEqual(hook_profiles[-1]["publish_hook"], "raw_fused_async")
+        self.assertTrue(hook_profiles[-1]["published"])
+        self.assertTrue(hook_profiles[-1]["surface_anchor_cache_published"])
 
     def test_demo32_explicit_preset_uses_demo32_default_output_root(self) -> None:
         args = self._parse(
@@ -559,8 +706,10 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(shared_args.gpu_pipeline_mode, "dual-gpu-split")
         self.assertEqual(shared_args.ffs_schedule, "strict3-latest")
         self.assertEqual(shared_args.ffs_device, "cuda:0")
-        self.assertEqual(shared_args.edgetam_device, "cuda:1")
-        self.assertEqual(shared_args.sam31_device, "cuda:1")
+        self.assertEqual(shared_args.edgetam_device, "cuda:0")
+        self.assertEqual(shared_args.sam31_device, "cuda:0")
+        self.assertTrue(shared_args.demo32_ffs_edgetam_same_gpu)
+        self.assertEqual(shared_args.demo32_gpu_placement, "ffs_edgetam_gpu0_litetracker_gpu1")
         self.assertTrue(shared_args.dual_gpu_processes)
         self.assertTrue(shared_args.enable_pcd_filter)
         self.assertEqual(shared_args.pcd_filter_mode, "async")
@@ -582,6 +731,12 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("async_depth_pipeline = true", output)
         self.assertIn("shared_runtime_preset = demo2.3-dual4090-maxfps", output)
         self.assertIn("shared_runtime_gpu_pipeline_mode = dual-gpu-split", output)
+        self.assertIn("shared_runtime_gpu_placement = ffs_edgetam_gpu0_litetracker_gpu1", output)
+        self.assertIn("ffs_gpu_physical = 0", output)
+        self.assertIn("edgetam_gpu_physical = 0", output)
+        self.assertIn("sam31_gpu_physical = 0", output)
+        self.assertIn("litetracker_gpu_physical = 1", output)
+        self.assertIn("ffs_edgetam_same_gpu = true", output)
         self.assertIn("tracker_backend = litetracker", output)
         self.assertIn("tracker_env_name = demo_3_1_max", output)
         self.assertIn("tracking_backend_execution_mode = serial", output)

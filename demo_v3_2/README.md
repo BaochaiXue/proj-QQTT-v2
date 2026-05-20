@@ -1,12 +1,20 @@
 # Demo 3.2 FFS LiteTracker
 
-Demo 3.2 is copied from the Demo 3.1 dual-4090 point-tracker overlay lineage,
-but changes the depth/tracker contract:
+Demo 3.2 is its own FFS + LiteTracker live work. It reuses shared camera,
+FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
+`qqtt.demo.demo32_runtime` instead of treating Demo 3.2 as a Demo 3.1 preset:
 
 - depth is FFS TensorRT `builderOptimizationLevel=5`, static batch `3`
-- the shared runtime uses the Demo 2.3 dual-GPU FFS/EdgeTAM path
+- FFS TensorRT depth and SAM3.1/HF EdgeTAM masks share GPU0
+- LiteTracker remains isolated in the child tracker process on GPU1
 - the intended order is capture -> FFS depth -> EdgeTAM masks -> LiteTracker serial -> render/diagnostics
 - the tracker backend defaults to `litetracker` with serial execution
+- LiteTracker uses lazy query initialization by default: the child process is
+  ready to receive inputs immediately, and query-dependent tracker state is
+  initialized from the first valid RGB + mask packet
+- RGB plus object/controller/union masks are published to LiteTracker from
+  both fused and async raw-fused paths
+- render waits for a LiteTracker result and surface-snapped 3D control marker
 - object/controller semantics stay the current experiment default: object `stuffed animal`, controller `towel`
 
 Dry-run:

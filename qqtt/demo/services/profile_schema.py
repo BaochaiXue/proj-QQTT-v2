@@ -40,6 +40,12 @@ DEMO31_REQUIRED_PROFILE_KEYS = (
     "dual_gpu_enabled",
     "mask_gpu_physical",
     "cotracker_gpu_physical",
+    "ffs_gpu_physical",
+    "edgetam_gpu_physical",
+    "sam31_gpu_physical",
+    "litetracker_gpu_physical",
+    "ffs_edgetam_same_gpu",
+    "shared_runtime_gpu_placement",
     "main_cuda_visible_devices",
     "cotracker_cuda_visible_devices",
     "cross_gpu_cuda_tensor_transfer",
@@ -153,11 +159,21 @@ def event_fps(times_s: Sequence[float]) -> float:
     return float((len(times_s) - 1) / duration_s) if duration_s > 0.0 else 0.0
 
 
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
 def build_empty_demo31_profile_summary(contract: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "dual_gpu_enabled": True,
         "mask_gpu_physical": int(contract.get("mask_gpu_physical", 0)),
         "cotracker_gpu_physical": int(contract.get("cotracker_gpu_physical", 1)),
+        "ffs_gpu_physical": _optional_int(contract.get("ffs_gpu_physical")),
+        "edgetam_gpu_physical": int(contract.get("edgetam_gpu_physical", contract.get("mask_gpu_physical", 0))),
+        "sam31_gpu_physical": int(contract.get("sam31_gpu_physical", contract.get("mask_gpu_physical", 0))),
+        "litetracker_gpu_physical": _optional_int(contract.get("litetracker_gpu_physical")),
+        "ffs_edgetam_same_gpu": bool(contract.get("ffs_edgetam_same_gpu", False)),
+        "shared_runtime_gpu_placement": str(contract.get("shared_runtime_gpu_placement", "mask_gpu0_track_gpu1")),
         "main_cuda_visible_devices": str(contract.get("main_cuda_visible_devices", "0")),
         "cotracker_cuda_visible_devices": str(contract.get("cotracker_cuda_visible_devices", "1")),
         "cross_gpu_cuda_tensor_transfer": False,
@@ -189,9 +205,21 @@ def build_empty_demo31_profile_summary(contract: Mapping[str, Any]) -> dict[str,
         "cotracker_batch_error_count": 0,
         "cotracker_batch_disabled_reason": None,
         "cotracker_process_ready": False,
+        "tracker_process_ready": False,
+        "tracker_ready_to_receive_inputs": False,
+        "tracker_ready_state": str(contract.get("tracker_ready_state", "ready_to_receive_inputs")),
         "cotracker_process_total_init_ms": 0.0,
+        "tracker_process_total_init_ms": 0.0,
         "cotracker_backend_warmup_ms": 0.0,
+        "tracker_backend_warmup_ms": 0.0,
         "cotracker_backend_warmup_by_camera": {},
+        "tracker_backend_warmup_by_camera": {},
+        "tracker_prewarm_backends": bool(contract.get("tracker_prewarm_backends", contract.get("cotracker_prewarm_backends", True))),
+        "tracker_prewarm_mode": str(contract.get("tracker_prewarm_mode", "unknown")),
+        "tracker_query_dependent_init": bool(contract.get("tracker_query_dependent_init", False)),
+        "tracker_query_dependent_init_pending": bool(
+            contract.get("tracker_query_dependent_init_pending_until_first_input", False)
+        ),
         "render_waited_for_cotracker": bool(contract.get("render_waited_for_cotracker", False)),
         "render_waited_for_fresh_cotracker_result": bool(
             contract.get("render_waited_for_fresh_cotracker_result", False)
@@ -228,13 +256,21 @@ def build_empty_demo31_profile_summary(contract: Mapping[str, Any]) -> dict[str,
         "mask_group_delta_median": 0.0,
         "mask_group_delta_p95": 0.0,
         ProfileKeys.COTRACKER_INPUT_FPS: 0.0,
+        "tracker_input_fps": 0.0,
         "cotracker_input_drop_count": 0,
+        "tracker_input_drop_count": 0,
         "cotracker_input_queue_replace_count": 0,
+        "tracker_input_queue_replace_count": 0,
         ProfileKeys.COTRACKER_PUBLISH_FPS: 0.0,
+        "tracker_publish_fps": 0.0,
         "cotracker_model_ms_median": 0.0,
+        "tracker_model_ms_median": 0.0,
         "cotracker_model_ms_p95": 0.0,
+        "tracker_model_ms_p95": 0.0,
         "cotracker_e2e_ms_median": 0.0,
+        "tracker_e2e_ms_median": 0.0,
         "cotracker_e2e_ms_p95": 0.0,
+        "tracker_e2e_ms_p95": 0.0,
         "overlay_age_ms_median": 0.0,
         "overlay_age_ms_p95": 0.0,
         "overlay_render_group_delta_median": 0.0,

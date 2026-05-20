@@ -22,19 +22,16 @@ def _preconfigure_main_cuda(argv: Sequence[str] | None = None) -> None:
 
 def build_arg_parser():
     _preconfigure_main_cuda(None)
-    from qqtt.demo import demo31_runtime as runtime  # noqa: E402
+    from qqtt.demo import demo32_runtime as runtime  # noqa: E402
 
-    return runtime.build_arg_parser(default_preset=runtime.PRESET_DEMO32_FFS_LITETRACKER)
+    return runtime.build_arg_parser()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     _preconfigure_main_cuda(argv)
-    from qqtt.demo import demo31_runtime as runtime  # noqa: E402
+    from qqtt.demo import demo32_runtime as runtime  # noqa: E402
 
-    return runtime.main(
-        argv,
-        default_preset=runtime.PRESET_DEMO32_FFS_LITETRACKER,
-    )
+    return runtime.main(argv)
 
 
 if __name__ == "__main__":

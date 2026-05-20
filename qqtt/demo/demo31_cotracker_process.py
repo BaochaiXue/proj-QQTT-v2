@@ -17,6 +17,7 @@ from qqtt.demo.demo31_dual_gpu_ipc import (
 )
 from qqtt.tracking.backends.point_tracker_adapter import (
     TRACKER_BACKEND_COTRACKER3,
+    TRACKER_BACKEND_LITETRACKER,
     TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
     TRACKER_EXECUTION_MODE_AUTO,
     TRACKER_EXECUTION_MODE_BATCH_VIEWS,
@@ -26,6 +27,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (
     normalize_tracker_backend,
     normalize_tracker_batch_query_count_policy,
     normalize_tracker_execution_mode,
+    tracker_backend_spec,
 )
 
 
@@ -61,6 +63,24 @@ class CoTrackerProcessConfig:
     litetracker_weights: str | None = None
     litetracker_repo_dir: str | None = None
     tracker_batch_query_count_policy: str = TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED
+
+    @property
+    def normalized_tracker_backend(self) -> str:
+        return normalize_tracker_backend(self.cotracker_backend)
+
+    @property
+    def tracker_family(self) -> str:
+        return tracker_backend_spec(self.normalized_tracker_backend).family
+
+    @property
+    def tracker_query_dependent_init(self) -> bool:
+        return self.normalized_tracker_backend == TRACKER_BACKEND_LITETRACKER
+
+    @property
+    def tracker_prewarm_mode(self) -> str:
+        if self.normalized_tracker_backend == TRACKER_BACKEND_LITETRACKER:
+            return "model_load_only" if bool(self.prewarm_backends) else "lazy_query_init"
+        return "backend_model_prewarm" if bool(self.prewarm_backends) else "disabled"
 
     def to_json_dict(self) -> dict[str, Any]:
         tracker_backend = normalize_tracker_backend(self.cotracker_backend)
@@ -328,6 +348,8 @@ def run_cotracker_worker_loop(
         ),
     )
     warmup_profile: dict[str, Any] = {}
+    tracker_backend = normalize_tracker_backend(config.cotracker_backend)
+    tracker_prewarm_mode = config.tracker_prewarm_mode
     if bool(config.prewarm_backends):
         try:
             warmup_profile = worker.warmup_backends()
@@ -337,28 +359,52 @@ def run_cotracker_worker_loop(
                     status_queue.put_nowait(
                         {
                             "type": "error",
-                            "stage": "cotracker_warmup",
+                            "stage": "tracker_warmup",
+                            "legacy_stage": "cotracker_warmup",
                             "error": f"{type(exc).__name__}: {exc}",
                             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                            "tracker_backend": tracker_backend,
+                            "tracker_prewarm_mode": tracker_prewarm_mode,
                             "total_init_ms": float((time.perf_counter() - process_start_s) * 1000.0),
                         }
                     )
                 except Exception:
                     pass
             raise
+    else:
+        warmup_profile = {
+            "skipped": True,
+            "skip_reason": str(tracker_prewarm_mode),
+            "tracker_backend": tracker_backend,
+            "total_ms": 0.0,
+            "per_camera": {},
+        }
     if status_queue is not None:
         try:
             status_queue.put_nowait(
                 {
                     "type": "ready",
-                    "stage": "cotracker",
+                    "stage": (
+                        "litetracker_ready_to_receive_inputs"
+                        if tracker_backend == TRACKER_BACKEND_LITETRACKER
+                        else "tracker_ready"
+                    ),
+                    "legacy_stage": "cotracker",
                     "process_kind": "point_tracker_child",
+                    "ready_state": "ready_to_receive_inputs",
+                    "ready_to_receive_inputs": True,
                     "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
-                    "tracker_backend": normalize_tracker_backend(config.cotracker_backend),
+                    "cotracker_backend": tracker_backend,
+                    "tracker_backend": tracker_backend,
+                    "tracker_family": config.tracker_family,
                     "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "prewarm_backends": bool(config.prewarm_backends),
+                    "tracker_prewarm_mode": tracker_prewarm_mode,
+                    "tracker_query_dependent_init": bool(config.tracker_query_dependent_init),
+                    "tracker_query_dependent_init_pending": bool(config.tracker_query_dependent_init),
                     "update_mode": str(update_mode),
                     "warmup_profile": warmup_profile,
+                    "tracker_warmup_profile": warmup_profile,
                     "total_init_ms": float((time.perf_counter() - process_start_s) * 1000.0),
                     "ready_perf_s": time.perf_counter(),
                 }
@@ -410,6 +456,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "process_kind": "point_tracker_child",
                     "cotracker_backend": config.cotracker_backend,
                     "tracker_backend": normalize_tracker_backend(config.cotracker_backend),
+                    "tracker_family": config.tracker_family,
                     "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "cotracker_cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
                     "tracking_query_mode": config.query_mode,
@@ -419,6 +466,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "overlay_max_points_per_camera": config.overlay_max_points_per_camera,
                     "overlay_display_scope": config.overlay_display_scope,
                     "prewarm_backends": config.prewarm_backends,
+                    "tracker_prewarm_mode": config.tracker_prewarm_mode,
+                    "tracker_query_dependent_init": config.tracker_query_dependent_init,
+                    "ready_state": "ready_to_receive_inputs",
                     "update_mode": effective_legacy_update_mode(config.backend_execution_mode),
                     "tracker_batch_query_count_policy": normalize_tracker_batch_query_count_policy(
                         config.tracker_batch_query_count_policy
