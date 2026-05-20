@@ -219,6 +219,11 @@ class PointTrackerAdaptersTest(unittest.TestCase):
             },
         )
 
+    def test_cotracker_online_cuda_cache_is_reserved_for_oom_recovery(self) -> None:
+        self.assertTrue(CoTracker3OnlineBackend._is_cuda_oom_error(RuntimeError("CUDA out of memory.")))
+        self.assertTrue(CoTracker3OnlineBackend._is_cuda_oom_error(RuntimeError("CUBLAS out of memory.")))
+        self.assertFalse(CoTracker3OnlineBackend._is_cuda_oom_error(RuntimeError("shape mismatch")))
+
 
 if __name__ == "__main__":
     unittest.main()

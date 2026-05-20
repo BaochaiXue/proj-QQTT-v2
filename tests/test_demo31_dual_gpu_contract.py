@@ -4,6 +4,8 @@ import argparse
 import contextlib
 from dataclasses import dataclass
 import io
+import pickle
+import tempfile
 from types import SimpleNamespace
 import unittest
 
@@ -384,6 +386,39 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(config.backend_execution_mode, "batch-views")
         self.assertEqual(config.tracker_batch_query_count_policy, "min-common")
 
+    def test_trackon2_live_realsense_validation_uses_demo31_backend_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            calibrate_path = f"{tmp_dir}/calibrate.pkl"
+            with open(calibrate_path, "wb") as handle:
+                pickle.dump(np.repeat(np.eye(4, dtype=np.float32)[None, :, :], 3, axis=0), handle)
+            args = self._parse(
+                [
+                    "--camera-ids",
+                    "0,1,2",
+                    "--mask-gpu",
+                    "0",
+                    "--cotracker-gpu",
+                    "1",
+                    "--cotracker-backend",
+                    "trackon2",
+                    "--trackon2-checkpoint",
+                    "/tmp/trackon2.pth",
+                    "--trackon2-repo-dir",
+                    "/tmp/track_on",
+                    "--calibrate-path",
+                    calibrate_path,
+                ]
+            )
+
+            validation = demo31_runtime.validate_live_realsense_contract(
+                args,
+                connected_serials_provider=lambda: ["s0", "s1", "s2"],
+                cuda_device_count_provider=lambda: 2,
+            )
+
+        self.assertEqual(validation["active_serials"], ["s0", "s1", "s2"])
+        self.assertEqual(validation["calibration_transform_count"], 3)
+
     def test_litetracker_auto_contract_marks_batch_support_unknown(self) -> None:
         args = self._parse(
             [
@@ -533,6 +568,39 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(summary["gpu1_util_median"], 66.0)
         self.assertEqual(summary["gpu1_util_p95"], 88.0)
         self.assertEqual(summary["gpu1_mem_used_gb"], 8.0)
+
+    def test_summary_uses_real_cotracker_snapshot_metrics(self) -> None:
+        args = self._parse(["--camera-ids", "0,1,2", "--cotracker-input-fps", "17"])
+        runtime = demo31_runtime.Demo31Runtime(
+            args,
+            cuda_device_count_provider=lambda: 2,
+            connected_serials_provider=lambda: ["s0", "s1", "s2"],
+        )
+
+        summary = runtime._build_summary(
+            runtime=SimpleNamespace(_summary={"final": {}}),
+            exit_code=0,
+            snapshot={
+                "cotracker_input_fps": 8.5,
+                "cotracker_publish_fps": 2.25,
+                "cotracker_input_count": 9,
+                "cotracker_result_count": 3,
+                "cotracker_model_ms_median": 123.0,
+                "cotracker_model_ms_p95": 150.0,
+                "cotracker_e2e_ms_median": 180.0,
+                "cotracker_e2e_ms_p95": 210.0,
+                "process": {"pid": 42, "ready": {"total_init_ms": 1.0}},
+            },
+            shared_payload={"tracking_update_hz": 99.0},
+        )
+
+        self.assertEqual(summary["cotracker_input_fps"], 8.5)
+        self.assertEqual(summary["cotracker_publish_fps"], 2.25)
+        self.assertEqual(summary["cotracker_input_count"], 9)
+        self.assertEqual(summary["cotracker_result_count"], 3)
+        self.assertEqual(summary["cotracker_model_ms_median"], 123.0)
+        self.assertEqual(summary["cotracker_e2e_ms_p95"], 210.0)
+        self.assertNotEqual(summary["cotracker_publish_fps"], 99.0)
 
     def test_track_mode_is_not_public_cli(self) -> None:
         parser = demo31_runtime.build_arg_parser()

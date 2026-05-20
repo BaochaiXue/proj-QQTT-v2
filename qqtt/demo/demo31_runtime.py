@@ -26,7 +26,7 @@ from qqtt.demo.demo31_dual_gpu_ipc import (
     TrackingResultLitePacket,
     should_publish_tracking_input,
 )
-from qqtt.demo.demo31_profile import build_empty_dual_gpu_profile_summary, percentile_summary
+from qqtt.demo.demo31_profile import build_empty_dual_gpu_profile_summary, event_fps, percentile_summary
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world
 from qqtt.tracking.backends.point_tracker_adapter import (
     TRACKER_BACKEND_COTRACKER3,
@@ -88,6 +88,40 @@ DEFAULT_TRACKING_BACKEND_EXECUTION_MODE = TRACKING_BACKEND_EXECUTION_MODE_BATCH_
 ConnectedSerialsProvider = Callable[[], Sequence[str]]
 CudaDeviceCountProvider = Callable[[], int]
 ProcessClientFactory = Callable[[CoTrackerProcessConfig], Any]
+
+
+def _merge_cotracker_process_snapshot_metrics(
+    summary: dict[str, Any],
+    snapshot: dict[str, Any] | None,
+) -> None:
+    if not isinstance(snapshot, dict):
+        return
+    worker = snapshot.get("worker") if isinstance(snapshot.get("worker"), dict) else {}
+
+    def _float_value(primary_key: str, *, worker_key: str | None = None) -> float:
+        value = snapshot.get(primary_key)
+        if value is None and worker_key:
+            value = worker.get(worker_key)
+        return float(value or 0.0)
+
+    def _int_value(primary_key: str, *, worker_key: str | None = None) -> int:
+        value = snapshot.get(primary_key)
+        if value is None and worker_key:
+            value = worker.get(worker_key)
+        return int(value or 0)
+
+    summary.update(
+        {
+            "cotracker_input_fps": _float_value("cotracker_input_fps", worker_key="input_fps"),
+            "cotracker_publish_fps": _float_value("cotracker_publish_fps", worker_key="publish_fps"),
+            "cotracker_input_count": _int_value("cotracker_input_count", worker_key="input_count"),
+            "cotracker_result_count": _int_value("cotracker_result_count", worker_key="published_packets"),
+            "cotracker_model_ms_median": _float_value("cotracker_model_ms_median", worker_key="model_ms_median"),
+            "cotracker_model_ms_p95": _float_value("cotracker_model_ms_p95", worker_key="model_ms_p95"),
+            "cotracker_e2e_ms_median": _float_value("cotracker_e2e_ms_median", worker_key="e2e_ms_median"),
+            "cotracker_e2e_ms_p95": _float_value("cotracker_e2e_ms_p95", worker_key="e2e_ms_p95"),
+        }
+    )
 
 
 def _overlay_debug_color_rgb(camera_idx: int) -> tuple[int, int, int]:
@@ -938,6 +972,63 @@ def fresh_tracking_result_or_none(
     return result
 
 
+def validate_live_realsense_contract(
+    args: argparse.Namespace,
+    *,
+    connected_serials_provider: ConnectedSerialsProvider | None = None,
+    cuda_device_count_provider: CudaDeviceCountProvider | None = None,
+) -> dict[str, Any]:
+    validate_args(args, require_calibration=True, cuda_device_count_provider=cuda_device_count_provider)
+    provider = connected_serials_provider or demo3_runtime._get_connected_realsense_serials
+    connected_serials = list(provider())
+    requested_serials = list(args.serials or [])
+    if requested_serials:
+        if len(requested_serials) != 3:
+            raise RuntimeError("Demo 3.1 requires exactly three requested RealSense serials when --serials is used.")
+        missing = [serial for serial in requested_serials if serial not in connected_serials]
+        if missing:
+            raise RuntimeError(f"Demo 3.1 requested RealSense serials are not connected: {missing}")
+        active_serials = requested_serials
+    else:
+        if len(connected_serials) != 3:
+            raise RuntimeError(
+                "Demo 3.1 requires exactly three connected RealSense cameras when --serials is not provided. "
+                f"connected={len(connected_serials)}"
+            )
+        active_serials = connected_serials
+
+    from qqtt.env.camera.calibration_metadata import load_calibration_reference_serials
+
+    calibration_reference_serials = load_calibration_reference_serials(args.calibrate_path)
+    if calibration_reference_serials is not None:
+        if len(calibration_reference_serials) != 3:
+            raise RuntimeError(
+                "Demo 3.1 requires calibrate.pkl metadata for exactly three cameras. "
+                f"calibration_reference_serials={len(calibration_reference_serials)}"
+            )
+        missing_from_calibration = [serial for serial in active_serials if serial not in calibration_reference_serials]
+        if missing_from_calibration:
+            raise RuntimeError(
+                "Demo 3.1 active RealSense serials are not covered by calibrate.pkl metadata. "
+                f"missing={missing_from_calibration}"
+            )
+    try:
+        calibration_transform_count = demo3_runtime._calibration_transform_count(args.calibrate_path)
+    except Exception as exc:
+        raise RuntimeError(f"Demo 3.1 calibration validation failed: {exc}") from exc
+    if calibration_transform_count != 3:
+        raise RuntimeError(
+            "Demo 3.1 requires calibrate.pkl to contain exactly three camera-to-world transforms. "
+            f"transform_count={calibration_transform_count}"
+        )
+    return {
+        "connected_serials": connected_serials,
+        "active_serials": active_serials,
+        "calibration_reference_serials": calibration_reference_serials,
+        "calibration_transform_count": int(calibration_transform_count),
+    }
+
+
 def build_shared_runtime_args(
     args: argparse.Namespace,
     *,
@@ -1191,6 +1282,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_lift_input_cache = Demo31LiftInputCache()
             self.demo31_mask_cache = LatestMaskCache()
             self.demo31_last_tracking_input_s: float | None = None
+            self.demo31_tracking_input_publish_times_s: list[float] = []
             self.demo31_tracking_input_skip_count = 0
             self.demo31_tracking_input_queue_replace_count = 0
             self.demo31_tracking_input_drop_count = 0
@@ -1213,6 +1305,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_overlay_age_ms_samples: list[float] = []
             self.demo31_overlay_model_ms_samples: list[float] = []
             self.demo31_overlay_e2e_ms_samples: list[float] = []
+            self.demo31_cotracker_publish_times_s: list[float] = []
             self.demo31_overlay_render_group_delta_samples: list[float] = []
             self.demo31_tracking_mask_age_ms_samples: list[float] = []
             self.demo31_tracking_mask_reuse_count = 0
@@ -1246,8 +1339,11 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             if path is None:
                 return
             snapshot = self.demo31_snapshot()
+            summary = build_empty_dual_gpu_profile_summary(self.demo31_contract)
+            _merge_cotracker_process_snapshot_metrics(summary, snapshot)
             payload = {
                 "contract": dict(self.demo31_contract),
+                "summary": summary,
                 "cotracker_process_snapshot": snapshot,
                 "shared_runtime_profile": (
                     None
@@ -1387,6 +1483,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     )
                     self.demo31_tracking_input_queue_replace_count += int(replaced_count)
                     self.demo31_last_tracking_input_s = now_s
+                    self.demo31_tracking_input_publish_times_s.append(float(now_s))
                 else:
                     self.demo31_tracking_input_skip_count += 1
             return super()._build_fused_packet(depth_group=depth_group, masks=capped_masks, ray_cache=ray_cache, rng=rng)
@@ -1852,6 +1949,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_overlay_age_ms_samples.append(float(age_ms))
             self.demo31_overlay_model_ms_samples.append(float(result.model_ms))
             self.demo31_overlay_e2e_ms_samples.append(float(result.e2e_ms))
+            self.demo31_cotracker_publish_times_s.append(float(result.publish_timestamp_s))
             self.demo31_tracking_mask_selection_count += 1
             self.demo31_tracking_mask_reuse_count += int(bool(result.mask_reused))
             self.demo31_tracking_mask_age_ms_samples.append(float(result.mask_age_ms))
@@ -1924,6 +2022,10 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "tracking_input_skip_count": int(self.demo31_tracking_input_skip_count),
                 "tracking_input_queue_replace_count": int(self.demo31_tracking_input_queue_replace_count),
                 "tracking_input_drop_count": int(self.demo31_tracking_input_drop_count),
+                "cotracker_input_count": int(len(self.demo31_tracking_input_publish_times_s)),
+                "cotracker_input_fps": float(event_fps(self.demo31_tracking_input_publish_times_s)),
+                "cotracker_result_count": int(len(self.demo31_cotracker_publish_times_s)),
+                "cotracker_publish_fps": float(event_fps(self.demo31_cotracker_publish_times_s)),
                 "tracking_pending_render_packets": pending_render_count,
                 "tracking_pending_render_packet_max_groups": int(self.demo31_pending_render_packet_max_groups),
                 "tracking_pending_render_packet_drop_count": int(self.demo31_pending_render_packet_drop_count),
@@ -1987,9 +2089,10 @@ class Demo31Runtime:
         self.process_client_factory = process_client_factory
 
     def run(self) -> dict[str, Any]:
-        live_validation = demo3_runtime.validate_live_realsense_contract(
+        live_validation = validate_live_realsense_contract(
             self.args,
             connected_serials_provider=self.connected_serials_provider,
+            cuda_device_count_provider=self.cuda_device_count_provider,
         )
         shared = self.shared_runtime_module or demo3_runtime._load_shared_runtime_module()
         shared_profile = demo3_runtime._shared_profile_path(self.args)
@@ -2236,6 +2339,7 @@ class Demo31Runtime:
                     ),
                 }
             )
+            _merge_cotracker_process_snapshot_metrics(summary, snapshot)
         return summary
 
 
@@ -2277,4 +2381,5 @@ __all__ = [
     "make_demo31_live_runtime_class",
     "Demo31MaskPolicyJoinBuffer",
     "validate_args",
+    "validate_live_realsense_contract",
 ]

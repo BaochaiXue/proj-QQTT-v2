@@ -237,6 +237,22 @@ class CoTracker3OnlineBackend:
             raise AttributeError("CoTracker online predictor does not expose a positive step size.")
         return step, step * 2
 
+    @staticmethod
+    def _is_cuda_oom_error(exc: BaseException) -> bool:
+        message = str(exc).lower()
+        return "out of memory" in message and ("cuda" in message or "cudnn" in message or "cublas" in message)
+
+    def _clear_cuda_cache_after_oom(self, exc: BaseException) -> None:
+        if not self._is_cuda_oom_error(exc):
+            return
+        try:
+            import torch
+
+            if str(self.device).startswith("cuda") and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            return
+
     def _reset_stream(self, query_points_yx: np.ndarray, *, camera_idx: int | None = None) -> None:
         query_points = np.asarray(query_points_yx, dtype=np.float32)
         if query_points.ndim != 2 or query_points.shape[1] != 2:
@@ -573,24 +589,26 @@ class CoTracker3OnlineBackend:
         import torch
 
         video = self._batch_frames_to_torch_video(self._batch_stream_frames, device=self.device)
-        if str(self.device).startswith("cuda") and torch.cuda.is_available():
-            torch.cuda.empty_cache()
         run_start = time.perf_counter()
-        with torch.no_grad():
-            if not self._batch_initialized:
-                queries = self._batch_queries_yx_to_torch(
-                    self._batch_query_points_yx_by_camera,
-                    camera_ids=self._batch_camera_ids,
-                    device=self.device,
+        try:
+            with torch.no_grad():
+                if not self._batch_initialized:
+                    queries = self._batch_queries_yx_to_torch(
+                        self._batch_query_points_yx_by_camera,
+                        camera_ids=self._batch_camera_ids,
+                        device=self.device,
+                    )
+                    model(video_chunk=video, is_first_step=True, queries=queries, grid_size=0, add_support_grid=False)
+                    self._batch_initialized = True
+                tracks_xy, visibility = model(
+                    video_chunk=video,
+                    is_first_step=False,
+                    grid_size=0,
+                    add_support_grid=False,
                 )
-                model(video_chunk=video, is_first_step=True, queries=queries, grid_size=0, add_support_grid=False)
-                self._batch_initialized = True
-            tracks_xy, visibility = model(
-                video_chunk=video,
-                is_first_step=False,
-                grid_size=0,
-                add_support_grid=False,
-            )
+        except RuntimeError as exc:
+            self._clear_cuda_cache_after_oom(exc)
+            raise
         run_ms = (time.perf_counter() - run_start) * 1000.0
         self._batch_last_processed_frame_count = self._batch_total_frames
         return self._tracks_to_batch_results(

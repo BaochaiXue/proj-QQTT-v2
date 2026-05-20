@@ -45,5 +45,8 @@ GPU1 owns the latest-wins point-tracker child process.
   `batch-views`.
 - Track-On2 and LiteTracker adapters fail clearly when their external repos or
   checkpoints are not configured.
+- Demo 3.1 live RealSense preflight uses Demo 3.1 backend validation, so
+  `trackon2` and `litetracker` are not rejected by the older Demo 3
+  `cotracker3_online`-only guard.
 - `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
   passes.
