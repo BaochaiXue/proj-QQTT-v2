@@ -475,6 +475,8 @@ class TAPNextPPAdapter:
     def update(self, frame: np.ndarray) -> TrackingResult:
         if self._query_points_yx is None:
             raise RuntimeError("Call initialize(..., query_points_yx=...) before update().")
+        wall_started_s = time.perf_counter()
+        preprocess_started_s = wall_started_s
         video, source_shape = self._frames_to_video_tensor([frame])
         if self._original_frame_shape_hw is None:
             self._original_frame_shape_hw = source_shape
@@ -487,18 +489,22 @@ class TAPNextPPAdapter:
                 "TAPNext++ serial stream frame shape changed after initialization; "
                 f"expected {self._original_frame_shape_hw}, got {source_shape}"
             )
+        preprocess_ms = float((time.perf_counter() - preprocess_started_s) * 1000.0)
         first_update = self._tracking_state is None
         output, run_ms = self._run_model(
             video=video,
             query_points=self._query_points_tyx if first_update else None,
             state=None if first_update else self._tracking_state,
         )
+        postprocess_started_s = time.perf_counter()
         tracks_yx_b, visibility_b, self._tracking_state = self._parse_output(
             output,
             batch_size=1,
             query_count=len(self._query_points_yx),
             source_shapes_hw=[self._original_frame_shape_hw],
         )
+        postprocess_ms = float((time.perf_counter() - postprocess_started_s) * 1000.0)
+        wall_ms = float((time.perf_counter() - wall_started_s) * 1000.0)
         frame_idx = int(self._frames_seen)
         self._frames_seen += 1
         return TrackingResult(
@@ -519,6 +525,10 @@ class TAPNextPPAdapter:
                 "frames_seen": int(self._frames_seen),
                 "num_query_points": int(len(self._query_points_yx)),
                 "model_run_ms": float(run_ms),
+                "cuda_event_ms": float(run_ms),
+                "preprocess_ms": float(preprocess_ms),
+                "postprocess_ms": float(postprocess_ms),
+                "wall_ms": float(wall_ms),
                 "fps_model_only": float(1000.0 / run_ms) if run_ms > 0.0 else 0.0,
                 "image_size": [int(self.image_size[0]), int(self.image_size[1])],
                 "tapnextpp_image_size": [int(self.image_size[0]), int(self.image_size[1])],
@@ -555,6 +565,8 @@ class TAPNextPPAdapter:
     def update_batch(self, frames_by_camera: Mapping[int, np.ndarray]) -> dict[int, TrackingResult]:
         if not self._batch_camera_ids:
             raise RuntimeError("Call initialize_batch(...) before update_batch().")
+        wall_started_s = time.perf_counter()
+        preprocess_started_s = wall_started_s
         expected = set(int(item) for item in self._batch_camera_ids)
         received = set(int(item) for item in frames_by_camera)
         missing = sorted(expected - received)
@@ -583,6 +595,7 @@ class TAPNextPPAdapter:
                     "TAPNext++ batch-views frame shape changed after initialization; "
                     f"expected {self._batch_original_frame_shape_hw_by_camera}, got {expected_shapes}"
                 )
+        preprocess_ms = float((time.perf_counter() - preprocess_started_s) * 1000.0)
         first_update = self._batch_tracking_state is None
         try:
             output, run_ms = self._run_model(
@@ -598,12 +611,15 @@ class TAPNextPPAdapter:
             raise
         query_count = int(len(next(iter(self._batch_query_points_yx_by_camera.values()))))
         source_shapes = [self._batch_original_frame_shape_hw_by_camera[idx] for idx in camera_ids]
+        postprocess_started_s = time.perf_counter()
         tracks_yx_b, visibility_b, self._batch_tracking_state = self._parse_output(
             output,
             batch_size=len(camera_ids),
             query_count=query_count,
             source_shapes_hw=source_shapes,
         )
+        postprocess_ms = float((time.perf_counter() - postprocess_started_s) * 1000.0)
+        wall_ms = float((time.perf_counter() - wall_started_s) * 1000.0)
         frame_idx = int(self._batch_frames_seen)
         self._batch_frames_seen += 1
         self._batch_model_call_groups += 1
@@ -628,6 +644,10 @@ class TAPNextPPAdapter:
                     "frames_seen": int(self._batch_frames_seen),
                     "num_query_points": int(len(query_points_yx)),
                     "model_run_ms": float(run_ms),
+                    "cuda_event_ms": float(run_ms),
+                    "preprocess_ms": float(preprocess_ms),
+                    "postprocess_ms": float(postprocess_ms),
+                    "wall_ms": float(wall_ms),
                     "fps_model_only": float(1000.0 / run_ms) if run_ms > 0.0 else 0.0,
                     "image_size": [int(self.image_size[0]), int(self.image_size[1])],
                     "tapnextpp_image_size": [int(self.image_size[0]), int(self.image_size[1])],

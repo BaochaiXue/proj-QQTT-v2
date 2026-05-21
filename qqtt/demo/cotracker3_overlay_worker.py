@@ -112,6 +112,15 @@ class TrackingOverlayPacket:
     tracking_backend_effective_query_count: int = 0
     tracking_backend_query_count_truncated_by_camera: dict[int, int] = field(default_factory=dict)
     tracking_backend_batch_fallback_reason: str | None = None
+    tracker_group_wall_ms: float = 0.0
+    tracker_model_ms_sum_per_group: float = 0.0
+    tracker_model_ms_max_per_group: float = 0.0
+    per_camera_model_ms_by_camera: dict[int, float] = field(default_factory=dict)
+    model_calls_per_group: int = 0
+    model_instances_expected: int = 0
+    model_instances_actual: int = 0
+    query_count_per_camera: int = 0
+    total_query_count_across_views: int = 0
 
     @property
     def seq(self) -> int:
@@ -328,6 +337,11 @@ class CoTracker3OverlayWorker:
         self._published_packets = 0
         self._model_ms_samples: list[float] = []
         self._e2e_ms_samples: list[float] = []
+        self._tracker_group_wall_ms_samples: list[float] = []
+        self._tracker_model_ms_sum_per_group_samples: list[float] = []
+        self._tracker_model_ms_max_per_group_samples: list[float] = []
+        self._per_camera_model_ms_samples: dict[int, list[float]] = {}
+        self._model_calls_per_group_samples: list[float] = []
         self._publish_times_s: list[float] = []
         self._backend_warmup_profile: dict[int, dict[str, Any]] = {}
         self._batch_warmup_profile: dict[str, Any] = {}
@@ -341,6 +355,9 @@ class CoTracker3OverlayWorker:
         self._last_batch_size = 0
         self._last_batch_effective_query_count = 0
         self._last_batch_truncated_by_camera: dict[int, int] = {}
+        self._last_model_calls_per_group = 0
+        self._last_model_instances_expected = 0
+        self._last_model_instances_actual = 0
         if self.query_mode != "phystwin_dense":
             raise ValueError("CoTracker3OverlayWorker currently supports only query_mode='phystwin_dense'.")
         # Non-positive means "render all selected visible tracks". Demo 3.1 uses
@@ -661,6 +678,9 @@ class CoTracker3OverlayWorker:
         self._batch_update_count += 1
         self._last_update_mode = COTRACKER_UPDATE_MODE_BATCH
         self._last_batch_size = int(len(active_inputs))
+        self._last_model_calls_per_group = 1
+        self._last_model_instances_expected = 1
+        self._last_model_instances_actual = 1 if self._batch_backend is not None else 0
         return {int(camera_idx): result for camera_idx, result in results.items()}
 
     def _batch_policy_inputs(
@@ -709,7 +729,40 @@ class CoTracker3OverlayWorker:
             self._serial_group_update_count += 1
         self._last_update_mode = COTRACKER_UPDATE_MODE_SERIAL
         self._last_batch_size = 1 if active_inputs else 0
+        self._last_model_calls_per_group = int(len(active_inputs))
+        self._last_model_instances_expected = int(len(active_inputs))
+        self._last_model_instances_actual = int(len(self._backends))
         return results
+
+    def _query_count_metrics(self) -> tuple[int, int]:
+        counts = [
+            int(len(np.asarray(points, dtype=np.float32).reshape(-1, 2)))
+            for points in self._query_points_yx.values()
+        ]
+        if not counts:
+            return 0, 0
+        per_camera = int(max(counts)) if len(set(counts)) > 1 else int(counts[0])
+        return per_camera, int(sum(counts))
+
+    @staticmethod
+    def _model_ms_from_results(
+        *,
+        results: Mapping[int, Any],
+        active_inputs: Mapping[int, dict[str, Any]],
+        update_mode: str,
+    ) -> tuple[float, float, dict[int, float]]:
+        per_camera: dict[int, float] = {}
+        for camera_idx in active_inputs:
+            result = results.get(int(camera_idx))
+            if result is None:
+                continue
+            per_camera[int(camera_idx)] = float(getattr(result, "stats", {}).get("model_run_ms", 0.0) or 0.0)
+        if not per_camera:
+            return 0.0, 0.0, {}
+        if str(update_mode) == COTRACKER_UPDATE_MODE_BATCH:
+            shared_ms = max(per_camera.values())
+            return float(shared_ms), float(shared_ms), per_camera
+        return float(sum(per_camera.values())), float(max(per_camera.values())), per_camera
 
     def process_group(self, packet: TrackingOverlayInputPacket) -> TrackingOverlayPacket | None:
         started_s = time.perf_counter()
@@ -755,11 +808,14 @@ class CoTracker3OverlayWorker:
 
         results: dict[int, Any] | None = None
         batch_attempt_failed = False
+        tracker_group_wall_ms = 0.0
         if self._batch_preferred() and self._batch_backend_disabled_reason is None:
             if len(active_inputs) == len(self.camera_ids):
                 batch_inputs = self._batch_policy_inputs(active_inputs)
                 try:
+                    update_started_s = time.perf_counter()
                     results = self._process_batch_updates(batch_inputs)
+                    tracker_group_wall_ms = float((time.perf_counter() - update_started_s) * 1000.0)
                     if results is not None:
                         active_inputs = batch_inputs
                 except BaseException as exc:
@@ -780,9 +836,18 @@ class CoTracker3OverlayWorker:
                 return None
             if self._batch_preferred() and self._batch_backend_disabled_reason is not None and not batch_attempt_failed:
                 self._serial_fallback_count += 1
+            update_started_s = time.perf_counter()
             results = self._process_serial_updates(active_inputs)
+            tracker_group_wall_ms = float((time.perf_counter() - update_started_s) * 1000.0)
 
-        counted_batch_model_ms = False
+        model_sum_ms, model_max_ms, per_camera_model_ms = self._model_ms_from_results(
+            results=results,
+            active_inputs=active_inputs,
+            update_mode=str(self._last_update_mode),
+        )
+        query_count_per_camera, total_query_count = self._query_count_metrics()
+        model_ms = float(model_sum_ms)
+
         for camera_idx in self.camera_ids:
             if camera_idx not in results or camera_idx not in active_inputs:
                 continue
@@ -815,12 +880,6 @@ class CoTracker3OverlayWorker:
             self._overlay_display_count_by_camera[int(camera_idx)] = int(len(selected))
             self._overlay_display_object_count_by_camera[int(camera_idx)] = int(np.count_nonzero(selected_is_object))
             self._overlay_display_controller_count_by_camera[int(camera_idx)] = int(np.count_nonzero(selected_is_controller))
-            if str(result.stats.get("update_mode", "")) == COTRACKER_UPDATE_MODE_BATCH:
-                if not counted_batch_model_ms:
-                    model_ms += float(result.stats.get("model_run_ms", 0.0))
-                    counted_batch_model_ms = True
-            else:
-                model_ms += float(result.stats.get("model_run_ms", 0.0))
             publish_starts.append(int(result.stats.get("chunk_start_idx", packet.frame_idx)))
             publish_ends.append(int(result.stats.get("chunk_end_idx", packet.frame_idx)))
 
@@ -917,11 +976,26 @@ class CoTracker3OverlayWorker:
             tracking_backend_effective_query_count=int(self._last_batch_effective_query_count),
             tracking_backend_query_count_truncated_by_camera=dict(self._last_batch_truncated_by_camera),
             tracking_backend_batch_fallback_reason=self._batch_backend_disabled_reason,
+            tracker_group_wall_ms=float(tracker_group_wall_ms),
+            tracker_model_ms_sum_per_group=float(model_sum_ms),
+            tracker_model_ms_max_per_group=float(model_max_ms),
+            per_camera_model_ms_by_camera=dict(per_camera_model_ms),
+            model_calls_per_group=int(self._last_model_calls_per_group),
+            model_instances_expected=int(self._last_model_instances_expected),
+            model_instances_actual=int(self._last_model_instances_actual),
+            query_count_per_camera=int(query_count_per_camera),
+            total_query_count_across_views=int(total_query_count),
         )
         self.output_slot.publish(overlay)
         self._published_packets += 1
         self._model_ms_samples.append(float(model_ms))
         self._e2e_ms_samples.append(float(e2e_ms))
+        self._tracker_group_wall_ms_samples.append(float(tracker_group_wall_ms))
+        self._tracker_model_ms_sum_per_group_samples.append(float(model_sum_ms))
+        self._tracker_model_ms_max_per_group_samples.append(float(model_max_ms))
+        self._model_calls_per_group_samples.append(float(self._last_model_calls_per_group))
+        for camera_idx, value in per_camera_model_ms.items():
+            self._per_camera_model_ms_samples.setdefault(int(camera_idx), []).append(float(value))
         self._publish_times_s.append(float(published_s))
         return overlay
 
@@ -1019,6 +1093,26 @@ class CoTracker3OverlayWorker:
             "model_ms_p95": _p95(self._model_ms_samples),
             "e2e_ms_median": _median(self._e2e_ms_samples),
             "e2e_ms_p95": _p95(self._e2e_ms_samples),
+            "tracker_group_wall_ms_p50": _median(self._tracker_group_wall_ms_samples),
+            "tracker_group_wall_ms_p95": _p95(self._tracker_group_wall_ms_samples),
+            "tracker_model_ms_sum_per_group_p50": _median(self._tracker_model_ms_sum_per_group_samples),
+            "tracker_model_ms_sum_per_group_p95": _p95(self._tracker_model_ms_sum_per_group_samples),
+            "tracker_model_ms_max_per_group_p50": _median(self._tracker_model_ms_max_per_group_samples),
+            "tracker_model_ms_max_per_group_p95": _p95(self._tracker_model_ms_max_per_group_samples),
+            "per_camera_model_ms_p50_by_camera": {
+                int(camera_idx): _median(samples)
+                for camera_idx, samples in self._per_camera_model_ms_samples.items()
+            },
+            "per_camera_model_ms_p95_by_camera": {
+                int(camera_idx): _p95(samples)
+                for camera_idx, samples in self._per_camera_model_ms_samples.items()
+            },
+            "model_calls_per_group": int(self._last_model_calls_per_group),
+            "model_calls_per_group_p50": _median(self._model_calls_per_group_samples),
+            "model_instances_expected": int(self._last_model_instances_expected),
+            "model_instances_actual": int(self._last_model_instances_actual),
+            "query_count_per_camera": int(self._query_count_metrics()[0]),
+            "total_query_count_across_views": int(self._query_count_metrics()[1]),
             "publish_fps": _event_fps(self._publish_times_s),
             "slot": self.output_slot.snapshot(),
         }

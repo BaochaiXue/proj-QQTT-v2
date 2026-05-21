@@ -9,8 +9,10 @@ PointTrackerAdapter contract. Keep GPU0 responsible for RealSense, masks, depth
 fusion, and rendering. Keep GPU1 responsible for CPU RGB/mask input packets and
 CPU 2D track/visibility output packets.
 
-The profiling target for this task is explicitly `4096` query points per camera,
-which means `12288` total query points across the three Demo 3.1 views.
+The live stress-test target remains `4096` query points per camera, which means
+`12288` total query points across the three Demo 3.1 views. The real
+approximately-4000-total target is `1365/view` (`4095` total), and summaries
+must clearly separate that target from the `4096/view` stress test.
 
 ## Scope
 
@@ -19,13 +21,19 @@ which means `12288` total query points across the three Demo 3.1 views.
 3. Add Demo 3.1 CLI, dry-run contract, and child-process config wiring.
 4. Add an installer for `demo_3_1_max` that does not replace CUDA Torch.
 5. Add fake-model tests proving online serial and batch-views call shapes.
-6. Add profiling harnesses focused on `4096/view` rendered live Demo 3.1.
+6. Add profiling harnesses for `1365/view` rendered live Demo 3.1 and keep
+   `4096/view` available as a stress repeat.
+7. Add group-level timing fields so serial per-camera calls are not compared
+   incorrectly with batch-views group calls.
+8. Add model-only TAPNext++ benchmark support to separate model cost from
+   RealSense/render/IPC cost.
 
 ## Non-Goals
 
 - Do not move depth, intrinsics, c2w, or world lifting into TAPNext++.
 - Do not replace the default backend.
-- Do not run or optimize `1365/view` as the primary target.
+- Do not change TAPNext++ tracking semantics while adding timing and profiling
+  harnesses.
 - Do not silently fall back from batch-views to serial.
 
 ## Verification
@@ -35,8 +43,10 @@ which means `12288` total query points across the three Demo 3.1 views.
 - Real TAPNext++ import/checkpoint smoke in `demo_3_1_max` when the install
   script is run.
 - Rendered profiling for:
-  - `tapnextpp`, `serial`, `4096/view`
-  - `tapnextpp`, `batch-views`, `4096/view`
+  - `tapnextpp`, `serial`, `1365/view`
+  - `tapnextpp`, `batch-views`, `1365/view`
+  - optional stress repeat at `4096/view`
+  - model-only B=1/B=3 recurrent update sweeps
 
 ## Implementation Notes
 
@@ -92,3 +102,16 @@ which means `12288` total query points across the three Demo 3.1 views.
   Tracker ready receive times are `7.188s` serial and `4.086s` batch-views;
   first rendered groups remain `0` in both modes with no warmup-skipped or
   render-blocked frames.
+- PASS: Added group-level tracker timing fields for serial-vs-batch
+  disambiguation: group wall, sum/max model ms per group, per-camera model ms,
+  model calls/instances, and total query count.
+- PASS: `conda run --no-capture-output -n demo_3_1_max python -m unittest tests.test_demo3_cotracker_worker.Demo3CoTrackerWorkerTest.test_batch_backend_updates_three_cameras_together tests.test_demo3_cotracker_worker.Demo3CoTrackerWorkerTest.test_serial_backend_records_group_model_timing_for_three_cameras tests.test_demo31_tapnextpp_profile_summaries`.
+- PASS: `conda run --no-capture-output -n demo_3_1_max python scripts/harness/check_all.py`.
+- PASS: Model-only TAPNext++ q1365 smoke on tracker GPU:
+  `docs/generated/demo31_tapnextpp_model_only_smoke/summary.md`.
+  B=1 q1365 recurrent model p50 `14.270ms`; B=3 q1365 recurrent model p50
+  `16.316ms`.
+- PASS: Rendered live q1365/q4096 group-timing summary:
+  `docs/generated/demo31_tapnextpp_rendered_profile/summary_q1365_q4096_live_group_timing.md`.
+  q1365 serial/batch render FPS: `7.253/7.264`; q4096 serial/batch render FPS:
+  `6.856/6.409`.

@@ -241,9 +241,52 @@ class Demo3CoTrackerWorkerTest(unittest.TestCase):
         self.assertEqual(overlay.cotracker_update_mode, "batch")  # type: ignore[union-attr]
         self.assertEqual(overlay.cotracker_batch_size, 3)  # type: ignore[union-attr]
         self.assertEqual(overlay.model_ms, 2.5)  # type: ignore[union-attr]
+        self.assertEqual(overlay.tracker_model_ms_sum_per_group, 2.5)  # type: ignore[union-attr]
+        self.assertEqual(overlay.tracker_model_ms_max_per_group, 2.5)  # type: ignore[union-attr]
+        self.assertEqual(overlay.per_camera_model_ms_by_camera, {0: 2.5, 1: 2.5, 2: 2.5})  # type: ignore[union-attr]
+        self.assertEqual(overlay.model_calls_per_group, 1)  # type: ignore[union-attr]
+        self.assertEqual(overlay.model_instances_expected, 1)  # type: ignore[union-attr]
+        self.assertEqual(overlay.model_instances_actual, 1)  # type: ignore[union-attr]
+        self.assertEqual(overlay.query_count_per_camera, 4)  # type: ignore[union-attr]
+        self.assertEqual(overlay.total_query_count_across_views, 12)  # type: ignore[union-attr]
         self.assertTrue(overlay.mask_reused)  # type: ignore[union-attr]
         self.assertEqual(overlay.mask_source_group_id, 6)  # type: ignore[union-attr]
-        self.assertEqual(worker.snapshot()["cotracker_batch_update_count"], 1)
+        snapshot = worker.snapshot()
+        self.assertEqual(snapshot["cotracker_batch_update_count"], 1)
+        self.assertEqual(snapshot["model_calls_per_group"], 1)
+        self.assertEqual(snapshot["model_instances_expected"], 1)
+        self.assertEqual(snapshot["query_count_per_camera"], 4)
+        self.assertEqual(snapshot["total_query_count_across_views"], 12)
+
+    def test_serial_backend_records_group_model_timing_for_three_cameras(self) -> None:
+        backends = {idx: _FakeOnlineBackend(window_len=1, step=1) for idx in (0, 1, 2)}
+        sampled = np.array([[0, 0], [1, 1], [2, 2], [3, 3]], dtype=np.float32)
+        worker = CoTracker3OverlayWorker(
+            camera_ids=(0, 1, 2),
+            backend_factory=lambda camera_idx: backends[int(camera_idx)],
+            query_count=4,
+            overlay_max_points_per_camera=2,
+            update_mode="serial",
+        )
+        with mock.patch("qqtt.demo.cotracker3_overlay_worker.sample_phystwin_dense", return_value=sampled):
+            overlay = worker.process_group(self._three_camera_packet(7))
+
+        self.assertIsNotNone(overlay)
+        self.assertEqual(overlay.cotracker_update_mode, "serial")  # type: ignore[union-attr]
+        self.assertEqual(overlay.model_calls_per_group, 3)  # type: ignore[union-attr]
+        self.assertEqual(overlay.model_instances_expected, 3)  # type: ignore[union-attr]
+        self.assertEqual(overlay.model_instances_actual, 3)  # type: ignore[union-attr]
+        self.assertEqual(overlay.tracker_model_ms_sum_per_group, 3.75)  # type: ignore[union-attr]
+        self.assertEqual(overlay.tracker_model_ms_max_per_group, 1.25)  # type: ignore[union-attr]
+        self.assertEqual(overlay.per_camera_model_ms_by_camera, {0: 1.25, 1: 1.25, 2: 1.25})  # type: ignore[union-attr]
+        self.assertEqual(overlay.query_count_per_camera, 4)  # type: ignore[union-attr]
+        self.assertEqual(overlay.total_query_count_across_views, 12)  # type: ignore[union-attr]
+        snapshot = worker.snapshot()
+        self.assertEqual(snapshot["cotracker_serial_group_update_count"], 1)
+        self.assertEqual(snapshot["model_calls_per_group"], 3)
+        self.assertEqual(snapshot["model_instances_expected"], 3)
+        self.assertEqual(snapshot["query_count_per_camera"], 4)
+        self.assertEqual(snapshot["total_query_count_across_views"], 12)
 
     def test_batch_min_common_query_policy_truncates_each_camera(self) -> None:
         backend = _FakeBatchBackend()

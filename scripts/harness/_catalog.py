@@ -100,6 +100,30 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/run_demo31_tapnextpp_q1365_profiles.py",
+        "hardware_external",
+        "Rendered Demo 3.1 TAPNext++ q1365/view serial vs batch-views profiles.",
+        "full",
+    ),
+    HarnessEntry(
+        "scripts/harness/summarize_demo31_tapnextpp_profiles.py",
+        "hardware_external",
+        "Summarize rendered Demo 3.1 TAPNext++ profile JSON files.",
+        "full",
+    ),
+    HarnessEntry(
+        "scripts/harness/benchmark_demo31_tapnextpp_model_only.py",
+        "hardware_external",
+        "Synthetic TAPNext++ model-only benchmark without RealSense or Open3D.",
+        "full",
+    ),
+    HarnessEntry(
+        "scripts/harness/summarize_demo31_tapnextpp_model_only.py",
+        "hardware_external",
+        "Summarize synthetic TAPNext++ model-only benchmark JSON files.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/benchmark_ffs_configs.py",
         "hardware_external",
         "Saved-pair PyTorch FFS config screening; not live 3-camera realtime.",

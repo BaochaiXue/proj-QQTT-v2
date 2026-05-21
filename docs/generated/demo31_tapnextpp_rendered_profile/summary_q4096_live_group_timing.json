@@ -1,0 +1,92 @@
+{
+  "rows": [
+    {
+      "execution_mode": "batch-views",
+      "gpu0_mem_used_gb": 3.39813232421875,
+      "gpu1_mem_used_gb": 8.43780517578125,
+      "input_drop_count": 0,
+      "lift_cache_miss_count": 0,
+      "model_calls_per_group": 1,
+      "model_instances_actual": 1,
+      "model_instances_expected": 1,
+      "per_camera_model_ms_p50_by_camera": {
+        "0": 147.86578369140625,
+        "1": 147.86578369140625,
+        "2": 147.86578369140625
+      },
+      "per_camera_model_ms_p95_by_camera": {
+        "0": 149.21897888183594,
+        "1": 149.21897888183594,
+        "2": 149.21897888183594
+      },
+      "profile_json": "docs/generated/demo31_tapnextpp_rendered_profile/batch_views_q4096_live_45s.json",
+      "query_count_per_camera": 4096,
+      "rendered_fps": 6.408553875184247,
+      "rendered_groups_after_warmup": 243,
+      "result_drop_count": 0,
+      "stale_overlay_count": 0,
+      "surface_snap_accept": 0,
+      "surface_snap_reject": 0,
+      "target_class": "stress_12288_total",
+      "total_query_count_across_views": 12288,
+      "tracker_batch_size": 3,
+      "tracker_e2e_ms_p50": 150.95033264160156,
+      "tracker_e2e_ms_p95": 153.5879669189453,
+      "tracker_group_wall_ms_p50": 150.76480102539062,
+      "tracker_group_wall_ms_p95": 153.38507080078125,
+      "tracker_model_ms_max_per_group_p50": 147.86578369140625,
+      "tracker_model_ms_max_per_group_p95": 149.21897888183594,
+      "tracker_model_ms_p50": 147.86578369140625,
+      "tracker_model_ms_p95": 149.21897888183594,
+      "tracker_model_ms_sum_per_group_p50": 147.86578369140625,
+      "tracker_model_ms_sum_per_group_p95": 149.21897888183594,
+      "tracker_publish_fps": 6.407099209865238,
+      "tracking_backend_execution_mode": "batch-views",
+      "valid_rendered_profile": true
+    },
+    {
+      "execution_mode": "serial",
+      "gpu0_mem_used_gb": 3.39813232421875,
+      "gpu1_mem_used_gb": 8.18756103515625,
+      "input_drop_count": 0,
+      "lift_cache_miss_count": 0,
+      "model_calls_per_group": 3,
+      "model_instances_actual": 3,
+      "model_instances_expected": 3,
+      "per_camera_model_ms_p50_by_camera": {
+        "0": 45.202857971191406,
+        "1": 43.37895965576172,
+        "2": 47.431434631347656
+      },
+      "per_camera_model_ms_p95_by_camera": {
+        "0": 47.02619934082031,
+        "1": 47.166629791259766,
+        "2": 48.5701904296875
+      },
+      "profile_json": "docs/generated/demo31_tapnextpp_rendered_profile/serial_q4096_live_45s.json",
+      "query_count_per_camera": 4096,
+      "rendered_fps": 6.855887442233267,
+      "rendered_groups_after_warmup": 261,
+      "result_drop_count": 0,
+      "stale_overlay_count": 0,
+      "surface_snap_accept": 0,
+      "surface_snap_reject": 0,
+      "target_class": "stress_12288_total",
+      "total_query_count_across_views": 12288,
+      "tracker_batch_size": 1,
+      "tracker_e2e_ms_p50": 140.43972778320312,
+      "tracker_e2e_ms_p95": 143.6854248046875,
+      "tracker_group_wall_ms_p50": 140.25271606445312,
+      "tracker_group_wall_ms_p95": 143.50355529785156,
+      "tracker_model_ms_max_per_group_p50": 47.54806137084961,
+      "tracker_model_ms_max_per_group_p95": 48.58040237426758,
+      "tracker_model_ms_p50": 136.0456085205078,
+      "tracker_model_ms_p95": 138.0719757080078,
+      "tracker_model_ms_sum_per_group_p50": 136.0456085205078,
+      "tracker_model_ms_sum_per_group_p95": 138.0719757080078,
+      "tracker_publish_fps": 6.855936387288176,
+      "tracking_backend_execution_mode": "serial",
+      "valid_rendered_profile": true
+    }
+  ]
+}

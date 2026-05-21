@@ -1,0 +1,33 @@
+{
+  "autocast_dtype": "fp16",
+  "backend": "tapnextpp",
+  "batch_size": 3,
+  "compile": false,
+  "cuda_event_ms_max": 19.556822000595275,
+  "cuda_event_ms_p50": 16.31573499980732,
+  "cuda_event_ms_p95": 19.395716600411106,
+  "device": "cuda:1",
+  "first_update_model_ms": 17.951377001736546,
+  "first_update_ms": 61.42125399856013,
+  "image_size": [
+    256,
+    256
+  ],
+  "measured_frames": 5,
+  "measured_wall_fps": 16.301209099193038,
+  "postprocess_ms_max": 42.642156997317215,
+  "postprocess_ms_p50": 42.292707999877166,
+  "postprocess_ms_p95": 42.57322059784201,
+  "preprocess_ms_max": 1.5625409978383686,
+  "preprocess_ms_p50": 0.9477329986111727,
+  "preprocess_ms_p95": 1.4500089979264885,
+  "query_count_per_view": 1365,
+  "recurrent_update_ms_max": 19.556822000595275,
+  "recurrent_update_ms_p50": 16.31573499980732,
+  "recurrent_update_ms_p95": 19.395716600411106,
+  "total_query_count": 4095,
+  "wall_ms_max": 63.79693299822975,
+  "wall_ms_p50": 59.597407998808194,
+  "wall_ms_p95": 63.36277519876603,
+  "warmup_frames": 2
+}

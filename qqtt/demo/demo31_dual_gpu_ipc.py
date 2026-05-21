@@ -100,6 +100,15 @@ class TrackingResultLitePacket:
     tracking_backend_effective_query_count: int = 0
     tracking_backend_query_count_truncated_by_camera: dict[int, int] = field(default_factory=dict)
     tracking_backend_batch_fallback_reason: str | None = None
+    tracker_group_wall_ms: float = 0.0
+    tracker_model_ms_sum_per_group: float = 0.0
+    tracker_model_ms_max_per_group: float = 0.0
+    per_camera_model_ms_by_camera: dict[int, float] = field(default_factory=dict)
+    model_calls_per_group: int = 0
+    model_instances_expected: int = 0
+    model_instances_actual: int = 0
+    query_count_per_camera: int = 0
+    total_query_count_across_views: int = 0
 
     @property
     def seq(self) -> int:
@@ -213,6 +222,22 @@ class TrackingResultLitePacket:
                 ).items()
             },
             tracking_backend_batch_fallback_reason=getattr(packet, "tracking_backend_batch_fallback_reason", None),
+            tracker_group_wall_ms=float(getattr(packet, "tracker_group_wall_ms", 0.0) or 0.0),
+            tracker_model_ms_sum_per_group=float(
+                getattr(packet, "tracker_model_ms_sum_per_group", getattr(packet, "model_ms", 0.0)) or 0.0
+            ),
+            tracker_model_ms_max_per_group=float(
+                getattr(packet, "tracker_model_ms_max_per_group", getattr(packet, "model_ms", 0.0)) or 0.0
+            ),
+            per_camera_model_ms_by_camera={
+                int(camera_idx): float(value)
+                for camera_idx, value in getattr(packet, "per_camera_model_ms_by_camera", {}).items()
+            },
+            model_calls_per_group=int(getattr(packet, "model_calls_per_group", 0) or 0),
+            model_instances_expected=int(getattr(packet, "model_instances_expected", 0) or 0),
+            model_instances_actual=int(getattr(packet, "model_instances_actual", 0) or 0),
+            query_count_per_camera=int(getattr(packet, "query_count_per_camera", 0) or 0),
+            total_query_count_across_views=int(getattr(packet, "total_query_count_across_views", 0) or 0),
         )
 
     def mark_stale(self) -> "TrackingResultLitePacket":
@@ -261,6 +286,15 @@ class TrackingResultLitePacket:
                 self.tracking_backend_query_count_truncated_by_camera
             ),
             tracking_backend_batch_fallback_reason=self.tracking_backend_batch_fallback_reason,
+            tracker_group_wall_ms=self.tracker_group_wall_ms,
+            tracker_model_ms_sum_per_group=self.tracker_model_ms_sum_per_group,
+            tracker_model_ms_max_per_group=self.tracker_model_ms_max_per_group,
+            per_camera_model_ms_by_camera=dict(self.per_camera_model_ms_by_camera),
+            model_calls_per_group=self.model_calls_per_group,
+            model_instances_expected=self.model_instances_expected,
+            model_instances_actual=self.model_instances_actual,
+            query_count_per_camera=self.query_count_per_camera,
+            total_query_count_across_views=self.total_query_count_across_views,
         )
 
 

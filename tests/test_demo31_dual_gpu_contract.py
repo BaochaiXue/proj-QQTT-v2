@@ -1301,6 +1301,19 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "cotracker_model_ms_p95": 150.0,
                 "cotracker_e2e_ms_median": 180.0,
                 "cotracker_e2e_ms_p95": 210.0,
+                "tracker_group_wall_ms_p50": 140.0,
+                "tracker_group_wall_ms_p95": 190.0,
+                "tracker_model_ms_sum_per_group_p50": 136.0,
+                "tracker_model_ms_sum_per_group_p95": 180.0,
+                "tracker_model_ms_max_per_group_p50": 48.0,
+                "tracker_model_ms_max_per_group_p95": 60.0,
+                "per_camera_model_ms_p50_by_camera": {0: 45.0, 1: 46.0, 2: 48.0},
+                "per_camera_model_ms_p95_by_camera": {0: 58.0, 1: 59.0, 2: 60.0},
+                "model_calls_per_group": 3,
+                "model_instances_expected": 3,
+                "model_instances_actual": 3,
+                "query_count_per_camera": 1365,
+                "total_query_count_across_views": 4095,
                 "process": {"pid": 42, "ready": {"total_init_ms": 1.0}},
             },
             shared_payload={"tracking_update_hz": 99.0},
@@ -1312,6 +1325,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(summary["cotracker_result_count"], 3)
         self.assertEqual(summary["cotracker_model_ms_median"], 123.0)
         self.assertEqual(summary["cotracker_e2e_ms_p95"], 210.0)
+        self.assertEqual(summary["tracker_group_wall_ms_p50"], 140.0)
+        self.assertEqual(summary["tracker_model_ms_sum_per_group_p50"], 136.0)
+        self.assertEqual(summary["tracker_model_ms_max_per_group_p50"], 48.0)
+        self.assertEqual(summary["per_camera_model_ms_p50_by_camera"], {0: 45.0, 1: 46.0, 2: 48.0})
+        self.assertEqual(summary["model_calls_per_group"], 3)
+        self.assertEqual(summary["model_instances_expected"], 3)
+        self.assertEqual(summary["query_count_per_camera"], 1365)
+        self.assertEqual(summary["total_query_count_across_views"], 4095)
         self.assertNotEqual(summary["cotracker_publish_fps"], 99.0)
 
     def test_track_mode_is_not_public_cli(self) -> None:

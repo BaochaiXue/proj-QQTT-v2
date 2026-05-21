@@ -249,6 +249,40 @@ def _merge_cotracker_process_snapshot_metrics(
             "tracker_e2e_ms_median": _float_value("cotracker_e2e_ms_median", worker_key="e2e_ms_median"),
             "cotracker_e2e_ms_p95": _float_value("cotracker_e2e_ms_p95", worker_key="e2e_ms_p95"),
             "tracker_e2e_ms_p95": _float_value("cotracker_e2e_ms_p95", worker_key="e2e_ms_p95"),
+            "tracker_group_wall_ms_p50": _float_value("tracker_group_wall_ms_p50", worker_key="tracker_group_wall_ms_p50"),
+            "tracker_group_wall_ms_p95": _float_value("tracker_group_wall_ms_p95", worker_key="tracker_group_wall_ms_p95"),
+            "tracker_model_ms_sum_per_group_p50": _float_value(
+                "tracker_model_ms_sum_per_group_p50",
+                worker_key="tracker_model_ms_sum_per_group_p50",
+            ),
+            "tracker_model_ms_sum_per_group_p95": _float_value(
+                "tracker_model_ms_sum_per_group_p95",
+                worker_key="tracker_model_ms_sum_per_group_p95",
+            ),
+            "tracker_model_ms_max_per_group_p50": _float_value(
+                "tracker_model_ms_max_per_group_p50",
+                worker_key="tracker_model_ms_max_per_group_p50",
+            ),
+            "tracker_model_ms_max_per_group_p95": _float_value(
+                "tracker_model_ms_max_per_group_p95",
+                worker_key="tracker_model_ms_max_per_group_p95",
+            ),
+            "per_camera_model_ms_p50_by_camera": snapshot.get(
+                "per_camera_model_ms_p50_by_camera",
+                worker.get("per_camera_model_ms_p50_by_camera", {}),
+            ),
+            "per_camera_model_ms_p95_by_camera": snapshot.get(
+                "per_camera_model_ms_p95_by_camera",
+                worker.get("per_camera_model_ms_p95_by_camera", {}),
+            ),
+            "model_calls_per_group": _int_value("model_calls_per_group", worker_key="model_calls_per_group"),
+            "model_instances_expected": _int_value("model_instances_expected", worker_key="model_instances_expected"),
+            "model_instances_actual": _int_value("model_instances_actual", worker_key="model_instances_actual"),
+            "query_count_per_camera": _int_value("query_count_per_camera", worker_key="query_count_per_camera"),
+            "total_query_count_across_views": _int_value(
+                "total_query_count_across_views",
+                worker_key="total_query_count_across_views",
+            ),
         }
     )
     trackable = snapshot.get("trackable_mask_stats")
@@ -2542,6 +2576,10 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_overlay_age_ms_samples: list[float] = []
             self.demo31_overlay_model_ms_samples: list[float] = []
             self.demo31_overlay_e2e_ms_samples: list[float] = []
+            self.demo31_tracker_group_wall_ms_samples: list[float] = []
+            self.demo31_tracker_model_ms_sum_per_group_samples: list[float] = []
+            self.demo31_tracker_model_ms_max_per_group_samples: list[float] = []
+            self.demo31_per_camera_model_ms_samples: dict[int, list[float]] = {}
             self.demo31_cotracker_publish_times_s: list[float] = []
             self.demo31_overlay_render_group_delta_samples: list[float] = []
             self.demo31_tracking_mask_age_ms_samples: list[float] = []
@@ -3880,6 +3918,23 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     ),
                     "cotracker_model_ms": None if overlay is None else float(overlay.model_ms),
                     "cotracker_e2e_ms": None if overlay is None else float(overlay.e2e_ms),
+                    "tracker_group_wall_ms": None if overlay is None else float(overlay.tracker_group_wall_ms),
+                    "tracker_model_ms_sum_per_group": (
+                        None if overlay is None else float(overlay.tracker_model_ms_sum_per_group)
+                    ),
+                    "tracker_model_ms_max_per_group": (
+                        None if overlay is None else float(overlay.tracker_model_ms_max_per_group)
+                    ),
+                    "per_camera_model_ms_by_camera": (
+                        {} if overlay is None else dict(overlay.per_camera_model_ms_by_camera)
+                    ),
+                    "model_calls_per_group": None if overlay is None else int(overlay.model_calls_per_group),
+                    "model_instances_expected": None if overlay is None else int(overlay.model_instances_expected),
+                    "model_instances_actual": None if overlay is None else int(overlay.model_instances_actual),
+                    "query_count_per_camera": None if overlay is None else int(overlay.query_count_per_camera),
+                    "total_query_count_across_views": (
+                        None if overlay is None else int(overlay.total_query_count_across_views)
+                    ),
                     "cotracker_publish_to_render_ms": (
                         None if overlay is None else float((overlay_start_s - float(overlay.publish_timestamp_s)) * 1000.0)
                     ),
@@ -3975,6 +4030,11 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_overlay_age_ms_samples.append(float(age_ms))
             self.demo31_overlay_model_ms_samples.append(float(result.model_ms))
             self.demo31_overlay_e2e_ms_samples.append(float(result.e2e_ms))
+            self.demo31_tracker_group_wall_ms_samples.append(float(result.tracker_group_wall_ms))
+            self.demo31_tracker_model_ms_sum_per_group_samples.append(float(result.tracker_model_ms_sum_per_group))
+            self.demo31_tracker_model_ms_max_per_group_samples.append(float(result.tracker_model_ms_max_per_group))
+            for camera_idx, value in result.per_camera_model_ms_by_camera.items():
+                self.demo31_per_camera_model_ms_samples.setdefault(int(camera_idx), []).append(float(value))
             self.demo31_cotracker_publish_times_s.append(float(result.publish_timestamp_s))
             self.demo31_tracking_mask_selection_count += 1
             self.demo31_tracking_mask_reuse_count += int(bool(result.mask_reused))
@@ -4018,6 +4078,15 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "cotracker_serial_fallback_count": int(result.cotracker_serial_fallback_count),
                 "cotracker_batch_error_count": int(result.cotracker_batch_error_count),
                 "cotracker_batch_disabled_reason": result.cotracker_batch_disabled_reason,
+                "tracker_group_wall_ms": float(result.tracker_group_wall_ms),
+                "tracker_model_ms_sum_per_group": float(result.tracker_model_ms_sum_per_group),
+                "tracker_model_ms_max_per_group": float(result.tracker_model_ms_max_per_group),
+                "per_camera_model_ms_by_camera": dict(result.per_camera_model_ms_by_camera),
+                "model_calls_per_group": int(result.model_calls_per_group),
+                "model_instances_expected": int(result.model_instances_expected),
+                "model_instances_actual": int(result.model_instances_actual),
+                "query_count_per_camera": int(result.query_count_per_camera),
+                "total_query_count_across_views": int(result.total_query_count_across_views),
                 "tracking_mask_source_group_id": (
                     None if result.mask_source_group_id is None else int(result.mask_source_group_id)
                 ),
@@ -4035,6 +4104,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             age = percentile_summary(self.demo31_overlay_age_ms_samples)
             model = percentile_summary(self.demo31_overlay_model_ms_samples)
             e2e = percentile_summary(self.demo31_overlay_e2e_ms_samples)
+            tracker_group_wall = percentile_summary(self.demo31_tracker_group_wall_ms_samples)
+            tracker_model_sum = percentile_summary(self.demo31_tracker_model_ms_sum_per_group_samples)
+            tracker_model_max = percentile_summary(self.demo31_tracker_model_ms_max_per_group_samples)
             overlay_delta = percentile_summary(self.demo31_overlay_render_group_delta_samples)
             tracking_mask_age = percentile_summary(self.demo31_tracking_mask_age_ms_samples)
             with self.demo31_pending_render_lock:
@@ -4072,6 +4144,27 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "cotracker_model_ms_p95": float(model["p95"]),
                 "cotracker_e2e_ms_median": float(e2e["median"]),
                 "cotracker_e2e_ms_p95": float(e2e["p95"]),
+                "tracker_group_wall_ms_p50": float(tracker_group_wall["median"]),
+                "tracker_group_wall_ms_p95": float(tracker_group_wall["p95"]),
+                "tracker_model_ms_sum_per_group_p50": float(tracker_model_sum["median"]),
+                "tracker_model_ms_sum_per_group_p95": float(tracker_model_sum["p95"]),
+                "tracker_model_ms_max_per_group_p50": float(tracker_model_max["median"]),
+                "tracker_model_ms_max_per_group_p95": float(tracker_model_max["p95"]),
+                "per_camera_model_ms_p50_by_camera": {
+                    int(camera_idx): float(percentile_summary(samples)["median"])
+                    for camera_idx, samples in self.demo31_per_camera_model_ms_samples.items()
+                },
+                "per_camera_model_ms_p95_by_camera": {
+                    int(camera_idx): float(percentile_summary(samples)["p95"])
+                    for camera_idx, samples in self.demo31_per_camera_model_ms_samples.items()
+                },
+                "model_calls_per_group": int(self.demo31_tracking_stats.get("model_calls_per_group", 0) or 0),
+                "model_instances_expected": int(self.demo31_tracking_stats.get("model_instances_expected", 0) or 0),
+                "model_instances_actual": int(self.demo31_tracking_stats.get("model_instances_actual", 0) or 0),
+                "query_count_per_camera": int(self.demo31_tracking_stats.get("query_count_per_camera", 0) or 0),
+                "total_query_count_across_views": int(
+                    self.demo31_tracking_stats.get("total_query_count_across_views", 0) or 0
+                ),
                 "overlay_render_group_delta_median": float(overlay_delta["median"]),
                 "overlay_render_group_delta_p95": float(overlay_delta["p95"]),
                 "overlay_render_group_mismatch_count": int(self.demo31_overlay_render_group_mismatch_count),
@@ -4353,6 +4446,29 @@ class Demo31Runtime:
                     "cotracker_model_ms_p95": float(snapshot.get("cotracker_model_ms_p95", 0.0) or 0.0),
                     "cotracker_e2e_ms_median": float(snapshot.get("cotracker_e2e_ms_median", 0.0) or 0.0),
                     "cotracker_e2e_ms_p95": float(snapshot.get("cotracker_e2e_ms_p95", 0.0) or 0.0),
+                    "tracker_group_wall_ms_p50": float(snapshot.get("tracker_group_wall_ms_p50", 0.0) or 0.0),
+                    "tracker_group_wall_ms_p95": float(snapshot.get("tracker_group_wall_ms_p95", 0.0) or 0.0),
+                    "tracker_model_ms_sum_per_group_p50": float(
+                        snapshot.get("tracker_model_ms_sum_per_group_p50", 0.0) or 0.0
+                    ),
+                    "tracker_model_ms_sum_per_group_p95": float(
+                        snapshot.get("tracker_model_ms_sum_per_group_p95", 0.0) or 0.0
+                    ),
+                    "tracker_model_ms_max_per_group_p50": float(
+                        snapshot.get("tracker_model_ms_max_per_group_p50", 0.0) or 0.0
+                    ),
+                    "tracker_model_ms_max_per_group_p95": float(
+                        snapshot.get("tracker_model_ms_max_per_group_p95", 0.0) or 0.0
+                    ),
+                    "per_camera_model_ms_p50_by_camera": snapshot.get("per_camera_model_ms_p50_by_camera", {}),
+                    "per_camera_model_ms_p95_by_camera": snapshot.get("per_camera_model_ms_p95_by_camera", {}),
+                    "model_calls_per_group": int(tracking_stats.get("model_calls_per_group", 0) or 0),
+                    "model_instances_expected": int(tracking_stats.get("model_instances_expected", 0) or 0),
+                    "model_instances_actual": int(tracking_stats.get("model_instances_actual", 0) or 0),
+                    "query_count_per_camera": int(tracking_stats.get("query_count_per_camera", 0) or 0),
+                    "total_query_count_across_views": int(
+                        tracking_stats.get("total_query_count_across_views", 0) or 0
+                    ),
                     "overlay_age_ms_median": float(snapshot.get("overlay_age_ms_median", 0.0) or 0.0),
                     "overlay_age_ms_p95": float(snapshot.get("overlay_age_ms_p95", 0.0) or 0.0),
                     "overlay_render_group_delta_median": float(
