@@ -57,6 +57,24 @@ which means `12288` total query points across the three Demo 3.1 views.
 - PASS: Real adapter CUDA smoke on tracker GPU with TAPNext++ checkpoint:
   serial `B=1,N=4` and batch-views `B=3,N=4`.
 - PASS: `conda run --no-capture-output -n demo_3_1_max python scripts/harness/check_all.py`.
-
-Not run yet: rendered live RealSense/Open3D profile for `4096/view`; this
-requires the physical camera/render session and is the next measurement step.
+- PASS: Fixed TAPNext++ PyTorch adapter preprocessing to match the official
+  DAVIS path: RGB frames are `float32 [-1, 1]`, not `[0, 255]`.
+- PASS: Fixed TAPNext++ PyTorch raw track parsing to keep the model's native
+  `yx` output convention before converting back to QQTT original-frame `yx`.
+- PASS: Real TAPNext++ CUDA smoke on tracker GPU with an `848x480` frame and
+  query points confirms first-frame output stays near the queries and in image
+  bounds.
+- PASS: Rendered live RealSense/Open3D serial profile for
+  `tapnextpp`, `4096/view`, `120s`:
+  `docs/generated/demo31_tapnextpp_rendered_profile/serial_q4096_live_fixed_yx_120s_shared_runtime.json`.
+  Shared runtime after-warmup render FPS: `6.373`; rendered groups: `719`.
+  Tracker process first render group: `0`; warmup skipped: `0`; render blocked:
+  `0`; query counts: `{0: 4096, 1: 4096, 2: 4096}`.
+- PASS: Rendered live RealSense/Open3D batch-views profile for
+  `tapnextpp`, `4096/view`, `120s`:
+  `docs/generated/demo31_tapnextpp_rendered_profile/batch_views_q4096_live_fixed_yx_120s_shared_runtime.json`.
+  Shared runtime after-warmup render FPS: `5.730`; rendered groups: `647`.
+  Tracker process first render group: `0`; warmup skipped: `0`; render blocked:
+  `0`; query counts: `{0: 4096, 1: 4096, 2: 4096}`; batch errors: `0`.
+- PASS: Committed summary:
+  `docs/generated/demo31_tapnextpp_rendered_profile/summary_q4096_live_fixed_yx.md`.

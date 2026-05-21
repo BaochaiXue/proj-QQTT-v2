@@ -631,7 +631,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 self.assertEqual(contract["tapnextpp_checkpoint"], "checkpoints/tapnextpp/tapnextpp_ckpt.pt")
                 self.assertEqual(contract["tapnextpp_image_size"], [256, 256])
                 self.assertEqual(contract["tapnextpp_autocast_dtype"], "fp16")
-                self.assertEqual(contract["tapnextpp_frame_value_range"], "0_255_float")
+                self.assertEqual(contract["tapnextpp_frame_value_range"], "minus1_1_float")
                 self.assertEqual(config.cotracker_backend, "tapnextpp")
                 self.assertEqual(config.backend_execution_mode, mode)
                 self.assertEqual(config.update_mode, update_mode)

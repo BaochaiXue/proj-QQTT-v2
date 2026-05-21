@@ -1718,7 +1718,7 @@ def build_contract(
         "tapnextpp_certainty_radius": int(args.tapnextpp_certainty_radius),
         "tapnextpp_certainty_threshold": float(args.tapnextpp_certainty_threshold),
         "tapnextpp_compile": bool(args.tapnextpp_compile),
-        "tapnextpp_frame_value_range": "0_255_float",
+        "tapnextpp_frame_value_range": "minus1_1_float",
         "tracker_env_name": "demo_3_1_max",
         "ffs_contract": (
             {

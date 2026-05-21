@@ -238,9 +238,9 @@ class _FakeTAPNextPPModel:
         batch_size = int(video.shape[0])
         query_count = int(source_queries.shape[1])
         batch_offsets = torch.arange(batch_size, device=video.device, dtype=source_queries.dtype).reshape(batch_size, 1)
-        tracks_xy = torch.empty((batch_size, 1, query_count, 2), device=video.device, dtype=source_queries.dtype)
-        tracks_xy[:, 0, :, 0] = source_queries[:, :, 2] + batch_offsets
-        tracks_xy[:, 0, :, 1] = source_queries[:, :, 1] + 2.0 * batch_offsets
+        tracks_yx = torch.empty((batch_size, 1, query_count, 2), device=video.device, dtype=source_queries.dtype)
+        tracks_yx[:, 0, :, 0] = source_queries[:, :, 1] + 2.0 * batch_offsets
+        tracks_yx[:, 0, :, 1] = source_queries[:, :, 2] + batch_offsets
         visible_logits = torch.ones((batch_size, 1, query_count, 1), device=video.device, dtype=source_queries.dtype)
         if query_count > 1:
             visible_logits[:, 0, 1, 0] = -1.0
@@ -248,11 +248,13 @@ class _FakeTAPNextPPModel:
         self.call_history.append(
             {
                 "video_shape": self.last_video_shape,
+                "video_min": float(video.detach().cpu().amin().item()),
+                "video_max": float(video.detach().cpu().amax().item()),
                 "query_shape": self.last_query_shape,
                 "used_state": self.last_used_state,
             }
         )
-        return tracks_xy, torch.zeros((batch_size, 1, query_count, 512), device=video.device), visible_logits, next_state
+        return tracks_yx, torch.zeros((batch_size, 1, query_count, 512), device=video.device), visible_logits, next_state
 
 
 class PointTrackerAdaptersTest(unittest.TestCase):
@@ -369,13 +371,17 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         query = np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32)
         adapter.initialize([], query)
         adapter.update(np.zeros((256, 256, 3), dtype=np.uint8))
-        result = adapter.update(np.ones((256, 256, 3), dtype=np.uint8))
+        result = adapter.update(np.full((256, 256, 3), 255, dtype=np.uint8))
 
         self.assertEqual(fake.calls, 2)
         self.assertEqual(fake.call_history[0]["video_shape"], (1, 1, 256, 256, 3))
+        self.assertEqual(fake.call_history[0]["video_min"], -1.0)
+        self.assertEqual(fake.call_history[0]["video_max"], -1.0)
         self.assertEqual(fake.call_history[0]["query_shape"], (1, 2, 3))
         self.assertFalse(bool(fake.call_history[0]["used_state"]))
         self.assertEqual(fake.call_history[1]["video_shape"], (1, 1, 256, 256, 3))
+        self.assertEqual(fake.call_history[1]["video_min"], 1.0)
+        self.assertEqual(fake.call_history[1]["video_max"], 1.0)
         self.assertIsNone(fake.call_history[1]["query_shape"])
         self.assertTrue(bool(fake.call_history[1]["used_state"]))
         np.testing.assert_allclose(fake.last_queries if fake.last_queries is not None else query, query)

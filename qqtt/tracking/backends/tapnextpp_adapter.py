@@ -68,7 +68,7 @@ class TAPNextPPAdapter:
         self.certainty_threshold = float(certainty_threshold)
         self.compile_model = bool(compile_model)
         self.reset_on_reinitialize = bool(reset_on_reinitialize)
-        self.frame_value_range = "0_255_float"
+        self.frame_value_range = "minus1_1_float"
         self._model: Any | None = None
         self._tracker_certainty: Any | None = None
         self._model_load_ms = 0.0
@@ -313,6 +313,7 @@ class TAPNextPPAdapter:
                 )
         stacked = np.stack(arrays, axis=0)
         tensor = torch.from_numpy(stacked).to(device=self.device, dtype=torch.float32)
+        tensor = tensor.mul(2.0 / 255.0).sub(1.0)
         source_h, source_w = int(shape[0]), int(shape[1])
         target_h, target_w = self.image_size
         if (source_h, source_w) != (target_h, target_w):
@@ -330,8 +331,8 @@ class TAPNextPPAdapter:
         points = np.asarray(query_points_yx, dtype=np.float32).reshape(-1, 2)
         source_h, source_w = int(source_shape_hw[0]), int(source_shape_hw[1])
         target_h, target_w = self.image_size
-        y_scale = float(target_h - 1) / float(max(source_h - 1, 1))
-        x_scale = float(target_w - 1) / float(max(source_w - 1, 1))
+        y_scale = float(target_h) / float(max(source_h, 1))
+        x_scale = float(target_w) / float(max(source_w, 1))
         y_scaled = points[:, 0:1] * np.float32(y_scale)
         x_scaled = points[:, 1:2] * np.float32(x_scale)
         t = np.zeros((len(points), 1), dtype=np.float32)
@@ -404,23 +405,23 @@ class TAPNextPPAdapter:
             raise ValueError(f"TAPNext++ visible logits shape {visible.shape} does not match expected {expected}")
         return (visible > 0.0).astype(np.float32)
 
-    def _scaled_tracks_xy_to_original_yx(
+    def _scaled_tracks_yx_to_original_yx(
         self,
-        tracks_xy_b_t_n: np.ndarray,
+        tracks_yx_b_t_n: np.ndarray,
         *,
         source_shapes_hw: Sequence[tuple[int, int]],
     ) -> np.ndarray:
-        tracks_xy = np.asarray(tracks_xy_b_t_n, dtype=np.float32)
-        batch_size = tracks_xy.shape[0]
+        tracks_yx_scaled = np.asarray(tracks_yx_b_t_n, dtype=np.float32)
+        batch_size = tracks_yx_scaled.shape[0]
         if len(source_shapes_hw) != batch_size:
             raise ValueError("source_shapes_hw length must match TAPNext++ batch size.")
         target_h, target_w = self.image_size
-        tracks_yx = np.empty_like(tracks_xy, dtype=np.float32)
+        tracks_yx = np.empty_like(tracks_yx_scaled, dtype=np.float32)
         for batch_idx, (source_h, source_w) in enumerate(source_shapes_hw):
-            y_scale = float(max(int(source_h) - 1, 1)) / float(max(target_h - 1, 1))
-            x_scale = float(max(int(source_w) - 1, 1)) / float(max(target_w - 1, 1))
-            tracks_yx[batch_idx, ..., 0] = tracks_xy[batch_idx, ..., 1] * np.float32(y_scale)
-            tracks_yx[batch_idx, ..., 1] = tracks_xy[batch_idx, ..., 0] * np.float32(x_scale)
+            y_scale = float(max(int(source_h), 1)) / float(max(target_h, 1))
+            x_scale = float(max(int(source_w), 1)) / float(max(target_w, 1))
+            tracks_yx[batch_idx, ..., 0] = tracks_yx_scaled[batch_idx, ..., 0] * np.float32(y_scale)
+            tracks_yx[batch_idx, ..., 1] = tracks_yx_scaled[batch_idx, ..., 1] * np.float32(x_scale)
         return np.ascontiguousarray(tracks_yx, dtype=np.float32)
 
     def _parse_output(
@@ -432,7 +433,7 @@ class TAPNextPPAdapter:
         source_shapes_hw: Sequence[tuple[int, int]],
     ) -> tuple[np.ndarray, np.ndarray, Any]:
         tracks_raw, _track_logits, visible_raw, state = self._extract_output(output)
-        tracks_xy = self._normalize_tracks_time_shape(
+        tracks_yx_scaled = self._normalize_tracks_time_shape(
             self._to_numpy(tracks_raw),
             batch_size=batch_size,
             query_count=query_count,
@@ -444,8 +445,8 @@ class TAPNextPPAdapter:
             query_count=query_count,
             time_steps=1,
         )
-        tracks_yx = self._scaled_tracks_xy_to_original_yx(
-            tracks_xy,
+        tracks_yx = self._scaled_tracks_yx_to_original_yx(
+            tracks_yx_scaled,
             source_shapes_hw=source_shapes_hw,
         )
         return tracks_yx, visibility, state
