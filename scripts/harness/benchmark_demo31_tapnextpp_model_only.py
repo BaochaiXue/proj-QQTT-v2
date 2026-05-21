@@ -17,6 +17,32 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = ROOT / "docs/generated/demo31_tapnextpp_model_only"
 SUMMARY_SCRIPT = ROOT / "scripts/harness/summarize_demo31_tapnextpp_model_only.py"
 
+TIMING_FIELDS = (
+    "recurrent_update_ms",
+    "preprocess_ms",
+    "output_extract_ms",
+    "tracks_to_cpu_ms",
+    "visibility_to_cpu_ms",
+    "tracks_normalize_shape_ms",
+    "visibility_normalize_shape_ms",
+    "normalize_shape_ms",
+    "scale_to_original_ms",
+    "postprocess_ms",
+    "result_pack_ms",
+    "postprocess_with_pack_ms",
+    "cuda_event_ms",
+    "wall_ms",
+    "wall_with_pack_ms",
+)
+
+VALUE_FIELDS = (
+    "tracks_raw_numel",
+    "visible_raw_numel",
+    "tracks_cpu_bytes",
+    "visibility_cpu_bytes",
+    "postprocess_cpu_bytes",
+)
+
 
 def _csv_ints(value: str) -> tuple[int, ...]:
     return tuple(int(part.strip()) for part in str(value).split(",") if part.strip())
@@ -142,13 +168,9 @@ def _run_case(
     for idx in range(int(args.warmup_frames)):
         _run_update(adapter, batch_size=int(batch_size), frame=_frame(rng, image_size, idx + 1))
 
-    measured: dict[str, list[float]] = {
-        "recurrent_update_ms": [],
-        "preprocess_ms": [],
-        "postprocess_ms": [],
-        "cuda_event_ms": [],
-        "wall_ms": [],
-    }
+    measured: dict[str, list[float]] = {name: [] for name in TIMING_FIELDS}
+    measured_values: dict[str, list[float]] = {name: [] for name in VALUE_FIELDS}
+    last_stats: Mapping[str, Any] = {}
     started_s = time.perf_counter()
     for idx in range(int(args.measured_frames)):
         stats = _run_update(
@@ -156,11 +178,16 @@ def _run_case(
             batch_size=int(batch_size),
             frame=_frame(rng, image_size, idx + 1 + int(args.warmup_frames)),
         )
+        last_stats = stats
         measured["recurrent_update_ms"].append(float(stats.get("model_run_ms", 0.0) or 0.0))
-        measured["preprocess_ms"].append(float(stats.get("preprocess_ms", 0.0) or 0.0))
-        measured["postprocess_ms"].append(float(stats.get("postprocess_ms", 0.0) or 0.0))
-        measured["cuda_event_ms"].append(float(stats.get("cuda_event_ms", stats.get("model_run_ms", 0.0)) or 0.0))
-        measured["wall_ms"].append(float(stats.get("wall_ms", 0.0) or 0.0))
+        for field in TIMING_FIELDS:
+            if field == "recurrent_update_ms":
+                continue
+            measured[field].append(float(stats.get(field, 0.0) or 0.0))
+        if not measured["cuda_event_ms"][-1]:
+            measured["cuda_event_ms"][-1] = float(stats.get("model_run_ms", 0.0) or 0.0)
+        for field in VALUE_FIELDS:
+            measured_values[field].append(float(stats.get(field, 0.0) or 0.0))
     total_measured_s = float(time.perf_counter() - started_s)
 
     row: dict[str, Any] = {
@@ -176,6 +203,9 @@ def _run_case(
         "device": str(args.device),
         "first_update_ms": float(first_stats.get("wall_ms", 0.0) or 0.0),
         "first_update_model_ms": float(first_stats.get("model_run_ms", 0.0) or 0.0),
+        "first_update_wall_with_pack_ms": float(first_stats.get("wall_with_pack_ms", first_stats.get("wall_ms", 0.0)) or 0.0),
+        "tracks_raw_shape": list(last_stats.get("tracks_raw_shape", first_stats.get("tracks_raw_shape", []))),
+        "visible_raw_shape": list(last_stats.get("visible_raw_shape", first_stats.get("visible_raw_shape", []))),
         "measured_wall_fps": (
             float(args.measured_frames) / total_measured_s if total_measured_s > 0.0 else 0.0
         ),
@@ -185,6 +215,9 @@ def _run_case(
         row[f"{name}_p50"] = float(stats["p50"])
         row[f"{name}_p95"] = float(stats["p95"])
         row[f"{name}_max"] = float(stats["max"])
+    for name, values in measured_values.items():
+        stats = _percentiles(values)
+        row[f"{name}_p50"] = float(stats["p50"])
     return row
 
 

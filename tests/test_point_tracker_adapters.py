@@ -394,6 +394,14 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(float(result.visibility[0, 1]), 0.0)
         self.assertEqual(result.stats["mode"], "tapnextpp_online_serial")
         self.assertEqual(result.stats["update_mode"], "serial")
+        self.assertEqual(result.stats["tracks_raw_shape"], [1, 1, 2, 2])
+        self.assertEqual(result.stats["visible_raw_shape"], [1, 1, 2, 1])
+        self.assertIn("tracks_to_cpu_ms", result.stats)
+        self.assertIn("visibility_to_cpu_ms", result.stats)
+        self.assertIn("normalize_shape_ms", result.stats)
+        self.assertIn("scale_to_original_ms", result.stats)
+        self.assertIn("result_pack_ms", result.stats)
+        self.assertGreaterEqual(result.stats["postprocess_with_pack_ms"], result.stats["postprocess_ms"])
 
     def test_tapnextpp_fake_model_batch_views_single_call_and_camera_split(self) -> None:
         fake = _FakeTAPNextPPModel()
@@ -423,6 +431,13 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(results[0].stats["batch_size"], 3)
         self.assertEqual(results[0].stats["batch_camera_ids"], [0, 1, 2])
         self.assertEqual(results[0].stats["tapnextpp_model_calls"], 1)
+        self.assertEqual(results[0].stats["tracks_raw_shape"], [3, 1, 2, 2])
+        self.assertEqual(results[0].stats["visible_raw_shape"], [3, 1, 2, 1])
+        self.assertEqual(results[0].stats["tracks_cpu_bytes"], 48)
+        self.assertEqual(results[0].stats["visibility_cpu_bytes"], 24)
+        self.assertIn("tracks_to_cpu_ms", results[0].stats)
+        self.assertIn("visibility_to_cpu_ms", results[0].stats)
+        self.assertIn("result_pack_ms", results[0].stats)
 
     def test_tapnextpp_batch_views_rejects_unequal_query_count(self) -> None:
         adapter = TAPNextPPAdapter(device="cpu")

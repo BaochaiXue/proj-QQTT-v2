@@ -293,6 +293,26 @@ class TAPNextPPAdapter:
             return np.asarray(numpy())
         return np.asarray(value)
 
+    @staticmethod
+    def _shape_list(value: Any) -> list[int]:
+        shape = getattr(value, "shape", None)
+        if shape is None:
+            return list(np.asarray(value).shape)
+        return [int(item) for item in tuple(shape)]
+
+    @staticmethod
+    def _numel(value: Any) -> int:
+        numel = getattr(value, "numel", None)
+        if callable(numel):
+            return int(numel())
+        return int(np.asarray(value).size)
+
+    @classmethod
+    def _to_numpy_timed(cls, value: Any) -> tuple[np.ndarray, float]:
+        started_s = time.perf_counter()
+        array = cls._to_numpy(value)
+        return array, float((time.perf_counter() - started_s) * 1000.0)
+
     def _frames_to_video_tensor(self, frames: Sequence[np.ndarray], *, camera_ids: Sequence[int] | None = None):
         import torch
         import torch.nn.functional as F
@@ -432,24 +452,65 @@ class TAPNextPPAdapter:
         query_count: int,
         source_shapes_hw: Sequence[tuple[int, int]],
     ) -> tuple[np.ndarray, np.ndarray, Any]:
+        tracks_yx, visibility, state, _profile = self._parse_output_profiled(
+            output,
+            batch_size=batch_size,
+            query_count=query_count,
+            source_shapes_hw=source_shapes_hw,
+        )
+        return tracks_yx, visibility, state
+
+    def _parse_output_profiled(
+        self,
+        output: Any,
+        *,
+        batch_size: int,
+        query_count: int,
+        source_shapes_hw: Sequence[tuple[int, int]],
+    ) -> tuple[np.ndarray, np.ndarray, Any, dict[str, Any]]:
+        profile: dict[str, Any] = {}
+        started_s = time.perf_counter()
         tracks_raw, _track_logits, visible_raw, state = self._extract_output(output)
+        profile["output_extract_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+        profile["tracks_raw_shape"] = self._shape_list(tracks_raw)
+        profile["visible_raw_shape"] = self._shape_list(visible_raw)
+        profile["tracks_raw_numel"] = int(self._numel(tracks_raw))
+        profile["visible_raw_numel"] = int(self._numel(visible_raw))
+
+        tracks_np, tracks_to_cpu_ms = self._to_numpy_timed(tracks_raw)
+        profile["tracks_to_cpu_ms"] = float(tracks_to_cpu_ms)
+        profile["tracks_cpu_bytes"] = int(np.asarray(tracks_np).nbytes)
+        started_s = time.perf_counter()
         tracks_yx_scaled = self._normalize_tracks_time_shape(
-            self._to_numpy(tracks_raw),
+            tracks_np,
             batch_size=batch_size,
             query_count=query_count,
             time_steps=1,
         )
+        profile["tracks_normalize_shape_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+
+        visible_np, visibility_to_cpu_ms = self._to_numpy_timed(visible_raw)
+        profile["visibility_to_cpu_ms"] = float(visibility_to_cpu_ms)
+        profile["visibility_cpu_bytes"] = int(np.asarray(visible_np).nbytes)
+        started_s = time.perf_counter()
         visibility = self._normalize_visibility_time_shape(
-            self._to_numpy(visible_raw),
+            visible_np,
             batch_size=batch_size,
             query_count=query_count,
             time_steps=1,
         )
+        profile["visibility_normalize_shape_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+        profile["normalize_shape_ms"] = float(
+            profile["tracks_normalize_shape_ms"] + profile["visibility_normalize_shape_ms"]
+        )
+        started_s = time.perf_counter()
         tracks_yx = self._scaled_tracks_yx_to_original_yx(
             tracks_yx_scaled,
             source_shapes_hw=source_shapes_hw,
         )
-        return tracks_yx, visibility, state
+        profile["scale_to_original_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+        profile["postprocess_cpu_bytes"] = int(profile["tracks_cpu_bytes"] + profile["visibility_cpu_bytes"])
+        return tracks_yx, visibility, state, profile
 
     def initialize(
         self,
@@ -497,7 +558,7 @@ class TAPNextPPAdapter:
             state=None if first_update else self._tracking_state,
         )
         postprocess_started_s = time.perf_counter()
-        tracks_yx_b, visibility_b, self._tracking_state = self._parse_output(
+        tracks_yx_b, visibility_b, self._tracking_state, postprocess_profile = self._parse_output_profiled(
             output,
             batch_size=1,
             query_count=len(self._query_points_yx),
@@ -507,39 +568,47 @@ class TAPNextPPAdapter:
         wall_ms = float((time.perf_counter() - wall_started_s) * 1000.0)
         frame_idx = int(self._frames_seen)
         self._frames_seen += 1
-        return TrackingResult(
+        result_pack_started_s = time.perf_counter()
+        stats = {
+            "backend": self.name,
+            "tracker_backend": self.name,
+            "adapter": type(self).__name__,
+            "mode": "tapnextpp_online_serial",
+            "stream_status": "published",
+            "update_mode": "serial",
+            "chunk_start_idx": frame_idx,
+            "chunk_end_idx": frame_idx,
+            "frames_seen": int(self._frames_seen),
+            "num_query_points": int(len(self._query_points_yx)),
+            "model_run_ms": float(run_ms),
+            "cuda_event_ms": float(run_ms),
+            "preprocess_ms": float(preprocess_ms),
+            "postprocess_ms": float(postprocess_ms),
+            "wall_ms": float(wall_ms),
+            "fps_model_only": float(1000.0 / run_ms) if run_ms > 0.0 else 0.0,
+            "image_size": [int(self.image_size[0]), int(self.image_size[1])],
+            "tapnextpp_image_size": [int(self.image_size[0]), int(self.image_size[1])],
+            "autocast_dtype": self.autocast_dtype,
+            "tapnextpp_autocast_dtype": self.autocast_dtype,
+            "tapnextpp_frame_value_range": self.frame_value_range,
+            "tapnextpp_state_active": self._tracking_state is not None,
+            "tapnextpp_model_calls": 1,
+            "device": self.device,
+        }
+        stats.update(postprocess_profile)
+        result = TrackingResult(
             tracks_yx=tracks_yx_b[0],
             visibility=visibility_b[0],
             backend=self.name,
             camera_idx=self.camera_idx,
             query_points_yx=self._query_points_yx,
-            stats={
-                "backend": self.name,
-                "tracker_backend": self.name,
-                "adapter": type(self).__name__,
-                "mode": "tapnextpp_online_serial",
-                "stream_status": "published",
-                "update_mode": "serial",
-                "chunk_start_idx": frame_idx,
-                "chunk_end_idx": frame_idx,
-                "frames_seen": int(self._frames_seen),
-                "num_query_points": int(len(self._query_points_yx)),
-                "model_run_ms": float(run_ms),
-                "cuda_event_ms": float(run_ms),
-                "preprocess_ms": float(preprocess_ms),
-                "postprocess_ms": float(postprocess_ms),
-                "wall_ms": float(wall_ms),
-                "fps_model_only": float(1000.0 / run_ms) if run_ms > 0.0 else 0.0,
-                "image_size": [int(self.image_size[0]), int(self.image_size[1])],
-                "tapnextpp_image_size": [int(self.image_size[0]), int(self.image_size[1])],
-                "autocast_dtype": self.autocast_dtype,
-                "tapnextpp_autocast_dtype": self.autocast_dtype,
-                "tapnextpp_frame_value_range": self.frame_value_range,
-                "tapnextpp_state_active": self._tracking_state is not None,
-                "tapnextpp_model_calls": 1,
-                "device": self.device,
-            },
+            stats=stats,
         )
+        result_pack_ms = float((time.perf_counter() - result_pack_started_s) * 1000.0)
+        result.stats["result_pack_ms"] = float(result_pack_ms)
+        result.stats["postprocess_with_pack_ms"] = float(postprocess_ms + result_pack_ms)
+        result.stats["wall_with_pack_ms"] = float(wall_ms + result_pack_ms)
+        return result
 
     def initialize_batch(self, query_points_yx_by_camera: Mapping[int, np.ndarray]) -> None:
         self._load_model()
@@ -612,7 +681,7 @@ class TAPNextPPAdapter:
         query_count = int(len(next(iter(self._batch_query_points_yx_by_camera.values()))))
         source_shapes = [self._batch_original_frame_shape_hw_by_camera[idx] for idx in camera_ids]
         postprocess_started_s = time.perf_counter()
-        tracks_yx_b, visibility_b, self._batch_tracking_state = self._parse_output(
+        tracks_yx_b, visibility_b, self._batch_tracking_state, postprocess_profile = self._parse_output_profiled(
             output,
             batch_size=len(camera_ids),
             query_count=query_count,
@@ -624,47 +693,55 @@ class TAPNextPPAdapter:
         self._batch_frames_seen += 1
         self._batch_model_call_groups += 1
         results: dict[int, TrackingResult] = {}
+        result_pack_started_s = time.perf_counter()
         for batch_idx, camera_idx in enumerate(camera_ids):
             query_points_yx = self._batch_query_points_yx_by_camera[int(camera_idx)]
+            stats = {
+                "backend": self.name,
+                "tracker_backend": self.name,
+                "adapter": type(self).__name__,
+                "mode": "tapnextpp_online_batch_views",
+                "stream_status": "published",
+                "update_mode": "batch",
+                "chunk_start_idx": frame_idx,
+                "chunk_end_idx": frame_idx,
+                "frames_seen": int(self._batch_frames_seen),
+                "num_query_points": int(len(query_points_yx)),
+                "model_run_ms": float(run_ms),
+                "cuda_event_ms": float(run_ms),
+                "preprocess_ms": float(preprocess_ms),
+                "postprocess_ms": float(postprocess_ms),
+                "wall_ms": float(wall_ms),
+                "fps_model_only": float(1000.0 / run_ms) if run_ms > 0.0 else 0.0,
+                "image_size": [int(self.image_size[0]), int(self.image_size[1])],
+                "tapnextpp_image_size": [int(self.image_size[0]), int(self.image_size[1])],
+                "autocast_dtype": self.autocast_dtype,
+                "tapnextpp_autocast_dtype": self.autocast_dtype,
+                "tapnextpp_frame_value_range": self.frame_value_range,
+                "tapnextpp_state_active": self._batch_tracking_state is not None,
+                "batch_size": int(len(camera_ids)),
+                "batch_camera_ids": [int(item) for item in camera_ids],
+                "batch_index": int(batch_idx),
+                "tapnextpp_batch_size": int(len(camera_ids)),
+                "tapnextpp_model_calls": 1,
+                "tapnextpp_model_calls_per_group": 1,
+                "tapnextpp_model_call_groups": int(self._batch_model_call_groups),
+                "device": self.device,
+            }
+            stats.update(postprocess_profile)
             results[int(camera_idx)] = TrackingResult(
                 tracks_yx=tracks_yx_b[batch_idx],
                 visibility=visibility_b[batch_idx],
                 backend=self.name,
                 camera_idx=int(camera_idx),
                 query_points_yx=query_points_yx,
-                stats={
-                    "backend": self.name,
-                    "tracker_backend": self.name,
-                    "adapter": type(self).__name__,
-                    "mode": "tapnextpp_online_batch_views",
-                    "stream_status": "published",
-                    "update_mode": "batch",
-                    "chunk_start_idx": frame_idx,
-                    "chunk_end_idx": frame_idx,
-                    "frames_seen": int(self._batch_frames_seen),
-                    "num_query_points": int(len(query_points_yx)),
-                    "model_run_ms": float(run_ms),
-                    "cuda_event_ms": float(run_ms),
-                    "preprocess_ms": float(preprocess_ms),
-                    "postprocess_ms": float(postprocess_ms),
-                    "wall_ms": float(wall_ms),
-                    "fps_model_only": float(1000.0 / run_ms) if run_ms > 0.0 else 0.0,
-                    "image_size": [int(self.image_size[0]), int(self.image_size[1])],
-                    "tapnextpp_image_size": [int(self.image_size[0]), int(self.image_size[1])],
-                    "autocast_dtype": self.autocast_dtype,
-                    "tapnextpp_autocast_dtype": self.autocast_dtype,
-                    "tapnextpp_frame_value_range": self.frame_value_range,
-                    "tapnextpp_state_active": self._batch_tracking_state is not None,
-                    "batch_size": int(len(camera_ids)),
-                    "batch_camera_ids": [int(item) for item in camera_ids],
-                    "batch_index": int(batch_idx),
-                    "tapnextpp_batch_size": int(len(camera_ids)),
-                    "tapnextpp_model_calls": 1,
-                    "tapnextpp_model_calls_per_group": 1,
-                    "tapnextpp_model_call_groups": int(self._batch_model_call_groups),
-                    "device": self.device,
-                },
+                stats=stats,
             )
+        result_pack_ms = float((time.perf_counter() - result_pack_started_s) * 1000.0)
+        for result in results.values():
+            result.stats["result_pack_ms"] = float(result_pack_ms)
+            result.stats["postprocess_with_pack_ms"] = float(postprocess_ms + result_pack_ms)
+            result.stats["wall_with_pack_ms"] = float(wall_ms + result_pack_ms)
         return results
 
 

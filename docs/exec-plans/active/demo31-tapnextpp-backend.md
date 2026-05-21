@@ -115,3 +115,22 @@ must clearly separate that target from the `4096/view` stress test.
   `docs/generated/demo31_tapnextpp_rendered_profile/summary_q1365_q4096_live_group_timing.md`.
   q1365 serial/batch render FPS: `7.253/7.264`; q4096 serial/batch render FPS:
   `6.856/6.409`.
+- PASS: Added TAPNext++ adapter postprocess profiling fields that split output
+  extraction, tracks/visibility CPU transfer, shape normalization, coordinate
+  scaling, result packing, raw output shapes, and CPU byte counts.
+- PASS: Extended the model-only TAPNext++ harness/summary to report the detailed
+  postprocess fields for `B=1/B=3` and `q1365/q4096` sweeps.
+- PASS: Focused fake-model TAPNext++ serial/batch tests cover the new profiling
+  fields while preserving output shape and visibility semantics.
+- PASS: `python -m py_compile qqtt/tracking/backends/tapnextpp_adapter.py scripts/harness/benchmark_demo31_tapnextpp_model_only.py scripts/harness/summarize_demo31_tapnextpp_model_only.py tests/test_point_tracker_adapters.py`.
+- PASS: `conda run --no-capture-output -n demo_3_1_max python -m unittest tests.test_point_tracker_adapters.PointTrackerAdaptersTest.test_tapnextpp_fake_model_serial_online_shapes_and_visibility tests.test_point_tracker_adapters.PointTrackerAdaptersTest.test_tapnextpp_fake_model_batch_views_single_call_and_camera_split`.
+- PASS: `conda run --no-capture-output -n demo_3_1_max python scripts/harness/benchmark_demo31_tapnextpp_model_only.py --dry-run --query-counts 1365,4096 --batch-sizes 1,3 --autocast-dtypes fp16 --compile-modes false --warmup-frames 10 --measured-frames 80`.
+- PASS: `conda run --no-capture-output -n demo_3_1_max python scripts/harness/check_all.py`.
+- BLOCKED: Real CUDA model-only postprocess profiling is blocked by the local
+  NVIDIA driver stack, not by TAPNext++ code. `nvidia-smi` reports
+  `Failed to initialize NVML: Driver/library version mismatch` with NVML
+  `580.159`; `/proc/driver/nvidia/version` reports loaded kernel module
+  `580.126.09`; PyTorch in `demo_3_1_max` reports `torch 2.11.0+cu130`,
+  `cuda_available=False`, `device_count=0`, and CUDA error 804. Rerun the
+  detailed model-only profile after the NVIDIA kernel module and userspace
+  versions match.
