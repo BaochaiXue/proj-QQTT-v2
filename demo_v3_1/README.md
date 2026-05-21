@@ -7,7 +7,7 @@ RealSense tracking-overlay lineage.
   fusion, and Open3D/render.
 - GPU1 owns a point-tracker backend in a separate child process.
 - Supported backend names are `cotracker3_online`, `trackon2`, `litetracker`,
-  and `locotrack`; `cotracker3_online` is the default and currently the
+  `locotrack`, and `tapnextpp`; `cotracker3_online` is the default and currently the
   validated live backend.
 - The point tracker receives CPU RGB/mask latest-wins packets only.
 - The point tracker returns small CPU 2D track/visibility packets.
@@ -93,8 +93,9 @@ Useful rendered/debug profiling flags:
 If `--gpu-sampling` is enabled without explicit indexes, Demo 3.1 samples the
 configured mask and CoTracker physical GPUs, `0,1` by default.
 
-Track-On2 and LiteTracker are exposed through the same child-process contract,
-and LocoTrack-S is exposed as the `locotrack` backend. These external
+Track-On2, LiteTracker, LocoTrack-S, and TAPNext++ are exposed through the same
+child-process contract. LocoTrack-S uses the `locotrack` backend name and
+TAPNext++ uses `tapnextpp`. These external
 repos/weights stay outside this repository. Use
 `scripts/env/create_demo_3_1_max.sh` to clone the current Demo 3 environment.
 For LocoTrack-S, install the live-inference dependency set without replacing
@@ -137,3 +138,32 @@ python scripts/harness/summarize_demo31_locotrack_s_profiles.py
 
 The adapter layer fails early with a clear message if the required external
 repo/checkpoint is not configured.
+
+TAPNext++ is a stateful frame-by-frame online backend, unlike the rolling-window
+LocoTrack path. Install it without replacing the existing CUDA Torch:
+
+```bash
+scripts/env/install_tapnextpp_demo_3_1_max.sh --cuda-smoke --cuda-batch-smoke
+```
+
+Dry-run TAPNext++ batch-views at the Demo 3.1 stress target of `4096/view`
+(`12288` total points across three cameras):
+
+```bash
+conda run --no-capture-output -n demo_3_1_max \
+  python demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py \
+  --dry-run \
+  --camera-ids 0,1,2 \
+  --mask-gpu 0 \
+  --cotracker-gpu 1 \
+  --require-two-cuda \
+  --calibrate-path calibrate.pkl \
+  --cotracker-backend tapnextpp \
+  --tracking-backend-execution-mode batch-views \
+  --tracker-batch-query-count-policy fixed \
+  --cotracker-query-count 4096 \
+  --tapnet-repo-dir external/tapnet \
+  --tapnextpp-checkpoint checkpoints/tapnextpp/tapnextpp_ckpt.pt \
+  --tapnextpp-image-size 256,256 \
+  --tapnextpp-autocast-dtype fp16
+```

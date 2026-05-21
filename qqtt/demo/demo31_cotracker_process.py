@@ -20,6 +20,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (
     TRACKER_BACKEND_COTRACKER3,
     TRACKER_BACKEND_LITETRACKER,
     TRACKER_BACKEND_LOCOTRACK,
+    TRACKER_BACKEND_TAPNEXTPP,
     TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
     TRACKER_EXECUTION_MODE_AUTO,
     TRACKER_EXECUTION_MODE_BATCH_VIEWS,
@@ -77,6 +78,15 @@ class CoTrackerProcessConfig:
     locotrack_resolution: tuple[int, int] = (256, 256)
     locotrack_query_chunk_size: int = 256
     locotrack_autocast_dtype: str = "bf16"
+    tapnet_repo_dir: str | None = None
+    tapnextpp_checkpoint: str | None = None
+    tapnextpp_image_size: tuple[int, int] = (256, 256)
+    tapnextpp_autocast_dtype: str = "fp16"
+    tapnextpp_use_certainty: bool = False
+    tapnextpp_certainty_radius: int = 8
+    tapnextpp_certainty_threshold: float = 0.5
+    tapnextpp_compile: bool = False
+    tapnextpp_reset_on_reinitialize: bool = True
     tracker_batch_query_count_policy: str = TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED
 
     @property
@@ -96,6 +106,8 @@ class CoTrackerProcessConfig:
         if self.normalized_tracker_backend == TRACKER_BACKEND_LITETRACKER:
             return "model_load_only" if bool(self.prewarm_backends) else "lazy_query_init"
         if self.normalized_tracker_backend == TRACKER_BACKEND_LOCOTRACK:
+            return "model_load_only" if bool(self.prewarm_backends) else "disabled"
+        if self.normalized_tracker_backend == TRACKER_BACKEND_TAPNEXTPP:
             return "model_load_only" if bool(self.prewarm_backends) else "disabled"
         return "backend_model_prewarm" if bool(self.prewarm_backends) else "disabled"
 
@@ -141,6 +153,15 @@ class CoTrackerProcessConfig:
             "locotrack_resolution": [int(item) for item in self.locotrack_resolution],
             "locotrack_query_chunk_size": int(self.locotrack_query_chunk_size),
             "locotrack_autocast_dtype": str(self.locotrack_autocast_dtype),
+            "tapnet_repo_dir": self.tapnet_repo_dir,
+            "tapnextpp_checkpoint": self.tapnextpp_checkpoint,
+            "tapnextpp_image_size": [int(item) for item in self.tapnextpp_image_size],
+            "tapnextpp_autocast_dtype": str(self.tapnextpp_autocast_dtype),
+            "tapnextpp_use_certainty": bool(self.tapnextpp_use_certainty),
+            "tapnextpp_certainty_radius": int(self.tapnextpp_certainty_radius),
+            "tapnextpp_certainty_threshold": float(self.tapnextpp_certainty_threshold),
+            "tapnextpp_compile": bool(self.tapnextpp_compile),
+            "tapnextpp_reset_on_reinitialize": bool(self.tapnextpp_reset_on_reinitialize),
             "tracker_batch_query_count_policy": normalize_tracker_batch_query_count_policy(
                 self.tracker_batch_query_count_policy
             ),
@@ -192,6 +213,15 @@ class CoTrackerProcessConfig:
             locotrack_resolution=tuple(int(item) for item in payload.get("locotrack_resolution", (256, 256))),
             locotrack_query_chunk_size=int(payload.get("locotrack_query_chunk_size", 256)),
             locotrack_autocast_dtype=str(payload.get("locotrack_autocast_dtype", "bf16")),
+            tapnet_repo_dir=payload.get("tapnet_repo_dir"),
+            tapnextpp_checkpoint=payload.get("tapnextpp_checkpoint"),
+            tapnextpp_image_size=tuple(int(item) for item in payload.get("tapnextpp_image_size", (256, 256))),
+            tapnextpp_autocast_dtype=str(payload.get("tapnextpp_autocast_dtype", "fp16")),
+            tapnextpp_use_certainty=bool(payload.get("tapnextpp_use_certainty", False)),
+            tapnextpp_certainty_radius=int(payload.get("tapnextpp_certainty_radius", 8)),
+            tapnextpp_certainty_threshold=float(payload.get("tapnextpp_certainty_threshold", 0.5)),
+            tapnextpp_compile=bool(payload.get("tapnextpp_compile", False)),
+            tapnextpp_reset_on_reinitialize=bool(payload.get("tapnextpp_reset_on_reinitialize", True)),
             tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
                 payload.get("tracker_batch_query_count_policy", TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED)
             ),
@@ -380,6 +410,15 @@ def run_cotracker_worker_loop(
             locotrack_resolution=config.locotrack_resolution,
             locotrack_query_chunk_size=config.locotrack_query_chunk_size,
             locotrack_autocast_dtype=config.locotrack_autocast_dtype,
+            tapnet_repo_dir=config.tapnet_repo_dir,
+            tapnextpp_checkpoint=config.tapnextpp_checkpoint,
+            tapnextpp_image_size=config.tapnextpp_image_size,
+            tapnextpp_autocast_dtype=config.tapnextpp_autocast_dtype,
+            tapnextpp_use_certainty=config.tapnextpp_use_certainty,
+            tapnextpp_certainty_radius=config.tapnextpp_certainty_radius,
+            tapnextpp_certainty_threshold=config.tapnextpp_certainty_threshold,
+            tapnextpp_compile=config.tapnextpp_compile,
+            tapnextpp_reset_on_reinitialize=config.tapnextpp_reset_on_reinitialize,
         )
     )
     update_mode = effective_legacy_update_mode(config.backend_execution_mode)
@@ -464,6 +503,15 @@ def run_cotracker_worker_loop(
                     "locotrack_autocast_dtype": str(config.locotrack_autocast_dtype),
                     "locotrack_checkpoint": config.locotrack_checkpoint,
                     "locotrack_repo_dir": config.locotrack_repo_dir,
+                    "tapnet_repo_dir": config.tapnet_repo_dir,
+                    "tapnextpp_checkpoint": config.tapnextpp_checkpoint,
+                    "tapnextpp_image_size": [int(item) for item in config.tapnextpp_image_size],
+                    "tapnextpp_autocast_dtype": str(config.tapnextpp_autocast_dtype),
+                    "tapnextpp_use_certainty": bool(config.tapnextpp_use_certainty),
+                    "tapnextpp_certainty_radius": int(config.tapnextpp_certainty_radius),
+                    "tapnextpp_certainty_threshold": float(config.tapnextpp_certainty_threshold),
+                    "tapnextpp_compile": bool(config.tapnextpp_compile),
+                    "tapnextpp_reset_on_reinitialize": bool(config.tapnextpp_reset_on_reinitialize),
                     "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "prewarm_backends": bool(config.prewarm_backends),
                     "tracker_prewarm_mode": tracker_prewarm_mode,
@@ -536,6 +584,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "locotrack_autocast_dtype": str(config.locotrack_autocast_dtype),
                     "locotrack_checkpoint": config.locotrack_checkpoint,
                     "locotrack_repo_dir": config.locotrack_repo_dir,
+                    "tapnet_repo_dir": config.tapnet_repo_dir,
+                    "tapnextpp_checkpoint": config.tapnextpp_checkpoint,
+                    "tapnextpp_image_size": [int(item) for item in config.tapnextpp_image_size],
+                    "tapnextpp_autocast_dtype": str(config.tapnextpp_autocast_dtype),
+                    "tapnextpp_use_certainty": bool(config.tapnextpp_use_certainty),
+                    "tapnextpp_certainty_radius": int(config.tapnextpp_certainty_radius),
+                    "tapnextpp_certainty_threshold": float(config.tapnextpp_certainty_threshold),
+                    "tapnextpp_compile": bool(config.tapnextpp_compile),
+                    "tapnextpp_reset_on_reinitialize": bool(config.tapnextpp_reset_on_reinitialize),
                     "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "cotracker_cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
                     "tracking_query_mode": config.query_mode,

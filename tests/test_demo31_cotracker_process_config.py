@@ -40,6 +40,15 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
             locotrack_resolution=(320, 256),
             locotrack_query_chunk_size=128,
             locotrack_autocast_dtype="fp16",
+            tapnet_repo_dir="/tmp/tapnet",
+            tapnextpp_checkpoint="/tmp/tapnextpp_ckpt.pt",
+            tapnextpp_image_size=(256, 256),
+            tapnextpp_autocast_dtype="fp16",
+            tapnextpp_use_certainty=True,
+            tapnextpp_certainty_radius=6,
+            tapnextpp_certainty_threshold=0.4,
+            tapnextpp_compile=True,
+            tapnextpp_reset_on_reinitialize=False,
             tracker_batch_query_count_policy="min-common",
         )
 
@@ -175,6 +184,44 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         self.assertIn('"locotrack_resolution": [', output)
         self.assertIn('"locotrack_query_chunk_size": 256', output)
         self.assertIn('"locotrack_autocast_dtype": "bf16"', output)
+        self.assertIn('"tracker_prewarm_mode": "model_load_only"', output)
+        if old_value is None:
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = old_value
+
+    def test_tapnextpp_config_prints_stateful_online_contract_fields(self) -> None:
+        config = process_mod.CoTrackerProcessConfig(
+            cotracker_backend="tapnextpp",
+            backend_execution_mode="batch-views",
+            tapnet_repo_dir="/tmp/tapnet",
+            tapnextpp_checkpoint="/tmp/tapnextpp_ckpt.pt",
+            tapnextpp_image_size=(256, 256),
+            tapnextpp_autocast_dtype="fp16",
+            tapnextpp_use_certainty=False,
+            tapnextpp_compile=False,
+        )
+
+        self.assertEqual(config.tracker_family, "tapnext")
+        self.assertEqual(config.tracker_prewarm_mode, "model_load_only")
+        self.assertFalse(config.tracker_query_dependent_init)
+
+        old_value = os.environ.get("CUDA_VISIBLE_DEVICES")
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = process_mod.main(["--config-json", config.to_json(), "--print-contract"])
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn('"tracker_backend": "tapnextpp"', output)
+        self.assertIn('"tracker_family": "tapnext"', output)
+        self.assertIn('"backend_execution_mode": "batch-views"', output)
+        self.assertIn('"tapnet_repo_dir": "/tmp/tapnet"', output)
+        self.assertIn('"tapnextpp_checkpoint": "/tmp/tapnextpp_ckpt.pt"', output)
+        self.assertIn('"tapnextpp_image_size": [', output)
+        self.assertIn('"tapnextpp_autocast_dtype": "fp16"', output)
+        self.assertIn('"tapnextpp_use_certainty": false', output)
+        self.assertIn('"tapnextpp_compile": false', output)
         self.assertIn('"tracker_prewarm_mode": "model_load_only"', output)
         if old_value is None:
             os.environ.pop("CUDA_VISIBLE_DEVICES", None)

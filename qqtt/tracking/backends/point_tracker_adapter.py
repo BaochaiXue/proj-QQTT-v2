@@ -15,11 +15,13 @@ TRACKER_BACKEND_COTRACKER3 = "cotracker3_online"
 TRACKER_BACKEND_TRACKON2 = "trackon2"
 TRACKER_BACKEND_LITETRACKER = "litetracker"
 TRACKER_BACKEND_LOCOTRACK = "locotrack"
+TRACKER_BACKEND_TAPNEXTPP = "tapnextpp"
 TRACKER_BACKENDS = (
     TRACKER_BACKEND_COTRACKER3,
     TRACKER_BACKEND_TRACKON2,
     TRACKER_BACKEND_LITETRACKER,
     TRACKER_BACKEND_LOCOTRACK,
+    TRACKER_BACKEND_TAPNEXTPP,
 )
 
 TRACKER_EXECUTION_MODE_AUTO = "auto"
@@ -113,6 +115,11 @@ def normalize_tracker_backend(value: str) -> str:
         "loco_track": TRACKER_BACKEND_LOCOTRACK,
         "locotrack_s": TRACKER_BACKEND_LOCOTRACK,
         "loco_track_s": TRACKER_BACKEND_LOCOTRACK,
+        "tapnext++": TRACKER_BACKEND_TAPNEXTPP,
+        "tapnext_pp": TRACKER_BACKEND_TAPNEXTPP,
+        "tap_next_pp": TRACKER_BACKEND_TAPNEXTPP,
+        "tapnext_plus_plus": TRACKER_BACKEND_TAPNEXTPP,
+        "tap_next_plus_plus": TRACKER_BACKEND_TAPNEXTPP,
     }
     normalized = aliases.get(normalized, normalized)
     if normalized not in TRACKER_BACKENDS:
@@ -182,6 +189,16 @@ def tracker_backend_spec(backend: str) -> PointTrackerBackendSpec:
             query_format="yx",
             batch_support_status="windowed_batch_views",
         )
+    if normalized == TRACKER_BACKEND_TAPNEXTPP:
+        return PointTrackerBackendSpec(
+            name=TRACKER_BACKEND_TAPNEXTPP,
+            family="tapnext",
+            supports_batch_views=True,
+            supports_online=True,
+            supports_prewarm=True,
+            query_format="yx",
+            batch_support_status="true_online_batch_views",
+        )
     return PointTrackerBackendSpec(
         name=TRACKER_BACKEND_LITETRACKER,
         family="litetracker",
@@ -225,6 +242,15 @@ class PointTrackerAdapterConfig:
     locotrack_resolution: tuple[int, int] = (256, 256)
     locotrack_query_chunk_size: int = 256
     locotrack_autocast_dtype: str = "bf16"
+    tapnet_repo_dir: str | None = None
+    tapnextpp_checkpoint: str | None = None
+    tapnextpp_image_size: tuple[int, int] = (256, 256)
+    tapnextpp_autocast_dtype: str = "fp16"
+    tapnextpp_use_certainty: bool = False
+    tapnextpp_certainty_radius: int = 8
+    tapnextpp_certainty_threshold: float = 0.5
+    tapnextpp_compile: bool = False
+    tapnextpp_reset_on_reinitialize: bool = True
 
 
 def _prepend_repo_dir(repo_dir: str | None) -> None:
@@ -268,6 +294,23 @@ def build_point_tracker_adapter_factory(config: PointTrackerAdapterConfig) -> Ca
                 resolution=config.locotrack_resolution,
                 query_chunk_size=int(config.locotrack_query_chunk_size),
                 autocast_dtype=str(config.locotrack_autocast_dtype),
+            )
+        if backend == TRACKER_BACKEND_TAPNEXTPP:
+            from qqtt.tracking.backends.tapnextpp_adapter import TAPNextPPAdapter
+
+            _prepend_repo_dir(config.tapnet_repo_dir or config.repo_dir)
+            return TAPNextPPAdapter(
+                device=str(config.device),
+                camera_idx=None if int(camera_idx) < 0 else int(camera_idx),
+                repo_dir=config.tapnet_repo_dir or config.repo_dir,
+                checkpoint=config.tapnextpp_checkpoint or config.checkpoint,
+                image_size=config.tapnextpp_image_size,
+                autocast_dtype=str(config.tapnextpp_autocast_dtype),
+                use_certainty=bool(config.tapnextpp_use_certainty),
+                certainty_radius=int(config.tapnextpp_certainty_radius),
+                certainty_threshold=float(config.tapnextpp_certainty_threshold),
+                compile_model=bool(config.tapnextpp_compile),
+                reset_on_reinitialize=bool(config.tapnextpp_reset_on_reinitialize),
             )
         _prepend_repo_dir(config.litetracker_repo_dir or config.repo_dir)
         runtime = normalize_litetracker_runtime(config.litetracker_runtime)
@@ -360,6 +403,7 @@ __all__ = [
     "TRACKER_BACKEND_COTRACKER3",
     "TRACKER_BACKEND_LITETRACKER",
     "TRACKER_BACKEND_LOCOTRACK",
+    "TRACKER_BACKEND_TAPNEXTPP",
     "TRACKER_BACKEND_TRACKON2",
     "TRACKER_BACKENDS",
     "TRACKER_BATCH_QUERY_COUNT_POLICIES",

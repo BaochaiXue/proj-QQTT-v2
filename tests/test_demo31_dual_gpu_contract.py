@@ -586,6 +586,57 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracker_backend"], "locotrack")
         self.assertEqual(contract["tracker_backend_family"], "locotrack")
 
+    def test_tapnextpp_backend_contract_accepts_serial_and_batch_views(self) -> None:
+        common = [
+            "--dry-run",
+            "--camera-ids",
+            "0,1,2",
+            "--mask-gpu",
+            "0",
+            "--cotracker-gpu",
+            "1",
+            "--cotracker-backend",
+            "tapnextpp",
+            "--tapnet-repo-dir",
+            "external/tapnet",
+            "--tapnextpp-checkpoint",
+            "checkpoints/tapnextpp/tapnextpp_ckpt.pt",
+            "--tapnextpp-image-size",
+            "256,256",
+            "--tapnextpp-autocast-dtype",
+            "fp16",
+        ]
+        for mode, batch_dimension, batch_size, update_mode, expected_instances in (
+            ("serial", "none", 1, "serial", 3),
+            ("batch-views", "camera", 3, "batch", 1),
+        ):
+            with self.subTest(mode=mode):
+                args = self._parse([*common, "--tracking-backend-execution-mode", mode])
+                demo31_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+                contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+                config = demo31_runtime.build_cotracker_process_config(args)
+
+                self.assertEqual(contract["cotracker_backend"], "tapnextpp")
+                self.assertEqual(contract["tracker_backend"], "tapnextpp")
+                self.assertEqual(contract["tracker_backend_family"], "tapnext")
+                self.assertEqual(contract["tracking_backend_execution_mode"], mode)
+                self.assertEqual(contract["tracking_backend_batch_dimension"], batch_dimension)
+                self.assertEqual(contract["tracking_backend_batch_size"], batch_size)
+                self.assertEqual(contract["tracking_backend_model_instances_expected"], expected_instances)
+                self.assertTrue(contract["tracking_backend_supports_batch_views"])
+                self.assertTrue(contract["tracking_backend_supports_online"])
+                self.assertEqual(contract["tracking_backend_online_semantics"], "stateful_frame_by_frame")
+                self.assertEqual(contract["tracking_backend_batch_support_status"], "true_online_batch_views")
+                self.assertEqual(contract["tapnet_repo_dir"], "external/tapnet")
+                self.assertEqual(contract["tapnextpp_checkpoint"], "checkpoints/tapnextpp/tapnextpp_ckpt.pt")
+                self.assertEqual(contract["tapnextpp_image_size"], [256, 256])
+                self.assertEqual(contract["tapnextpp_autocast_dtype"], "fp16")
+                self.assertEqual(contract["tapnextpp_frame_value_range"], "0_255_float")
+                self.assertEqual(config.cotracker_backend, "tapnextpp")
+                self.assertEqual(config.backend_execution_mode, mode)
+                self.assertEqual(config.update_mode, update_mode)
+                self.assertEqual(config.tapnextpp_image_size, (256, 256))
+
     def test_demo32_defaults_to_ffs_batch3_litetracker_batch3(self) -> None:
         args = self._parse(
             ["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],

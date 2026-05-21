@@ -53,6 +53,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (
     TRACKER_BACKEND_COTRACKER3,
     TRACKER_BACKEND_LITETRACKER,
     TRACKER_BACKEND_LOCOTRACK,
+    TRACKER_BACKEND_TAPNEXTPP,
     TRACKER_BACKENDS,
     TRACKER_BATCH_QUERY_COUNT_POLICIES,
     TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
@@ -96,6 +97,12 @@ DEFAULT_LOCOTRACK_WINDOW_FRAMES = 8
 DEFAULT_LOCOTRACK_RESOLUTION = (256, 256)
 DEFAULT_LOCOTRACK_QUERY_CHUNK_SIZE = 256
 DEFAULT_LOCOTRACK_AUTOCAST_DTYPE = "bf16"
+DEFAULT_TAPNEXTPP_IMAGE_SIZE = (256, 256)
+DEFAULT_TAPNEXTPP_AUTOCAST_DTYPE = "fp16"
+DEFAULT_TAPNEXTPP_USE_CERTAINTY = False
+DEFAULT_TAPNEXTPP_CERTAINTY_RADIUS = 8
+DEFAULT_TAPNEXTPP_CERTAINTY_THRESHOLD = 0.5
+DEFAULT_TAPNEXTPP_COMPILE = False
 DEFAULT_SAM31_INIT_QUICK_FAIL_EMPTY_MASKS = True
 DEFAULT_SAM31_INIT_MIN_MASK_PIXELS = 1
 DEFAULT_DEMO32_LITETRACKER_REPO_DIR = "/home/xinjie/external/lite-tracker"
@@ -828,6 +835,31 @@ def parse_locotrack_resolution(value: str | Sequence[int]) -> tuple[int, int]:
     return (int(height), int(width))
 
 
+def parse_tapnextpp_image_size(value: str | Sequence[int]) -> tuple[int, int]:
+    if isinstance(value, str):
+        raw = value.strip().lower().replace("x", ",")
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        if len(parts) == 1:
+            height = width = int(parts[0])
+        elif len(parts) == 2:
+            height, width = int(parts[0]), int(parts[1])
+        else:
+            raise argparse.ArgumentTypeError("--tapnextpp-image-size must be HxW, H,W, or a single square size.")
+    else:
+        parts = tuple(int(item) for item in value)
+        if len(parts) == 1:
+            height = width = parts[0]
+        elif len(parts) == 2:
+            height, width = parts
+        else:
+            raise argparse.ArgumentTypeError("--tapnextpp-image-size must contain one or two integers.")
+    if height <= 0 or width <= 0:
+        raise argparse.ArgumentTypeError("--tapnextpp-image-size dimensions must be positive.")
+    if height % 8 != 0 or width % 8 != 0:
+        raise argparse.ArgumentTypeError("--tapnextpp-image-size dimensions must be multiples of 8.")
+    return (int(height), int(width))
+
+
 def _physical_cuda_device_count_from_nvidia_smi() -> int:
     override = os.environ.get("QQTT_DEMO31_TEST_CUDA_COUNT")
     if override:
@@ -977,6 +1009,41 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         "--locotrack-autocast-dtype",
         choices=("bf16", "fp16", "fp32"),
         default=DEFAULT_LOCOTRACK_AUTOCAST_DTYPE,
+    )
+    parser.add_argument("--tapnet-repo-dir", default=None)
+    parser.add_argument("--tapnextpp-checkpoint", default=None)
+    parser.add_argument(
+        "--tapnextpp-image-size",
+        type=parse_tapnextpp_image_size,
+        default=DEFAULT_TAPNEXTPP_IMAGE_SIZE,
+        help="TAPNext++ inference image size as HxW, H,W, or a square size.",
+    )
+    parser.add_argument(
+        "--tapnextpp-autocast-dtype",
+        choices=("fp16", "bf16", "fp32"),
+        default=DEFAULT_TAPNEXTPP_AUTOCAST_DTYPE,
+    )
+    parser.add_argument(
+        "--tapnextpp-use-certainty",
+        action="store_true",
+        default=DEFAULT_TAPNEXTPP_USE_CERTAINTY,
+        help="Combine TAPNext++ visible logits with tracker certainty. Disabled by default for lowest live latency.",
+    )
+    parser.add_argument(
+        "--tapnextpp-certainty-radius",
+        type=int,
+        default=DEFAULT_TAPNEXTPP_CERTAINTY_RADIUS,
+    )
+    parser.add_argument(
+        "--tapnextpp-certainty-threshold",
+        type=float,
+        default=DEFAULT_TAPNEXTPP_CERTAINTY_THRESHOLD,
+    )
+    parser.add_argument(
+        "--tapnextpp-compile",
+        action="store_true",
+        default=DEFAULT_TAPNEXTPP_COMPILE,
+        help="Opt into torch.compile for TAPNext++; disabled by default for predictable startup.",
     )
     parser.add_argument(
         "--cotracker-query-mode",
@@ -1330,6 +1397,11 @@ def validate_args(
     if int(args.locotrack_query_chunk_size) < 1:
         raise ValueError("--locotrack-query-chunk-size must be >= 1.")
     parse_locotrack_resolution(args.locotrack_resolution)
+    parse_tapnextpp_image_size(args.tapnextpp_image_size)
+    if int(args.tapnextpp_certainty_radius) < 1:
+        raise ValueError("--tapnextpp-certainty-radius must be >= 1.")
+    if not 0.0 <= float(args.tapnextpp_certainty_threshold) <= 1.0:
+        raise ValueError("--tapnextpp-certainty-threshold must be between 0 and 1.")
     if str(args.cotracker_query_mode) != demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError(f"{demo_label} currently supports only --cotracker-query-mode phystwin_dense.")
     demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
@@ -1446,6 +1518,14 @@ def build_cotracker_process_config(args: argparse.Namespace) -> CoTrackerProcess
         locotrack_resolution=parse_locotrack_resolution(args.locotrack_resolution),
         locotrack_query_chunk_size=int(args.locotrack_query_chunk_size),
         locotrack_autocast_dtype=str(args.locotrack_autocast_dtype),
+        tapnet_repo_dir=args.tapnet_repo_dir,
+        tapnextpp_checkpoint=args.tapnextpp_checkpoint,
+        tapnextpp_image_size=parse_tapnextpp_image_size(args.tapnextpp_image_size),
+        tapnextpp_autocast_dtype=str(args.tapnextpp_autocast_dtype),
+        tapnextpp_use_certainty=bool(args.tapnextpp_use_certainty),
+        tapnextpp_certainty_radius=int(args.tapnextpp_certainty_radius),
+        tapnextpp_certainty_threshold=float(args.tapnextpp_certainty_threshold),
+        tapnextpp_compile=bool(args.tapnextpp_compile),
         tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
             args.tracker_batch_query_count_policy
         ),
@@ -1485,11 +1565,20 @@ def build_contract(
         tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "lazy_query_init"
     elif tracker_backend == TRACKER_BACKEND_LOCOTRACK:
         tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "disabled"
+    elif tracker_backend == TRACKER_BACKEND_TAPNEXTPP:
+        tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "disabled"
     else:
         tracker_prewarm_mode = "backend_model_prewarm" if bool(args.cotracker_prewarm_backends) else "disabled"
     tracker_query_dependent_init = tracker_backend == TRACKER_BACKEND_LITETRACKER
-    tracker_online_semantics = "windowed" if tracker_backend == TRACKER_BACKEND_LOCOTRACK else "online"
+    tracker_online_semantics = (
+        "windowed"
+        if tracker_backend == TRACKER_BACKEND_LOCOTRACK
+        else "stateful_frame_by_frame"
+        if tracker_backend == TRACKER_BACKEND_TAPNEXTPP
+        else "online"
+    )
     locotrack_resolution = parse_locotrack_resolution(args.locotrack_resolution)
+    tapnextpp_image_size = parse_tapnextpp_image_size(args.tapnextpp_image_size)
     batch_enabled_by_contract = bool(
         tracker_spec.supports_batch_views
         and execution_mode in {TRACKING_BACKEND_EXECUTION_MODE_AUTO, TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS}
@@ -1556,6 +1645,7 @@ def build_contract(
         "sam31_gpu_physical": 0 if demo32 else int(args.mask_gpu),
         "litetracker_gpu_physical": int(args.cotracker_gpu) if demo32 else None,
         "locotrack_gpu_physical": int(args.cotracker_gpu) if tracker_backend == TRACKER_BACKEND_LOCOTRACK else None,
+        "tapnextpp_gpu_physical": int(args.cotracker_gpu) if tracker_backend == TRACKER_BACKEND_TAPNEXTPP else None,
         "ffs_edgetam_same_gpu": bool(demo32),
         "shared_runtime_gpu_placement": (
             "ffs_edgetam_gpu0_litetracker_gpu1" if demo32 else "mask_gpu0_track_gpu1"
@@ -1590,6 +1680,7 @@ def build_contract(
         "tracking_backend_execution_mode": execution_mode,
         "tracking_backend_batch_dimension": "camera" if batch_enabled_by_contract else "none",
         "tracking_backend_batch_size": int(len(camera_ids) if batch_enabled_by_contract else 1),
+        "tracking_backend_model_instances_expected": int(1 if batch_enabled_by_contract else len(camera_ids)),
         "tracking_backend_batch_supported": bool(tracker_spec.supports_batch_views),
         "tracking_backend_supports_batch_views": bool(tracker_spec.supports_batch_views),
         "tracking_backend_supports_online": bool(tracker_spec.supports_online),
@@ -1619,6 +1710,15 @@ def build_contract(
         "locotrack_autocast_dtype": str(args.locotrack_autocast_dtype),
         "locotrack_checkpoint": args.locotrack_checkpoint,
         "locotrack_repo_dir": args.locotrack_repo_dir,
+        "tapnet_repo_dir": args.tapnet_repo_dir,
+        "tapnextpp_checkpoint": args.tapnextpp_checkpoint,
+        "tapnextpp_image_size": [int(tapnextpp_image_size[0]), int(tapnextpp_image_size[1])],
+        "tapnextpp_autocast_dtype": str(args.tapnextpp_autocast_dtype),
+        "tapnextpp_use_certainty": bool(args.tapnextpp_use_certainty),
+        "tapnextpp_certainty_radius": int(args.tapnextpp_certainty_radius),
+        "tapnextpp_certainty_threshold": float(args.tapnextpp_certainty_threshold),
+        "tapnextpp_compile": bool(args.tapnextpp_compile),
+        "tapnextpp_frame_value_range": "0_255_float",
         "tracker_env_name": "demo_3_1_max",
         "ffs_contract": (
             {
@@ -1856,6 +1956,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "sam31_gpu_physical",
         "litetracker_gpu_physical",
         "locotrack_gpu_physical",
+        "tapnextpp_gpu_physical",
         "ffs_edgetam_same_gpu",
         "shared_runtime_gpu_placement",
         "main_cuda_visible_devices",
@@ -1937,9 +2038,19 @@ def format_contract(contract: dict[str, Any]) -> str:
         "locotrack_autocast_dtype",
         "locotrack_checkpoint",
         "locotrack_repo_dir",
+        "tapnet_repo_dir",
+        "tapnextpp_checkpoint",
+        "tapnextpp_image_size",
+        "tapnextpp_autocast_dtype",
+        "tapnextpp_use_certainty",
+        "tapnextpp_certainty_radius",
+        "tapnextpp_certainty_threshold",
+        "tapnextpp_compile",
+        "tapnextpp_frame_value_range",
         "tracking_backend_execution_mode",
         "tracking_backend_batch_dimension",
         "tracking_backend_batch_size",
+        "tracking_backend_model_instances_expected",
         "tracking_backend_batch_supported",
         "tracking_backend_supports_batch_views",
         "tracking_backend_supports_online",
