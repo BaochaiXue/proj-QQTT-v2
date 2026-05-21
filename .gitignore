@@ -125,6 +125,22 @@ wandb/
 docs/generated/demo22_full_hf_batched_multisession_stuffed_animal_*_profile.json
 docs/generated/demo22_full_hf_batched_multisession_stuffed_animal_*_profile.md
 
+# Detailed Demo 3.1 rendered tracker profile payloads; keep compact summaries versioned.
+docs/generated/demo31_locotrack_s_rendered_profile/serial_*.json
+docs/generated/demo31_locotrack_s_rendered_profile/serial_*_shared_runtime.json
+docs/generated/demo31_locotrack_s_rendered_profile/serial_*_shared_runtime.md
+docs/generated/demo31_locotrack_s_rendered_profile/batch_views_*.json
+docs/generated/demo31_locotrack_s_rendered_profile/batch_views_*_shared_runtime.json
+docs/generated/demo31_locotrack_s_rendered_profile/batch_views_*_shared_runtime.md
+docs/generated/demo31_locotrack_s_rendered_profile/manifest*.json
+docs/generated/demo31_tapnextpp_rendered_profile/serial_*.json
+docs/generated/demo31_tapnextpp_rendered_profile/serial_*_shared_runtime.json
+docs/generated/demo31_tapnextpp_rendered_profile/serial_*_shared_runtime.md
+docs/generated/demo31_tapnextpp_rendered_profile/batch_views_*.json
+docs/generated/demo31_tapnextpp_rendered_profile/batch_views_*_shared_runtime.json
+docs/generated/demo31_tapnextpp_rendered_profile/batch_views_*_shared_runtime.md
+docs/generated/demo31_tapnextpp_rendered_profile/manifest*.json
+
 # Temp / scratch
 quick_test/
 deprecated/
