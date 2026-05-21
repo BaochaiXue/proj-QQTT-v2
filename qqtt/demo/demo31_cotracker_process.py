@@ -321,7 +321,27 @@ class CoTrackerProcessHandle:
             except queue.Empty:
                 break
             if isinstance(item, dict):
-                drained.append(dict(item))
+                receive_perf_s = time.perf_counter()
+                event = dict(item)
+                event["status_receive_perf_s"] = float(receive_perf_s)
+                event["status_receive_after_process_start_s"] = float(
+                    max(0.0, receive_perf_s - float(self.started_s))
+                )
+                ready_perf_s = event.get("ready_perf_s")
+                if ready_perf_s is not None:
+                    try:
+                        ready_perf = float(ready_perf_s)
+                    except (TypeError, ValueError):
+                        ready_perf = 0.0
+                    if ready_perf > 0.0:
+                        event["ready_event_after_process_start_s"] = float(
+                            max(0.0, ready_perf - float(self.started_s))
+                        )
+                        event["ready_receive_after_process_start_s"] = float(
+                            max(0.0, receive_perf_s - float(self.started_s))
+                        )
+                        event["ready_queue_lag_ms"] = float(max(0.0, (receive_perf_s - ready_perf) * 1000.0))
+                drained.append(event)
         self._status_events.extend(drained)
         return drained
 

@@ -2476,6 +2476,10 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             else None
             )
             self.demo31_process_status_events: list[dict[str, Any]] = []
+            self.demo31_process_status_lock = threading.Lock()
+            self.demo31_process_status_drain_stop = threading.Event()
+            self.demo31_process_status_drain_thread: threading.Thread | None = None
+            self.demo31_process_status_last_drain_perf_s = 0.0
             if self.demo31_process_client is not None:
                 self._summary["demo31_cotracker_process_eager_started_before_camera"] = True
                 self._summary["demo31_cotracker_pid"] = int(getattr(self.demo31_process_client, "pid", 0) or 0)
@@ -2489,6 +2493,16 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         "started_s": self._profile_rel_s(),
                     },
                 )
+                if bool(self.demo31_contract.get("demo31_process_status_background_drain", True)) and hasattr(
+                    self.demo31_process_client,
+                    "drain_status_events",
+                ):
+                    self.demo31_process_status_drain_thread = threading.Thread(
+                        target=self._demo31_process_status_drain_loop,
+                        name="demo31-tracker-status-drain",
+                        daemon=True,
+                    )
+                    self.demo31_process_status_drain_thread.start()
             self.stage_join_buffer = Demo31MaskPolicyJoinBuffer(
                 max_groups=8,
                 policy=str(self.demo31_contract["fusion_mask_policy"]),
@@ -2552,6 +2566,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
 
         def stop(self) -> None:
             self.stop_event.set()
+            self._stop_demo31_process_status_drain_thread()
             self._drain_demo31_process_status()
             if self.demo31_process_client is not None:
                 self.demo31_process_client.stop(timeout_s=2.0)
@@ -2589,63 +2604,151 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             }
             _write_profile(Path(path), payload)
 
+        def _stop_demo31_process_status_drain_thread(self) -> None:
+            self.demo31_process_status_drain_stop.set()
+            thread = self.demo31_process_status_drain_thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=0.5)
+
+        def _demo31_process_status_drain_loop(self) -> None:
+            while not self.demo31_process_status_drain_stop.wait(0.05):
+                try:
+                    self._drain_demo31_process_status()
+                except Exception as exc:
+                    self._summary["demo31_process_status_drain_error"] = str(exc)
+                    break
+
+        def _annotate_demo31_process_status_event(
+            self,
+            event: dict[str, Any],
+            *,
+            receive_perf_s: float,
+            receive_profile_s: float,
+        ) -> dict[str, Any]:
+            annotated = dict(event)
+            annotated["status_runtime_receive_s"] = float(receive_profile_s)
+            annotated["status_runtime_receive_perf_s"] = float(receive_perf_s)
+            client_started_s = float(getattr(self.demo31_process_client, "started_s", 0.0) or 0.0)
+            if client_started_s > 0.0:
+                annotated.setdefault(
+                    "status_receive_after_process_start_s",
+                    float(max(0.0, receive_perf_s - client_started_s)),
+                )
+            ready_perf_raw = annotated.get("ready_perf_s")
+            if ready_perf_raw is None:
+                return annotated
+            try:
+                ready_perf_s = float(ready_perf_raw)
+            except (TypeError, ValueError):
+                return annotated
+            if ready_perf_s <= 0.0:
+                return annotated
+            annotated["ready_receive_s"] = float(receive_profile_s)
+            annotated["ready_receive_perf_s"] = float(receive_perf_s)
+            annotated["ready_queue_lag_ms"] = float(max(0.0, (receive_perf_s - ready_perf_s) * 1000.0))
+            if client_started_s > 0.0:
+                annotated.setdefault(
+                    "ready_event_after_process_start_s",
+                    float(max(0.0, ready_perf_s - client_started_s)),
+                )
+                annotated.setdefault(
+                    "ready_receive_after_process_start_s",
+                    float(max(0.0, receive_perf_s - client_started_s)),
+                )
+            return annotated
+
+        def _maybe_drain_demo31_process_status(self, *, min_interval_s: float = 0.05) -> list[dict[str, Any]]:
+            now_s = time.perf_counter()
+            if now_s - float(self.demo31_process_status_last_drain_perf_s) < float(min_interval_s):
+                return []
+            return self._drain_demo31_process_status()
+
         def _drain_demo31_process_status(self) -> list[dict[str, Any]]:
             if self.demo31_process_client is None or not hasattr(self.demo31_process_client, "drain_status_events"):
                 return []
-            events = self.demo31_process_client.drain_status_events()
-            for event in events:
-                if not isinstance(event, dict):
-                    continue
-                event = dict(event)
-                self.demo31_process_status_events.append(event)
-                if str(event.get("type")) == "error":
-                    self._summary["demo31_cotracker_process_error"] = str(event.get("error", "unknown"))
-                    self._summary["demo31_tracker_process_error"] = str(event.get("error", "unknown"))
-                    self._summary["demo31_cotracker_process_error_stage"] = str(event.get("stage", "cotracker"))
-                    self._summary["demo31_tracker_process_error_stage"] = str(event.get("stage", "tracker"))
-                    self._init_profile_update(("demo31", "cotracker_process", "error"), event)
-                    self._init_profile_update(("demo31", "tracker_process", "error"), event)
-                    continue
-                if str(event.get("type")) != "ready":
-                    continue
-                ready_to_receive = bool(event.get("ready_to_receive_inputs", True))
-                self._summary["demo31_cotracker_process_ready"] = True
-                self._summary["demo31_tracker_process_ready"] = True
-                self._summary["demo31_tracker_ready_to_receive_inputs"] = ready_to_receive
-                self._summary["demo31_tracker_ready_state"] = str(event.get("ready_state", "ready_to_receive_inputs"))
-                self._summary["demo31_cotracker_process_init_ms"] = float(event.get("total_init_ms", 0.0) or 0.0)
-                self._summary["demo31_tracker_process_init_ms"] = float(event.get("total_init_ms", 0.0) or 0.0)
-                self._summary["demo31_cotracker_prewarm_backends"] = bool(event.get("prewarm_backends", False))
-                self._summary["demo31_tracker_prewarm_backends"] = bool(event.get("prewarm_backends", False))
-                self._summary["demo31_tracker_prewarm_mode"] = str(event.get("tracker_prewarm_mode", "unknown"))
-                self._summary["demo31_tracker_query_dependent_init_pending"] = bool(
-                    event.get("tracker_query_dependent_init_pending", False)
-                )
-                warmup_profile = event.get("warmup_profile") if isinstance(event.get("warmup_profile"), dict) else {}
-                self._summary["demo31_cotracker_backend_warmup_ms"] = float(
-                    warmup_profile.get("total_ms", 0.0) if isinstance(warmup_profile, dict) else 0.0
-                )
-                self._summary["demo31_tracker_backend_warmup_ms"] = float(
-                    warmup_profile.get("total_ms", 0.0) if isinstance(warmup_profile, dict) else 0.0
-                )
-                self._init_profile_update(
-                    ("demo31", "cotracker_process", "ready"),
-                    {
-                        "cuda_visible_devices": event.get("cuda_visible_devices"),
-                        "prewarm_backends": bool(event.get("prewarm_backends", False)),
-                        "tracker_prewarm_mode": event.get("tracker_prewarm_mode"),
-                        "ready_state": event.get("ready_state", "ready_to_receive_inputs"),
-                        "ready_to_receive_inputs": ready_to_receive,
-                        "tracker_query_dependent_init_pending": bool(
-                            event.get("tracker_query_dependent_init_pending", False)
-                        ),
-                        "total_init_ms": float(event.get("total_init_ms", 0.0) or 0.0),
-                        "warmup_profile": warmup_profile,
-                        "ready_receive_s": self._profile_rel_s(),
-                    },
-                )
-                self._init_profile_update(("demo31", "tracker_process", "ready"), event)
-            return events
+            with self.demo31_process_status_lock:
+                events = self.demo31_process_client.drain_status_events()
+                receive_perf_s = time.perf_counter()
+                self.demo31_process_status_last_drain_perf_s = float(receive_perf_s)
+                if not events:
+                    return []
+                receive_profile_s = self._profile_rel_s()
+                processed_events: list[dict[str, Any]] = []
+                for event in events:
+                    if not isinstance(event, dict):
+                        continue
+                    event = self._annotate_demo31_process_status_event(
+                        dict(event),
+                        receive_perf_s=receive_perf_s,
+                        receive_profile_s=receive_profile_s,
+                    )
+                    processed_events.append(event)
+                    self.demo31_process_status_events.append(event)
+                    if str(event.get("type")) == "error":
+                        self._summary["demo31_cotracker_process_error"] = str(event.get("error", "unknown"))
+                        self._summary["demo31_tracker_process_error"] = str(event.get("error", "unknown"))
+                        self._summary["demo31_cotracker_process_error_stage"] = str(event.get("stage", "cotracker"))
+                        self._summary["demo31_tracker_process_error_stage"] = str(event.get("stage", "tracker"))
+                        self._init_profile_update(("demo31", "cotracker_process", "error"), event)
+                        self._init_profile_update(("demo31", "tracker_process", "error"), event)
+                        continue
+                    if str(event.get("type")) != "ready":
+                        continue
+                    ready_to_receive = bool(event.get("ready_to_receive_inputs", True))
+                    self._summary["demo31_cotracker_process_ready"] = True
+                    self._summary["demo31_tracker_process_ready"] = True
+                    self._summary["demo31_tracker_ready_to_receive_inputs"] = ready_to_receive
+                    self._summary["demo31_tracker_ready_state"] = str(event.get("ready_state", "ready_to_receive_inputs"))
+                    self._summary["demo31_cotracker_process_init_ms"] = float(event.get("total_init_ms", 0.0) or 0.0)
+                    self._summary["demo31_tracker_process_init_ms"] = float(event.get("total_init_ms", 0.0) or 0.0)
+                    self._summary["demo31_cotracker_prewarm_backends"] = bool(event.get("prewarm_backends", False))
+                    self._summary["demo31_tracker_prewarm_backends"] = bool(event.get("prewarm_backends", False))
+                    self._summary["demo31_tracker_prewarm_mode"] = str(event.get("tracker_prewarm_mode", "unknown"))
+                    self._summary["demo31_tracker_query_dependent_init_pending"] = bool(
+                        event.get("tracker_query_dependent_init_pending", False)
+                    )
+                    if "ready_event_after_process_start_s" in event:
+                        self._summary["demo31_tracker_ready_event_after_process_start_s"] = float(
+                            event.get("ready_event_after_process_start_s", 0.0) or 0.0
+                        )
+                    if "ready_receive_after_process_start_s" in event:
+                        self._summary["demo31_tracker_ready_receive_after_process_start_s"] = float(
+                            event.get("ready_receive_after_process_start_s", 0.0) or 0.0
+                        )
+                    if "ready_queue_lag_ms" in event:
+                        self._summary["demo31_tracker_ready_queue_lag_ms"] = float(
+                            event.get("ready_queue_lag_ms", 0.0) or 0.0
+                        )
+                    warmup_profile = event.get("warmup_profile") if isinstance(event.get("warmup_profile"), dict) else {}
+                    self._summary["demo31_cotracker_backend_warmup_ms"] = float(
+                        warmup_profile.get("total_ms", 0.0) if isinstance(warmup_profile, dict) else 0.0
+                    )
+                    self._summary["demo31_tracker_backend_warmup_ms"] = float(
+                        warmup_profile.get("total_ms", 0.0) if isinstance(warmup_profile, dict) else 0.0
+                    )
+                    self._init_profile_update(
+                        ("demo31", "cotracker_process", "ready"),
+                        {
+                            "cuda_visible_devices": event.get("cuda_visible_devices"),
+                            "prewarm_backends": bool(event.get("prewarm_backends", False)),
+                            "tracker_prewarm_mode": event.get("tracker_prewarm_mode"),
+                            "ready_state": event.get("ready_state", "ready_to_receive_inputs"),
+                            "ready_to_receive_inputs": ready_to_receive,
+                            "tracker_query_dependent_init_pending": bool(
+                                event.get("tracker_query_dependent_init_pending", False)
+                            ),
+                            "total_init_ms": float(event.get("total_init_ms", 0.0) or 0.0),
+                            "warmup_profile": warmup_profile,
+                            "ready_event_after_process_start_s": event.get("ready_event_after_process_start_s"),
+                            "ready_receive_after_process_start_s": event.get(
+                                "ready_receive_after_process_start_s"
+                            ),
+                            "ready_receive_s": event.get("ready_receive_s", receive_profile_s),
+                            "ready_queue_lag_ms": event.get("ready_queue_lag_ms"),
+                        },
+                    )
+                    self._init_profile_update(("demo31", "tracker_process", "ready"), event)
+                return processed_events
 
         def _build_surface_anchor_snapshot(
             self,
@@ -2868,6 +2971,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             publish_hook: str,
         ) -> None:
             now_s = time.perf_counter()
+            self._maybe_drain_demo31_process_status()
             rgb_by_camera: dict[int, np.ndarray] = {}
             mask_by_camera: dict[int, np.ndarray] = {}
             object_mask_by_camera: dict[int, np.ndarray] = {}
@@ -3851,6 +3955,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
         def _take_fresh_tracking_result(self, *, now_s: float) -> TrackingResultLitePacket | None:
             if self.demo31_process_client is None:
                 return None
+            self._maybe_drain_demo31_process_status()
             result = self.demo31_process_client.get_result()
             if result is not None:
                 fresh = fresh_tracking_result_or_none(

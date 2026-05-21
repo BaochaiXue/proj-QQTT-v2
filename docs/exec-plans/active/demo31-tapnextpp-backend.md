@@ -78,3 +78,17 @@ which means `12288` total query points across the three Demo 3.1 views.
   `0`; query counts: `{0: 4096, 1: 4096, 2: 4096}`; batch errors: `0`.
 - PASS: Committed summary:
   `docs/generated/demo31_tapnextpp_rendered_profile/summary_q4096_live_fixed_yx.md`.
+- PASS: Fixed tracker child-process ready/warmup profiling so the child
+  `ready_perf_s` event time is recorded separately from runtime receive time;
+  the runtime now drains status events in the startup/background path and in
+  tracking input/result hot paths.
+- PASS: Added regression coverage:
+  `tests.test_demo31_dual_gpu_contract.Demo31DualGpuContractTest.test_tracker_ready_status_records_event_time_not_teardown_time`.
+- PASS: `conda run --no-capture-output -n demo_3_1_max python -m unittest tests.test_point_tracker_adapters tests.test_demo31_cotracker_process_config tests.test_demo31_dual_gpu_contract`.
+- PASS: `conda run --no-capture-output -n demo_3_1_max python scripts/harness/check_all.py`.
+- PASS: Rendered live RealSense/Open3D ready-timing verification for
+  `tapnextpp`, `4096/view`, `45s`:
+  `docs/generated/demo31_tapnextpp_rendered_profile/summary_q4096_live_readyfix.md`.
+  Tracker ready receive times are `7.188s` serial and `4.086s` batch-views;
+  first rendered groups remain `0` in both modes with no warmup-skipped or
+  render-blocked frames.

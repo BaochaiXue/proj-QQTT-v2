@@ -85,6 +85,19 @@ class _FakeProcessClient:
         return None
 
 
+class _FakeStatusProcessClient(_FakeProcessClient):
+    def __init__(self, events: list[dict[str, object]], *, started_s: float) -> None:
+        super().__init__(None)
+        self.events = list(events)
+        self.started_s = float(started_s)
+        self.pid = 12345
+
+    def drain_status_events(self) -> list[dict[str, object]]:
+        events = list(self.events)
+        self.events.clear()
+        return events
+
+
 class _FakeSharedRuntimeModule:
     PRESET_DEMO23_DUAL4090_MAXFPS = "demo2.3-dual4090-maxfps"
     DEPTH_SOURCE_FFS = "ffs"
@@ -206,6 +219,53 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         parser = demo31_runtime.build_arg_parser(default_preset=default_preset)
         args = parser.parse_args(argv)
         return demo31_runtime.apply_preset_defaults(args, explicit_options=set(argv))
+
+    def test_tracker_ready_status_records_event_time_not_teardown_time(self) -> None:
+        process_started_s = demo31_runtime.time.perf_counter() - 1.0
+        ready_perf_s = process_started_s + 0.25
+        ready_event = {
+            "type": "ready",
+            "ready_to_receive_inputs": True,
+            "ready_state": "ready_to_receive_inputs",
+            "ready_perf_s": ready_perf_s,
+            "total_init_ms": 250.0,
+            "prewarm_backends": True,
+            "tracker_prewarm_mode": "backend_model_prewarm",
+            "warmup_profile": {"total_ms": 200.0},
+        }
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeStatusProcessClient(
+                [ready_event],
+                started_s=process_started_s,
+            ),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "demo31_process_status_background_drain": False,
+            },
+            cotracker_process_config=SimpleNamespace(prewarm_backends=True),
+        )
+
+        events = runtime._drain_demo31_process_status()
+
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertAlmostEqual(float(event["ready_event_after_process_start_s"]), 0.25, places=3)
+        self.assertIn("ready_receive_s", event)
+        self.assertGreaterEqual(float(event["ready_receive_after_process_start_s"]), 0.25)
+        self.assertGreaterEqual(float(event["ready_queue_lag_ms"]), 0.0)
+        self.assertAlmostEqual(runtime._summary["demo31_tracker_process_init_ms"], 250.0)
+        self.assertAlmostEqual(runtime._summary["demo31_tracker_backend_warmup_ms"], 200.0)
+        self.assertAlmostEqual(
+            runtime._summary["demo31_tracker_ready_event_after_process_start_s"],
+            0.25,
+            places=3,
+        )
 
     def test_dry_run_contract_maps_gpu0_and_gpu1(self) -> None:
         args = self._parse(["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"])
