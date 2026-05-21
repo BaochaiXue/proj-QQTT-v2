@@ -19,6 +19,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (
     LITETRACKER_RUNTIME_PYTORCH,
     TRACKER_BACKEND_COTRACKER3,
     TRACKER_BACKEND_LITETRACKER,
+    TRACKER_BACKEND_LOCOTRACK,
     TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
     TRACKER_EXECUTION_MODE_AUTO,
     TRACKER_EXECUTION_MODE_BATCH_VIEWS,
@@ -69,6 +70,13 @@ class CoTrackerProcessConfig:
     litetracker_export_onnx: bool = False
     litetracker_onnx_opset: int = 17
     litetracker_onnx_optimization_level: int = 5
+    locotrack_repo_dir: str | None = None
+    locotrack_checkpoint: str | None = None
+    locotrack_model_size: str = "small"
+    locotrack_window_frames: int = 8
+    locotrack_resolution: tuple[int, int] = (256, 256)
+    locotrack_query_chunk_size: int = 256
+    locotrack_autocast_dtype: str = "bf16"
     tracker_batch_query_count_policy: str = TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED
 
     @property
@@ -87,6 +95,8 @@ class CoTrackerProcessConfig:
     def tracker_prewarm_mode(self) -> str:
         if self.normalized_tracker_backend == TRACKER_BACKEND_LITETRACKER:
             return "model_load_only" if bool(self.prewarm_backends) else "lazy_query_init"
+        if self.normalized_tracker_backend == TRACKER_BACKEND_LOCOTRACK:
+            return "model_load_only" if bool(self.prewarm_backends) else "disabled"
         return "backend_model_prewarm" if bool(self.prewarm_backends) else "disabled"
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -124,6 +134,13 @@ class CoTrackerProcessConfig:
             "litetracker_export_onnx": bool(self.litetracker_export_onnx),
             "litetracker_onnx_opset": int(self.litetracker_onnx_opset),
             "litetracker_onnx_optimization_level": int(self.litetracker_onnx_optimization_level),
+            "locotrack_repo_dir": self.locotrack_repo_dir,
+            "locotrack_checkpoint": self.locotrack_checkpoint,
+            "locotrack_model_size": str(self.locotrack_model_size),
+            "locotrack_window_frames": int(self.locotrack_window_frames),
+            "locotrack_resolution": [int(item) for item in self.locotrack_resolution],
+            "locotrack_query_chunk_size": int(self.locotrack_query_chunk_size),
+            "locotrack_autocast_dtype": str(self.locotrack_autocast_dtype),
             "tracker_batch_query_count_policy": normalize_tracker_batch_query_count_policy(
                 self.tracker_batch_query_count_policy
             ),
@@ -168,6 +185,13 @@ class CoTrackerProcessConfig:
             litetracker_export_onnx=bool(payload.get("litetracker_export_onnx", False)),
             litetracker_onnx_opset=int(payload.get("litetracker_onnx_opset", 17)),
             litetracker_onnx_optimization_level=int(payload.get("litetracker_onnx_optimization_level", 5)),
+            locotrack_repo_dir=payload.get("locotrack_repo_dir"),
+            locotrack_checkpoint=payload.get("locotrack_checkpoint"),
+            locotrack_model_size=str(payload.get("locotrack_model_size", "small")),
+            locotrack_window_frames=int(payload.get("locotrack_window_frames", 8)),
+            locotrack_resolution=tuple(int(item) for item in payload.get("locotrack_resolution", (256, 256))),
+            locotrack_query_chunk_size=int(payload.get("locotrack_query_chunk_size", 256)),
+            locotrack_autocast_dtype=str(payload.get("locotrack_autocast_dtype", "bf16")),
             tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
                 payload.get("tracker_batch_query_count_policy", TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED)
             ),
@@ -349,6 +373,13 @@ def run_cotracker_worker_loop(
             litetracker_export_onnx=config.litetracker_export_onnx,
             litetracker_onnx_opset=config.litetracker_onnx_opset,
             litetracker_onnx_optimization_level=config.litetracker_onnx_optimization_level,
+            locotrack_repo_dir=config.locotrack_repo_dir,
+            locotrack_checkpoint=config.locotrack_checkpoint,
+            locotrack_model_size=config.locotrack_model_size,
+            locotrack_window_frames=config.locotrack_window_frames,
+            locotrack_resolution=config.locotrack_resolution,
+            locotrack_query_chunk_size=config.locotrack_query_chunk_size,
+            locotrack_autocast_dtype=config.locotrack_autocast_dtype,
         )
     )
     update_mode = effective_legacy_update_mode(config.backend_execution_mode)
@@ -426,6 +457,13 @@ def run_cotracker_worker_loop(
                     "litetracker_export_onnx": bool(config.litetracker_export_onnx),
                     "litetracker_onnx_opset": int(config.litetracker_onnx_opset),
                     "litetracker_onnx_optimization_level": int(config.litetracker_onnx_optimization_level),
+                    "locotrack_model_size": str(config.locotrack_model_size),
+                    "locotrack_window_frames": int(config.locotrack_window_frames),
+                    "locotrack_resolution": [int(item) for item in config.locotrack_resolution],
+                    "locotrack_query_chunk_size": int(config.locotrack_query_chunk_size),
+                    "locotrack_autocast_dtype": str(config.locotrack_autocast_dtype),
+                    "locotrack_checkpoint": config.locotrack_checkpoint,
+                    "locotrack_repo_dir": config.locotrack_repo_dir,
                     "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "prewarm_backends": bool(config.prewarm_backends),
                     "tracker_prewarm_mode": tracker_prewarm_mode,
@@ -491,6 +529,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "litetracker_export_onnx": bool(config.litetracker_export_onnx),
                     "litetracker_onnx_opset": int(config.litetracker_onnx_opset),
                     "litetracker_onnx_optimization_level": int(config.litetracker_onnx_optimization_level),
+                    "locotrack_model_size": str(config.locotrack_model_size),
+                    "locotrack_window_frames": int(config.locotrack_window_frames),
+                    "locotrack_resolution": [int(item) for item in config.locotrack_resolution],
+                    "locotrack_query_chunk_size": int(config.locotrack_query_chunk_size),
+                    "locotrack_autocast_dtype": str(config.locotrack_autocast_dtype),
+                    "locotrack_checkpoint": config.locotrack_checkpoint,
+                    "locotrack_repo_dir": config.locotrack_repo_dir,
                     "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "cotracker_cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
                     "tracking_query_mode": config.query_mode,

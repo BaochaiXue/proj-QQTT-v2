@@ -89,6 +89,8 @@ wandb/
 /MPC/
 
 # Downloaded third-party assets / checkpoints
+/external/
+/checkpoints/
 /data_process/TRELLIS/
 /data_process/models/weights/
 /data_process/groundedSAM_checkpoints/

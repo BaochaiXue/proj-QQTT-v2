@@ -6,9 +6,9 @@ RealSense tracking-overlay lineage.
 - GPU0 owns three RealSense capture, SAM3.1/HF EdgeTAM masks, RealSense-depth
   fusion, and Open3D/render.
 - GPU1 owns a point-tracker backend in a separate child process.
-- Supported backend names are `cotracker3_online`, `trackon2`, and
-  `litetracker`; `cotracker3_online` is the default and currently the validated
-  live backend.
+- Supported backend names are `cotracker3_online`, `trackon2`, `litetracker`,
+  and `locotrack`; `cotracker3_online` is the default and currently the
+  validated live backend.
 - The point tracker receives CPU RGB/mask latest-wins packets only.
 - The point tracker returns small CPU 2D track/visibility packets.
 - The main process lifts tracks to world with group-aligned cached RealSense depth,
@@ -94,8 +94,46 @@ If `--gpu-sampling` is enabled without explicit indexes, Demo 3.1 samples the
 configured mask and CoTracker physical GPUs, `0,1` by default.
 
 Track-On2 and LiteTracker are exposed through the same child-process contract,
-but their external repos/weights stay outside this repository. Use
-`scripts/env/create_demo_3_1_max.sh` to clone the current Demo 3 environment,
-then install external tracker dependencies into `demo_3_1_max` before live
-profiling those backends. The adapter layer fails early with a clear message if
-the required external repo/checkpoint is not configured.
+and LocoTrack-S is exposed as the `locotrack` backend. These external
+repos/weights stay outside this repository. Use
+`scripts/env/create_demo_3_1_max.sh` to clone the current Demo 3 environment.
+For LocoTrack-S, install the live-inference dependency set without replacing
+the existing CUDA Torch:
+
+```bash
+scripts/env/install_locotrack_s_demo_3_1_max.sh
+```
+
+Dry-run LocoTrack-S batch-views:
+
+```bash
+conda run --no-capture-output -n demo_3_1_max \
+  python demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py \
+  --dry-run \
+  --camera-ids 0,1,2 \
+  --mask-gpu 0 \
+  --cotracker-gpu 1 \
+  --require-two-cuda \
+  --calibrate-path calibrate.pkl \
+  --cotracker-backend locotrack \
+  --tracking-backend-execution-mode batch-views \
+  --locotrack-repo-dir external/locotrack/locotrack_pytorch \
+  --locotrack-checkpoint checkpoints/locotrack/locotrack_small.ckpt \
+  --locotrack-model-size small \
+  --locotrack-window-frames 8 \
+  --locotrack-query-chunk-size 256
+```
+
+LocoTrack is treated as a rolling-window backend, not frame-by-frame online
+tracking. The contract reports `tracking_backend_online_semantics=windowed`;
+serial mode creates one adapter per camera, while batch-views creates one
+adapter/model and calls inference once over `[3,T,H,W,3]`. Rendered profile
+targets are available through:
+
+```bash
+python scripts/harness/run_demo31_locotrack_s_profiles.py --print-commands
+python scripts/harness/summarize_demo31_locotrack_s_profiles.py
+```
+
+The adapter layer fails early with a clear message if the required external
+repo/checkpoint is not configured.

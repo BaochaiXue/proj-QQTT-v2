@@ -33,6 +33,13 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
             litetracker_export_onnx=True,
             litetracker_onnx_opset=17,
             litetracker_onnx_optimization_level=5,
+            locotrack_repo_dir="/tmp/locotrack/locotrack_pytorch",
+            locotrack_checkpoint="/tmp/locotrack_small.ckpt",
+            locotrack_model_size="small",
+            locotrack_window_frames=12,
+            locotrack_resolution=(320, 256),
+            locotrack_query_chunk_size=128,
+            locotrack_autocast_dtype="fp16",
             tracker_batch_query_count_policy="min-common",
         )
 
@@ -135,6 +142,44 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         self.assertIn('"litetracker_export_onnx": true', output)
         self.assertIn('"litetracker_onnx_opset": 17', output)
         self.assertIn('"litetracker_onnx_optimization_level": 5', output)
+
+    def test_locotrack_config_prints_windowed_contract_fields(self) -> None:
+        config = process_mod.CoTrackerProcessConfig(
+            cotracker_backend="locotrack",
+            backend_execution_mode="batch-views",
+            locotrack_repo_dir="/tmp/locotrack/locotrack_pytorch",
+            locotrack_checkpoint="/tmp/locotrack_small.ckpt",
+            locotrack_model_size="small",
+            locotrack_window_frames=8,
+            locotrack_resolution=(256, 256),
+            locotrack_query_chunk_size=256,
+            locotrack_autocast_dtype="bf16",
+        )
+
+        self.assertEqual(config.tracker_family, "locotrack")
+        self.assertEqual(config.tracker_prewarm_mode, "model_load_only")
+        self.assertFalse(config.tracker_query_dependent_init)
+
+        old_value = os.environ.get("CUDA_VISIBLE_DEVICES")
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = process_mod.main(["--config-json", config.to_json(), "--print-contract"])
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn('"tracker_backend": "locotrack"', output)
+        self.assertIn('"tracker_family": "locotrack"', output)
+        self.assertIn('"backend_execution_mode": "batch-views"', output)
+        self.assertIn('"locotrack_model_size": "small"', output)
+        self.assertIn('"locotrack_window_frames": 8', output)
+        self.assertIn('"locotrack_resolution": [', output)
+        self.assertIn('"locotrack_query_chunk_size": 256', output)
+        self.assertIn('"locotrack_autocast_dtype": "bf16"', output)
+        self.assertIn('"tracker_prewarm_mode": "model_load_only"', output)
+        if old_value is None:
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = old_value
 
 
 if __name__ == "__main__":

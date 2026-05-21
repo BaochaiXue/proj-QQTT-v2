@@ -52,6 +52,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (
     LITETRACKER_RUNTIMES,
     TRACKER_BACKEND_COTRACKER3,
     TRACKER_BACKEND_LITETRACKER,
+    TRACKER_BACKEND_LOCOTRACK,
     TRACKER_BACKENDS,
     TRACKER_BATCH_QUERY_COUNT_POLICIES,
     TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED,
@@ -90,6 +91,11 @@ DEFAULT_MASK_STALE_TIMEOUT_MS = 250.0
 DEFAULT_MASK_GPU = "0"
 DEFAULT_COTRACKER_GPU = "1"
 DEFAULT_DEMO31_COTRACKER_QUERY_COUNT_REQUEST = "4096"
+DEFAULT_LOCOTRACK_MODEL_SIZE = "small"
+DEFAULT_LOCOTRACK_WINDOW_FRAMES = 8
+DEFAULT_LOCOTRACK_RESOLUTION = (256, 256)
+DEFAULT_LOCOTRACK_QUERY_CHUNK_SIZE = 256
+DEFAULT_LOCOTRACK_AUTOCAST_DTYPE = "bf16"
 DEFAULT_SAM31_INIT_QUICK_FAIL_EMPTY_MASKS = True
 DEFAULT_SAM31_INIT_MIN_MASK_PIXELS = 1
 DEFAULT_DEMO32_LITETRACKER_REPO_DIR = "/home/xinjie/external/lite-tracker"
@@ -797,6 +803,31 @@ def _normalize_mask_source(value: str) -> str:
     return demo3_runtime.MASK_SOURCE_HF_EDGETAM
 
 
+def parse_locotrack_resolution(value: str | Sequence[int]) -> tuple[int, int]:
+    if isinstance(value, str):
+        raw = value.strip().lower().replace("x", ",")
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        if len(parts) == 1:
+            height = width = int(parts[0])
+        elif len(parts) == 2:
+            height, width = int(parts[0]), int(parts[1])
+        else:
+            raise argparse.ArgumentTypeError("--locotrack-resolution must be HxW, H,W, or a single square size.")
+    else:
+        parts = tuple(int(item) for item in value)
+        if len(parts) == 1:
+            height = width = parts[0]
+        elif len(parts) == 2:
+            height, width = parts
+        else:
+            raise argparse.ArgumentTypeError("--locotrack-resolution must contain one or two integers.")
+    if height <= 0 or width <= 0:
+        raise argparse.ArgumentTypeError("--locotrack-resolution dimensions must be positive.")
+    if height % 8 != 0 or width % 8 != 0:
+        raise argparse.ArgumentTypeError("--locotrack-resolution dimensions must be multiples of 8.")
+    return (int(height), int(width))
+
+
 def _physical_cuda_device_count_from_nvidia_smi() -> int:
     override = os.environ.get("QQTT_DEMO31_TEST_CUDA_COUNT")
     if override:
@@ -881,6 +912,13 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         help="Legacy flag name for the Demo 3.1 point-tracker backend.",
     )
     parser.add_argument(
+        "--tracking-backend",
+        dest="cotracker_backend",
+        choices=TRACKER_BACKENDS,
+        default=argparse.SUPPRESS,
+        help="Alias for --cotracker-backend.",
+    )
+    parser.add_argument(
         "--tracking-backend-execution-mode",
         choices=TRACKING_BACKEND_EXECUTION_MODES,
         default=DEFAULT_TRACKING_BACKEND_EXECUTION_MODE,
@@ -911,6 +949,34 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         type=int,
         default=5,
         help="Requested ONNX Runtime graph optimization level; 5 maps to ORT_ENABLE_ALL when available.",
+    )
+    parser.add_argument("--locotrack-repo-dir", default=None)
+    parser.add_argument("--locotrack-checkpoint", default=None)
+    parser.add_argument(
+        "--locotrack-model-size",
+        choices=("small", "base"),
+        default=DEFAULT_LOCOTRACK_MODEL_SIZE,
+    )
+    parser.add_argument(
+        "--locotrack-window-frames",
+        type=int,
+        default=DEFAULT_LOCOTRACK_WINDOW_FRAMES,
+    )
+    parser.add_argument(
+        "--locotrack-resolution",
+        type=parse_locotrack_resolution,
+        default=DEFAULT_LOCOTRACK_RESOLUTION,
+        help="LocoTrack inference resolution as HxW, H,W, or a square size.",
+    )
+    parser.add_argument(
+        "--locotrack-query-chunk-size",
+        type=int,
+        default=DEFAULT_LOCOTRACK_QUERY_CHUNK_SIZE,
+    )
+    parser.add_argument(
+        "--locotrack-autocast-dtype",
+        choices=("bf16", "fp16", "fp32"),
+        default=DEFAULT_LOCOTRACK_AUTOCAST_DTYPE,
     )
     parser.add_argument(
         "--cotracker-query-mode",
@@ -1182,7 +1248,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             args.depth_source = demo3_runtime.DEPTH_SOURCE_FFS
         if "--fusion-mask-policy" not in explicit:
             args.fusion_mask_policy = FUSION_MASK_POLICY_LATEST_REUSE
-        if "--cotracker-backend" not in explicit:
+        if "--cotracker-backend" not in explicit and "--tracking-backend" not in explicit:
             args.cotracker_backend = TRACKER_BACKEND_LITETRACKER
         if "--tracking-backend-execution-mode" not in explicit:
             args.tracking_backend_execution_mode = TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS
@@ -1259,6 +1325,11 @@ def validate_args(
         raise ValueError("--litetracker-onnx-opset must be positive.")
     if int(args.litetracker_onnx_optimization_level) < 0:
         raise ValueError("--litetracker-onnx-optimization-level must be >= 0.")
+    if int(args.locotrack_window_frames) < 1:
+        raise ValueError("--locotrack-window-frames must be >= 1.")
+    if int(args.locotrack_query_chunk_size) < 1:
+        raise ValueError("--locotrack-query-chunk-size must be >= 1.")
+    parse_locotrack_resolution(args.locotrack_resolution)
     if str(args.cotracker_query_mode) != demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE:
         raise ValueError(f"{demo_label} currently supports only --cotracker-query-mode phystwin_dense.")
     demo3_runtime.normalize_cotracker_query_count_request(args.cotracker_query_count)
@@ -1368,6 +1439,13 @@ def build_cotracker_process_config(args: argparse.Namespace) -> CoTrackerProcess
         litetracker_export_onnx=bool(args.litetracker_export_onnx),
         litetracker_onnx_opset=int(args.litetracker_onnx_opset),
         litetracker_onnx_optimization_level=int(args.litetracker_onnx_optimization_level),
+        locotrack_repo_dir=args.locotrack_repo_dir,
+        locotrack_checkpoint=args.locotrack_checkpoint,
+        locotrack_model_size=str(args.locotrack_model_size),
+        locotrack_window_frames=int(args.locotrack_window_frames),
+        locotrack_resolution=parse_locotrack_resolution(args.locotrack_resolution),
+        locotrack_query_chunk_size=int(args.locotrack_query_chunk_size),
+        locotrack_autocast_dtype=str(args.locotrack_autocast_dtype),
         tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
             args.tracker_batch_query_count_policy
         ),
@@ -1403,12 +1481,15 @@ def build_contract(
             TRACKER_MARKER_LABEL_COLORS_RGB[SURFACE_ANCHOR_LABEL_UNION],
         )
     )
-    tracker_prewarm_mode = (
-        ("model_load_only" if bool(args.cotracker_prewarm_backends) else "lazy_query_init")
-        if tracker_backend == TRACKER_BACKEND_LITETRACKER
-        else ("backend_model_prewarm" if bool(args.cotracker_prewarm_backends) else "disabled")
-    )
+    if tracker_backend == TRACKER_BACKEND_LITETRACKER:
+        tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "lazy_query_init"
+    elif tracker_backend == TRACKER_BACKEND_LOCOTRACK:
+        tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "disabled"
+    else:
+        tracker_prewarm_mode = "backend_model_prewarm" if bool(args.cotracker_prewarm_backends) else "disabled"
     tracker_query_dependent_init = tracker_backend == TRACKER_BACKEND_LITETRACKER
+    tracker_online_semantics = "windowed" if tracker_backend == TRACKER_BACKEND_LOCOTRACK else "online"
+    locotrack_resolution = parse_locotrack_resolution(args.locotrack_resolution)
     batch_enabled_by_contract = bool(
         tracker_spec.supports_batch_views
         and execution_mode in {TRACKING_BACKEND_EXECUTION_MODE_AUTO, TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS}
@@ -1474,6 +1555,7 @@ def build_contract(
         "edgetam_gpu_physical": 0 if demo32 else int(args.mask_gpu),
         "sam31_gpu_physical": 0 if demo32 else int(args.mask_gpu),
         "litetracker_gpu_physical": int(args.cotracker_gpu) if demo32 else None,
+        "locotrack_gpu_physical": int(args.cotracker_gpu) if tracker_backend == TRACKER_BACKEND_LOCOTRACK else None,
         "ffs_edgetam_same_gpu": bool(demo32),
         "shared_runtime_gpu_placement": (
             "ffs_edgetam_gpu0_litetracker_gpu1" if demo32 else "mask_gpu0_track_gpu1"
@@ -1509,6 +1591,9 @@ def build_contract(
         "tracking_backend_batch_dimension": "camera" if batch_enabled_by_contract else "none",
         "tracking_backend_batch_size": int(len(camera_ids) if batch_enabled_by_contract else 1),
         "tracking_backend_batch_supported": bool(tracker_spec.supports_batch_views),
+        "tracking_backend_supports_batch_views": bool(tracker_spec.supports_batch_views),
+        "tracking_backend_supports_online": bool(tracker_spec.supports_online),
+        "tracking_backend_online_semantics": tracker_online_semantics,
         "tracking_backend_batch_support_status": str(tracker_spec.batch_support_status),
         "tracking_backend_batch_auto_selected": bool(
             execution_mode == TRACKING_BACKEND_EXECUTION_MODE_AUTO and tracker_spec.supports_batch_views
@@ -1527,6 +1612,13 @@ def build_contract(
         "litetracker_onnx_opset": int(args.litetracker_onnx_opset),
         "litetracker_onnx_opset_actual": max(int(args.litetracker_onnx_opset), 18),
         "litetracker_onnx_optimization_level": int(args.litetracker_onnx_optimization_level),
+        "locotrack_model_size": str(args.locotrack_model_size),
+        "locotrack_window_frames": int(args.locotrack_window_frames),
+        "locotrack_resolution": [int(locotrack_resolution[0]), int(locotrack_resolution[1])],
+        "locotrack_query_chunk_size": int(args.locotrack_query_chunk_size),
+        "locotrack_autocast_dtype": str(args.locotrack_autocast_dtype),
+        "locotrack_checkpoint": args.locotrack_checkpoint,
+        "locotrack_repo_dir": args.locotrack_repo_dir,
         "tracker_env_name": "demo_3_1_max",
         "ffs_contract": (
             {
@@ -1763,6 +1855,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "edgetam_gpu_physical",
         "sam31_gpu_physical",
         "litetracker_gpu_physical",
+        "locotrack_gpu_physical",
         "ffs_edgetam_same_gpu",
         "shared_runtime_gpu_placement",
         "main_cuda_visible_devices",
@@ -1837,10 +1930,20 @@ def format_contract(contract: dict[str, Any]) -> str:
         "litetracker_onnx_opset",
         "litetracker_onnx_opset_actual",
         "litetracker_onnx_optimization_level",
+        "locotrack_model_size",
+        "locotrack_window_frames",
+        "locotrack_resolution",
+        "locotrack_query_chunk_size",
+        "locotrack_autocast_dtype",
+        "locotrack_checkpoint",
+        "locotrack_repo_dir",
         "tracking_backend_execution_mode",
         "tracking_backend_batch_dimension",
         "tracking_backend_batch_size",
         "tracking_backend_batch_supported",
+        "tracking_backend_supports_batch_views",
+        "tracking_backend_supports_online",
+        "tracking_backend_online_semantics",
         "tracker_batch_query_count_policy",
         "tracker_prewarm_mode",
         "tracker_ready_state",
@@ -1969,11 +2072,12 @@ def build_shared_runtime_args(
     shared_args.tracking_source = "cached"
     shared_args.show_tracking_overlay = False
     tracker_backend = normalize_tracker_backend(args.cotracker_backend)
-    tracker_prewarm_mode = (
-        ("model_load_only" if bool(args.cotracker_prewarm_backends) else "lazy_query_init")
-        if tracker_backend == TRACKER_BACKEND_LITETRACKER
-        else ("backend_model_prewarm" if bool(args.cotracker_prewarm_backends) else "disabled")
-    )
+    if tracker_backend == TRACKER_BACKEND_LITETRACKER:
+        tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "lazy_query_init"
+    elif tracker_backend == TRACKER_BACKEND_LOCOTRACK:
+        tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "disabled"
+    else:
+        tracker_prewarm_mode = "backend_model_prewarm" if bool(args.cotracker_prewarm_backends) else "disabled"
     shared_args.external_tracker_backend = tracker_backend
     shared_args.external_tracker_update_mode = effective_tracking_backend_execution_mode(args)
     shared_args.external_tracker_prewarm_mode = tracker_prewarm_mode

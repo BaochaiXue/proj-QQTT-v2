@@ -88,6 +88,18 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "quick",
     ),
     HarnessEntry(
+        "scripts/harness/run_demo31_locotrack_s_profiles.py",
+        "hardware_external",
+        "Rendered Demo 3.1 LocoTrack-S serial vs batch-views profile matrix.",
+        "full",
+    ),
+    HarnessEntry(
+        "scripts/harness/summarize_demo31_locotrack_s_profiles.py",
+        "hardware_external",
+        "Summarize rendered Demo 3.1 LocoTrack-S profile JSON files.",
+        "full",
+    ),
+    HarnessEntry(
         "scripts/harness/benchmark_ffs_configs.py",
         "hardware_external",
         "Saved-pair PyTorch FFS config screening; not live 3-camera realtime.",

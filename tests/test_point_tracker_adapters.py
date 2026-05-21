@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+from pathlib import Path
+import subprocess
 import unittest
 
 import numpy as np
@@ -7,6 +10,7 @@ import numpy as np
 from qqtt.tracking.backends.cotracker3_adapter import CoTracker3Adapter
 from qqtt.tracking.backends.cotracker3_online import CoTracker3OnlineBackend
 from qqtt.tracking.backends.litetracker_adapter import LiteTrackerAdapter
+from qqtt.tracking.backends.locotrack_adapter import LocoTrackAdapter
 from qqtt.tracking.backends.point_tracker_adapter import (
     PointTrackerAdapterConfig,
     build_point_tracker_adapter_factory,
@@ -178,15 +182,54 @@ def np_concat_torch_time(left, right):
     return torch.cat([left, right], dim=1)
 
 
+class _FakeLocoTrackModel:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.last_video_shape: tuple[int, ...] | None = None
+        self.last_queries = None
+        self.last_kwargs: dict[str, object] = {}
+
+    def inference(self, video, query_points, **kwargs):
+        import torch
+
+        self.calls += 1
+        self.last_video_shape = tuple(video.shape)
+        self.last_queries = query_points.detach().cpu().numpy()
+        self.last_kwargs = dict(kwargs)
+        batch_size, frames, _height, _width, _channels = video.shape
+        query_count = int(query_points.shape[1])
+        queries_np = self.last_queries.astype(np.float32)
+        tracks_xy = np.zeros((batch_size, query_count, frames, 2), dtype=np.float32)
+        occlusion = np.zeros((batch_size, query_count, frames), dtype=bool)
+        for batch_idx in range(batch_size):
+            for query_idx in range(query_count):
+                y = float(queries_np[batch_idx, query_idx, 1])
+                x = float(queries_np[batch_idx, query_idx, 2])
+                for frame_idx in range(frames):
+                    tracks_xy[batch_idx, query_idx, frame_idx, 0] = x + batch_idx
+                    tracks_xy[batch_idx, query_idx, frame_idx, 1] = y + frame_idx
+        if query_count > 1:
+            occlusion[:, 1, -1] = True
+        return {
+            "tracks": torch.from_numpy(tracks_xy),
+            "occlusion": torch.from_numpy(occlusion),
+        }
+
+
 class PointTrackerAdaptersTest(unittest.TestCase):
     def test_backend_normalization_and_specs(self) -> None:
         self.assertEqual(normalize_tracker_backend("co-tracker3"), "cotracker3_online")
         self.assertEqual(normalize_tracker_backend("track_on2"), "trackon2")
         self.assertEqual(normalize_tracker_backend("lite-tracker"), "litetracker")
+        self.assertEqual(normalize_tracker_backend("loco-track-s"), "locotrack")
         self.assertTrue(tracker_backend_spec("cotracker3_online").supports_batch_views)
         self.assertTrue(tracker_backend_spec("trackon2").supports_batch_views)
         self.assertTrue(tracker_backend_spec("litetracker").supports_batch_views)
         self.assertEqual(tracker_backend_spec("litetracker").batch_support_status, "experimental_batch_views")
+        self.assertEqual(tracker_backend_spec("locotrack").family, "locotrack")
+        self.assertTrue(tracker_backend_spec("locotrack").supports_batch_views)
+        self.assertFalse(tracker_backend_spec("locotrack").supports_online)
+        self.assertEqual(tracker_backend_spec("locotrack").batch_support_status, "windowed_batch_views")
 
     def test_execution_mode_and_policy_normalization(self) -> None:
         self.assertEqual(normalize_tracker_execution_mode("batch"), "batch-views")
@@ -198,12 +241,18 @@ class PointTrackerAdaptersTest(unittest.TestCase):
     def test_factory_returns_external_adapter_shells(self) -> None:
         trackon = build_point_tracker_adapter_factory(PointTrackerAdapterConfig(backend="trackon2"))(-1)
         lite = build_point_tracker_adapter_factory(PointTrackerAdapterConfig(backend="litetracker"))(-1)
+        loco = build_point_tracker_adapter_factory(PointTrackerAdapterConfig(backend="locotrack"))(-1)
 
         self.assertEqual(trackon.name, "trackon2")
         self.assertFalse(trackon.availability().available)
         self.assertEqual(lite.name, "litetracker")
         self.assertFalse(lite.availability().available)
         self.assertIn("--litetracker-weights", lite.availability().reason)
+        self.assertEqual(loco.name, "locotrack")
+        self.assertEqual(type(loco).__name__, "LocoTrackAdapter")
+        self.assertFalse(loco.availability().available)
+        self.assertIn("--locotrack-repo-dir", loco.availability().reason)
+        self.assertIn("install_locotrack_s_demo_3_1_max.sh", loco.availability().reason)
 
         lite_onnx = build_point_tracker_adapter_factory(
             PointTrackerAdapterConfig(backend="litetracker", litetracker_runtime="onnx-cuda")
@@ -211,6 +260,115 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(type(lite_onnx).__name__, "OnnxLiteTrackerAdapter")
         self.assertFalse(lite_onnx.availability().available)
         self.assertIn("--litetracker-onnx-dir", lite_onnx.availability().reason)
+
+    def test_point_tracker_adapter_config_roundtrips_locotrack_fields(self) -> None:
+        config = PointTrackerAdapterConfig(
+            backend="locotrack",
+            locotrack_repo_dir="/tmp/locotrack/locotrack_pytorch",
+            locotrack_checkpoint="/tmp/locotrack_small.ckpt",
+            locotrack_model_size="small",
+            locotrack_window_frames=12,
+            locotrack_resolution=(320, 256),
+            locotrack_query_chunk_size=128,
+            locotrack_autocast_dtype="fp16",
+        )
+        restored = PointTrackerAdapterConfig(**asdict(config))
+
+        self.assertEqual(restored, config)
+
+    def test_locotrack_adapter_availability_fails_clearly_when_missing(self) -> None:
+        adapter = LocoTrackAdapter(device="cpu")
+        availability = adapter.availability()
+
+        self.assertFalse(availability.available)
+        self.assertIn("--locotrack-repo-dir", availability.reason)
+        self.assertIn("--locotrack-checkpoint", availability.reason)
+        self.assertIn("install_locotrack_s_demo_3_1_max.sh", availability.reason)
+
+    def test_locotrack_fake_model_serial_window_shapes_and_visibility(self) -> None:
+        fake = _FakeLocoTrackModel()
+        adapter = LocoTrackAdapter(
+            device="cpu",
+            window_frames=3,
+            resolution=(256, 256),
+            query_chunk_size=128,
+        )
+        adapter._model = fake
+        query = np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32)
+        adapter.initialize([], query)
+        adapter.update(np.zeros((4, 5, 3), dtype=np.uint8))
+        result = adapter.update(np.ones((4, 5, 3), dtype=np.uint8))
+
+        self.assertEqual(fake.calls, 2)
+        self.assertEqual(fake.last_video_shape, (1, 2, 4, 5, 3))
+        self.assertEqual(tuple(fake.last_queries.shape), (1, 2, 3))
+        np.testing.assert_allclose(fake.last_queries[0, 0], np.array([0.0, 10.0, 20.0], dtype=np.float32))
+        self.assertEqual(fake.last_kwargs["query_format"], "tyx")
+        self.assertEqual(fake.last_kwargs["query_chunk_size"], 128)
+        self.assertEqual(fake.last_kwargs["resolution"], (256, 256))
+        self.assertEqual(result.tracks_yx.shape, (2, 2, 2))
+        np.testing.assert_allclose(result.tracks_yx[-1, 0], np.array([11.0, 20.0], dtype=np.float32))
+        self.assertEqual(result.visibility.shape, (2, 2))
+        self.assertEqual(float(result.visibility[-1, 0]), 1.0)
+        self.assertEqual(float(result.visibility[-1, 1]), 0.0)
+        self.assertEqual(result.stats["mode"], "locotrack_windowed_serial")
+        self.assertEqual(result.stats["update_mode"], "serial")
+
+    def test_locotrack_fake_model_batch_views_single_call_and_camera_split(self) -> None:
+        fake = _FakeLocoTrackModel()
+        adapter = LocoTrackAdapter(device="cpu", window_frames=4, resolution=(256, 256))
+        adapter._model = fake
+        query_points = {
+            0: np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32),
+            1: np.array([[11.0, 21.0], [31.0, 41.0]], dtype=np.float32),
+            2: np.array([[12.0, 22.0], [32.0, 42.0]], dtype=np.float32),
+        }
+        adapter.initialize_batch(query_points)
+        frames = {idx: np.zeros((6, 7, 3), dtype=np.uint8) for idx in query_points}
+
+        results = adapter.update_batch(frames)
+
+        self.assertEqual(fake.calls, 1)
+        self.assertEqual(fake.last_video_shape, (3, 1, 6, 7, 3))
+        self.assertEqual(tuple(fake.last_queries.shape), (3, 2, 3))
+        np.testing.assert_allclose(fake.last_queries[2, 0], np.array([0.0, 12.0, 22.0], dtype=np.float32))
+        self.assertEqual(tuple(results), (0, 1, 2))
+        np.testing.assert_allclose(results[0].tracks_yx[-1, 0], np.array([10.0, 20.0], dtype=np.float32))
+        np.testing.assert_allclose(results[1].tracks_yx[-1, 0], np.array([11.0, 22.0], dtype=np.float32))
+        np.testing.assert_allclose(results[2].tracks_yx[-1, 0], np.array([12.0, 24.0], dtype=np.float32))
+        self.assertEqual(float(results[2].visibility[-1, 1]), 0.0)
+        self.assertEqual(results[0].stats["mode"], "locotrack_windowed_batch_views")
+        self.assertEqual(results[0].stats["update_mode"], "batch")
+        self.assertEqual(results[0].stats["batch_size"], 3)
+        self.assertEqual(results[0].stats["batch_camera_ids"], [0, 1, 2])
+
+    def test_locotrack_batch_views_rejects_unequal_query_count(self) -> None:
+        adapter = LocoTrackAdapter(device="cpu")
+        adapter._model = _FakeLocoTrackModel()
+
+        with self.assertRaisesRegex(ValueError, "requires equal query counts"):
+            adapter.initialize_batch(
+                {
+                    0: np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32),
+                    1: np.array([[11.0, 21.0]], dtype=np.float32),
+                }
+            )
+
+    def test_locotrack_install_script_help_does_not_install_torch_by_default(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = root / "scripts/env/install_locotrack_s_demo_3_1_max.sh"
+        completed = subprocess.run(
+            [str(script), "--help"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        text = script.read_text(encoding="utf-8")
+
+        self.assertIn("live-inference dependencies only", completed.stdout)
+        self.assertIn("does not reinstall torch", completed.stdout)
+        self.assertNotIn("torch==", text)
+        self.assertIn("Do not reinstall torch/torchvision/torchaudio", text)
 
     def test_cotracker_adapter_serial_and_batch_shapes(self) -> None:
         adapter = CoTracker3Adapter(backend=_FakeCoTrackerBackend())

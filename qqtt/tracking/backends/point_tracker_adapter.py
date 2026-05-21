@@ -14,10 +14,12 @@ from qqtt.tracking.base import BackendAvailability, BackendUnavailableError, Tra
 TRACKER_BACKEND_COTRACKER3 = "cotracker3_online"
 TRACKER_BACKEND_TRACKON2 = "trackon2"
 TRACKER_BACKEND_LITETRACKER = "litetracker"
+TRACKER_BACKEND_LOCOTRACK = "locotrack"
 TRACKER_BACKENDS = (
     TRACKER_BACKEND_COTRACKER3,
     TRACKER_BACKEND_TRACKON2,
     TRACKER_BACKEND_LITETRACKER,
+    TRACKER_BACKEND_LOCOTRACK,
 )
 
 TRACKER_EXECUTION_MODE_AUTO = "auto"
@@ -108,6 +110,9 @@ def normalize_tracker_backend(value: str) -> str:
         "track_on": TRACKER_BACKEND_TRACKON2,
         "lite_tracker": TRACKER_BACKEND_LITETRACKER,
         "lite-tracker": TRACKER_BACKEND_LITETRACKER,
+        "loco_track": TRACKER_BACKEND_LOCOTRACK,
+        "locotrack_s": TRACKER_BACKEND_LOCOTRACK,
+        "loco_track_s": TRACKER_BACKEND_LOCOTRACK,
     }
     normalized = aliases.get(normalized, normalized)
     if normalized not in TRACKER_BACKENDS:
@@ -167,6 +172,16 @@ def tracker_backend_spec(backend: str) -> PointTrackerBackendSpec:
             supports_batch_views=True,
             batch_support_status="declared",
         )
+    if normalized == TRACKER_BACKEND_LOCOTRACK:
+        return PointTrackerBackendSpec(
+            name=TRACKER_BACKEND_LOCOTRACK,
+            family="locotrack",
+            supports_batch_views=True,
+            supports_online=False,
+            supports_prewarm=True,
+            query_format="yx",
+            batch_support_status="windowed_batch_views",
+        )
     return PointTrackerBackendSpec(
         name=TRACKER_BACKEND_LITETRACKER,
         family="litetracker",
@@ -203,6 +218,13 @@ class PointTrackerAdapterConfig:
     trackon2_checkpoint: str | None = None
     trackon2_config: str | None = None
     trackon2_repo_dir: str | None = None
+    locotrack_repo_dir: str | None = None
+    locotrack_checkpoint: str | None = None
+    locotrack_model_size: str = "small"
+    locotrack_window_frames: int = 8
+    locotrack_resolution: tuple[int, int] = (256, 256)
+    locotrack_query_chunk_size: int = 256
+    locotrack_autocast_dtype: str = "bf16"
 
 
 def _prepend_repo_dir(repo_dir: str | None) -> None:
@@ -231,6 +253,21 @@ def build_point_tracker_adapter_factory(config: PointTrackerAdapterConfig) -> Ca
                 checkpoint=config.trackon2_checkpoint or config.checkpoint,
                 config_path=config.trackon2_config or config.config_path,
                 repo_dir=config.trackon2_repo_dir or config.repo_dir,
+            )
+        if backend == TRACKER_BACKEND_LOCOTRACK:
+            from qqtt.tracking.backends.locotrack_adapter import LocoTrackAdapter
+
+            _prepend_repo_dir(config.locotrack_repo_dir or config.repo_dir)
+            return LocoTrackAdapter(
+                device=str(config.device),
+                camera_idx=None if int(camera_idx) < 0 else int(camera_idx),
+                repo_dir=config.locotrack_repo_dir or config.repo_dir,
+                checkpoint=config.locotrack_checkpoint or config.checkpoint,
+                model_size=str(config.locotrack_model_size),
+                window_frames=int(config.locotrack_window_frames),
+                resolution=config.locotrack_resolution,
+                query_chunk_size=int(config.locotrack_query_chunk_size),
+                autocast_dtype=str(config.locotrack_autocast_dtype),
             )
         _prepend_repo_dir(config.litetracker_repo_dir or config.repo_dir)
         runtime = normalize_litetracker_runtime(config.litetracker_runtime)
@@ -322,6 +359,7 @@ __all__ = [
     "LITETRACKER_RUNTIMES",
     "TRACKER_BACKEND_COTRACKER3",
     "TRACKER_BACKEND_LITETRACKER",
+    "TRACKER_BACKEND_LOCOTRACK",
     "TRACKER_BACKEND_TRACKON2",
     "TRACKER_BACKENDS",
     "TRACKER_BATCH_QUERY_COUNT_POLICIES",

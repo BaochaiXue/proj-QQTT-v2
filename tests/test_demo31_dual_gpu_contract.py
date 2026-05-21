@@ -510,6 +510,82 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracking_backend_batch_support_status"], "experimental_batch_views")
         self.assertEqual(contract["tracking_backend_batch_dimension"], "camera")
 
+    def test_locotrack_backend_contract_accepts_serial_and_batch_views(self) -> None:
+        common = [
+            "--dry-run",
+            "--camera-ids",
+            "0,1,2",
+            "--mask-gpu",
+            "0",
+            "--cotracker-gpu",
+            "1",
+            "--cotracker-backend",
+            "locotrack",
+            "--locotrack-repo-dir",
+            "external/locotrack/locotrack_pytorch",
+            "--locotrack-checkpoint",
+            "checkpoints/locotrack/locotrack_small.ckpt",
+            "--locotrack-model-size",
+            "small",
+            "--locotrack-window-frames",
+            "8",
+            "--locotrack-resolution",
+            "256x256",
+            "--locotrack-query-chunk-size",
+            "256",
+            "--locotrack-autocast-dtype",
+            "bf16",
+        ]
+        for mode, batch_dimension, batch_size, update_mode in (
+            ("serial", "none", 1, "serial"),
+            ("batch-views", "camera", 3, "batch"),
+        ):
+            with self.subTest(mode=mode):
+                args = self._parse([*common, "--tracking-backend-execution-mode", mode])
+                demo31_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+                contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+                config = demo31_runtime.build_cotracker_process_config(args)
+
+                self.assertEqual(contract["cotracker_backend"], "locotrack")
+                self.assertEqual(contract["tracker_backend"], "locotrack")
+                self.assertEqual(contract["tracker_backend_family"], "locotrack")
+                self.assertEqual(contract["tracking_backend_execution_mode"], mode)
+                self.assertEqual(contract["tracking_backend_batch_dimension"], batch_dimension)
+                self.assertEqual(contract["tracking_backend_batch_size"], batch_size)
+                self.assertTrue(contract["tracking_backend_supports_batch_views"])
+                self.assertEqual(contract["tracking_backend_online_semantics"], "windowed")
+                self.assertEqual(contract["tracking_backend_batch_support_status"], "windowed_batch_views")
+                self.assertEqual(contract["locotrack_model_size"], "small")
+                self.assertEqual(contract["locotrack_window_frames"], 8)
+                self.assertEqual(contract["locotrack_resolution"], [256, 256])
+                self.assertEqual(contract["locotrack_query_chunk_size"], 256)
+                self.assertEqual(contract["locotrack_autocast_dtype"], "bf16")
+                self.assertEqual(contract["locotrack_checkpoint"], "checkpoints/locotrack/locotrack_small.ckpt")
+                self.assertEqual(contract["locotrack_repo_dir"], "external/locotrack/locotrack_pytorch")
+                self.assertEqual(config.cotracker_backend, "locotrack")
+                self.assertEqual(config.backend_execution_mode, mode)
+                self.assertEqual(config.update_mode, update_mode)
+                self.assertEqual(config.locotrack_resolution, (256, 256))
+
+    def test_tracking_backend_alias_selects_locotrack(self) -> None:
+        args = self._parse(
+            [
+                "--dry-run",
+                "--camera-ids",
+                "0,1,2",
+                "--mask-gpu",
+                "0",
+                "--cotracker-gpu",
+                "1",
+                "--tracking-backend",
+                "locotrack",
+            ]
+        )
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+
+        self.assertEqual(contract["tracker_backend"], "locotrack")
+        self.assertEqual(contract["tracker_backend_family"], "locotrack")
+
     def test_demo32_defaults_to_ffs_batch3_litetracker_batch3(self) -> None:
         args = self._parse(
             ["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
