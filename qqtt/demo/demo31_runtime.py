@@ -1080,6 +1080,19 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         help="Opt into torch.compile for TAPNext++; disabled by default for predictable startup.",
     )
     parser.add_argument(
+        "--tapnextpp-fast-postprocess",
+        dest="tapnextpp_fast_postprocess",
+        action="store_true",
+        default=True,
+        help="Slice TAPNext++ latest-frame outputs on GPU before CPU transfer.",
+    )
+    parser.add_argument(
+        "--no-tapnextpp-fast-postprocess",
+        dest="tapnextpp_fast_postprocess",
+        action="store_false",
+        help="Use the legacy TAPNext++ output parse path for A/B profiling.",
+    )
+    parser.add_argument(
         "--cotracker-query-mode",
         choices=(demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,),
         default=demo3_runtime.TRACKING_QUERY_MODE_PHYSTWIN_DENSE,
@@ -1560,6 +1573,7 @@ def build_cotracker_process_config(args: argparse.Namespace) -> CoTrackerProcess
         tapnextpp_certainty_radius=int(args.tapnextpp_certainty_radius),
         tapnextpp_certainty_threshold=float(args.tapnextpp_certainty_threshold),
         tapnextpp_compile=bool(args.tapnextpp_compile),
+        tapnextpp_fast_postprocess=bool(args.tapnextpp_fast_postprocess),
         tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
             args.tracker_batch_query_count_policy
         ),
@@ -1752,6 +1766,7 @@ def build_contract(
         "tapnextpp_certainty_radius": int(args.tapnextpp_certainty_radius),
         "tapnextpp_certainty_threshold": float(args.tapnextpp_certainty_threshold),
         "tapnextpp_compile": bool(args.tapnextpp_compile),
+        "tapnextpp_fast_postprocess": bool(args.tapnextpp_fast_postprocess),
         "tapnextpp_frame_value_range": "minus1_1_float",
         "tracker_env_name": "demo_3_1_max",
         "ffs_contract": (
@@ -2080,6 +2095,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tapnextpp_certainty_radius",
         "tapnextpp_certainty_threshold",
         "tapnextpp_compile",
+        "tapnextpp_fast_postprocess",
         "tapnextpp_frame_value_range",
         "tracking_backend_execution_mode",
         "tracking_backend_batch_dimension",

@@ -341,6 +341,7 @@ class PointTrackerAdaptersTest(unittest.TestCase):
             tapnextpp_certainty_threshold=0.4,
             tapnextpp_compile=True,
             tapnextpp_reset_on_reinitialize=False,
+            tapnextpp_fast_postprocess=False,
         )
         restored = PointTrackerAdapterConfig(**asdict(config))
 
@@ -396,8 +397,13 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(result.stats["update_mode"], "serial")
         self.assertEqual(result.stats["tracks_raw_shape"], [1, 1, 2, 2])
         self.assertEqual(result.stats["visible_raw_shape"], [1, 1, 2, 1])
+        self.assertEqual(result.stats["tracks_latest_shape"], [1, 2, 2])
+        self.assertEqual(result.stats["visible_latest_shape"], [1, 2])
         self.assertIn("tracks_to_cpu_ms", result.stats)
         self.assertIn("visibility_to_cpu_ms", result.stats)
+        self.assertIn("gpu_wait_before_cpu_copy_ms", result.stats)
+        self.assertIn("slice_latest_on_gpu_ms", result.stats)
+        self.assertIn("total_postprocess_ms", result.stats)
         self.assertIn("normalize_shape_ms", result.stats)
         self.assertIn("scale_to_original_ms", result.stats)
         self.assertIn("result_pack_ms", result.stats)
@@ -433,11 +439,51 @@ class PointTrackerAdaptersTest(unittest.TestCase):
         self.assertEqual(results[0].stats["tapnextpp_model_calls"], 1)
         self.assertEqual(results[0].stats["tracks_raw_shape"], [3, 1, 2, 2])
         self.assertEqual(results[0].stats["visible_raw_shape"], [3, 1, 2, 1])
+        self.assertEqual(results[0].stats["tracks_latest_shape"], [3, 2, 2])
+        self.assertEqual(results[0].stats["visible_latest_shape"], [3, 2])
         self.assertEqual(results[0].stats["tracks_cpu_bytes"], 48)
-        self.assertEqual(results[0].stats["visibility_cpu_bytes"], 24)
+        self.assertEqual(results[0].stats["visibility_cpu_bytes"], 6)
         self.assertIn("tracks_to_cpu_ms", results[0].stats)
         self.assertIn("visibility_to_cpu_ms", results[0].stats)
+        self.assertIn("gpu_wait_before_cpu_copy_ms", results[0].stats)
         self.assertIn("result_pack_ms", results[0].stats)
+
+    def test_tapnextpp_fast_and_slow_postprocess_match_for_timestep_last(self) -> None:
+        import torch
+
+        fast = TAPNextPPAdapter(device="cpu", image_size=(256, 256), autocast_dtype="fp32", fast_postprocess=True)
+        slow = TAPNextPPAdapter(device="cpu", image_size=(256, 256), autocast_dtype="fp32", fast_postprocess=False)
+        tracks = torch.tensor(
+            [
+                [
+                    [[1.0, 2.0], [3.0, 4.0]],
+                    [[10.0, 20.0], [30.0, 40.0]],
+                ]
+            ],
+            dtype=torch.float32,
+        )
+        visible = torch.tensor([[[1.0], [-1.0]]], dtype=torch.float32)
+        output_fast = (tracks, None, visible, {"ok": True})
+        output_slow = (tracks[:, -1:, :, :], None, visible[:, None, :, :], {"ok": True})
+
+        tracks_fast, visible_fast, _, stats_fast = fast._parse_output_profiled(
+            output_fast,
+            batch_size=1,
+            query_count=2,
+            source_shapes_hw=[(256, 256)],
+        )
+        tracks_slow, visible_slow, _, stats_slow = slow._parse_output_profiled(
+            output_slow,
+            batch_size=1,
+            query_count=2,
+            source_shapes_hw=[(256, 256)],
+        )
+
+        np.testing.assert_allclose(tracks_fast, tracks_slow)
+        np.testing.assert_allclose(visible_fast, visible_slow)
+        self.assertEqual(stats_fast["tracks_latest_shape"], [1, 2, 2])
+        self.assertEqual(stats_fast["visible_latest_shape"], [1, 2])
+        self.assertFalse(bool(stats_slow["fast_postprocess"]))
 
     def test_tapnextpp_batch_views_rejects_unequal_query_count(self) -> None:
         adapter = TAPNextPPAdapter(device="cpu")

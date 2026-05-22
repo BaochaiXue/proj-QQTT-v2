@@ -251,6 +251,7 @@ class PointTrackerAdapterConfig:
     tapnextpp_certainty_threshold: float = 0.5
     tapnextpp_compile: bool = False
     tapnextpp_reset_on_reinitialize: bool = True
+    tapnextpp_fast_postprocess: bool = True
 
 
 def _prepend_repo_dir(repo_dir: str | None) -> None:
@@ -311,6 +312,7 @@ def build_point_tracker_adapter_factory(config: PointTrackerAdapterConfig) -> Ca
                 certainty_threshold=float(config.tapnextpp_certainty_threshold),
                 compile_model=bool(config.tapnextpp_compile),
                 reset_on_reinitialize=bool(config.tapnextpp_reset_on_reinitialize),
+                fast_postprocess=bool(config.tapnextpp_fast_postprocess),
             )
         _prepend_repo_dir(config.litetracker_repo_dir or config.repo_dir)
         runtime = normalize_litetracker_runtime(config.litetracker_runtime)

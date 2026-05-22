@@ -1,0 +1,19 @@
+{
+  "backend": "tapnextpp",
+  "benchmark": "model_only",
+  "image_size": [
+    256,
+    256
+  ],
+  "matrix": [
+    {
+      "autocast_dtype": "fp16",
+      "batch_size": 3,
+      "compile": true,
+      "fast_postprocess": true,
+      "query_count_per_view": 4096
+    }
+  ],
+  "measured_frames": 30,
+  "warmup_frames": 5
+}

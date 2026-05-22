@@ -21,12 +21,19 @@ TIMING_FIELDS = (
     "recurrent_update_ms",
     "preprocess_ms",
     "output_extract_ms",
+    "output_shape_inspect_ms",
+    "slice_latest_on_gpu_ms",
+    "gpu_wait_before_cpu_copy_ms",
     "tracks_to_cpu_ms",
     "visibility_to_cpu_ms",
+    "numpy_conversion_ms",
     "tracks_normalize_shape_ms",
     "visibility_normalize_shape_ms",
     "normalize_shape_ms",
+    "xy_to_yx_ms",
+    "scale_xy_to_original_ms",
     "scale_to_original_ms",
+    "total_postprocess_ms",
     "postprocess_ms",
     "result_pack_ms",
     "postprocess_with_pack_ms",
@@ -39,6 +46,7 @@ VALUE_FIELDS = (
     "tracks_raw_numel",
     "visible_raw_numel",
     "tracks_cpu_bytes",
+    "visible_cpu_bytes",
     "visibility_cpu_bytes",
     "postprocess_cpu_bytes",
 )
@@ -89,6 +97,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-size", type=_parse_image_size, default=(256, 256))
     parser.add_argument("--autocast-dtypes", type=_csv_strings, default=("fp16", "bf16"))
     parser.add_argument("--compile-modes", type=_csv_bools, default=(False,))
+    parser.add_argument("--fast-postprocess-modes", type=_csv_bools, default=(True,))
     parser.add_argument("--warmup-frames", type=int, default=20)
     parser.add_argument("--measured-frames", type=int, default=200)
     parser.add_argument("--seed", type=int, default=1234)
@@ -147,6 +156,7 @@ def _run_case(
     query_count: int,
     autocast_dtype: str,
     compile_model: bool,
+    fast_postprocess: bool,
 ) -> dict[str, Any]:
     image_size = tuple(int(item) for item in args.image_size)
     rng = np.random.default_rng(int(args.seed))
@@ -158,6 +168,7 @@ def _run_case(
         image_size=image_size,
         autocast_dtype=str(autocast_dtype),
         compile_model=bool(compile_model),
+        fast_postprocess=bool(fast_postprocess),
     )
     if int(batch_size) == 1:
         adapter.initialize([], points)
@@ -198,6 +209,7 @@ def _run_case(
         "image_size": [int(image_size[0]), int(image_size[1])],
         "autocast_dtype": str(autocast_dtype),
         "compile": bool(compile_model),
+        "fast_postprocess": bool(fast_postprocess),
         "warmup_frames": int(args.warmup_frames),
         "measured_frames": int(args.measured_frames),
         "device": str(args.device),
@@ -206,6 +218,12 @@ def _run_case(
         "first_update_wall_with_pack_ms": float(first_stats.get("wall_with_pack_ms", first_stats.get("wall_ms", 0.0)) or 0.0),
         "tracks_raw_shape": list(last_stats.get("tracks_raw_shape", first_stats.get("tracks_raw_shape", []))),
         "visible_raw_shape": list(last_stats.get("visible_raw_shape", first_stats.get("visible_raw_shape", []))),
+        "tracks_latest_shape": list(last_stats.get("tracks_latest_shape", first_stats.get("tracks_latest_shape", []))),
+        "visible_latest_shape": list(last_stats.get("visible_latest_shape", first_stats.get("visible_latest_shape", []))),
+        "tracks_raw_dtype": str(last_stats.get("tracks_raw_dtype", first_stats.get("tracks_raw_dtype", ""))),
+        "visible_raw_dtype": str(last_stats.get("visible_raw_dtype", first_stats.get("visible_raw_dtype", ""))),
+        "tracks_raw_device": str(last_stats.get("tracks_raw_device", first_stats.get("tracks_raw_device", ""))),
+        "visible_raw_device": str(last_stats.get("visible_raw_device", first_stats.get("visible_raw_device", ""))),
         "measured_wall_fps": (
             float(args.measured_frames) / total_measured_s if total_measured_s > 0.0 else 0.0
         ),
@@ -224,10 +242,11 @@ def _run_case(
 def _case_path(output_dir: Path, row: Mapping[str, Any]) -> Path:
     h, w = row.get("image_size", [0, 0])
     compile_tag = "compile_on" if bool(row.get("compile")) else "compile_off"
+    fast_tag = "fast_on" if bool(row.get("fast_postprocess", True)) else "fast_off"
     return output_dir / (
         f"tapnextpp_model_only_b{int(row['batch_size'])}"
         f"_q{int(row['query_count_per_view'])}_{int(h)}x{int(w)}"
-        f"_{row['autocast_dtype']}_{compile_tag}.json"
+        f"_{row['autocast_dtype']}_{compile_tag}_{fast_tag}.json"
     )
 
 
@@ -241,11 +260,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "query_count_per_view": int(query_count),
             "autocast_dtype": str(dtype),
             "compile": bool(compile_model),
+            "fast_postprocess": bool(fast_postprocess),
         }
         for batch_size in tuple(args.batch_sizes)
         for query_count in tuple(args.query_counts)
         for dtype in tuple(args.autocast_dtypes)
         for compile_model in tuple(args.compile_modes)
+        for fast_postprocess in tuple(args.fast_postprocess_modes)
     ]
     manifest = {
         "backend": "tapnextpp",
@@ -265,7 +286,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             "[tapnextpp-model-only] "
             f"B={entry['batch_size']} q={entry['query_count_per_view']} "
-            f"dtype={entry['autocast_dtype']} compile={entry['compile']}"
+            f"dtype={entry['autocast_dtype']} compile={entry['compile']} "
+            f"fast_post={entry['fast_postprocess']}"
         )
         row = _run_case(
             args=args,
@@ -273,6 +295,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             query_count=int(entry["query_count_per_view"]),
             autocast_dtype=str(entry["autocast_dtype"]),
             compile_model=bool(entry["compile"]),
+            fast_postprocess=bool(entry["fast_postprocess"]),
         )
         rows.append(row)
         _case_path(output_dir, row).write_text(json.dumps(row, indent=2, sort_keys=True) + "\n", encoding="utf-8")

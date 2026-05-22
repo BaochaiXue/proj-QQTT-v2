@@ -48,6 +48,7 @@ class TAPNextPPAdapter:
         certainty_threshold: float = 0.5,
         compile_model: bool = False,
         reset_on_reinitialize: bool = True,
+        fast_postprocess: bool = True,
     ) -> None:
         self.device = str(device)
         self.camera_idx = camera_idx
@@ -68,6 +69,7 @@ class TAPNextPPAdapter:
         self.certainty_threshold = float(certainty_threshold)
         self.compile_model = bool(compile_model)
         self.reset_on_reinitialize = bool(reset_on_reinitialize)
+        self.fast_postprocess = bool(fast_postprocess)
         self.frame_value_range = "minus1_1_float"
         self._model: Any | None = None
         self._tracker_certainty: Any | None = None
@@ -230,7 +232,7 @@ class TAPNextPPAdapter:
             import torch
 
             if torch.cuda.is_available():
-                torch.cuda.synchronize()
+                torch.cuda.synchronize(torch.device(self.device))
         except Exception:
             return
 
@@ -256,6 +258,7 @@ class TAPNextPPAdapter:
             "tapnextpp_autocast_dtype": self.autocast_dtype,
             "tapnextpp_use_certainty": bool(self.use_certainty),
             "tapnextpp_compile": bool(self.compile_model),
+            "tapnextpp_fast_postprocess": bool(self.fast_postprocess),
             "tapnextpp_frame_value_range": self.frame_value_range,
             "batch_support_status": self.spec.batch_support_status,
             "state_dict_missing": list(self._model_load_missing),
@@ -301,6 +304,16 @@ class TAPNextPPAdapter:
         return [int(item) for item in tuple(shape)]
 
     @staticmethod
+    def _dtype_name(value: Any) -> str:
+        dtype = getattr(value, "dtype", None)
+        return "" if dtype is None else str(dtype)
+
+    @staticmethod
+    def _device_name(value: Any) -> str:
+        device = getattr(value, "device", None)
+        return "" if device is None else str(device)
+
+    @staticmethod
     def _numel(value: Any) -> int:
         numel = getattr(value, "numel", None)
         if callable(numel):
@@ -312,6 +325,21 @@ class TAPNextPPAdapter:
         started_s = time.perf_counter()
         array = cls._to_numpy(value)
         return array, float((time.perf_counter() - started_s) * 1000.0)
+
+    @staticmethod
+    def _is_torch_tensor(value: Any) -> bool:
+        return callable(getattr(value, "detach", None)) and hasattr(value, "device") and hasattr(value, "shape")
+
+    @staticmethod
+    def _torch_to_numpy_copy_timed(value: Any) -> tuple[np.ndarray, float, float]:
+        tensor = value.detach()
+        started_s = time.perf_counter()
+        cpu_tensor = tensor.cpu()
+        to_cpu_ms = float((time.perf_counter() - started_s) * 1000.0)
+        started_s = time.perf_counter()
+        array = np.asarray(cpu_tensor.numpy())
+        numpy_ms = float((time.perf_counter() - started_s) * 1000.0)
+        return array, to_cpu_ms, numpy_ms
 
     def _frames_to_video_tensor(self, frames: Sequence[np.ndarray], *, camera_ids: Sequence[int] | None = None):
         import torch
@@ -444,6 +472,189 @@ class TAPNextPPAdapter:
             tracks_yx[batch_idx, ..., 1] = tracks_yx_scaled[batch_idx, ..., 1] * np.float32(x_scale)
         return np.ascontiguousarray(tracks_yx, dtype=np.float32)
 
+    def _scale_latest_yx_to_original_yx(
+        self,
+        tracks_yx_b_n: np.ndarray,
+        *,
+        source_shapes_hw: Sequence[tuple[int, int]],
+    ) -> np.ndarray:
+        tracks_yx_scaled = np.asarray(tracks_yx_b_n, dtype=np.float32)
+        if tracks_yx_scaled.ndim != 3 or tracks_yx_scaled.shape[-1] != 2:
+            raise ValueError(f"TAPNext++ latest tracks must have shape (B,N,2); got {tracks_yx_scaled.shape}")
+        batch_size = int(tracks_yx_scaled.shape[0])
+        if len(source_shapes_hw) != batch_size:
+            raise ValueError("source_shapes_hw length must match TAPNext++ batch size.")
+        target_h, target_w = self.image_size
+        scale = np.asarray(
+            [
+                [
+                    float(max(int(source_h), 1)) / float(max(target_h, 1)),
+                    float(max(int(source_w), 1)) / float(max(target_w, 1)),
+                ]
+                for source_h, source_w in source_shapes_hw
+            ],
+            dtype=np.float32,
+        )
+        tracks_yx = tracks_yx_scaled * scale[:, None, :]
+        return np.ascontiguousarray(tracks_yx[:, None, :, :], dtype=np.float32)
+
+    @staticmethod
+    def _latest_tracks_tensor(value: Any, *, batch_size: int, query_count: int) -> Any:
+        shape = tuple(int(item) for item in value.shape)
+        if len(shape) == 3 and shape == (batch_size, query_count, 2):
+            return value
+        if len(shape) == 4:
+            if shape[0] != batch_size or shape[-1] != 2:
+                raise ValueError(f"TAPNext++ tracks shape {shape} does not match batch/query expectations")
+            if shape[2] == query_count:
+                return value[:, -1, :, :]
+            if shape[1] == query_count:
+                return value[:, :, -1, :]
+        raise ValueError(f"TAPNext++ tracks shape {shape} does not contain a recognizable latest frame")
+
+    @staticmethod
+    def _latest_visibility_tensor(value: Any, *, batch_size: int, query_count: int) -> Any:
+        visible = value
+        shape = tuple(int(item) for item in visible.shape)
+        if len(shape) == 4 and shape[-1] == 1:
+            visible = visible[..., 0]
+            shape = tuple(int(item) for item in visible.shape)
+        if len(shape) == 2 and shape == (batch_size, query_count):
+            return visible
+        if len(shape) == 3:
+            if shape[0] != batch_size:
+                raise ValueError(f"TAPNext++ visible logits shape {shape} does not match batch size {batch_size}")
+            if shape[2] == query_count:
+                return visible[:, -1, :]
+            if shape[1] == query_count:
+                return visible[:, :, -1]
+        raise ValueError(f"TAPNext++ visible logits shape {shape} does not contain a recognizable latest frame")
+
+    def _parse_output_fast_profiled(
+        self,
+        tracks_raw: Any,
+        visible_raw: Any,
+        state: Any,
+        profile: dict[str, Any],
+        *,
+        batch_size: int,
+        query_count: int,
+        source_shapes_hw: Sequence[tuple[int, int]],
+    ) -> tuple[np.ndarray, np.ndarray, Any, dict[str, Any]]:
+        if not self._is_torch_tensor(tracks_raw) or not self._is_torch_tensor(visible_raw):
+            profile["fast_postprocess_fallback"] = "non_torch_output"
+            return self._parse_output_slow_profiled(
+                tracks_raw,
+                visible_raw,
+                state,
+                profile,
+                batch_size=batch_size,
+                query_count=query_count,
+                source_shapes_hw=source_shapes_hw,
+            )
+
+        import torch
+
+        started_s = time.perf_counter()
+        tracks_latest = self._latest_tracks_tensor(
+            tracks_raw,
+            batch_size=int(batch_size),
+            query_count=int(query_count),
+        ).to(dtype=torch.float32).contiguous()
+        visible_latest = self._latest_visibility_tensor(
+            visible_raw,
+            batch_size=int(batch_size),
+            query_count=int(query_count),
+        )
+        visible_latest = (visible_latest > 0.0).contiguous()
+        profile["slice_latest_on_gpu_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+        profile["tracks_latest_shape"] = self._shape_list(tracks_latest)
+        profile["visible_latest_shape"] = self._shape_list(visible_latest)
+
+        started_s = time.perf_counter()
+        self._sync_cuda_if_needed()
+        profile["gpu_wait_before_cpu_copy_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+
+        tracks_np, tracks_to_cpu_ms, tracks_numpy_ms = self._torch_to_numpy_copy_timed(tracks_latest)
+        profile["tracks_to_cpu_ms"] = float(tracks_to_cpu_ms)
+        profile["tracks_cpu_bytes"] = int(np.asarray(tracks_np).nbytes)
+        visible_np, visibility_to_cpu_ms, visible_numpy_ms = self._torch_to_numpy_copy_timed(visible_latest)
+        profile["visibility_to_cpu_ms"] = float(visibility_to_cpu_ms)
+        profile["visible_cpu_bytes"] = int(np.asarray(visible_np).nbytes)
+        profile["visibility_cpu_bytes"] = int(np.asarray(visible_np).nbytes)
+        profile["numpy_conversion_ms"] = float(tracks_numpy_ms + visible_numpy_ms)
+        profile["tracks_normalize_shape_ms"] = 0.0
+        profile["visibility_normalize_shape_ms"] = 0.0
+        profile["normalize_shape_ms"] = 0.0
+
+        started_s = time.perf_counter()
+        tracks_yx_scaled = np.asarray(tracks_np, dtype=np.float32)
+        profile["xy_to_yx_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+        started_s = time.perf_counter()
+        tracks_yx = self._scale_latest_yx_to_original_yx(
+            tracks_yx_scaled,
+            source_shapes_hw=source_shapes_hw,
+        )
+        profile["scale_xy_to_original_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+        profile["scale_to_original_ms"] = float(profile["scale_xy_to_original_ms"])
+        visibility = np.ascontiguousarray(np.asarray(visible_np, dtype=np.float32)[:, None, :], dtype=np.float32)
+        profile["postprocess_cpu_bytes"] = int(profile["tracks_cpu_bytes"] + profile["visibility_cpu_bytes"])
+        return tracks_yx, visibility, state, profile
+
+    def _parse_output_slow_profiled(
+        self,
+        tracks_raw: Any,
+        visible_raw: Any,
+        state: Any,
+        profile: dict[str, Any],
+        *,
+        batch_size: int,
+        query_count: int,
+        source_shapes_hw: Sequence[tuple[int, int]],
+    ) -> tuple[np.ndarray, np.ndarray, Any, dict[str, Any]]:
+        profile.setdefault("slice_latest_on_gpu_ms", 0.0)
+        profile.setdefault("gpu_wait_before_cpu_copy_ms", 0.0)
+        profile.setdefault("xy_to_yx_ms", 0.0)
+        tracks_np, tracks_to_cpu_ms = self._to_numpy_timed(tracks_raw)
+        profile["tracks_to_cpu_ms"] = float(tracks_to_cpu_ms)
+        profile["tracks_cpu_bytes"] = int(np.asarray(tracks_np).nbytes)
+        profile["tracks_latest_shape"] = []
+        started_s = time.perf_counter()
+        tracks_yx_scaled = self._normalize_tracks_time_shape(
+            tracks_np,
+            batch_size=batch_size,
+            query_count=query_count,
+            time_steps=1,
+        )
+        profile["tracks_normalize_shape_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+
+        visible_np, visibility_to_cpu_ms = self._to_numpy_timed(visible_raw)
+        profile["visibility_to_cpu_ms"] = float(visibility_to_cpu_ms)
+        profile["visible_cpu_bytes"] = int(np.asarray(visible_np).nbytes)
+        profile["visibility_cpu_bytes"] = int(np.asarray(visible_np).nbytes)
+        profile["visible_latest_shape"] = []
+        profile["numpy_conversion_ms"] = 0.0
+        started_s = time.perf_counter()
+        visibility = self._normalize_visibility_time_shape(
+            visible_np,
+            batch_size=batch_size,
+            query_count=query_count,
+            time_steps=1,
+        )
+        profile["visibility_normalize_shape_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+        profile["normalize_shape_ms"] = float(
+            profile["tracks_normalize_shape_ms"] + profile["visibility_normalize_shape_ms"]
+        )
+        started_s = time.perf_counter()
+        tracks_yx = self._scaled_tracks_yx_to_original_yx(
+            tracks_yx_scaled,
+            source_shapes_hw=source_shapes_hw,
+        )
+        profile["scale_to_original_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+        profile["scale_xy_to_original_ms"] = float(profile["scale_to_original_ms"])
+        profile["postprocess_cpu_bytes"] = int(profile["tracks_cpu_bytes"] + profile["visibility_cpu_bytes"])
+        return tracks_yx, visibility, state, profile
+
     def _parse_output(
         self,
         output: Any,
@@ -468,48 +679,43 @@ class TAPNextPPAdapter:
         query_count: int,
         source_shapes_hw: Sequence[tuple[int, int]],
     ) -> tuple[np.ndarray, np.ndarray, Any, dict[str, Any]]:
+        total_started_s = time.perf_counter()
         profile: dict[str, Any] = {}
         started_s = time.perf_counter()
         tracks_raw, _track_logits, visible_raw, state = self._extract_output(output)
         profile["output_extract_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+        started_s = time.perf_counter()
         profile["tracks_raw_shape"] = self._shape_list(tracks_raw)
         profile["visible_raw_shape"] = self._shape_list(visible_raw)
+        profile["tracks_raw_dtype"] = self._dtype_name(tracks_raw)
+        profile["visible_raw_dtype"] = self._dtype_name(visible_raw)
+        profile["tracks_raw_device"] = self._device_name(tracks_raw)
+        profile["visible_raw_device"] = self._device_name(visible_raw)
         profile["tracks_raw_numel"] = int(self._numel(tracks_raw))
         profile["visible_raw_numel"] = int(self._numel(visible_raw))
-
-        tracks_np, tracks_to_cpu_ms = self._to_numpy_timed(tracks_raw)
-        profile["tracks_to_cpu_ms"] = float(tracks_to_cpu_ms)
-        profile["tracks_cpu_bytes"] = int(np.asarray(tracks_np).nbytes)
-        started_s = time.perf_counter()
-        tracks_yx_scaled = self._normalize_tracks_time_shape(
-            tracks_np,
-            batch_size=batch_size,
-            query_count=query_count,
-            time_steps=1,
-        )
-        profile["tracks_normalize_shape_ms"] = float((time.perf_counter() - started_s) * 1000.0)
-
-        visible_np, visibility_to_cpu_ms = self._to_numpy_timed(visible_raw)
-        profile["visibility_to_cpu_ms"] = float(visibility_to_cpu_ms)
-        profile["visibility_cpu_bytes"] = int(np.asarray(visible_np).nbytes)
-        started_s = time.perf_counter()
-        visibility = self._normalize_visibility_time_shape(
-            visible_np,
-            batch_size=batch_size,
-            query_count=query_count,
-            time_steps=1,
-        )
-        profile["visibility_normalize_shape_ms"] = float((time.perf_counter() - started_s) * 1000.0)
-        profile["normalize_shape_ms"] = float(
-            profile["tracks_normalize_shape_ms"] + profile["visibility_normalize_shape_ms"]
-        )
-        started_s = time.perf_counter()
-        tracks_yx = self._scaled_tracks_yx_to_original_yx(
-            tracks_yx_scaled,
-            source_shapes_hw=source_shapes_hw,
-        )
-        profile["scale_to_original_ms"] = float((time.perf_counter() - started_s) * 1000.0)
-        profile["postprocess_cpu_bytes"] = int(profile["tracks_cpu_bytes"] + profile["visibility_cpu_bytes"])
+        profile["output_shape_inspect_ms"] = float((time.perf_counter() - started_s) * 1000.0)
+        profile["fast_postprocess"] = bool(self.fast_postprocess)
+        if self.fast_postprocess:
+            tracks_yx, visibility, state, profile = self._parse_output_fast_profiled(
+                tracks_raw,
+                visible_raw,
+                state,
+                profile,
+                batch_size=batch_size,
+                query_count=query_count,
+                source_shapes_hw=source_shapes_hw,
+            )
+        else:
+            tracks_yx, visibility, state, profile = self._parse_output_slow_profiled(
+                tracks_raw,
+                visible_raw,
+                state,
+                profile,
+                batch_size=batch_size,
+                query_count=query_count,
+                source_shapes_hw=source_shapes_hw,
+            )
+        profile["total_postprocess_ms"] = float((time.perf_counter() - total_started_s) * 1000.0)
         return tracks_yx, visibility, state, profile
 
     def initialize(
@@ -591,6 +797,7 @@ class TAPNextPPAdapter:
             "autocast_dtype": self.autocast_dtype,
             "tapnextpp_autocast_dtype": self.autocast_dtype,
             "tapnextpp_frame_value_range": self.frame_value_range,
+            "tapnextpp_fast_postprocess": bool(self.fast_postprocess),
             "tapnextpp_state_active": self._tracking_state is not None,
             "tapnextpp_model_calls": 1,
             "device": self.device,
@@ -718,6 +925,7 @@ class TAPNextPPAdapter:
                 "autocast_dtype": self.autocast_dtype,
                 "tapnextpp_autocast_dtype": self.autocast_dtype,
                 "tapnextpp_frame_value_range": self.frame_value_range,
+                "tapnextpp_fast_postprocess": bool(self.fast_postprocess),
                 "tapnextpp_state_active": self._batch_tracking_state is not None,
                 "batch_size": int(len(camera_ids)),
                 "batch_camera_ids": [int(item) for item in camera_ids],

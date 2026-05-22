@@ -691,11 +691,26 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 self.assertEqual(contract["tapnextpp_checkpoint"], "checkpoints/tapnextpp/tapnextpp_ckpt.pt")
                 self.assertEqual(contract["tapnextpp_image_size"], [256, 256])
                 self.assertEqual(contract["tapnextpp_autocast_dtype"], "fp16")
+                self.assertTrue(contract["tapnextpp_fast_postprocess"])
                 self.assertEqual(contract["tapnextpp_frame_value_range"], "minus1_1_float")
                 self.assertEqual(config.cotracker_backend, "tapnextpp")
                 self.assertEqual(config.backend_execution_mode, mode)
                 self.assertEqual(config.update_mode, update_mode)
                 self.assertEqual(config.tapnextpp_image_size, (256, 256))
+                self.assertTrue(config.tapnextpp_fast_postprocess)
+
+        args = self._parse(
+            [
+                *common,
+                "--tracking-backend-execution-mode",
+                "batch-views",
+                "--no-tapnextpp-fast-postprocess",
+            ]
+        )
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+        config = demo31_runtime.build_cotracker_process_config(args)
+        self.assertFalse(contract["tapnextpp_fast_postprocess"])
+        self.assertFalse(config.tapnextpp_fast_postprocess)
 
     def test_demo32_defaults_to_ffs_batch3_litetracker_batch3(self) -> None:
         args = self._parse(

@@ -49,6 +49,7 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
             tapnextpp_certainty_threshold=0.4,
             tapnextpp_compile=True,
             tapnextpp_reset_on_reinitialize=False,
+            tapnextpp_fast_postprocess=False,
             tracker_batch_query_count_policy="min-common",
         )
 
@@ -200,6 +201,7 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
             tapnextpp_autocast_dtype="fp16",
             tapnextpp_use_certainty=False,
             tapnextpp_compile=False,
+            tapnextpp_fast_postprocess=True,
         )
 
         self.assertEqual(config.tracker_family, "tapnext")
@@ -222,6 +224,7 @@ class Demo31CoTrackerProcessConfigTest(unittest.TestCase):
         self.assertIn('"tapnextpp_autocast_dtype": "fp16"', output)
         self.assertIn('"tapnextpp_use_certainty": false', output)
         self.assertIn('"tapnextpp_compile": false', output)
+        self.assertIn('"tapnextpp_fast_postprocess": true', output)
         self.assertIn('"tracker_prewarm_mode": "model_load_only"', output)
         if old_value is None:
             os.environ.pop("CUDA_VISIBLE_DEVICES", None)

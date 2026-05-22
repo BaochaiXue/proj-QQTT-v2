@@ -134,3 +134,32 @@ must clearly separate that target from the `4096/view` stress test.
   `cuda_available=False`, `device_count=0`, and CUDA error 804. Rerun the
   detailed model-only profile after the NVIDIA kernel module and userspace
   versions match.
+- PASS: After reboot/driver reload, `nvidia-smi` and PyTorch CUDA are healthy
+  on both RTX 4090s with driver `580.159.03`.
+- PASS: Fixed TAPNext++ adapter CUDA synchronization to target the configured
+  adapter device (`cuda:1`) instead of the process default device. The previous
+  model-only profile underreported model time and misattributed the hidden
+  `cuda:1` wait to `tracks_to_cpu_ms`.
+- PASS: Added `--tapnextpp-fast-postprocess` / `--no-tapnextpp-fast-postprocess`
+  for A/B profiling. The fast path slices the latest frame on GPU and copies
+  only current-frame tracks/visibility to CPU; it does not change model inputs,
+  checkpoint, recurrent state, query set, visibility threshold, or QQTT output
+  semantics.
+- PASS: Real TAPNext++ checkpoint equivalence smoke for B=3/N=16 confirms fast
+  and slow output paths produce identical CPU results:
+  `max_track_diff=0.0`, `max_visibility_diff=0.0`.
+- PASS: Detailed model-only A/B profile:
+  `docs/generated/demo31_tapnextpp_postprocess_profile/summary.md`.
+  With correct device synchronization, B=3 q1365/view reports recurrent model
+  p50 about `59 ms`, wall p50 about `60 ms`, and total postprocess p50 below
+  `0.3 ms`; B=3 q4096/view reports recurrent model p50 about `148 ms`, wall
+  p50 about `150 ms`, and total postprocess p50 below `0.6 ms`. This confirms
+  current wall time is dominated by TAPNext++ recurrent model compute, not CPU
+  transfer or result packing.
+- PASS: `torch.compile` probe for B=3 q4096/view reduced recurrent model p50
+  from about `148 ms` to about `141 ms` after compilation, but first update
+  took about `18.4 s`; keep it opt-in until live warmup/startup behavior is
+  acceptable.
+- BLOCKED/REJECTED: Directly lowering `--tapnextpp-image-size` to `224` or
+  `192` is not a quality-preserving flag change with the current checkpoint:
+  TAPNext++ positional embedding shapes mismatch the `256x256` checkpoint.

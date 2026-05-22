@@ -17,6 +17,7 @@ SUMMARY_COLUMNS = (
     "image_size",
     "autocast_dtype",
     "compile",
+    "fast_postprocess",
     "first_update_ms",
     "first_update_model_ms",
     "first_update_wall_with_pack_ms",
@@ -25,12 +26,19 @@ SUMMARY_COLUMNS = (
     "preprocess_ms_p50",
     "preprocess_ms_p95",
     "output_extract_ms_p50",
+    "output_shape_inspect_ms_p50",
+    "slice_latest_on_gpu_ms_p50",
+    "gpu_wait_before_cpu_copy_ms_p50",
     "tracks_to_cpu_ms_p50",
     "visibility_to_cpu_ms_p50",
+    "numpy_conversion_ms_p50",
     "tracks_normalize_shape_ms_p50",
     "visibility_normalize_shape_ms_p50",
     "normalize_shape_ms_p50",
+    "xy_to_yx_ms_p50",
+    "scale_xy_to_original_ms_p50",
     "scale_to_original_ms_p50",
+    "total_postprocess_ms_p50",
     "postprocess_ms_p50",
     "postprocess_ms_p95",
     "result_pack_ms_p50",
@@ -42,7 +50,14 @@ SUMMARY_COLUMNS = (
     "wall_with_pack_ms_p50",
     "tracks_raw_shape",
     "visible_raw_shape",
+    "tracks_latest_shape",
+    "visible_latest_shape",
+    "tracks_raw_dtype",
+    "visible_raw_dtype",
+    "tracks_raw_device",
+    "visible_raw_device",
     "tracks_cpu_bytes_p50",
+    "visible_cpu_bytes_p50",
     "visibility_cpu_bytes_p50",
     "measured_wall_fps",
 )
@@ -94,7 +109,7 @@ def render_markdown(rows: Sequence[Mapping[str, Any]]) -> str:
     lines = [
         "# Demo 3.1 TAPNext++ Model-Only Benchmark Summary",
         "",
-        "This excludes RealSense, masks, Open3D, IPC, lift, and render. `recurrent_update_ms_*` is the adapter-reported TAPNext++ model update time; the postprocess columns split output extraction, GPU-to-CPU transfer, shape normalization, scaling, and result packing.",
+        "This excludes RealSense, masks, Open3D, IPC, lift, and render. `recurrent_update_ms_*` is the adapter-reported TAPNext++ model update time; the postprocess columns split output extraction, target-device synchronization before CPU copy, GPU-to-CPU transfer, shape normalization, scaling, and result packing.",
         "",
     ]
     if not rows:
@@ -116,6 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             int(row.get("query_count_per_view", 0) or 0),
             str(row.get("autocast_dtype", "")),
             bool(row.get("compile", False)),
+            bool(row.get("fast_postprocess", True)),
         )
     )
     output_json = Path(args.output_json) if args.output_json else Path(args.input_dir) / "summary.json"

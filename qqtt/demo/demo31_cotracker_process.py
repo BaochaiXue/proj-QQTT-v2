@@ -87,6 +87,7 @@ class CoTrackerProcessConfig:
     tapnextpp_certainty_threshold: float = 0.5
     tapnextpp_compile: bool = False
     tapnextpp_reset_on_reinitialize: bool = True
+    tapnextpp_fast_postprocess: bool = True
     tracker_batch_query_count_policy: str = TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED
 
     @property
@@ -162,6 +163,7 @@ class CoTrackerProcessConfig:
             "tapnextpp_certainty_threshold": float(self.tapnextpp_certainty_threshold),
             "tapnextpp_compile": bool(self.tapnextpp_compile),
             "tapnextpp_reset_on_reinitialize": bool(self.tapnextpp_reset_on_reinitialize),
+            "tapnextpp_fast_postprocess": bool(self.tapnextpp_fast_postprocess),
             "tracker_batch_query_count_policy": normalize_tracker_batch_query_count_policy(
                 self.tracker_batch_query_count_policy
             ),
@@ -222,6 +224,7 @@ class CoTrackerProcessConfig:
             tapnextpp_certainty_threshold=float(payload.get("tapnextpp_certainty_threshold", 0.5)),
             tapnextpp_compile=bool(payload.get("tapnextpp_compile", False)),
             tapnextpp_reset_on_reinitialize=bool(payload.get("tapnextpp_reset_on_reinitialize", True)),
+            tapnextpp_fast_postprocess=bool(payload.get("tapnextpp_fast_postprocess", True)),
             tracker_batch_query_count_policy=normalize_tracker_batch_query_count_policy(
                 payload.get("tracker_batch_query_count_policy", TRACKER_BATCH_QUERY_COUNT_POLICY_FIXED)
             ),
@@ -439,6 +442,7 @@ def run_cotracker_worker_loop(
             tapnextpp_certainty_threshold=config.tapnextpp_certainty_threshold,
             tapnextpp_compile=config.tapnextpp_compile,
             tapnextpp_reset_on_reinitialize=config.tapnextpp_reset_on_reinitialize,
+            tapnextpp_fast_postprocess=config.tapnextpp_fast_postprocess,
         )
     )
     update_mode = effective_legacy_update_mode(config.backend_execution_mode)
@@ -532,6 +536,7 @@ def run_cotracker_worker_loop(
                     "tapnextpp_certainty_threshold": float(config.tapnextpp_certainty_threshold),
                     "tapnextpp_compile": bool(config.tapnextpp_compile),
                     "tapnextpp_reset_on_reinitialize": bool(config.tapnextpp_reset_on_reinitialize),
+                    "tapnextpp_fast_postprocess": bool(config.tapnextpp_fast_postprocess),
                     "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "prewarm_backends": bool(config.prewarm_backends),
                     "tracker_prewarm_mode": tracker_prewarm_mode,
@@ -613,6 +618,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "tapnextpp_certainty_threshold": float(config.tapnextpp_certainty_threshold),
                     "tapnextpp_compile": bool(config.tapnextpp_compile),
                     "tapnextpp_reset_on_reinitialize": bool(config.tapnextpp_reset_on_reinitialize),
+                    "tapnextpp_fast_postprocess": bool(config.tapnextpp_fast_postprocess),
                     "backend_execution_mode": normalize_tracker_execution_mode(config.backend_execution_mode),
                     "cotracker_cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
                     "tracking_query_mode": config.query_mode,
