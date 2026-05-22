@@ -49,6 +49,8 @@ from qqtt.demo.three_view_masked_fused_pcd_runtime import (
     POSTPROCESS_ENHANCED_PT,
     POSTPROCESS_MODES,
     POSTPROCESS_PT_FILTER,
+    async_fusion_filter_enabled,
+    temporal_group_is_coherent,
 )
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world
 from qqtt.tracking.backends.point_tracker_adapter import (
@@ -83,6 +85,11 @@ PRESETS = (PRESET_DEMO31_DUAL4090_HIGHFPS, PRESET_DEMO32_FFS_LITETRACKER)
 FUSION_MASK_POLICY_STRICT = "strict"
 FUSION_MASK_POLICY_LATEST_REUSE = "latest-reuse"
 FUSION_MASK_POLICIES = (FUSION_MASK_POLICY_STRICT, FUSION_MASK_POLICY_LATEST_REUSE)
+
+PCD_FUSION_TRIGGER_DEPTH_MASK_READY = "depth-mask-ready"
+PCD_FUSION_TRIGGER_TRACKER_RESULT = "tracker-result"
+PCD_FUSION_TRIGGERS = (PCD_FUSION_TRIGGER_DEPTH_MASK_READY, PCD_FUSION_TRIGGER_TRACKER_RESULT)
+DEFAULT_PCD_FUSION_TRIGGER = PCD_FUSION_TRIGGER_TRACKER_RESULT
 
 GPU_PLAN_SPLIT_MASK0_TRACK1 = "split-mask0-track1"
 GPU_PLANS = (GPU_PLAN_SPLIT_MASK0_TRACK1,)
@@ -692,6 +699,15 @@ class Demo31RetargetedMaskGroup:
     @property
     def seq(self) -> int:
         return int(self.group_id)
+
+
+@dataclass(frozen=True)
+class Demo31PendingFusionBundle:
+    group_id: int
+    created_perf_s: float
+    depth_group: Any
+    masks: dict[int, Any]
+    publish_hook: str
 
 
 class Demo31LiftInputCache:
@@ -1379,6 +1395,15 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         ),
     )
     parser.add_argument("--fusion-mask-policy", choices=FUSION_MASK_POLICIES, default=FUSION_MASK_POLICY_LATEST_REUSE)
+    parser.add_argument(
+        "--pcd-fusion-trigger",
+        choices=PCD_FUSION_TRIGGERS,
+        default=DEFAULT_PCD_FUSION_TRIGGER,
+        help=(
+            "When tracking is enabled, choose whether PCD fusion runs as soon as depth+masks are ready "
+            "or is deferred until a fresh tracker result arrives."
+        ),
+    )
     parser.add_argument("--mask-stale-timeout-ms", type=float, default=DEFAULT_MASK_STALE_TIMEOUT_MS)
     parser.add_argument("--render-target-fps", type=float, default=DEFAULT_RENDER_TARGET_FPS)
     parser.add_argument("--render-resample-latest", action=argparse.BooleanOptionalAction, default=True)
@@ -1995,6 +2020,11 @@ def build_contract(
         "overlay_trail_len": int(args.overlay_trail_len),
         "overlay_stale_timeout_ms": float(args.overlay_stale_timeout_ms),
         "fusion_mask_policy": str(args.fusion_mask_policy),
+        "pcd_fusion_trigger": str(args.pcd_fusion_trigger),
+        "tracker_result_gated_fusion": bool(
+            (not bool(args.disable_cotracker))
+            and str(args.pcd_fusion_trigger) == PCD_FUSION_TRIGGER_TRACKER_RESULT
+        ),
         "mask_stale_timeout_ms": float(args.mask_stale_timeout_ms),
         "render_mode": str(args.render_mode),
         "render_target_fps": float(args.render_target_fps),
@@ -2016,7 +2046,12 @@ def build_contract(
         "render_waited_for_fresh_cotracker_result": not bool(args.disable_cotracker),
         "render_driver": "cotracker_child_output",
         "render_trigger": "new_cotracker_result",
+        "render_triggers_pcd_fusion": bool(
+            (not bool(args.disable_cotracker))
+            and str(args.pcd_fusion_trigger) == PCD_FUSION_TRIGGER_TRACKER_RESULT
+        ),
         "tracking_pending_render_packet_max_groups": int(DEFAULT_PENDING_RENDER_PACKET_GROUPS),
+        "tracking_pending_fusion_bundle_max_groups": int(DEFAULT_PENDING_RENDER_PACKET_GROUPS),
         "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
         "render_waited_for_mask": bool(render_waited_for_mask),
         "render_object_filter": {
@@ -2207,6 +2242,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "cross_gpu_cuda_tensor_transfer",
         "ipc_payload",
         "fusion_mask_policy",
+        "pcd_fusion_trigger",
+        "tracker_result_gated_fusion",
         "pcd_color_mode",
         "object_point_control",
         "object_postprocess",
@@ -2215,7 +2252,9 @@ def format_contract(contract: dict[str, Any]) -> str:
         "render_waited_for_fresh_cotracker_result",
         "render_driver",
         "render_trigger",
+        "render_triggers_pcd_fusion",
         "tracking_pending_render_packet_max_groups",
+        "tracking_pending_fusion_bundle_max_groups",
         "tracking_render_packet_match_policy",
         "render_waited_for_mask",
         "render_object_filter",
@@ -2686,6 +2725,15 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 ),
             )
             self.demo31_pending_render_packet_drop_count = 0
+            self.demo31_pending_fusion_bundles: dict[int, Demo31PendingFusionBundle] = {}
+            self.demo31_pending_fusion_lock = threading.Lock()
+            self.demo31_pending_fusion_max_groups = int(self.demo31_pending_render_packet_max_groups)
+            self.demo31_pending_fusion_bundle_drop_count = 0
+            self.demo31_tracker_result_triggered_fusion_count = 0
+            self.demo31_tracker_result_fusion_skipped_count = 0
+            self.demo31_tracker_result_fusion_ms_samples: list[float] = []
+            self.demo31_tracker_result_fusion_ray_cache: dict[int, Any] = {}
+            self.demo31_tracker_result_fusion_rng = np.random.default_rng()
             self.demo31_tracking_result_without_render_packet_count = 0
             self.demo31_tracking_result_exact_render_packet_count = 0
             self.demo31_tracking_result_nearest_render_packet_count = 0
@@ -3282,7 +3330,128 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             if hasattr(self, "_profile_update"):
                 self._profile_update(int(depth_group.group_id), demo31_tracking_input=profile_payload)
 
+        def _pcd_fusion_trigger(self) -> str:
+            return str(
+                self.demo31_contract.get(
+                    "pcd_fusion_trigger",
+                    PCD_FUSION_TRIGGER_DEPTH_MASK_READY,
+                )
+            )
+
+        def _tracker_result_gated_fusion_enabled(self) -> bool:
+            return bool(self.demo31_cotracker_enabled) and self._pcd_fusion_trigger() == PCD_FUSION_TRIGGER_TRACKER_RESULT
+
+        def _remember_pending_fusion_bundle(self, bundle: Demo31PendingFusionBundle) -> None:
+            with self.demo31_pending_fusion_lock:
+                self.demo31_pending_fusion_bundles[int(bundle.group_id)] = bundle
+                while len(self.demo31_pending_fusion_bundles) > int(self.demo31_pending_fusion_max_groups):
+                    oldest = min(self.demo31_pending_fusion_bundles)
+                    self.demo31_pending_fusion_bundles.pop(oldest, None)
+                    self.demo31_pending_fusion_bundle_drop_count += 1
+
+        def _drop_pending_fusion_bundles_through(self, group_id: int) -> None:
+            with self.demo31_pending_fusion_lock:
+                stale_ids = [key for key in self.demo31_pending_fusion_bundles if int(key) <= int(group_id)]
+                for key in stale_ids:
+                    self.demo31_pending_fusion_bundles.pop(key, None)
+
+        def _defer_fusion_until_tracker_result(
+            self,
+            *,
+            depth_group: Any,
+            masks: dict[int, Any],
+            publish_hook: str,
+        ) -> Demo31PendingFusionBundle:
+            capped_masks = self._cap_demo31_controller_masks(depth_group=depth_group, masks=masks)
+            self._publish_demo31_tracking_input(
+                depth_group=depth_group,
+                masks=capped_masks,
+                publish_hook=publish_hook,
+            )
+            bundle = Demo31PendingFusionBundle(
+                group_id=int(depth_group.group_id),
+                created_perf_s=time.perf_counter(),
+                depth_group=depth_group,
+                masks=dict(capped_masks),
+                publish_hook=str(publish_hook),
+            )
+            self._remember_pending_fusion_bundle(bundle)
+            if hasattr(self, "_profile_update"):
+                self._profile_update(
+                    int(depth_group.group_id),
+                    fusion={
+                        "pcd_fusion_trigger": PCD_FUSION_TRIGGER_TRACKER_RESULT,
+                        "fusion_deferred_until_tracker_result": True,
+                        "pending_fusion_bundle_cached": True,
+                        "pending_fusion_bundle_publish_hook": str(publish_hook),
+                        "tracking_pending_fusion_bundle_max_groups": int(self.demo31_pending_fusion_max_groups),
+                    },
+                )
+            return bundle
+
+        def _publish_complete_inference_group(
+            self,
+            *,
+            complete: Any,
+            rng: np.random.Generator,
+            ray_cache: dict[int, Any],
+            fusion_waits: dict[str, float] | None = None,
+            warning_label: str,
+        ) -> bool:
+            if not self._tracker_result_gated_fusion_enabled():
+                return super()._publish_complete_inference_group(
+                    complete=complete,
+                    rng=rng,
+                    ray_cache=ray_cache,
+                    fusion_waits=fusion_waits,
+                    warning_label=warning_label,
+                )
+            depth_group = complete.depth_group
+            if not temporal_group_is_coherent(depth_group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+                self._summary["fusion_drop_skewed_group"] = int(self._summary.get("fusion_drop_skewed_group", 0)) + 1
+                self._profile_mark_drop(depth_group.group_id, "fusion_drop_skewed_group")
+                return False
+            if set(int(idx) for idx in complete.mask_packets) != set(int(idx) for idx in self.args.camera_ids):
+                self._summary["fusion_timeout_groups"] = int(self._summary.get("fusion_timeout_groups", 0)) + 1
+                self._profile_mark_drop(depth_group.group_id, "single_owner_missing_mask")
+                return False
+            waits = fusion_waits or {
+                "wait_depth_ms": 0.0,
+                "wait_total_ms": 0.0,
+                **{f"wait_mask_cam{int(camera_idx)}_ms": 0.0 for camera_idx in self.args.camera_ids},
+            }
+            waits = {
+                **waits,
+                "pcd_fusion_trigger": PCD_FUSION_TRIGGER_TRACKER_RESULT,
+                "fusion_deferred_until_tracker_result": True,
+            }
+            self._profile_update(depth_group.group_id, fusion=waits)
+            try:
+                self._defer_fusion_until_tracker_result(
+                    depth_group=depth_group,
+                    masks=complete.mask_packets,
+                    publish_hook="tracker_result_gated_fusion",
+                )
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    print(
+                        f"[WARN] Demo 3.1 {warning_label} deferred fusion group {depth_group.group_id} failed: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                return False
+            self._summary["fusion_deferred_until_tracker_result_groups"] = int(
+                self._summary.get("fusion_deferred_until_tracker_result_groups", 0)
+            ) + 1
+            return True
+
         def _build_raw_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
+            if self._tracker_result_gated_fusion_enabled():
+                return self._defer_fusion_until_tracker_result(
+                    depth_group=depth_group,
+                    masks=masks,
+                    publish_hook="raw_fused_async_deferred",
+                )
             capped_masks = self._cap_demo31_controller_masks(depth_group=depth_group, masks=masks)
             self._publish_demo31_tracking_input(
                 depth_group=depth_group,
@@ -3290,6 +3459,11 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 publish_hook="raw_fused_async",
             )
             return super()._build_raw_fused_packet(depth_group=depth_group, masks=capped_masks, ray_cache=ray_cache, rng=rng)
+
+        def _publish_raw_fused_for_async_filter(self, raw: Any) -> None:
+            if isinstance(raw, Demo31PendingFusionBundle):
+                return
+            super()._publish_raw_fused_for_async_filter(raw)
 
         def _build_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
             capped_masks = self._cap_demo31_controller_masks(depth_group=depth_group, masks=masks)
@@ -3366,6 +3540,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             cached_group_ids: set[int] | None = None,
             require_exact: bool = False,
         ) -> tuple[Any | None, dict[str, Any]]:
+            if self._tracker_result_gated_fusion_enabled():
+                return self._take_tracker_result_gated_render_packet(
+                    group_id,
+                    cached_group_ids=cached_group_ids,
+                    require_exact=require_exact,
+                )
             requested_group_id = int(group_id)
             lift_group_ids = (
                 set(int(group_id) for group_id in cached_group_ids)
@@ -3451,6 +3631,169 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
                     "tracking_pending_render_packet_had_lift_candidate": int(render_packet.group_id) in lift_group_ids,
                 }
+
+        def _take_tracker_result_gated_render_packet(
+            self,
+            group_id: int,
+            *,
+            cached_group_ids: set[int] | None = None,
+            require_exact: bool = False,
+        ) -> tuple[Any | None, dict[str, Any]]:
+            requested_group_id = int(group_id)
+            lift_group_ids = (
+                set(int(group_id) for group_id in cached_group_ids)
+                if cached_group_ids is not None
+                else self.demo31_lift_input_cache.cached_group_ids()
+            )
+            with self.demo31_pending_fusion_lock:
+                pending_ids_before = sorted(int(item) for item in self.demo31_pending_fusion_bundles)
+                bundle = self.demo31_pending_fusion_bundles.pop(requested_group_id, None)
+                match_mode = "exact"
+                if bundle is None and bool(require_exact):
+                    self.demo31_tracking_result_without_render_packet_count += 1
+                    return None, {
+                        "tracking_render_packet_match_mode": "missing-exact",
+                        "tracking_result_has_matching_render_packet": False,
+                        "tracking_result_used_render_packet": False,
+                        "tracking_result_used_nearest_render_packet": False,
+                        "tracking_render_packet_group_id": None,
+                        "tracking_render_packet_group_delta": None,
+                        "tracking_nearest_render_packet_abs_delta": None,
+                        "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
+                        "tracking_pending_render_packet_had_lift_candidate": requested_group_id in lift_group_ids,
+                        "tracking_pending_fusion_bundle_count_before_match": int(len(pending_ids_before)),
+                        "tracker_result_triggered_fusion": False,
+                        "tracker_result_fusion_ms": 0.0,
+                    }
+                if bundle is None and pending_ids_before:
+                    lift_candidate_ids = [group for group in pending_ids_before if group in lift_group_ids]
+                    candidate_ids = lift_candidate_ids or pending_ids_before
+                    nearest_group_id = min(
+                        candidate_ids,
+                        key=lambda candidate: (
+                            abs(int(candidate) - requested_group_id),
+                            0 if int(candidate) >= requested_group_id else 1,
+                            int(candidate),
+                        ),
+                    )
+                    bundle = self.demo31_pending_fusion_bundles.pop(nearest_group_id, None)
+                    match_mode = "nearest"
+                if bundle is None:
+                    self.demo31_tracking_result_without_render_packet_count += 1
+                    return None, {
+                        "tracking_render_packet_match_mode": "missing",
+                        "tracking_result_has_matching_render_packet": False,
+                        "tracking_result_used_render_packet": False,
+                        "tracking_result_used_nearest_render_packet": False,
+                        "tracking_render_packet_group_id": None,
+                        "tracking_render_packet_group_delta": None,
+                        "tracking_nearest_render_packet_abs_delta": None,
+                        "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
+                        "tracking_pending_render_packet_had_lift_candidate": False,
+                        "tracking_pending_fusion_bundle_count_before_match": int(len(pending_ids_before)),
+                        "tracker_result_triggered_fusion": False,
+                        "tracker_result_fusion_ms": 0.0,
+                    }
+            bundle_group_id = int(bundle.group_id)
+            delta = bundle_group_id - requested_group_id
+            if match_mode == "exact":
+                self.demo31_tracking_result_exact_render_packet_count += 1
+            else:
+                self.demo31_tracking_result_nearest_render_packet_count += 1
+            started_s = time.perf_counter()
+            try:
+                render_packet = self._build_tracker_result_gated_render_packet(bundle)
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    print(
+                        f"[WARN] Demo 3.1 tracker-result fusion group {bundle_group_id} failed: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                self.demo31_tracker_result_fusion_skipped_count += 1
+                self._profile_mark_drop(bundle_group_id, "tracker_result_gated_fusion_failed")
+                return None, {
+                    "tracking_render_packet_match_mode": "fusion-failed",
+                    "tracking_result_has_matching_render_packet": match_mode == "exact",
+                    "tracking_result_used_render_packet": False,
+                    "tracking_result_used_nearest_render_packet": False,
+                    "tracking_render_packet_group_id": bundle_group_id,
+                    "tracking_render_packet_group_delta": int(delta),
+                    "tracking_nearest_render_packet_abs_delta": int(abs(delta)),
+                    "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
+                    "tracking_pending_render_packet_had_lift_candidate": bundle_group_id in lift_group_ids,
+                    "tracking_pending_fusion_bundle_count_before_match": int(len(pending_ids_before)),
+                    "tracker_result_triggered_fusion": False,
+                    "tracker_result_fusion_ms": 0.0,
+                    "tracker_result_fusion_error": f"{type(exc).__name__}: {exc}",
+                }
+            fusion_ms = float((time.perf_counter() - started_s) * 1000.0)
+            self.demo31_tracker_result_triggered_fusion_count += 1
+            self.demo31_tracker_result_fusion_ms_samples.append(fusion_ms)
+            return render_packet, {
+                "tracking_render_packet_match_mode": match_mode,
+                "tracking_result_has_matching_render_packet": match_mode == "exact",
+                "tracking_result_used_render_packet": True,
+                "tracking_result_used_nearest_render_packet": match_mode == "nearest",
+                "tracking_render_packet_group_id": int(render_packet.group_id),
+                "tracking_render_packet_group_delta": int(delta),
+                "tracking_nearest_render_packet_abs_delta": int(abs(delta)),
+                "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
+                "tracking_pending_render_packet_had_lift_candidate": int(render_packet.group_id) in lift_group_ids,
+                "tracking_pending_fusion_bundle_count_before_match": int(len(pending_ids_before)),
+                "tracker_result_triggered_fusion": True,
+                "tracker_result_fusion_ms": fusion_ms,
+            }
+
+        def _build_tracker_result_gated_render_packet(self, bundle: Demo31PendingFusionBundle) -> Any:
+            if async_fusion_filter_enabled(self.args):
+                raw = super()._build_raw_fused_packet(
+                    depth_group=bundle.depth_group,
+                    masks=bundle.masks,
+                    ray_cache=self.demo31_tracker_result_fusion_ray_cache,
+                    rng=self.demo31_tracker_result_fusion_rng,
+                )
+                self._latest_raw_fused = raw
+                if hasattr(self, "raw_fusion_stats"):
+                    self.raw_fusion_stats.record(raw.created_perf_s)
+                if hasattr(self, "_summary"):
+                    self._summary["raw_fusion_groups"] = int(self._summary.get("raw_fusion_groups", 0)) + 1
+                packet = super()._filter_raw_fused_packet(raw)
+                self._latest_fused = packet
+                if hasattr(self, "filter_output_stats"):
+                    self.filter_output_stats.record(packet.created_perf_s)
+                if hasattr(self, "fusion_stats"):
+                    self.fusion_stats.record(packet.created_perf_s)
+                if hasattr(self, "_summary"):
+                    self._summary["filter_output_groups"] = int(self._summary.get("filter_output_groups", 0)) + 1
+                    self._summary["fusion_complete_groups"] = int(self._summary.get("fusion_complete_groups", 0)) + 1
+                return packet
+            packet = super()._build_fused_packet(
+                depth_group=bundle.depth_group,
+                masks=bundle.masks,
+                ray_cache=self.demo31_tracker_result_fusion_ray_cache,
+                rng=self.demo31_tracker_result_fusion_rng,
+            )
+            self._latest_fused = packet
+            if hasattr(self, "fusion_stats"):
+                self.fusion_stats.record(getattr(packet, "created_perf_s", None))
+            if hasattr(self, "_summary"):
+                self._summary["fusion_complete_groups"] = int(self._summary.get("fusion_complete_groups", 0)) + 1
+            return packet
+
+        def _tracking_result_has_visible_tracks(self, overlay: TrackingResultLitePacket) -> bool:
+            for camera_idx, tracks_yx in overlay.camera_tracks_yx.items():
+                idx = int(camera_idx)
+                tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+                if len(tracks) == 0:
+                    continue
+                visibility = np.asarray(
+                    overlay.camera_visibility.get(idx, np.ones((len(tracks),), dtype=np.float32)),
+                    dtype=np.float32,
+                ).reshape(-1)
+                if visibility.size == 0 or bool(np.any(visibility > 0.0)):
+                    return True
+            return False
 
         def _publish_tracker_driven_render(self, overlay: TrackingResultLitePacket, *, overlay_start_s: float) -> None:
             render_requires_new_tracker = bool(self.demo31_cotracker_enabled)
@@ -3588,6 +3931,41 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             overlay_render_group_delta: int | None = None
             render_packet = None
             overlay_group_id = int(overlay.group_id)
+            if self._tracker_result_gated_fusion_enabled() and not self._tracking_result_has_visible_tracks(overlay):
+                self.demo31_tracker_result_fusion_skipped_count += 1
+                self.demo31_tracking_overlay_render_blocked_count += 1
+                if self.demo31_tracking_overlay_first_render_group_id is None:
+                    self.demo31_tracking_overlay_warmup_skipped_render_count += 1
+                if hasattr(self, "_profile_update"):
+                    self._profile_update(
+                        overlay_group_id,
+                        demo31_tracking_overlay={
+                            "overlay_available": True,
+                            "overlay_points": 0,
+                            "overlay_group_id": overlay_group_id,
+                            "incoming_render_group_id": overlay_group_id,
+                            "render_group_id": overlay_group_id,
+                            "render_driver": "cotracker_child_output",
+                            "render_trigger": "new_cotracker_result",
+                            "pcd_fusion_trigger": PCD_FUSION_TRIGGER_TRACKER_RESULT,
+                            "tracker_result_gated_fusion": True,
+                            "tracker_result_triggered_fusion": False,
+                            "tracker_result_fusion_skip_reason": "no_visible_tracks",
+                            "rendered_on_new_cotracker_result": False,
+                            "tracking_overlay_render_blocked": True,
+                            "tracking_overlay_warmup_blocked": self.demo31_tracking_overlay_first_render_group_id is None,
+                            "render_requires_new_cotracker_result": True,
+                            "render_reuses_cached_cotracker_result": False,
+                            "tracking_result_used_render_packet": False,
+                            "tracking_result_used_nearest_render_packet": False,
+                            "tracking_render_packet_match_mode": "no-visible-tracks",
+                            "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
+                            "cotracker_model_ms": float(overlay.model_ms),
+                            "cotracker_e2e_ms": float(overlay.e2e_ms),
+                            "cross_gpu_cuda_tensor_transfer": False,
+                        },
+                    )
+                return
             render_packet, render_match_profile = self._take_render_packet_for_tracking_result(
                 overlay_group_id,
                 cached_group_ids=(
@@ -3997,6 +4375,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_render_group_delta": overlay_render_group_delta,
                     "render_driver": "cotracker_child_output",
                     "render_trigger": "new_cotracker_result",
+                    "pcd_fusion_trigger": self._pcd_fusion_trigger(),
+                    "tracker_result_gated_fusion": bool(self._tracker_result_gated_fusion_enabled()),
+                    "tracker_result_triggered_fusion": bool(
+                        render_match_profile.get("tracker_result_triggered_fusion", False)
+                    ),
+                    "tracker_result_fusion_ms": float(render_match_profile.get("tracker_result_fusion_ms", 0.0) or 0.0),
                     "rendered_on_new_cotracker_result": bool(render_packet is not None and len(overlay_points) > 0),
                     "tracking_overlay_render_blocked": tracking_overlay_render_blocked,
                     "tracking_overlay_warmup_blocked": tracking_overlay_warmup_blocked,
@@ -4031,6 +4415,10 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "tracking_pending_render_packet_count_before_match": render_match_profile[
                         "tracking_pending_render_packet_count_before_match"
                     ],
+                    "tracking_pending_fusion_bundle_count_before_match": int(
+                        render_match_profile.get("tracking_pending_fusion_bundle_count_before_match", 0) or 0
+                    ),
+                    "tracking_pending_fusion_bundle_max_groups": int(self.demo31_pending_fusion_max_groups),
                     "tracking_pending_render_packet_max_groups": int(self.demo31_pending_render_packet_max_groups),
                     "tracking_pending_render_packet_had_lift_candidate": bool(
                         render_match_profile["tracking_pending_render_packet_had_lift_candidate"]
@@ -4107,7 +4495,10 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 if not render_requires_new_tracker:
                     return
                 return
-            self._drop_pending_render_packets_through(int(render_packet.group_id))
+            if self._tracker_result_gated_fusion_enabled():
+                self._drop_pending_fusion_bundles_through(int(render_packet.group_id))
+            else:
+                self._drop_pending_render_packets_through(int(render_packet.group_id))
             if self.demo31_tracking_overlay_first_render_group_id is None:
                 self.demo31_tracking_overlay_first_render_group_id = int(render_packet.group_id)
             super()._publish_render_packet(render_packet)
@@ -4228,8 +4619,11 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             tracker_model_max = percentile_summary(self.demo31_tracker_model_ms_max_per_group_samples)
             overlay_delta = percentile_summary(self.demo31_overlay_render_group_delta_samples)
             tracking_mask_age = percentile_summary(self.demo31_tracking_mask_age_ms_samples)
+            tracker_fusion = percentile_summary(self.demo31_tracker_result_fusion_ms_samples)
             with self.demo31_pending_render_lock:
                 pending_render_count = int(len(self.demo31_pending_render_packets))
+            with self.demo31_pending_fusion_lock:
+                pending_fusion_count = int(len(self.demo31_pending_fusion_bundles))
             return {
                 "process": process_snapshot,
                 "process_status_events": list(self.demo31_process_status_events),
@@ -4246,6 +4640,15 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "tracking_pending_render_packets": pending_render_count,
                 "tracking_pending_render_packet_max_groups": int(self.demo31_pending_render_packet_max_groups),
                 "tracking_pending_render_packet_drop_count": int(self.demo31_pending_render_packet_drop_count),
+                "pcd_fusion_trigger": self._pcd_fusion_trigger(),
+                "tracker_result_gated_fusion": bool(self._tracker_result_gated_fusion_enabled()),
+                "tracking_pending_fusion_bundles": pending_fusion_count,
+                "tracking_pending_fusion_bundle_max_groups": int(self.demo31_pending_fusion_max_groups),
+                "tracking_pending_fusion_bundle_drop_count": int(self.demo31_pending_fusion_bundle_drop_count),
+                "tracker_result_triggered_fusion_count": int(self.demo31_tracker_result_triggered_fusion_count),
+                "tracker_result_fusion_skipped_count": int(self.demo31_tracker_result_fusion_skipped_count),
+                "tracker_result_fusion_ms_median": float(tracker_fusion["median"]),
+                "tracker_result_fusion_ms_p95": float(tracker_fusion["p95"]),
                 "tracking_result_without_render_packet_count": int(
                     self.demo31_tracking_result_without_render_packet_count
                 ),
@@ -4612,6 +5015,27 @@ class Demo31Runtime:
                     ),
                     "tracking_pending_render_packet_drop_count": int(
                         snapshot.get("tracking_pending_render_packet_drop_count", 0) or 0
+                    ),
+                    "pcd_fusion_trigger": str(snapshot.get("pcd_fusion_trigger", DEFAULT_PCD_FUSION_TRIGGER)),
+                    "tracker_result_gated_fusion": bool(snapshot.get("tracker_result_gated_fusion", False)),
+                    "tracking_pending_fusion_bundles": int(snapshot.get("tracking_pending_fusion_bundles", 0) or 0),
+                    "tracking_pending_fusion_bundle_max_groups": int(
+                        snapshot.get("tracking_pending_fusion_bundle_max_groups", 0) or 0
+                    ),
+                    "tracking_pending_fusion_bundle_drop_count": int(
+                        snapshot.get("tracking_pending_fusion_bundle_drop_count", 0) or 0
+                    ),
+                    "tracker_result_triggered_fusion_count": int(
+                        snapshot.get("tracker_result_triggered_fusion_count", 0) or 0
+                    ),
+                    "tracker_result_fusion_skipped_count": int(
+                        snapshot.get("tracker_result_fusion_skipped_count", 0) or 0
+                    ),
+                    "tracker_result_fusion_ms_median": float(
+                        snapshot.get("tracker_result_fusion_ms_median", 0.0) or 0.0
+                    ),
+                    "tracker_result_fusion_ms_p95": float(
+                        snapshot.get("tracker_result_fusion_ms_p95", 0.0) or 0.0
                     ),
                     "tracking_result_without_render_packet_count": int(
                         snapshot.get("tracking_result_without_render_packet_count", 0) or 0

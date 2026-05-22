@@ -65,18 +65,20 @@ and union overlays to object/controller union anchors. If no same-group surface
 anchor is available, or the nearest anchor is outside the pixel snap radius,
 the marker is rejected rather than rendered as a detached 3D point.
 
-Camera/mask/PCD work remains asynchronous, but rendered result publication is
-gated by the point tracker by default. The main process stores pending PCD packets by
-`group_id` in a bounded latest window. When a fresh tracker result arrives,
-Demo 3.1 first renders the exact matching PCD packet. If that exact packet was
-already evicted, it falls back to the nearest pending PCD group by absolute
-`group_id` delta and marks the frame as `nearest` in the profile. If the point tracker
-is not ready, no pending PCD is available, or the selected PCD has no matching
-surface anchors, no new rendered result is published and Open3D keeps the
-previous valid frame.
-Rendered FPS therefore measures track-ready results, not semantic-only PCD
-throughput. Because the tracker result is already the render clock, Demo 3.1
-does not expose a render stride option and renders every tracker-ready group.
+Camera/mask/tracker work remains asynchronous, but PCD fusion is
+tracker-result-gated by default. The main process publishes bounded tracker
+inputs and stores pending depth+mask fusion bundles by `group_id`; it does not
+run expensive fusion/filter work until a fresh tracker result arrives. The
+tracker result first requests the exact matching pending fusion bundle. If that
+exact bundle was already evicted, it falls back to the nearest pending bundle
+by absolute `group_id` delta and marks the frame as `nearest` in the profile.
+If the point tracker is not ready, no pending bundle is available, tracking has
+no visible query result, or the selected PCD has no matching surface anchors, no
+new rendered result is published and Open3D keeps the previous valid frame.
+Rendered FPS therefore measures track-ready fused PCD results, not
+semantic-only PCD throughput. Because the tracker result is already the render
+clock, Demo 3.1 does not expose a render stride option and renders every
+tracker-ready group.
 Use `--no-wait-for-tracking-overlay` only for debugging the semantic PCD before
 tracking is available.
 
@@ -163,6 +165,7 @@ tracking_control_point_radius_m = 0.006
 tracking_control_point_sampling = visible-spread_surface_snap
 overlay_render_raw_track_points = false
 tracking_pending_render_packet_max_groups = 128
+tracking_pending_fusion_bundle_max_groups = 128
 tracking_render_packet_match_policy = exact-then-nearest-pending-pcd-by-group-id
 cotracker_backend = tapnextpp
 tracker_backend = tapnextpp
@@ -189,10 +192,13 @@ tracking_input_contains_intrinsics = false
 tracking_input_contains_c2w = false
 world_lift_owner = main_process
 fusion_mask_policy = latest-reuse
+pcd_fusion_trigger = tracker-result
+tracker_result_gated_fusion = true
 render_waited_for_cotracker = true
 render_waited_for_fresh_cotracker_result = true
 render_driver = cotracker_child_output
 render_trigger = new_cotracker_result
+render_triggers_pcd_fusion = true
 render_waited_for_mask = false
 debug_fusion.color_by_camera = false
 gpu_sampling.enabled = false
@@ -253,6 +259,12 @@ render_reuses_cached_cotracker_result
 render_waited_for_fresh_cotracker_result
 render_driver
 render_trigger
+pcd_fusion_trigger
+tracker_result_gated_fusion
+tracker_result_triggered_fusion_count
+tracker_result_fusion_skipped_count
+tracker_result_fusion_ms_median
+tracker_result_fusion_ms_p95
 rendered_on_new_cotracker_result
 overlay_age_ms_median
 overlay_age_ms_p95
@@ -264,6 +276,9 @@ tracking_overlay_render_blocked_count
 tracking_pending_render_packets
 tracking_pending_render_packet_max_groups
 tracking_pending_render_packet_drop_count
+tracking_pending_fusion_bundles
+tracking_pending_fusion_bundle_max_groups
+tracking_pending_fusion_bundle_drop_count
 tracking_render_packet_match_policy
 tracking_result_exact_render_packet_count
 tracking_result_nearest_render_packet_count
