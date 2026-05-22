@@ -7,8 +7,7 @@ RealSense tracking-overlay lineage.
   fusion, and Open3D/render.
 - GPU1 owns a point-tracker backend in a separate child process.
 - Supported backend names are `cotracker3_online`, `trackon2`, `litetracker`,
-  `locotrack`, and `tapnextpp`; `cotracker3_online` is the default and currently the
-  validated live backend.
+  `locotrack`, and `tapnextpp`; `tapnextpp` is the default backend.
 - The point tracker receives CPU RGB/mask latest-wins packets only.
 - The point tracker returns small CPU 2D track/visibility packets.
 - The main process lifts tracks to world with group-aligned cached RealSense depth,
@@ -36,13 +35,14 @@ RealSense tracking-overlay lineage.
   overlay points by source camera when diagnosing alignment. The lift mask
   follows the display scope, so controller overlays must land inside the current
   controller mask rather than the broader object/controller union.
-- When CoTracker is not ready, the Open3D window keeps the last valid rendered
+- When the point tracker is not ready, the Open3D window keeps the last valid rendered
   result instead of publishing a new semantic-only PCD frame. Rendered FPS
   therefore measures track-ready results, not camera/mask-only throughput.
-- Rendered object PCD density is controlled by FuturePhysTwin-style 5mm world
-  voxel sampling by default. `--object-volume-points-per-voxel` can retain more
-  representatives inside each occupied voxel without changing CoTracker query
-  counts or overlay caps.
+- Rendered object PCD uses `object_point_control=fixed-cap` plus
+  `object_postprocess=enhanced-pt` by default. Keep controller on `pt-filter`
+  so separated two-hand controller components are not collapsed by the object
+  largest-component prior. Use `--object-point-control phystwin-volume` only as
+  a diagnostic override.
 - Rendered PCD color defaults to live RGB via `--pcd-color-mode rgb`. Use
   `--pcd-color-mode class` only when you want semantic object/controller solid
   colors for debugging.
@@ -75,10 +75,14 @@ hangs or crashes during teardown on the local workstation, run through
 Useful rendered/debug profiling flags:
 
 ```bash
---cotracker-backend cotracker3_online \
+--cotracker-backend tapnextpp \
 --tracking-backend-execution-mode batch-views \
 --cotracker-update-mode batch \
 --tracker-batch-query-count-policy fixed \
+--tapnet-repo-dir external/tapnet \
+--tapnextpp-checkpoint checkpoints/tapnextpp/tapnextpp_ckpt.pt \
+--tapnextpp-image-size 256,256 \
+--tapnextpp-autocast-dtype fp16 \
 --gpu-sampling \
 --gpu-sampling-device-indexes 0,1 \
 --overlay-display-scope controller \
@@ -91,11 +95,11 @@ Useful rendered/debug profiling flags:
 ```
 
 If `--gpu-sampling` is enabled without explicit indexes, Demo 3.1 samples the
-configured mask and CoTracker physical GPUs, `0,1` by default.
+configured mask and tracker physical GPUs, `0,1` by default.
 
-Track-On2, LiteTracker, LocoTrack-S, and TAPNext++ are exposed through the same
-child-process contract. LocoTrack-S uses the `locotrack` backend name and
-TAPNext++ uses `tapnextpp`. These external
+CoTracker3, Track-On2, LiteTracker, LocoTrack-S, and TAPNext++ are exposed
+through the same child-process contract. LocoTrack-S uses the `locotrack`
+backend name and TAPNext++ uses `tapnextpp`. These external
 repos/weights stay outside this repository. Use
 `scripts/env/create_demo_3_1_max.sh` to clone the current Demo 3 environment.
 For LocoTrack-S, install the live-inference dependency set without replacing

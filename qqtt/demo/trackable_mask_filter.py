@@ -40,7 +40,7 @@ TRACKABLE_QUERY_INIT_STRATEGIES = (
 class TrackableMaskFilterConfig:
     depth_min_m: float
     depth_max_m: float
-    object_point_control: str = "phystwin-volume"
+    object_point_control: str = "fixed-cap"
     object_volume_voxel_m: float = 0.005
     object_volume_origin: str = PHYSTWIN_VOLUME_ORIGIN_WORLD
     object_volume_points_per_voxel: int = 1
@@ -335,6 +335,10 @@ def summarize_trackable_stats(stats_by_camera: Mapping[int, Mapping[str, Any]]) 
         "controller_trackable_cap_applied_by_camera": {},
         "trackable_union_pixels_by_camera": {},
         "trackable_mask_standard_filter_ms_by_camera": {},
+        "object_filter_by_camera": {},
+        "controller_filter_by_camera": {},
+        "object_filter_mode_by_camera": {},
+        "controller_filter_mode_by_camera": {},
     }
     for camera_idx, raw_stats in stats_by_camera.items():
         idx = int(camera_idx)
@@ -349,6 +353,12 @@ def summarize_trackable_stats(stats_by_camera: Mapping[int, Mapping[str, Any]]) 
         summary["controller_trackable_cap_applied_by_camera"][idx] = bool(stats.get("controller_trackable_cap_applied", False))
         summary["trackable_union_pixels_by_camera"][idx] = int(stats.get("union_trackable_pixels", 0))
         summary["trackable_mask_standard_filter_ms_by_camera"][idx] = float(stats.get("trackable_mask_ms", 0.0))
+        object_filter = dict(stats.get("object_filter", {}) or {})
+        controller_filter = dict(stats.get("controller_filter", {}) or {})
+        summary["object_filter_by_camera"][idx] = object_filter
+        summary["controller_filter_by_camera"][idx] = controller_filter
+        summary["object_filter_mode_by_camera"][idx] = str(object_filter.get("mode", ""))
+        summary["controller_filter_mode_by_camera"][idx] = str(controller_filter.get("mode", ""))
     return summary
 
 

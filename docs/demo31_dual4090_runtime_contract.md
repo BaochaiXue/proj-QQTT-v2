@@ -3,9 +3,9 @@
 Demo 3.1 is a dual-4090 realtime visualization runtime cloned from Demo 3.0.
 GPU0 owns the shared three-RealSense capture, SAM3.1/HF EdgeTAM mask,
 RealSense-depth fusion, and render path. GPU1 owns a point-tracker backend in a
-separate child process. The default validated backend is `cotracker3_online`;
-the contract also accepts `trackon2` and `litetracker` so the same Demo 3.1
-pipeline can profile alternative online trackers.
+separate child process. The default backend is `tapnextpp`; the contract also
+accepts `cotracker3_online`, `trackon2`, `litetracker`, and `locotrack` so the
+same Demo 3.1 pipeline can profile alternative trackers.
 
 No CUDA tensors are transferred between processes. The tracker receives CPU RGB
 plus live object/controller union-mask latest-wins packets and returns small CPU
@@ -19,7 +19,7 @@ Demo 3.1 inherits Demo 3.0's online-only object/controller union tracking
 semantics. The only public semantic switch is `--mode exp|demo`; both modes
 track `object_mask | controller_mask`. `exp` uses controller `towel`, while
 `demo` uses controller prompt `human hand` for SAM3.1 while the controller
-semantic remains a hand. CoTracker query sampling uses
+semantic remains a hand. Tracker query sampling uses
 `phystwin_dense`, but Demo 3.1 defaults to `--cotracker-query-count 4096`
 per camera for the batch=3 RTX 4090 path. A full `auto` / 5000-per-view
 three-camera batch exceeds the 24GB 4090 memory budget in live profiling. The
@@ -36,8 +36,8 @@ tracking union and anchor/trackable-mask path; its implicit default is `1` in
 render-voxel downsampled before Open3D display with
 `--controller-render-voxel-m` and capped by
 `--controller-render-max-points` (default `10000`); these render-only reductions
-do not touch LiteTracker input or the red tracking/control markers. Overlay display selection is
-separate: raw CoTracker tracks still come from the capped union, but each query
+do not touch tracker input or the red tracking/control markers. Overlay display selection is
+separate: raw tracker queries still come from the capped union, but each query
 is labeled by first-frame object/controller mask membership and the default
 rendered overlay shows controller-labeled tracks only. The display cap is
 disabled by default for Demo 3.1: `overlay_max_points_per_camera = 0`
@@ -66,11 +66,11 @@ anchor is available, or the nearest anchor is outside the pixel snap radius,
 the marker is rejected rather than rendered as a detached 3D point.
 
 Camera/mask/PCD work remains asynchronous, but rendered result publication is
-gated by CoTracker by default. The main process stores pending PCD packets by
-`group_id` in a bounded latest window. When a fresh CoTracker result arrives,
+gated by the point tracker by default. The main process stores pending PCD packets by
+`group_id` in a bounded latest window. When a fresh tracker result arrives,
 Demo 3.1 first renders the exact matching PCD packet. If that exact packet was
 already evicted, it falls back to the nearest pending PCD group by absolute
-`group_id` delta and marks the frame as `nearest` in the profile. If CoTracker
+`group_id` delta and marks the frame as `nearest` in the profile. If the point tracker
 is not ready, no pending PCD is available, or the selected PCD has no matching
 surface anchors, no new rendered result is published and Open3D keeps the
 previous valid frame.
@@ -80,11 +80,11 @@ does not expose a render stride option and renders every tracker-ready group.
 Use `--no-wait-for-tracking-overlay` only for debugging the semantic PCD before
 tracking is available.
 
-The rendered object PCD uses FuturePhysTwin-style world-volume sampling by
-default: one representative point per occupied 5mm voxel. This is independent
-from CoTracker query sampling and the overlay display cap. Use
-`--object-volume-points-per-voxel N` to keep more representatives inside each
-occupied voxel when local surface density is more important than render cost.
+The rendered object PCD uses the object semantic postprocess path by default:
+`object_point_control=fixed-cap` and `object_postprocess=enhanced-pt`. This is
+independent from tracker query sampling and the overlay display cap. Use
+`--object-point-control phystwin-volume` only as a diagnostic override when
+FuturePhysTwin-style world-volume sampling is needed.
 
 ## Contract Fields
 
@@ -112,11 +112,22 @@ tracking_mask_scope = object_controller_union
 tracking_query_mode = phystwin_dense
 tracking_query_count_requested = 4096
 tracking_query_count_rule = min(capped_object_controller_union_pixels, 5000)
+trackable_mask_source = standard_filter_survivors
+tracking_input_mask_semantics = standard_filter_trackable_masks
+tracker_query_source = union_trackable_mask
+trackable_object_filter = {'mode': 'enhanced-pt', 'point_control': 'fixed-cap', 'radius_m': 0.01, 'nb_points': 12, 'component_voxel_size_m': 0.006, 'keep_near_main_gap_m': 0.035}
+trackable_controller_filter = {'mode': 'pt-filter', 'radius_m': 0.01, 'nb_points': 12}
+object_filter = {'mode': 'enhanced-pt', 'point_control': 'fixed-cap'}
+controller_filter = {'mode': 'pt-filter'}
 tracking_sampling = controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx
 controller_mask_erode_px = 0
 controller_mask_erode_stage = before_tracking_union_and_trackable_filter
 controller_mask_erode_applies_to = tracking_input_and_anchor_masks
-render_controller_filter = {'render_voxel_m': 0.003, 'render_voxel_downsample': true, 'render_max_points': 10000, 'render_cap_enabled': true, 'render_only': true, 'affects_tracking_markers': false}
+object_point_control = fixed-cap
+object_postprocess = enhanced-pt
+controller_postprocess = pt-filter
+render_object_filter = {'point_control': 'fixed-cap', 'postprocess': 'enhanced-pt', 'radius_m': 0.01, 'nb_points': 12, 'component_voxel_size_m': 0.006, 'keep_near_main_gap_m': 0.035, 'voxel_m': 0.005, 'origin_policy': 'world', 'adaptive': true, 'min_voxel_m': 0.005, 'max_voxel_m': 0.012, 'target_ms': 8.0, 'emergency_max_points': 30000, 'points_per_voxel': 1}
+render_controller_filter = {'postprocess': 'pt-filter', 'radius_m': 0.01, 'nb_points': 12, 'render_voxel_m': 0.003, 'render_voxel_downsample': true, 'render_max_points': 10000, 'render_cap_enabled': true, 'render_only': true, 'affects_tracking_markers': false}
 controller_pcd_max_points_per_camera = 4999
 controller_pcd_cap_stage = before_tracking_query_and_fusion
 controller_pcd_cap_sampling = stable_coordinate_hash_seed_plus_camera_idx
@@ -153,9 +164,14 @@ tracking_control_point_sampling = visible-spread_surface_snap
 overlay_render_raw_track_points = false
 tracking_pending_render_packet_max_groups = 128
 tracking_render_packet_match_policy = exact-then-nearest-pending-pcd-by-group-id
-cotracker_backend = cotracker3_online
-tracker_backend = cotracker3_online
-tracker_backend_family = cotracker
+cotracker_backend = tapnextpp
+tracker_backend = tapnextpp
+tracker_backend_family = tapnext
+tracking_backend_online_semantics = stateful_frame_by_frame
+tapnextpp_checkpoint = checkpoints/tapnextpp/tapnextpp_ckpt.pt
+tapnextpp_image_size = [256, 256]
+tapnextpp_autocast_dtype = fp16
+tapnextpp_fast_postprocess = true
 tracking_backend_execution_mode = batch-views
 tracking_backend_batch_dimension = camera
 tracking_backend_batch_size = 3
@@ -191,10 +207,10 @@ gpu_sampling.device_indexes = [0, 1]
 Demo 3.1 reports render, fusion, mask reuse, tracking, and GPU ownership
 separately so rendered FPS is not confused with true fresh-mask FPS:
 
-Rendered groups are gated on a newly published CoTracker child-process result.
-The renderer must not reuse an old CoTracker result as a new rendered tracking
+Rendered groups are gated on a newly published tracker child-process result.
+The renderer must not reuse an old tracker result as a new rendered tracking
 frame. The Open3D HUD shows the displayed depth/FFS cycle time, HF EdgeTAM
-inference timing, and the CoTracker batch inference/e2e timing for the rendered
+inference timing, and the tracker batch inference/e2e timing for the rendered
 tracking frame.
 
 ```text
@@ -332,6 +348,8 @@ Demo 3.1 exposes the Demo 2.3 fusion and renderer diagnostics through its public
 CLI and forwards them to the shared three-view runtime:
 
 ```text
+--object-postprocess none|pt-filter|enhanced-pt
+--controller-postprocess none|pt-filter|enhanced-pt
 --object-point-control fixed-cap|phystwin-volume
 --object-volume-voxel-m
 --object-volume-origin world|frame-min|first-stable-frame-min
@@ -341,6 +359,10 @@ CLI and forwards them to the shared three-view runtime:
 --object-volume-target-ms
 --object-volume-emergency-max-points
 --object-volume-points-per-voxel
+--phystwin-radius-m
+--phystwin-nb-points
+--enhanced-component-voxel-size-m
+--enhanced-keep-near-main-gap-m
 --controller-render-voxel-m
 --controller-render-max-points
 --debug-color-by-camera
@@ -373,7 +395,7 @@ CLI and forwards them to the shared three-view runtime:
 ```
 
 When `--gpu-sampling` is enabled and `--gpu-sampling-device-indexes` is omitted,
-Demo 3.1 samples the physical mask and CoTracker GPU indexes, which are `0,1`
+Demo 3.1 samples the physical mask and tracker GPU indexes, which are `0,1`
 for the default dual-4090 split. The wrapper summary copies the shared runtime
 per-device utilization and memory summaries into `gpu0_*` and `gpu1_*` fields.
 
@@ -382,10 +404,10 @@ per-device utilization and memory summaries into `gpu0_*` and `gpu1_*` fields.
 - Demo 3.0 remains the stable single-process lineage.
 - Demo 3.1 does not build or consume FFS depth.
 - Demo 3.1 does not rely on cross-GPU tensor operations or CUDA tensor IPC.
-- CoTracker process does not receive depth, intrinsics, or camera-to-world data.
+- Tracker process does not receive depth, intrinsics, or camera-to-world data.
 - Demo 3.1 does not expose object-only or controller-only raw live tracking
   modes; `--overlay-display-scope controller|object|union` changes only which
   already-tracked first-frame labels are rendered.
 - Demo 3.1 does not expose offline video, cached tracking input, saved-mask
   initialization, or case replay through the live entrypoint.
-- CoTracker output is visualization-only tracking overlay data.
+- Tracker output is visualization-only tracking overlay data.

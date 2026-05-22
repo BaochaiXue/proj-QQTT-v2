@@ -45,6 +45,11 @@ from qqtt.demo.trackable_mask_filter import (
     build_standard_filter_trackable_masks_for_camera,
     summarize_trackable_stats,
 )
+from qqtt.demo.three_view_masked_fused_pcd_runtime import (
+    POSTPROCESS_ENHANCED_PT,
+    POSTPROCESS_MODES,
+    POSTPROCESS_PT_FILTER,
+)
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world
 from qqtt.tracking.backends.point_tracker_adapter import (
     LITETRACKER_RUNTIME_ONNX_CUDA,
@@ -82,8 +87,9 @@ FUSION_MASK_POLICIES = (FUSION_MASK_POLICY_STRICT, FUSION_MASK_POLICY_LATEST_REU
 GPU_PLAN_SPLIT_MASK0_TRACK1 = "split-mask0-track1"
 GPU_PLANS = (GPU_PLAN_SPLIT_MASK0_TRACK1,)
 
-DEFAULT_OUTPUT_ROOT = Path("result/demo31_dual4090_realsense_cotracker")
+DEFAULT_OUTPUT_ROOT = Path("result/demo31_dual4090_realsense_tapnextpp")
 DEFAULT_DEMO32_OUTPUT_ROOT = Path("result/demo32_ffs_litetracker")
+DEFAULT_DEMO31_TRACKER_BACKEND = TRACKER_BACKEND_TAPNEXTPP
 DEFAULT_RENDER_TARGET_FPS = 60.0
 DEFAULT_COTRACKER_INPUT_FPS = 10.0
 DEFAULT_COTRACKER_INPUT_MAX_AGE_MS = 250.0
@@ -103,6 +109,8 @@ DEFAULT_TAPNEXTPP_USE_CERTAINTY = False
 DEFAULT_TAPNEXTPP_CERTAINTY_RADIUS = 8
 DEFAULT_TAPNEXTPP_CERTAINTY_THRESHOLD = 0.5
 DEFAULT_TAPNEXTPP_COMPILE = False
+DEFAULT_TAPNET_REPO_DIR = "external/tapnet"
+DEFAULT_TAPNEXTPP_CHECKPOINT = "checkpoints/tapnextpp/tapnextpp_ckpt.pt"
 DEFAULT_SAM31_INIT_QUICK_FAIL_EMPTY_MASKS = True
 DEFAULT_SAM31_INIT_MIN_MASK_PIXELS = 1
 DEFAULT_DEMO32_LITETRACKER_REPO_DIR = "/home/xinjie/external/lite-tracker"
@@ -110,8 +118,15 @@ DEFAULT_DEMO32_LITETRACKER_WEIGHTS = "/home/xinjie/external/weights/cotracker3/s
 DEFAULT_DEMO32_TRACKABLE_MASK_BUILD_POLICY = TRACKABLE_MASK_BUILD_POLICY_INIT_ONLY
 DEFAULT_DEMO32_TRACKABLE_QUERY_INIT_STRATEGY = TRACKABLE_QUERY_INIT_STRATEGY_STANDARD_FILTER_INIT
 DEFAULT_DEMO32_CONTROLLER_TRACKABLE_MAX_POINTS_PER_CAMERA = 4999
+DEFAULT_OBJECT_POINT_CONTROL = demo3_runtime.OBJECT_POINT_CONTROL_FIXED_CAP
+DEFAULT_OBJECT_POSTPROCESS = POSTPROCESS_ENHANCED_PT
+DEFAULT_CONTROLLER_POSTPROCESS = POSTPROCESS_PT_FILTER
+DEFAULT_PHYSTWIN_RADIUS_M = 0.01
+DEFAULT_PHYSTWIN_NB_POINTS = 12
+DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.006
+DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.035
 DEFAULT_CONTROLLER_MASK_ERODE_PX = 0
-DEFAULT_DEMO_MODE_CONTROLLER_MASK_ERODE_PX = 1
+DEFAULT_DEMO_MODE_CONTROLLER_MASK_ERODE_PX = 0
 DEFAULT_CONTROLLER_RENDER_VOXEL_M = 0.003
 DEFAULT_CONTROLLER_RENDER_MAX_POINTS = 10_000
 DEFAULT_LIFT_INPUT_CACHE_GROUPS = 128
@@ -974,7 +989,7 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
     parser.add_argument(
         "--cotracker-backend",
         choices=TRACKER_BACKENDS,
-        default=TRACKER_BACKEND_COTRACKER3,
+        default=DEFAULT_DEMO31_TRACKER_BACKEND,
         help="Legacy flag name for the Demo 3.1 point-tracker backend.",
     )
     parser.add_argument(
@@ -1044,8 +1059,8 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         choices=("bf16", "fp16", "fp32"),
         default=DEFAULT_LOCOTRACK_AUTOCAST_DTYPE,
     )
-    parser.add_argument("--tapnet-repo-dir", default=None)
-    parser.add_argument("--tapnextpp-checkpoint", default=None)
+    parser.add_argument("--tapnet-repo-dir", default=DEFAULT_TAPNET_REPO_DIR)
+    parser.add_argument("--tapnextpp-checkpoint", default=DEFAULT_TAPNEXTPP_CHECKPOINT)
     parser.add_argument(
         "--tapnextpp-image-size",
         type=parse_tapnextpp_image_size,
@@ -1101,7 +1116,7 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         "--cotracker-query-count",
         default=DEFAULT_DEMO31_COTRACKER_QUERY_COUNT_REQUEST,
         help=(
-            "Raw CoTracker query points per camera. Demo 3.1 defaults to 4096 "
+            "Raw point-tracker query points per camera. Demo 3.1 defaults to 4096 "
             "because full batch=3 at 5000/view exceeds RTX 4090 24GB memory."
         ),
     )
@@ -1110,7 +1125,7 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         type=int,
         default=demo3_runtime.DEFAULT_CONTROLLER_PCD_MAX_POINTS_PER_CAMERA,
         help=(
-            "Maximum controller/towel mask pixels kept per camera before CoTracker query "
+            "Maximum controller/towel mask pixels kept per camera before tracker query "
             "selection and before fused PCD construction. Must be < 5000."
         ),
     )
@@ -1161,9 +1176,21 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
     parser.add_argument("--no-render-async-latest-only", action="store_true")
     parser.add_argument("--render-micro-profile", action="store_true")
     parser.add_argument(
+        "--object-postprocess",
+        choices=POSTPROCESS_MODES,
+        default=DEFAULT_OBJECT_POSTPROCESS,
+        help="Object semantic PCD postprocess used for render and trackable query filtering.",
+    )
+    parser.add_argument(
+        "--controller-postprocess",
+        choices=POSTPROCESS_MODES,
+        default=DEFAULT_CONTROLLER_POSTPROCESS,
+        help="Controller semantic PCD postprocess used for render and trackable query filtering.",
+    )
+    parser.add_argument(
         "--object-point-control",
         choices=demo3_runtime.OBJECT_POINT_CONTROLS,
-        default=demo3_runtime.OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME,
+        default=DEFAULT_OBJECT_POINT_CONTROL,
     )
     parser.add_argument(
         "--object-volume-voxel-m",
@@ -1201,6 +1228,18 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         type=int,
         default=demo3_runtime.DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
     )
+    parser.add_argument("--phystwin-radius-m", type=float, default=DEFAULT_PHYSTWIN_RADIUS_M)
+    parser.add_argument("--phystwin-nb-points", type=int, default=DEFAULT_PHYSTWIN_NB_POINTS)
+    parser.add_argument(
+        "--enhanced-component-voxel-size-m",
+        type=float,
+        default=DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
+    )
+    parser.add_argument(
+        "--enhanced-keep-near-main-gap-m",
+        type=float,
+        default=DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
+    )
     parser.add_argument(
         "--controller-render-voxel-m",
         type=float,
@@ -1235,7 +1274,7 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         "--overlay-max-points-per-camera",
         type=int,
         default=DEFAULT_DEMO31_OVERLAY_MAX_POINTS_PER_CAMERA,
-        help="Maximum rendered CoTracker overlay points per camera; 0 renders all selected visible tracks.",
+        help="Maximum rendered tracker overlay points per camera; 0 renders all selected visible tracks.",
     )
     parser.add_argument(
         "--overlay-display-scope",
@@ -1245,7 +1284,7 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
     parser.add_argument(
         "--overlay-debug-color-by-camera",
         action="store_true",
-        help="Color lifted CoTracker overlay points by source camera for live alignment debugging.",
+        help="Color lifted tracker overlay points by source camera for live alignment debugging.",
     )
     parser.add_argument(
         "--overlay-reject-outside-semantic-bbox",
@@ -1336,7 +1375,7 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         default=DEFAULT_WAIT_FOR_TRACKING_OVERLAY,
         help=(
             "Legacy compatibility flag. Demo 3.1 rendered profiling remains "
-            "gated on fresh CoTracker results whenever tracking is enabled."
+            "gated on fresh tracker results whenever tracking is enabled."
         ),
     )
     parser.add_argument("--fusion-mask-policy", choices=FUSION_MASK_POLICIES, default=FUSION_MASK_POLICY_LATEST_REUSE)
@@ -1465,8 +1504,20 @@ def validate_args(
         raise ValueError("--controller-mask-erode-px must be >= 0.")
     if str(args.object_point_control) not in demo3_runtime.OBJECT_POINT_CONTROLS:
         raise ValueError(f"{demo_label} unsupported --object-point-control {args.object_point_control}")
+    if str(args.object_postprocess) not in POSTPROCESS_MODES:
+        raise ValueError(f"{demo_label} unsupported --object-postprocess {args.object_postprocess}")
+    if str(args.controller_postprocess) not in POSTPROCESS_MODES:
+        raise ValueError(f"{demo_label} unsupported --controller-postprocess {args.controller_postprocess}")
     if str(args.object_volume_origin) not in demo3_runtime.PHYSTWIN_VOLUME_ORIGINS:
         raise ValueError(f"{demo_label} unsupported --object-volume-origin {args.object_volume_origin}")
+    if float(args.phystwin_radius_m) <= 0.0:
+        raise ValueError("--phystwin-radius-m must be positive.")
+    if int(args.phystwin_nb_points) < 1:
+        raise ValueError("--phystwin-nb-points must be >= 1.")
+    if float(args.enhanced_component_voxel_size_m) <= 0.0:
+        raise ValueError("--enhanced-component-voxel-size-m must be positive.")
+    if float(args.enhanced_keep_near_main_gap_m) < 0.0:
+        raise ValueError("--enhanced-keep-near-main-gap-m must be >= 0.")
     if float(args.object_volume_voxel_m) <= 0.0:
         raise ValueError("--object-volume-voxel-m must be positive.")
     if float(args.object_volume_min_voxel_m) <= 0.0 or float(args.object_volume_max_voxel_m) <= 0.0:
@@ -1633,6 +1684,7 @@ def build_contract(
     )
     demo32 = is_demo32_preset(args)
     depth_source = demo3_runtime.DEPTH_SOURCE_FFS if demo32 else demo3_runtime.DEPTH_SOURCE_REALSENSE
+    trackable_filter_enabled = str(args.trackable_mask_build_policy) != TRACKABLE_MASK_BUILD_POLICY_DISABLED
     demo32_tracker_stage = (
         "litetracker_batch3_auto_fallback"
         if demo32 and execution_mode == TRACKING_BACKEND_EXECUTION_MODE_AUTO
@@ -1835,29 +1887,49 @@ def build_contract(
         "trackable_query_init_strategy": str(args.trackable_query_init_strategy),
         "trackable_mask_source": (
             "standard_filter_survivors"
-            if demo32 and str(args.trackable_mask_build_policy) != TRACKABLE_MASK_BUILD_POLICY_DISABLED
+            if trackable_filter_enabled
             else "raw_semantic_union"
         ),
         "tracking_input_mask_semantics": (
             "standard_filter_trackable_masks"
-            if demo32 and str(args.trackable_mask_build_policy) != TRACKABLE_MASK_BUILD_POLICY_DISABLED
+            if trackable_filter_enabled
             else "raw_semantic_masks"
         ),
         "tracker_query_source": (
             "union_trackable_mask"
-            if demo32 and str(args.trackable_mask_build_policy) != TRACKABLE_MASK_BUILD_POLICY_DISABLED
+            if trackable_filter_enabled
             else "object_controller_union_mask"
         ),
         "object_mask_semantics": (
             "object_trackable_mask"
-            if demo32 and str(args.trackable_mask_build_policy) != TRACKABLE_MASK_BUILD_POLICY_DISABLED
+            if trackable_filter_enabled
             else "raw_object_mask"
         ),
         "controller_mask_semantics": (
             "controller_trackable_mask"
-            if demo32 and str(args.trackable_mask_build_policy) != TRACKABLE_MASK_BUILD_POLICY_DISABLED
+            if trackable_filter_enabled
             else "raw_controller_mask"
         ),
+        "trackable_object_filter": {
+            "mode": str(args.object_postprocess),
+            "point_control": str(args.object_point_control),
+            "radius_m": float(args.phystwin_radius_m),
+            "nb_points": int(args.phystwin_nb_points),
+            "component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
+            "keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
+        },
+        "trackable_controller_filter": {
+            "mode": str(args.controller_postprocess),
+            "radius_m": float(args.phystwin_radius_m),
+            "nb_points": int(args.phystwin_nb_points),
+        },
+        "object_filter": {
+            "mode": str(args.object_postprocess),
+            "point_control": str(args.object_point_control),
+        },
+        "controller_filter": {
+            "mode": str(args.controller_postprocess),
+        },
         "controller_trackable_max_points_per_camera": int(args.controller_trackable_max_points_per_camera),
         "controller_trackable_cap_stage": "after_standard_filter",
         "controller_mask_erode_px": int(controller_mask_erode_px),
@@ -1931,6 +2003,13 @@ def build_contract(
         "render_layer_mode": None if args.render_layer_mode is None else str(args.render_layer_mode),
         "render_copy_mode": None if args.render_copy_mode is None else str(args.render_copy_mode),
         "pcd_color_mode": str(args.pcd_color_mode),
+        "object_point_control": str(args.object_point_control),
+        "object_postprocess": str(args.object_postprocess),
+        "controller_postprocess": str(args.controller_postprocess),
+        "phystwin_radius_m": float(args.phystwin_radius_m),
+        "phystwin_nb_points": int(args.phystwin_nb_points),
+        "enhanced_component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
+        "enhanced_keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
         "render_micro_profile": True,
         "render_latest_wins": True,
         "render_waited_for_cotracker": not bool(args.disable_cotracker),
@@ -1942,6 +2021,11 @@ def build_contract(
         "render_waited_for_mask": bool(render_waited_for_mask),
         "render_object_filter": {
             "point_control": str(args.object_point_control),
+            "postprocess": str(args.object_postprocess),
+            "radius_m": float(args.phystwin_radius_m),
+            "nb_points": int(args.phystwin_nb_points),
+            "component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
+            "keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
             "voxel_m": float(args.object_volume_voxel_m),
             "origin_policy": str(args.object_volume_origin),
             "adaptive": bool(args.object_volume_adaptive),
@@ -1952,6 +2036,9 @@ def build_contract(
             "points_per_voxel": int(args.object_volume_points_per_voxel),
         },
         "render_controller_filter": {
+            "postprocess": str(args.controller_postprocess),
+            "radius_m": float(args.phystwin_radius_m),
+            "nb_points": int(args.phystwin_nb_points),
             "render_voxel_m": float(args.controller_render_voxel_m),
             "render_voxel_downsample": float(args.controller_render_voxel_m) > 0.0,
             "render_max_points": int(args.controller_render_max_points),
@@ -2037,6 +2124,10 @@ def format_contract(contract: dict[str, Any]) -> str:
         "trackable_mask_source",
         "tracking_input_mask_semantics",
         "tracker_query_source",
+        "trackable_object_filter",
+        "trackable_controller_filter",
+        "object_filter",
+        "controller_filter",
         "controller_trackable_max_points_per_camera",
         "controller_trackable_cap_stage",
         "controller_mask_erode_px",
@@ -2117,6 +2208,9 @@ def format_contract(contract: dict[str, Any]) -> str:
         "ipc_payload",
         "fusion_mask_policy",
         "pcd_color_mode",
+        "object_point_control",
+        "object_postprocess",
+        "controller_postprocess",
         "render_waited_for_cotracker",
         "render_waited_for_fresh_cotracker_result",
         "render_driver",
@@ -2124,6 +2218,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracking_pending_render_packet_max_groups",
         "tracking_render_packet_match_policy",
         "render_waited_for_mask",
+        "render_object_filter",
         "render_controller_filter",
         "output_root",
     )
@@ -2291,6 +2386,12 @@ def build_shared_runtime_args(
     shared_args.trackable_mask_build_policy = str(args.trackable_mask_build_policy)
     shared_args.trackable_query_init_strategy = str(args.trackable_query_init_strategy)
     shared_args.controller_trackable_max_points_per_camera = int(args.controller_trackable_max_points_per_camera)
+    shared_args.object_postprocess = str(args.object_postprocess)
+    shared_args.controller_postprocess = str(args.controller_postprocess)
+    shared_args.phystwin_radius_m = float(args.phystwin_radius_m)
+    shared_args.phystwin_nb_points = int(args.phystwin_nb_points)
+    shared_args.enhanced_component_voxel_size_m = float(args.enhanced_component_voxel_size_m)
+    shared_args.enhanced_keep_near_main_gap_m = float(args.enhanced_keep_near_main_gap_m)
     shared_args.controller_mask_erode_px = resolved_controller_mask_erode_px(args)
     shared_args.controller_render_voxel_m = float(args.controller_render_voxel_m)
     shared_args.controller_render_max_points = int(args.controller_render_max_points)
@@ -2876,7 +2977,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 depth_min_m=float(getattr(self.args, "depth_min_m", 0.0)),
                 depth_max_m=float(getattr(self.args, "depth_max_m", 0.0)),
                 object_point_control=str(
-                    getattr(self.args, "object_point_control", demo3_runtime.OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME)
+                    getattr(self.args, "object_point_control", DEFAULT_OBJECT_POINT_CONTROL)
                 ),
                 object_volume_voxel_m=float(
                     getattr(
@@ -2899,12 +3000,16 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         demo3_runtime.DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
                     )
                 ),
-                object_postprocess=str(getattr(self.args, "object_postprocess", "enhanced-pt")),
-                controller_postprocess=str(getattr(self.args, "controller_postprocess", "pt-filter")),
-                phystwin_radius_m=float(getattr(self.args, "phystwin_radius_m", 0.01)),
-                phystwin_nb_points=int(getattr(self.args, "phystwin_nb_points", 12)),
-                enhanced_component_voxel_size_m=float(getattr(self.args, "enhanced_component_voxel_size_m", 0.006)),
-                enhanced_keep_near_main_gap_m=float(getattr(self.args, "enhanced_keep_near_main_gap_m", 0.035)),
+                object_postprocess=str(getattr(self.args, "object_postprocess", DEFAULT_OBJECT_POSTPROCESS)),
+                controller_postprocess=str(getattr(self.args, "controller_postprocess", DEFAULT_CONTROLLER_POSTPROCESS)),
+                phystwin_radius_m=float(getattr(self.args, "phystwin_radius_m", DEFAULT_PHYSTWIN_RADIUS_M)),
+                phystwin_nb_points=int(getattr(self.args, "phystwin_nb_points", DEFAULT_PHYSTWIN_NB_POINTS)),
+                enhanced_component_voxel_size_m=float(
+                    getattr(self.args, "enhanced_component_voxel_size_m", DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M)
+                ),
+                enhanced_keep_near_main_gap_m=float(
+                    getattr(self.args, "enhanced_keep_near_main_gap_m", DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M)
+                ),
                 controller_trackable_max_points_per_camera=int(
                     self.demo31_contract.get(
                         "controller_trackable_max_points_per_camera",
@@ -2926,8 +3031,6 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             intrinsics_by_camera: dict[int, np.ndarray],
             c2w_by_camera: dict[int, np.ndarray],
         ) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray], dict[int, np.ndarray], dict[str, Any]]:
-            if str(self.demo31_contract.get("demo", "")) != "demo3.2":
-                return mask_by_camera, object_mask_by_camera, controller_mask_by_camera, {}
             policy = str(
                 self.demo31_contract.get(
                     "trackable_mask_build_policy",
@@ -4274,7 +4377,7 @@ class Demo31Runtime:
             "shared_runtime_profile": None if shared_profile is None else str(shared_profile),
             "shared_runtime_profile_payload": shared_payload,
             "cotracker_process_snapshot": snapshot,
-            "runtime_note": "Demo 3.1 delegates capture/mask/fusion/render to the shared runtime and runs CoTracker3 in an isolated latest-wins process.",
+            "runtime_note": "Demo 3.1 delegates capture/mask/fusion/render to the shared runtime and runs the point tracker in an isolated latest-wins process.",
             "exit_code": exit_code,
         }
         _write_profile(self.args.profile_json_output, profile)

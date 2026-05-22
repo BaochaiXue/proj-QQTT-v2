@@ -192,16 +192,15 @@ export TORCH_CUDA_ARCH_LIST=12.0
     `scaled_online.pth`, `scaled_offline.pth`, `baseline_online.pth`,
     `baseline_offline.pth`
   - PyTorch Hub checkpoint cache prewarmed through symlinks under
-    `/home/xinjie/.cache/torch/hub/checkpoints/` for Demo 3's default
-    `torch.hub.load("facebookresearch/co-tracker", "cotracker3_online")`
-    path
+    `/home/xinjie/.cache/torch/hub/checkpoints/` for the optional
+    `cotracker3_online` fallback path
 - Demo 3 runtime contract:
   - exactly three RealSense cameras
   - `depth_source = realsense`
   - `uses_ffs = false`
   - `mask_source = hf_edgetam`
   - `edgetam_batch_vision_encoder = true`
-  - `cotracker_backend = cotracker3_online`
+  - `cotracker_backend = tapnextpp`
   - `render_waited_for_cotracker = false`
 - Current caveat:
   - `python -m pip check` reports the inherited `sam3` metadata requirement
@@ -231,8 +230,8 @@ export TORCH_CUDA_ARCH_LIST=12.0
 - Current policy:
   - keep external tracker repos and weights outside this repository
   - do not silently replace the core PyTorch stack from `demo3-max`
-  - use `--cotracker-backend cotracker3_online|trackon2|litetracker` from the
-    Demo 3.1 entrypoint
+  - use `--cotracker-backend tapnextpp|cotracker3_online|trackon2|litetracker|locotrack`
+    from the Demo 3.1 entrypoint
 - Track-On2 notes:
   - expected repo checkout: `third_party/track_on` or another documented
     external path
@@ -260,8 +259,8 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - `conda run --no-capture-output -n demo_3_1_max python demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py --dry-run --camera-ids 0,1,2 --mask-gpu 0 --cotracker-gpu 1`
   - `conda run --no-capture-output -n demo_3_1_max python -m unittest -v tests.test_point_tracker_adapters tests.test_demo31_dual_gpu_contract`
 - Expected use:
-  - rendered Demo 3.1 profiling with `cotracker3_online` serial vs batch-views
-  - external Track-On2 / LiteTracker adapter bring-up without destabilizing
+  - rendered Demo 3.1 profiling with `tapnextpp` batch-views by default
+  - external CoTracker3 / Track-On2 / LiteTracker adapter A/B without destabilizing
     the default `demo3-max` environment
 
 ## `FFS-max-sam31-rs`

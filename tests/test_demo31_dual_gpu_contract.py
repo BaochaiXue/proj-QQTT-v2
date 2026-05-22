@@ -129,6 +129,8 @@ class _FakeSharedRuntimeModule:
         parser.add_argument("--pcd-color-mode")
         parser.add_argument("--no-render-async-latest-only", action="store_true")
         parser.add_argument("--track-mode")
+        parser.add_argument("--object-postprocess")
+        parser.add_argument("--controller-postprocess")
         parser.add_argument("--object-prompt")
         parser.add_argument("--controller-prompt")
         parser.add_argument("--experiment-mode")
@@ -146,6 +148,10 @@ class _FakeSharedRuntimeModule:
         parser.add_argument("--object-volume-target-ms", type=float)
         parser.add_argument("--object-volume-emergency-max-points", type=int)
         parser.add_argument("--object-volume-points-per-voxel", type=int)
+        parser.add_argument("--phystwin-radius-m", type=float)
+        parser.add_argument("--phystwin-nb-points", type=int)
+        parser.add_argument("--enhanced-component-voxel-size-m", type=float)
+        parser.add_argument("--enhanced-keep-near-main-gap-m", type=float)
         parser.add_argument("--controller-render-voxel-m", type=float)
         parser.add_argument("--controller-render-max-points", type=int)
         parser.add_argument("--debug-color-by-camera", action="store_true")
@@ -273,6 +279,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
 
         self.assertEqual(contract["demo"], "demo3.1")
+        self.assertEqual(contract["output_root"], "result/demo31_dual4090_realsense_tapnextpp")
         self.assertTrue(contract["dual_gpu_enabled"])
         self.assertEqual(contract["required_cuda_devices"], 2)
         self.assertEqual(contract["mask_gpu_physical"], 0)
@@ -298,6 +305,23 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracking_mask_scope"], "object_controller_union")
         self.assertEqual(contract["tracking_query_mode"], "phystwin_dense")
         self.assertEqual(contract["tracking_query_count_requested"], "4096")
+        self.assertEqual(contract["trackable_mask_source"], "standard_filter_survivors")
+        self.assertEqual(contract["tracking_input_mask_semantics"], "standard_filter_trackable_masks")
+        self.assertEqual(contract["tracker_query_source"], "union_trackable_mask")
+        self.assertEqual(contract["object_mask_semantics"], "object_trackable_mask")
+        self.assertEqual(contract["controller_mask_semantics"], "controller_trackable_mask")
+        self.assertEqual(contract["object_point_control"], "fixed-cap")
+        self.assertEqual(contract["object_postprocess"], "enhanced-pt")
+        self.assertEqual(contract["controller_postprocess"], "pt-filter")
+        self.assertEqual(contract["trackable_object_filter"]["mode"], "enhanced-pt")
+        self.assertEqual(contract["trackable_object_filter"]["point_control"], "fixed-cap")
+        self.assertEqual(contract["trackable_controller_filter"]["mode"], "pt-filter")
+        self.assertEqual(contract["object_filter"]["mode"], "enhanced-pt")
+        self.assertEqual(contract["object_filter"]["point_control"], "fixed-cap")
+        self.assertEqual(contract["controller_filter"]["mode"], "pt-filter")
+        self.assertEqual(contract["render_object_filter"]["point_control"], "fixed-cap")
+        self.assertEqual(contract["render_object_filter"]["postprocess"], "enhanced-pt")
+        self.assertEqual(contract["render_controller_filter"]["postprocess"], "pt-filter")
         self.assertEqual(contract["tracking_sampling"], "controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx")
         self.assertEqual(contract["controller_pcd_max_points_per_camera"], 4999)
         self.assertEqual(contract["controller_pcd_cap_stage"], "before_tracking_query_and_fusion")
@@ -336,9 +360,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
             "exact-then-nearest-pending-pcd-by-group-id",
         )
         self.assertFalse(contract["phystwin_dense_compatible"])
-        self.assertEqual(contract["cotracker_backend"], "cotracker3_online")
-        self.assertEqual(contract["tracker_backend"], "cotracker3_online")
-        self.assertEqual(contract["tracker_backend_family"], "cotracker")
+        self.assertEqual(contract["cotracker_backend"], "tapnextpp")
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
+        self.assertEqual(contract["tracker_backend_family"], "tapnext")
+        self.assertEqual(contract["tracking_backend_online_semantics"], "stateful_frame_by_frame")
+        self.assertEqual(contract["tapnextpp_checkpoint"], "checkpoints/tapnextpp/tapnextpp_ckpt.pt")
+        self.assertEqual(contract["tapnextpp_image_size"], [256, 256])
+        self.assertEqual(contract["tapnextpp_autocast_dtype"], "fp16")
+        self.assertTrue(contract["tapnextpp_fast_postprocess"])
         self.assertEqual(contract["tracking_backend_execution_mode"], "batch-views")
         self.assertEqual(contract["tracking_backend_batch_dimension"], "camera")
         self.assertEqual(contract["tracking_backend_batch_size"], 3)
@@ -382,6 +411,12 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("tracking_mask_scope = object_controller_union", output)
         self.assertIn("tracking_query_mode = phystwin_dense", output)
         self.assertIn("tracking_query_count_requested = 4096", output)
+        self.assertIn("trackable_mask_source = standard_filter_survivors", output)
+        self.assertIn("tracking_input_mask_semantics = standard_filter_trackable_masks", output)
+        self.assertIn("tracker_query_source = union_trackable_mask", output)
+        self.assertIn("object_point_control = fixed-cap", output)
+        self.assertIn("object_postprocess = enhanced-pt", output)
+        self.assertIn("controller_postprocess = pt-filter", output)
         self.assertIn("controller_pcd_max_points_per_camera = 4999", output)
         self.assertIn("controller_pcd_cap_stage = before_tracking_query_and_fusion", output)
         self.assertIn("wait_for_tracking_overlay = true", output)
@@ -405,7 +440,11 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("tracking_render_packet_match_policy = exact-then-nearest-pending-pcd-by-group-id", output)
         self.assertIn("phystwin_dense_compatible = false", output)
         self.assertIn("cotracker_owner = process", output)
-        self.assertIn("tracker_backend = cotracker3_online", output)
+        self.assertIn("tracker_backend = tapnextpp", output)
+        self.assertIn("tracker_backend_family = tapnext", output)
+        self.assertIn("tracking_backend_online_semantics = stateful_frame_by_frame", output)
+        self.assertIn("tapnextpp_checkpoint = checkpoints/tapnextpp/tapnextpp_ckpt.pt", output)
+        self.assertIn("output_root = result/demo31_dual4090_realsense_tapnextpp", output)
         self.assertIn("tracking_backend_execution_mode = batch-views", output)
         self.assertIn("tracking_backend_batch_dimension = camera", output)
         self.assertIn("cotracker_update_mode = batch", output)
@@ -413,6 +452,28 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("pcd_color_mode = rgb", output)
         self.assertIn("render_waited_for_cotracker = true", output)
         self.assertIn("render_waited_for_fresh_cotracker_result = true", output)
+
+    def test_trackable_mask_policy_disabled_reports_raw_semantic_query_masks(self) -> None:
+        args = self._parse(
+            [
+                "--dry-run",
+                "--camera-ids",
+                "0,1,2",
+                "--mask-gpu",
+                "0",
+                "--cotracker-gpu",
+                "1",
+                "--trackable-mask-build-policy",
+                "disabled",
+            ]
+        )
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+
+        self.assertEqual(contract["trackable_mask_source"], "raw_semantic_union")
+        self.assertEqual(contract["tracking_input_mask_semantics"], "raw_semantic_masks")
+        self.assertEqual(contract["tracker_query_source"], "object_controller_union_mask")
+        self.assertEqual(contract["object_mask_semantics"], "raw_object_mask")
+        self.assertEqual(contract["controller_mask_semantics"], "raw_controller_mask")
 
     def test_requires_two_cuda_unless_debug_override(self) -> None:
         args = self._parse(["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"])
@@ -468,7 +529,10 @@ class Demo31DualGpuContractTest(unittest.TestCase):
 
         self.assertEqual(config.cotracker_gpu, "1")
         self.assertEqual(config.camera_ids, (0, 1, 2))
-        self.assertEqual(config.cotracker_backend, "cotracker3_online")
+        self.assertEqual(config.cotracker_backend, "tapnextpp")
+        self.assertEqual(config.tapnet_repo_dir, "external/tapnet")
+        self.assertEqual(config.tapnextpp_checkpoint, "checkpoints/tapnextpp/tapnextpp_ckpt.pt")
+        self.assertEqual(config.tapnextpp_image_size, (256, 256))
         self.assertEqual(config.backend_execution_mode, "batch-views")
         self.assertEqual(config.tracker_batch_query_count_policy, "fixed")
         self.assertEqual(config.query_mode, "phystwin_dense")
@@ -768,6 +832,17 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["trackable_mask_source"], "standard_filter_survivors")
         self.assertEqual(contract["tracking_input_mask_semantics"], "standard_filter_trackable_masks")
         self.assertEqual(contract["tracker_query_source"], "union_trackable_mask")
+        self.assertEqual(contract["object_point_control"], "fixed-cap")
+        self.assertEqual(contract["object_postprocess"], "enhanced-pt")
+        self.assertEqual(contract["controller_postprocess"], "pt-filter")
+        self.assertEqual(contract["trackable_object_filter"]["mode"], "enhanced-pt")
+        self.assertEqual(contract["trackable_object_filter"]["point_control"], "fixed-cap")
+        self.assertEqual(contract["trackable_controller_filter"]["mode"], "pt-filter")
+        self.assertEqual(contract["object_filter"]["mode"], "enhanced-pt")
+        self.assertEqual(contract["object_filter"]["point_control"], "fixed-cap")
+        self.assertEqual(contract["controller_filter"]["mode"], "pt-filter")
+        self.assertEqual(contract["render_object_filter"]["point_control"], "fixed-cap")
+        self.assertEqual(contract["render_object_filter"]["postprocess"], "enhanced-pt")
         self.assertEqual(contract["controller_trackable_max_points_per_camera"], 4999)
         self.assertEqual(contract["controller_trackable_cap_stage"], "after_standard_filter")
         self.assertEqual(contract["controller_mask_erode_px"], 0)
@@ -888,18 +963,23 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "serial-only"):
             demo31_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
 
-    def test_controller_mask_erode_defaults_to_one_in_demo_mode(self) -> None:
-        args = self._parse(
-            ["--dry-run", "--mode", "demo", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
-            default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
-        )
-        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+    def test_controller_mask_erode_defaults_to_zero_in_demo_mode(self) -> None:
+        for preset in (
+            demo31_runtime.PRESET_DEMO31_DUAL4090_HIGHFPS,
+            demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+        ):
+            with self.subTest(preset=preset):
+                args = self._parse(
+                    ["--dry-run", "--mode", "demo", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
+                    default_preset=preset,
+                )
+                contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
 
-        self.assertEqual(args.controller_mask_erode_px, 1)
-        self.assertEqual(contract["semantic_mode"], "demo")
-        self.assertEqual(contract["controller_prompt"], "human hand")
-        self.assertEqual(contract["tracking_controller_label"], "hand")
-        self.assertEqual(contract["controller_mask_erode_px"], 1)
+                self.assertEqual(args.controller_mask_erode_px, 0)
+                self.assertEqual(contract["semantic_mode"], "demo")
+                self.assertEqual(contract["controller_prompt"], "human hand")
+                self.assertEqual(contract["tracking_controller_label"], "hand")
+                self.assertEqual(contract["controller_mask_erode_px"], 0)
 
     def test_controller_mask_erode_explicit_override_wins_in_demo_mode(self) -> None:
         args = self._parse(
@@ -908,7 +988,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "--mode",
                 "demo",
                 "--controller-mask-erode-px",
-                "0",
+                "2",
                 "--camera-ids",
                 "0,1,2",
                 "--mask-gpu",
@@ -920,9 +1000,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
         contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
 
-        self.assertEqual(args.controller_mask_erode_px, 0)
+        self.assertEqual(args.controller_mask_erode_px, 2)
         self.assertEqual(contract["semantic_mode"], "demo")
-        self.assertEqual(contract["controller_mask_erode_px"], 0)
+        self.assertEqual(contract["controller_mask_erode_px"], 2)
 
     def test_controller_mask_erode_happens_before_tracking_union(self) -> None:
         object_mask = np.zeros((5, 5), dtype=bool)
@@ -1153,7 +1233,12 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("trackable_mask_source = standard_filter_survivors", output)
         self.assertIn("tracker_query_source = union_trackable_mask", output)
         self.assertIn("controller_mask_erode_px = 0", output)
-        self.assertIn("render_controller_filter = {'render_voxel_m': 0.003", output)
+        self.assertIn("object_point_control = fixed-cap", output)
+        self.assertIn("object_postprocess = enhanced-pt", output)
+        self.assertIn("controller_postprocess = pt-filter", output)
+        self.assertIn("render_object_filter = {'point_control': 'fixed-cap', 'postprocess': 'enhanced-pt'", output)
+        self.assertIn("render_controller_filter = {'postprocess': 'pt-filter'", output)
+        self.assertIn("'render_voxel_m': 0.003", output)
         self.assertIn("'render_max_points': 10000", output)
         self.assertIn("tracker_visualization_mode = all-tracks-3d-lift", output)
         self.assertIn("tracker_3d_marker_mode = all-tracks-3d-lift", output)
@@ -1234,7 +1319,13 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(shared_args.gpu_sampling_device_indexes, (0, 1))
         self.assertEqual(shared_args.point_size, 1.5)
         self.assertEqual(shared_args.pcd_color_mode, "rgb")
-        self.assertEqual(shared_args.object_point_control, "phystwin-volume")
+        self.assertEqual(shared_args.object_point_control, "fixed-cap")
+        self.assertEqual(shared_args.object_postprocess, "enhanced-pt")
+        self.assertEqual(shared_args.controller_postprocess, "pt-filter")
+        self.assertEqual(shared_args.phystwin_radius_m, 0.01)
+        self.assertEqual(shared_args.phystwin_nb_points, 12)
+        self.assertEqual(shared_args.enhanced_component_voxel_size_m, 0.006)
+        self.assertEqual(shared_args.enhanced_keep_near_main_gap_m, 0.035)
         self.assertEqual(shared_args.object_volume_voxel_m, 0.005)
         self.assertEqual(shared_args.object_volume_points_per_voxel, 3)
         self.assertEqual(shared_args.depth_source, "realsense")

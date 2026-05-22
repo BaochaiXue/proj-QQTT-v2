@@ -1,0 +1,36 @@
+{
+  "backend": "tapnextpp",
+  "benchmark": "model_only",
+  "image_size": [
+    256,
+    256
+  ],
+  "matrix": [
+    {
+      "autocast_dtype": "fp16",
+      "batch_size": 1,
+      "compile": false,
+      "query_count_per_view": 1365
+    },
+    {
+      "autocast_dtype": "fp16",
+      "batch_size": 1,
+      "compile": false,
+      "query_count_per_view": 4096
+    },
+    {
+      "autocast_dtype": "fp16",
+      "batch_size": 3,
+      "compile": false,
+      "query_count_per_view": 1365
+    },
+    {
+      "autocast_dtype": "fp16",
+      "batch_size": 3,
+      "compile": false,
+      "query_count_per_view": 4096
+    }
+  ],
+  "measured_frames": 80,
+  "warmup_frames": 10
+}
