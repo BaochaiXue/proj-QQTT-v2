@@ -17,7 +17,7 @@ class CheckAllSmokeTest(unittest.TestCase):
 
     def test_quick_profile_uses_curated_batched_commands(self) -> None:
         commands = check_all.build_commands(python="python", profile="quick")
-        self.assertEqual(len(commands), 21)
+        self.assertEqual(len(commands), 22)
         self.assertIn(["python", "cameras_viewer.py", "--help"], commands)
         self.assertIn(["python", "record_data_realtime_align.py", "--help"], commands)
         self.assertIn(["python", "data_process/record_data_align.py", "--help"], commands)
@@ -28,6 +28,7 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertIn(["python", "scripts/harness/experiments/check_demo3_tracking_backend_stack.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/experiments/run_demo3_onnx_trt_probe.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/experiments/probe_demo31_tapnextpp_onnx_trt_feasibility.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visualize_demo3_tracking_pcd_overlay.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/summarize_demo23_failure_packet.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/check_harness_catalog.py"], commands)
@@ -44,6 +45,7 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertNotIn("tests.test_visual_compare_turntable_smoke", flat_items)
         self.assertNotIn("tests.test_demo_v2_1_three_view_fused_pcd_smoke", flat_items)
         self.assertIn("tests.test_demo23_harness_engineering_smoke", flat_items)
+        self.assertIn("tests.test_demo31_tapnextpp_onnx_trt_feasibility", flat_items)
 
     def test_full_profile_keeps_pytest_and_broader_command_surface(self) -> None:
         commands = check_all.build_commands(python="python", profile="full")

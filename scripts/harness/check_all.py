@@ -102,6 +102,7 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_demo32_trackable_mask_filter",
     "tests.test_demo31_ipc_latest_wins",
     "tests.test_demo31_cotracker_process_config",
+    "tests.test_demo31_tapnextpp_onnx_trt_feasibility",
     "tests.test_check_all_smoke",
 )
 

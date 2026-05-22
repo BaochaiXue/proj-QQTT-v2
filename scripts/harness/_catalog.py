@@ -76,6 +76,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "quick",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/probe_demo31_tapnextpp_onnx_trt_feasibility.py",
+        "experiments",
+        "Isolated TAPNext++ recurrent ONNX/TensorRT feasibility probe for Demo 3.1.",
+        "quick",
+    ),
+    HarnessEntry(
         "scripts/harness/visualize_demo3_tracking_pcd_overlay.py",
         "focused_diagnostics",
         "Offline Demo 3 fused PCD overlay export for lifted tracking anchors and trails.",
