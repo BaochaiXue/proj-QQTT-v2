@@ -82,6 +82,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "quick",
     ),
     HarnessEntry(
+        "scripts/harness/experiments/profile_demo31_tapnextpp_attention_kernels.py",
+        "experiments",
+        "Model-only TAPNext++ recurrent attention kernel profiler for Demo 3.1.",
+        "quick",
+    ),
+    HarnessEntry(
         "scripts/harness/visualize_demo3_tracking_pcd_overlay.py",
         "focused_diagnostics",
         "Offline Demo 3 fused PCD overlay export for lifted tracking anchors and trails.",
