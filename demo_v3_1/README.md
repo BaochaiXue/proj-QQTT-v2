@@ -16,11 +16,13 @@ RealSense tracking-overlay lineage.
 - Camera/mask/PCD work stays asynchronous, but rendered results are gated by
   the point tracker: a PCD packet is published only when the matching tracking
   result for that group can be lifted into red tracking points.
-- The default frame-bundle policy is `exact-target`: tracker result, PCD,
-  depth/lift inputs, and surface anchors must share the same target `group_id`.
-  Latest-reuse masks remain allowed but are recorded as provenance; nearest
-  pending PCD fallback is only available with
-  `--tracking-render-packet-match-policy exact-then-nearest-debug`.
+- The default frame-bundle policy is `strict-source`: final rendered RGB,
+  depth, mask source, query candidate, tracker input/result, PCD, lift, and
+  render provenance must all share the same three-camera batch `group_id`.
+  If tracker result `N` arrives without same-source bundle `N`, the profile
+  treats it as a pipeline invariant violation rather than a normal skip.
+  Latest-reuse masks and nearest pending PCD fallback are debug-only via
+  explicit `latest-reuse-debug` / `exact-then-nearest-debug` flags.
 - Demo 3.1 does not use FFS.
 - Demo 3.1 inherits Demo 3.0's online-only object/controller union tracking
   semantics: `--mode exp|demo`, object/controller union masks,
@@ -42,7 +44,7 @@ RealSense tracking-overlay lineage.
   controller mask rather than the broader object/controller union.
 - When the point tracker is not ready, the Open3D window keeps the last valid rendered
   result instead of publishing a new semantic-only PCD frame. Rendered FPS
-  therefore measures exact target track-ready results, not camera/mask-only
+  therefore measures strict same-source track-ready results, not camera/mask-only
   throughput or mixed-frame reuse.
 - Rendered object and controller PCD use enhanced PT by default. Object keeps
   the top-1 3D component, while controller keeps the top-2 3D components before

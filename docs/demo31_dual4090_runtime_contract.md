@@ -84,19 +84,21 @@ Tracker input publication protects the corresponding bundle while it is in
 flight; if latest-wins IPC replaces a pending input, the replaced group's
 bundle is immediately unprotected. A TTL/window safety prune also releases
 protected bundles that never receive a tracker result. The default
-frame-bundle policy is `exact-target`: the tracker result must render
-with the same target `group_id` for the PCD/depth/lift/surface-anchor bundle.
-If the exact bundle is missing or was evicted, no new rendered result is
-published and Open3D keeps the previous valid frame. The old nearest pending
-bundle behavior is available only for explicit diagnostics via
+frame-bundle policy is `strict-source`: the RGB/depth/mask/query/tracker
+input/tracker result/PCD/lift/render provenance must all resolve to the same
+three-camera batch `group_id`. If tracker result `N` arrives and the
+same-source bundle `N` is missing, this is a pipeline invariant violation, not
+a normal skip; rendered profiles fail fast by default. Open3D keeps the
+previous valid frame visible while waiting for a new complete strict bundle.
+The old nearest pending bundle and latest-reused mask behavior is available
+only for explicit diagnostics via `--fusion-mask-policy latest-reuse`,
+`--batch-bundle-policy latest-reuse-debug`, or
 `--tracking-render-packet-match-policy exact-then-nearest-debug`; profiles mark
-those renders as `nearest` and count them as debug fallback, not same-target
-results. `--frame-bundle-policy strict-source` is stricter: it also rejects
-tracker results whose mask was latest-reused from an older group. Rendered FPS
-therefore measures track-ready fused PCD results, not semantic-only PCD
-throughput or mixed-frame reuse. Because the tracker result is already the
-render clock, Demo 3.1 does not expose a render stride option and renders every
-tracker-ready exact target group.
+those renders as debug fallback, not strict same-source results. Rendered FPS
+therefore measures track-ready strict same-source fused PCD results, not
+semantic-only PCD throughput or mixed-frame reuse. Because the tracker result is
+already the render clock, Demo 3.1 does not expose a render stride option and
+renders every tracker-ready strict target group.
 Profile summaries separate `display_loop_fps` from
 `new_complete_bundle_fps`; the latter is the tracker-result-driven rate of new
 same-bundle rendered results. `display_last_complete_while_waiting=true` means
@@ -195,7 +197,8 @@ tracking_control_point_sampling = visible-spread_surface_snap
 overlay_render_raw_track_points = false
 tracking_pending_render_packet_max_groups = 128
 tracking_pending_fusion_bundle_max_groups = 128
-frame_bundle_policy = exact-target
+frame_bundle_policy = strict-source
+same_bundle_invariant_fail_fast = true
 tracking_render_packet_match_policy = exact-target-bundle
 tracker_child_receives_full_frame_bundle = false
 tracker_child_receives_depth = false
@@ -226,7 +229,7 @@ tracking_input_contains_depth = false
 tracking_input_contains_intrinsics = false
 tracking_input_contains_c2w = false
 world_lift_owner = main_process
-fusion_mask_policy = latest-reuse
+fusion_mask_policy = strict
 pcd_fusion_trigger = tracker-result
 tracker_result_gated_fusion = true
 render_waited_for_cotracker = true
@@ -234,14 +237,15 @@ render_waited_for_fresh_cotracker_result = true
 render_driver = cotracker_child_output
 render_trigger = new_cotracker_result
 render_triggers_pcd_fusion = true
-render_waited_for_mask = false
+render_waited_for_mask = true
 debug_fusion.color_by_camera = false
 gpu_sampling.enabled = false
 gpu_sampling.device_indexes = [0, 1]
 ```
 
-`strict` mask policy is available for comparison. In strict mode,
-`render_waited_for_mask = true` because fusion requires a matching mask group.
+`latest-reuse` mask policy is available only for diagnostics. In the default
+strict mode, `render_waited_for_mask = true` because fusion requires the mask
+source group to match the RGB/depth/query/tracker/render group.
 
 ## Profile Fields
 
@@ -324,6 +328,10 @@ tracking_pending_fusion_bundles
 tracking_pending_fusion_bundle_max_groups
 tracking_pending_fusion_bundle_drop_count
 frame_bundle_policy
+same_bundle_invariant_fail_fast
+same_bundle_invariant_violation_count
+missing_exact_after_tracker_result_count
+bundle_incomplete_drop_count
 tracking_render_packet_match_policy
 same_bundle_rendered_among_rendered_ratio
 same_bundle_rendered_per_tracker_result_ratio

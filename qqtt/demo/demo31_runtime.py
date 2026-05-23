@@ -163,7 +163,6 @@ DEFAULT_LIFT_INPUT_CACHE_GROUPS = 128
 DEFAULT_PENDING_RENDER_PACKET_GROUPS = 128
 DEFAULT_PROTECTED_BUNDLE_TTL_MS = 10_000.0
 DEFAULT_PROTECTED_BUNDLE_MAX_GROUPS = 0
-DEFAULT_BATCH_BUNDLE_POLICY = BATCH_BUNDLE_POLICY_SAME_BUNDLE_LATEST_WINS
 FRAME_BUNDLE_POLICY_EXACT_TARGET = "exact-target"
 FRAME_BUNDLE_POLICY_STRICT_SOURCE = "strict-source"
 FRAME_BUNDLE_POLICY_LATEST_REUSE_DEBUG = "latest-reuse-debug"
@@ -172,6 +171,9 @@ FRAME_BUNDLE_POLICIES = (
     FRAME_BUNDLE_POLICY_STRICT_SOURCE,
     FRAME_BUNDLE_POLICY_LATEST_REUSE_DEBUG,
 )
+DEFAULT_FUSION_MASK_POLICY = FUSION_MASK_POLICY_STRICT
+DEFAULT_BATCH_BUNDLE_POLICY = BATCH_BUNDLE_POLICY_STRICT_SOURCE
+DEFAULT_FRAME_BUNDLE_POLICY = FRAME_BUNDLE_POLICY_STRICT_SOURCE
 TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_ONLY = "exact-target-bundle"
 TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_THEN_NEAREST_DEBUG = "exact-then-nearest-debug"
 TRACKING_RENDER_PACKET_MATCH_POLICIES = (
@@ -179,6 +181,7 @@ TRACKING_RENDER_PACKET_MATCH_POLICIES = (
     TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_THEN_NEAREST_DEBUG,
 )
 TRACKING_RENDER_PACKET_MATCH_POLICY = TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_ONLY
+DEFAULT_SAME_BUNDLE_INVARIANT_FAIL_FAST = True
 DEFAULT_WAIT_FOR_TRACKING_OVERLAY = True
 DEFAULT_DEMO31_OVERLAY_MAX_POINTS_PER_CAMERA = 0
 DEFAULT_OVERLAY_REJECT_OUTSIDE_SEMANTIC_BBOX = True
@@ -1549,7 +1552,7 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
             "gated on fresh tracker results whenever tracking is enabled."
         ),
     )
-    parser.add_argument("--fusion-mask-policy", choices=FUSION_MASK_POLICIES, default=FUSION_MASK_POLICY_LATEST_REUSE)
+    parser.add_argument("--fusion-mask-policy", choices=FUSION_MASK_POLICIES, default=DEFAULT_FUSION_MASK_POLICY)
     parser.add_argument(
         "--pcd-fusion-trigger",
         choices=PCD_FUSION_TRIGGERS,
@@ -1562,11 +1565,11 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
     parser.add_argument(
         "--frame-bundle-policy",
         choices=FRAME_BUNDLE_POLICIES,
-        default=FRAME_BUNDLE_POLICY_EXACT_TARGET,
+        default=DEFAULT_FRAME_BUNDLE_POLICY,
         help=(
-            "Frame provenance policy for tracker-driven render. exact-target keeps "
-            "tracker/depth/PCD/lift on the same target group while allowing recorded mask reuse; "
-            "strict-source also requires a same-source mask; latest-reuse-debug is for A/B diagnostics."
+            "Frame provenance policy for tracker-driven render. strict-source requires "
+            "RGB/depth/mask/query/tracker/PCD/lift/render to share the same source group; "
+            "latest-reuse-debug is for A/B diagnostics."
         ),
     )
     parser.add_argument(
@@ -1574,8 +1577,8 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         choices=BATCH_BUNDLE_POLICIES,
         default=DEFAULT_BATCH_BUNDLE_POLICY,
         help=(
-            "Async same-bundle policy. same-bundle-latest-wins drops unstarted stale batches "
-            "but renders only exact complete bundles; latest-reuse-debug enables explicit nearest diagnostics."
+            "Async same-bundle policy. strict-source is the default and requires RGB/depth/mask/query/"
+            "tracker/render provenance to share one group; latest-reuse-debug enables explicit diagnostics."
         ),
     )
     parser.add_argument(
@@ -1614,6 +1617,12 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         default=TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_ONLY,
         help="Use exact target bundles by default; nearest fallback exists only for explicit debug runs.",
     )
+    parser.add_argument(
+        "--same-bundle-invariant-fail-fast",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_SAME_BUNDLE_INVARIANT_FAIL_FAST,
+        help="Raise if a tracker result arrives without the same-source renderable bundle in strict-source mode.",
+    )
     parser.add_argument("--mask-stale-timeout-ms", type=float, default=DEFAULT_MASK_STALE_TIMEOUT_MS)
     parser.add_argument("--render-target-fps", type=float, default=DEFAULT_RENDER_TARGET_FPS)
     parser.add_argument("--render-resample-latest", action=argparse.BooleanOptionalAction, default=True)
@@ -1626,7 +1635,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         args.output_root = DEFAULT_DEMO32_OUTPUT_ROOT if args.preset == PRESET_DEMO32_FFS_LITETRACKER else DEFAULT_OUTPUT_ROOT
     if args.preset == PRESET_DEMO31_DUAL4090_HIGHFPS:
         if "--fusion-mask-policy" not in explicit:
-            args.fusion_mask_policy = FUSION_MASK_POLICY_LATEST_REUSE
+            args.fusion_mask_policy = DEFAULT_FUSION_MASK_POLICY
         if "--cotracker-input-fps" not in explicit:
             args.cotracker_input_fps = DEFAULT_COTRACKER_INPUT_FPS
         if "--render-target-fps" not in explicit:
@@ -1635,7 +1644,7 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
         if "--depth-source" not in explicit:
             args.depth_source = demo3_runtime.DEPTH_SOURCE_FFS
         if "--fusion-mask-policy" not in explicit:
-            args.fusion_mask_policy = FUSION_MASK_POLICY_LATEST_REUSE
+            args.fusion_mask_policy = DEFAULT_FUSION_MASK_POLICY
         if "--cotracker-backend" not in explicit and "--tracking-backend" not in explicit:
             args.cotracker_backend = TRACKER_BACKEND_LITETRACKER
         if "--tracking-backend-execution-mode" not in explicit:
@@ -1679,6 +1688,12 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             args.batch_bundle_policy = BATCH_BUNDLE_POLICY_STRICT_SOURCE
         elif args.frame_bundle_policy == FRAME_BUNDLE_POLICY_LATEST_REUSE_DEBUG:
             args.batch_bundle_policy = BATCH_BUNDLE_POLICY_LATEST_REUSE_DEBUG
+            if "--tracking-render-packet-match-policy" not in explicit:
+                args.tracking_render_packet_match_policy = TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_THEN_NEAREST_DEBUG
+    if "--fusion-mask-policy" in explicit and args.fusion_mask_policy == FUSION_MASK_POLICY_LATEST_REUSE:
+        if "--batch-bundle-policy" not in explicit and "--frame-bundle-policy" not in explicit:
+            args.batch_bundle_policy = BATCH_BUNDLE_POLICY_LATEST_REUSE_DEBUG
+            args.frame_bundle_policy = FRAME_BUNDLE_POLICY_LATEST_REUSE_DEBUG
             if "--tracking-render-packet-match-policy" not in explicit:
                 args.tracking_render_packet_match_policy = TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_THEN_NEAREST_DEBUG
     if "--controller-mask-erode-px" not in explicit or getattr(args, "controller_mask_erode_px", None) is None:
@@ -2294,6 +2309,7 @@ def build_contract(
         "protect_tracker_input_bundles": bool(args.protect_tracker_input_bundles),
         "protected_bundle_ttl_ms": float(args.protected_bundle_ttl_ms),
         "protected_bundle_max_groups": int(args.protected_bundle_max_groups),
+        "same_bundle_invariant_fail_fast": bool(args.same_bundle_invariant_fail_fast),
         "frame_bundle_policy": str(args.frame_bundle_policy),
         "tracking_render_packet_match_policy": str(args.tracking_render_packet_match_policy),
         "tracker_child_receives_full_frame_bundle": False,
@@ -2553,6 +2569,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "protect_tracker_input_bundles",
         "protected_bundle_ttl_ms",
         "protected_bundle_max_groups",
+        "same_bundle_invariant_fail_fast",
         "frame_bundle_policy",
         "tracking_render_packet_match_policy",
         "same_bundle_render_default",
@@ -3097,6 +3114,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_frame_bundle_strict_same_source_count = 0
             self.demo31_frame_bundle_provenance_count = 0
             self.demo31_frame_bundle_strict_source_reject_count = 0
+            self.demo31_same_bundle_invariant_violation_count = 0
+            self.demo31_missing_exact_after_tracker_result_count = 0
+            self.demo31_bundle_incomplete_drop_count = 0
             self.demo31_tracker_result_triggered_fusion_count = 0
             self.demo31_tracker_result_fusion_skipped_count = 0
             self.demo31_tracker_result_fusion_ms_samples: list[float] = []
@@ -3656,11 +3676,15 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "publish_hook": str(publish_hook),
                 "published": False,
                 "skipped": False,
+                "strict_same_source_required": bool(self._strict_same_bundle_default_enabled()),
+                "strict_same_source_frame": False,
+                "same_bundle_input_complete": False,
                 "process_enabled": self.demo31_process_client is not None,
                 "camera_count": int(len(mask_by_camera)),
                 "mask_source_group_id": int(mask_source_group_id),
                 "mask_age_ms": float(mask_age_ms),
                 "mask_reused": bool(mask_reused),
+                "query_group_id": int(depth_group.group_id),
                 "surface_anchor_cache_published": False,
                 "trackable_mask": trackable_mask_profile,
                 "controller_mask_erode_px": int(controller_mask_erode_px),
@@ -3668,9 +3692,52 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "controller_mask_pixels_after_erode_by_camera": dict(controller_mask_pixels_after_erode_by_camera),
             }
             if self.demo31_process_client is None or not rgb_by_camera or not mask_by_camera:
+                if self.demo31_process_client is not None and self._strict_same_bundle_default_enabled():
+                    self.demo31_bundle_incomplete_drop_count += 1
+                    profile_payload["bundle_incomplete_drop_reason"] = "missing_rgb_or_mask"
                 if hasattr(self, "_profile_update"):
                     self._profile_update(int(depth_group.group_id), demo31_tracking_input=profile_payload)
                 return
+            if self._strict_same_bundle_default_enabled():
+                gid = int(depth_group.group_id)
+                expected_camera_ids = {int(camera_idx) for camera_idx in self.args.camera_ids}
+                missing_inputs: list[str] = []
+                for name, mapping in (
+                    ("rgb", rgb_by_camera),
+                    ("depth", depth_by_camera),
+                    ("mask", mask_by_camera),
+                    ("intrinsics", intrinsics_by_camera),
+                    ("c2w", c2w_by_camera),
+                    ("object_mask", object_mask_by_camera),
+                    ("controller_mask", controller_mask_by_camera),
+                ):
+                    missing = sorted(expected_camera_ids - {int(key) for key in mapping})
+                    if missing:
+                        missing_inputs.append(f"{name}:{missing}")
+                for camera_idx, packet in masks.items():
+                    packet_group_id = getattr(packet, "group_id", gid)
+                    if packet_group_id is not None and int(packet_group_id) != gid:
+                        missing_inputs.append(f"mask_packet_cam{int(camera_idx)}_group:{int(packet_group_id)}")
+                if int(mask_source_group_id) != gid or bool(mask_reused):
+                    missing_inputs.append(f"mask_source_group:{int(mask_source_group_id)} reused:{bool(mask_reused)}")
+                if gid not in self.demo31_frame_bundle_store.renderable_group_ids():
+                    missing_inputs.append("bundle_store_renderable:false")
+                if missing_inputs:
+                    self.demo31_bundle_incomplete_drop_count += 1
+                    self.demo31_tracking_input_drop_count += 1
+                    profile_payload.update(
+                        {
+                            "skipped": True,
+                            "bundle_incomplete_drop_reason": ",".join(missing_inputs),
+                            "same_bundle_input_complete": False,
+                            "strict_same_source_frame": False,
+                        }
+                    )
+                    if hasattr(self, "_profile_update"):
+                        self._profile_update(gid, demo31_tracking_input=profile_payload)
+                    return
+                profile_payload["same_bundle_input_complete"] = True
+                profile_payload["strict_same_source_frame"] = True
             if not should_publish_tracking_input(
                 now_s=now_s,
                 last_publish_s=self.demo31_last_tracking_input_s,
@@ -3758,10 +3825,21 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             )
 
         def _frame_bundle_policy(self) -> str:
-            return str(self.demo31_contract.get("frame_bundle_policy", FRAME_BUNDLE_POLICY_EXACT_TARGET))
+            if "frame_bundle_policy" in self.demo31_contract:
+                return str(self.demo31_contract["frame_bundle_policy"])
+            if str(self.demo31_contract.get("fusion_mask_policy", DEFAULT_FUSION_MASK_POLICY)) == FUSION_MASK_POLICY_LATEST_REUSE:
+                return FRAME_BUNDLE_POLICY_LATEST_REUSE_DEBUG
+            return DEFAULT_FRAME_BUNDLE_POLICY
 
         def _batch_bundle_policy(self) -> str:
-            return str(self.demo31_contract.get("batch_bundle_policy", DEFAULT_BATCH_BUNDLE_POLICY))
+            if "batch_bundle_policy" in self.demo31_contract:
+                return str(self.demo31_contract["batch_bundle_policy"])
+            frame_policy = self._frame_bundle_policy()
+            if frame_policy == FRAME_BUNDLE_POLICY_LATEST_REUSE_DEBUG:
+                return BATCH_BUNDLE_POLICY_LATEST_REUSE_DEBUG
+            if frame_policy == FRAME_BUNDLE_POLICY_EXACT_TARGET:
+                return BATCH_BUNDLE_POLICY_SAME_BUNDLE_LATEST_WINS
+            return DEFAULT_BATCH_BUNDLE_POLICY
 
         def _tracking_render_packet_match_policy(self) -> str:
             return str(
@@ -3779,10 +3857,34 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 == TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_THEN_NEAREST_DEBUG
             )
 
+        def _strict_same_bundle_default_enabled(self) -> bool:
+            return self._frame_bundle_policy() == FRAME_BUNDLE_POLICY_STRICT_SOURCE or (
+                self._batch_bundle_policy() == BATCH_BUNDLE_POLICY_STRICT_SOURCE
+            )
+
+        def _same_bundle_invariant_fail_fast(self) -> bool:
+            return bool(
+                self.demo31_contract.get(
+                    "same_bundle_invariant_fail_fast",
+                    DEFAULT_SAME_BUNDLE_INVARIANT_FAIL_FAST,
+                )
+            )
+
+        def _record_same_bundle_invariant_violation(self, group_id: int, reason: str) -> None:
+            gid = int(group_id)
+            self.demo31_same_bundle_invariant_violation_count += 1
+            print(
+                "INVARIANT VIOLATION: tracker result arrived for group "
+                f"{gid} but same-source bundle {gid} is missing or incomplete ({reason}).",
+                flush=True,
+            )
+            if self._same_bundle_invariant_fail_fast():
+                raise RuntimeError(
+                    f"same-bundle invariant violation for group {gid}: {reason}"
+                )
+
         def _strict_source_rejects_overlay(self, overlay: TrackingResultLitePacket) -> bool:
-            if self._frame_bundle_policy() != FRAME_BUNDLE_POLICY_STRICT_SOURCE and (
-                self._batch_bundle_policy() != BATCH_BUNDLE_POLICY_STRICT_SOURCE
-            ):
+            if not self._strict_same_bundle_default_enabled():
                 return False
             source_group = overlay.mask_source_group_id
             if source_group is None:
@@ -4197,6 +4299,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 if exact_only:
                     self.demo31_tracking_result_without_render_packet_count += 1
                     self.demo31_frame_bundle_missing_exact_count += 1
+                    self.demo31_missing_exact_after_tracker_result_count += 1
+                    if self._strict_same_bundle_default_enabled():
+                        self._record_same_bundle_invariant_violation(requested_group_id, "missing-exact-render-packet")
                     return None, {
                         "tracking_render_packet_match_mode": "missing-exact",
                         "tracking_result_has_matching_render_packet": False,
@@ -4284,6 +4389,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             if frame_bundle is None:
                 self.demo31_tracking_result_without_render_packet_count += 1
                 self.demo31_frame_bundle_missing_exact_count += int(match_mode == "missing-exact")
+                self.demo31_missing_exact_after_tracker_result_count += int(match_mode == "missing-exact")
+                if match_mode == "missing-exact" and self._strict_same_bundle_default_enabled():
+                    self._record_same_bundle_invariant_violation(requested_group_id, "missing-exact-bundle-store")
                 return None, {
                     "tracking_render_packet_match_mode": match_mode,
                     "tracking_result_has_matching_render_packet": False,
@@ -5607,6 +5715,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "frame_bundle_exact_render_count": int(self.demo31_frame_bundle_exact_render_count),
                 "frame_bundle_missing_exact_count": int(self.demo31_frame_bundle_missing_exact_count),
                 "nearest_fallback_debug_count": int(self.demo31_frame_bundle_nearest_fallback_debug_count),
+                "same_bundle_invariant_fail_fast": bool(self._same_bundle_invariant_fail_fast()),
+                "same_bundle_invariant_violation_count": int(self.demo31_same_bundle_invariant_violation_count),
+                "missing_exact_after_tracker_result_count": int(
+                    self.demo31_missing_exact_after_tracker_result_count
+                ),
+                "bundle_incomplete_drop_count": int(self.demo31_bundle_incomplete_drop_count),
                 "protected_bundle_count": protected_bundle_count,
                 "protected_bundle_ttl_ms": float(
                     self.demo31_contract.get("protected_bundle_ttl_ms", DEFAULT_PROTECTED_BUNDLE_TTL_MS)
@@ -6090,6 +6204,16 @@ class Demo31Runtime:
                         snapshot.get("frame_bundle_missing_exact_count", 0) or 0
                     ),
                     "nearest_fallback_debug_count": int(snapshot.get("nearest_fallback_debug_count", 0) or 0),
+                    "same_bundle_invariant_fail_fast": bool(
+                        snapshot.get("same_bundle_invariant_fail_fast", True)
+                    ),
+                    "same_bundle_invariant_violation_count": int(
+                        snapshot.get("same_bundle_invariant_violation_count", 0) or 0
+                    ),
+                    "missing_exact_after_tracker_result_count": int(
+                        snapshot.get("missing_exact_after_tracker_result_count", 0) or 0
+                    ),
+                    "bundle_incomplete_drop_count": int(snapshot.get("bundle_incomplete_drop_count", 0) or 0),
                     "protected_bundle_count": int(snapshot.get("protected_bundle_count", 0) or 0),
                     "protected_bundle_ttl_ms": float(snapshot.get("protected_bundle_ttl_ms", 0.0) or 0.0),
                     "protected_bundle_max_groups": int(snapshot.get("protected_bundle_max_groups", 0) or 0),

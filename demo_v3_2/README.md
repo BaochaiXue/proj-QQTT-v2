@@ -42,9 +42,11 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
   anchors, and marker validation; they are not sent to the LiteTracker child
 - trackable masks are published to LiteTracker from both fused and async
   raw-fused paths
-- rendered LiteTracker markers use the same exact target frame bundle by
-  default: tracker result, FFS depth/lift inputs, and rendered PCD must share
-  the same `group_id`; nearest-frame fallback is debug-only
+- rendered LiteTracker markers use the same strict-source frame bundle by
+  default: RGB, FFS depth, mask source, query candidate, tracker input/result,
+  rendered PCD, and lift inputs must share the same `group_id`; a tracker result
+  without its same-source bundle is an invariant violation, and nearest-frame or
+  latest-reuse fallback is debug-only
 - render waits for a LiteTracker result and 3D tracking control markers
 - every visible LiteTracker point with valid depth is eligible for the 3D
   anchor layer by default (`--tracker-visualization-mode all-tracks-3d-lift`);

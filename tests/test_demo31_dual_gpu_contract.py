@@ -398,13 +398,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
             contract["tracking_render_packet_match_policy"],
             "exact-target-bundle",
         )
-        self.assertEqual(contract["batch_bundle_policy"], "same-bundle-latest-wins")
+        self.assertEqual(contract["batch_bundle_policy"], "strict-source")
         self.assertEqual(contract["stage_mailbox_policy"], "latest-only")
         self.assertTrue(contract["display_last_complete_while_waiting"])
         self.assertTrue(contract["protect_tracker_input_bundles"])
         self.assertEqual(contract["protected_bundle_ttl_ms"], 10000.0)
         self.assertEqual(contract["protected_bundle_max_groups"], 0)
-        self.assertEqual(contract["frame_bundle_policy"], "exact-target")
+        self.assertEqual(contract["frame_bundle_policy"], "strict-source")
+        self.assertTrue(contract["same_bundle_invariant_fail_fast"])
         self.assertTrue(contract["same_bundle_render_default"])
         self.assertFalse(contract["nearest_fallback_allowed_by_default"])
         self.assertTrue(contract["render_bundle_exact_target_default"])
@@ -441,7 +442,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["shared_runtime_tracking_backend"], "none")
         self.assertTrue(contract["render_waited_for_cotracker"])
         self.assertTrue(contract["render_waited_for_fresh_cotracker_result"])
-        self.assertFalse(contract["render_waited_for_mask"])
+        self.assertTrue(contract["render_waited_for_mask"])
         self.assertEqual(contract["pcd_color_mode"], "rgb")
 
     def test_main_dry_run_prints_dual_gpu_contract(self) -> None:
@@ -498,13 +499,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("overlay_render_raw_track_points = false", output)
         self.assertIn("tracking_pending_render_packet_max_groups = 128", output)
         self.assertIn("tracking_pending_fusion_bundle_max_groups = 128", output)
-        self.assertIn("batch_bundle_policy = same-bundle-latest-wins", output)
+        self.assertIn("batch_bundle_policy = strict-source", output)
         self.assertIn("stage_mailbox_policy = latest-only", output)
         self.assertIn("display_last_complete_while_waiting = true", output)
         self.assertIn("protect_tracker_input_bundles = true", output)
         self.assertIn("protected_bundle_ttl_ms = 10000.0", output)
         self.assertIn("protected_bundle_max_groups = 0", output)
-        self.assertIn("frame_bundle_policy = exact-target", output)
+        self.assertIn("frame_bundle_policy = strict-source", output)
+        self.assertIn("same_bundle_invariant_fail_fast = true", output)
         self.assertIn("tracking_render_packet_match_policy = exact-target-bundle", output)
         self.assertIn("same_bundle_render_default = true", output)
         self.assertIn("nearest_fallback_allowed_by_default = false", output)
@@ -1587,6 +1589,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "fusion_mask_policy": "latest-reuse",
                 "mask_stale_timeout_ms": 250.0,
                 "cotracker_result_stale_timeout_ms": 1500.0,
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
             },
             cotracker_process_config=SimpleNamespace(),
         )
@@ -1989,6 +1993,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "fusion_mask_policy": "latest-reuse",
                 "mask_stale_timeout_ms": 250.0,
                 "cotracker_result_stale_timeout_ms": 1500.0,
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
             },
             cotracker_process_config=SimpleNamespace(),
         )
@@ -2062,6 +2068,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "fusion_mask_policy": "latest-reuse",
                 "mask_stale_timeout_ms": 250.0,
                 "cotracker_result_stale_timeout_ms": 1500.0,
+                "batch_bundle_policy": "same-bundle-latest-wins",
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
             },
             cotracker_process_config=SimpleNamespace(),
         )
@@ -2119,6 +2128,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "fusion_mask_policy": "latest-reuse",
                 "mask_stale_timeout_ms": 250.0,
                 "cotracker_result_stale_timeout_ms": 1500.0,
+                "batch_bundle_policy": "same-bundle-latest-wins",
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
             },
             cotracker_process_config=SimpleNamespace(),
         )
@@ -2181,6 +2193,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "fusion_mask_policy": "latest-reuse",
                 "mask_stale_timeout_ms": 250.0,
                 "cotracker_result_stale_timeout_ms": 1500.0,
+                "batch_bundle_policy": "same-bundle-latest-wins",
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
             },
             cotracker_process_config=SimpleNamespace(),
         )
@@ -2245,6 +2260,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "fusion_mask_policy": "latest-reuse",
                 "mask_stale_timeout_ms": 250.0,
                 "cotracker_result_stale_timeout_ms": 1500.0,
+                "batch_bundle_policy": "same-bundle-latest-wins",
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
             },
             cotracker_process_config=SimpleNamespace(),
         )
@@ -2541,6 +2559,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "fusion_mask_policy": "latest-reuse",
                 "mask_stale_timeout_ms": 250.0,
                 "cotracker_result_stale_timeout_ms": 1500.0,
+                "batch_bundle_policy": "same-bundle-latest-wins",
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
             },
             cotracker_process_config=SimpleNamespace(),
         )
@@ -2603,6 +2624,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "fusion_mask_policy": "latest-reuse",
                 "mask_stale_timeout_ms": 250.0,
                 "cotracker_result_stale_timeout_ms": 1500.0,
+                "batch_bundle_policy": "same-bundle-latest-wins",
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
             },
             cotracker_process_config=SimpleNamespace(),
         )
@@ -2873,6 +2897,100 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         snapshot = runtime.demo31_snapshot()
         self.assertEqual(snapshot["tracking_input_replaced_group_ids_last"], [7])
         self.assertEqual(snapshot["tracking_input_replaced_group_unprotect_count"], 1)
+
+    def test_strict_source_rejects_tracker_input_with_mismatched_mask_packet_group(self) -> None:
+        client = _FakeProcessClient(None)
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: client,
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "strict",
+                "batch_bundle_policy": "strict-source",
+                "frame_bundle_policy": "strict-source",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "cotracker_input_fps": 30.0,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime._stream_metadata = [{"K_color": np.eye(3, dtype=np.float32)}]
+        runtime._c2w_by_camera = {0: np.eye(4, dtype=np.float32)}
+        depth_group = _FakeDepthGroup(
+            group_id=8,
+            depths={0: _FakeDepthFrame(8, np.ones((1, 1), dtype=np.float32))},
+            per_camera_frame_seq={0: 8},
+        )
+        masks = {
+            0: _FakePacket(
+                7,
+                0,
+                np.array([[True]], dtype=bool),
+                np.array([[True]], dtype=bool),
+                np.zeros((1, 1, 3), dtype=np.uint8),
+            )
+        }
+        runtime._remember_pending_fusion_bundle(
+            demo31_runtime.Demo31PendingFusionBundle(
+                group_id=8,
+                created_perf_s=demo31_runtime.time.perf_counter(),
+                depth_group=depth_group,
+                masks=masks,
+                publish_hook="test",
+            )
+        )
+
+        runtime._publish_demo31_tracking_input(
+            depth_group=depth_group,
+            masks=masks,
+            publish_hook="test",
+        )
+
+        self.assertEqual(client.inputs, [])
+        self.assertEqual(runtime.demo31_bundle_incomplete_drop_count, 1)
+        self.assertEqual(runtime.demo31_tracking_input_drop_count, 1)
+        profile = runtime.profile_updates[-1][1]["demo31_tracking_input"]
+        self.assertTrue(profile["strict_same_source_required"])
+        self.assertFalse(profile["same_bundle_input_complete"])
+        self.assertIn("mask_packet_cam0_group:7", profile["bundle_incomplete_drop_reason"])
+
+    def test_strict_source_missing_bundle_after_tracker_result_is_invariant_violation(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=5,
+            frame_idx=5,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            publish_range=(5, 5),
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "strict",
+                "batch_bundle_policy": "strict-source",
+                "frame_bundle_policy": "strict-source",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "same_bundle_invariant_fail_fast": True,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+
+        with self.assertRaises(RuntimeError):
+            runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        self.assertEqual(runtime.demo31_same_bundle_invariant_violation_count, 1)
+        self.assertEqual(runtime.demo31_missing_exact_after_tracker_result_count, 1)
+        self.assertEqual(runtime.demo31_frame_bundle_missing_exact_count, 1)
 
     def test_protected_bundle_ttl_and_window_release_stale_groups(self) -> None:
         runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
@@ -3207,6 +3325,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "pcd_fusion_trigger": "tracker-result",
                 "tracker_visualization_mode": "none",
                 "batch_bundle_policy": "same-bundle-latest-wins",
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
             },
             cotracker_process_config=SimpleNamespace(),
         )
