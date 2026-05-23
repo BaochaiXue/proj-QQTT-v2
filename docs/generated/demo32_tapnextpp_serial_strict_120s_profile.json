@@ -1,0 +1,5988 @@
+{
+  "contract": {
+    "all_tracks_lift_max_points_per_camera": 512,
+    "all_tracks_lift_selection": "visible-spread",
+    "apply_enhanced_component_filter_to_pcd": true,
+    "async_depth_pipeline": true,
+    "batch_bundle_policy": "strict-source",
+    "calibrate_path": "calibrate.pkl",
+    "calibrate_pkl_loaded": true,
+    "camera_ids": [
+      0,
+      1,
+      2
+    ],
+    "controller_enhanced_keep_top_n_components": 2,
+    "controller_filter": {
+      "apply_enhanced_component_filter_to_pcd": true,
+      "component_selection_policy": "largest-n-plus-gap",
+      "keep_top_n_components": 2,
+      "mode": "enhanced-pt"
+    },
+    "controller_mask_erode_applies_to": "tracking_input_and_anchor_masks",
+    "controller_mask_erode_default_source": "explicit_or_non_demo_default",
+    "controller_mask_erode_px": 0,
+    "controller_mask_erode_stage": "before_tracking_union_and_trackable_filter",
+    "controller_mask_erode_unit": "px",
+    "controller_mask_semantics": "controller_trackable_mask",
+    "controller_pcd_cap_sampling": "stable_coordinate_hash_seed_plus_camera_idx",
+    "controller_pcd_cap_stage": "before_tracking_query_and_fusion",
+    "controller_pcd_max_points_per_camera": 4999,
+    "controller_postprocess": "enhanced-pt",
+    "controller_prompt": "towel",
+    "controller_trackable_cap_stage": "after_enhanced_pt_top_n_component_filter",
+    "controller_trackable_max_points_per_camera": 4999,
+    "cotracker_backend": "tapnextpp",
+    "cotracker_batch_fallback_enabled": false,
+    "cotracker_batch_size_target": 3,
+    "cotracker_cuda_visible_devices": "1",
+    "cotracker_enabled": true,
+    "cotracker_gpu_physical": 1,
+    "cotracker_input_fps": 10.0,
+    "cotracker_input_max_age_ms": 250.0,
+    "cotracker_owner": "process",
+    "cotracker_prewarm_backends": false,
+    "cotracker_process_mode": "subprocess",
+    "cotracker_publish_step": 8,
+    "cotracker_result_stale_timeout_ms": 1500.0,
+    "cotracker_seed": 42,
+    "cotracker_update_mode": "serial",
+    "cotracker_window_len": 16,
+    "cross_gpu_cuda_tensor_transfer": false,
+    "debug_fusion": {
+      "color_by_camera": false,
+      "identity_c2w": false,
+      "invert_c2w": false,
+      "max_saved_groups": null,
+      "only_camera_idx": null,
+      "save_mask_overlays": false,
+      "save_per_camera_pcd": false
+    },
+    "delegates_to_demo23_entrypoint": false,
+    "demo": "demo3.2",
+    "depth_source": "ffs",
+    "derived_from_demo31_preset": false,
+    "display_last_complete_while_waiting": true,
+    "dual_gpu_enabled": true,
+    "edgetam_batch_vision_encoder": true,
+    "edgetam_gpu_physical": 0,
+    "edgetam_live_session_keep_frames": 64,
+    "edgetam_live_session_pruning": true,
+    "enhanced_component_selection_policy": "largest-n-plus-gap",
+    "enhanced_component_voxel_size_m": 0.006,
+    "enhanced_keep_near_main_gap_m": 0.035,
+    "enhanced_min_component_points": 32,
+    "enhanced_min_component_ratio": 0.0,
+    "ffs_contract": {
+      "batch3_isolated_artifact": true,
+      "builderOptimizationLevel": 5,
+      "checkpoint": "20-30-48",
+      "depth_stage": "before_edgetam",
+      "max_disp": 192,
+      "schedule": "strict3-latest",
+      "trt_batch_size": 3,
+      "trt_model_dir": "/home/xinjie/proj-QQTT-v2/data/experiments/ffs_trt_4090_848x480_pad864_builderopt5_batch3/engines/model_20-30-48_iters_4_res_480x864_batch3",
+      "valid_iters": 4,
+      "worker_mode": "dual-gpu-split-ffs-worker"
+    },
+    "ffs_edgetam_same_gpu": true,
+    "ffs_gpu_physical": 0,
+    "fps": 30,
+    "frame_bundle_policy": "strict-source",
+    "fusion_mask_policy": "strict",
+    "gpu_plan": "split-mask0-track1",
+    "gpu_sampling": {
+      "backend": "nvml",
+      "device_index": 0,
+      "device_indexes": [
+        0,
+        1
+      ],
+      "enabled": true,
+      "interval_s": 0.5
+    },
+    "height": 480,
+    "hot_path_forbids": [
+      "ffs_remote",
+      "ffs_ir_alignment",
+      "track_process_data.pkl",
+      "inverse_physics",
+      "cross_gpu_cuda_tensor_transfer"
+    ],
+    "independent_demo_runtime": true,
+    "init_mode": "sam31_first_frame",
+    "input_source": "live_realsense",
+    "ipc_payload": "cpu_numpy_latest_wins",
+    "litetracker_export_onnx": false,
+    "litetracker_gpu_physical": null,
+    "litetracker_onnx_dir": null,
+    "litetracker_onnx_opset": 17,
+    "litetracker_onnx_opset_actual": 18,
+    "litetracker_onnx_optimization_level": 5,
+    "litetracker_repo_dir": null,
+    "litetracker_runtime": "pytorch",
+    "litetracker_weights": null,
+    "locotrack_autocast_dtype": "bf16",
+    "locotrack_checkpoint": null,
+    "locotrack_gpu_physical": null,
+    "locotrack_model_size": "small",
+    "locotrack_query_chunk_size": 256,
+    "locotrack_repo_dir": null,
+    "locotrack_resolution": [
+      256,
+      256
+    ],
+    "locotrack_window_frames": 8,
+    "main_cuda_visible_devices": "0",
+    "mask_gpu_physical": 0,
+    "mask_propagation": "hf_edgetam_online",
+    "mask_source": "hf_edgetam",
+    "mask_stale_timeout_ms": 250.0,
+    "nearest_fallback_allowed_by_default": false,
+    "num_cameras": 3,
+    "num_realsense_cameras": 3,
+    "object_enhanced_keep_top_n_components": 1,
+    "object_filter": {
+      "apply_enhanced_component_filter_to_pcd": true,
+      "component_selection_policy": "largest-n-plus-gap",
+      "keep_top_n_components": 1,
+      "mode": "enhanced-pt",
+      "point_control": "fixed-cap"
+    },
+    "object_mask_semantics": "object_trackable_mask",
+    "object_point_control": "fixed-cap",
+    "object_postprocess": "enhanced-pt",
+    "object_prompt": "stuffed animal",
+    "offline_mode_available": false,
+    "offline_tracking_available": false,
+    "output_root": "result/demo32_ffs_tapnextpp",
+    "overlay_bbox_filter_enabled": false,
+    "overlay_bbox_filter_margin_m": 0.15,
+    "overlay_bbox_filter_scope": "controller",
+    "overlay_display_classification": "first_frame_mask_membership",
+    "overlay_display_scope": "controller",
+    "overlay_max_points_per_camera": 0,
+    "overlay_render_raw_track_points": false,
+    "overlay_stale_timeout_ms": 500.0,
+    "overlay_trail_len": 16,
+    "pcd_color_mode": "rgb",
+    "pcd_fusion_trigger": "tracker-result",
+    "physical_cuda_device_count": 2,
+    "phystwin_dense_compatible": false,
+    "phystwin_nb_points": 12,
+    "phystwin_radius_m": 0.01,
+    "pipeline_order": [
+      "capture",
+      "ffs_batch3_opt5_depth",
+      "edgetam",
+      "tapnextpp_serial",
+      "render_and_diagnostics"
+    ],
+    "preset": "demo3.2-ffs-litetracker",
+    "profile_summary_fields": {
+      "all_tracks_lift_attempt_count": 0,
+      "all_tracks_lift_candidate_count_by_camera": {},
+      "all_tracks_lift_cap_applied_by_camera": {},
+      "all_tracks_lift_cap_applied_count": 0,
+      "all_tracks_lift_exact_depth_group": false,
+      "all_tracks_lift_exact_depth_group_ratio": 0.0,
+      "all_tracks_lift_max_points_per_camera": 512,
+      "all_tracks_lift_ms": 0.0,
+      "all_tracks_lift_rejected_by_cap_by_camera": {},
+      "all_tracks_lift_rendered_count_by_camera": {},
+      "all_tracks_lift_selected_count_by_camera": {},
+      "all_tracks_lift_selection": "visible-spread",
+      "apply_enhanced_component_filter_to_pcd": true,
+      "batch_bundle_policy": "strict-source",
+      "bundle_consumed_without_render_count": 0,
+      "bundle_incomplete_drop_count": 0,
+      "bundle_taken_lift_input_missing_count": 0,
+      "bundle_taken_render_success_count": 0,
+      "bundle_taken_surface_anchor_missing_count": 0,
+      "bundle_taken_then_render_failed_count": 0,
+      "capture_group_fps": 0.0,
+      "capture_pending_drop_count": 0,
+      "complete_bundle_rendered_count": 0,
+      "controller_component_count_by_camera": {},
+      "controller_component_filter_removed_ratio_by_camera": {},
+      "controller_component_point_counts_by_camera": {},
+      "controller_enhanced_keep_top_n_components": 2,
+      "controller_filter": {
+        "apply_enhanced_component_filter_to_pcd": true,
+        "component_selection_policy": "largest-n-plus-gap",
+        "keep_top_n_components": 2,
+        "mode": "enhanced-pt"
+      },
+      "controller_kept_component_indices_by_camera": {},
+      "controller_mask_erode_applies_to": "tracking_input_and_anchor_masks",
+      "controller_mask_erode_px": 0,
+      "controller_mask_erode_stage": "before_tracking_union_and_trackable_filter",
+      "controller_mask_erode_unit": "px",
+      "controller_mask_pixels_after_erode_by_camera": {},
+      "controller_mask_pixels_before_erode_by_camera": {},
+      "controller_mask_semantics": "controller_trackable_mask",
+      "controller_pcd_cap_sampling": "stable_coordinate_hash_seed_plus_camera_idx",
+      "controller_pcd_cap_stage": "before_tracking_query_and_fusion",
+      "controller_pcd_max_points_per_camera": 4999,
+      "controller_postprocess": "enhanced-pt",
+      "controller_removed_component_count_by_camera": {},
+      "controller_removed_point_count_by_camera": {},
+      "controller_render_cap_affects_tracking_markers": false,
+      "controller_render_cap_enabled": true,
+      "controller_render_cap_input_points": 0,
+      "controller_render_cap_ms": 0.0,
+      "controller_render_cap_output_points": 0,
+      "controller_render_cap_removed_points": 0,
+      "controller_render_cap_stage": "render_pcd_only_after_controller_render_voxel",
+      "controller_render_max_points": 10000,
+      "controller_render_voxel_affects_tracking_markers": false,
+      "controller_render_voxel_enabled": true,
+      "controller_render_voxel_input_points": 0,
+      "controller_render_voxel_m": 0.003,
+      "controller_render_voxel_ms": 0.0,
+      "controller_render_voxel_output_points": 0,
+      "controller_render_voxel_removed_points": 0,
+      "controller_render_voxel_stage": "render_pcd_only_after_controller_postprocess",
+      "controller_top_n_component_point_counts_by_camera": {},
+      "controller_trackable_after_cap_by_camera": {},
+      "controller_trackable_before_cap_by_camera": {},
+      "controller_trackable_cap_applied_by_camera": {},
+      "controller_trackable_cap_stage": "after_enhanced_pt_top_n_component_filter",
+      "controller_trackable_max_points_per_camera": 4999,
+      "cotracker_backend": "tapnextpp",
+      "cotracker_backend_warmup_by_camera": {},
+      "cotracker_backend_warmup_ms": 0.0,
+      "cotracker_batch_disabled_reason": null,
+      "cotracker_batch_error_count": 0,
+      "cotracker_batch_size": 0,
+      "cotracker_batch_size_target": 3,
+      "cotracker_batch_update_count": 0,
+      "cotracker_cuda_visible_devices": "1",
+      "cotracker_e2e_ms_median": 0.0,
+      "cotracker_e2e_ms_p95": 0.0,
+      "cotracker_gpu_physical": 1,
+      "cotracker_input_drop_count": 0,
+      "cotracker_input_fps": 0.0,
+      "cotracker_input_queue_replace_count": 0,
+      "cotracker_model_ms_median": 0.0,
+      "cotracker_model_ms_p95": 0.0,
+      "cotracker_owner": "process",
+      "cotracker_prewarm_backends": false,
+      "cotracker_process_mode": "subprocess",
+      "cotracker_process_pid": 0,
+      "cotracker_process_ready": false,
+      "cotracker_process_total_init_ms": 0.0,
+      "cotracker_publish_fps": 0.0,
+      "cotracker_seed": 42,
+      "cotracker_serial_camera_update_count": 0,
+      "cotracker_serial_fallback_count": 0,
+      "cotracker_serial_group_update_count": 0,
+      "cotracker_update_mode": "serial",
+      "cotracker_update_mode_effective": "serial",
+      "cross_gpu_cuda_tensor_transfer": false,
+      "depth_pending_drop_count": 0,
+      "depth_source": "ffs",
+      "depth_valid_controller_pixels_by_camera": {},
+      "depth_valid_object_pixels_by_camera": {},
+      "display_last_complete_while_waiting": true,
+      "display_loop_fps": 0.0,
+      "dual_gpu_enabled": true,
+      "edgetam_gpu_physical": 0,
+      "edgetam_live_session_keep_frames": 64,
+      "edgetam_live_session_pruning": true,
+      "enhanced_component_selection_policy": "largest-n-plus-gap",
+      "enhanced_min_component_points": 32,
+      "enhanced_min_component_ratio": 0.0,
+      "ffs_edgetam_same_gpu": true,
+      "ffs_gpu_physical": 0,
+      "first_trackable_mask_group_id": null,
+      "first_trackable_mask_s": null,
+      "first_tracking_input_publish_s": null,
+      "frame_bundle_exact_render_count": 0,
+      "frame_bundle_missing_exact_count": 0,
+      "frame_bundle_policy": "strict-source",
+      "frame_bundle_strict_source_reject_count": 0,
+      "fresh_mask_fps": 0.0,
+      "fusion_mask_policy": "strict",
+      "gpu0_mem_used_gb": 0.0,
+      "gpu0_util_median": 0.0,
+      "gpu0_util_p95": 0.0,
+      "gpu1_mem_used_gb": 0.0,
+      "gpu1_util_median": 0.0,
+      "gpu1_util_p95": 0.0,
+      "incomplete_bundle_skip_count": 0,
+      "init_mode": "sam31_first_frame",
+      "input_source": "live_realsense",
+      "ipc_payload": "cpu_numpy_latest_wins",
+      "litetracker_export_onnx": false,
+      "litetracker_gpu_physical": null,
+      "litetracker_onnx_dir": null,
+      "litetracker_onnx_opset": 17,
+      "litetracker_onnx_opset_actual": 18,
+      "litetracker_onnx_optimization_level": 5,
+      "litetracker_runtime": "pytorch",
+      "locotrack_autocast_dtype": "bf16",
+      "locotrack_checkpoint": null,
+      "locotrack_model_size": "small",
+      "locotrack_query_chunk_size": 256,
+      "locotrack_repo_dir": null,
+      "locotrack_resolution": [
+        256,
+        256
+      ],
+      "locotrack_window_frames": 8,
+      "main_cuda_visible_devices": "0",
+      "main_process_pid": 0,
+      "mask_age_ms_median": 0.0,
+      "mask_age_ms_p95": 0.0,
+      "mask_gpu_physical": 0,
+      "mask_group_delta_median": 0.0,
+      "mask_group_delta_p95": 0.0,
+      "mask_pending_drop_count": 0,
+      "mask_propagation": "hf_edgetam_online",
+      "mask_reuse_ratio": 0.0,
+      "mask_source": "hf_edgetam",
+      "missing_exact_after_tracker_result_count": 0,
+      "missing_exact_rate": 0.0,
+      "model_calls_per_group": 0,
+      "model_instances_actual": 0,
+      "model_instances_expected": 0,
+      "nearest_fallback_count": 0,
+      "nearest_fallback_debug_count": 0,
+      "new_complete_bundle_fps": 0.0,
+      "new_fused_pcd_fps": 0.0,
+      "object_component_count_by_camera": {},
+      "object_component_filter_removed_ratio_by_camera": {},
+      "object_component_point_counts_by_camera": {},
+      "object_enhanced_keep_top_n_components": 1,
+      "object_filter": {
+        "apply_enhanced_component_filter_to_pcd": true,
+        "component_selection_policy": "largest-n-plus-gap",
+        "keep_top_n_components": 1,
+        "mode": "enhanced-pt",
+        "point_control": "fixed-cap"
+      },
+      "object_kept_component_indices_by_camera": {},
+      "object_mask_semantics": "object_trackable_mask",
+      "object_point_control": "fixed-cap",
+      "object_postprocess": "enhanced-pt",
+      "object_removed_component_count_by_camera": {},
+      "object_removed_point_count_by_camera": {},
+      "object_top_n_component_point_counts_by_camera": {},
+      "object_volume_adaptive_active": false,
+      "object_volume_age_ms_p50": 0.0,
+      "object_volume_age_ms_p95": 0.0,
+      "object_volume_exact": false,
+      "object_volume_filter_source_counts": {},
+      "object_volume_gather_ms": 0.0,
+      "object_volume_input_points": 0,
+      "object_volume_key_ms": 0.0,
+      "object_volume_ms": 0.0,
+      "object_volume_occupied_voxels": 0,
+      "object_volume_output_points": 0,
+      "object_volume_safety_cap_triggered": false,
+      "object_volume_sampler_impl": "",
+      "object_volume_target_ms": 8.0,
+      "object_volume_total_ms": 0.0,
+      "object_volume_unique_ms": 0.0,
+      "object_volume_worker_fps": 0.0,
+      "offline_mode_available": false,
+      "offline_tracking_available": false,
+      "overlay_age_ms_median": 0.0,
+      "overlay_age_ms_p95": 0.0,
+      "overlay_bbox_filter_enabled": false,
+      "overlay_bbox_filter_margin_m": 0.15,
+      "overlay_bbox_filter_scope": "controller",
+      "overlay_bbox_input_points_by_camera": {},
+      "overlay_bbox_kept_points_by_camera": {},
+      "overlay_bbox_rejected_by_camera": {},
+      "overlay_display_classification": "first_frame_mask_membership",
+      "overlay_display_controller_count_by_camera": {},
+      "overlay_display_count_by_camera": {},
+      "overlay_display_object_count_by_camera": {},
+      "overlay_display_scope": "controller",
+      "overlay_max_points_per_camera": 0,
+      "overlay_rejected_by_depth_or_bounds_by_camera": {},
+      "overlay_render_group_delta_median": 0.0,
+      "overlay_render_group_delta_p95": 0.0,
+      "overlay_render_group_mismatch_count": 0,
+      "overlay_render_raw_track_points": false,
+      "overlay_world_centroid_by_camera_before_bbox": {},
+      "pcd_component_filter_removed_ratio": 0.0,
+      "pcd_component_filter_removed_ratio_by_camera": {},
+      "pcd_controller_points_after_component_filter": 0,
+      "pcd_controller_points_after_component_filter_by_camera": {},
+      "pcd_controller_points_before_component_filter": 0,
+      "pcd_controller_points_before_component_filter_by_camera": {},
+      "pcd_object_points_after_component_filter": 0,
+      "pcd_object_points_after_component_filter_by_camera": {},
+      "pcd_object_points_before_component_filter": 0,
+      "pcd_object_points_before_component_filter_by_camera": {},
+      "per_camera_model_ms_p50_by_camera": {},
+      "per_camera_model_ms_p95_by_camera": {},
+      "phystwin_dense_compatible": false,
+      "protect_tracker_input_bundles": true,
+      "protected_bundle_count": 0,
+      "protected_bundle_eviction_avoided_count": 0,
+      "protected_bundle_max_groups": 0,
+      "protected_bundle_oldest_age_ms": 0.0,
+      "protected_bundle_ttl_ms": 10000.0,
+      "protected_bundle_ttl_unprotect_count": 0,
+      "protected_bundle_window_unprotect_count": 0,
+      "query_and_pcd_surface_filter_shared": "same_config_reuse_when_source_points_identical",
+      "query_count_per_camera": 0,
+      "query_pcd_filter_reused_result_by_camera": {},
+      "query_pending_drop_count": 0,
+      "raw_controller_pixels_by_camera": {},
+      "raw_object_pixels_by_camera": {},
+      "render_driver": "cotracker_child_output",
+      "render_loop_fps": 0.0,
+      "render_object_filter": {
+        "adaptive": true,
+        "apply_enhanced_component_filter_to_pcd": true,
+        "component_selection_policy": "largest-n-plus-gap",
+        "component_voxel_size_m": 0.006,
+        "emergency_max_points": 30000,
+        "keep_near_main_gap_m": 0.035,
+        "keep_top_n_components": 1,
+        "max_voxel_m": 0.012,
+        "min_component_points": 32,
+        "min_component_ratio": 0.0,
+        "min_voxel_m": 0.005,
+        "nb_points": 12,
+        "origin_policy": "world",
+        "point_control": "fixed-cap",
+        "points_per_voxel": 1,
+        "postprocess": "enhanced-pt",
+        "radius_m": 0.01,
+        "target_ms": 8.0,
+        "voxel_m": 0.005
+      },
+      "render_requires_new_cotracker_result": true,
+      "render_reuses_cached_cotracker_result": false,
+      "render_trigger": "new_cotracker_result",
+      "render_waited_for_cotracker": true,
+      "render_waited_for_fresh_cotracker_result": true,
+      "render_waited_for_mask": true,
+      "render_waited_for_object_volume_filter": false,
+      "rendered_fps": 0.0,
+      "rendered_on_new_cotracker_result": false,
+      "sam31_gpu_physical": 0,
+      "same_bundle_invariant_fail_fast": true,
+      "same_bundle_invariant_violation_count": 0,
+      "same_bundle_rendered_among_rendered_ratio": 0.0,
+      "same_bundle_rendered_per_tracker_result_ratio": 0.0,
+      "same_bundle_rendered_ratio": 0.0,
+      "same_target_group_ratio": 0.0,
+      "semantic_mode": "exp",
+      "shared_runtime_gpu_placement": "ffs_edgetam_gpu0_tapnextpp_gpu1",
+      "stage_mailbox_pending_drop_count": 0,
+      "stage_mailbox_policy": "latest-only",
+      "strict_same_source_frame_ratio": 0.0,
+      "total_query_count_across_views": 0,
+      "trackable_mask_build_policy": "init-only",
+      "trackable_mask_build_stage": "first_valid_tracking_input",
+      "trackable_mask_initialized_cameras": [],
+      "trackable_mask_source": "standard_filter_survivors",
+      "trackable_mask_standard_filter_ms_by_camera": {},
+      "trackable_object_pixels_by_camera": {},
+      "trackable_query_init_strategy": "standard-filter-init",
+      "trackable_union_pixels_by_camera": {},
+      "tracker_3d_marker_mode": "all-tracks-3d-lift",
+      "tracker_3d_marker_radius_m": 0.006,
+      "tracker_3d_marker_shape": "sphere",
+      "tracker_3d_snap_radius_px": 4.0,
+      "tracker_all_tracks_anchor_mode": true,
+      "tracker_backend": "tapnextpp",
+      "tracker_backend_family": "tapnext",
+      "tracker_backend_warmup_by_camera": {},
+      "tracker_backend_warmup_ms": 0.0,
+      "tracker_batch_query_count_policy": "min-common",
+      "tracker_control_point_selection": "visible-spread",
+      "tracker_control_points_per_camera": 16,
+      "tracker_direct_depth_lift_used": true,
+      "tracker_e2e_ms_median": 0.0,
+      "tracker_e2e_ms_p95": 0.0,
+      "tracker_group_wall_ms_p50": 0.0,
+      "tracker_group_wall_ms_p95": 0.0,
+      "tracker_input_drop_count": 0,
+      "tracker_input_fps": 0.0,
+      "tracker_input_queue_replace_count": 0,
+      "tracker_legacy_lift_used": false,
+      "tracker_marker_accepted_by_camera": {},
+      "tracker_marker_layer_by_camera": {},
+      "tracker_marker_pixel_error_median_by_camera": {},
+      "tracker_marker_pixel_error_p95_by_camera": {},
+      "tracker_marker_points_appended": false,
+      "tracker_marker_points_rendered": 0,
+      "tracker_marker_rejected_by_camera": {},
+      "tracker_model_ms_max_per_group_p50": 0.0,
+      "tracker_model_ms_max_per_group_p95": 0.0,
+      "tracker_model_ms_median": 0.0,
+      "tracker_model_ms_p95": 0.0,
+      "tracker_model_ms_sum_per_group_p50": 0.0,
+      "tracker_model_ms_sum_per_group_p95": 0.0,
+      "tracker_pending_drop_count": 0,
+      "tracker_prewarm_backends": false,
+      "tracker_prewarm_mode": "disabled",
+      "tracker_process_ready": false,
+      "tracker_process_ready_s": 0.0,
+      "tracker_process_total_init_ms": 0.0,
+      "tracker_publish_fps": 0.0,
+      "tracker_query_dependent_init": false,
+      "tracker_query_dependent_init_pending": false,
+      "tracker_query_source": "union_trackable_mask",
+      "tracker_ready_state": "ready_to_receive_inputs",
+      "tracker_ready_to_receive_inputs": false,
+      "tracker_ready_to_receive_inputs_s": 0.0,
+      "tracker_surface_anchor_cache_hit": false,
+      "tracker_surface_anchor_group_id": null,
+      "tracker_surface_gate_enabled": false,
+      "tracker_visualization_mode": "all-tracks-3d-lift",
+      "tracking_backend_batch_auto_selected": false,
+      "tracking_backend_batch_dimension": "none",
+      "tracking_backend_batch_enabled": false,
+      "tracking_backend_batch_fallback_reason": null,
+      "tracking_backend_batch_size": 1,
+      "tracking_backend_batch_support_status": "true_online_batch_views",
+      "tracking_backend_batch_supported": true,
+      "tracking_backend_effective_query_count": 0,
+      "tracking_backend_execution_mode": "serial",
+      "tracking_backend_online_semantics": "stateful_frame_by_frame",
+      "tracking_backend_query_count_truncated_by_camera": {},
+      "tracking_backend_supports_batch_views": true,
+      "tracking_backend_supports_online": true,
+      "tracking_control_marker_points": 0,
+      "tracking_control_point_count": 0,
+      "tracking_control_point_count_requested": 0,
+      "tracking_control_point_markers": true,
+      "tracking_control_point_radius_m": 0.006,
+      "tracking_control_point_sampling": "visible-spread_all_tracks_depth_lift_cap_512",
+      "tracking_control_points_by_camera": {},
+      "tracking_control_points_per_camera": 16,
+      "tracking_controller_label": "towel",
+      "tracking_controller_pixels_by_camera": {},
+      "tracking_input_mask_age_ms_median": 0.0,
+      "tracking_input_mask_age_ms_p95": 0.0,
+      "tracking_input_mask_reuse_ratio": 0.0,
+      "tracking_input_mask_semantics": "standard_filter_trackable_masks",
+      "tracking_input_replaced_group_ids_last": [],
+      "tracking_input_replaced_group_unprotect_count": 0,
+      "tracking_mask_scope": "object_controller_union",
+      "tracking_object_pixels_by_camera": {},
+      "tracking_overlay_color_rgb": [
+        255,
+        0,
+        0
+      ],
+      "tracking_overlay_first_render_group_id": null,
+      "tracking_overlay_render_blocked_count": 0,
+      "tracking_overlay_required_before_first_render": true,
+      "tracking_overlay_required_for_render": true,
+      "tracking_overlay_warmup_skipped_render_count": 0,
+      "tracking_pending_render_packet_drop_count": 0,
+      "tracking_pending_render_packet_max_groups": 128,
+      "tracking_pending_render_packets": 0,
+      "tracking_query_count_actual_by_camera": {},
+      "tracking_query_count_requested": "4096",
+      "tracking_query_count_rule": "min(capped_object_controller_union_pixels, 5000)",
+      "tracking_query_mode": "phystwin_dense",
+      "tracking_render_packet_match_policy": "exact-target-bundle",
+      "tracking_result_exact_render_packet_count": 0,
+      "tracking_result_nearest_render_packet_count": 0,
+      "tracking_result_without_lift_input_count": 0,
+      "tracking_result_without_render_packet_count": 0,
+      "tracking_sample_background_hits_by_camera": {},
+      "tracking_sample_controller_hits_by_camera": {},
+      "tracking_sample_object_hits_by_camera": {},
+      "tracking_sample_overlap_hits_by_camera": {},
+      "tracking_sampling": "controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx",
+      "tracking_union_pixels_by_camera": {},
+      "uses_ffs": true,
+      "wait_for_tracking_overlay": true
+    },
+    "protect_tracker_input_bundles": true,
+    "protected_bundle_max_groups": 0,
+    "protected_bundle_ttl_ms": 10000.0,
+    "query_and_pcd_surface_filter_shared": "same_config_reuse_when_source_points_identical",
+    "render_backend": null,
+    "render_bundle_exact_target_default": true,
+    "render_controller_filter": {
+      "affects_tracking_markers": false,
+      "apply_enhanced_component_filter_to_pcd": true,
+      "component_selection_policy": "largest-n-plus-gap",
+      "component_voxel_size_m": 0.006,
+      "keep_near_main_gap_m": 0.035,
+      "keep_top_n_components": 2,
+      "min_component_points": 32,
+      "min_component_ratio": 0.0,
+      "nb_points": 12,
+      "postprocess": "enhanced-pt",
+      "radius_m": 0.01,
+      "render_cap_enabled": true,
+      "render_max_points": 10000,
+      "render_only": true,
+      "render_voxel_downsample": true,
+      "render_voxel_m": 0.003
+    },
+    "render_copy_mode": null,
+    "render_driver": "cotracker_child_output",
+    "render_latest_wins": true,
+    "render_layer_mode": null,
+    "render_micro_profile": true,
+    "render_mode": "pointcloud",
+    "render_object_filter": {
+      "adaptive": true,
+      "apply_enhanced_component_filter_to_pcd": true,
+      "component_selection_policy": "largest-n-plus-gap",
+      "component_voxel_size_m": 0.006,
+      "emergency_max_points": 30000,
+      "keep_near_main_gap_m": 0.035,
+      "keep_top_n_components": 1,
+      "max_voxel_m": 0.012,
+      "min_component_points": 32,
+      "min_component_ratio": 0.0,
+      "min_voxel_m": 0.005,
+      "nb_points": 12,
+      "origin_policy": "world",
+      "point_control": "fixed-cap",
+      "points_per_voxel": 1,
+      "postprocess": "enhanced-pt",
+      "radius_m": 0.01,
+      "target_ms": 8.0,
+      "voxel_m": 0.005
+    },
+    "render_requires_new_cotracker_result": true,
+    "render_resample_latest": true,
+    "render_reuses_cached_cotracker_result": false,
+    "render_target_fps": 60.0,
+    "render_trigger": "new_cotracker_result",
+    "render_triggers_pcd_fusion": true,
+    "render_waited_for_cotracker": true,
+    "render_waited_for_fresh_cotracker_result": true,
+    "render_waited_for_mask": true,
+    "required_cuda_devices": 2,
+    "requires_three_realsense": true,
+    "runtime_module": "qqtt.demo.demo32_runtime",
+    "runtime_owner": "demo32_tracker_ffs",
+    "sam31_gpu_physical": 0,
+    "sam31_init_min_mask_pixels": 1,
+    "sam31_init_quick_fail_empty_masks": true,
+    "sam31_init_required_masks": [
+      "stuffed animal",
+      "towel"
+    ],
+    "same_bundle_invariant_fail_fast": true,
+    "same_bundle_render_default": true,
+    "semantic_mode": "exp",
+    "serials": [],
+    "shared_experiment_mode": "controller-object-exp",
+    "shared_runtime_gpu_pipeline_mode": "dual-gpu-split",
+    "shared_runtime_gpu_placement": "ffs_edgetam_gpu0_tapnextpp_gpu1",
+    "shared_runtime_preset": "demo2.3-dual4090-maxfps",
+    "shared_runtime_services_reused": true,
+    "shared_runtime_track_mode": "controller-object",
+    "shared_runtime_tracking_backend": "none",
+    "stage_mailbox_policy": "latest-only",
+    "tapnet_repo_dir": "external/tapnet",
+    "tapnextpp_autocast_dtype": "fp16",
+    "tapnextpp_certainty_radius": 8,
+    "tapnextpp_certainty_threshold": 0.5,
+    "tapnextpp_checkpoint": "checkpoints/tapnextpp/tapnextpp_ckpt.pt",
+    "tapnextpp_compile": false,
+    "tapnextpp_fast_postprocess": true,
+    "tapnextpp_frame_value_range": "minus1_1_float",
+    "tapnextpp_gpu_physical": 1,
+    "tapnextpp_image_size": [
+      256,
+      256
+    ],
+    "tapnextpp_use_certainty": false,
+    "trackable_controller_filter": {
+      "component_selection_policy": "largest-n-plus-gap",
+      "component_voxel_size_m": 0.006,
+      "keep_near_main_gap_m": 0.035,
+      "keep_top_n_components": 2,
+      "min_component_points": 32,
+      "min_component_ratio": 0.0,
+      "mode": "enhanced-pt",
+      "nb_points": 12,
+      "radius_m": 0.01
+    },
+    "trackable_mask_build_policy": "init-only",
+    "trackable_mask_build_stage": "first_valid_tracking_input",
+    "trackable_mask_source": "standard_filter_survivors",
+    "trackable_object_filter": {
+      "component_selection_policy": "largest-n-plus-gap",
+      "component_voxel_size_m": 0.006,
+      "keep_near_main_gap_m": 0.035,
+      "keep_top_n_components": 1,
+      "min_component_points": 32,
+      "min_component_ratio": 0.0,
+      "mode": "enhanced-pt",
+      "nb_points": 12,
+      "point_control": "fixed-cap",
+      "radius_m": 0.01
+    },
+    "trackable_query_init_strategy": "standard-filter-init",
+    "tracker_3d_marker_mode": "all-tracks-3d-lift",
+    "tracker_3d_marker_radius_m": 0.006,
+    "tracker_3d_marker_shape": "sphere",
+    "tracker_3d_snap_radius_px": 4.0,
+    "tracker_all_tracks_anchor_mode": true,
+    "tracker_backend": "tapnextpp",
+    "tracker_backend_family": "tapnext",
+    "tracker_batch_query_count_policy": "min-common",
+    "tracker_child_receives_c2w": false,
+    "tracker_child_receives_depth": false,
+    "tracker_child_receives_full_frame_bundle": false,
+    "tracker_child_receives_intrinsics": false,
+    "tracker_control_point_selection": "visible-spread",
+    "tracker_control_points_per_camera": 16,
+    "tracker_direct_depth_lift_used": true,
+    "tracker_env_name": "demo_3_1_max",
+    "tracker_input_publish_hooks": [
+      "raw_fused_async",
+      "fused_packet"
+    ],
+    "tracker_legacy_lift_used": false,
+    "tracker_marker_required_for_render": true,
+    "tracker_prewarm_backends": false,
+    "tracker_prewarm_mode": "disabled",
+    "tracker_query_dependent_init": false,
+    "tracker_query_dependent_init_pending_until_first_input": false,
+    "tracker_query_source": "union_trackable_mask",
+    "tracker_ready_state": "ready_to_receive_inputs",
+    "tracker_result_gated_fusion": true,
+    "tracker_result_required_for_render": true,
+    "tracker_surface_gate_enabled": false,
+    "tracker_visualization_mode": "all-tracks-3d-lift",
+    "tracking_backend_batch_auto_selected": false,
+    "tracking_backend_batch_dimension": "none",
+    "tracking_backend_batch_size": 1,
+    "tracking_backend_batch_support_status": "true_online_batch_views",
+    "tracking_backend_batch_supported": true,
+    "tracking_backend_execution_mode": "serial",
+    "tracking_backend_model_instances_expected": 3,
+    "tracking_backend_online_semantics": "stateful_frame_by_frame",
+    "tracking_backend_spec": {
+      "batch_support_status": "true_online_batch_views",
+      "family": "tapnext",
+      "name": "tapnextpp",
+      "query_format": "yx",
+      "supports_batch_views": true,
+      "supports_online": true,
+      "supports_prewarm": true
+    },
+    "tracking_backend_supports_batch_views": true,
+    "tracking_backend_supports_online": true,
+    "tracking_control_point_color_rgb": [
+      255,
+      0,
+      0
+    ],
+    "tracking_control_point_count_requested": 0,
+    "tracking_control_point_markers": true,
+    "tracking_control_point_radius_m": 0.006,
+    "tracking_control_point_sampling": "visible-spread_all_tracks_depth_lift_cap_512",
+    "tracking_control_points_per_camera": 16,
+    "tracking_controller_label": "towel",
+    "tracking_input_contains_c2w": false,
+    "tracking_input_contains_depth": false,
+    "tracking_input_contains_intrinsics": false,
+    "tracking_input_mask_semantics": "standard_filter_trackable_masks",
+    "tracking_mask_scope": "object_controller_union",
+    "tracking_max_query_points_per_camera": 5000,
+    "tracking_overlay_color_mode": "solid",
+    "tracking_overlay_color_rgb": [
+      255,
+      0,
+      0
+    ],
+    "tracking_overlay_debug_color_by_camera": false,
+    "tracking_overlay_lift_method": "all_tracks_depth_lift",
+    "tracking_overlay_required_before_first_render": true,
+    "tracking_overlay_required_for_render": true,
+    "tracking_pending_fusion_bundle_max_groups": 128,
+    "tracking_pending_render_packet_max_groups": 128,
+    "tracking_query_count_requested": "4096",
+    "tracking_query_count_rule": "min(capped_object_controller_union_pixels, 5000)",
+    "tracking_query_mode": "phystwin_dense",
+    "tracking_render_packet_match_policy": "exact-target-bundle",
+    "tracking_sampling": "controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx",
+    "trackon2_checkpoint": null,
+    "trackon2_config": null,
+    "trackon2_repo_dir": null,
+    "uses_ffs": true,
+    "wait_for_tracking_overlay": true,
+    "width": 848,
+    "world_lift_owner": "main_process"
+  },
+  "cotracker_process_snapshot": {
+    "all_tracks_lift_attempt_count": 601,
+    "all_tracks_lift_cap_applied_count": 1202,
+    "all_tracks_lift_exact_depth_group_ratio": 1.0,
+    "batch_bundle_policy": "strict-source",
+    "bundle_consumed_without_render_count": 0,
+    "bundle_incomplete_drop_count": 0,
+    "bundle_store_created_count": 975,
+    "bundle_store_drop_through_count": 369,
+    "bundle_store_evicted_count": 0,
+    "bundle_store_exact_match_count": 601,
+    "bundle_store_groups": 5,
+    "bundle_store_missing_exact_count": 0,
+    "bundle_store_nearest_match_count": 0,
+    "bundle_store_newest_group_id": 3232,
+    "bundle_store_oldest_group_id": 3069,
+    "bundle_store_pending_fusion_attached_count": 975,
+    "bundle_store_precomputed_render_attached_count": 0,
+    "bundle_store_protected_eviction_avoided_count": 0,
+    "bundle_store_protected_groups": 3,
+    "bundle_store_renderable_groups": 5,
+    "bundle_store_tracker_input_protected_count": 650,
+    "bundle_taken_lift_input_missing_count": 0,
+    "bundle_taken_render_success_count": 601,
+    "bundle_taken_surface_anchor_missing_count": 0,
+    "bundle_taken_then_render_failed_count": 0,
+    "capture_pending_drop_count": 2258,
+    "complete_bundle_rendered_count": 601,
+    "controller_mask_erode_px": 0,
+    "controller_mask_pixels_after_erode_by_camera": {
+      "0": 4999,
+      "1": 4999,
+      "2": 4999
+    },
+    "controller_mask_pixels_before_erode_by_camera": {
+      "0": 4999,
+      "1": 4999,
+      "2": 4999
+    },
+    "cotracker_e2e_ms_median": 139.8163299560547,
+    "cotracker_e2e_ms_p95": 144.8992919921875,
+    "cotracker_input_count": 650,
+    "cotracker_input_fps": 6.048214920345407,
+    "cotracker_model_ms_median": 134.133056640625,
+    "cotracker_model_ms_p95": 137.45437622070312,
+    "cotracker_publish_fps": 6.0328827099008295,
+    "cotracker_result_count": 601,
+    "depth_pending_drop_count": 854,
+    "display_last_complete_while_waiting": true,
+    "display_loop_fps": 5.090491965246691,
+    "first_trackable_mask_group_id": 375,
+    "first_trackable_mask_s": 92750.547274468,
+    "first_tracking_input_publish_s": 92750.547274468,
+    "frame_bundle_exact_render_count": 601,
+    "frame_bundle_missing_exact_count": 0,
+    "frame_bundle_policy": "strict-source",
+    "frame_bundle_strict_source_reject_count": 0,
+    "incomplete_bundle_skip_count": 0,
+    "lift_input_cache": {
+      "cached_groups": 128,
+      "evicted": 522,
+      "hit_count": 601,
+      "max_groups": 128,
+      "miss_count": 0,
+      "newest_group_id": 3232,
+      "oldest_group_id": 2680,
+      "protected_eviction_avoided_count": 0,
+      "protected_group_count": 3,
+      "published": 650
+    },
+    "mask_cache": {
+      "mask_age_ms_median": 0.0,
+      "mask_age_ms_p95": 0.0,
+      "mask_reuse_ratio": 0.0,
+      "reuse_count": 0,
+      "selection_count": 0,
+      "stale_reject_count": 0
+    },
+    "mask_pending_drop_count": 1462,
+    "missing_exact_after_tracker_result_count": 0,
+    "missing_exact_rate": 0.0,
+    "model_calls_per_group": 3,
+    "model_instances_actual": 3,
+    "model_instances_expected": 3,
+    "nearest_fallback_count": 0,
+    "nearest_fallback_debug_count": 0,
+    "new_complete_bundle_fps": 6.034856395863547,
+    "overlay_age_ms_median": 1.0169670581817627,
+    "overlay_age_ms_p95": 133.564208984375,
+    "overlay_render_group_delta_median": 0.0,
+    "overlay_render_group_delta_p95": 0.0,
+    "overlay_render_group_mismatch_count": 0,
+    "pcd_fusion_trigger": "tracker-result",
+    "per_camera_model_ms_p50_by_camera": {
+      "0": 45.427913665771484,
+      "1": 43.4897346496582,
+      "2": 44.736000061035156
+    },
+    "per_camera_model_ms_p95_by_camera": {
+      "0": 47.25566864013672,
+      "1": 46.266170501708984,
+      "2": 47.45064163208008
+    },
+    "process": {
+      "alive": false,
+      "input_endpoint": {
+        "published": 650,
+        "put_failures": 0,
+        "replaced": 44,
+        "taken": 0
+      },
+      "output_endpoint": {
+        "published": 0,
+        "put_failures": 0,
+        "replaced": 0,
+        "taken": 601
+      },
+      "pid": 596352,
+      "ready": {
+        "backend_execution_mode": "serial",
+        "cotracker_backend": "tapnextpp",
+        "cuda_visible_devices": "1",
+        "legacy_stage": "cotracker",
+        "litetracker_export_onnx": false,
+        "litetracker_onnx_dir": null,
+        "litetracker_onnx_opset": 17,
+        "litetracker_onnx_optimization_level": 5,
+        "litetracker_runtime": "pytorch",
+        "locotrack_autocast_dtype": "bf16",
+        "locotrack_checkpoint": null,
+        "locotrack_model_size": "small",
+        "locotrack_query_chunk_size": 256,
+        "locotrack_repo_dir": null,
+        "locotrack_resolution": [
+          256,
+          256
+        ],
+        "locotrack_window_frames": 8,
+        "prewarm_backends": false,
+        "process_kind": "point_tracker_child",
+        "ready_event_after_process_start_s": 0.23182900599204004,
+        "ready_perf_s": 92724.276010444,
+        "ready_queue_lag_ms": 0.9768860036274418,
+        "ready_receive_after_process_start_s": 0.23280589199566748,
+        "ready_state": "ready_to_receive_inputs",
+        "ready_to_receive_inputs": true,
+        "stage": "tracker_ready",
+        "status_receive_after_process_start_s": 0.23280589199566748,
+        "status_receive_perf_s": 92724.27698733,
+        "tapnet_repo_dir": "external/tapnet",
+        "tapnextpp_autocast_dtype": "fp16",
+        "tapnextpp_certainty_radius": 8,
+        "tapnextpp_certainty_threshold": 0.5,
+        "tapnextpp_checkpoint": "checkpoints/tapnextpp/tapnextpp_ckpt.pt",
+        "tapnextpp_compile": false,
+        "tapnextpp_fast_postprocess": true,
+        "tapnextpp_image_size": [
+          256,
+          256
+        ],
+        "tapnextpp_reset_on_reinitialize": true,
+        "tapnextpp_use_certainty": false,
+        "total_init_ms": 117.58565800846554,
+        "tracker_backend": "tapnextpp",
+        "tracker_family": "tapnext",
+        "tracker_prewarm_mode": "disabled",
+        "tracker_query_dependent_init": false,
+        "tracker_query_dependent_init_pending": false,
+        "tracker_warmup_profile": {
+          "per_camera": {},
+          "skip_reason": "disabled",
+          "skipped": true,
+          "total_ms": 0.0,
+          "tracker_backend": "tapnextpp"
+        },
+        "type": "ready",
+        "update_mode": "serial",
+        "warmup_profile": {
+          "per_camera": {},
+          "skip_reason": "disabled",
+          "skipped": true,
+          "total_ms": 0.0,
+          "tracker_backend": "tapnextpp"
+        }
+      },
+      "status_events": [
+        {
+          "backend_execution_mode": "serial",
+          "cotracker_backend": "tapnextpp",
+          "cuda_visible_devices": "1",
+          "legacy_stage": "cotracker",
+          "litetracker_export_onnx": false,
+          "litetracker_onnx_dir": null,
+          "litetracker_onnx_opset": 17,
+          "litetracker_onnx_optimization_level": 5,
+          "litetracker_runtime": "pytorch",
+          "locotrack_autocast_dtype": "bf16",
+          "locotrack_checkpoint": null,
+          "locotrack_model_size": "small",
+          "locotrack_query_chunk_size": 256,
+          "locotrack_repo_dir": null,
+          "locotrack_resolution": [
+            256,
+            256
+          ],
+          "locotrack_window_frames": 8,
+          "prewarm_backends": false,
+          "process_kind": "point_tracker_child",
+          "ready_event_after_process_start_s": 0.23182900599204004,
+          "ready_perf_s": 92724.276010444,
+          "ready_queue_lag_ms": 0.9768860036274418,
+          "ready_receive_after_process_start_s": 0.23280589199566748,
+          "ready_state": "ready_to_receive_inputs",
+          "ready_to_receive_inputs": true,
+          "stage": "tracker_ready",
+          "status_receive_after_process_start_s": 0.23280589199566748,
+          "status_receive_perf_s": 92724.27698733,
+          "tapnet_repo_dir": "external/tapnet",
+          "tapnextpp_autocast_dtype": "fp16",
+          "tapnextpp_certainty_radius": 8,
+          "tapnextpp_certainty_threshold": 0.5,
+          "tapnextpp_checkpoint": "checkpoints/tapnextpp/tapnextpp_ckpt.pt",
+          "tapnextpp_compile": false,
+          "tapnextpp_fast_postprocess": true,
+          "tapnextpp_image_size": [
+            256,
+            256
+          ],
+          "tapnextpp_reset_on_reinitialize": true,
+          "tapnextpp_use_certainty": false,
+          "total_init_ms": 117.58565800846554,
+          "tracker_backend": "tapnextpp",
+          "tracker_family": "tapnext",
+          "tracker_prewarm_mode": "disabled",
+          "tracker_query_dependent_init": false,
+          "tracker_query_dependent_init_pending": false,
+          "tracker_warmup_profile": {
+            "per_camera": {},
+            "skip_reason": "disabled",
+            "skipped": true,
+            "total_ms": 0.0,
+            "tracker_backend": "tapnextpp"
+          },
+          "type": "ready",
+          "update_mode": "serial",
+          "warmup_profile": {
+            "per_camera": {},
+            "skip_reason": "disabled",
+            "skipped": true,
+            "total_ms": 0.0,
+            "tracker_backend": "tapnextpp"
+          }
+        }
+      ]
+    },
+    "process_status_events": [
+      {
+        "backend_execution_mode": "serial",
+        "cotracker_backend": "tapnextpp",
+        "cuda_visible_devices": "1",
+        "legacy_stage": "cotracker",
+        "litetracker_export_onnx": false,
+        "litetracker_onnx_dir": null,
+        "litetracker_onnx_opset": 17,
+        "litetracker_onnx_optimization_level": 5,
+        "litetracker_runtime": "pytorch",
+        "locotrack_autocast_dtype": "bf16",
+        "locotrack_checkpoint": null,
+        "locotrack_model_size": "small",
+        "locotrack_query_chunk_size": 256,
+        "locotrack_repo_dir": null,
+        "locotrack_resolution": [
+          256,
+          256
+        ],
+        "locotrack_window_frames": 8,
+        "prewarm_backends": false,
+        "process_kind": "point_tracker_child",
+        "ready_event_after_process_start_s": 0.23182900599204004,
+        "ready_perf_s": 92724.276010444,
+        "ready_queue_lag_ms": 1.00780300272163,
+        "ready_receive_after_process_start_s": 0.23280589199566748,
+        "ready_receive_perf_s": 92724.277018247,
+        "ready_receive_s": 0.2339900210063206,
+        "ready_state": "ready_to_receive_inputs",
+        "ready_to_receive_inputs": true,
+        "stage": "tracker_ready",
+        "status_receive_after_process_start_s": 0.23280589199566748,
+        "status_receive_perf_s": 92724.27698733,
+        "status_runtime_receive_perf_s": 92724.277018247,
+        "status_runtime_receive_s": 0.2339900210063206,
+        "tapnet_repo_dir": "external/tapnet",
+        "tapnextpp_autocast_dtype": "fp16",
+        "tapnextpp_certainty_radius": 8,
+        "tapnextpp_certainty_threshold": 0.5,
+        "tapnextpp_checkpoint": "checkpoints/tapnextpp/tapnextpp_ckpt.pt",
+        "tapnextpp_compile": false,
+        "tapnextpp_fast_postprocess": true,
+        "tapnextpp_image_size": [
+          256,
+          256
+        ],
+        "tapnextpp_reset_on_reinitialize": true,
+        "tapnextpp_use_certainty": false,
+        "total_init_ms": 117.58565800846554,
+        "tracker_backend": "tapnextpp",
+        "tracker_family": "tapnext",
+        "tracker_prewarm_mode": "disabled",
+        "tracker_query_dependent_init": false,
+        "tracker_query_dependent_init_pending": false,
+        "tracker_warmup_profile": {
+          "per_camera": {},
+          "skip_reason": "disabled",
+          "skipped": true,
+          "total_ms": 0.0,
+          "tracker_backend": "tapnextpp"
+        },
+        "type": "ready",
+        "update_mode": "serial",
+        "warmup_profile": {
+          "per_camera": {},
+          "skip_reason": "disabled",
+          "skipped": true,
+          "total_ms": 0.0,
+          "tracker_backend": "tapnextpp"
+        }
+      }
+    ],
+    "protect_tracker_input_bundles": true,
+    "protected_bundle_count": 3,
+    "protected_bundle_eviction_avoided_count": 0,
+    "protected_bundle_max_groups": 128,
+    "protected_bundle_oldest_age_ms": 6828.901092012529,
+    "protected_bundle_ttl_ms": 10000.0,
+    "protected_bundle_ttl_unprotect_count": 2,
+    "protected_bundle_window_unprotect_count": 0,
+    "query_count_per_camera": 4096,
+    "query_pending_drop_count": 44,
+    "same_bundle_invariant_fail_fast": true,
+    "same_bundle_invariant_violation_count": 0,
+    "same_bundle_rendered_among_rendered_ratio": 1.0,
+    "same_bundle_rendered_per_tracker_result_ratio": 1.0,
+    "same_bundle_rendered_ratio": 1.0,
+    "same_target_group_ratio": 1.0,
+    "stage_join_buffer": {
+      "capture_pending": 5,
+      "capture_stale_drops": 2258,
+      "depth_pending": 0,
+      "depth_stale_drops": 854,
+      "mask_age_ms_median": 4.099676132202148,
+      "mask_age_ms_p95": 26.734331130981445,
+      "mask_group_delta_median": 0.0,
+      "mask_group_delta_p95": 0.0,
+      "mask_pending": 8,
+      "mask_reuse_count": 0,
+      "mask_reuse_ratio": 0.0,
+      "mask_selection_count": 975,
+      "mask_stale_drops": 1462,
+      "max_groups": 8,
+      "policy": "strict",
+      "ready_join_count": 975,
+      "ready_stage_active_present": false,
+      "ready_stage_mailbox": {
+        "accepted": 975,
+        "active_present": false,
+        "completed": 975,
+        "pending_present": false,
+        "pending_replaced": 0,
+        "published": 975
+      },
+      "ready_stage_pending_drops": 0,
+      "ready_stage_pending_present": false
+    },
+    "stage_mailbox": {
+      "accepted": 975,
+      "active_present": false,
+      "completed": 975,
+      "pending_present": false,
+      "pending_replaced": 0,
+      "published": 975
+    },
+    "stage_mailbox_pending_drop_count": 0,
+    "stage_mailbox_policy": "latest-only",
+    "strict_same_source_frame_ratio": 1.0,
+    "surface_anchor_cache": {
+      "cached_groups": 128,
+      "evicted": 522,
+      "hit_count": 0,
+      "max_groups": 128,
+      "miss_count": 0,
+      "newest_group_id": 3232,
+      "oldest_group_id": 2680,
+      "protected_eviction_avoided_count": 0,
+      "protected_group_count": 3,
+      "published": 650
+    },
+    "total_query_count_across_views": 12288,
+    "trackable_mask_initialized_cameras": [
+      0,
+      1,
+      2
+    ],
+    "trackable_mask_stats": {
+      "controller_component_count_by_camera": {
+        "0": 11,
+        "1": 7,
+        "2": 12
+      },
+      "controller_component_filter_removed_ratio_by_camera": {
+        "0": 0.02198952879581152,
+        "1": 0.000503651473180559,
+        "2": 0.033734939759036145
+      },
+      "controller_component_point_counts_by_camera": {
+        "0": [
+          2640,
+          827,
+          134,
+          104,
+          78,
+          17,
+          10,
+          3,
+          3,
+          3,
+          1
+        ],
+        "1": [
+          3588,
+          278,
+          94,
+          6,
+          3,
+          1,
+          1
+        ],
+        "2": [
+          3374,
+          190,
+          92,
+          31,
+          15,
+          13,
+          11,
+          3,
+          2,
+          2,
+          1,
+          1
+        ]
+      },
+      "controller_filter_by_camera": {
+        "0": {
+          "after_radius_point_count": 3820,
+          "component_bbox_gap_to_kept_top_n_m": {
+            "0": 0.0,
+            "1": 0.0,
+            "10": 0.02617090940475464,
+            "2": 0.0,
+            "3": 0.0038334131240844727,
+            "4": 0.03752171993255615,
+            "5": 0.0,
+            "6": 0.010345637798309326,
+            "7": 0.0,
+            "8": 0.059820957481861115,
+            "9": 0.03878529369831085
+          },
+          "component_count": 11,
+          "component_filter_enabled": true,
+          "component_point_counts": [
+            2640,
+            827,
+            134,
+            104,
+            78,
+            17,
+            10,
+            3,
+            3,
+            3,
+            1
+          ],
+          "component_selection_ms": 0.2645699860295281,
+          "component_selection_policy": "largest-n-plus-gap",
+          "component_voxel_size_m": 0.006,
+          "components": [
+            {
+              "bbox_extent": [
+                0.15856847167015076,
+                0.21186566352844238,
+                0.10239574313163757
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.08546900749206543,
+                0.404410183429718,
+                0.011483728885650635
+              ],
+              "bbox_min": [
+                -0.07309946417808533,
+                0.19254451990127563,
+                -0.09091201424598694
+              ],
+              "centroid": [
+                0.01799403876066208,
+                0.29618099331855774,
+                -0.02684108354151249
+              ],
+              "component_idx": 0,
+              "kept": true,
+              "point_count": 2640
+            },
+            {
+              "bbox_extent": [
+                0.14832644164562225,
+                0.14426672458648682,
+                0.05547875165939331
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.16736215353012085,
+              "bbox_max": [
+                0.39044591784477234,
+                0.13363170623779297,
+                -0.012132823467254639
+              ],
+              "bbox_min": [
+                0.24211947619915009,
+                -0.010635018348693848,
+                -0.06761157512664795
+              ],
+              "centroid": [
+                0.32009971141815186,
+                0.0746942013502121,
+                -0.03705216199159622
+              ],
+              "component_idx": 1,
+              "kept": true,
+              "point_count": 827
+            },
+            {
+              "bbox_extent": [
+                0.05659770965576172,
+                0.051981836557388306,
+                0.017367839813232422
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                -0.006539672613143921,
+                0.37963956594467163,
+                -0.015198737382888794
+              ],
+              "bbox_min": [
+                -0.06313738226890564,
+                0.3276577293872833,
+                -0.032566577196121216
+              ],
+              "centroid": [
+                -0.03361208736896515,
+                0.36046919226646423,
+                -0.024707496166229248
+              ],
+              "component_idx": 2,
+              "kept": true,
+              "point_count": 134
+            },
+            {
+              "bbox_extent": [
+                0.04032173752784729,
+                0.03856301307678223,
+                0.025646507740020752
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0038334131240844727,
+              "bbox_gap_to_main_m": 0.0038334131240844727,
+              "bbox_max": [
+                0.08561384677886963,
+                0.18871110677719116,
+                -0.032922834157943726
+              ],
+              "bbox_min": [
+                0.04529210925102234,
+                0.15014809370040894,
+                -0.05856934189796448
+              ],
+              "centroid": [
+                0.06508899480104446,
+                0.17171533405780792,
+                -0.0456911139190197
+              ],
+              "component_idx": 3,
+              "kept": true,
+              "point_count": 104
+            },
+            {
+              "bbox_extent": [
+                0.0818423330783844,
+                0.03776425123214722,
+                0.019563764333724976
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.03752171993255615,
+              "bbox_gap_to_main_m": 0.3249654173851013,
+              "bbox_max": [
+                0.38563546538352966,
+                -0.04815673828125,
+                -0.026996642351150513
+              ],
+              "bbox_min": [
+                0.30379313230514526,
+                -0.08592098951339722,
+                -0.04656040668487549
+              ],
+              "centroid": [
+                0.34565669298171997,
+                -0.07013241946697235,
+                -0.03714985400438309
+              ],
+              "component_idx": 4,
+              "kept": false,
+              "point_count": 78
+            },
+            {
+              "bbox_extent": [
+                0.005225062370300293,
+                0.019018471240997314,
+                0.008898735046386719
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.07293611764907837,
+                0.30215054750442505,
+                0.009547770023345947
+              ],
+              "bbox_min": [
+                0.06771105527877808,
+                0.28313207626342773,
+                0.0006490349769592285
+              ],
+              "centroid": [
+                0.0699075385928154,
+                0.292298823595047,
+                0.007035504560917616
+              ],
+              "component_idx": 5,
+              "kept": true,
+              "point_count": 17
+            },
+            {
+              "bbox_extent": [
+                0.019113004207611084,
+                0.016480863094329834,
+                0.004716008901596069
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.010345637798309326,
+              "bbox_gap_to_main_m": 0.3049362897872925,
+              "bbox_max": [
+                0.3222816586494446,
+                -0.020980656147003174,
+                -0.04059880971908569
+              ],
+              "bbox_min": [
+                0.3031686544418335,
+                -0.03746151924133301,
+                -0.04531481862068176
+              ],
+              "centroid": [
+                0.31270259618759155,
+                -0.02727365493774414,
+                -0.04205905273556709
+              ],
+              "component_idx": 6,
+              "kept": true,
+              "point_count": 10
+            },
+            {
+              "bbox_extent": [
+                0.002895951271057129,
+                0.0073552727699279785,
+                0.00029337406158447266
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.28533169627189636,
+              "bbox_max": [
+                0.28964436054229736,
+                -0.009694874286651611,
+                -0.06117844581604004
+              ],
+              "bbox_min": [
+                0.28674840927124023,
+                -0.01705014705657959,
+                -0.06147181987762451
+              ],
+              "centroid": [
+                0.2878898084163666,
+                -0.012647449970245361,
+                -0.06128082796931267
+              ],
+              "component_idx": 7,
+              "kept": true,
+              "point_count": 3
+            },
+            {
+              "bbox_extent": [
+                0.0024709701538085938,
+                0.0045043230056762695,
+                0.0014740824699401855
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.059820957481861115,
+              "bbox_gap_to_main_m": 0.39141571521759033,
+              "bbox_max": [
+                0.37790632247924805,
+                -0.0703732967376709,
+                -0.007514685392379761
+              ],
+              "bbox_min": [
+                0.37543535232543945,
+                -0.07487761974334717,
+                -0.008988767862319946
+              ],
+              "centroid": [
+                0.37628793716430664,
+                -0.07316545397043228,
+                -0.008347560651600361
+              ],
+              "component_idx": 8,
+              "kept": false,
+              "point_count": 3
+            },
+            {
+              "bbox_extent": [
+                0.008742928504943848,
+                0.005665183067321777,
+                0.0005362629890441895
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.03878529369831085,
+              "bbox_gap_to_main_m": 0.3681618273258209,
+              "bbox_max": [
+                0.37174585461616516,
+                -0.04936051368713379,
+                -0.009443700313568115
+              ],
+              "bbox_min": [
+                0.3630029261112213,
+                -0.055025696754455566,
+                -0.009979963302612305
+              ],
+              "centroid": [
+                0.36672869324684143,
+                -0.051576774567365646,
+                -0.009748756885528564
+              ],
+              "component_idx": 9,
+              "kept": false,
+              "point_count": 3
+            },
+            {
+              "bbox_extent": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.02617090940475464,
+              "bbox_gap_to_main_m": 0.34704089164733887,
+              "bbox_max": [
+                0.34592199325561523,
+                -0.036805927753448486,
+                -0.03973811864852905
+              ],
+              "bbox_min": [
+                0.34592199325561523,
+                -0.036805927753448486,
+                -0.03973811864852905
+              ],
+              "centroid": [
+                0.34592199325561523,
+                -0.036805927753448486,
+                -0.03973811864852905
+              ],
+              "component_idx": 10,
+              "kept": true,
+              "point_count": 1
+            }
+          ],
+          "enabled": true,
+          "input_point_count": 4664,
+          "keep_near_main_gap_m": 0.035,
+          "keep_top_n_components": 2,
+          "kept_component_count": 8,
+          "kept_component_indices": [
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            10
+          ],
+          "min_component_points": 32,
+          "min_component_ratio": 0.0,
+          "mode": "enhanced-pt",
+          "output_point_count": 3736,
+          "radius_filter_ms": 1.764747008564882,
+          "radius_postprocess": {
+            "enabled": true,
+            "inlier_point_count": 3820,
+            "input_point_count": 4664,
+            "mode": "phystwin_like_radius_neighbor_filter",
+            "nb_points": 12,
+            "outlier_point_count": 844,
+            "outlier_ratio": 0.18096054888507718,
+            "radius_filter_ms": 1.764747008564882,
+            "radius_m": 0.01
+          },
+          "removed_component_count": 3,
+          "removed_component_indices": [
+            4,
+            8,
+            9
+          ],
+          "removed_components": [
+            {
+              "bbox_extent": [
+                0.0818423330783844,
+                0.03776425123214722,
+                0.019563764333724976
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.03752171993255615,
+              "bbox_gap_to_main_m": 0.3249654173851013,
+              "bbox_max": [
+                0.38563546538352966,
+                -0.04815673828125,
+                -0.026996642351150513
+              ],
+              "bbox_min": [
+                0.30379313230514526,
+                -0.08592098951339722,
+                -0.04656040668487549
+              ],
+              "centroid": [
+                0.34565669298171997,
+                -0.07013241946697235,
+                -0.03714985400438309
+              ],
+              "component_idx": 4,
+              "kept": false,
+              "point_count": 78
+            },
+            {
+              "bbox_extent": [
+                0.0024709701538085938,
+                0.0045043230056762695,
+                0.0014740824699401855
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.059820957481861115,
+              "bbox_gap_to_main_m": 0.39141571521759033,
+              "bbox_max": [
+                0.37790632247924805,
+                -0.0703732967376709,
+                -0.007514685392379761
+              ],
+              "bbox_min": [
+                0.37543535232543945,
+                -0.07487761974334717,
+                -0.008988767862319946
+              ],
+              "centroid": [
+                0.37628793716430664,
+                -0.07316545397043228,
+                -0.008347560651600361
+              ],
+              "component_idx": 8,
+              "kept": false,
+              "point_count": 3
+            },
+            {
+              "bbox_extent": [
+                0.008742928504943848,
+                0.005665183067321777,
+                0.0005362629890441895
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.03878529369831085,
+              "bbox_gap_to_main_m": 0.3681618273258209,
+              "bbox_max": [
+                0.37174585461616516,
+                -0.04936051368713379,
+                -0.009443700313568115
+              ],
+              "bbox_min": [
+                0.3630029261112213,
+                -0.055025696754455566,
+                -0.009979963302612305
+              ],
+              "centroid": [
+                0.36672869324684143,
+                -0.051576774567365646,
+                -0.009748756885528564
+              ],
+              "component_idx": 9,
+              "kept": false,
+              "point_count": 3
+            }
+          ],
+          "removed_point_count": 84,
+          "removed_point_ratio_after_radius": 0.02198952879581152,
+          "survivor_index_space": "source_points_world",
+          "top_n_component_indices": [
+            0,
+            1
+          ],
+          "top_n_component_point_counts": [
+            2640,
+            827
+          ],
+          "total_ms": 7.601588004035875,
+          "voxel_component_ms": 5.262924009002745
+        },
+        "1": {
+          "after_radius_point_count": 3971,
+          "component_bbox_gap_to_kept_top_n_m": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.004405468702316284,
+            "3": 0.007616877555847168,
+            "4": 0.008058294653892517,
+            "5": 0.035625338554382324,
+            "6": 0.03527987003326416
+          },
+          "component_count": 7,
+          "component_filter_enabled": true,
+          "component_point_counts": [
+            3588,
+            278,
+            94,
+            6,
+            3,
+            1,
+            1
+          ],
+          "component_selection_ms": 0.1498669880675152,
+          "component_selection_policy": "largest-n-plus-gap",
+          "component_voxel_size_m": 0.006,
+          "components": [
+            {
+              "bbox_extent": [
+                0.12886148691177368,
+                0.2593216001987457,
+                0.0995301604270935
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.08857014030218124,
+                0.3882695436477661,
+                0.005902230739593506
+              ],
+              "bbox_min": [
+                -0.040291354060173035,
+                0.12894794344902039,
+                -0.0936279296875
+              ],
+              "centroid": [
+                0.015909992158412933,
+                0.25997063517570496,
+                -0.025323182344436646
+              ],
+              "component_idx": 0,
+              "kept": true,
+              "point_count": 3588
+            },
+            {
+              "bbox_extent": [
+                0.052590757608413696,
+                0.16640174388885498,
+                0.044106870889663696
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.18721464276313782,
+              "bbox_max": [
+                0.32707148790359497,
+                0.10688939690589905,
+                -0.020311564207077026
+              ],
+              "bbox_min": [
+                0.2744807302951813,
+                -0.05951234698295593,
+                -0.06441843509674072
+              ],
+              "centroid": [
+                0.29289430379867554,
+                0.018621288239955902,
+                -0.04292833432555199
+              ],
+              "component_idx": 1,
+              "kept": true,
+              "point_count": 278
+            },
+            {
+              "bbox_extent": [
+                0.04867511987686157,
+                0.07297978550195694,
+                0.01454383134841919
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.004405468702316284,
+              "bbox_gap_to_main_m": 0.15099553763866425,
+              "bbox_max": [
+                0.270075261592865,
+                0.057143740355968475,
+                -0.03540453314781189
+              ],
+              "bbox_min": [
+                0.22140014171600342,
+                -0.015836045145988464,
+                -0.04994836449623108
+              ],
+              "centroid": [
+                0.24273289740085602,
+                0.021191662177443504,
+                -0.045597273856401443
+              ],
+              "component_idx": 2,
+              "kept": true,
+              "point_count": 94
+            },
+            {
+              "bbox_extent": [
+                0.008979469537734985,
+                0.00938647985458374,
+                0.0030411481857299805
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.007616877555847168,
+              "bbox_gap_to_main_m": 0.17301777005195618,
+              "bbox_max": [
+                0.2668638527393341,
+                0.09334121644496918,
+                -0.0298861563205719
+              ],
+              "bbox_min": [
+                0.2578843832015991,
+                0.08395473659038544,
+                -0.03292730450630188
+              ],
+              "centroid": [
+                0.26193737983703613,
+                0.08779674023389816,
+                -0.031020844355225563
+              ],
+              "component_idx": 3,
+              "kept": true,
+              "point_count": 6
+            },
+            {
+              "bbox_extent": [
+                0.009662210941314697,
+                0.0013462677597999573,
+                0.0003789067268371582
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.008058294653892517,
+              "bbox_gap_to_main_m": 0.20157656073570251,
+              "bbox_max": [
+                0.2994113564491272,
+                0.11629395931959152,
+                -0.03616809844970703
+              ],
+              "bbox_min": [
+                0.2897491455078125,
+                0.11494769155979156,
+                -0.03654700517654419
+              ],
+              "centroid": [
+                0.2947942316532135,
+                0.11581441015005112,
+                -0.036299556493759155
+              ],
+              "component_idx": 4,
+              "kept": true,
+              "point_count": 3
+            },
+            {
+              "bbox_extent": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.035625338554382324,
+              "bbox_gap_to_main_m": 0.2817399203777313,
+              "bbox_max": [
+                0.3626968264579773,
+                0.06389454752206802,
+                -0.03615772724151611
+              ],
+              "bbox_min": [
+                0.3626968264579773,
+                0.06389454752206802,
+                -0.03615772724151611
+              ],
+              "centroid": [
+                0.3626968264579773,
+                0.06389454752206802,
+                -0.03615772724151611
+              ],
+              "component_idx": 5,
+              "kept": false,
+              "point_count": 1
+            },
+            {
+              "bbox_extent": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.03527987003326416,
+              "bbox_gap_to_main_m": 0.2855108082294464,
+              "bbox_max": [
+                0.36235135793685913,
+                0.04795244336128235,
+                -0.035806238651275635
+              ],
+              "bbox_min": [
+                0.36235135793685913,
+                0.04795244336128235,
+                -0.035806238651275635
+              ],
+              "centroid": [
+                0.36235135793685913,
+                0.04795244336128235,
+                -0.035806238651275635
+              ],
+              "component_idx": 6,
+              "kept": false,
+              "point_count": 1
+            }
+          ],
+          "enabled": true,
+          "input_point_count": 4685,
+          "keep_near_main_gap_m": 0.035,
+          "keep_top_n_components": 2,
+          "kept_component_count": 5,
+          "kept_component_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "min_component_points": 32,
+          "min_component_ratio": 0.0,
+          "mode": "enhanced-pt",
+          "output_point_count": 3969,
+          "radius_filter_ms": 1.994775011553429,
+          "radius_postprocess": {
+            "enabled": true,
+            "inlier_point_count": 3971,
+            "input_point_count": 4685,
+            "mode": "phystwin_like_radius_neighbor_filter",
+            "nb_points": 12,
+            "outlier_point_count": 714,
+            "outlier_ratio": 0.15240128068303094,
+            "radius_filter_ms": 1.994775011553429,
+            "radius_m": 0.01
+          },
+          "removed_component_count": 2,
+          "removed_component_indices": [
+            5,
+            6
+          ],
+          "removed_components": [
+            {
+              "bbox_extent": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.035625338554382324,
+              "bbox_gap_to_main_m": 0.2817399203777313,
+              "bbox_max": [
+                0.3626968264579773,
+                0.06389454752206802,
+                -0.03615772724151611
+              ],
+              "bbox_min": [
+                0.3626968264579773,
+                0.06389454752206802,
+                -0.03615772724151611
+              ],
+              "centroid": [
+                0.3626968264579773,
+                0.06389454752206802,
+                -0.03615772724151611
+              ],
+              "component_idx": 5,
+              "kept": false,
+              "point_count": 1
+            },
+            {
+              "bbox_extent": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.03527987003326416,
+              "bbox_gap_to_main_m": 0.2855108082294464,
+              "bbox_max": [
+                0.36235135793685913,
+                0.04795244336128235,
+                -0.035806238651275635
+              ],
+              "bbox_min": [
+                0.36235135793685913,
+                0.04795244336128235,
+                -0.035806238651275635
+              ],
+              "centroid": [
+                0.36235135793685913,
+                0.04795244336128235,
+                -0.035806238651275635
+              ],
+              "component_idx": 6,
+              "kept": false,
+              "point_count": 1
+            }
+          ],
+          "removed_point_count": 2,
+          "removed_point_ratio_after_radius": 0.000503651473180559,
+          "survivor_index_space": "source_points_world",
+          "top_n_component_indices": [
+            0,
+            1
+          ],
+          "top_n_component_point_counts": [
+            3588,
+            278
+          ],
+          "total_ms": 7.129415011149831,
+          "voxel_component_ms": 4.829930010600947
+        },
+        "2": {
+          "after_radius_point_count": 3735,
+          "component_bbox_gap_to_kept_top_n_m": {
+            "0": 0.0,
+            "1": 0.0,
+            "10": 0.13931499421596527,
+            "11": 0.02973324805498123,
+            "2": 0.0588139109313488,
+            "3": 0.0,
+            "4": 0.12686924636363983,
+            "5": 0.05200853943824768,
+            "6": 0.0,
+            "7": 0.13391441106796265,
+            "8": 0.12965506315231323,
+            "9": 0.0
+          },
+          "component_count": 12,
+          "component_filter_enabled": true,
+          "component_point_counts": [
+            3374,
+            190,
+            92,
+            31,
+            15,
+            13,
+            11,
+            3,
+            2,
+            2,
+            1,
+            1
+          ],
+          "component_selection_ms": 0.22794499818701297,
+          "component_selection_policy": "largest-n-plus-gap",
+          "component_voxel_size_m": 0.006,
+          "components": [
+            {
+              "bbox_extent": [
+                0.1897163689136505,
+                0.25547143816947937,
+                0.07138237357139587
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.4087512493133545,
+                0.13698822259902954,
+                0.012394547462463379
+              ],
+              "bbox_min": [
+                0.21903488039970398,
+                -0.11848321557044983,
+                -0.058987826108932495
+              ],
+              "centroid": [
+                0.3375566899776459,
+                -0.0006650429568253458,
+                -0.027080314233899117
+              ],
+              "component_idx": 0,
+              "kept": true,
+              "point_count": 3374
+            },
+            {
+              "bbox_extent": [
+                0.07014063000679016,
+                0.0740426778793335,
+                0.03641703724861145
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.2400341033935547,
+              "bbox_max": [
+                -0.017890751361846924,
+                0.24953562021255493,
+                0.009784162044525146
+              ],
+              "bbox_min": [
+                -0.08803138136863708,
+                0.17549294233322144,
+                -0.026632875204086304
+              ],
+              "centroid": [
+                -0.04827004298567772,
+                0.21065132319927216,
+                -0.007101607974618673
+              ],
+              "component_idx": 1,
+              "kept": true,
+              "point_count": 190
+            },
+            {
+              "bbox_extent": [
+                0.051267385482788086,
+                0.08081185817718506,
+                0.02966800332069397
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0588139109313488,
+              "bbox_gap_to_main_m": 0.14079594612121582,
+              "bbox_max": [
+                0.09040260314941406,
+                0.275047242641449,
+                -0.041024357080459595
+              ],
+              "bbox_min": [
+                0.03913521766662598,
+                0.19423538446426392,
+                -0.07069236040115356
+              ],
+              "centroid": [
+                0.06120426580309868,
+                0.23883400857448578,
+                -0.0556890033185482
+              ],
+              "component_idx": 2,
+              "kept": false,
+              "point_count": 92
+            },
+            {
+              "bbox_extent": [
+                0.035108521580696106,
+                0.016668349504470825,
+                0.009624779224395752
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.2370126098394394,
+                0.010689496994018555,
+                0.008938312530517578
+              ],
+              "bbox_min": [
+                0.2019040882587433,
+                -0.0059788525104522705,
+                -0.0006864666938781738
+              ],
+              "centroid": [
+                0.2152002900838852,
+                0.0038427230902016163,
+                0.006139193661510944
+              ],
+              "component_idx": 3,
+              "kept": true,
+              "point_count": 31
+            },
+            {
+              "bbox_extent": [
+                0.028364062309265137,
+                0.010398268699645996,
+                0.01915714144706726
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.12686924636363983,
+              "bbox_gap_to_main_m": 0.3072579801082611,
+              "bbox_max": [
+                0.020991653203964233,
+                0.38230425119400024,
+                -0.058423787355422974
+              ],
+              "bbox_min": [
+                -0.007372409105300903,
+                0.37190598249435425,
+                -0.07758092880249023
+              ],
+              "centroid": [
+                0.003871613647788763,
+                0.3764171004295349,
+                -0.06648077815771103
+              ],
+              "component_idx": 4,
+              "kept": false,
+              "point_count": 15
+            },
+            {
+              "bbox_extent": [
+                0.014339089393615723,
+                0.018007099628448486,
+                0.01586383581161499
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.05200853943824768,
+              "bbox_gap_to_main_m": 0.17627905309200287,
+              "bbox_max": [
+                0.04845687747001648,
+                0.1994638442993164,
+                -0.010845661163330078
+              ],
+              "bbox_min": [
+                0.03411778807640076,
+                0.18145674467086792,
+                -0.02670949697494507
+              ],
+              "centroid": [
+                0.03987418860197067,
+                0.1907196342945099,
+                -0.018516093492507935
+              ],
+              "component_idx": 5,
+              "kept": false,
+              "point_count": 13
+            },
+            {
+              "bbox_extent": [
+                0.015334486961364746,
+                0.004205197095870972,
+                0.007801413536071777
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.3060130476951599,
+                -0.033352166414260864,
+                0.01567167043685913
+              ],
+              "bbox_min": [
+                0.29067856073379517,
+                -0.037557363510131836,
+                0.007870256900787354
+              ],
+              "centroid": [
+                0.2973293960094452,
+                -0.03567599505186081,
+                0.011220460757613182
+              ],
+              "component_idx": 6,
+              "kept": true,
+              "point_count": 11
+            },
+            {
+              "bbox_extent": [
+                0.009363144636154175,
+                0.002026081085205078,
+                0.0032173991203308105
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.13391441106796265,
+              "bbox_gap_to_main_m": 0.33805549144744873,
+              "bbox_max": [
+                -0.01234811544418335,
+                0.38547611236572266,
+                -0.01002269983291626
+              ],
+              "bbox_min": [
+                -0.021711260080337524,
+                0.3834500312805176,
+                -0.01324009895324707
+              ],
+              "centroid": [
+                -0.016892364248633385,
+                0.3847378194332123,
+                -0.011690914630889893
+              ],
+              "component_idx": 7,
+              "kept": false,
+              "point_count": 3
+            },
+            {
+              "bbox_extent": [
+                0.004283219575881958,
+                0.0001894831657409668,
+                0.003227710723876953
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.12965506315231323,
+              "bbox_gap_to_main_m": 0.34670040011405945,
+              "bbox_max": [
+                -0.029035955667495728,
+                0.37938016653060913,
+                -0.009085237979888916
+              ],
+              "bbox_min": [
+                -0.033319175243377686,
+                0.37919068336486816,
+                -0.01231294870376587
+              ],
+              "centroid": [
+                -0.031177565455436707,
+                0.37928542494773865,
+                -0.010699093341827393
+              ],
+              "component_idx": 8,
+              "kept": false,
+              "point_count": 2
+            },
+            {
+              "bbox_extent": [
+                0.0008745193481445312,
+                0.0040902793407440186,
+                0.0016408562660217285
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.2606664299964905,
+                -0.01498451828956604,
+                0.009486973285675049
+              ],
+              "bbox_min": [
+                0.25979191064834595,
+                -0.01907479763031006,
+                0.00784611701965332
+              ],
+              "centroid": [
+                0.2602291703224182,
+                -0.01702965795993805,
+                0.008666545152664185
+              ],
+              "component_idx": 9,
+              "kept": true,
+              "point_count": 2
+            },
+            {
+              "bbox_extent": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.13931499421596527,
+              "bbox_gap_to_main_m": 0.3354303538799286,
+              "bbox_max": [
+                -0.003363102674484253,
+                0.3880910873413086,
+                -0.00784456729888916
+              ],
+              "bbox_min": [
+                -0.003363102674484253,
+                0.3880910873413086,
+                -0.00784456729888916
+              ],
+              "centroid": [
+                -0.003363102674484253,
+                0.3880910873413086,
+                -0.00784456729888916
+              ],
+              "component_idx": 10,
+              "kept": false,
+              "point_count": 1
+            },
+            {
+              "bbox_extent": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.02973324805498123,
+              "bbox_gap_to_main_m": 0.2202519178390503,
+              "bbox_max": [
+                0.011674612760543823,
+                0.21123528480529785,
+                -0.029788076877593994
+              ],
+              "bbox_min": [
+                0.011674612760543823,
+                0.21123528480529785,
+                -0.029788076877593994
+              ],
+              "centroid": [
+                0.011674612760543823,
+                0.21123528480529785,
+                -0.029788076877593994
+              ],
+              "component_idx": 11,
+              "kept": true,
+              "point_count": 1
+            }
+          ],
+          "enabled": true,
+          "input_point_count": 4692,
+          "keep_near_main_gap_m": 0.035,
+          "keep_top_n_components": 2,
+          "kept_component_count": 6,
+          "kept_component_indices": [
+            0,
+            1,
+            3,
+            6,
+            9,
+            11
+          ],
+          "min_component_points": 32,
+          "min_component_ratio": 0.0,
+          "mode": "enhanced-pt",
+          "output_point_count": 3609,
+          "radius_filter_ms": 1.6123169916681945,
+          "radius_postprocess": {
+            "enabled": true,
+            "inlier_point_count": 3735,
+            "input_point_count": 4692,
+            "mode": "phystwin_like_radius_neighbor_filter",
+            "nb_points": 12,
+            "outlier_point_count": 957,
+            "outlier_ratio": 0.20396419437340155,
+            "radius_filter_ms": 1.6123169916681945,
+            "radius_m": 0.01
+          },
+          "removed_component_count": 6,
+          "removed_component_indices": [
+            2,
+            4,
+            5,
+            7,
+            8,
+            10
+          ],
+          "removed_components": [
+            {
+              "bbox_extent": [
+                0.051267385482788086,
+                0.08081185817718506,
+                0.02966800332069397
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0588139109313488,
+              "bbox_gap_to_main_m": 0.14079594612121582,
+              "bbox_max": [
+                0.09040260314941406,
+                0.275047242641449,
+                -0.041024357080459595
+              ],
+              "bbox_min": [
+                0.03913521766662598,
+                0.19423538446426392,
+                -0.07069236040115356
+              ],
+              "centroid": [
+                0.06120426580309868,
+                0.23883400857448578,
+                -0.0556890033185482
+              ],
+              "component_idx": 2,
+              "kept": false,
+              "point_count": 92
+            },
+            {
+              "bbox_extent": [
+                0.028364062309265137,
+                0.010398268699645996,
+                0.01915714144706726
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.12686924636363983,
+              "bbox_gap_to_main_m": 0.3072579801082611,
+              "bbox_max": [
+                0.020991653203964233,
+                0.38230425119400024,
+                -0.058423787355422974
+              ],
+              "bbox_min": [
+                -0.007372409105300903,
+                0.37190598249435425,
+                -0.07758092880249023
+              ],
+              "centroid": [
+                0.003871613647788763,
+                0.3764171004295349,
+                -0.06648077815771103
+              ],
+              "component_idx": 4,
+              "kept": false,
+              "point_count": 15
+            },
+            {
+              "bbox_extent": [
+                0.014339089393615723,
+                0.018007099628448486,
+                0.01586383581161499
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.05200853943824768,
+              "bbox_gap_to_main_m": 0.17627905309200287,
+              "bbox_max": [
+                0.04845687747001648,
+                0.1994638442993164,
+                -0.010845661163330078
+              ],
+              "bbox_min": [
+                0.03411778807640076,
+                0.18145674467086792,
+                -0.02670949697494507
+              ],
+              "centroid": [
+                0.03987418860197067,
+                0.1907196342945099,
+                -0.018516093492507935
+              ],
+              "component_idx": 5,
+              "kept": false,
+              "point_count": 13
+            },
+            {
+              "bbox_extent": [
+                0.009363144636154175,
+                0.002026081085205078,
+                0.0032173991203308105
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.13391441106796265,
+              "bbox_gap_to_main_m": 0.33805549144744873,
+              "bbox_max": [
+                -0.01234811544418335,
+                0.38547611236572266,
+                -0.01002269983291626
+              ],
+              "bbox_min": [
+                -0.021711260080337524,
+                0.3834500312805176,
+                -0.01324009895324707
+              ],
+              "centroid": [
+                -0.016892364248633385,
+                0.3847378194332123,
+                -0.011690914630889893
+              ],
+              "component_idx": 7,
+              "kept": false,
+              "point_count": 3
+            },
+            {
+              "bbox_extent": [
+                0.004283219575881958,
+                0.0001894831657409668,
+                0.003227710723876953
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.12965506315231323,
+              "bbox_gap_to_main_m": 0.34670040011405945,
+              "bbox_max": [
+                -0.029035955667495728,
+                0.37938016653060913,
+                -0.009085237979888916
+              ],
+              "bbox_min": [
+                -0.033319175243377686,
+                0.37919068336486816,
+                -0.01231294870376587
+              ],
+              "centroid": [
+                -0.031177565455436707,
+                0.37928542494773865,
+                -0.010699093341827393
+              ],
+              "component_idx": 8,
+              "kept": false,
+              "point_count": 2
+            },
+            {
+              "bbox_extent": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.13931499421596527,
+              "bbox_gap_to_main_m": 0.3354303538799286,
+              "bbox_max": [
+                -0.003363102674484253,
+                0.3880910873413086,
+                -0.00784456729888916
+              ],
+              "bbox_min": [
+                -0.003363102674484253,
+                0.3880910873413086,
+                -0.00784456729888916
+              ],
+              "centroid": [
+                -0.003363102674484253,
+                0.3880910873413086,
+                -0.00784456729888916
+              ],
+              "component_idx": 10,
+              "kept": false,
+              "point_count": 1
+            }
+          ],
+          "removed_point_count": 126,
+          "removed_point_ratio_after_radius": 0.033734939759036145,
+          "survivor_index_space": "source_points_world",
+          "top_n_component_indices": [
+            0,
+            1
+          ],
+          "top_n_component_point_counts": [
+            3374,
+            190
+          ],
+          "total_ms": 7.372182008111849,
+          "voxel_component_ms": 5.36155300505925
+        }
+      },
+      "controller_filter_mode_by_camera": {
+        "0": "enhanced-pt",
+        "1": "enhanced-pt",
+        "2": "enhanced-pt"
+      },
+      "controller_kept_component_indices_by_camera": {
+        "0": [
+          0,
+          1,
+          2,
+          3,
+          5,
+          6,
+          7,
+          10
+        ],
+        "1": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "2": [
+          0,
+          1,
+          3,
+          6,
+          9,
+          11
+        ]
+      },
+      "controller_removed_component_count_by_camera": {
+        "0": 3,
+        "1": 2,
+        "2": 6
+      },
+      "controller_removed_point_count_by_camera": {
+        "0": 84,
+        "1": 2,
+        "2": 126
+      },
+      "controller_top_n_component_point_counts_by_camera": {
+        "0": [
+          2640,
+          827
+        ],
+        "1": [
+          3588,
+          278
+        ],
+        "2": [
+          3374,
+          190
+        ]
+      },
+      "controller_trackable_after_cap_by_camera": {
+        "0": 3736,
+        "1": 3969,
+        "2": 3609
+      },
+      "controller_trackable_before_cap_by_camera": {
+        "0": 3736,
+        "1": 3969,
+        "2": 3609
+      },
+      "controller_trackable_cap_applied_by_camera": {
+        "0": false,
+        "1": false,
+        "2": false
+      },
+      "depth_valid_controller_pixels_by_camera": {
+        "0": 4664,
+        "1": 4685,
+        "2": 4692
+      },
+      "depth_valid_object_pixels_by_camera": {
+        "0": 16201,
+        "1": 31629,
+        "2": 13523
+      },
+      "object_component_count_by_camera": {
+        "0": 3,
+        "1": 4,
+        "2": 4
+      },
+      "object_component_filter_removed_ratio_by_camera": {
+        "0": 0.0,
+        "1": 0.0,
+        "2": 0.0
+      },
+      "object_component_point_counts_by_camera": {
+        "0": [
+          15993,
+          45,
+          41
+        ],
+        "1": [
+          31305,
+          103,
+          32,
+          29
+        ],
+        "2": [
+          13170,
+          81,
+          17,
+          17
+        ]
+      },
+      "object_filter_by_camera": {
+        "0": {
+          "after_radius_point_count": 16079,
+          "component_bbox_gap_to_kept_top_n_m": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.0
+          },
+          "component_count": 3,
+          "component_filter_enabled": true,
+          "component_point_counts": [
+            15993,
+            45,
+            41
+          ],
+          "component_selection_ms": 0.3026480117114261,
+          "component_selection_policy": "largest-n-plus-gap",
+          "component_voxel_size_m": 0.006,
+          "components": [
+            {
+              "bbox_extent": [
+                0.34207093715667725,
+                0.3364444077014923,
+                0.09663122892379761
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.26009976863861084,
+                0.21035358309745789,
+                0.007948517799377441
+              ],
+              "bbox_min": [
+                -0.0819711685180664,
+                -0.12609082460403442,
+                -0.08868271112442017
+              ],
+              "centroid": [
+                0.13495618104934692,
+                0.09848257154226303,
+                -0.04621841758489609
+              ],
+              "component_idx": 0,
+              "kept": true,
+              "point_count": 15993
+            },
+            {
+              "bbox_extent": [
+                0.01366664469242096,
+                0.015533149242401123,
+                0.01580101251602173
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.22369064390659332,
+                -0.00328981876373291,
+                -0.03960642218589783
+              ],
+              "bbox_min": [
+                0.21002399921417236,
+                -0.018822968006134033,
+                -0.055407434701919556
+              ],
+              "centroid": [
+                0.21793752908706665,
+                -0.00987868569791317,
+                -0.050064221024513245
+              ],
+              "component_idx": 1,
+              "kept": true,
+              "point_count": 45
+            },
+            {
+              "bbox_extent": [
+                0.006704956293106079,
+                0.030985891819000244,
+                0.010921299457550049
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.20367293059825897,
+                -0.10007071495056152,
+                0.007914423942565918
+              ],
+              "bbox_min": [
+                0.1969679743051529,
+                -0.13105660676956177,
+                -0.003006875514984131
+              ],
+              "centroid": [
+                0.19988606870174408,
+                -0.11448457837104797,
+                0.003560782875865698
+              ],
+              "component_idx": 2,
+              "kept": true,
+              "point_count": 41
+            }
+          ],
+          "enabled": true,
+          "input_point_count": 16201,
+          "keep_near_main_gap_m": 0.035,
+          "keep_top_n_components": 1,
+          "kept_component_count": 3,
+          "kept_component_indices": [
+            0,
+            1,
+            2
+          ],
+          "min_component_points": 32,
+          "min_component_ratio": 0.0,
+          "mode": "enhanced-pt",
+          "output_point_count": 16079,
+          "radius_filter_ms": 8.113552001304924,
+          "radius_postprocess": {
+            "enabled": true,
+            "inlier_point_count": 16079,
+            "input_point_count": 16201,
+            "mode": "phystwin_like_radius_neighbor_filter",
+            "nb_points": 12,
+            "outlier_point_count": 122,
+            "outlier_ratio": 0.007530399358064317,
+            "radius_filter_ms": 8.113552001304924,
+            "radius_m": 0.01
+          },
+          "removed_component_count": 0,
+          "removed_component_indices": [],
+          "removed_components": [],
+          "removed_point_count": 0,
+          "removed_point_ratio_after_radius": 0.0,
+          "survivor_index_space": "source_points_world",
+          "top_n_component_indices": [
+            0
+          ],
+          "top_n_component_point_counts": [
+            15993
+          ],
+          "total_ms": 175.0891830015462,
+          "voxel_component_ms": 165.68435900262557
+        },
+        "1": {
+          "after_radius_point_count": 31469,
+          "component_bbox_gap_to_kept_top_n_m": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0
+          },
+          "component_count": 4,
+          "component_filter_enabled": true,
+          "component_point_counts": [
+            31305,
+            103,
+            32,
+            29
+          ],
+          "component_selection_ms": 0.2159269934054464,
+          "component_selection_policy": "largest-n-plus-gap",
+          "component_voxel_size_m": 0.006,
+          "components": [
+            {
+              "bbox_extent": [
+                0.29687637090682983,
+                0.33997637033462524,
+                0.09679752588272095
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.2554711401462555,
+                0.20578309893608093,
+                0.009109318256378174
+              ],
+              "bbox_min": [
+                -0.04140521585941315,
+                -0.1341932862997055,
+                -0.08768820762634277
+              ],
+              "centroid": [
+                0.10807415097951889,
+                0.06856977939605713,
+                -0.053303588181734085
+              ],
+              "component_idx": 0,
+              "kept": true,
+              "point_count": 31305
+            },
+            {
+              "bbox_extent": [
+                0.010334804654121399,
+                0.02277076244354248,
+                0.01565954089164734
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.11053384095430374,
+                0.0693591833114624,
+                0.012470483779907227
+              ],
+              "bbox_min": [
+                0.10019903630018234,
+                0.04658842086791992,
+                -0.0031890571117401123
+              ],
+              "centroid": [
+                0.10582352429628372,
+                0.06089484691619873,
+                0.00955523643642664
+              ],
+              "component_idx": 1,
+              "kept": true,
+              "point_count": 103
+            },
+            {
+              "bbox_extent": [
+                0.012537539005279541,
+                0.026156485080718994,
+                0.009448200464248657
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.17383673787117004,
+                -0.11885927617549896,
+                0.008429527282714844
+              ],
+              "bbox_min": [
+                0.1612991988658905,
+                -0.14501576125621796,
+                -0.0010186731815338135
+              ],
+              "centroid": [
+                0.16602042317390442,
+                -0.1307862102985382,
+                0.005324271507561207
+              ],
+              "component_idx": 2,
+              "kept": true,
+              "point_count": 32
+            },
+            {
+              "bbox_extent": [
+                0.006370663642883301,
+                0.012290656566619873,
+                0.01020023226737976
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.1878736913204193,
+                0.18601951003074646,
+                0.006528079509735107
+              ],
+              "bbox_min": [
+                0.181503027677536,
+                0.1737288534641266,
+                -0.0036721527576446533
+              ],
+              "centroid": [
+                0.18605779111385345,
+                0.17867416143417358,
+                0.003233266295865178
+              ],
+              "component_idx": 3,
+              "kept": true,
+              "point_count": 29
+            }
+          ],
+          "enabled": true,
+          "input_point_count": 31629,
+          "keep_near_main_gap_m": 0.035,
+          "keep_top_n_components": 1,
+          "kept_component_count": 4,
+          "kept_component_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "min_component_points": 32,
+          "min_component_ratio": 0.0,
+          "mode": "enhanced-pt",
+          "output_point_count": 31469,
+          "radius_filter_ms": 28.537759004393592,
+          "radius_postprocess": {
+            "enabled": true,
+            "inlier_point_count": 31469,
+            "input_point_count": 31629,
+            "mode": "phystwin_like_radius_neighbor_filter",
+            "nb_points": 12,
+            "outlier_point_count": 160,
+            "outlier_ratio": 0.005058648708463752,
+            "radius_filter_ms": 28.537759004393592,
+            "radius_m": 0.01
+          },
+          "removed_component_count": 0,
+          "removed_component_indices": [],
+          "removed_components": [],
+          "removed_point_count": 0,
+          "removed_point_ratio_after_radius": 0.0,
+          "survivor_index_space": "source_points_world",
+          "top_n_component_indices": [
+            0
+          ],
+          "top_n_component_point_counts": [
+            31305
+          ],
+          "total_ms": 50.223462996655144,
+          "voxel_component_ms": 20.27009500307031
+        },
+        "2": {
+          "after_radius_point_count": 13285,
+          "component_bbox_gap_to_kept_top_n_m": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0
+          },
+          "component_count": 4,
+          "component_filter_enabled": true,
+          "component_point_counts": [
+            13170,
+            81,
+            17,
+            17
+          ],
+          "component_selection_ms": 0.18612100393511355,
+          "component_selection_policy": "largest-n-plus-gap",
+          "component_voxel_size_m": 0.006,
+          "components": [
+            {
+              "bbox_extent": [
+                0.4000541567802429,
+                0.3145880699157715,
+                0.10269594192504883
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.2658364474773407,
+                0.17587852478027344,
+                0.01632744073867798
+              ],
+              "bbox_min": [
+                -0.13421770930290222,
+                -0.13870953023433685,
+                -0.08636850118637085
+              ],
+              "centroid": [
+                0.14170525968074799,
+                0.026656296104192734,
+                -0.04504666477441788
+              ],
+              "component_idx": 0,
+              "kept": true,
+              "point_count": 13170
+            },
+            {
+              "bbox_extent": [
+                0.015665948390960693,
+                0.037161409854888916,
+                0.022404015064239502
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.08660659193992615,
+                0.2049291729927063,
+                -0.02472364902496338
+              ],
+              "bbox_min": [
+                0.07094064354896545,
+                0.16776776313781738,
+                -0.04712766408920288
+              ],
+              "centroid": [
+                0.07620704174041748,
+                0.18705543875694275,
+                -0.03451761230826378
+              ],
+              "component_idx": 1,
+              "kept": true,
+              "point_count": 81
+            },
+            {
+              "bbox_extent": [
+                0.008956626057624817,
+                0.014669656753540039,
+                0.006209015846252441
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.23980997502803802,
+                0.040238410234451294,
+                -0.04444479942321777
+              ],
+              "bbox_min": [
+                0.2308533489704132,
+                0.025568753480911255,
+                -0.050653815269470215
+              ],
+              "centroid": [
+                0.23465518653392792,
+                0.03323987126350403,
+                -0.04881840944290161
+              ],
+              "component_idx": 2,
+              "kept": true,
+              "point_count": 17
+            },
+            {
+              "bbox_extent": [
+                0.013063192367553711,
+                0.015513360500335693,
+                0.011179029941558838
+              ],
+              "bbox_gap_to_kept_top_n_m": 0.0,
+              "bbox_gap_to_main_m": 0.0,
+              "bbox_max": [
+                0.11600080132484436,
+                -0.036654531955718994,
+                0.011893928050994873
+              ],
+              "bbox_min": [
+                0.10293760895729065,
+                -0.05216789245605469,
+                0.0007148981094360352
+              ],
+              "centroid": [
+                0.10967191308736801,
+                -0.04570311680436134,
+                0.008059469982981682
+              ],
+              "component_idx": 3,
+              "kept": true,
+              "point_count": 17
+            }
+          ],
+          "enabled": true,
+          "input_point_count": 13523,
+          "keep_near_main_gap_m": 0.035,
+          "keep_top_n_components": 1,
+          "kept_component_count": 4,
+          "kept_component_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "min_component_points": 32,
+          "min_component_ratio": 0.0,
+          "mode": "enhanced-pt",
+          "output_point_count": 13285,
+          "radius_filter_ms": 7.143255003029481,
+          "radius_postprocess": {
+            "enabled": true,
+            "inlier_point_count": 13285,
+            "input_point_count": 13523,
+            "mode": "phystwin_like_radius_neighbor_filter",
+            "nb_points": 12,
+            "outlier_point_count": 238,
+            "outlier_ratio": 0.01759964504917548,
+            "radius_filter_ms": 7.143255003029481,
+            "radius_m": 0.01
+          },
+          "removed_component_count": 0,
+          "removed_component_indices": [],
+          "removed_components": [],
+          "removed_point_count": 0,
+          "removed_point_ratio_after_radius": 0.0,
+          "survivor_index_space": "source_points_world",
+          "top_n_component_indices": [
+            0
+          ],
+          "top_n_component_point_counts": [
+            13170
+          ],
+          "total_ms": 23.365312998066656,
+          "voxel_component_ms": 15.345181993325241
+        }
+      },
+      "object_filter_mode_by_camera": {
+        "0": "enhanced-pt",
+        "1": "enhanced-pt",
+        "2": "enhanced-pt"
+      },
+      "object_kept_component_indices_by_camera": {
+        "0": [
+          0,
+          1,
+          2
+        ],
+        "1": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "2": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "object_removed_component_count_by_camera": {
+        "0": 0,
+        "1": 0,
+        "2": 0
+      },
+      "object_removed_point_count_by_camera": {
+        "0": 0,
+        "1": 0,
+        "2": 0
+      },
+      "object_top_n_component_point_counts_by_camera": {
+        "0": [
+          15993
+        ],
+        "1": [
+          31305
+        ],
+        "2": [
+          13170
+        ]
+      },
+      "query_pcd_filter_reused_result_by_camera": {
+        "0": false,
+        "1": false,
+        "2": false
+      },
+      "raw_controller_pixels_by_camera": {
+        "0": 4999,
+        "1": 4999,
+        "2": 4999
+      },
+      "raw_object_pixels_by_camera": {
+        "0": 17021,
+        "1": 34089,
+        "2": 14463
+      },
+      "trackable_mask_source": "standard_filter_survivors",
+      "trackable_mask_standard_filter_ms_by_camera": {
+        "0": 187.95885299914517,
+        "1": 61.96078201173805,
+        "2": 35.182892010197975
+      },
+      "trackable_object_pixels_by_camera": {
+        "0": 16079,
+        "1": 31469,
+        "2": 13285
+      },
+      "trackable_union_pixels_by_camera": {
+        "0": 19815,
+        "1": 35438,
+        "2": 16894
+      }
+    },
+    "tracker_group_wall_ms_p50": 139.63372802734375,
+    "tracker_group_wall_ms_p95": 144.69931030273438,
+    "tracker_model_ms_max_per_group_p50": 45.72052764892578,
+    "tracker_model_ms_max_per_group_p95": 47.911930084228516,
+    "tracker_model_ms_sum_per_group_p50": 134.133056640625,
+    "tracker_model_ms_sum_per_group_p95": 137.45437622070312,
+    "tracker_pending_drop_count": 0,
+    "tracker_result_fusion_ms_median": 86.20645141601562,
+    "tracker_result_fusion_ms_p95": 248.58029174804688,
+    "tracker_result_fusion_skipped_count": 0,
+    "tracker_result_gated_fusion": true,
+    "tracker_result_triggered_fusion_count": 601,
+    "tracking_input_drop_count": 0,
+    "tracking_input_mask_age_ms_median": 5.132556915283203,
+    "tracking_input_mask_age_ms_p95": 27.801576614379883,
+    "tracking_input_mask_reuse_ratio": 0.0,
+    "tracking_input_queue_replace_count": 44,
+    "tracking_input_replaced_group_ids_last": [
+      2215
+    ],
+    "tracking_input_replaced_group_unprotect_count": 44,
+    "tracking_input_skip_count": 325,
+    "tracking_overlay_first_render_group_id": 377,
+    "tracking_overlay_render_blocked_count": 0,
+    "tracking_overlay_warmup_skipped_render_count": 0,
+    "tracking_pending_fusion_bundle_drop_count": 0,
+    "tracking_pending_fusion_bundle_max_groups": 128,
+    "tracking_pending_fusion_bundles": 4,
+    "tracking_pending_render_packet_drop_count": 0,
+    "tracking_pending_render_packet_max_groups": 128,
+    "tracking_pending_render_packets": 0,
+    "tracking_render_packet_match_policy": "exact-target-bundle",
+    "tracking_result_exact_render_packet_count": 601,
+    "tracking_result_nearest_render_packet_count": 0,
+    "tracking_result_without_lift_input_count": 0,
+    "tracking_result_without_render_packet_count": 0,
+    "tracking_stats": {
+      "cotracker_batch_disabled_reason": null,
+      "cotracker_batch_error_count": 0,
+      "cotracker_batch_size": 1,
+      "cotracker_batch_update_count": 0,
+      "cotracker_serial_camera_update_count": 1803,
+      "cotracker_serial_fallback_count": 0,
+      "cotracker_serial_group_update_count": 601,
+      "cotracker_update_mode": "serial",
+      "model_calls_per_group": 3,
+      "model_instances_actual": 3,
+      "model_instances_expected": 3,
+      "overlay_display_controller_count_by_camera": {
+        "0": 752,
+        "1": 481,
+        "2": 870
+      },
+      "overlay_display_count_by_camera": {
+        "0": 752,
+        "1": 481,
+        "2": 870
+      },
+      "overlay_display_object_count_by_camera": {
+        "0": 0,
+        "1": 0,
+        "2": 0
+      },
+      "overlay_display_scope": "controller",
+      "per_camera_model_ms_by_camera": {
+        "0": 43.96252999140415,
+        "1": 43.61965200223494,
+        "2": 44.051253993529826
+      },
+      "query_count_per_camera": 4096,
+      "total_query_count_across_views": 12288,
+      "tracker_backend": "tapnextpp",
+      "tracker_batch_query_count_policy": "min-common",
+      "tracker_group_wall_ms": 138.4250489936676,
+      "tracker_model_ms_max_per_group": 44.051253993529826,
+      "tracker_model_ms_sum_per_group": 131.63343598716892,
+      "tracking_backend_batch_fallback_reason": null,
+      "tracking_backend_effective_query_count": 0,
+      "tracking_backend_execution_mode": "serial",
+      "tracking_backend_query_count_truncated_by_camera": {},
+      "tracking_controller_pixels_by_camera": {
+        "0": 3736,
+        "1": 3969,
+        "2": 3609
+      },
+      "tracking_mask_age_ms": 24.47280500200577,
+      "tracking_mask_reused": false,
+      "tracking_mask_source_group_id": 3223,
+      "tracking_object_pixels_by_camera": {
+        "0": 16079,
+        "1": 31469,
+        "2": 13285
+      },
+      "tracking_query_count_actual_by_camera": {
+        "0": 4096,
+        "1": 4096,
+        "2": 4096
+      },
+      "tracking_sample_background_hits_by_camera": {
+        "0": 0,
+        "1": 0,
+        "2": 0
+      },
+      "tracking_sample_controller_hits_by_camera": {
+        "0": 752,
+        "1": 485,
+        "2": 870
+      },
+      "tracking_sample_object_hits_by_camera": {
+        "0": 3344,
+        "1": 3611,
+        "2": 3226
+      },
+      "tracking_sample_overlap_hits_by_camera": {
+        "0": 0,
+        "1": 0,
+        "2": 0
+      },
+      "tracking_union_pixels_by_camera": {
+        "0": 19815,
+        "1": 35438,
+        "2": 16894
+      }
+    }
+  },
+  "pre_teardown_profile": true,
+  "runtime_note": "Pre-teardown Demo 3.1 profile written before legacy Open3D cleanup so live profiling survives workstation teardown crashes.",
+  "shared_runtime_profile": "docs/generated/demo32_tapnextpp_serial_strict_120s_profile_shared_runtime.json",
+  "summary": {
+    "all_tracks_lift_attempt_count": 601,
+    "all_tracks_lift_candidate_count_by_camera": {},
+    "all_tracks_lift_cap_applied_by_camera": {},
+    "all_tracks_lift_cap_applied_count": 1202,
+    "all_tracks_lift_exact_depth_group": false,
+    "all_tracks_lift_exact_depth_group_ratio": 1.0,
+    "all_tracks_lift_max_points_per_camera": 512,
+    "all_tracks_lift_ms": 0.0,
+    "all_tracks_lift_rejected_by_cap_by_camera": {},
+    "all_tracks_lift_rendered_count_by_camera": {},
+    "all_tracks_lift_selected_count_by_camera": {},
+    "all_tracks_lift_selection": "visible-spread",
+    "apply_enhanced_component_filter_to_pcd": true,
+    "batch_bundle_policy": "strict-source",
+    "bundle_consumed_without_render_count": 0,
+    "bundle_incomplete_drop_count": 0,
+    "bundle_taken_lift_input_missing_count": 0,
+    "bundle_taken_render_success_count": 601,
+    "bundle_taken_surface_anchor_missing_count": 0,
+    "bundle_taken_then_render_failed_count": 0,
+    "capture_group_fps": 0.0,
+    "capture_pending_drop_count": 0,
+    "complete_bundle_rendered_count": 601,
+    "controller_component_count_by_camera": {
+      "0": 11,
+      "1": 7,
+      "2": 12
+    },
+    "controller_component_filter_removed_ratio_by_camera": {
+      "0": 0.02198952879581152,
+      "1": 0.000503651473180559,
+      "2": 0.033734939759036145
+    },
+    "controller_component_point_counts_by_camera": {
+      "0": [
+        2640,
+        827,
+        134,
+        104,
+        78,
+        17,
+        10,
+        3,
+        3,
+        3,
+        1
+      ],
+      "1": [
+        3588,
+        278,
+        94,
+        6,
+        3,
+        1,
+        1
+      ],
+      "2": [
+        3374,
+        190,
+        92,
+        31,
+        15,
+        13,
+        11,
+        3,
+        2,
+        2,
+        1,
+        1
+      ]
+    },
+    "controller_enhanced_keep_top_n_components": 2,
+    "controller_filter": {
+      "apply_enhanced_component_filter_to_pcd": true,
+      "component_selection_policy": "largest-n-plus-gap",
+      "keep_top_n_components": 2,
+      "mode": "enhanced-pt"
+    },
+    "controller_filter_by_camera": {
+      "0": {
+        "after_radius_point_count": 3820,
+        "component_bbox_gap_to_kept_top_n_m": {
+          "0": 0.0,
+          "1": 0.0,
+          "10": 0.02617090940475464,
+          "2": 0.0,
+          "3": 0.0038334131240844727,
+          "4": 0.03752171993255615,
+          "5": 0.0,
+          "6": 0.010345637798309326,
+          "7": 0.0,
+          "8": 0.059820957481861115,
+          "9": 0.03878529369831085
+        },
+        "component_count": 11,
+        "component_filter_enabled": true,
+        "component_point_counts": [
+          2640,
+          827,
+          134,
+          104,
+          78,
+          17,
+          10,
+          3,
+          3,
+          3,
+          1
+        ],
+        "component_selection_ms": 0.2645699860295281,
+        "component_selection_policy": "largest-n-plus-gap",
+        "component_voxel_size_m": 0.006,
+        "components": [
+          {
+            "bbox_extent": [
+              0.15856847167015076,
+              0.21186566352844238,
+              0.10239574313163757
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.08546900749206543,
+              0.404410183429718,
+              0.011483728885650635
+            ],
+            "bbox_min": [
+              -0.07309946417808533,
+              0.19254451990127563,
+              -0.09091201424598694
+            ],
+            "centroid": [
+              0.01799403876066208,
+              0.29618099331855774,
+              -0.02684108354151249
+            ],
+            "component_idx": 0,
+            "kept": true,
+            "point_count": 2640
+          },
+          {
+            "bbox_extent": [
+              0.14832644164562225,
+              0.14426672458648682,
+              0.05547875165939331
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.16736215353012085,
+            "bbox_max": [
+              0.39044591784477234,
+              0.13363170623779297,
+              -0.012132823467254639
+            ],
+            "bbox_min": [
+              0.24211947619915009,
+              -0.010635018348693848,
+              -0.06761157512664795
+            ],
+            "centroid": [
+              0.32009971141815186,
+              0.0746942013502121,
+              -0.03705216199159622
+            ],
+            "component_idx": 1,
+            "kept": true,
+            "point_count": 827
+          },
+          {
+            "bbox_extent": [
+              0.05659770965576172,
+              0.051981836557388306,
+              0.017367839813232422
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              -0.006539672613143921,
+              0.37963956594467163,
+              -0.015198737382888794
+            ],
+            "bbox_min": [
+              -0.06313738226890564,
+              0.3276577293872833,
+              -0.032566577196121216
+            ],
+            "centroid": [
+              -0.03361208736896515,
+              0.36046919226646423,
+              -0.024707496166229248
+            ],
+            "component_idx": 2,
+            "kept": true,
+            "point_count": 134
+          },
+          {
+            "bbox_extent": [
+              0.04032173752784729,
+              0.03856301307678223,
+              0.025646507740020752
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0038334131240844727,
+            "bbox_gap_to_main_m": 0.0038334131240844727,
+            "bbox_max": [
+              0.08561384677886963,
+              0.18871110677719116,
+              -0.032922834157943726
+            ],
+            "bbox_min": [
+              0.04529210925102234,
+              0.15014809370040894,
+              -0.05856934189796448
+            ],
+            "centroid": [
+              0.06508899480104446,
+              0.17171533405780792,
+              -0.0456911139190197
+            ],
+            "component_idx": 3,
+            "kept": true,
+            "point_count": 104
+          },
+          {
+            "bbox_extent": [
+              0.0818423330783844,
+              0.03776425123214722,
+              0.019563764333724976
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.03752171993255615,
+            "bbox_gap_to_main_m": 0.3249654173851013,
+            "bbox_max": [
+              0.38563546538352966,
+              -0.04815673828125,
+              -0.026996642351150513
+            ],
+            "bbox_min": [
+              0.30379313230514526,
+              -0.08592098951339722,
+              -0.04656040668487549
+            ],
+            "centroid": [
+              0.34565669298171997,
+              -0.07013241946697235,
+              -0.03714985400438309
+            ],
+            "component_idx": 4,
+            "kept": false,
+            "point_count": 78
+          },
+          {
+            "bbox_extent": [
+              0.005225062370300293,
+              0.019018471240997314,
+              0.008898735046386719
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.07293611764907837,
+              0.30215054750442505,
+              0.009547770023345947
+            ],
+            "bbox_min": [
+              0.06771105527877808,
+              0.28313207626342773,
+              0.0006490349769592285
+            ],
+            "centroid": [
+              0.0699075385928154,
+              0.292298823595047,
+              0.007035504560917616
+            ],
+            "component_idx": 5,
+            "kept": true,
+            "point_count": 17
+          },
+          {
+            "bbox_extent": [
+              0.019113004207611084,
+              0.016480863094329834,
+              0.004716008901596069
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.010345637798309326,
+            "bbox_gap_to_main_m": 0.3049362897872925,
+            "bbox_max": [
+              0.3222816586494446,
+              -0.020980656147003174,
+              -0.04059880971908569
+            ],
+            "bbox_min": [
+              0.3031686544418335,
+              -0.03746151924133301,
+              -0.04531481862068176
+            ],
+            "centroid": [
+              0.31270259618759155,
+              -0.02727365493774414,
+              -0.04205905273556709
+            ],
+            "component_idx": 6,
+            "kept": true,
+            "point_count": 10
+          },
+          {
+            "bbox_extent": [
+              0.002895951271057129,
+              0.0073552727699279785,
+              0.00029337406158447266
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.28533169627189636,
+            "bbox_max": [
+              0.28964436054229736,
+              -0.009694874286651611,
+              -0.06117844581604004
+            ],
+            "bbox_min": [
+              0.28674840927124023,
+              -0.01705014705657959,
+              -0.06147181987762451
+            ],
+            "centroid": [
+              0.2878898084163666,
+              -0.012647449970245361,
+              -0.06128082796931267
+            ],
+            "component_idx": 7,
+            "kept": true,
+            "point_count": 3
+          },
+          {
+            "bbox_extent": [
+              0.0024709701538085938,
+              0.0045043230056762695,
+              0.0014740824699401855
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.059820957481861115,
+            "bbox_gap_to_main_m": 0.39141571521759033,
+            "bbox_max": [
+              0.37790632247924805,
+              -0.0703732967376709,
+              -0.007514685392379761
+            ],
+            "bbox_min": [
+              0.37543535232543945,
+              -0.07487761974334717,
+              -0.008988767862319946
+            ],
+            "centroid": [
+              0.37628793716430664,
+              -0.07316545397043228,
+              -0.008347560651600361
+            ],
+            "component_idx": 8,
+            "kept": false,
+            "point_count": 3
+          },
+          {
+            "bbox_extent": [
+              0.008742928504943848,
+              0.005665183067321777,
+              0.0005362629890441895
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.03878529369831085,
+            "bbox_gap_to_main_m": 0.3681618273258209,
+            "bbox_max": [
+              0.37174585461616516,
+              -0.04936051368713379,
+              -0.009443700313568115
+            ],
+            "bbox_min": [
+              0.3630029261112213,
+              -0.055025696754455566,
+              -0.009979963302612305
+            ],
+            "centroid": [
+              0.36672869324684143,
+              -0.051576774567365646,
+              -0.009748756885528564
+            ],
+            "component_idx": 9,
+            "kept": false,
+            "point_count": 3
+          },
+          {
+            "bbox_extent": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.02617090940475464,
+            "bbox_gap_to_main_m": 0.34704089164733887,
+            "bbox_max": [
+              0.34592199325561523,
+              -0.036805927753448486,
+              -0.03973811864852905
+            ],
+            "bbox_min": [
+              0.34592199325561523,
+              -0.036805927753448486,
+              -0.03973811864852905
+            ],
+            "centroid": [
+              0.34592199325561523,
+              -0.036805927753448486,
+              -0.03973811864852905
+            ],
+            "component_idx": 10,
+            "kept": true,
+            "point_count": 1
+          }
+        ],
+        "enabled": true,
+        "input_point_count": 4664,
+        "keep_near_main_gap_m": 0.035,
+        "keep_top_n_components": 2,
+        "kept_component_count": 8,
+        "kept_component_indices": [
+          0,
+          1,
+          2,
+          3,
+          5,
+          6,
+          7,
+          10
+        ],
+        "min_component_points": 32,
+        "min_component_ratio": 0.0,
+        "mode": "enhanced-pt",
+        "output_point_count": 3736,
+        "radius_filter_ms": 1.764747008564882,
+        "radius_postprocess": {
+          "enabled": true,
+          "inlier_point_count": 3820,
+          "input_point_count": 4664,
+          "mode": "phystwin_like_radius_neighbor_filter",
+          "nb_points": 12,
+          "outlier_point_count": 844,
+          "outlier_ratio": 0.18096054888507718,
+          "radius_filter_ms": 1.764747008564882,
+          "radius_m": 0.01
+        },
+        "removed_component_count": 3,
+        "removed_component_indices": [
+          4,
+          8,
+          9
+        ],
+        "removed_components": [
+          {
+            "bbox_extent": [
+              0.0818423330783844,
+              0.03776425123214722,
+              0.019563764333724976
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.03752171993255615,
+            "bbox_gap_to_main_m": 0.3249654173851013,
+            "bbox_max": [
+              0.38563546538352966,
+              -0.04815673828125,
+              -0.026996642351150513
+            ],
+            "bbox_min": [
+              0.30379313230514526,
+              -0.08592098951339722,
+              -0.04656040668487549
+            ],
+            "centroid": [
+              0.34565669298171997,
+              -0.07013241946697235,
+              -0.03714985400438309
+            ],
+            "component_idx": 4,
+            "kept": false,
+            "point_count": 78
+          },
+          {
+            "bbox_extent": [
+              0.0024709701538085938,
+              0.0045043230056762695,
+              0.0014740824699401855
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.059820957481861115,
+            "bbox_gap_to_main_m": 0.39141571521759033,
+            "bbox_max": [
+              0.37790632247924805,
+              -0.0703732967376709,
+              -0.007514685392379761
+            ],
+            "bbox_min": [
+              0.37543535232543945,
+              -0.07487761974334717,
+              -0.008988767862319946
+            ],
+            "centroid": [
+              0.37628793716430664,
+              -0.07316545397043228,
+              -0.008347560651600361
+            ],
+            "component_idx": 8,
+            "kept": false,
+            "point_count": 3
+          },
+          {
+            "bbox_extent": [
+              0.008742928504943848,
+              0.005665183067321777,
+              0.0005362629890441895
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.03878529369831085,
+            "bbox_gap_to_main_m": 0.3681618273258209,
+            "bbox_max": [
+              0.37174585461616516,
+              -0.04936051368713379,
+              -0.009443700313568115
+            ],
+            "bbox_min": [
+              0.3630029261112213,
+              -0.055025696754455566,
+              -0.009979963302612305
+            ],
+            "centroid": [
+              0.36672869324684143,
+              -0.051576774567365646,
+              -0.009748756885528564
+            ],
+            "component_idx": 9,
+            "kept": false,
+            "point_count": 3
+          }
+        ],
+        "removed_point_count": 84,
+        "removed_point_ratio_after_radius": 0.02198952879581152,
+        "survivor_index_space": "source_points_world",
+        "top_n_component_indices": [
+          0,
+          1
+        ],
+        "top_n_component_point_counts": [
+          2640,
+          827
+        ],
+        "total_ms": 7.601588004035875,
+        "voxel_component_ms": 5.262924009002745
+      },
+      "1": {
+        "after_radius_point_count": 3971,
+        "component_bbox_gap_to_kept_top_n_m": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 0.004405468702316284,
+          "3": 0.007616877555847168,
+          "4": 0.008058294653892517,
+          "5": 0.035625338554382324,
+          "6": 0.03527987003326416
+        },
+        "component_count": 7,
+        "component_filter_enabled": true,
+        "component_point_counts": [
+          3588,
+          278,
+          94,
+          6,
+          3,
+          1,
+          1
+        ],
+        "component_selection_ms": 0.1498669880675152,
+        "component_selection_policy": "largest-n-plus-gap",
+        "component_voxel_size_m": 0.006,
+        "components": [
+          {
+            "bbox_extent": [
+              0.12886148691177368,
+              0.2593216001987457,
+              0.0995301604270935
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.08857014030218124,
+              0.3882695436477661,
+              0.005902230739593506
+            ],
+            "bbox_min": [
+              -0.040291354060173035,
+              0.12894794344902039,
+              -0.0936279296875
+            ],
+            "centroid": [
+              0.015909992158412933,
+              0.25997063517570496,
+              -0.025323182344436646
+            ],
+            "component_idx": 0,
+            "kept": true,
+            "point_count": 3588
+          },
+          {
+            "bbox_extent": [
+              0.052590757608413696,
+              0.16640174388885498,
+              0.044106870889663696
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.18721464276313782,
+            "bbox_max": [
+              0.32707148790359497,
+              0.10688939690589905,
+              -0.020311564207077026
+            ],
+            "bbox_min": [
+              0.2744807302951813,
+              -0.05951234698295593,
+              -0.06441843509674072
+            ],
+            "centroid": [
+              0.29289430379867554,
+              0.018621288239955902,
+              -0.04292833432555199
+            ],
+            "component_idx": 1,
+            "kept": true,
+            "point_count": 278
+          },
+          {
+            "bbox_extent": [
+              0.04867511987686157,
+              0.07297978550195694,
+              0.01454383134841919
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.004405468702316284,
+            "bbox_gap_to_main_m": 0.15099553763866425,
+            "bbox_max": [
+              0.270075261592865,
+              0.057143740355968475,
+              -0.03540453314781189
+            ],
+            "bbox_min": [
+              0.22140014171600342,
+              -0.015836045145988464,
+              -0.04994836449623108
+            ],
+            "centroid": [
+              0.24273289740085602,
+              0.021191662177443504,
+              -0.045597273856401443
+            ],
+            "component_idx": 2,
+            "kept": true,
+            "point_count": 94
+          },
+          {
+            "bbox_extent": [
+              0.008979469537734985,
+              0.00938647985458374,
+              0.0030411481857299805
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.007616877555847168,
+            "bbox_gap_to_main_m": 0.17301777005195618,
+            "bbox_max": [
+              0.2668638527393341,
+              0.09334121644496918,
+              -0.0298861563205719
+            ],
+            "bbox_min": [
+              0.2578843832015991,
+              0.08395473659038544,
+              -0.03292730450630188
+            ],
+            "centroid": [
+              0.26193737983703613,
+              0.08779674023389816,
+              -0.031020844355225563
+            ],
+            "component_idx": 3,
+            "kept": true,
+            "point_count": 6
+          },
+          {
+            "bbox_extent": [
+              0.009662210941314697,
+              0.0013462677597999573,
+              0.0003789067268371582
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.008058294653892517,
+            "bbox_gap_to_main_m": 0.20157656073570251,
+            "bbox_max": [
+              0.2994113564491272,
+              0.11629395931959152,
+              -0.03616809844970703
+            ],
+            "bbox_min": [
+              0.2897491455078125,
+              0.11494769155979156,
+              -0.03654700517654419
+            ],
+            "centroid": [
+              0.2947942316532135,
+              0.11581441015005112,
+              -0.036299556493759155
+            ],
+            "component_idx": 4,
+            "kept": true,
+            "point_count": 3
+          },
+          {
+            "bbox_extent": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.035625338554382324,
+            "bbox_gap_to_main_m": 0.2817399203777313,
+            "bbox_max": [
+              0.3626968264579773,
+              0.06389454752206802,
+              -0.03615772724151611
+            ],
+            "bbox_min": [
+              0.3626968264579773,
+              0.06389454752206802,
+              -0.03615772724151611
+            ],
+            "centroid": [
+              0.3626968264579773,
+              0.06389454752206802,
+              -0.03615772724151611
+            ],
+            "component_idx": 5,
+            "kept": false,
+            "point_count": 1
+          },
+          {
+            "bbox_extent": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.03527987003326416,
+            "bbox_gap_to_main_m": 0.2855108082294464,
+            "bbox_max": [
+              0.36235135793685913,
+              0.04795244336128235,
+              -0.035806238651275635
+            ],
+            "bbox_min": [
+              0.36235135793685913,
+              0.04795244336128235,
+              -0.035806238651275635
+            ],
+            "centroid": [
+              0.36235135793685913,
+              0.04795244336128235,
+              -0.035806238651275635
+            ],
+            "component_idx": 6,
+            "kept": false,
+            "point_count": 1
+          }
+        ],
+        "enabled": true,
+        "input_point_count": 4685,
+        "keep_near_main_gap_m": 0.035,
+        "keep_top_n_components": 2,
+        "kept_component_count": 5,
+        "kept_component_indices": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "min_component_points": 32,
+        "min_component_ratio": 0.0,
+        "mode": "enhanced-pt",
+        "output_point_count": 3969,
+        "radius_filter_ms": 1.994775011553429,
+        "radius_postprocess": {
+          "enabled": true,
+          "inlier_point_count": 3971,
+          "input_point_count": 4685,
+          "mode": "phystwin_like_radius_neighbor_filter",
+          "nb_points": 12,
+          "outlier_point_count": 714,
+          "outlier_ratio": 0.15240128068303094,
+          "radius_filter_ms": 1.994775011553429,
+          "radius_m": 0.01
+        },
+        "removed_component_count": 2,
+        "removed_component_indices": [
+          5,
+          6
+        ],
+        "removed_components": [
+          {
+            "bbox_extent": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.035625338554382324,
+            "bbox_gap_to_main_m": 0.2817399203777313,
+            "bbox_max": [
+              0.3626968264579773,
+              0.06389454752206802,
+              -0.03615772724151611
+            ],
+            "bbox_min": [
+              0.3626968264579773,
+              0.06389454752206802,
+              -0.03615772724151611
+            ],
+            "centroid": [
+              0.3626968264579773,
+              0.06389454752206802,
+              -0.03615772724151611
+            ],
+            "component_idx": 5,
+            "kept": false,
+            "point_count": 1
+          },
+          {
+            "bbox_extent": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.03527987003326416,
+            "bbox_gap_to_main_m": 0.2855108082294464,
+            "bbox_max": [
+              0.36235135793685913,
+              0.04795244336128235,
+              -0.035806238651275635
+            ],
+            "bbox_min": [
+              0.36235135793685913,
+              0.04795244336128235,
+              -0.035806238651275635
+            ],
+            "centroid": [
+              0.36235135793685913,
+              0.04795244336128235,
+              -0.035806238651275635
+            ],
+            "component_idx": 6,
+            "kept": false,
+            "point_count": 1
+          }
+        ],
+        "removed_point_count": 2,
+        "removed_point_ratio_after_radius": 0.000503651473180559,
+        "survivor_index_space": "source_points_world",
+        "top_n_component_indices": [
+          0,
+          1
+        ],
+        "top_n_component_point_counts": [
+          3588,
+          278
+        ],
+        "total_ms": 7.129415011149831,
+        "voxel_component_ms": 4.829930010600947
+      },
+      "2": {
+        "after_radius_point_count": 3735,
+        "component_bbox_gap_to_kept_top_n_m": {
+          "0": 0.0,
+          "1": 0.0,
+          "10": 0.13931499421596527,
+          "11": 0.02973324805498123,
+          "2": 0.0588139109313488,
+          "3": 0.0,
+          "4": 0.12686924636363983,
+          "5": 0.05200853943824768,
+          "6": 0.0,
+          "7": 0.13391441106796265,
+          "8": 0.12965506315231323,
+          "9": 0.0
+        },
+        "component_count": 12,
+        "component_filter_enabled": true,
+        "component_point_counts": [
+          3374,
+          190,
+          92,
+          31,
+          15,
+          13,
+          11,
+          3,
+          2,
+          2,
+          1,
+          1
+        ],
+        "component_selection_ms": 0.22794499818701297,
+        "component_selection_policy": "largest-n-plus-gap",
+        "component_voxel_size_m": 0.006,
+        "components": [
+          {
+            "bbox_extent": [
+              0.1897163689136505,
+              0.25547143816947937,
+              0.07138237357139587
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.4087512493133545,
+              0.13698822259902954,
+              0.012394547462463379
+            ],
+            "bbox_min": [
+              0.21903488039970398,
+              -0.11848321557044983,
+              -0.058987826108932495
+            ],
+            "centroid": [
+              0.3375566899776459,
+              -0.0006650429568253458,
+              -0.027080314233899117
+            ],
+            "component_idx": 0,
+            "kept": true,
+            "point_count": 3374
+          },
+          {
+            "bbox_extent": [
+              0.07014063000679016,
+              0.0740426778793335,
+              0.03641703724861145
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.2400341033935547,
+            "bbox_max": [
+              -0.017890751361846924,
+              0.24953562021255493,
+              0.009784162044525146
+            ],
+            "bbox_min": [
+              -0.08803138136863708,
+              0.17549294233322144,
+              -0.026632875204086304
+            ],
+            "centroid": [
+              -0.04827004298567772,
+              0.21065132319927216,
+              -0.007101607974618673
+            ],
+            "component_idx": 1,
+            "kept": true,
+            "point_count": 190
+          },
+          {
+            "bbox_extent": [
+              0.051267385482788086,
+              0.08081185817718506,
+              0.02966800332069397
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0588139109313488,
+            "bbox_gap_to_main_m": 0.14079594612121582,
+            "bbox_max": [
+              0.09040260314941406,
+              0.275047242641449,
+              -0.041024357080459595
+            ],
+            "bbox_min": [
+              0.03913521766662598,
+              0.19423538446426392,
+              -0.07069236040115356
+            ],
+            "centroid": [
+              0.06120426580309868,
+              0.23883400857448578,
+              -0.0556890033185482
+            ],
+            "component_idx": 2,
+            "kept": false,
+            "point_count": 92
+          },
+          {
+            "bbox_extent": [
+              0.035108521580696106,
+              0.016668349504470825,
+              0.009624779224395752
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.2370126098394394,
+              0.010689496994018555,
+              0.008938312530517578
+            ],
+            "bbox_min": [
+              0.2019040882587433,
+              -0.0059788525104522705,
+              -0.0006864666938781738
+            ],
+            "centroid": [
+              0.2152002900838852,
+              0.0038427230902016163,
+              0.006139193661510944
+            ],
+            "component_idx": 3,
+            "kept": true,
+            "point_count": 31
+          },
+          {
+            "bbox_extent": [
+              0.028364062309265137,
+              0.010398268699645996,
+              0.01915714144706726
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.12686924636363983,
+            "bbox_gap_to_main_m": 0.3072579801082611,
+            "bbox_max": [
+              0.020991653203964233,
+              0.38230425119400024,
+              -0.058423787355422974
+            ],
+            "bbox_min": [
+              -0.007372409105300903,
+              0.37190598249435425,
+              -0.07758092880249023
+            ],
+            "centroid": [
+              0.003871613647788763,
+              0.3764171004295349,
+              -0.06648077815771103
+            ],
+            "component_idx": 4,
+            "kept": false,
+            "point_count": 15
+          },
+          {
+            "bbox_extent": [
+              0.014339089393615723,
+              0.018007099628448486,
+              0.01586383581161499
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.05200853943824768,
+            "bbox_gap_to_main_m": 0.17627905309200287,
+            "bbox_max": [
+              0.04845687747001648,
+              0.1994638442993164,
+              -0.010845661163330078
+            ],
+            "bbox_min": [
+              0.03411778807640076,
+              0.18145674467086792,
+              -0.02670949697494507
+            ],
+            "centroid": [
+              0.03987418860197067,
+              0.1907196342945099,
+              -0.018516093492507935
+            ],
+            "component_idx": 5,
+            "kept": false,
+            "point_count": 13
+          },
+          {
+            "bbox_extent": [
+              0.015334486961364746,
+              0.004205197095870972,
+              0.007801413536071777
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.3060130476951599,
+              -0.033352166414260864,
+              0.01567167043685913
+            ],
+            "bbox_min": [
+              0.29067856073379517,
+              -0.037557363510131836,
+              0.007870256900787354
+            ],
+            "centroid": [
+              0.2973293960094452,
+              -0.03567599505186081,
+              0.011220460757613182
+            ],
+            "component_idx": 6,
+            "kept": true,
+            "point_count": 11
+          },
+          {
+            "bbox_extent": [
+              0.009363144636154175,
+              0.002026081085205078,
+              0.0032173991203308105
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.13391441106796265,
+            "bbox_gap_to_main_m": 0.33805549144744873,
+            "bbox_max": [
+              -0.01234811544418335,
+              0.38547611236572266,
+              -0.01002269983291626
+            ],
+            "bbox_min": [
+              -0.021711260080337524,
+              0.3834500312805176,
+              -0.01324009895324707
+            ],
+            "centroid": [
+              -0.016892364248633385,
+              0.3847378194332123,
+              -0.011690914630889893
+            ],
+            "component_idx": 7,
+            "kept": false,
+            "point_count": 3
+          },
+          {
+            "bbox_extent": [
+              0.004283219575881958,
+              0.0001894831657409668,
+              0.003227710723876953
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.12965506315231323,
+            "bbox_gap_to_main_m": 0.34670040011405945,
+            "bbox_max": [
+              -0.029035955667495728,
+              0.37938016653060913,
+              -0.009085237979888916
+            ],
+            "bbox_min": [
+              -0.033319175243377686,
+              0.37919068336486816,
+              -0.01231294870376587
+            ],
+            "centroid": [
+              -0.031177565455436707,
+              0.37928542494773865,
+              -0.010699093341827393
+            ],
+            "component_idx": 8,
+            "kept": false,
+            "point_count": 2
+          },
+          {
+            "bbox_extent": [
+              0.0008745193481445312,
+              0.0040902793407440186,
+              0.0016408562660217285
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.2606664299964905,
+              -0.01498451828956604,
+              0.009486973285675049
+            ],
+            "bbox_min": [
+              0.25979191064834595,
+              -0.01907479763031006,
+              0.00784611701965332
+            ],
+            "centroid": [
+              0.2602291703224182,
+              -0.01702965795993805,
+              0.008666545152664185
+            ],
+            "component_idx": 9,
+            "kept": true,
+            "point_count": 2
+          },
+          {
+            "bbox_extent": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.13931499421596527,
+            "bbox_gap_to_main_m": 0.3354303538799286,
+            "bbox_max": [
+              -0.003363102674484253,
+              0.3880910873413086,
+              -0.00784456729888916
+            ],
+            "bbox_min": [
+              -0.003363102674484253,
+              0.3880910873413086,
+              -0.00784456729888916
+            ],
+            "centroid": [
+              -0.003363102674484253,
+              0.3880910873413086,
+              -0.00784456729888916
+            ],
+            "component_idx": 10,
+            "kept": false,
+            "point_count": 1
+          },
+          {
+            "bbox_extent": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.02973324805498123,
+            "bbox_gap_to_main_m": 0.2202519178390503,
+            "bbox_max": [
+              0.011674612760543823,
+              0.21123528480529785,
+              -0.029788076877593994
+            ],
+            "bbox_min": [
+              0.011674612760543823,
+              0.21123528480529785,
+              -0.029788076877593994
+            ],
+            "centroid": [
+              0.011674612760543823,
+              0.21123528480529785,
+              -0.029788076877593994
+            ],
+            "component_idx": 11,
+            "kept": true,
+            "point_count": 1
+          }
+        ],
+        "enabled": true,
+        "input_point_count": 4692,
+        "keep_near_main_gap_m": 0.035,
+        "keep_top_n_components": 2,
+        "kept_component_count": 6,
+        "kept_component_indices": [
+          0,
+          1,
+          3,
+          6,
+          9,
+          11
+        ],
+        "min_component_points": 32,
+        "min_component_ratio": 0.0,
+        "mode": "enhanced-pt",
+        "output_point_count": 3609,
+        "radius_filter_ms": 1.6123169916681945,
+        "radius_postprocess": {
+          "enabled": true,
+          "inlier_point_count": 3735,
+          "input_point_count": 4692,
+          "mode": "phystwin_like_radius_neighbor_filter",
+          "nb_points": 12,
+          "outlier_point_count": 957,
+          "outlier_ratio": 0.20396419437340155,
+          "radius_filter_ms": 1.6123169916681945,
+          "radius_m": 0.01
+        },
+        "removed_component_count": 6,
+        "removed_component_indices": [
+          2,
+          4,
+          5,
+          7,
+          8,
+          10
+        ],
+        "removed_components": [
+          {
+            "bbox_extent": [
+              0.051267385482788086,
+              0.08081185817718506,
+              0.02966800332069397
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0588139109313488,
+            "bbox_gap_to_main_m": 0.14079594612121582,
+            "bbox_max": [
+              0.09040260314941406,
+              0.275047242641449,
+              -0.041024357080459595
+            ],
+            "bbox_min": [
+              0.03913521766662598,
+              0.19423538446426392,
+              -0.07069236040115356
+            ],
+            "centroid": [
+              0.06120426580309868,
+              0.23883400857448578,
+              -0.0556890033185482
+            ],
+            "component_idx": 2,
+            "kept": false,
+            "point_count": 92
+          },
+          {
+            "bbox_extent": [
+              0.028364062309265137,
+              0.010398268699645996,
+              0.01915714144706726
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.12686924636363983,
+            "bbox_gap_to_main_m": 0.3072579801082611,
+            "bbox_max": [
+              0.020991653203964233,
+              0.38230425119400024,
+              -0.058423787355422974
+            ],
+            "bbox_min": [
+              -0.007372409105300903,
+              0.37190598249435425,
+              -0.07758092880249023
+            ],
+            "centroid": [
+              0.003871613647788763,
+              0.3764171004295349,
+              -0.06648077815771103
+            ],
+            "component_idx": 4,
+            "kept": false,
+            "point_count": 15
+          },
+          {
+            "bbox_extent": [
+              0.014339089393615723,
+              0.018007099628448486,
+              0.01586383581161499
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.05200853943824768,
+            "bbox_gap_to_main_m": 0.17627905309200287,
+            "bbox_max": [
+              0.04845687747001648,
+              0.1994638442993164,
+              -0.010845661163330078
+            ],
+            "bbox_min": [
+              0.03411778807640076,
+              0.18145674467086792,
+              -0.02670949697494507
+            ],
+            "centroid": [
+              0.03987418860197067,
+              0.1907196342945099,
+              -0.018516093492507935
+            ],
+            "component_idx": 5,
+            "kept": false,
+            "point_count": 13
+          },
+          {
+            "bbox_extent": [
+              0.009363144636154175,
+              0.002026081085205078,
+              0.0032173991203308105
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.13391441106796265,
+            "bbox_gap_to_main_m": 0.33805549144744873,
+            "bbox_max": [
+              -0.01234811544418335,
+              0.38547611236572266,
+              -0.01002269983291626
+            ],
+            "bbox_min": [
+              -0.021711260080337524,
+              0.3834500312805176,
+              -0.01324009895324707
+            ],
+            "centroid": [
+              -0.016892364248633385,
+              0.3847378194332123,
+              -0.011690914630889893
+            ],
+            "component_idx": 7,
+            "kept": false,
+            "point_count": 3
+          },
+          {
+            "bbox_extent": [
+              0.004283219575881958,
+              0.0001894831657409668,
+              0.003227710723876953
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.12965506315231323,
+            "bbox_gap_to_main_m": 0.34670040011405945,
+            "bbox_max": [
+              -0.029035955667495728,
+              0.37938016653060913,
+              -0.009085237979888916
+            ],
+            "bbox_min": [
+              -0.033319175243377686,
+              0.37919068336486816,
+              -0.01231294870376587
+            ],
+            "centroid": [
+              -0.031177565455436707,
+              0.37928542494773865,
+              -0.010699093341827393
+            ],
+            "component_idx": 8,
+            "kept": false,
+            "point_count": 2
+          },
+          {
+            "bbox_extent": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.13931499421596527,
+            "bbox_gap_to_main_m": 0.3354303538799286,
+            "bbox_max": [
+              -0.003363102674484253,
+              0.3880910873413086,
+              -0.00784456729888916
+            ],
+            "bbox_min": [
+              -0.003363102674484253,
+              0.3880910873413086,
+              -0.00784456729888916
+            ],
+            "centroid": [
+              -0.003363102674484253,
+              0.3880910873413086,
+              -0.00784456729888916
+            ],
+            "component_idx": 10,
+            "kept": false,
+            "point_count": 1
+          }
+        ],
+        "removed_point_count": 126,
+        "removed_point_ratio_after_radius": 0.033734939759036145,
+        "survivor_index_space": "source_points_world",
+        "top_n_component_indices": [
+          0,
+          1
+        ],
+        "top_n_component_point_counts": [
+          3374,
+          190
+        ],
+        "total_ms": 7.372182008111849,
+        "voxel_component_ms": 5.36155300505925
+      }
+    },
+    "controller_filter_mode_by_camera": {
+      "0": "enhanced-pt",
+      "1": "enhanced-pt",
+      "2": "enhanced-pt"
+    },
+    "controller_kept_component_indices_by_camera": {
+      "0": [
+        0,
+        1,
+        2,
+        3,
+        5,
+        6,
+        7,
+        10
+      ],
+      "1": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "2": [
+        0,
+        1,
+        3,
+        6,
+        9,
+        11
+      ]
+    },
+    "controller_mask_erode_applies_to": "tracking_input_and_anchor_masks",
+    "controller_mask_erode_px": 0,
+    "controller_mask_erode_stage": "before_tracking_union_and_trackable_filter",
+    "controller_mask_erode_unit": "px",
+    "controller_mask_pixels_after_erode_by_camera": {
+      "0": 4999,
+      "1": 4999,
+      "2": 4999
+    },
+    "controller_mask_pixels_before_erode_by_camera": {
+      "0": 4999,
+      "1": 4999,
+      "2": 4999
+    },
+    "controller_mask_semantics": "controller_trackable_mask",
+    "controller_pcd_cap_sampling": "stable_coordinate_hash_seed_plus_camera_idx",
+    "controller_pcd_cap_stage": "before_tracking_query_and_fusion",
+    "controller_pcd_max_points_per_camera": 4999,
+    "controller_postprocess": "enhanced-pt",
+    "controller_removed_component_count_by_camera": {
+      "0": 3,
+      "1": 2,
+      "2": 6
+    },
+    "controller_removed_point_count_by_camera": {
+      "0": 84,
+      "1": 2,
+      "2": 126
+    },
+    "controller_render_cap_affects_tracking_markers": false,
+    "controller_render_cap_enabled": true,
+    "controller_render_cap_input_points": 0,
+    "controller_render_cap_ms": 0.0,
+    "controller_render_cap_output_points": 0,
+    "controller_render_cap_removed_points": 0,
+    "controller_render_cap_stage": "render_pcd_only_after_controller_render_voxel",
+    "controller_render_max_points": 10000,
+    "controller_render_voxel_affects_tracking_markers": false,
+    "controller_render_voxel_enabled": true,
+    "controller_render_voxel_input_points": 0,
+    "controller_render_voxel_m": 0.003,
+    "controller_render_voxel_ms": 0.0,
+    "controller_render_voxel_output_points": 0,
+    "controller_render_voxel_removed_points": 0,
+    "controller_render_voxel_stage": "render_pcd_only_after_controller_postprocess",
+    "controller_top_n_component_point_counts_by_camera": {
+      "0": [
+        2640,
+        827
+      ],
+      "1": [
+        3588,
+        278
+      ],
+      "2": [
+        3374,
+        190
+      ]
+    },
+    "controller_trackable_after_cap_by_camera": {
+      "0": 3736,
+      "1": 3969,
+      "2": 3609
+    },
+    "controller_trackable_before_cap_by_camera": {
+      "0": 3736,
+      "1": 3969,
+      "2": 3609
+    },
+    "controller_trackable_cap_applied_by_camera": {
+      "0": false,
+      "1": false,
+      "2": false
+    },
+    "controller_trackable_cap_stage": "after_enhanced_pt_top_n_component_filter",
+    "controller_trackable_max_points_per_camera": 4999,
+    "cotracker_backend": "tapnextpp",
+    "cotracker_backend_warmup_by_camera": {},
+    "cotracker_backend_warmup_ms": 0.0,
+    "cotracker_batch_disabled_reason": null,
+    "cotracker_batch_error_count": 0,
+    "cotracker_batch_size": 0,
+    "cotracker_batch_size_target": 3,
+    "cotracker_batch_update_count": 0,
+    "cotracker_cuda_visible_devices": "1",
+    "cotracker_e2e_ms_median": 139.8163299560547,
+    "cotracker_e2e_ms_p95": 144.8992919921875,
+    "cotracker_gpu_physical": 1,
+    "cotracker_input_count": 650,
+    "cotracker_input_drop_count": 0,
+    "cotracker_input_fps": 6.048214920345407,
+    "cotracker_input_queue_replace_count": 0,
+    "cotracker_model_ms_median": 134.133056640625,
+    "cotracker_model_ms_p95": 137.45437622070312,
+    "cotracker_owner": "process",
+    "cotracker_prewarm_backends": false,
+    "cotracker_process_mode": "subprocess",
+    "cotracker_process_pid": 0,
+    "cotracker_process_ready": false,
+    "cotracker_process_total_init_ms": 0.0,
+    "cotracker_publish_fps": 6.0328827099008295,
+    "cotracker_result_count": 601,
+    "cotracker_seed": 42,
+    "cotracker_serial_camera_update_count": 0,
+    "cotracker_serial_fallback_count": 0,
+    "cotracker_serial_group_update_count": 0,
+    "cotracker_update_mode": "serial",
+    "cotracker_update_mode_effective": "serial",
+    "cross_gpu_cuda_tensor_transfer": false,
+    "depth_pending_drop_count": 0,
+    "depth_source": "ffs",
+    "depth_valid_controller_pixels_by_camera": {
+      "0": 4664,
+      "1": 4685,
+      "2": 4692
+    },
+    "depth_valid_object_pixels_by_camera": {
+      "0": 16201,
+      "1": 31629,
+      "2": 13523
+    },
+    "display_last_complete_while_waiting": true,
+    "display_loop_fps": 5.090491965246691,
+    "dual_gpu_enabled": true,
+    "edgetam_gpu_physical": 0,
+    "edgetam_live_session_keep_frames": 64,
+    "edgetam_live_session_pruning": true,
+    "enhanced_component_selection_policy": "largest-n-plus-gap",
+    "enhanced_min_component_points": 32,
+    "enhanced_min_component_ratio": 0.0,
+    "ffs_edgetam_same_gpu": true,
+    "ffs_gpu_physical": 0,
+    "first_trackable_mask_group_id": 375,
+    "first_trackable_mask_s": 92750.547274468,
+    "first_tracking_input_publish_s": 92750.547274468,
+    "frame_bundle_exact_render_count": 601,
+    "frame_bundle_missing_exact_count": 0,
+    "frame_bundle_policy": "strict-source",
+    "frame_bundle_strict_source_reject_count": 0,
+    "fresh_mask_fps": 0.0,
+    "fusion_mask_policy": "strict",
+    "gpu0_mem_used_gb": 0.0,
+    "gpu0_util_median": 0.0,
+    "gpu0_util_p95": 0.0,
+    "gpu1_mem_used_gb": 0.0,
+    "gpu1_util_median": 0.0,
+    "gpu1_util_p95": 0.0,
+    "incomplete_bundle_skip_count": 0,
+    "init_mode": "sam31_first_frame",
+    "input_source": "live_realsense",
+    "ipc_payload": "cpu_numpy_latest_wins",
+    "litetracker_export_onnx": false,
+    "litetracker_gpu_physical": null,
+    "litetracker_onnx_dir": null,
+    "litetracker_onnx_opset": 17,
+    "litetracker_onnx_opset_actual": 18,
+    "litetracker_onnx_optimization_level": 5,
+    "litetracker_runtime": "pytorch",
+    "locotrack_autocast_dtype": "bf16",
+    "locotrack_checkpoint": null,
+    "locotrack_model_size": "small",
+    "locotrack_query_chunk_size": 256,
+    "locotrack_repo_dir": null,
+    "locotrack_resolution": [
+      256,
+      256
+    ],
+    "locotrack_window_frames": 8,
+    "main_cuda_visible_devices": "0",
+    "main_process_pid": 0,
+    "mask_age_ms_median": 0.0,
+    "mask_age_ms_p95": 0.0,
+    "mask_gpu_physical": 0,
+    "mask_group_delta_median": 0.0,
+    "mask_group_delta_p95": 0.0,
+    "mask_pending_drop_count": 0,
+    "mask_propagation": "hf_edgetam_online",
+    "mask_reuse_ratio": 0.0,
+    "mask_source": "hf_edgetam",
+    "missing_exact_after_tracker_result_count": 0,
+    "missing_exact_rate": 0.0,
+    "model_calls_per_group": 3,
+    "model_instances_actual": 3,
+    "model_instances_expected": 3,
+    "nearest_fallback_count": 0,
+    "nearest_fallback_debug_count": 0,
+    "new_complete_bundle_fps": 6.034856395863547,
+    "new_fused_pcd_fps": 0.0,
+    "object_component_count_by_camera": {
+      "0": 3,
+      "1": 4,
+      "2": 4
+    },
+    "object_component_filter_removed_ratio_by_camera": {
+      "0": 0.0,
+      "1": 0.0,
+      "2": 0.0
+    },
+    "object_component_point_counts_by_camera": {
+      "0": [
+        15993,
+        45,
+        41
+      ],
+      "1": [
+        31305,
+        103,
+        32,
+        29
+      ],
+      "2": [
+        13170,
+        81,
+        17,
+        17
+      ]
+    },
+    "object_enhanced_keep_top_n_components": 1,
+    "object_filter": {
+      "apply_enhanced_component_filter_to_pcd": true,
+      "component_selection_policy": "largest-n-plus-gap",
+      "keep_top_n_components": 1,
+      "mode": "enhanced-pt",
+      "point_control": "fixed-cap"
+    },
+    "object_filter_by_camera": {
+      "0": {
+        "after_radius_point_count": 16079,
+        "component_bbox_gap_to_kept_top_n_m": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 0.0
+        },
+        "component_count": 3,
+        "component_filter_enabled": true,
+        "component_point_counts": [
+          15993,
+          45,
+          41
+        ],
+        "component_selection_ms": 0.3026480117114261,
+        "component_selection_policy": "largest-n-plus-gap",
+        "component_voxel_size_m": 0.006,
+        "components": [
+          {
+            "bbox_extent": [
+              0.34207093715667725,
+              0.3364444077014923,
+              0.09663122892379761
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.26009976863861084,
+              0.21035358309745789,
+              0.007948517799377441
+            ],
+            "bbox_min": [
+              -0.0819711685180664,
+              -0.12609082460403442,
+              -0.08868271112442017
+            ],
+            "centroid": [
+              0.13495618104934692,
+              0.09848257154226303,
+              -0.04621841758489609
+            ],
+            "component_idx": 0,
+            "kept": true,
+            "point_count": 15993
+          },
+          {
+            "bbox_extent": [
+              0.01366664469242096,
+              0.015533149242401123,
+              0.01580101251602173
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.22369064390659332,
+              -0.00328981876373291,
+              -0.03960642218589783
+            ],
+            "bbox_min": [
+              0.21002399921417236,
+              -0.018822968006134033,
+              -0.055407434701919556
+            ],
+            "centroid": [
+              0.21793752908706665,
+              -0.00987868569791317,
+              -0.050064221024513245
+            ],
+            "component_idx": 1,
+            "kept": true,
+            "point_count": 45
+          },
+          {
+            "bbox_extent": [
+              0.006704956293106079,
+              0.030985891819000244,
+              0.010921299457550049
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.20367293059825897,
+              -0.10007071495056152,
+              0.007914423942565918
+            ],
+            "bbox_min": [
+              0.1969679743051529,
+              -0.13105660676956177,
+              -0.003006875514984131
+            ],
+            "centroid": [
+              0.19988606870174408,
+              -0.11448457837104797,
+              0.003560782875865698
+            ],
+            "component_idx": 2,
+            "kept": true,
+            "point_count": 41
+          }
+        ],
+        "enabled": true,
+        "input_point_count": 16201,
+        "keep_near_main_gap_m": 0.035,
+        "keep_top_n_components": 1,
+        "kept_component_count": 3,
+        "kept_component_indices": [
+          0,
+          1,
+          2
+        ],
+        "min_component_points": 32,
+        "min_component_ratio": 0.0,
+        "mode": "enhanced-pt",
+        "output_point_count": 16079,
+        "radius_filter_ms": 8.113552001304924,
+        "radius_postprocess": {
+          "enabled": true,
+          "inlier_point_count": 16079,
+          "input_point_count": 16201,
+          "mode": "phystwin_like_radius_neighbor_filter",
+          "nb_points": 12,
+          "outlier_point_count": 122,
+          "outlier_ratio": 0.007530399358064317,
+          "radius_filter_ms": 8.113552001304924,
+          "radius_m": 0.01
+        },
+        "removed_component_count": 0,
+        "removed_component_indices": [],
+        "removed_components": [],
+        "removed_point_count": 0,
+        "removed_point_ratio_after_radius": 0.0,
+        "survivor_index_space": "source_points_world",
+        "top_n_component_indices": [
+          0
+        ],
+        "top_n_component_point_counts": [
+          15993
+        ],
+        "total_ms": 175.0891830015462,
+        "voxel_component_ms": 165.68435900262557
+      },
+      "1": {
+        "after_radius_point_count": 31469,
+        "component_bbox_gap_to_kept_top_n_m": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 0.0,
+          "3": 0.0
+        },
+        "component_count": 4,
+        "component_filter_enabled": true,
+        "component_point_counts": [
+          31305,
+          103,
+          32,
+          29
+        ],
+        "component_selection_ms": 0.2159269934054464,
+        "component_selection_policy": "largest-n-plus-gap",
+        "component_voxel_size_m": 0.006,
+        "components": [
+          {
+            "bbox_extent": [
+              0.29687637090682983,
+              0.33997637033462524,
+              0.09679752588272095
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.2554711401462555,
+              0.20578309893608093,
+              0.009109318256378174
+            ],
+            "bbox_min": [
+              -0.04140521585941315,
+              -0.1341932862997055,
+              -0.08768820762634277
+            ],
+            "centroid": [
+              0.10807415097951889,
+              0.06856977939605713,
+              -0.053303588181734085
+            ],
+            "component_idx": 0,
+            "kept": true,
+            "point_count": 31305
+          },
+          {
+            "bbox_extent": [
+              0.010334804654121399,
+              0.02277076244354248,
+              0.01565954089164734
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.11053384095430374,
+              0.0693591833114624,
+              0.012470483779907227
+            ],
+            "bbox_min": [
+              0.10019903630018234,
+              0.04658842086791992,
+              -0.0031890571117401123
+            ],
+            "centroid": [
+              0.10582352429628372,
+              0.06089484691619873,
+              0.00955523643642664
+            ],
+            "component_idx": 1,
+            "kept": true,
+            "point_count": 103
+          },
+          {
+            "bbox_extent": [
+              0.012537539005279541,
+              0.026156485080718994,
+              0.009448200464248657
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.17383673787117004,
+              -0.11885927617549896,
+              0.008429527282714844
+            ],
+            "bbox_min": [
+              0.1612991988658905,
+              -0.14501576125621796,
+              -0.0010186731815338135
+            ],
+            "centroid": [
+              0.16602042317390442,
+              -0.1307862102985382,
+              0.005324271507561207
+            ],
+            "component_idx": 2,
+            "kept": true,
+            "point_count": 32
+          },
+          {
+            "bbox_extent": [
+              0.006370663642883301,
+              0.012290656566619873,
+              0.01020023226737976
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.1878736913204193,
+              0.18601951003074646,
+              0.006528079509735107
+            ],
+            "bbox_min": [
+              0.181503027677536,
+              0.1737288534641266,
+              -0.0036721527576446533
+            ],
+            "centroid": [
+              0.18605779111385345,
+              0.17867416143417358,
+              0.003233266295865178
+            ],
+            "component_idx": 3,
+            "kept": true,
+            "point_count": 29
+          }
+        ],
+        "enabled": true,
+        "input_point_count": 31629,
+        "keep_near_main_gap_m": 0.035,
+        "keep_top_n_components": 1,
+        "kept_component_count": 4,
+        "kept_component_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "min_component_points": 32,
+        "min_component_ratio": 0.0,
+        "mode": "enhanced-pt",
+        "output_point_count": 31469,
+        "radius_filter_ms": 28.537759004393592,
+        "radius_postprocess": {
+          "enabled": true,
+          "inlier_point_count": 31469,
+          "input_point_count": 31629,
+          "mode": "phystwin_like_radius_neighbor_filter",
+          "nb_points": 12,
+          "outlier_point_count": 160,
+          "outlier_ratio": 0.005058648708463752,
+          "radius_filter_ms": 28.537759004393592,
+          "radius_m": 0.01
+        },
+        "removed_component_count": 0,
+        "removed_component_indices": [],
+        "removed_components": [],
+        "removed_point_count": 0,
+        "removed_point_ratio_after_radius": 0.0,
+        "survivor_index_space": "source_points_world",
+        "top_n_component_indices": [
+          0
+        ],
+        "top_n_component_point_counts": [
+          31305
+        ],
+        "total_ms": 50.223462996655144,
+        "voxel_component_ms": 20.27009500307031
+      },
+      "2": {
+        "after_radius_point_count": 13285,
+        "component_bbox_gap_to_kept_top_n_m": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 0.0,
+          "3": 0.0
+        },
+        "component_count": 4,
+        "component_filter_enabled": true,
+        "component_point_counts": [
+          13170,
+          81,
+          17,
+          17
+        ],
+        "component_selection_ms": 0.18612100393511355,
+        "component_selection_policy": "largest-n-plus-gap",
+        "component_voxel_size_m": 0.006,
+        "components": [
+          {
+            "bbox_extent": [
+              0.4000541567802429,
+              0.3145880699157715,
+              0.10269594192504883
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.2658364474773407,
+              0.17587852478027344,
+              0.01632744073867798
+            ],
+            "bbox_min": [
+              -0.13421770930290222,
+              -0.13870953023433685,
+              -0.08636850118637085
+            ],
+            "centroid": [
+              0.14170525968074799,
+              0.026656296104192734,
+              -0.04504666477441788
+            ],
+            "component_idx": 0,
+            "kept": true,
+            "point_count": 13170
+          },
+          {
+            "bbox_extent": [
+              0.015665948390960693,
+              0.037161409854888916,
+              0.022404015064239502
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.08660659193992615,
+              0.2049291729927063,
+              -0.02472364902496338
+            ],
+            "bbox_min": [
+              0.07094064354896545,
+              0.16776776313781738,
+              -0.04712766408920288
+            ],
+            "centroid": [
+              0.07620704174041748,
+              0.18705543875694275,
+              -0.03451761230826378
+            ],
+            "component_idx": 1,
+            "kept": true,
+            "point_count": 81
+          },
+          {
+            "bbox_extent": [
+              0.008956626057624817,
+              0.014669656753540039,
+              0.006209015846252441
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.23980997502803802,
+              0.040238410234451294,
+              -0.04444479942321777
+            ],
+            "bbox_min": [
+              0.2308533489704132,
+              0.025568753480911255,
+              -0.050653815269470215
+            ],
+            "centroid": [
+              0.23465518653392792,
+              0.03323987126350403,
+              -0.04881840944290161
+            ],
+            "component_idx": 2,
+            "kept": true,
+            "point_count": 17
+          },
+          {
+            "bbox_extent": [
+              0.013063192367553711,
+              0.015513360500335693,
+              0.011179029941558838
+            ],
+            "bbox_gap_to_kept_top_n_m": 0.0,
+            "bbox_gap_to_main_m": 0.0,
+            "bbox_max": [
+              0.11600080132484436,
+              -0.036654531955718994,
+              0.011893928050994873
+            ],
+            "bbox_min": [
+              0.10293760895729065,
+              -0.05216789245605469,
+              0.0007148981094360352
+            ],
+            "centroid": [
+              0.10967191308736801,
+              -0.04570311680436134,
+              0.008059469982981682
+            ],
+            "component_idx": 3,
+            "kept": true,
+            "point_count": 17
+          }
+        ],
+        "enabled": true,
+        "input_point_count": 13523,
+        "keep_near_main_gap_m": 0.035,
+        "keep_top_n_components": 1,
+        "kept_component_count": 4,
+        "kept_component_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "min_component_points": 32,
+        "min_component_ratio": 0.0,
+        "mode": "enhanced-pt",
+        "output_point_count": 13285,
+        "radius_filter_ms": 7.143255003029481,
+        "radius_postprocess": {
+          "enabled": true,
+          "inlier_point_count": 13285,
+          "input_point_count": 13523,
+          "mode": "phystwin_like_radius_neighbor_filter",
+          "nb_points": 12,
+          "outlier_point_count": 238,
+          "outlier_ratio": 0.01759964504917548,
+          "radius_filter_ms": 7.143255003029481,
+          "radius_m": 0.01
+        },
+        "removed_component_count": 0,
+        "removed_component_indices": [],
+        "removed_components": [],
+        "removed_point_count": 0,
+        "removed_point_ratio_after_radius": 0.0,
+        "survivor_index_space": "source_points_world",
+        "top_n_component_indices": [
+          0
+        ],
+        "top_n_component_point_counts": [
+          13170
+        ],
+        "total_ms": 23.365312998066656,
+        "voxel_component_ms": 15.345181993325241
+      }
+    },
+    "object_filter_mode_by_camera": {
+      "0": "enhanced-pt",
+      "1": "enhanced-pt",
+      "2": "enhanced-pt"
+    },
+    "object_kept_component_indices_by_camera": {
+      "0": [
+        0,
+        1,
+        2
+      ],
+      "1": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "2": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "object_mask_semantics": "object_trackable_mask",
+    "object_point_control": "fixed-cap",
+    "object_postprocess": "enhanced-pt",
+    "object_removed_component_count_by_camera": {
+      "0": 0,
+      "1": 0,
+      "2": 0
+    },
+    "object_removed_point_count_by_camera": {
+      "0": 0,
+      "1": 0,
+      "2": 0
+    },
+    "object_top_n_component_point_counts_by_camera": {
+      "0": [
+        15993
+      ],
+      "1": [
+        31305
+      ],
+      "2": [
+        13170
+      ]
+    },
+    "object_volume_adaptive_active": false,
+    "object_volume_age_ms_p50": 0.0,
+    "object_volume_age_ms_p95": 0.0,
+    "object_volume_exact": false,
+    "object_volume_filter_source_counts": {},
+    "object_volume_gather_ms": 0.0,
+    "object_volume_input_points": 0,
+    "object_volume_key_ms": 0.0,
+    "object_volume_ms": 0.0,
+    "object_volume_occupied_voxels": 0,
+    "object_volume_output_points": 0,
+    "object_volume_safety_cap_triggered": false,
+    "object_volume_sampler_impl": "",
+    "object_volume_target_ms": 8.0,
+    "object_volume_total_ms": 0.0,
+    "object_volume_unique_ms": 0.0,
+    "object_volume_worker_fps": 0.0,
+    "offline_mode_available": false,
+    "offline_tracking_available": false,
+    "overlay_age_ms_median": 0.0,
+    "overlay_age_ms_p95": 0.0,
+    "overlay_bbox_filter_enabled": false,
+    "overlay_bbox_filter_margin_m": 0.15,
+    "overlay_bbox_filter_scope": "controller",
+    "overlay_bbox_input_points_by_camera": {},
+    "overlay_bbox_kept_points_by_camera": {},
+    "overlay_bbox_rejected_by_camera": {},
+    "overlay_display_classification": "first_frame_mask_membership",
+    "overlay_display_controller_count_by_camera": {
+      "0": 752,
+      "1": 481,
+      "2": 870
+    },
+    "overlay_display_count_by_camera": {
+      "0": 752,
+      "1": 481,
+      "2": 870
+    },
+    "overlay_display_object_count_by_camera": {
+      "0": 0,
+      "1": 0,
+      "2": 0
+    },
+    "overlay_display_scope": "controller",
+    "overlay_max_points_per_camera": 0,
+    "overlay_rejected_by_depth_or_bounds_by_camera": {},
+    "overlay_render_group_delta_median": 0.0,
+    "overlay_render_group_delta_p95": 0.0,
+    "overlay_render_group_mismatch_count": 0,
+    "overlay_render_raw_track_points": false,
+    "overlay_world_centroid_by_camera_before_bbox": {},
+    "pcd_component_filter_removed_ratio": 0.0,
+    "pcd_component_filter_removed_ratio_by_camera": {},
+    "pcd_controller_points_after_component_filter": 0,
+    "pcd_controller_points_after_component_filter_by_camera": {},
+    "pcd_controller_points_before_component_filter": 0,
+    "pcd_controller_points_before_component_filter_by_camera": {},
+    "pcd_object_points_after_component_filter": 0,
+    "pcd_object_points_after_component_filter_by_camera": {},
+    "pcd_object_points_before_component_filter": 0,
+    "pcd_object_points_before_component_filter_by_camera": {},
+    "per_camera_model_ms_p50_by_camera": {
+      "0": 45.427913665771484,
+      "1": 43.4897346496582,
+      "2": 44.736000061035156
+    },
+    "per_camera_model_ms_p95_by_camera": {
+      "0": 47.25566864013672,
+      "1": 46.266170501708984,
+      "2": 47.45064163208008
+    },
+    "phystwin_dense_compatible": false,
+    "protect_tracker_input_bundles": true,
+    "protected_bundle_count": 3,
+    "protected_bundle_eviction_avoided_count": 0,
+    "protected_bundle_max_groups": 0,
+    "protected_bundle_oldest_age_ms": 6828.901092012529,
+    "protected_bundle_ttl_ms": 10000.0,
+    "protected_bundle_ttl_unprotect_count": 2,
+    "protected_bundle_window_unprotect_count": 0,
+    "query_and_pcd_surface_filter_shared": "same_config_reuse_when_source_points_identical",
+    "query_count_per_camera": 4096,
+    "query_pcd_filter_reused_result_by_camera": {
+      "0": false,
+      "1": false,
+      "2": false
+    },
+    "query_pending_drop_count": 44,
+    "raw_controller_pixels_by_camera": {
+      "0": 4999,
+      "1": 4999,
+      "2": 4999
+    },
+    "raw_object_pixels_by_camera": {
+      "0": 17021,
+      "1": 34089,
+      "2": 14463
+    },
+    "render_driver": "cotracker_child_output",
+    "render_loop_fps": 0.0,
+    "render_object_filter": {
+      "adaptive": true,
+      "apply_enhanced_component_filter_to_pcd": true,
+      "component_selection_policy": "largest-n-plus-gap",
+      "component_voxel_size_m": 0.006,
+      "emergency_max_points": 30000,
+      "keep_near_main_gap_m": 0.035,
+      "keep_top_n_components": 1,
+      "max_voxel_m": 0.012,
+      "min_component_points": 32,
+      "min_component_ratio": 0.0,
+      "min_voxel_m": 0.005,
+      "nb_points": 12,
+      "origin_policy": "world",
+      "point_control": "fixed-cap",
+      "points_per_voxel": 1,
+      "postprocess": "enhanced-pt",
+      "radius_m": 0.01,
+      "target_ms": 8.0,
+      "voxel_m": 0.005
+    },
+    "render_requires_new_cotracker_result": true,
+    "render_reuses_cached_cotracker_result": false,
+    "render_trigger": "new_cotracker_result",
+    "render_waited_for_cotracker": true,
+    "render_waited_for_fresh_cotracker_result": true,
+    "render_waited_for_mask": true,
+    "render_waited_for_object_volume_filter": false,
+    "rendered_fps": 0.0,
+    "rendered_on_new_cotracker_result": false,
+    "sam31_gpu_physical": 0,
+    "same_bundle_invariant_fail_fast": true,
+    "same_bundle_invariant_violation_count": 0,
+    "same_bundle_rendered_among_rendered_ratio": 1.0,
+    "same_bundle_rendered_per_tracker_result_ratio": 1.0,
+    "same_bundle_rendered_ratio": 1.0,
+    "same_target_group_ratio": 1.0,
+    "semantic_mode": "exp",
+    "shared_runtime_gpu_placement": "ffs_edgetam_gpu0_tapnextpp_gpu1",
+    "stage_mailbox_pending_drop_count": 0,
+    "stage_mailbox_policy": "latest-only",
+    "strict_same_source_frame_ratio": 1.0,
+    "total_query_count_across_views": 12288,
+    "trackable_mask_build_policy": "init-only",
+    "trackable_mask_build_stage": "first_valid_tracking_input",
+    "trackable_mask_initialized_cameras": [
+      0,
+      1,
+      2
+    ],
+    "trackable_mask_source": "standard_filter_survivors",
+    "trackable_mask_standard_filter_ms_by_camera": {
+      "0": 187.95885299914517,
+      "1": 61.96078201173805,
+      "2": 35.182892010197975
+    },
+    "trackable_object_pixels_by_camera": {
+      "0": 16079,
+      "1": 31469,
+      "2": 13285
+    },
+    "trackable_query_init_strategy": "standard-filter-init",
+    "trackable_union_pixels_by_camera": {
+      "0": 19815,
+      "1": 35438,
+      "2": 16894
+    },
+    "tracker_3d_marker_mode": "all-tracks-3d-lift",
+    "tracker_3d_marker_radius_m": 0.006,
+    "tracker_3d_marker_shape": "sphere",
+    "tracker_3d_snap_radius_px": 4.0,
+    "tracker_all_tracks_anchor_mode": true,
+    "tracker_backend": "tapnextpp",
+    "tracker_backend_family": "tapnext",
+    "tracker_backend_warmup_by_camera": {},
+    "tracker_backend_warmup_ms": 0.0,
+    "tracker_batch_query_count_policy": "min-common",
+    "tracker_control_point_selection": "visible-spread",
+    "tracker_control_points_per_camera": 16,
+    "tracker_direct_depth_lift_used": true,
+    "tracker_e2e_ms_median": 139.8163299560547,
+    "tracker_e2e_ms_p95": 144.8992919921875,
+    "tracker_group_wall_ms_p50": 139.63372802734375,
+    "tracker_group_wall_ms_p95": 144.69931030273438,
+    "tracker_input_count": 650,
+    "tracker_input_drop_count": 0,
+    "tracker_input_fps": 6.048214920345407,
+    "tracker_input_queue_replace_count": 0,
+    "tracker_legacy_lift_used": false,
+    "tracker_marker_accepted_by_camera": {},
+    "tracker_marker_layer_by_camera": {},
+    "tracker_marker_pixel_error_median_by_camera": {},
+    "tracker_marker_pixel_error_p95_by_camera": {},
+    "tracker_marker_points_appended": false,
+    "tracker_marker_points_rendered": 0,
+    "tracker_marker_rejected_by_camera": {},
+    "tracker_model_ms_max_per_group_p50": 45.72052764892578,
+    "tracker_model_ms_max_per_group_p95": 47.911930084228516,
+    "tracker_model_ms_median": 134.133056640625,
+    "tracker_model_ms_p95": 137.45437622070312,
+    "tracker_model_ms_sum_per_group_p50": 134.133056640625,
+    "tracker_model_ms_sum_per_group_p95": 137.45437622070312,
+    "tracker_pending_drop_count": 0,
+    "tracker_prewarm_backends": false,
+    "tracker_prewarm_mode": "disabled",
+    "tracker_process_ready": false,
+    "tracker_process_ready_s": 0.0,
+    "tracker_process_total_init_ms": 0.0,
+    "tracker_publish_fps": 6.0328827099008295,
+    "tracker_query_dependent_init": false,
+    "tracker_query_dependent_init_pending": false,
+    "tracker_query_source": "union_trackable_mask",
+    "tracker_ready_state": "ready_to_receive_inputs",
+    "tracker_ready_to_receive_inputs": false,
+    "tracker_ready_to_receive_inputs_s": 0.0,
+    "tracker_result_count": 601,
+    "tracker_result_fusion_ms_median": 86.20645141601562,
+    "tracker_result_fusion_ms_p95": 248.58029174804688,
+    "tracker_result_triggered_fusion_count": 601,
+    "tracker_surface_anchor_cache_hit": false,
+    "tracker_surface_anchor_group_id": null,
+    "tracker_surface_gate_enabled": false,
+    "tracker_visualization_mode": "all-tracks-3d-lift",
+    "tracking_backend_batch_auto_selected": false,
+    "tracking_backend_batch_dimension": "none",
+    "tracking_backend_batch_enabled": false,
+    "tracking_backend_batch_fallback_reason": null,
+    "tracking_backend_batch_size": 1,
+    "tracking_backend_batch_support_status": "true_online_batch_views",
+    "tracking_backend_batch_supported": true,
+    "tracking_backend_effective_query_count": 0,
+    "tracking_backend_execution_mode": "serial",
+    "tracking_backend_online_semantics": "stateful_frame_by_frame",
+    "tracking_backend_query_count_truncated_by_camera": {},
+    "tracking_backend_supports_batch_views": true,
+    "tracking_backend_supports_online": true,
+    "tracking_control_marker_points": 0,
+    "tracking_control_point_count": 0,
+    "tracking_control_point_count_requested": 0,
+    "tracking_control_point_markers": true,
+    "tracking_control_point_radius_m": 0.006,
+    "tracking_control_point_sampling": "visible-spread_all_tracks_depth_lift_cap_512",
+    "tracking_control_points_by_camera": {},
+    "tracking_control_points_per_camera": 16,
+    "tracking_controller_label": "towel",
+    "tracking_controller_pixels_by_camera": {
+      "0": 3736,
+      "1": 3969,
+      "2": 3609
+    },
+    "tracking_input_mask_age_ms_median": 0.0,
+    "tracking_input_mask_age_ms_p95": 0.0,
+    "tracking_input_mask_reuse_ratio": 0.0,
+    "tracking_input_mask_semantics": "standard_filter_trackable_masks",
+    "tracking_input_queue_replace_count": 44,
+    "tracking_input_replaced_group_ids_last": [],
+    "tracking_input_replaced_group_unprotect_count": 44,
+    "tracking_mask_scope": "object_controller_union",
+    "tracking_object_pixels_by_camera": {
+      "0": 16079,
+      "1": 31469,
+      "2": 13285
+    },
+    "tracking_overlay_color_rgb": [
+      255,
+      0,
+      0
+    ],
+    "tracking_overlay_first_render_group_id": null,
+    "tracking_overlay_render_blocked_count": 0,
+    "tracking_overlay_required_before_first_render": true,
+    "tracking_overlay_required_for_render": true,
+    "tracking_overlay_warmup_skipped_render_count": 0,
+    "tracking_pending_fusion_bundles": 4,
+    "tracking_pending_render_packet_drop_count": 0,
+    "tracking_pending_render_packet_max_groups": 128,
+    "tracking_pending_render_packets": 0,
+    "tracking_query_count_actual_by_camera": {
+      "0": 4096,
+      "1": 4096,
+      "2": 4096
+    },
+    "tracking_query_count_requested": "4096",
+    "tracking_query_count_rule": "min(capped_object_controller_union_pixels, 5000)",
+    "tracking_query_mode": "phystwin_dense",
+    "tracking_render_packet_match_policy": "exact-target-bundle",
+    "tracking_result_exact_render_packet_count": 601,
+    "tracking_result_nearest_render_packet_count": 0,
+    "tracking_result_without_lift_input_count": 0,
+    "tracking_result_without_render_packet_count": 0,
+    "tracking_sample_background_hits_by_camera": {
+      "0": 0,
+      "1": 0,
+      "2": 0
+    },
+    "tracking_sample_controller_hits_by_camera": {
+      "0": 752,
+      "1": 485,
+      "2": 870
+    },
+    "tracking_sample_object_hits_by_camera": {
+      "0": 3344,
+      "1": 3611,
+      "2": 3226
+    },
+    "tracking_sample_overlap_hits_by_camera": {
+      "0": 0,
+      "1": 0,
+      "2": 0
+    },
+    "tracking_sampling": "controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx",
+    "tracking_union_pixels_by_camera": {
+      "0": 19815,
+      "1": 35438,
+      "2": 16894
+    },
+    "uses_ffs": true,
+    "wait_for_tracking_overlay": true
+  }
+}
