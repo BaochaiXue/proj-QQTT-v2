@@ -113,7 +113,9 @@ GPU_PLANS = (GPU_PLAN_SPLIT_MASK0_TRACK1,)
 
 DEFAULT_OUTPUT_ROOT = Path("result/demo31_dual4090_realsense_tapnextpp")
 DEFAULT_DEMO32_OUTPUT_ROOT = Path("result/demo32_ffs_litetracker")
+DEFAULT_DEMO32_TAPNEXTPP_OUTPUT_ROOT = Path("result/demo32_ffs_tapnextpp")
 DEFAULT_DEMO31_TRACKER_BACKEND = TRACKER_BACKEND_TAPNEXTPP
+DEMO32_TRACKER_BACKENDS = (TRACKER_BACKEND_LITETRACKER, TRACKER_BACKEND_TAPNEXTPP)
 DEFAULT_RENDER_TARGET_FPS = 60.0
 DEFAULT_COTRACKER_INPUT_FPS = 10.0
 DEFAULT_COTRACKER_INPUT_MAX_AGE_MS = 250.0
@@ -159,6 +161,40 @@ DEFAULT_CONTROLLER_MASK_ERODE_PX = 0
 DEFAULT_DEMO_MODE_CONTROLLER_MASK_ERODE_PX = 0
 DEFAULT_CONTROLLER_RENDER_VOXEL_M = 0.003
 DEFAULT_CONTROLLER_RENDER_MAX_POINTS = 10_000
+
+
+def _demo32_tracker_label(tracker_backend: str) -> str:
+    backend = normalize_tracker_backend(tracker_backend)
+    if backend == TRACKER_BACKEND_TAPNEXTPP:
+        return "tapnextpp"
+    if backend == TRACKER_BACKEND_LITETRACKER:
+        return "litetracker"
+    return str(backend)
+
+
+def _demo32_gpu_placement(tracker_backend: str) -> str:
+    return f"ffs_edgetam_gpu0_{_demo32_tracker_label(tracker_backend)}_gpu1"
+
+
+def _demo32_tracker_stage(
+    tracker_backend: str,
+    *,
+    execution_mode: str,
+    legacy_update_mode: str,
+) -> str:
+    label = _demo32_tracker_label(tracker_backend)
+    if execution_mode == TRACKING_BACKEND_EXECUTION_MODE_AUTO:
+        return f"{label}_batch3_auto_fallback"
+    return f"{label}_batch3" if legacy_update_mode == "batch" else f"{label}_serial"
+
+
+def _tracker_prewarm_mode(tracker_backend: str, *, prewarm_backends: bool) -> str:
+    backend = normalize_tracker_backend(tracker_backend)
+    if backend == TRACKER_BACKEND_LITETRACKER:
+        return "model_load_only" if bool(prewarm_backends) else "lazy_query_init"
+    if backend in {TRACKER_BACKEND_LOCOTRACK, TRACKER_BACKEND_TAPNEXTPP}:
+        return "model_load_only" if bool(prewarm_backends) else "disabled"
+    return "backend_model_prewarm" if bool(prewarm_backends) else "disabled"
 DEFAULT_LIFT_INPUT_CACHE_GROUPS = 128
 DEFAULT_PENDING_RENDER_PACKET_GROUPS = 128
 DEFAULT_PROTECTED_BUNDLE_TTL_MS = 10_000.0
@@ -284,6 +320,7 @@ def _merge_cotracker_process_snapshot_metrics(
     if not isinstance(snapshot, dict):
         return
     worker = snapshot.get("worker") if isinstance(snapshot.get("worker"), dict) else {}
+    tracking_stats = snapshot.get("tracking_stats") if isinstance(snapshot.get("tracking_stats"), dict) else {}
 
     def _float_value(primary_key: str, *, worker_key: str | None = None) -> float:
         value = snapshot.get(primary_key)
@@ -296,6 +333,15 @@ def _merge_cotracker_process_snapshot_metrics(
         if value is None and worker_key:
             value = worker.get(worker_key)
         return int(value or 0)
+
+    def _snapshot_or_tracking_stats(primary_key: str, default: Any = None) -> Any:
+        value = snapshot.get(primary_key)
+        if value is not None:
+            return value
+        value = tracking_stats.get(primary_key)
+        if value is not None:
+            return value
+        return default
 
     summary.update(
         {
@@ -348,6 +394,57 @@ def _merge_cotracker_process_snapshot_metrics(
             "total_query_count_across_views": _int_value(
                 "total_query_count_across_views",
                 worker_key="total_query_count_across_views",
+            ),
+            "tracking_backend_effective_query_count": int(
+                _snapshot_or_tracking_stats("tracking_backend_effective_query_count", 0) or 0
+            ),
+            "tracking_backend_query_count_truncated_by_camera": dict(
+                _snapshot_or_tracking_stats("tracking_backend_query_count_truncated_by_camera", {}) or {}
+            ),
+            "tracking_query_count_actual_by_camera": dict(
+                _snapshot_or_tracking_stats("tracking_query_count_actual_by_camera", {}) or {}
+            ),
+            "tracking_union_pixels_by_camera": dict(
+                _snapshot_or_tracking_stats("tracking_union_pixels_by_camera", {}) or {}
+            ),
+            "tracking_object_pixels_by_camera": dict(
+                _snapshot_or_tracking_stats("tracking_object_pixels_by_camera", {}) or {}
+            ),
+            "tracking_controller_pixels_by_camera": dict(
+                _snapshot_or_tracking_stats("tracking_controller_pixels_by_camera", {}) or {}
+            ),
+            "tracking_sample_object_hits_by_camera": dict(
+                _snapshot_or_tracking_stats("tracking_sample_object_hits_by_camera", {}) or {}
+            ),
+            "tracking_sample_controller_hits_by_camera": dict(
+                _snapshot_or_tracking_stats("tracking_sample_controller_hits_by_camera", {}) or {}
+            ),
+            "tracking_sample_overlap_hits_by_camera": dict(
+                _snapshot_or_tracking_stats("tracking_sample_overlap_hits_by_camera", {}) or {}
+            ),
+            "tracking_sample_background_hits_by_camera": dict(
+                _snapshot_or_tracking_stats("tracking_sample_background_hits_by_camera", {}) or {}
+            ),
+            "overlay_display_count_by_camera": dict(
+                _snapshot_or_tracking_stats("overlay_display_count_by_camera", {}) or {}
+            ),
+            "overlay_display_object_count_by_camera": dict(
+                _snapshot_or_tracking_stats("overlay_display_object_count_by_camera", {}) or {}
+            ),
+            "overlay_display_controller_count_by_camera": dict(
+                _snapshot_or_tracking_stats("overlay_display_controller_count_by_camera", {}) or {}
+            ),
+            "tracking_result_without_lift_input_count": int(
+                _snapshot_or_tracking_stats("tracking_result_without_lift_input_count", 0) or 0
+            ),
+            "all_tracks_lift_exact_depth_group_ratio": float(
+                _snapshot_or_tracking_stats("all_tracks_lift_exact_depth_group_ratio", 0.0) or 0.0
+            ),
+            "all_tracks_lift_attempt_count": int(
+                _snapshot_or_tracking_stats("all_tracks_lift_attempt_count", 0) or 0
+            ),
+            "all_tracks_lift_cap_applied_count": int(
+                _snapshot_or_tracking_stats("all_tracks_lift_cap_applied_count", 0) or 0
             ),
         }
     )
@@ -1631,9 +1728,9 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
 
 def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str] | None = None) -> argparse.Namespace:
     explicit = explicit_options or set()
-    if "--output-root" not in explicit:
-        args.output_root = DEFAULT_DEMO32_OUTPUT_ROOT if args.preset == PRESET_DEMO32_FFS_LITETRACKER else DEFAULT_OUTPUT_ROOT
     if args.preset == PRESET_DEMO31_DUAL4090_HIGHFPS:
+        if "--output-root" not in explicit:
+            args.output_root = DEFAULT_OUTPUT_ROOT
         if "--fusion-mask-policy" not in explicit:
             args.fusion_mask_policy = DEFAULT_FUSION_MASK_POLICY
         if "--cotracker-input-fps" not in explicit:
@@ -1647,6 +1744,13 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             args.fusion_mask_policy = DEFAULT_FUSION_MASK_POLICY
         if "--cotracker-backend" not in explicit and "--tracking-backend" not in explicit:
             args.cotracker_backend = TRACKER_BACKEND_LITETRACKER
+        tracker_backend = normalize_tracker_backend(args.cotracker_backend)
+        if "--output-root" not in explicit:
+            args.output_root = (
+                DEFAULT_DEMO32_TAPNEXTPP_OUTPUT_ROOT
+                if tracker_backend == TRACKER_BACKEND_TAPNEXTPP
+                else DEFAULT_DEMO32_OUTPUT_ROOT
+            )
         if "--tracking-backend-execution-mode" not in explicit:
             args.tracking_backend_execution_mode = TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS
         if "--cotracker-update-mode" not in explicit:
@@ -1659,9 +1763,9 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             args.cotracker_input_fps = DEFAULT_COTRACKER_INPUT_FPS
         if "--render-target-fps" not in explicit:
             args.render_target_fps = DEFAULT_RENDER_TARGET_FPS
-        if "--litetracker-repo-dir" not in explicit:
+        if tracker_backend == TRACKER_BACKEND_LITETRACKER and "--litetracker-repo-dir" not in explicit:
             args.litetracker_repo_dir = DEFAULT_DEMO32_LITETRACKER_REPO_DIR
-        if "--litetracker-weights" not in explicit:
+        if tracker_backend == TRACKER_BACKEND_LITETRACKER and "--litetracker-weights" not in explicit:
             args.litetracker_weights = DEFAULT_DEMO32_LITETRACKER_WEIGHTS
         if "--tracker-visualization-mode" not in explicit:
             args.tracker_visualization_mode = DEFAULT_DEMO32_TRACKER_VISUALIZATION_MODE
@@ -1739,16 +1843,15 @@ def validate_args(
     normalize_tracker_execution_mode(args.tracking_backend_execution_mode)
     effective_execution_mode = effective_tracking_backend_execution_mode(args)
     normalize_tracker_batch_query_count_policy(args.tracker_batch_query_count_policy)
-    if demo32 and tracker_backend != TRACKER_BACKEND_LITETRACKER:
-        raise ValueError("Demo 3.2 requires --cotracker-backend litetracker.")
-    if litetracker_runtime == LITETRACKER_RUNTIME_ONNX_CUDA and tracker_backend != TRACKER_BACKEND_LITETRACKER:
-        raise ValueError("--litetracker-runtime onnx-cuda requires --cotracker-backend litetracker.")
-    if litetracker_runtime == LITETRACKER_RUNTIME_ONNX_CUDA and effective_execution_mode != TRACKING_BACKEND_EXECUTION_MODE_SERIAL:
-        raise ValueError("--litetracker-runtime onnx-cuda is serial-only; pass --tracking-backend-execution-mode serial.")
-    if int(args.litetracker_onnx_opset) < 1:
-        raise ValueError("--litetracker-onnx-opset must be positive.")
-    if int(args.litetracker_onnx_optimization_level) < 0:
-        raise ValueError("--litetracker-onnx-optimization-level must be >= 0.")
+    if demo32 and tracker_backend not in DEMO32_TRACKER_BACKENDS:
+        raise ValueError("Demo 3.2 supports --cotracker-backend litetracker or tapnextpp.")
+    if tracker_backend == TRACKER_BACKEND_LITETRACKER:
+        if litetracker_runtime == LITETRACKER_RUNTIME_ONNX_CUDA and effective_execution_mode != TRACKING_BACKEND_EXECUTION_MODE_SERIAL:
+            raise ValueError("--litetracker-runtime onnx-cuda is serial-only; pass --tracking-backend-execution-mode serial.")
+        if int(args.litetracker_onnx_opset) < 1:
+            raise ValueError("--litetracker-onnx-opset must be positive.")
+        if int(args.litetracker_onnx_optimization_level) < 0:
+            raise ValueError("--litetracker-onnx-optimization-level must be >= 0.")
     if int(args.locotrack_window_frames) < 1:
         raise ValueError("--locotrack-window-frames must be >= 1.")
     if int(args.locotrack_query_chunk_size) < 1:
@@ -1949,14 +2052,10 @@ def build_contract(
             TRACKER_MARKER_LABEL_COLORS_RGB[SURFACE_ANCHOR_LABEL_UNION],
         )
     )
-    if tracker_backend == TRACKER_BACKEND_LITETRACKER:
-        tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "lazy_query_init"
-    elif tracker_backend == TRACKER_BACKEND_LOCOTRACK:
-        tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "disabled"
-    elif tracker_backend == TRACKER_BACKEND_TAPNEXTPP:
-        tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "disabled"
-    else:
-        tracker_prewarm_mode = "backend_model_prewarm" if bool(args.cotracker_prewarm_backends) else "disabled"
+    tracker_prewarm_mode = _tracker_prewarm_mode(
+        tracker_backend,
+        prewarm_backends=bool(args.cotracker_prewarm_backends),
+    )
     tracker_query_dependent_init = tracker_backend == TRACKER_BACKEND_LITETRACKER
     tracker_online_semantics = (
         "windowed"
@@ -1974,12 +2073,10 @@ def build_contract(
     demo32 = is_demo32_preset(args)
     depth_source = demo3_runtime.DEPTH_SOURCE_FFS if demo32 else demo3_runtime.DEPTH_SOURCE_REALSENSE
     trackable_filter_enabled = str(args.trackable_mask_build_policy) != TRACKABLE_MASK_BUILD_POLICY_DISABLED
-    demo32_tracker_stage = (
-        "litetracker_batch3_auto_fallback"
-        if demo32 and execution_mode == TRACKING_BACKEND_EXECUTION_MODE_AUTO
-        else "litetracker_batch3"
-        if demo32 and legacy_update_mode == "batch"
-        else "litetracker_serial"
+    demo32_tracker_stage = _demo32_tracker_stage(
+        tracker_backend,
+        execution_mode=execution_mode,
+        legacy_update_mode=legacy_update_mode,
     )
     pipeline_order = (
         "capture",
@@ -2032,12 +2129,12 @@ def build_contract(
         "ffs_gpu_physical": 0 if demo32 else None,
         "edgetam_gpu_physical": 0 if demo32 else int(args.mask_gpu),
         "sam31_gpu_physical": 0 if demo32 else int(args.mask_gpu),
-        "litetracker_gpu_physical": int(args.cotracker_gpu) if demo32 else None,
+        "litetracker_gpu_physical": int(args.cotracker_gpu) if demo32 and tracker_backend == TRACKER_BACKEND_LITETRACKER else None,
         "locotrack_gpu_physical": int(args.cotracker_gpu) if tracker_backend == TRACKER_BACKEND_LOCOTRACK else None,
         "tapnextpp_gpu_physical": int(args.cotracker_gpu) if tracker_backend == TRACKER_BACKEND_TAPNEXTPP else None,
         "ffs_edgetam_same_gpu": bool(demo32),
         "shared_runtime_gpu_placement": (
-            "ffs_edgetam_gpu0_litetracker_gpu1" if demo32 else "mask_gpu0_track_gpu1"
+            _demo32_gpu_placement(tracker_backend) if demo32 else "mask_gpu0_track_gpu1"
         ),
         "main_cuda_visible_devices": str(args.mask_gpu),
         "cotracker_cuda_visible_devices": str(args.cotracker_gpu),
@@ -2709,12 +2806,10 @@ def build_shared_runtime_args(
     shared_args.tracking_source = "cached"
     shared_args.show_tracking_overlay = False
     tracker_backend = normalize_tracker_backend(args.cotracker_backend)
-    if tracker_backend == TRACKER_BACKEND_LITETRACKER:
-        tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "lazy_query_init"
-    elif tracker_backend == TRACKER_BACKEND_LOCOTRACK:
-        tracker_prewarm_mode = "model_load_only" if bool(args.cotracker_prewarm_backends) else "disabled"
-    else:
-        tracker_prewarm_mode = "backend_model_prewarm" if bool(args.cotracker_prewarm_backends) else "disabled"
+    tracker_prewarm_mode = _tracker_prewarm_mode(
+        tracker_backend,
+        prewarm_backends=bool(args.cotracker_prewarm_backends),
+    )
     shared_args.external_tracker_backend = tracker_backend
     shared_args.external_tracker_update_mode = effective_tracking_backend_execution_mode(args)
     shared_args.external_tracker_prewarm_mode = tracker_prewarm_mode
@@ -2737,7 +2832,7 @@ def build_shared_runtime_args(
         shared_args.edgetam_device = "cuda:0"
         shared_args.sam31_device = "cuda:0"
         shared_args.demo32_ffs_edgetam_same_gpu = True
-        shared_args.demo32_gpu_placement = "ffs_edgetam_gpu0_litetracker_gpu1"
+        shared_args.demo32_gpu_placement = _demo32_gpu_placement(tracker_backend)
         shared_args.dual_gpu_queue_size = 2
         shared_args.dual_gpu_transport = "pickle"
         shared_args.dual_gpu_start_method = "spawn"

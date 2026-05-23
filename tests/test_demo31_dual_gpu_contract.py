@@ -914,6 +914,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["edgetam_gpu_physical"], 0)
         self.assertEqual(contract["sam31_gpu_physical"], 0)
         self.assertEqual(contract["litetracker_gpu_physical"], 1)
+        self.assertIsNone(contract["tapnextpp_gpu_physical"])
         self.assertTrue(contract["ffs_edgetam_same_gpu"])
         self.assertEqual(contract["cotracker_backend"], "litetracker")
         self.assertEqual(contract["tracker_backend"], "litetracker")
@@ -1008,6 +1009,62 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(config.litetracker_export_onnx)
         self.assertEqual(config.litetracker_onnx_opset, 17)
         self.assertEqual(config.litetracker_onnx_optimization_level, 5)
+
+    def test_demo32_accepts_tapnextpp_serial_and_batch_views(self) -> None:
+        for mode, expected_stage, expected_batch_size in (
+            ("serial", "tapnextpp_serial", 1),
+            ("batch-views", "tapnextpp_batch3", 3),
+        ):
+            with self.subTest(mode=mode):
+                args = self._parse(
+                    [
+                        "--dry-run",
+                        "--camera-ids",
+                        "0,1,2",
+                        "--mask-gpu",
+                        "0",
+                        "--cotracker-gpu",
+                        "1",
+                        "--cotracker-backend",
+                        "tapnextpp",
+                        "--tracking-backend-execution-mode",
+                        mode,
+                        "--tapnextpp-checkpoint",
+                        "checkpoints/tapnextpp/tapnextpp_ckpt.pt",
+                        "--tapnextpp-image-size",
+                        "256,256",
+                        "--tapnextpp-autocast-dtype",
+                        "fp16",
+                    ],
+                    default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
+                )
+                demo31_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+                contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+                config = demo31_runtime.build_cotracker_process_config(args)
+
+                self.assertEqual(str(args.output_root), "result/demo32_ffs_tapnextpp")
+                self.assertEqual(contract["demo"], "demo3.2")
+                self.assertEqual(contract["depth_source"], "ffs")
+                self.assertEqual(contract["pipeline_order"][3], expected_stage)
+                self.assertEqual(contract["shared_runtime_gpu_placement"], "ffs_edgetam_gpu0_tapnextpp_gpu1")
+                self.assertIsNone(contract["litetracker_gpu_physical"])
+                self.assertEqual(contract["tapnextpp_gpu_physical"], 1)
+                self.assertEqual(contract["cotracker_backend"], "tapnextpp")
+                self.assertEqual(contract["tracker_backend"], "tapnextpp")
+                self.assertEqual(contract["tracker_backend_family"], "tapnext")
+                self.assertEqual(contract["tracking_backend_execution_mode"], mode)
+                self.assertEqual(contract["tracking_backend_batch_size"], expected_batch_size)
+                self.assertEqual(contract["tapnextpp_checkpoint"], "checkpoints/tapnextpp/tapnextpp_ckpt.pt")
+                self.assertEqual(contract["tapnextpp_image_size"], [256, 256])
+                self.assertEqual(contract["tapnextpp_autocast_dtype"], "fp16")
+                self.assertTrue(contract["tapnextpp_fast_postprocess"])
+                self.assertEqual(contract["tracker_prewarm_mode"], "disabled")
+                self.assertFalse(contract["tracker_query_dependent_init"])
+                self.assertEqual(config.cotracker_backend, "tapnextpp")
+                self.assertEqual(config.backend_execution_mode, mode)
+                self.assertEqual(config.tapnextpp_checkpoint, "checkpoints/tapnextpp/tapnextpp_ckpt.pt")
+                self.assertEqual(config.tapnextpp_image_size, (256, 256))
+                self.assertTrue(config.tapnextpp_fast_postprocess)
 
     def test_demo32_accepts_litetracker_serial_onnx_runtime(self) -> None:
         args = self._parse(
@@ -1149,7 +1206,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
 
         self.assertEqual(contract["demo"], "demo3.2")
         self.assertEqual(contract["runtime_module"], "qqtt.demo.demo32_runtime")
-        self.assertEqual(contract["runtime_owner"], "demo32_litetracker_ffs")
+        self.assertEqual(contract["runtime_owner"], "demo32_tracker_ffs")
         self.assertTrue(contract["independent_demo_runtime"])
         self.assertFalse(contract["derived_from_demo31_preset"])
         self.assertFalse(contract["delegates_to_demo23_entrypoint"])
@@ -1256,7 +1313,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
         self.assertEqual(str(args.output_root), "result/demo32_ffs_litetracker")
 
-    def test_demo32_rejects_non_litetracker_or_non_ffs(self) -> None:
+    def test_demo32_rejects_unsupported_tracker_backend_or_non_ffs(self) -> None:
         realsense_args = self._parse(
             ["--dry-run", "--camera-ids", "0,1,2", "--depth-source", "realsense"],
             default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
@@ -1268,7 +1325,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
             ["--dry-run", "--camera-ids", "0,1,2", "--cotracker-backend", "cotracker3_online"],
             default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
         )
-        with self.assertRaisesRegex(ValueError, "requires --cotracker-backend litetracker"):
+        with self.assertRaisesRegex(ValueError, "supports --cotracker-backend litetracker or tapnextpp"):
             demo31_runtime.validate_args(cotracker_args, cuda_device_count_provider=lambda: 2)
 
     def test_demo32_rejects_removed_query_init_choices(self) -> None:
@@ -1549,6 +1606,25 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "mask_pending_drop_count": 3,
                 "query_pending_drop_count": 4,
                 "tracker_pending_drop_count": 5,
+                "all_tracks_lift_exact_depth_group_ratio": 1.0,
+                "all_tracks_lift_attempt_count": 7,
+                "all_tracks_lift_cap_applied_count": 2,
+                "tracking_result_without_lift_input_count": 0,
+                "tracking_stats": {
+                    "tracking_backend_effective_query_count": 4096,
+                    "tracking_backend_query_count_truncated_by_camera": {0: 0, 1: 0, 2: 0},
+                    "tracking_query_count_actual_by_camera": {0: 4096, 1: 4096, 2: 4096},
+                    "tracking_union_pixels_by_camera": {0: 5000, 1: 5100, 2: 5200},
+                    "tracking_object_pixels_by_camera": {0: 1000, 1: 1100, 2: 1200},
+                    "tracking_controller_pixels_by_camera": {0: 700, 1: 800, 2: 900},
+                    "tracking_sample_object_hits_by_camera": {0: 300, 1: 301, 2: 302},
+                    "tracking_sample_controller_hits_by_camera": {0: 200, 1: 201, 2: 202},
+                    "tracking_sample_overlap_hits_by_camera": {0: 10, 1: 11, 2: 12},
+                    "tracking_sample_background_hits_by_camera": {0: 5, 1: 6, 2: 7},
+                    "overlay_display_count_by_camera": {0: 128, 1: 129, 2: 130},
+                    "overlay_display_object_count_by_camera": {0: 0, 1: 1, 2: 2},
+                    "overlay_display_controller_count_by_camera": {0: 128, 1: 128, 2: 128},
+                },
                 "process": {"pid": 42, "ready": {"total_init_ms": 1.0}},
             },
             shared_payload={"tracking_update_hz": 99.0},
@@ -1576,6 +1652,23 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(summary["mask_pending_drop_count"], 3)
         self.assertEqual(summary["query_pending_drop_count"], 4)
         self.assertEqual(summary["tracker_pending_drop_count"], 5)
+        self.assertEqual(summary["tracking_backend_effective_query_count"], 4096)
+        self.assertEqual(summary["tracking_backend_query_count_truncated_by_camera"], {0: 0, 1: 0, 2: 0})
+        self.assertEqual(summary["tracking_query_count_actual_by_camera"], {0: 4096, 1: 4096, 2: 4096})
+        self.assertEqual(summary["tracking_union_pixels_by_camera"], {0: 5000, 1: 5100, 2: 5200})
+        self.assertEqual(summary["tracking_object_pixels_by_camera"], {0: 1000, 1: 1100, 2: 1200})
+        self.assertEqual(summary["tracking_controller_pixels_by_camera"], {0: 700, 1: 800, 2: 900})
+        self.assertEqual(summary["tracking_sample_object_hits_by_camera"], {0: 300, 1: 301, 2: 302})
+        self.assertEqual(summary["tracking_sample_controller_hits_by_camera"], {0: 200, 1: 201, 2: 202})
+        self.assertEqual(summary["tracking_sample_overlap_hits_by_camera"], {0: 10, 1: 11, 2: 12})
+        self.assertEqual(summary["tracking_sample_background_hits_by_camera"], {0: 5, 1: 6, 2: 7})
+        self.assertEqual(summary["overlay_display_count_by_camera"], {0: 128, 1: 129, 2: 130})
+        self.assertEqual(summary["overlay_display_object_count_by_camera"], {0: 0, 1: 1, 2: 2})
+        self.assertEqual(summary["overlay_display_controller_count_by_camera"], {0: 128, 1: 128, 2: 128})
+        self.assertEqual(summary["all_tracks_lift_exact_depth_group_ratio"], 1.0)
+        self.assertEqual(summary["all_tracks_lift_attempt_count"], 7)
+        self.assertEqual(summary["all_tracks_lift_cap_applied_count"], 2)
+        self.assertEqual(summary["tracking_result_without_lift_input_count"], 0)
         self.assertNotEqual(summary["cotracker_publish_fps"], 99.0)
 
     def test_same_bundle_ratios_include_tracker_result_denominator(self) -> None:

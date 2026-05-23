@@ -1,15 +1,17 @@
-# Demo 3.2 FFS LiteTracker
+# Demo 3.2 FFS Tracker
 
-Demo 3.2 is its own FFS + LiteTracker live work. It reuses shared camera,
+Demo 3.2 is its own FFS + point-tracker live work. It reuses shared camera,
 FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
 `qqtt.demo.demo32_runtime` instead of treating Demo 3.2 as a Demo 3.1 preset:
 
 - depth is FFS TensorRT `builderOptimizationLevel=5`, static batch `3`
 - FFS TensorRT depth and SAM3.1/HF EdgeTAM masks share GPU0
-- LiteTracker remains isolated in the child tracker process on GPU1
-- the intended order is capture -> FFS depth -> EdgeTAM masks -> LiteTracker
+- the tracker child process remains isolated on GPU1
+- the intended order is capture -> FFS depth -> EdgeTAM masks -> tracker
   batch=3 camera views -> render/diagnostics
-- the tracker backend defaults to `litetracker` with experimental batch-view
+- the tracker backend defaults to `litetracker`, and explicit
+  `--cotracker-backend tapnextpp` is supported for TAPNext++ A/B profiling
+- the default LiteTracker path uses experimental batch-view
   execution: `--tracking-backend-execution-mode batch-views` and
   `--cotracker-update-mode batch`
 - LiteTracker ONNX-CUDA is retained as an explicit serial A/B profiling path,
@@ -20,6 +22,10 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
 - LiteTracker uses lazy query initialization by default: the child process is
   ready to receive inputs immediately, and query-dependent tracker state is
   initialized from the first valid RGB + mask packet
+- TAPNext++ uses the same Demo 3.2 strict-source bundle path, with existing
+  TAPNext++ CLI options such as `--tapnet-repo-dir`,
+  `--tapnextpp-checkpoint`, `--tapnextpp-image-size`, and
+  `--tapnextpp-autocast-dtype`
 - warmup fails fast by default if SAM3.1 first-frame init does not produce both
   required masks (`object` and `controller`); use
   `--no-sam31-init-quick-fail-empty-masks` only for debug
@@ -95,6 +101,69 @@ QQTT_WSLG_OPEN3D_FAST_EXIT=1 conda run --no-capture-output -n demo_3_1_max \
   --tracker-visualization-mode all-tracks-3d-lift \
   --all-tracks-lift-max-points-per-camera 512 \
   --profile-json-output docs/generated/demo32_litetracker_ffs_rendered_60s_profile.json
+```
+
+TAPNext++ serial profiling:
+
+```bash
+QQTT_WSLG_OPEN3D_FAST_EXIT=1 conda run --no-capture-output -n demo_3_1_max \
+  python demo_v3_2/realtime_three_view_litetracker_ffs_dual4090.py \
+  --mode exp \
+  --duration-s 120 \
+  --camera-ids 0,1,2 \
+  --mask-gpu 0 \
+  --cotracker-gpu 1 \
+  --require-two-cuda \
+  --calibrate-path calibrate.pkl \
+  --render-mode pointcloud \
+  --object-prompt "stuffed animal" \
+  --cotracker-backend tapnextpp \
+  --tracking-backend-execution-mode serial \
+  --cotracker-query-count 4096 \
+  --tracker-visualization-mode all-tracks-3d-lift \
+  --all-tracks-lift-max-points-per-camera 512 \
+  --fusion-mask-policy strict \
+  --batch-bundle-policy strict-source \
+  --frame-bundle-policy strict-source \
+  --tracking-render-packet-match-policy exact-target-bundle \
+  --same-bundle-invariant-fail-fast \
+  --display-last-complete-while-waiting \
+  --render-micro-profile \
+  --gpu-sampling \
+  --gpu-sampling-device-indexes 0,1 \
+  --profile-json-output docs/generated/demo32_tapnextpp_serial_strict_120s_profile.json
+```
+
+TAPNext++ batch=3 profiling:
+
+```bash
+QQTT_WSLG_OPEN3D_FAST_EXIT=1 conda run --no-capture-output -n demo_3_1_max \
+  python demo_v3_2/realtime_three_view_litetracker_ffs_dual4090.py \
+  --mode exp \
+  --duration-s 120 \
+  --camera-ids 0,1,2 \
+  --mask-gpu 0 \
+  --cotracker-gpu 1 \
+  --require-two-cuda \
+  --calibrate-path calibrate.pkl \
+  --render-mode pointcloud \
+  --object-prompt "stuffed animal" \
+  --cotracker-backend tapnextpp \
+  --tracking-backend-execution-mode batch-views \
+  --cotracker-query-count 4096 \
+  --tracker-batch-query-count-policy min-common \
+  --tracker-visualization-mode all-tracks-3d-lift \
+  --all-tracks-lift-max-points-per-camera 512 \
+  --fusion-mask-policy strict \
+  --batch-bundle-policy strict-source \
+  --frame-bundle-policy strict-source \
+  --tracking-render-packet-match-policy exact-target-bundle \
+  --same-bundle-invariant-fail-fast \
+  --display-last-complete-while-waiting \
+  --render-micro-profile \
+  --gpu-sampling \
+  --gpu-sampling-device-indexes 0,1 \
+  --profile-json-output docs/generated/demo32_tapnextpp_batch3_strict_120s_profile.json
 ```
 
 LiteTracker external defaults are the current local validation paths:

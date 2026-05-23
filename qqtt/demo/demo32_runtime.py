@@ -13,7 +13,7 @@ from qqtt.demo import demo3_runtime
 
 PRESET_DEMO32_FFS_LITETRACKER = demo31.PRESET_DEMO32_FFS_LITETRACKER
 DEMO32_RUNTIME_MODULE = "qqtt.demo.demo32_runtime"
-DEMO32_RUNTIME_OWNER = "demo32_litetracker_ffs"
+DEMO32_RUNTIME_OWNER = "demo32_tracker_ffs"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -198,7 +198,7 @@ class Demo32Runtime(demo31.Demo31Runtime):
             "shared_runtime_profile_payload": shared_payload,
             "tracker_process_snapshot": snapshot,
             "runtime_note": (
-                "Demo 3.2 owns the FFS + LiteTracker live orchestration. It reuses "
+                "Demo 3.2 owns the FFS + point-tracker live orchestration. It reuses "
                 "shared camera/FFS/EdgeTAM services but is not a Demo 3.1 preset."
             ),
             "exit_code": exit_code,
