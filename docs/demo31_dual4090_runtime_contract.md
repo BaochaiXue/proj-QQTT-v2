@@ -73,6 +73,10 @@ Camera/mask/tracker work remains asynchronous, but PCD fusion is
 tracker-result-gated by default. The main process publishes bounded tracker
 inputs and stores pending depth+mask fusion bundles by `group_id`; it does not
 run expensive fusion/filter work until a fresh tracker result arrives. The
+capture/depth/mask join stage uses the shared latest-only stage mailbox:
+pending ready bundles can be replaced by newer ready bundles, but the active
+bundle already accepted by the stage is never replaced until the runtime
+completes or drops that exact `group_id`.
 default frame-bundle policy is `exact-target`: the tracker result must render
 with the same target `group_id` for the PCD/depth/lift/surface-anchor bundle.
 If the exact bundle is missing or was evicted, no new rendered result is
@@ -86,6 +90,9 @@ therefore measures track-ready fused PCD results, not semantic-only PCD
 throughput or mixed-frame reuse. Because the tracker result is already the
 render clock, Demo 3.1 does not expose a render stride option and renders every
 tracker-ready exact target group.
+Profile summaries separate `display_loop_fps` from
+`new_complete_bundle_fps`; the latter is the tracker-result-driven rate of new
+same-bundle rendered results.
 Use `--no-wait-for-tracking-overlay` only for debugging the semantic PCD before
 tracking is available.
 
@@ -290,6 +297,14 @@ overlay_render_group_delta_p95
 tracking_overlay_warmup_skipped_render_count
 tracking_overlay_first_render_group_id
 tracking_overlay_render_blocked_count
+display_loop_fps
+new_complete_bundle_fps
+stage_mailbox_pending_drop_count
+capture_pending_drop_count
+depth_pending_drop_count
+mask_pending_drop_count
+query_pending_drop_count
+tracker_pending_drop_count
 tracking_pending_render_packets
 tracking_pending_render_packet_max_groups
 tracking_pending_render_packet_drop_count

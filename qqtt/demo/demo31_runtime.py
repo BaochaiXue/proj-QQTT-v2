@@ -47,6 +47,7 @@ from qqtt.demo.services.frame_bundle_service import (
     BundleStore,
 )
 from qqtt.demo.services.stage_mailbox import (
+    LatestOnlyStageMailbox,
     STAGE_MAILBOX_POLICIES,
     STAGE_MAILBOX_POLICY_LATEST_ONLY,
 )
@@ -2778,6 +2779,7 @@ class Demo31MaskPolicyJoinBuffer:
         self.mask_age_ms_samples: list[float] = []
         self.mask_group_delta_samples: list[float] = []
         self._selection_by_group: dict[int, dict[str, Any]] = {}
+        self.ready_stage_mailbox: LatestOnlyStageMailbox[tuple[Any, Any, Any]] = LatestOnlyStageMailbox()
 
     def put_capture(self, group: Any) -> None:
         self._captures[int(group.group_id)] = group
@@ -2792,6 +2794,9 @@ class Demo31MaskPolicyJoinBuffer:
         self._prune()
 
     def pop_latest_ready(self) -> tuple[Any, Any, Any] | None:
+        active = self.ready_stage_mailbox.take_next()
+        if active is not None:
+            return active
         ready_depth = sorted(set(self._captures) & set(self._depths))
         if not ready_depth:
             return None
@@ -2804,17 +2809,34 @@ class Demo31MaskPolicyJoinBuffer:
             depth = self._depths.pop(group_id)
             self.ready_join_count += 1
             self._drop_older_capture_depth(group_id)
-            return capture, depth, mask
+            self.ready_stage_mailbox.publish_latest((capture, depth, mask))
+            return self.ready_stage_mailbox.take_next()
         return None
+
+    def complete_active(self, group_id: int | None = None) -> tuple[Any, Any, Any] | None:
+        active = self.ready_stage_mailbox.active()
+        if active is None:
+            return None
+        if group_id is not None:
+            capture, depth, _mask = active
+            active_group_id = int(getattr(depth, "group_id", getattr(capture, "group_id", group_id)))
+            if int(group_id) != active_group_id:
+                return None
+        return self.ready_stage_mailbox.complete_active(active)
 
     def snapshot(self) -> dict[str, Any]:
         age = percentile_summary(self.mask_age_ms_samples)
+        mailbox = self.ready_stage_mailbox.snapshot()
         return {
             "max_groups": int(self.max_groups),
             "policy": str(self.policy),
             "capture_pending": int(len(self._captures)),
             "depth_pending": int(len(self._depths)),
             "mask_pending": int(len(self._masks)),
+            "ready_stage_mailbox": mailbox,
+            "ready_stage_pending_drops": int(mailbox.get("pending_replaced", 0) or 0),
+            "ready_stage_active_present": bool(mailbox.get("active_present", False)),
+            "ready_stage_pending_present": bool(mailbox.get("pending_present", False)),
             "capture_stale_drops": int(self.capture_stale_drops),
             "depth_stale_drops": int(self.depth_stale_drops),
             "mask_stale_drops": int(self.mask_stale_drops),
@@ -2996,6 +3018,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_mask_cache = LatestMaskCache()
             self.demo31_last_tracking_input_s: float | None = None
             self.demo31_tracking_input_publish_times_s: list[float] = []
+            self.demo31_complete_bundle_render_times_s: list[float] = []
             self.demo31_tracking_input_skip_count = 0
             self.demo31_tracking_input_queue_replace_count = 0
             self.demo31_tracking_input_drop_count = 0
@@ -3062,6 +3085,10 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_tracking_overlay_render_blocked_count = 0
             self.demo31_tracking_overlay_first_render_group_id: int | None = None
             self.demo31_tracking_stats: dict[str, dict[int, int]] = {}
+
+        def _complete_stage_join_active(self, group_id: int | None) -> None:
+            if hasattr(self.stage_join_buffer, "complete_active"):
+                self.stage_join_buffer.complete_active(None if group_id is None else int(group_id))
 
         def stop(self) -> None:
             self.stop_event.set()
@@ -3844,52 +3871,58 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             fusion_waits: dict[str, float] | None = None,
             warning_label: str,
         ) -> bool:
-            if not self._tracker_result_gated_fusion_enabled():
-                return super()._publish_complete_inference_group(
-                    complete=complete,
-                    rng=rng,
-                    ray_cache=ray_cache,
-                    fusion_waits=fusion_waits,
-                    warning_label=warning_label,
-                )
             depth_group = complete.depth_group
-            if not temporal_group_is_coherent(depth_group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
-                self._summary["fusion_drop_skewed_group"] = int(self._summary.get("fusion_drop_skewed_group", 0)) + 1
-                self._profile_mark_drop(depth_group.group_id, "fusion_drop_skewed_group")
-                return False
-            if set(int(idx) for idx in complete.mask_packets) != set(int(idx) for idx in self.args.camera_ids):
-                self._summary["fusion_timeout_groups"] = int(self._summary.get("fusion_timeout_groups", 0)) + 1
-                self._profile_mark_drop(depth_group.group_id, "single_owner_missing_mask")
-                return False
-            waits = fusion_waits or {
-                "wait_depth_ms": 0.0,
-                "wait_total_ms": 0.0,
-                **{f"wait_mask_cam{int(camera_idx)}_ms": 0.0 for camera_idx in self.args.camera_ids},
-            }
-            waits = {
-                **waits,
-                "pcd_fusion_trigger": PCD_FUSION_TRIGGER_TRACKER_RESULT,
-                "fusion_deferred_until_tracker_result": True,
-            }
-            self._profile_update(depth_group.group_id, fusion=waits)
-            try:
-                self._defer_fusion_until_tracker_result(
-                    depth_group=depth_group,
-                    masks=complete.mask_packets,
-                    publish_hook="tracker_result_gated_fusion",
-                )
-            except Exception as exc:
-                if not self.stop_event.is_set():
-                    print(
-                        f"[WARN] Demo 3.1 {warning_label} deferred fusion group {depth_group.group_id} failed: "
-                        f"{type(exc).__name__}: {exc}",
-                        flush=True,
+            if not self._tracker_result_gated_fusion_enabled():
+                try:
+                    return super()._publish_complete_inference_group(
+                        complete=complete,
+                        rng=rng,
+                        ray_cache=ray_cache,
+                        fusion_waits=fusion_waits,
+                        warning_label=warning_label,
                     )
-                return False
-            self._summary["fusion_deferred_until_tracker_result_groups"] = int(
-                self._summary.get("fusion_deferred_until_tracker_result_groups", 0)
-            ) + 1
-            return True
+                finally:
+                    self._complete_stage_join_active(int(depth_group.group_id))
+            try:
+                if not temporal_group_is_coherent(depth_group, max_capture_skew_ms=float(self.args.max_capture_skew_ms)):
+                    self._summary["fusion_drop_skewed_group"] = int(self._summary.get("fusion_drop_skewed_group", 0)) + 1
+                    self._profile_mark_drop(depth_group.group_id, "fusion_drop_skewed_group")
+                    return False
+                if set(int(idx) for idx in complete.mask_packets) != set(int(idx) for idx in self.args.camera_ids):
+                    self._summary["fusion_timeout_groups"] = int(self._summary.get("fusion_timeout_groups", 0)) + 1
+                    self._profile_mark_drop(depth_group.group_id, "single_owner_missing_mask")
+                    return False
+                waits = fusion_waits or {
+                    "wait_depth_ms": 0.0,
+                    "wait_total_ms": 0.0,
+                    **{f"wait_mask_cam{int(camera_idx)}_ms": 0.0 for camera_idx in self.args.camera_ids},
+                }
+                waits = {
+                    **waits,
+                    "pcd_fusion_trigger": PCD_FUSION_TRIGGER_TRACKER_RESULT,
+                    "fusion_deferred_until_tracker_result": True,
+                }
+                self._profile_update(depth_group.group_id, fusion=waits)
+                try:
+                    self._defer_fusion_until_tracker_result(
+                        depth_group=depth_group,
+                        masks=complete.mask_packets,
+                        publish_hook="tracker_result_gated_fusion",
+                    )
+                except Exception as exc:
+                    if not self.stop_event.is_set():
+                        print(
+                            f"[WARN] Demo 3.1 {warning_label} deferred fusion group {depth_group.group_id} failed: "
+                            f"{type(exc).__name__}: {exc}",
+                            flush=True,
+                        )
+                    return False
+                self._summary["fusion_deferred_until_tracker_result_groups"] = int(
+                    self._summary.get("fusion_deferred_until_tracker_result_groups", 0)
+                ) + 1
+                return True
+            finally:
+                self._complete_stage_join_active(int(depth_group.group_id))
 
         def _build_raw_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
             if self._tracker_result_gated_fusion_enabled():
@@ -5074,6 +5107,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             if self.demo31_tracking_overlay_first_render_group_id is None:
                 self.demo31_tracking_overlay_first_render_group_id = int(render_packet.group_id)
             super()._publish_render_packet(render_packet)
+            self.demo31_complete_bundle_render_times_s.append(time.perf_counter())
             self._unprotect_frame_bundle(overlay_group_id)
 
         def _remember_pending_render_packet(self, packet: Any) -> None:
@@ -5218,12 +5252,27 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 else 0.0
             )
             bundle_store_snapshot = self.demo31_frame_bundle_store.snapshot()
+            stage_join_snapshot = (
+                self.stage_join_buffer.snapshot()
+                if hasattr(self.stage_join_buffer, "snapshot")
+                else {}
+            )
+            ready_mailbox_snapshot = stage_join_snapshot.get("ready_stage_mailbox", {})
+            display_loop_fps = float(getattr(getattr(self, "render_stats", None), "render_fps", 0.0) or 0.0)
+            new_complete_bundle_fps = float(event_fps(self.demo31_complete_bundle_render_times_s))
             return {
                 "process": process_snapshot,
                 "process_status_events": list(self.demo31_process_status_events),
-                "stage_join_buffer": self.stage_join_buffer.snapshot()
-                if hasattr(self.stage_join_buffer, "snapshot")
-                else {},
+                "stage_join_buffer": stage_join_snapshot,
+                "stage_mailbox": ready_mailbox_snapshot,
+                "stage_mailbox_pending_drop_count": int(
+                    stage_join_snapshot.get("ready_stage_pending_drops", 0) or 0
+                ),
+                "capture_pending_drop_count": int(stage_join_snapshot.get("capture_stale_drops", 0) or 0),
+                "depth_pending_drop_count": int(stage_join_snapshot.get("depth_stale_drops", 0) or 0),
+                "mask_pending_drop_count": int(stage_join_snapshot.get("mask_stale_drops", 0) or 0),
+                "query_pending_drop_count": int(self.demo31_tracking_input_queue_replace_count),
+                "tracker_pending_drop_count": int(self.demo31_tracking_input_drop_count),
                 "tracking_input_skip_count": int(self.demo31_tracking_input_skip_count),
                 "tracking_input_queue_replace_count": int(self.demo31_tracking_input_queue_replace_count),
                 "tracking_input_drop_count": int(self.demo31_tracking_input_drop_count),
@@ -5231,6 +5280,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "cotracker_input_fps": float(event_fps(self.demo31_tracking_input_publish_times_s)),
                 "cotracker_result_count": int(len(self.demo31_cotracker_publish_times_s)),
                 "cotracker_publish_fps": float(event_fps(self.demo31_cotracker_publish_times_s)),
+                "display_loop_fps": display_loop_fps,
+                "new_complete_bundle_fps": new_complete_bundle_fps,
                 "tracking_pending_render_packets": pending_render_count,
                 "tracking_pending_render_packet_max_groups": int(self.demo31_pending_render_packet_max_groups),
                 "tracking_pending_render_packet_drop_count": int(self.demo31_pending_render_packet_drop_count),
@@ -5432,6 +5483,7 @@ class Demo31Runtime:
                 "exit_code": int(exit_code),
                 "rendered_fps": float(final.get("render_fps", warm.get("render_fps", 0.0)) or 0.0),
                 "render_loop_fps": float(final.get("render_fps", warm.get("render_fps", 0.0)) or 0.0),
+                "display_loop_fps": float(final.get("render_fps", warm.get("render_fps", 0.0)) or 0.0),
                 "new_fused_pcd_fps": float(final.get("fusion_fps", warm.get("fusion_fps", 0.0)) or 0.0),
                 "capture_group_fps": float(final.get("capture_group_fps", warm.get("capture_group_fps", 0.0)) or 0.0),
                 "gpu0_util_median": _gpu_metric(0, "gpu_util_pct", "median"),
@@ -5577,6 +5629,16 @@ class Demo31Runtime:
                     ),
                     "cotracker_batch_error_count": int(tracking_stats.get("cotracker_batch_error_count", 0) or 0),
                     "cotracker_batch_disabled_reason": tracking_stats.get("cotracker_batch_disabled_reason"),
+                    "display_loop_fps": float(snapshot.get("display_loop_fps", 0.0) or 0.0),
+                    "new_complete_bundle_fps": float(snapshot.get("new_complete_bundle_fps", 0.0) or 0.0),
+                    "stage_mailbox_pending_drop_count": int(
+                        snapshot.get("stage_mailbox_pending_drop_count", 0) or 0
+                    ),
+                    "capture_pending_drop_count": int(snapshot.get("capture_pending_drop_count", 0) or 0),
+                    "depth_pending_drop_count": int(snapshot.get("depth_pending_drop_count", 0) or 0),
+                    "mask_pending_drop_count": int(snapshot.get("mask_pending_drop_count", 0) or 0),
+                    "query_pending_drop_count": int(snapshot.get("query_pending_drop_count", 0) or 0),
+                    "tracker_pending_drop_count": int(snapshot.get("tracker_pending_drop_count", 0) or 0),
                     "cotracker_input_drop_count": int(snapshot.get("tracking_input_drop_count", 0) or 0),
                     "cotracker_input_queue_replace_count": int(
                         snapshot.get("tracking_input_queue_replace_count", 0)

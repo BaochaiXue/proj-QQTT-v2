@@ -1527,6 +1527,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 "model_instances_actual": 3,
                 "query_count_per_camera": 1365,
                 "total_query_count_across_views": 4095,
+                "display_loop_fps": 4.5,
+                "new_complete_bundle_fps": 2.0,
+                "stage_mailbox_pending_drop_count": 6,
+                "capture_pending_drop_count": 1,
+                "depth_pending_drop_count": 2,
+                "mask_pending_drop_count": 3,
+                "query_pending_drop_count": 4,
+                "tracker_pending_drop_count": 5,
                 "process": {"pid": 42, "ready": {"total_init_ms": 1.0}},
             },
             shared_payload={"tracking_update_hz": 99.0},
@@ -1546,6 +1554,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(summary["model_instances_expected"], 3)
         self.assertEqual(summary["query_count_per_camera"], 1365)
         self.assertEqual(summary["total_query_count_across_views"], 4095)
+        self.assertEqual(summary["display_loop_fps"], 4.5)
+        self.assertEqual(summary["new_complete_bundle_fps"], 2.0)
+        self.assertEqual(summary["stage_mailbox_pending_drop_count"], 6)
+        self.assertEqual(summary["capture_pending_drop_count"], 1)
+        self.assertEqual(summary["depth_pending_drop_count"], 2)
+        self.assertEqual(summary["mask_pending_drop_count"], 3)
+        self.assertEqual(summary["query_pending_drop_count"], 4)
+        self.assertEqual(summary["tracker_pending_drop_count"], 5)
         self.assertNotEqual(summary["cotracker_publish_fps"], 99.0)
 
     def test_track_mode_is_not_public_cli(self) -> None:
@@ -1575,6 +1591,51 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(buffer.selection_for_group(5)["source_group_id"], 4)  # type: ignore[index]
         self.assertEqual(buffer.snapshot()["mask_reuse_count"], 1)
         self.assertEqual(buffer.snapshot()["mask_group_delta_median"], 1.0)
+
+    def test_join_buffer_mailbox_drops_only_pending_not_active(self) -> None:
+        buffer = demo31_runtime.Demo31MaskPolicyJoinBuffer(
+            policy="strict",
+            stale_timeout_ms=1000.0,
+        )
+        for group_id in (1, 2, 3):
+            buffer.put_mask(
+                _FakeMaskGroup(
+                    group_id=group_id,
+                    mask_packets={0: _FakePacket(group_id=group_id, camera_idx=0)},
+                )
+            )
+            buffer.put_capture(_FakeGroup(group_id=group_id))
+            buffer.put_depth(_FakeGroup(group_id=group_id))
+
+        first = buffer.pop_latest_ready()
+        self.assertIsNotNone(first)
+        self.assertEqual(first[0].group_id, 3)  # type: ignore[index]
+        self.assertIsNone(buffer.pop_latest_ready())
+
+        for group_id in (4, 5):
+            buffer.put_mask(
+                _FakeMaskGroup(
+                    group_id=group_id,
+                    mask_packets={0: _FakePacket(group_id=group_id, camera_idx=0)},
+                )
+            )
+            buffer.put_capture(_FakeGroup(group_id=group_id))
+            buffer.put_depth(_FakeGroup(group_id=group_id))
+            self.assertIsNone(buffer.pop_latest_ready())
+
+        snapshot = buffer.snapshot()
+        self.assertTrue(snapshot["ready_stage_active_present"])
+        self.assertTrue(snapshot["ready_stage_pending_present"])
+        self.assertEqual(snapshot["ready_stage_mailbox"]["accepted"], 1)
+        self.assertEqual(snapshot["ready_stage_mailbox"]["pending_replaced"], 1)
+
+        buffer.complete_active(3)
+        second = buffer.pop_latest_ready()
+        self.assertIsNotNone(second)
+        self.assertEqual(second[0].group_id, 5)  # type: ignore[index]
+        snapshot = buffer.snapshot()
+        self.assertEqual(snapshot["ready_stage_mailbox"]["accepted"], 2)
+        self.assertEqual(snapshot["ready_stage_mailbox"]["completed"], 1)
 
     def test_strict_join_buffer_requires_matching_mask_group(self) -> None:
         buffer = demo31_runtime.Demo31MaskPolicyJoinBuffer(policy="strict")
@@ -2668,6 +2729,16 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(overlay_profile["tracker_result_gated_fusion"])
         self.assertTrue(overlay_profile["tracker_result_triggered_fusion"])
         self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "exact")
+        snapshot = runtime.demo31_snapshot()
+        self.assertEqual(snapshot["complete_bundle_rendered_count"], 1)
+        self.assertGreaterEqual(snapshot["new_complete_bundle_fps"], 0.0)
+        self.assertIn("display_loop_fps", snapshot)
+        self.assertIn("capture_pending_drop_count", snapshot)
+        self.assertIn("depth_pending_drop_count", snapshot)
+        self.assertIn("mask_pending_drop_count", snapshot)
+        self.assertIn("query_pending_drop_count", snapshot)
+        self.assertIn("tracker_pending_drop_count", snapshot)
+        self.assertIn("stage_mailbox_pending_drop_count", snapshot)
 
     def test_tracker_result_gated_fused_packet_path_caches_exact_batch_bundle(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
