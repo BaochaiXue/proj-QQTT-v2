@@ -3190,6 +3190,56 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             snapshot = self.demo31_snapshot()
             summary = build_empty_dual_gpu_profile_summary(self.demo31_contract)
             _merge_cotracker_process_snapshot_metrics(summary, snapshot)
+            for key in (
+                "display_loop_fps",
+                "new_complete_bundle_fps",
+                "complete_bundle_rendered_count",
+                "same_bundle_rendered_ratio",
+                "same_bundle_rendered_among_rendered_ratio",
+                "same_bundle_rendered_per_tracker_result_ratio",
+                "strict_same_source_frame_ratio",
+                "same_target_group_ratio",
+                "same_bundle_invariant_violation_count",
+                "missing_exact_after_tracker_result_count",
+                "nearest_fallback_count",
+                "frame_bundle_exact_render_count",
+                "frame_bundle_missing_exact_count",
+                "bundle_incomplete_drop_count",
+                "bundle_taken_render_success_count",
+                "bundle_taken_then_render_failed_count",
+                "bundle_consumed_without_render_count",
+                "tracking_result_exact_render_packet_count",
+                "tracking_result_nearest_render_packet_count",
+                "tracking_result_without_render_packet_count",
+                "tracking_result_without_lift_input_count",
+                "tracker_result_triggered_fusion_count",
+                "tracker_result_fusion_ms_median",
+                "tracker_result_fusion_ms_p95",
+                "tracking_input_queue_replace_count",
+                "tracking_input_replaced_group_unprotect_count",
+                "protected_bundle_count",
+                "protected_bundle_oldest_age_ms",
+                "protected_bundle_ttl_unprotect_count",
+                "protected_bundle_window_unprotect_count",
+                "protected_bundle_eviction_avoided_count",
+                "query_pending_drop_count",
+                "stage_mailbox_pending_drop_count",
+                "tracking_pending_fusion_bundles",
+                "tracking_pending_render_packets",
+            ):
+                if key in snapshot:
+                    summary[key] = snapshot[key]
+            mask_cache = snapshot.get("mask_cache")
+            if isinstance(mask_cache, dict):
+                for key in (
+                    "mask_reuse_ratio",
+                    "mask_age_ms_median",
+                    "mask_age_ms_p95",
+                    "mask_group_delta_median",
+                    "mask_group_delta_p95",
+                ):
+                    if key in mask_cache:
+                        summary[key] = mask_cache[key]
             payload = {
                 "contract": dict(self.demo31_contract),
                 "summary": summary,
