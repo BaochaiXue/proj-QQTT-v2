@@ -53,9 +53,12 @@ within 4 pixels, then draw a red 3D sphere marker with radius 6mm. Direct
 2D-track/depth/intrinsics/c2w lifting is disabled by default and is available
 under `--tracker-visualization-mode legacy-3d-lift` for debugging. Demo 3.2
 uses `--tracker-visualization-mode all-tracks-3d-lift` by default: every
-visible LiteTracker point with valid depth becomes a red 3D control marker,
-without surface-snap matching, semantic scope-mask rejection, or semantic bbox
-rejection.
+visible LiteTracker point with valid depth is eligible for a red 3D control
+marker, without surface-snap matching, semantic scope-mask rejection, or
+semantic bbox rejection. To keep this render path bounded, the default all-track
+lift cap is `all_tracks_lift_max_points_per_camera = 512` with
+`all_tracks_lift_selection = visible-spread`; pass `0` only for explicit
+all-point debug/quality runs.
 The Open3D warmup HUD is pipeline-aware: Demo 3.2 reports the FFS/EdgeTAM
 path plus LiteTracker query-init and 3D anchors instead of the older fixed
 FFS/EdgeTAM-only message.
@@ -174,6 +177,8 @@ tracker_3d_snap_radius_px = 4.0
 tracker_3d_marker_radius_m = 0.006
 tracker_control_points_per_camera = 16
 tracker_control_point_selection = visible-spread
+all_tracks_lift_max_points_per_camera = 512
+all_tracks_lift_selection = visible-spread
 tracking_overlay_lift_method = surface_snap
 overlay_lift_mask_scope = controller
 overlay_max_points_per_camera = 0
@@ -333,6 +338,14 @@ frame_bundle_missing_exact_count
 nearest_fallback_debug_count
 protected_bundle_count
 protected_bundle_eviction_avoided_count
+bundle_taken_then_render_failed_count
+bundle_consumed_without_render_count
+bundle_taken_render_success_count
+bundle_taken_surface_anchor_missing_count
+bundle_taken_lift_input_missing_count
+all_tracks_lift_exact_depth_group_ratio
+all_tracks_lift_attempt_count
+all_tracks_lift_cap_applied_count
 frame_bundle_strict_source_reject_count
 tracking_result_exact_render_packet_count
 tracking_result_nearest_render_packet_count

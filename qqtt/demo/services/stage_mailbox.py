@@ -51,13 +51,20 @@ class LatestOnlyStageMailbox(Generic[T]):
             self.accepted += 1
             return self._active
 
-    def complete_active(self, item: T | None = None) -> T | None:
+    def complete_active(self, item: T | None = None, *, group_id: int | None = None) -> T | None:
         with self._lock:
             active = self._active
             if active is None:
                 return None
-            if item is not None and item is not active:
-                return None
+            if group_id is not None:
+                active_group_id = getattr(active, "group_id", None)
+                if active_group_id is None or int(active_group_id) != int(group_id):
+                    return None
+            elif item is not None and item is not active:
+                active_group_id = getattr(active, "group_id", None)
+                item_group_id = getattr(item, "group_id", None)
+                if active_group_id is None or item_group_id is None or int(active_group_id) != int(item_group_id):
+                    return None
             self._active = None
             self.completed += 1
             return active

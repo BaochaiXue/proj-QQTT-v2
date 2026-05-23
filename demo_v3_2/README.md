@@ -46,10 +46,17 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
   default: tracker result, FFS depth/lift inputs, and rendered PCD must share
   the same `group_id`; nearest-frame fallback is debug-only
 - render waits for a LiteTracker result and 3D tracking control markers
-- every visible LiteTracker point with valid depth is treated as a 3D anchor by
-  default (`--tracker-visualization-mode all-tracks-3d-lift`); Demo 3.2 does
-  not apply surface-snap matching or semantic bbox rejection in this default
-  path
+- every visible LiteTracker point with valid depth is eligible for the 3D
+  anchor layer by default (`--tracker-visualization-mode all-tracks-3d-lift`);
+  Demo 3.2 does not apply surface-snap matching or semantic bbox rejection in
+  this default path
+- the all-tracks lift is still render-bounded by default:
+  `--all-tracks-lift-max-points-per-camera 512` with
+  `--all-tracks-lift-selection visible-spread`; pass
+  `--all-tracks-lift-max-points-per-camera 0` only for explicit all-point
+  quality/debug runs
+- rendered profiles report all-tracks lift candidate, selected, rendered, cap,
+  timing, and exact-depth-group fields so marker count cannot silently explode
 - the Open3D warmup HUD is generated from the active runtime pipeline, so Demo
   3.2 reports LiteTracker query-init and 3D anchors instead of a hard-coded
   Demo 2.3 FFS/EdgeTAM-only status line
@@ -84,6 +91,7 @@ QQTT_WSLG_OPEN3D_FAST_EXIT=1 conda run --no-capture-output -n demo_3_1_max \
   --gpu-sampling \
   --gpu-sampling-device-indexes 0,1 \
   --tracker-visualization-mode all-tracks-3d-lift \
+  --all-tracks-lift-max-points-per-camera 512 \
   --profile-json-output docs/generated/demo32_litetracker_ffs_rendered_60s_profile.json
 ```
 

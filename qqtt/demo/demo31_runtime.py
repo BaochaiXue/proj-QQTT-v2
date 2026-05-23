@@ -205,6 +205,7 @@ DEFAULT_DEMO32_TRACKER_VISUALIZATION_MODE = TRACKER_VISUALIZATION_MODE_ALL_TRACK
 DEFAULT_TRACKER_3D_SNAP_RADIUS_PX = 4.0
 DEFAULT_TRACKER_3D_MARKER_RADIUS_M = 0.006
 DEFAULT_TRACKER_CONTROL_POINTS_PER_CAMERA = 16
+DEFAULT_ALL_TRACKS_LIFT_MAX_POINTS_PER_CAMERA = 512
 TRACKER_CONTROL_POINT_SELECTION_VISIBLE_SPREAD = "visible-spread"
 TRACKER_CONTROL_POINT_SELECTION_TOP_VISIBLE = "top-visible"
 TRACKER_CONTROL_POINT_SELECTION_MASK_STRATIFIED = "mask-stratified"
@@ -1510,6 +1511,18 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         default=DEFAULT_TRACKER_CONTROL_POINT_SELECTION,
         help="Policy for choosing sparse visible tracking controls before surface snapping.",
     )
+    parser.add_argument(
+        "--all-tracks-lift-max-points-per-camera",
+        type=int,
+        default=DEFAULT_ALL_TRACKS_LIFT_MAX_POINTS_PER_CAMERA,
+        help="Render at most this many all-tracks 3D lift markers per camera; 0 keeps every valid lifted track.",
+    )
+    parser.add_argument(
+        "--all-tracks-lift-selection",
+        choices=TRACKER_CONTROL_POINT_SELECTIONS,
+        default=TRACKER_CONTROL_POINT_SELECTION_VISIBLE_SPREAD,
+        help="Selection policy used before all-tracks 3D depth lift when the cap is active.",
+    )
     parser.add_argument("--overlay-trail-len", type=int, default=demo3_runtime.DEFAULT_OVERLAY_TRAIL_LEN)
     parser.add_argument("--overlay-stale-timeout-ms", type=float, default=demo3_runtime.DEFAULT_OVERLAY_STALE_TIMEOUT_MS)
     parser.add_argument("--mask-gpu", default=DEFAULT_MASK_GPU)
@@ -1823,6 +1836,10 @@ def validate_args(
         raise ValueError("--tracker-control-points-per-camera must be >= 0.")
     if str(args.tracker_control_point_selection) not in TRACKER_CONTROL_POINT_SELECTIONS:
         raise ValueError(f"--tracker-control-point-selection must be one of {TRACKER_CONTROL_POINT_SELECTIONS}.")
+    if int(args.all_tracks_lift_max_points_per_camera) < 0:
+        raise ValueError("--all-tracks-lift-max-points-per-camera must be >= 0; use 0 for all visible tracks.")
+    if str(args.all_tracks_lift_selection) not in TRACKER_CONTROL_POINT_SELECTIONS:
+        raise ValueError(f"--all-tracks-lift-selection must be one of {TRACKER_CONTROL_POINT_SELECTIONS}.")
     if float(args.cotracker_input_fps) < 0.0:
         raise ValueError("--cotracker-input-fps must be non-negative.")
     if str(args.cotracker_update_mode) not in demo3_runtime.COTRACKER_UPDATE_MODES:
@@ -2127,6 +2144,8 @@ def build_contract(
         "tracker_3d_marker_radius_m": float(args.tracker_3d_marker_radius_m),
         "tracker_control_points_per_camera": int(args.tracker_control_points_per_camera),
         "tracker_control_point_selection": str(args.tracker_control_point_selection),
+        "all_tracks_lift_max_points_per_camera": int(args.all_tracks_lift_max_points_per_camera),
+        "all_tracks_lift_selection": str(args.all_tracks_lift_selection),
         "tracking_overlay_lift_method": (
             "surface_snap"
             if tracker_surface_mode
@@ -2260,7 +2279,7 @@ def build_contract(
         "tracking_control_point_sampling": (
             f"{args.tracker_control_point_selection}_surface_snap"
             if tracker_surface_mode
-            else "all_visible_depth_valid_tracks_no_surface_or_bbox_gate"
+            else f"{args.all_tracks_lift_selection}_all_tracks_depth_lift_cap_{int(args.all_tracks_lift_max_points_per_camera)}"
             if tracker_all_tracks_mode
             else "farthest_point_sample_after_lift_scope_and_bbox"
         ),
@@ -2468,6 +2487,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracker_3d_marker_radius_m",
         "tracker_control_points_per_camera",
         "tracker_control_point_selection",
+        "all_tracks_lift_max_points_per_camera",
+        "all_tracks_lift_selection",
         "tracking_overlay_lift_method",
         "tracking_overlay_color_mode",
         "overlay_max_points_per_camera",
@@ -3085,6 +3106,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_tracking_result_exact_render_packet_count = 0
             self.demo31_tracking_result_nearest_render_packet_count = 0
             self.demo31_tracking_result_without_lift_input_count = 0
+            self.demo31_bundle_taken_then_render_failed_count = 0
+            self.demo31_bundle_consumed_without_render_count = 0
+            self.demo31_bundle_taken_render_success_count = 0
+            self.demo31_bundle_taken_surface_anchor_missing_count = 0
+            self.demo31_bundle_taken_lift_input_missing_count = 0
+            self.demo31_all_tracks_lift_attempt_count = 0
+            self.demo31_all_tracks_lift_exact_depth_group_count = 0
+            self.demo31_all_tracks_lift_cap_applied_count = 0
             self.demo31_overlay_age_ms_samples: list[float] = []
             self.demo31_overlay_model_ms_samples: list[float] = []
             self.demo31_overlay_e2e_ms_samples: list[float] = []
@@ -4308,6 +4337,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 }
             if pending_fusion_bundle is None:
                 self.demo31_tracking_result_without_render_packet_count += 1
+                self.demo31_bundle_taken_then_render_failed_count += 1
+                self.demo31_bundle_consumed_without_render_count += 1
                 return None, {
                     "tracking_render_packet_match_mode": "missing",
                     "tracking_result_has_matching_render_packet": False,
@@ -4336,6 +4367,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         flush=True,
                     )
                 self.demo31_tracker_result_fusion_skipped_count += 1
+                self.demo31_bundle_taken_then_render_failed_count += 1
+                self.demo31_bundle_consumed_without_render_count += 1
                 self._profile_mark_drop(bundle_group_id, "tracker_result_gated_fusion_failed")
                 return None, {
                     "tracking_render_packet_match_mode": "fusion-failed",
@@ -4439,6 +4472,11 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             overlay_bbox_input_points_by_camera: dict[int, int] = {}
             overlay_bbox_kept_points_by_camera: dict[int, int] = {}
             overlay_bbox_rejected_by_camera: dict[int, int] = {}
+            all_tracks_lift_candidate_count_by_camera: dict[int, int] = {}
+            all_tracks_lift_selected_count_by_camera: dict[int, int] = {}
+            all_tracks_lift_rendered_count_by_camera: dict[int, int] = {}
+            all_tracks_lift_rejected_by_cap_by_camera: dict[int, int] = {}
+            all_tracks_lift_cap_applied_by_camera: dict[int, bool] = {}
             tracking_control_points_by_camera: dict[int, int] = {}
             tracking_control_point_count = 0
             tracking_control_marker_points = 0
@@ -4509,6 +4547,28 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     self.args,
                     "tracker_control_point_selection",
                     self.demo31_contract.get("tracker_control_point_selection", DEFAULT_TRACKER_CONTROL_POINT_SELECTION),
+                )
+            )
+            all_tracks_lift_max_points_per_camera = int(
+                getattr(
+                    self.args,
+                    "all_tracks_lift_max_points_per_camera",
+                    int(
+                        self.demo31_contract.get(
+                            "all_tracks_lift_max_points_per_camera",
+                            DEFAULT_ALL_TRACKS_LIFT_MAX_POINTS_PER_CAMERA,
+                        )
+                    ),
+                )
+            )
+            all_tracks_lift_selection = str(
+                getattr(
+                    self.args,
+                    "all_tracks_lift_selection",
+                    self.demo31_contract.get(
+                        "all_tracks_lift_selection",
+                        TRACKER_CONTROL_POINT_SELECTION_VISIBLE_SPREAD,
+                    ),
                 )
             )
             control_point_radius_m = float(
@@ -4658,14 +4718,20 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 surface_snapshot = self.demo31_surface_anchor_cache.get(int(overlay_group_id))
                 tracker_surface_anchor_cache_hit = surface_snapshot is not None
                 tracker_surface_anchor_group_id = None if surface_snapshot is None else int(surface_snapshot.group_id)
+                if surface_snapshot is None and render_match_profile.get("bundle_group_id") is not None:
+                    self.demo31_bundle_taken_surface_anchor_missing_count += 1
             elif direct_depth_lift_mode and render_packet is not None:
                 lift_inputs = self.demo31_lift_input_cache.get(int(render_packet.group_id))
             if direct_depth_lift_mode and render_packet is not None and lift_inputs is None:
                 self.demo31_tracking_result_without_lift_input_count += 1
+                if render_match_profile.get("bundle_group_id") is not None:
+                    self.demo31_bundle_taken_lift_input_missing_count += 1
             frame_provenance = None
+            all_tracks_lift_ms = 0.0
             if render_packet is not None:
                 color_by_camera = bool(getattr(self.args, "overlay_debug_color_by_camera", False))
                 lift_mask_scope = str(getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE))
+                all_tracks_lift_started_s: float | None = None
                 bbox_filter_enabled = bool(
                     getattr(
                         self.args,
@@ -4766,6 +4832,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             marker_parts.append(control_marker_points)
                             marker_color_parts.append(control_marker_colors)
                 elif direct_depth_lift_mode and lift_inputs is not None:
+                    if all_tracks_lift_mode:
+                        all_tracks_lift_started_s = time.perf_counter()
                     overlay_lift_cache_hit = True
                     lifted_points = []
                     lifted_colors = []
@@ -4778,7 +4846,37 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             or idx not in lift_inputs.c2w_by_camera
                         ):
                             continue
-                        overlay_input_points_by_camera[idx] = int(len(np.asarray(tracks_yx).reshape(-1, 2)))
+                        tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+                        visibility = np.asarray(
+                            overlay.camera_visibility.get(idx, np.zeros((len(tracks),), dtype=np.float32)),
+                            dtype=np.float32,
+                        ).reshape(-1)
+                        if visibility.shape[0] != tracks.shape[0]:
+                            visibility = np.zeros((len(tracks),), dtype=np.float32)
+                        overlay_input_points_by_camera[idx] = int(len(tracks))
+                        tracks_to_lift = tracks
+                        visibility_to_lift = visibility
+                        if all_tracks_lift_mode:
+                            visible_candidates = int(np.count_nonzero(visibility > 0.0))
+                            cap = int(all_tracks_lift_max_points_per_camera)
+                            all_tracks_lift_candidate_count_by_camera[idx] = visible_candidates
+                            if cap > 0:
+                                selected_indices = _select_visible_control_indices(
+                                    tracks,
+                                    visibility,
+                                    max_points=cap,
+                                    selection=all_tracks_lift_selection,
+                                )
+                                all_tracks_lift_cap_applied_by_camera[idx] = bool(visible_candidates > len(selected_indices))
+                                all_tracks_lift_rejected_by_cap_by_camera[idx] = int(
+                                    max(0, visible_candidates - len(selected_indices))
+                                )
+                                tracks_to_lift = tracks[selected_indices]
+                                visibility_to_lift = visibility[selected_indices]
+                            else:
+                                all_tracks_lift_cap_applied_by_camera[idx] = False
+                                all_tracks_lift_rejected_by_cap_by_camera[idx] = 0
+                            all_tracks_lift_selected_count_by_camera[idx] = int(len(tracks_to_lift))
                         lift_mask = (
                             None
                             if all_tracks_lift_mode
@@ -4789,8 +4887,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             )
                         )
                         lifted = lift_tracks_yx_to_world(
-                            tracks_yx=tracks_yx,
-                            visibility=overlay.camera_visibility[idx],
+                            tracks_yx=tracks_to_lift,
+                            visibility=visibility_to_lift,
                             depth=lift_inputs.depth_by_camera[idx],
                             intrinsics=lift_inputs.intrinsics_by_camera[idx],
                             c2w=lift_inputs.c2w_by_camera[idx],
@@ -4803,6 +4901,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             tracker_marker_rejected_by_camera[idx] = int(
                                 overlay_input_points_by_camera[idx] - len(lifted.points_world)
                             )
+                            all_tracks_lift_rendered_count_by_camera[idx] = int(len(lifted.points_world))
                         if lifted.points_world.size:
                             points = lifted.points_world.astype(np.float32, copy=False)
                             overlay_lifted_points_by_camera[idx] = int(len(points))
@@ -4898,6 +4997,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             if len(control_marker_points):
                                 marker_parts.append(control_marker_points)
                                 marker_color_parts.append(control_marker_colors)
+                if all_tracks_lift_started_s is not None:
+                    all_tracks_lift_ms = float((time.perf_counter() - all_tracks_lift_started_s) * 1000.0)
                 if marker_parts:
                     overlay_points = np.concatenate(marker_parts, axis=0).astype(np.float32)
                     overlay_colors = np.concatenate(marker_color_parts, axis=0).astype(np.uint8)
@@ -4958,6 +5059,19 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             )
             overlay_ms = float((time.perf_counter() - overlay_start_s) * 1000.0)
             profile_group_id = int(overlay_group_id if render_packet is None else render_packet.group_id)
+            all_tracks_lift_exact_depth_group = bool(
+                all_tracks_lift_mode
+                and lift_inputs is not None
+                and render_packet is not None
+                and int(lift_inputs.group_id) == int(overlay_group_id)
+                and int(render_packet.group_id) == int(overlay_group_id)
+            )
+            if all_tracks_lift_mode and render_packet is not None:
+                self.demo31_all_tracks_lift_attempt_count += 1
+                self.demo31_all_tracks_lift_exact_depth_group_count += int(all_tracks_lift_exact_depth_group)
+                self.demo31_all_tracks_lift_cap_applied_count += sum(
+                    1 for applied in all_tracks_lift_cap_applied_by_camera.values() if bool(applied)
+                )
             self._profile_update(
                 profile_group_id,
                 demo31_tracking_overlay={
@@ -4980,6 +5094,16 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "tracker_legacy_lift_used": bool(legacy_lift_mode),
                     "tracker_direct_depth_lift_used": bool(direct_depth_lift_mode),
                     "tracker_all_tracks_anchor_mode": bool(all_tracks_lift_mode),
+                    "all_tracks_lift_max_points_per_camera": int(all_tracks_lift_max_points_per_camera),
+                    "all_tracks_lift_selection": str(all_tracks_lift_selection),
+                    "all_tracks_lift_candidate_count_by_camera": dict(all_tracks_lift_candidate_count_by_camera),
+                    "all_tracks_lift_selected_count_by_camera": dict(all_tracks_lift_selected_count_by_camera),
+                    "all_tracks_lift_rendered_count_by_camera": dict(all_tracks_lift_rendered_count_by_camera),
+                    "all_tracks_lift_rejected_by_cap_by_camera": dict(all_tracks_lift_rejected_by_cap_by_camera),
+                    "all_tracks_lift_cap_applied_by_camera": dict(all_tracks_lift_cap_applied_by_camera),
+                    "all_tracks_lift_ms": float(all_tracks_lift_ms),
+                    "all_tracks_lift_exact_depth_group": bool(all_tracks_lift_exact_depth_group),
+                    "all_tracks_lift_exact_depth_group_ratio": 1.0 if all_tracks_lift_exact_depth_group else 0.0,
                     "tracker_surface_gate_enabled": bool(surface_marker_mode),
                     "tracker_3d_snap_radius_px": float(tracker_snap_radius_px),
                     "tracker_3d_marker_radius_m": float(control_point_radius_m),
@@ -5045,7 +5169,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "tracking_control_point_sampling": (
                         f"{tracker_control_point_selection}_surface_snap"
                         if surface_marker_mode
-                        else "all_visible_depth_valid_tracks_no_surface_or_bbox_gate"
+                        else f"{all_tracks_lift_selection}_all_tracks_depth_lift_cap_{int(all_tracks_lift_max_points_per_camera)}"
                         if all_tracks_lift_mode
                         else "farthest_point_sample_after_lift_scope_and_bbox"
                     ),
@@ -5197,6 +5321,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 },
             )
             if tracking_overlay_render_blocked:
+                if render_match_profile.get("bundle_group_id") is not None:
+                    self.demo31_bundle_consumed_without_render_count += 1
                 self.demo31_tracking_overlay_render_blocked_count += 1
                 if tracking_overlay_warmup_blocked:
                     self.demo31_tracking_overlay_warmup_skipped_render_count += 1
@@ -5225,6 +5351,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             if self.demo31_tracking_overlay_first_render_group_id is None:
                 self.demo31_tracking_overlay_first_render_group_id = int(render_packet.group_id)
             super()._publish_render_packet(render_packet)
+            if render_match_profile.get("bundle_group_id") is not None:
+                self.demo31_bundle_taken_render_success_count += 1
             self.demo31_complete_bundle_render_times_s.append(time.perf_counter())
             self._unprotect_tracker_render_groups(
                 overlay_group_id,
@@ -5445,6 +5573,20 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     self.demo31_tracking_result_nearest_render_packet_count
                 ),
                 "tracking_result_without_lift_input_count": int(self.demo31_tracking_result_without_lift_input_count),
+                "bundle_taken_then_render_failed_count": int(self.demo31_bundle_taken_then_render_failed_count),
+                "bundle_consumed_without_render_count": int(self.demo31_bundle_consumed_without_render_count),
+                "bundle_taken_render_success_count": int(self.demo31_bundle_taken_render_success_count),
+                "bundle_taken_surface_anchor_missing_count": int(
+                    self.demo31_bundle_taken_surface_anchor_missing_count
+                ),
+                "bundle_taken_lift_input_missing_count": int(self.demo31_bundle_taken_lift_input_missing_count),
+                "all_tracks_lift_exact_depth_group_ratio": (
+                    float(self.demo31_all_tracks_lift_exact_depth_group_count / self.demo31_all_tracks_lift_attempt_count)
+                    if self.demo31_all_tracks_lift_attempt_count
+                    else 0.0
+                ),
+                "all_tracks_lift_attempt_count": int(self.demo31_all_tracks_lift_attempt_count),
+                "all_tracks_lift_cap_applied_count": int(self.demo31_all_tracks_lift_cap_applied_count),
                 "batch_bundle_policy": self._batch_bundle_policy(),
                 "stage_mailbox_policy": str(self.demo31_contract.get("stage_mailbox_policy", STAGE_MAILBOX_POLICY_LATEST_ONLY)),
                 "display_last_complete_while_waiting": bool(
@@ -5886,6 +6028,30 @@ class Demo31Runtime:
                     ),
                     "tracking_result_without_lift_input_count": int(
                         snapshot.get("tracking_result_without_lift_input_count", 0) or 0
+                    ),
+                    "bundle_taken_then_render_failed_count": int(
+                        snapshot.get("bundle_taken_then_render_failed_count", 0) or 0
+                    ),
+                    "bundle_consumed_without_render_count": int(
+                        snapshot.get("bundle_consumed_without_render_count", 0) or 0
+                    ),
+                    "bundle_taken_render_success_count": int(
+                        snapshot.get("bundle_taken_render_success_count", 0) or 0
+                    ),
+                    "bundle_taken_surface_anchor_missing_count": int(
+                        snapshot.get("bundle_taken_surface_anchor_missing_count", 0) or 0
+                    ),
+                    "bundle_taken_lift_input_missing_count": int(
+                        snapshot.get("bundle_taken_lift_input_missing_count", 0) or 0
+                    ),
+                    "all_tracks_lift_exact_depth_group_ratio": float(
+                        snapshot.get("all_tracks_lift_exact_depth_group_ratio", 0.0) or 0.0
+                    ),
+                    "all_tracks_lift_attempt_count": int(
+                        snapshot.get("all_tracks_lift_attempt_count", 0) or 0
+                    ),
+                    "all_tracks_lift_cap_applied_count": int(
+                        snapshot.get("all_tracks_lift_cap_applied_count", 0) or 0
                     ),
                     "tracking_render_packet_match_policy": str(
                         snapshot.get(
