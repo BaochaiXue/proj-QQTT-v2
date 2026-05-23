@@ -1357,8 +1357,7 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         type=int,
         default=None,
         help=(
-            "Erode the controller mask by this many pixels before tracking/query/anchor "
-            "use. The implicit default is 1 in --mode demo and 0 otherwise."
+            "Erode the controller mask by this many pixels before tracking/query/anchor use."
         ),
     )
     parser.add_argument(
