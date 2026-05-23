@@ -394,7 +394,13 @@ class Demo31DualGpuContractTest(unittest.TestCase):
             contract["tracking_render_packet_match_policy"],
             "exact-target-bundle",
         )
+        self.assertEqual(contract["batch_bundle_policy"], "same-bundle-latest-wins")
+        self.assertEqual(contract["stage_mailbox_policy"], "latest-only")
+        self.assertTrue(contract["display_last_complete_while_waiting"])
+        self.assertTrue(contract["protect_tracker_input_bundles"])
         self.assertEqual(contract["frame_bundle_policy"], "exact-target")
+        self.assertTrue(contract["same_bundle_render_default"])
+        self.assertFalse(contract["nearest_fallback_allowed_by_default"])
         self.assertTrue(contract["render_bundle_exact_target_default"])
         self.assertFalse(contract["tracker_child_receives_full_frame_bundle"])
         self.assertFalse(contract["tracker_child_receives_depth"])
@@ -486,8 +492,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("overlay_render_raw_track_points = false", output)
         self.assertIn("tracking_pending_render_packet_max_groups = 128", output)
         self.assertIn("tracking_pending_fusion_bundle_max_groups = 128", output)
+        self.assertIn("batch_bundle_policy = same-bundle-latest-wins", output)
+        self.assertIn("stage_mailbox_policy = latest-only", output)
+        self.assertIn("display_last_complete_while_waiting = true", output)
+        self.assertIn("protect_tracker_input_bundles = true", output)
         self.assertIn("frame_bundle_policy = exact-target", output)
         self.assertIn("tracking_render_packet_match_policy = exact-target-bundle", output)
+        self.assertIn("same_bundle_render_default = true", output)
+        self.assertIn("nearest_fallback_allowed_by_default = false", output)
         self.assertIn("pcd_fusion_trigger = tracker-result", output)
         self.assertIn("tracker_result_gated_fusion = true", output)
         self.assertIn("render_triggers_pcd_fusion = true", output)
@@ -2738,6 +2750,107 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "exact")
         self.assertEqual(overlay_profile["tracking_render_packet_group_id"], 11)
         self.assertEqual(overlay_profile["tracking_render_packet_group_delta"], 0)
+
+    def test_tracker_result_gated_store_survives_legacy_pending_fusion_clear(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=13,
+            frame_idx=13,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            publish_range=(13, 13),
+        )
+        client = _FakeProcessClient(result)
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: client,
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(
+                camera_ids=(0,),
+                tracker_visualization_mode="none",
+                enable_pcd_filter=True,
+                pcd_filter_mode="async",
+            ),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "cotracker_input_fps": 30.0,
+                "pcd_fusion_trigger": "tracker-result",
+                "tracker_visualization_mode": "none",
+                "batch_bundle_policy": "same-bundle-latest-wins",
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime._stream_metadata = [{"K_color": np.eye(3, dtype=np.float32)}]
+        runtime._c2w_by_camera = {0: np.eye(4, dtype=np.float32)}
+        depth_group = _FakeDepthGroup(
+            group_id=13,
+            depths={0: _FakeDepthFrame(13, np.ones((1, 1), dtype=np.float32))},
+            per_camera_frame_seq={0: 13},
+        )
+        masks = {
+            0: _FakePacket(
+                13,
+                0,
+                np.array([[False]], dtype=bool),
+                np.array([[True]], dtype=bool),
+                np.zeros((1, 1, 3), dtype=np.uint8),
+            )
+        }
+
+        runtime._build_raw_fused_packet(
+            depth_group=depth_group,
+            masks=masks,
+            ray_cache={},
+            rng=np.random.default_rng(0),
+        )
+        with runtime.demo31_pending_fusion_lock:
+            runtime.demo31_pending_fusion_bundles.clear()
+
+        handled = runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        self.assertTrue(handled)
+        self.assertIsNotNone(runtime.published_packet)
+        self.assertEqual(runtime.published_packet.group_id, 13)  # type: ignore[union-attr]
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "exact")
+        self.assertTrue(overlay_profile["same_bundle_rendered"])
+        self.assertFalse(overlay_profile["nearest_fallback_used"])
+
+    def test_tracker_result_gated_uses_precomputed_bundle_packet(self) -> None:
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(None),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "pcd_fusion_trigger": "tracker-result",
+                "batch_bundle_policy": "same-bundle-latest-wins",
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        packet = _FakeRenderPacket(
+            group_id=15,
+            controller_points_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+        )
+        runtime._remember_pending_render_packet(packet)
+
+        render_packet, profile = runtime._take_tracker_result_gated_render_packet(15)
+
+        self.assertIs(render_packet, packet)
+        self.assertEqual(profile["tracking_render_packet_match_mode"], "exact")
+        self.assertFalse(profile["tracker_result_triggered_fusion"])
+        self.assertTrue(profile["same_bundle_rendered"])
 
     def test_renderer_warmup_blocks_first_frame_until_tracking_overlay_points_exist(self) -> None:
         runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
