@@ -35,6 +35,10 @@ from qqtt.demo.demo31_dual_gpu_ipc import (
     should_publish_tracking_input,
 )
 from qqtt.demo.demo31_profile import build_empty_dual_gpu_profile_summary, event_fps, percentile_summary
+from qqtt.demo.pcd_postprocess import (
+    COMPONENT_SELECTION_LARGEST_N_PLUS_GAP,
+    COMPONENT_SELECTION_POLICIES,
+)
 from qqtt.demo.trackable_mask_filter import (
     TRACKABLE_MASK_BUILD_POLICIES,
     TRACKABLE_MASK_BUILD_POLICY_DISABLED,
@@ -127,18 +131,38 @@ DEFAULT_DEMO32_TRACKABLE_QUERY_INIT_STRATEGY = TRACKABLE_QUERY_INIT_STRATEGY_STA
 DEFAULT_DEMO32_CONTROLLER_TRACKABLE_MAX_POINTS_PER_CAMERA = 4999
 DEFAULT_OBJECT_POINT_CONTROL = demo3_runtime.OBJECT_POINT_CONTROL_FIXED_CAP
 DEFAULT_OBJECT_POSTPROCESS = POSTPROCESS_ENHANCED_PT
-DEFAULT_CONTROLLER_POSTPROCESS = POSTPROCESS_PT_FILTER
+DEFAULT_CONTROLLER_POSTPROCESS = POSTPROCESS_ENHANCED_PT
 DEFAULT_PHYSTWIN_RADIUS_M = 0.01
 DEFAULT_PHYSTWIN_NB_POINTS = 12
 DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.006
 DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.035
+DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS = 1
+DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS = 2
+DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP
+DEFAULT_ENHANCED_MIN_COMPONENT_POINTS = 32
+DEFAULT_ENHANCED_MIN_COMPONENT_RATIO = 0.0
+DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD = True
 DEFAULT_CONTROLLER_MASK_ERODE_PX = 0
 DEFAULT_DEMO_MODE_CONTROLLER_MASK_ERODE_PX = 0
 DEFAULT_CONTROLLER_RENDER_VOXEL_M = 0.003
 DEFAULT_CONTROLLER_RENDER_MAX_POINTS = 10_000
 DEFAULT_LIFT_INPUT_CACHE_GROUPS = 128
 DEFAULT_PENDING_RENDER_PACKET_GROUPS = 128
-TRACKING_RENDER_PACKET_MATCH_POLICY = "exact-then-nearest-pending-pcd-by-group-id"
+FRAME_BUNDLE_POLICY_EXACT_TARGET = "exact-target"
+FRAME_BUNDLE_POLICY_STRICT_SOURCE = "strict-source"
+FRAME_BUNDLE_POLICY_LATEST_REUSE_DEBUG = "latest-reuse-debug"
+FRAME_BUNDLE_POLICIES = (
+    FRAME_BUNDLE_POLICY_EXACT_TARGET,
+    FRAME_BUNDLE_POLICY_STRICT_SOURCE,
+    FRAME_BUNDLE_POLICY_LATEST_REUSE_DEBUG,
+)
+TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_ONLY = "exact-target-bundle"
+TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_THEN_NEAREST_DEBUG = "exact-then-nearest-debug"
+TRACKING_RENDER_PACKET_MATCH_POLICIES = (
+    TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_ONLY,
+    TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_THEN_NEAREST_DEBUG,
+)
+TRACKING_RENDER_PACKET_MATCH_POLICY = TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_ONLY
 DEFAULT_WAIT_FOR_TRACKING_OVERLAY = True
 DEFAULT_DEMO31_OVERLAY_MAX_POINTS_PER_CAMERA = 0
 DEFAULT_OVERLAY_REJECT_OUTSIDE_SEMANTIC_BBOX = True
@@ -686,6 +710,38 @@ class Demo31LiftInputSnapshot:
 
 
 @dataclass(frozen=True)
+class FrameProvenance:
+    rendered_group_id: int
+    tracker_result_group_id: int
+    tracker_input_group_id: int
+    pcd_group_id: int
+    depth_group_id: int
+    lift_input_group_id: int | None
+    surface_anchor_group_id: int | None
+    mask_source_group_id: int | None
+    mask_reused: bool
+    mask_age_ms: float | None
+    same_target_group: bool
+    strict_same_source_frame: bool
+
+    def asdict(self) -> dict[str, Any]:
+        return {
+            "rendered_group_id": int(self.rendered_group_id),
+            "tracker_result_group_id": int(self.tracker_result_group_id),
+            "tracker_input_group_id": int(self.tracker_input_group_id),
+            "pcd_group_id": int(self.pcd_group_id),
+            "depth_group_id": int(self.depth_group_id),
+            "lift_input_group_id": self.lift_input_group_id,
+            "surface_anchor_group_id": self.surface_anchor_group_id,
+            "mask_source_group_id": self.mask_source_group_id,
+            "mask_reused": bool(self.mask_reused),
+            "mask_age_ms": self.mask_age_ms,
+            "same_target_group": bool(self.same_target_group),
+            "strict_same_source_frame": bool(self.strict_same_source_frame),
+        }
+
+
+@dataclass(frozen=True)
 class Demo31RetargetedMaskGroup:
     group_id: int
     mask_packets: dict[int, Any]
@@ -716,9 +772,11 @@ class Demo31LiftInputCache:
     def __init__(self, *, max_groups: int = DEFAULT_LIFT_INPUT_CACHE_GROUPS) -> None:
         self.max_groups = int(max_groups)
         self._snapshots: dict[int, Demo31LiftInputSnapshot] = {}
+        self._protected_group_ids: set[int] = set()
         self._lock = threading.Lock()
         self.published = 0
         self.evicted = 0
+        self.protected_eviction_avoided_count = 0
         self.hit_count = 0
         self.miss_count = 0
 
@@ -769,6 +827,15 @@ class Demo31LiftInputCache:
             self.published += 1
             self._prune_locked()
 
+    def protect(self, group_id: int) -> None:
+        with self._lock:
+            self._protected_group_ids.add(int(group_id))
+
+    def unprotect(self, group_id: int) -> None:
+        with self._lock:
+            self._protected_group_ids.discard(int(group_id))
+            self._prune_locked()
+
     def get(self, group_id: int) -> Demo31LiftInputSnapshot | None:
         with self._lock:
             snapshot = self._snapshots.get(int(group_id))
@@ -791,13 +858,19 @@ class Demo31LiftInputCache:
                 "newest_group_id": int(max(self._snapshots)) if self._snapshots else None,
                 "published": int(self.published),
                 "evicted": int(self.evicted),
+                "protected_group_count": int(len(self._protected_group_ids)),
+                "protected_eviction_avoided_count": int(self.protected_eviction_avoided_count),
                 "hit_count": int(self.hit_count),
                 "miss_count": int(self.miss_count),
             }
 
     def _prune_locked(self) -> None:
         while len(self._snapshots) > max(1, int(self.max_groups)):
-            oldest = min(self._snapshots)
+            unprotected = [group_id for group_id in self._snapshots if group_id not in self._protected_group_ids]
+            if not unprotected:
+                self.protected_eviction_avoided_count += 1
+                break
+            oldest = min(unprotected)
             self._snapshots.pop(oldest, None)
             self.evicted += 1
 
@@ -808,9 +881,11 @@ class Demo31SurfaceAnchorCache:
     def __init__(self, *, max_groups: int = DEFAULT_PENDING_RENDER_PACKET_GROUPS) -> None:
         self.max_groups = int(max_groups)
         self._snapshots: dict[int, SurfaceAnchorIndexSnapshot] = {}
+        self._protected_group_ids: set[int] = set()
         self._lock = threading.Lock()
         self.published = 0
         self.evicted = 0
+        self.protected_eviction_avoided_count = 0
         self.hit_count = 0
         self.miss_count = 0
 
@@ -835,6 +910,15 @@ class Demo31SurfaceAnchorCache:
             self.published += 1
             self._prune_locked()
 
+    def protect(self, group_id: int) -> None:
+        with self._lock:
+            self._protected_group_ids.add(int(group_id))
+
+    def unprotect(self, group_id: int) -> None:
+        with self._lock:
+            self._protected_group_ids.discard(int(group_id))
+            self._prune_locked()
+
     def get(self, group_id: int) -> SurfaceAnchorIndexSnapshot | None:
         with self._lock:
             snapshot = self._snapshots.get(int(group_id))
@@ -857,13 +941,19 @@ class Demo31SurfaceAnchorCache:
                 "newest_group_id": int(max(self._snapshots)) if self._snapshots else None,
                 "published": int(self.published),
                 "evicted": int(self.evicted),
+                "protected_group_count": int(len(self._protected_group_ids)),
+                "protected_eviction_avoided_count": int(self.protected_eviction_avoided_count),
                 "hit_count": int(self.hit_count),
                 "miss_count": int(self.miss_count),
             }
 
     def _prune_locked(self) -> None:
         while len(self._snapshots) > max(1, int(self.max_groups)):
-            oldest = min(self._snapshots)
+            unprotected = [group_id for group_id in self._snapshots if group_id not in self._protected_group_ids]
+            if not unprotected:
+                self.protected_eviction_avoided_count += 1
+                break
+            oldest = min(unprotected)
             self._snapshots.pop(oldest, None)
             self.evicted += 1
 
@@ -1257,6 +1347,42 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         default=DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
     )
     parser.add_argument(
+        "--object-enhanced-keep-top-n-components",
+        type=int,
+        default=DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS,
+        help="3D enhanced-PT component count kept for the object class before query/render sampling.",
+    )
+    parser.add_argument(
+        "--controller-enhanced-keep-top-n-components",
+        type=int,
+        default=DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS,
+        help="3D enhanced-PT component count kept for the controller class before query/render sampling.",
+    )
+    parser.add_argument(
+        "--enhanced-component-selection-policy",
+        choices=COMPONENT_SELECTION_POLICIES,
+        default=DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY,
+        help="3D voxel component retention policy for enhanced PT filtering.",
+    )
+    parser.add_argument(
+        "--enhanced-min-component-points",
+        type=int,
+        default=DEFAULT_ENHANCED_MIN_COMPONENT_POINTS,
+        help="Minimum points for non-main components to qualify as top-N enhanced PT survivors.",
+    )
+    parser.add_argument(
+        "--enhanced-min-component-ratio",
+        type=float,
+        default=DEFAULT_ENHANCED_MIN_COMPONENT_RATIO,
+        help="Minimum after-radius point ratio for non-main top-N enhanced PT components.",
+    )
+    parser.add_argument(
+        "--apply-enhanced-component-filter-to-pcd",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD,
+        help="Apply the same enhanced-PT top-N 3D surface policy to rendered/fused semantic PCD.",
+    )
+    parser.add_argument(
         "--controller-render-voxel-m",
         type=float,
         default=DEFAULT_CONTROLLER_RENDER_VOXEL_M,
@@ -1404,6 +1530,22 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
             "or is deferred until a fresh tracker result arrives."
         ),
     )
+    parser.add_argument(
+        "--frame-bundle-policy",
+        choices=FRAME_BUNDLE_POLICIES,
+        default=FRAME_BUNDLE_POLICY_EXACT_TARGET,
+        help=(
+            "Frame provenance policy for tracker-driven render. exact-target keeps "
+            "tracker/depth/PCD/lift on the same target group while allowing recorded mask reuse; "
+            "strict-source also requires a same-source mask; latest-reuse-debug is for A/B diagnostics."
+        ),
+    )
+    parser.add_argument(
+        "--tracking-render-packet-match-policy",
+        choices=TRACKING_RENDER_PACKET_MATCH_POLICIES,
+        default=TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_ONLY,
+        help="Use exact target bundles by default; nearest fallback exists only for explicit debug runs.",
+    )
     parser.add_argument("--mask-stale-timeout-ms", type=float, default=DEFAULT_MASK_STALE_TIMEOUT_MS)
     parser.add_argument("--render-target-fps", type=float, default=DEFAULT_RENDER_TARGET_FPS)
     parser.add_argument("--render-resample-latest", action=argparse.BooleanOptionalAction, default=True)
@@ -1543,6 +1685,16 @@ def validate_args(
         raise ValueError("--enhanced-component-voxel-size-m must be positive.")
     if float(args.enhanced_keep_near_main_gap_m) < 0.0:
         raise ValueError("--enhanced-keep-near-main-gap-m must be >= 0.")
+    if int(args.object_enhanced_keep_top_n_components) < 1:
+        raise ValueError("--object-enhanced-keep-top-n-components must be >= 1.")
+    if int(args.controller_enhanced_keep_top_n_components) < 1:
+        raise ValueError("--controller-enhanced-keep-top-n-components must be >= 1.")
+    if str(args.enhanced_component_selection_policy) not in COMPONENT_SELECTION_POLICIES:
+        raise ValueError(f"--enhanced-component-selection-policy must be one of {COMPONENT_SELECTION_POLICIES}.")
+    if int(args.enhanced_min_component_points) < 1:
+        raise ValueError("--enhanced-min-component-points must be >= 1.")
+    if float(args.enhanced_min_component_ratio) < 0.0:
+        raise ValueError("--enhanced-min-component-ratio must be >= 0.")
     if float(args.object_volume_voxel_m) <= 0.0:
         raise ValueError("--object-volume-voxel-m must be positive.")
     if float(args.object_volume_min_voxel_m) <= 0.0 or float(args.object_volume_max_voxel_m) <= 0.0:
@@ -1942,21 +2094,37 @@ def build_contract(
             "nb_points": int(args.phystwin_nb_points),
             "component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
             "keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
+            "keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
+            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "min_component_points": int(args.enhanced_min_component_points),
+            "min_component_ratio": float(args.enhanced_min_component_ratio),
         },
         "trackable_controller_filter": {
             "mode": str(args.controller_postprocess),
             "radius_m": float(args.phystwin_radius_m),
             "nb_points": int(args.phystwin_nb_points),
+            "component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
+            "keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
+            "keep_top_n_components": int(args.controller_enhanced_keep_top_n_components),
+            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "min_component_points": int(args.enhanced_min_component_points),
+            "min_component_ratio": float(args.enhanced_min_component_ratio),
         },
         "object_filter": {
             "mode": str(args.object_postprocess),
             "point_control": str(args.object_point_control),
+            "keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
+            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
         },
         "controller_filter": {
             "mode": str(args.controller_postprocess),
+            "keep_top_n_components": int(args.controller_enhanced_keep_top_n_components),
+            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
         },
         "controller_trackable_max_points_per_camera": int(args.controller_trackable_max_points_per_camera),
-        "controller_trackable_cap_stage": "after_standard_filter",
+        "controller_trackable_cap_stage": "after_enhanced_pt_top_n_component_filter",
         "controller_mask_erode_px": int(controller_mask_erode_px),
         "controller_mask_erode_unit": "px",
         "controller_mask_erode_stage": "before_tracking_union_and_trackable_filter",
@@ -2021,6 +2189,14 @@ def build_contract(
         "overlay_stale_timeout_ms": float(args.overlay_stale_timeout_ms),
         "fusion_mask_policy": str(args.fusion_mask_policy),
         "pcd_fusion_trigger": str(args.pcd_fusion_trigger),
+        "frame_bundle_policy": str(args.frame_bundle_policy),
+        "tracking_render_packet_match_policy": str(args.tracking_render_packet_match_policy),
+        "tracker_child_receives_full_frame_bundle": False,
+        "tracker_child_receives_depth": False,
+        "tracker_child_receives_intrinsics": False,
+        "tracker_child_receives_c2w": False,
+        "render_bundle_exact_target_default": str(args.tracking_render_packet_match_policy)
+        == TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_ONLY,
         "tracker_result_gated_fusion": bool(
             (not bool(args.disable_cotracker))
             and str(args.pcd_fusion_trigger) == PCD_FUSION_TRIGGER_TRACKER_RESULT
@@ -2040,6 +2216,13 @@ def build_contract(
         "phystwin_nb_points": int(args.phystwin_nb_points),
         "enhanced_component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
         "enhanced_keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
+        "object_enhanced_keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
+        "controller_enhanced_keep_top_n_components": int(args.controller_enhanced_keep_top_n_components),
+        "enhanced_component_selection_policy": str(args.enhanced_component_selection_policy),
+        "enhanced_min_component_points": int(args.enhanced_min_component_points),
+        "enhanced_min_component_ratio": float(args.enhanced_min_component_ratio),
+        "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
+        "query_and_pcd_surface_filter_shared": "same_config_reuse_when_source_points_identical",
         "render_micro_profile": True,
         "render_latest_wins": True,
         "render_waited_for_cotracker": not bool(args.disable_cotracker),
@@ -2052,7 +2235,6 @@ def build_contract(
         ),
         "tracking_pending_render_packet_max_groups": int(DEFAULT_PENDING_RENDER_PACKET_GROUPS),
         "tracking_pending_fusion_bundle_max_groups": int(DEFAULT_PENDING_RENDER_PACKET_GROUPS),
-        "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
         "render_waited_for_mask": bool(render_waited_for_mask),
         "render_object_filter": {
             "point_control": str(args.object_point_control),
@@ -2061,6 +2243,11 @@ def build_contract(
             "nb_points": int(args.phystwin_nb_points),
             "component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
             "keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
+            "keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
+            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "min_component_points": int(args.enhanced_min_component_points),
+            "min_component_ratio": float(args.enhanced_min_component_ratio),
+            "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
             "voxel_m": float(args.object_volume_voxel_m),
             "origin_policy": str(args.object_volume_origin),
             "adaptive": bool(args.object_volume_adaptive),
@@ -2074,6 +2261,13 @@ def build_contract(
             "postprocess": str(args.controller_postprocess),
             "radius_m": float(args.phystwin_radius_m),
             "nb_points": int(args.phystwin_nb_points),
+            "component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
+            "keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
+            "keep_top_n_components": int(args.controller_enhanced_keep_top_n_components),
+            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "min_component_points": int(args.enhanced_min_component_points),
+            "min_component_ratio": float(args.enhanced_min_component_ratio),
+            "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
             "render_voxel_m": float(args.controller_render_voxel_m),
             "render_voxel_downsample": float(args.controller_render_voxel_m) > 0.0,
             "render_max_points": int(args.controller_render_max_points),
@@ -2243,11 +2437,25 @@ def format_contract(contract: dict[str, Any]) -> str:
         "ipc_payload",
         "fusion_mask_policy",
         "pcd_fusion_trigger",
+        "frame_bundle_policy",
+        "tracking_render_packet_match_policy",
+        "tracker_child_receives_full_frame_bundle",
+        "tracker_child_receives_depth",
+        "tracker_child_receives_intrinsics",
+        "tracker_child_receives_c2w",
+        "render_bundle_exact_target_default",
         "tracker_result_gated_fusion",
         "pcd_color_mode",
         "object_point_control",
         "object_postprocess",
         "controller_postprocess",
+        "object_enhanced_keep_top_n_components",
+        "controller_enhanced_keep_top_n_components",
+        "enhanced_component_selection_policy",
+        "enhanced_min_component_points",
+        "enhanced_min_component_ratio",
+        "apply_enhanced_component_filter_to_pcd",
+        "query_and_pcd_surface_filter_shared",
         "render_waited_for_cotracker",
         "render_waited_for_fresh_cotracker_result",
         "render_driver",
@@ -2255,7 +2463,6 @@ def format_contract(contract: dict[str, Any]) -> str:
         "render_triggers_pcd_fusion",
         "tracking_pending_render_packet_max_groups",
         "tracking_pending_fusion_bundle_max_groups",
-        "tracking_render_packet_match_policy",
         "render_waited_for_mask",
         "render_object_filter",
         "render_controller_filter",
@@ -2431,6 +2638,12 @@ def build_shared_runtime_args(
     shared_args.phystwin_nb_points = int(args.phystwin_nb_points)
     shared_args.enhanced_component_voxel_size_m = float(args.enhanced_component_voxel_size_m)
     shared_args.enhanced_keep_near_main_gap_m = float(args.enhanced_keep_near_main_gap_m)
+    shared_args.object_enhanced_keep_top_n_components = int(args.object_enhanced_keep_top_n_components)
+    shared_args.controller_enhanced_keep_top_n_components = int(args.controller_enhanced_keep_top_n_components)
+    shared_args.enhanced_component_selection_policy = str(args.enhanced_component_selection_policy)
+    shared_args.enhanced_min_component_points = int(args.enhanced_min_component_points)
+    shared_args.enhanced_min_component_ratio = float(args.enhanced_min_component_ratio)
+    shared_args.apply_enhanced_component_filter_to_pcd = bool(args.apply_enhanced_component_filter_to_pcd)
     shared_args.controller_mask_erode_px = resolved_controller_mask_erode_px(args)
     shared_args.controller_render_voxel_m = float(args.controller_render_voxel_m)
     shared_args.controller_render_max_points = int(args.controller_render_max_points)
@@ -2715,6 +2928,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_tracking_input_drop_count = 0
             self.demo31_pending_render_packets: dict[int, Any] = {}
             self.demo31_pending_render_lock = threading.Lock()
+            self.demo31_protected_frame_bundle_group_ids: set[int] = set()
             self.demo31_pending_render_packet_max_groups = max(
                 1,
                 int(
@@ -2729,6 +2943,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_pending_fusion_lock = threading.Lock()
             self.demo31_pending_fusion_max_groups = int(self.demo31_pending_render_packet_max_groups)
             self.demo31_pending_fusion_bundle_drop_count = 0
+            self.demo31_protected_bundle_eviction_avoided_count = 0
+            self.demo31_frame_bundle_exact_render_count = 0
+            self.demo31_frame_bundle_missing_exact_count = 0
+            self.demo31_frame_bundle_nearest_fallback_debug_count = 0
+            self.demo31_frame_bundle_same_target_count = 0
+            self.demo31_frame_bundle_strict_same_source_count = 0
+            self.demo31_frame_bundle_provenance_count = 0
+            self.demo31_frame_bundle_strict_source_reject_count = 0
             self.demo31_tracker_result_triggered_fusion_count = 0
             self.demo31_tracker_result_fusion_skipped_count = 0
             self.demo31_tracker_result_fusion_ms_samples: list[float] = []
@@ -3058,6 +3280,33 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 enhanced_keep_near_main_gap_m=float(
                     getattr(self.args, "enhanced_keep_near_main_gap_m", DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M)
                 ),
+                object_enhanced_keep_top_n_components=int(
+                    getattr(
+                        self.args,
+                        "object_enhanced_keep_top_n_components",
+                        DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS,
+                    )
+                ),
+                controller_enhanced_keep_top_n_components=int(
+                    getattr(
+                        self.args,
+                        "controller_enhanced_keep_top_n_components",
+                        DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS,
+                    )
+                ),
+                enhanced_component_selection_policy=str(
+                    getattr(
+                        self.args,
+                        "enhanced_component_selection_policy",
+                        DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY,
+                    )
+                ),
+                enhanced_min_component_points=int(
+                    getattr(self.args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
+                ),
+                enhanced_min_component_ratio=float(
+                    getattr(self.args, "enhanced_min_component_ratio", DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)
+                ),
                 controller_trackable_max_points_per_camera=int(
                     self.demo31_contract.get(
                         "controller_trackable_max_points_per_camera",
@@ -3298,6 +3547,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     controller_mask_by_camera=controller_mask_by_camera,
                 )
             )
+            self._protect_frame_bundle(int(depth_group.group_id))
             replaced_count = self.demo31_process_client.publish_input(
                 TrackingInputLitePacket(
                     group_id=int(depth_group.group_id),
@@ -3338,16 +3588,125 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 )
             )
 
+        def _frame_bundle_policy(self) -> str:
+            return str(self.demo31_contract.get("frame_bundle_policy", FRAME_BUNDLE_POLICY_EXACT_TARGET))
+
+        def _tracking_render_packet_match_policy(self) -> str:
+            return str(
+                self.demo31_contract.get(
+                    "tracking_render_packet_match_policy",
+                    TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_ONLY,
+                )
+            )
+
+        def _nearest_render_fallback_enabled(self) -> bool:
+            return (
+                self._tracking_render_packet_match_policy()
+                == TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_THEN_NEAREST_DEBUG
+            )
+
+        def _strict_source_rejects_overlay(self, overlay: TrackingResultLitePacket) -> bool:
+            if self._frame_bundle_policy() != FRAME_BUNDLE_POLICY_STRICT_SOURCE:
+                return False
+            source_group = overlay.mask_source_group_id
+            if source_group is None:
+                return bool(overlay.mask_reused)
+            return bool(overlay.mask_reused) or int(source_group) != int(overlay.group_id)
+
+        def _frame_provenance(
+            self,
+            *,
+            overlay: TrackingResultLitePacket,
+            render_packet: Any,
+            lift_inputs: Demo31LiftInputSnapshot | None,
+            surface_snapshot: SurfaceAnchorIndexSnapshot | None,
+        ) -> FrameProvenance:
+            rendered_group_id = int(render_packet.group_id)
+            tracker_group_id = int(overlay.group_id)
+            mask_source_group_id = (
+                None if overlay.mask_source_group_id is None else int(overlay.mask_source_group_id)
+            )
+            lift_group_id = None if lift_inputs is None else int(lift_inputs.group_id)
+            surface_group_id = None if surface_snapshot is None else int(surface_snapshot.group_id)
+            same_target = (
+                rendered_group_id == tracker_group_id
+                and (lift_group_id is None or lift_group_id == tracker_group_id)
+                and (surface_group_id is None or surface_group_id == tracker_group_id)
+            )
+            strict_source = (
+                bool(same_target)
+                and not bool(overlay.mask_reused)
+                and (mask_source_group_id is None or mask_source_group_id == tracker_group_id)
+            )
+            return FrameProvenance(
+                rendered_group_id=rendered_group_id,
+                tracker_result_group_id=tracker_group_id,
+                tracker_input_group_id=tracker_group_id,
+                pcd_group_id=rendered_group_id,
+                depth_group_id=rendered_group_id,
+                lift_input_group_id=lift_group_id,
+                surface_anchor_group_id=surface_group_id,
+                mask_source_group_id=mask_source_group_id,
+                mask_reused=bool(overlay.mask_reused),
+                mask_age_ms=float(overlay.mask_age_ms),
+                same_target_group=bool(same_target),
+                strict_same_source_frame=bool(strict_source),
+            )
+
         def _tracker_result_gated_fusion_enabled(self) -> bool:
             return bool(self.demo31_cotracker_enabled) and self._pcd_fusion_trigger() == PCD_FUSION_TRIGGER_TRACKER_RESULT
+
+        def _protect_frame_bundle(self, group_id: int) -> None:
+            gid = int(group_id)
+            self.demo31_protected_frame_bundle_group_ids.add(gid)
+            self.demo31_lift_input_cache.protect(gid)
+            self.demo31_surface_anchor_cache.protect(gid)
+
+        def _unprotect_frame_bundle(self, group_id: int) -> None:
+            gid = int(group_id)
+            self.demo31_protected_frame_bundle_group_ids.discard(gid)
+            self.demo31_lift_input_cache.unprotect(gid)
+            self.demo31_surface_anchor_cache.unprotect(gid)
+            with self.demo31_pending_render_lock:
+                self._prune_pending_render_packets_locked()
+            with self.demo31_pending_fusion_lock:
+                self._prune_pending_fusion_bundles_locked()
+
+        def _pending_group_is_protected(self, group_id: int) -> bool:
+            return int(group_id) in self.demo31_protected_frame_bundle_group_ids
+
+        def _prune_pending_render_packets_locked(self) -> None:
+            while len(self.demo31_pending_render_packets) > int(self.demo31_pending_render_packet_max_groups):
+                unprotected = [
+                    group_id
+                    for group_id in self.demo31_pending_render_packets
+                    if not self._pending_group_is_protected(int(group_id))
+                ]
+                if not unprotected:
+                    self.demo31_protected_bundle_eviction_avoided_count += 1
+                    break
+                oldest = min(unprotected)
+                self.demo31_pending_render_packets.pop(oldest, None)
+                self.demo31_pending_render_packet_drop_count += 1
+
+        def _prune_pending_fusion_bundles_locked(self) -> None:
+            while len(self.demo31_pending_fusion_bundles) > int(self.demo31_pending_fusion_max_groups):
+                unprotected = [
+                    group_id
+                    for group_id in self.demo31_pending_fusion_bundles
+                    if not self._pending_group_is_protected(int(group_id))
+                ]
+                if not unprotected:
+                    self.demo31_protected_bundle_eviction_avoided_count += 1
+                    break
+                oldest = min(unprotected)
+                self.demo31_pending_fusion_bundles.pop(oldest, None)
+                self.demo31_pending_fusion_bundle_drop_count += 1
 
         def _remember_pending_fusion_bundle(self, bundle: Demo31PendingFusionBundle) -> None:
             with self.demo31_pending_fusion_lock:
                 self.demo31_pending_fusion_bundles[int(bundle.group_id)] = bundle
-                while len(self.demo31_pending_fusion_bundles) > int(self.demo31_pending_fusion_max_groups):
-                    oldest = min(self.demo31_pending_fusion_bundles)
-                    self.demo31_pending_fusion_bundles.pop(oldest, None)
-                    self.demo31_pending_fusion_bundle_drop_count += 1
+                self._prune_pending_fusion_bundles_locked()
 
         def _drop_pending_fusion_bundles_through(self, group_id: int) -> None:
             with self.demo31_pending_fusion_lock:
@@ -3505,7 +3864,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "tracking_result_used_render_packet": False,
                     "tracking_result_used_nearest_render_packet": False,
                     "tracking_render_packet_match_mode": "pending",
-                    "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
+                    "tracking_render_packet_match_policy": self._tracking_render_packet_match_policy(),
                     "tracking_render_packet_group_id": None,
                     "tracking_render_packet_group_delta": None,
                     "tracking_nearest_render_packet_abs_delta": None,
@@ -3552,11 +3911,13 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 if cached_group_ids is not None
                 else self.demo31_lift_input_cache.cached_group_ids()
             )
+            exact_only = bool(require_exact) or not self._nearest_render_fallback_enabled()
             with self.demo31_pending_render_lock:
                 pending_ids_before = sorted(int(item) for item in self.demo31_pending_render_packets)
                 render_packet = self.demo31_pending_render_packets.pop(requested_group_id, None)
                 if render_packet is not None:
                     self.demo31_tracking_result_exact_render_packet_count += 1
+                    self.demo31_frame_bundle_exact_render_count += 1
                     return render_packet, {
                         "tracking_render_packet_match_mode": "exact",
                         "tracking_result_has_matching_render_packet": True,
@@ -3568,8 +3929,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         "tracking_pending_render_packet_count_before_match": int(len(pending_ids_before)),
                         "tracking_pending_render_packet_had_lift_candidate": requested_group_id in lift_group_ids,
                     }
-                if bool(require_exact):
+                if exact_only:
                     self.demo31_tracking_result_without_render_packet_count += 1
+                    self.demo31_frame_bundle_missing_exact_count += 1
                     return None, {
                         "tracking_render_packet_match_mode": "missing-exact",
                         "tracking_result_has_matching_render_packet": False,
@@ -3620,6 +3982,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     }
                 delta = int(render_packet.group_id) - requested_group_id
                 self.demo31_tracking_result_nearest_render_packet_count += 1
+                self.demo31_frame_bundle_nearest_fallback_debug_count += 1
                 return render_packet, {
                     "tracking_render_packet_match_mode": "nearest",
                     "tracking_result_has_matching_render_packet": False,
@@ -3645,12 +4008,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 if cached_group_ids is not None
                 else self.demo31_lift_input_cache.cached_group_ids()
             )
+            exact_only = bool(require_exact) or not self._nearest_render_fallback_enabled()
             with self.demo31_pending_fusion_lock:
                 pending_ids_before = sorted(int(item) for item in self.demo31_pending_fusion_bundles)
                 bundle = self.demo31_pending_fusion_bundles.pop(requested_group_id, None)
                 match_mode = "exact"
-                if bundle is None and bool(require_exact):
+                if bundle is None and exact_only:
                     self.demo31_tracking_result_without_render_packet_count += 1
+                    self.demo31_frame_bundle_missing_exact_count += 1
                     return None, {
                         "tracking_render_packet_match_mode": "missing-exact",
                         "tracking_result_has_matching_render_packet": False,
@@ -3698,8 +4063,10 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             delta = bundle_group_id - requested_group_id
             if match_mode == "exact":
                 self.demo31_tracking_result_exact_render_packet_count += 1
+                self.demo31_frame_bundle_exact_render_count += 1
             else:
                 self.demo31_tracking_result_nearest_render_packet_count += 1
+                self.demo31_frame_bundle_nearest_fallback_debug_count += 1
             started_s = time.perf_counter()
             try:
                 render_packet = self._build_tracker_result_gated_render_packet(bundle)
@@ -3954,17 +4321,57 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             "rendered_on_new_cotracker_result": False,
                             "tracking_overlay_render_blocked": True,
                             "tracking_overlay_warmup_blocked": self.demo31_tracking_overlay_first_render_group_id is None,
+                            "frame_bundle_policy": self._frame_bundle_policy(),
                             "render_requires_new_cotracker_result": True,
                             "render_reuses_cached_cotracker_result": False,
                             "tracking_result_used_render_packet": False,
                             "tracking_result_used_nearest_render_packet": False,
                             "tracking_render_packet_match_mode": "no-visible-tracks",
-                            "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
+                            "tracking_render_packet_match_policy": self._tracking_render_packet_match_policy(),
                             "cotracker_model_ms": float(overlay.model_ms),
                             "cotracker_e2e_ms": float(overlay.e2e_ms),
                             "cross_gpu_cuda_tensor_transfer": False,
                         },
                     )
+                self._unprotect_frame_bundle(overlay_group_id)
+                return
+            if self._strict_source_rejects_overlay(overlay):
+                self.demo31_frame_bundle_strict_source_reject_count += 1
+                self.demo31_tracking_overlay_render_blocked_count += 1
+                if self.demo31_tracking_overlay_first_render_group_id is None:
+                    self.demo31_tracking_overlay_warmup_skipped_render_count += 1
+                if hasattr(self, "_profile_update"):
+                    self._profile_update(
+                        overlay_group_id,
+                        demo31_tracking_overlay={
+                            "overlay_available": True,
+                            "overlay_points": 0,
+                            "overlay_group_id": overlay_group_id,
+                            "incoming_render_group_id": overlay_group_id,
+                            "render_group_id": overlay_group_id,
+                            "render_driver": "cotracker_child_output",
+                            "render_trigger": "new_cotracker_result",
+                            "pcd_fusion_trigger": self._pcd_fusion_trigger(),
+                            "tracker_result_gated_fusion": bool(self._tracker_result_gated_fusion_enabled()),
+                            "rendered_on_new_cotracker_result": False,
+                            "tracking_overlay_render_blocked": True,
+                            "tracking_overlay_warmup_blocked": self.demo31_tracking_overlay_first_render_group_id is None,
+                            "frame_bundle_policy": self._frame_bundle_policy(),
+                            "frame_bundle_strict_source_rejected": True,
+                            "tracking_mask_source_group_id": (
+                                None if overlay.mask_source_group_id is None else int(overlay.mask_source_group_id)
+                            ),
+                            "tracking_mask_age_ms": float(overlay.mask_age_ms),
+                            "tracking_mask_reused": bool(overlay.mask_reused),
+                            "same_target_group": False,
+                            "strict_same_source_frame": False,
+                            "tracking_render_packet_match_policy": self._tracking_render_packet_match_policy(),
+                            "cotracker_model_ms": float(overlay.model_ms),
+                            "cotracker_e2e_ms": float(overlay.e2e_ms),
+                            "cross_gpu_cuda_tensor_transfer": False,
+                        },
+                    )
+                self._unprotect_frame_bundle(overlay_group_id)
                 return
             render_packet, render_match_profile = self._take_render_packet_for_tracking_result(
                 overlay_group_id,
@@ -3990,6 +4397,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 lift_inputs = self.demo31_lift_input_cache.get(int(render_packet.group_id))
             if direct_depth_lift_mode and render_packet is not None and lift_inputs is None:
                 self.demo31_tracking_result_without_lift_input_count += 1
+            frame_provenance = None
             if render_packet is not None:
                 color_by_camera = bool(getattr(self.args, "overlay_debug_color_by_camera", False))
                 lift_mask_scope = str(getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE))
@@ -4228,6 +4636,17 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 if marker_parts:
                     overlay_points = np.concatenate(marker_parts, axis=0).astype(np.float32)
                     overlay_colors = np.concatenate(marker_color_parts, axis=0).astype(np.uint8)
+                frame_provenance = self._frame_provenance(
+                    overlay=overlay,
+                    render_packet=render_packet,
+                    lift_inputs=lift_inputs,
+                    surface_snapshot=surface_snapshot,
+                )
+                self.demo31_frame_bundle_provenance_count += 1
+                self.demo31_frame_bundle_same_target_count += int(bool(frame_provenance.same_target_group))
+                self.demo31_frame_bundle_strict_same_source_count += int(
+                    bool(frame_provenance.strict_same_source_frame)
+                )
                 if len(overlay_points) or inert_visualization_mode:
                     render_replace_kwargs: dict[str, Any] = {
                         "controller_points_m": np.concatenate(
@@ -4375,6 +4794,13 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_render_group_delta": overlay_render_group_delta,
                     "render_driver": "cotracker_child_output",
                     "render_trigger": "new_cotracker_result",
+                    "frame_bundle_policy": self._frame_bundle_policy(),
+                    "frame_bundle_provenance": None if frame_provenance is None else frame_provenance.asdict(),
+                    "same_target_group": bool(frame_provenance.same_target_group) if frame_provenance is not None else False,
+                    "strict_same_source_frame": (
+                        bool(frame_provenance.strict_same_source_frame) if frame_provenance is not None else False
+                    ),
+                    "frame_bundle_strict_source_rejected": False,
                     "pcd_fusion_trigger": self._pcd_fusion_trigger(),
                     "tracker_result_gated_fusion": bool(self._tracker_result_gated_fusion_enabled()),
                     "tracker_result_triggered_fusion": bool(
@@ -4406,7 +4832,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "tracking_render_packet_match_mode": str(
                         render_match_profile["tracking_render_packet_match_mode"]
                     ),
-                    "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
+                    "tracking_render_packet_match_policy": self._tracking_render_packet_match_policy(),
                     "tracking_render_packet_group_id": render_match_profile["tracking_render_packet_group_id"],
                     "tracking_render_packet_group_delta": render_match_profile["tracking_render_packet_group_delta"],
                     "tracking_nearest_render_packet_abs_delta": render_match_profile[
@@ -4490,10 +4916,13 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 self.demo31_tracking_overlay_render_blocked_count += 1
                 if tracking_overlay_warmup_blocked:
                     self.demo31_tracking_overlay_warmup_skipped_render_count += 1
+                self._unprotect_frame_bundle(overlay_group_id)
                 return
             if render_packet is None:
                 if not render_requires_new_tracker:
+                    self._unprotect_frame_bundle(overlay_group_id)
                     return
+                self._unprotect_frame_bundle(overlay_group_id)
                 return
             if self._tracker_result_gated_fusion_enabled():
                 self._drop_pending_fusion_bundles_through(int(render_packet.group_id))
@@ -4502,14 +4931,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             if self.demo31_tracking_overlay_first_render_group_id is None:
                 self.demo31_tracking_overlay_first_render_group_id = int(render_packet.group_id)
             super()._publish_render_packet(render_packet)
+            self._unprotect_frame_bundle(overlay_group_id)
 
         def _remember_pending_render_packet(self, packet: Any) -> None:
             with self.demo31_pending_render_lock:
                 self.demo31_pending_render_packets[int(packet.group_id)] = packet
-                while len(self.demo31_pending_render_packets) > int(self.demo31_pending_render_packet_max_groups):
-                    oldest = min(self.demo31_pending_render_packets)
-                    self.demo31_pending_render_packets.pop(oldest, None)
-                    self.demo31_pending_render_packet_drop_count += 1
+                self._prune_pending_render_packets_locked()
 
         def _drop_pending_render_packets_through(self, group_id: int) -> None:
             with self.demo31_pending_render_lock:
@@ -4530,6 +4957,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 )
                 if fresh is None:
                     self.demo31_tracking_input_drop_count += 1
+                    self._unprotect_frame_bundle(int(result.group_id))
                 else:
                     self._record_new_tracking_result(fresh, now_s=now_s)
                     return fresh
@@ -4624,6 +5052,17 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 pending_render_count = int(len(self.demo31_pending_render_packets))
             with self.demo31_pending_fusion_lock:
                 pending_fusion_count = int(len(self.demo31_pending_fusion_bundles))
+            protected_bundle_count = int(len(self.demo31_protected_frame_bundle_group_ids))
+            same_target_ratio = (
+                float(self.demo31_frame_bundle_same_target_count / self.demo31_frame_bundle_provenance_count)
+                if self.demo31_frame_bundle_provenance_count
+                else 0.0
+            )
+            strict_source_ratio = (
+                float(self.demo31_frame_bundle_strict_same_source_count / self.demo31_frame_bundle_provenance_count)
+                if self.demo31_frame_bundle_provenance_count
+                else 0.0
+            )
             return {
                 "process": process_snapshot,
                 "process_status_events": list(self.demo31_process_status_events),
@@ -4659,7 +5098,20 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     self.demo31_tracking_result_nearest_render_packet_count
                 ),
                 "tracking_result_without_lift_input_count": int(self.demo31_tracking_result_without_lift_input_count),
-                "tracking_render_packet_match_policy": TRACKING_RENDER_PACKET_MATCH_POLICY,
+                "tracking_render_packet_match_policy": self._tracking_render_packet_match_policy(),
+                "frame_bundle_policy": self._frame_bundle_policy(),
+                "same_target_group_ratio": same_target_ratio,
+                "strict_same_source_frame_ratio": strict_source_ratio,
+                "frame_bundle_exact_render_count": int(self.demo31_frame_bundle_exact_render_count),
+                "frame_bundle_missing_exact_count": int(self.demo31_frame_bundle_missing_exact_count),
+                "nearest_fallback_debug_count": int(self.demo31_frame_bundle_nearest_fallback_debug_count),
+                "protected_bundle_count": protected_bundle_count,
+                "protected_bundle_eviction_avoided_count": int(
+                    self.demo31_protected_bundle_eviction_avoided_count
+                    + self.demo31_lift_input_cache.snapshot().get("protected_eviction_avoided_count", 0)
+                    + self.demo31_surface_anchor_cache.snapshot().get("protected_eviction_avoided_count", 0)
+                ),
+                "frame_bundle_strict_source_reject_count": int(self.demo31_frame_bundle_strict_source_reject_count),
                 "overlay_age_ms_median": float(age["median"]),
                 "overlay_age_ms_p95": float(age["p95"]),
                 "cotracker_model_ms_median": float(model["median"]),
@@ -5054,6 +5506,27 @@ class Demo31Runtime:
                             "tracking_render_packet_match_policy",
                             self.contract.get("tracking_render_packet_match_policy", TRACKING_RENDER_PACKET_MATCH_POLICY),
                         )
+                    ),
+                    "frame_bundle_policy": str(
+                        snapshot.get("frame_bundle_policy", self.contract.get("frame_bundle_policy", FRAME_BUNDLE_POLICY_EXACT_TARGET))
+                    ),
+                    "same_target_group_ratio": float(snapshot.get("same_target_group_ratio", 0.0) or 0.0),
+                    "strict_same_source_frame_ratio": float(
+                        snapshot.get("strict_same_source_frame_ratio", 0.0) or 0.0
+                    ),
+                    "frame_bundle_exact_render_count": int(
+                        snapshot.get("frame_bundle_exact_render_count", 0) or 0
+                    ),
+                    "frame_bundle_missing_exact_count": int(
+                        snapshot.get("frame_bundle_missing_exact_count", 0) or 0
+                    ),
+                    "nearest_fallback_debug_count": int(snapshot.get("nearest_fallback_debug_count", 0) or 0),
+                    "protected_bundle_count": int(snapshot.get("protected_bundle_count", 0) or 0),
+                    "protected_bundle_eviction_avoided_count": int(
+                        snapshot.get("protected_bundle_eviction_avoided_count", 0) or 0
+                    ),
+                    "frame_bundle_strict_source_reject_count": int(
+                        snapshot.get("frame_bundle_strict_source_reject_count", 0) or 0
                     ),
                     "mask_reuse_ratio": float(mask_cache.get("mask_reuse_ratio", 0.0) or 0.0),
                     "mask_age_ms_median": float(mask_cache.get("mask_age_ms_median", 0.0) or 0.0),

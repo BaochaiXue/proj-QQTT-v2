@@ -23,12 +23,13 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
 - warmup fails fast by default if SAM3.1 first-frame init does not produce both
   required masks (`object` and `controller`); use
   `--no-sam31-init-quick-fail-empty-masks` only for debug
-- before that first LiteTracker packet, Demo 3.2 builds standard-filter
-  trackable masks from FFS depth plus object/controller masks; LiteTracker
-  receives RGB plus `union_trackable_mask`, `object_trackable_mask`, and
+- before that first LiteTracker packet, Demo 3.2 builds enhanced PT trackable
+  masks from FFS depth plus object/controller masks; LiteTracker receives RGB
+  plus `union_trackable_mask`, `object_trackable_mask`, and
   `controller_trackable_mask`
-- controller trackable pixels are capped after standard filtering, default
-  `--controller-trackable-max-points-per-camera 4999`
+- object/controller enhanced PT defaults are object top-1 and controller top-2
+  3D components, with the controller trackable pixels capped after enhanced PT
+  filtering, default `--controller-trackable-max-points-per-camera 4999`
 - `--mode demo` uses the SAM3.1 controller prompt `human hand` while the
   controller semantic remains a hand
 - `--controller-mask-erode-px` shrinks the controller mask before building the
@@ -41,6 +42,9 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
   anchors, and marker validation; they are not sent to the LiteTracker child
 - trackable masks are published to LiteTracker from both fused and async
   raw-fused paths
+- rendered LiteTracker markers use the same exact target frame bundle by
+  default: tracker result, FFS depth/lift inputs, and rendered PCD must share
+  the same `group_id`; nearest-frame fallback is debug-only
 - render waits for a LiteTracker result and 3D tracking control markers
 - every visible LiteTracker point with valid depth is treated as a 3D anchor by
   default (`--tracker-visualization-mode all-tracks-3d-lift`); Demo 3.2 does

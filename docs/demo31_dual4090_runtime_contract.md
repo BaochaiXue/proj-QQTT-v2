@@ -23,11 +23,15 @@ semantic remains a hand. Tracker query sampling uses
 `phystwin_dense`, but Demo 3.1 defaults to `--cotracker-query-count 4096`
 per camera for the batch=3 RTX 4090 path. A full `auto` / 5000-per-view
 three-camera batch exceeds the 24GB 4090 memory budget in live profiling. The
-controller/towel mask is first capped to
-`controller_pcd_max_points_per_camera = 4999` per camera, before both tracking
-query selection and fused PCD construction. Query points are then sampled from
-the capped object/controller union with the requested per-view budget using
-torch `randperm(seed + camera_idx)` with seed 42. Use
+object and controller surfaces both use the enhanced PT 3D filter by default:
+object keeps the largest component and controller keeps the two largest
+components with the same radius-outlier plus 3D voxel-component policy. The
+controller/towel trackable surface is then capped to
+`controller_pcd_max_points_per_camera = 4999` per camera after enhanced PT
+component filtering and before both tracking query selection and fused PCD
+construction. Query points are then sampled from the capped
+object/controller union with the requested per-view budget using torch
+`randperm(seed + camera_idx)` with seed 42. Use
 `--cotracker-query-count auto` only when exact 5000-per-view dense sampling is
 needed and the tracker backend/memory budget can support it. The optional
 `--controller-mask-erode-px` parameter shrinks the controller mask before the
@@ -69,16 +73,19 @@ Camera/mask/tracker work remains asynchronous, but PCD fusion is
 tracker-result-gated by default. The main process publishes bounded tracker
 inputs and stores pending depth+mask fusion bundles by `group_id`; it does not
 run expensive fusion/filter work until a fresh tracker result arrives. The
-tracker result first requests the exact matching pending fusion bundle. If that
-exact bundle was already evicted, it falls back to the nearest pending bundle
-by absolute `group_id` delta and marks the frame as `nearest` in the profile.
-If the point tracker is not ready, no pending bundle is available, tracking has
-no visible query result, or the selected PCD has no matching surface anchors, no
-new rendered result is published and Open3D keeps the previous valid frame.
-Rendered FPS therefore measures track-ready fused PCD results, not
-semantic-only PCD throughput. Because the tracker result is already the render
-clock, Demo 3.1 does not expose a render stride option and renders every
-tracker-ready group.
+default frame-bundle policy is `exact-target`: the tracker result must render
+with the same target `group_id` for the PCD/depth/lift/surface-anchor bundle.
+If the exact bundle is missing or was evicted, no new rendered result is
+published and Open3D keeps the previous valid frame. The old nearest pending
+bundle behavior is available only for explicit diagnostics via
+`--tracking-render-packet-match-policy exact-then-nearest-debug`; profiles mark
+those renders as `nearest` and count them as debug fallback, not same-target
+results. `--frame-bundle-policy strict-source` is stricter: it also rejects
+tracker results whose mask was latest-reused from an older group. Rendered FPS
+therefore measures track-ready fused PCD results, not semantic-only PCD
+throughput or mixed-frame reuse. Because the tracker result is already the
+render clock, Demo 3.1 does not expose a render stride option and renders every
+tracker-ready exact target group.
 Use `--no-wait-for-tracking-overlay` only for debugging the semantic PCD before
 tracking is available.
 
@@ -118,18 +125,22 @@ trackable_mask_source = standard_filter_survivors
 tracking_input_mask_semantics = standard_filter_trackable_masks
 tracker_query_source = union_trackable_mask
 trackable_object_filter = {'mode': 'enhanced-pt', 'point_control': 'fixed-cap', 'radius_m': 0.01, 'nb_points': 12, 'component_voxel_size_m': 0.006, 'keep_near_main_gap_m': 0.035}
-trackable_controller_filter = {'mode': 'pt-filter', 'radius_m': 0.01, 'nb_points': 12}
+trackable_controller_filter = {'mode': 'enhanced-pt', 'radius_m': 0.01, 'nb_points': 12, 'component_voxel_size_m': 0.006, 'keep_near_main_gap_m': 0.035, 'keep_top_n_components': 2, 'component_selection_policy': 'largest-n-plus-gap'}
 object_filter = {'mode': 'enhanced-pt', 'point_control': 'fixed-cap'}
-controller_filter = {'mode': 'pt-filter'}
+controller_filter = {'mode': 'enhanced-pt'}
 tracking_sampling = controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx
 controller_mask_erode_px = 0
 controller_mask_erode_stage = before_tracking_union_and_trackable_filter
 controller_mask_erode_applies_to = tracking_input_and_anchor_masks
 object_point_control = fixed-cap
 object_postprocess = enhanced-pt
-controller_postprocess = pt-filter
-render_object_filter = {'point_control': 'fixed-cap', 'postprocess': 'enhanced-pt', 'radius_m': 0.01, 'nb_points': 12, 'component_voxel_size_m': 0.006, 'keep_near_main_gap_m': 0.035, 'voxel_m': 0.005, 'origin_policy': 'world', 'adaptive': true, 'min_voxel_m': 0.005, 'max_voxel_m': 0.012, 'target_ms': 8.0, 'emergency_max_points': 30000, 'points_per_voxel': 1}
-render_controller_filter = {'postprocess': 'pt-filter', 'radius_m': 0.01, 'nb_points': 12, 'render_voxel_m': 0.003, 'render_voxel_downsample': true, 'render_max_points': 10000, 'render_cap_enabled': true, 'render_only': true, 'affects_tracking_markers': false}
+controller_postprocess = enhanced-pt
+object_enhanced_keep_top_n_components = 1
+controller_enhanced_keep_top_n_components = 2
+enhanced_component_selection_policy = largest-n-plus-gap
+apply_enhanced_component_filter_to_pcd = true
+render_object_filter = {'point_control': 'fixed-cap', 'postprocess': 'enhanced-pt', 'radius_m': 0.01, 'nb_points': 12, 'component_voxel_size_m': 0.006, 'keep_near_main_gap_m': 0.035, 'keep_top_n_components': 1, 'component_selection_policy': 'largest-n-plus-gap', 'voxel_m': 0.005, 'origin_policy': 'world', 'adaptive': true, 'min_voxel_m': 0.005, 'max_voxel_m': 0.012, 'target_ms': 8.0, 'emergency_max_points': 30000, 'points_per_voxel': 1}
+render_controller_filter = {'postprocess': 'enhanced-pt', 'radius_m': 0.01, 'nb_points': 12, 'component_voxel_size_m': 0.006, 'keep_near_main_gap_m': 0.035, 'keep_top_n_components': 2, 'component_selection_policy': 'largest-n-plus-gap', 'render_voxel_m': 0.003, 'render_voxel_downsample': true, 'render_max_points': 10000, 'render_cap_enabled': true, 'render_only': true, 'affects_tracking_markers': false}
 controller_pcd_max_points_per_camera = 4999
 controller_pcd_cap_stage = before_tracking_query_and_fusion
 controller_pcd_cap_sampling = stable_coordinate_hash_seed_plus_camera_idx
@@ -166,7 +177,13 @@ tracking_control_point_sampling = visible-spread_surface_snap
 overlay_render_raw_track_points = false
 tracking_pending_render_packet_max_groups = 128
 tracking_pending_fusion_bundle_max_groups = 128
-tracking_render_packet_match_policy = exact-then-nearest-pending-pcd-by-group-id
+frame_bundle_policy = exact-target
+tracking_render_packet_match_policy = exact-target-bundle
+tracker_child_receives_full_frame_bundle = false
+tracker_child_receives_depth = false
+tracker_child_receives_intrinsics = false
+tracker_child_receives_c2w = false
+render_bundle_exact_target_default = true
 cotracker_backend = tapnextpp
 tracker_backend = tapnextpp
 tracker_backend_family = tapnext
@@ -279,7 +296,16 @@ tracking_pending_render_packet_drop_count
 tracking_pending_fusion_bundles
 tracking_pending_fusion_bundle_max_groups
 tracking_pending_fusion_bundle_drop_count
+frame_bundle_policy
 tracking_render_packet_match_policy
+same_target_group_ratio
+strict_same_source_frame_ratio
+frame_bundle_exact_render_count
+frame_bundle_missing_exact_count
+nearest_fallback_debug_count
+protected_bundle_count
+protected_bundle_eviction_avoided_count
+frame_bundle_strict_source_reject_count
 tracking_result_exact_render_packet_count
 tracking_result_nearest_render_packet_count
 tracking_result_without_render_packet_count

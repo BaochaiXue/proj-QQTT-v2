@@ -46,7 +46,7 @@ repository-local and link it from one of these layers.
 
 ## Current Catalog Shape
 
-`_catalog.py` currently contains 74 entries.
+`_catalog.py` currently contains 75 entries.
 
 | Category | Count | Meaning |
 | --- | ---: | --- |
@@ -56,13 +56,13 @@ repository-local and link it from one of these layers.
 | `formal_cleanup` | 1 | Downstream cleanup for `data/different_types/`. |
 | `current_compare` | 12 | In-scope aligned RealSense/native-vs-FFS comparison visualizations. |
 | `experiments` | 31 | Experiment-only workflows under `scripts/harness/experiments/`. |
-| `focused_diagnostics` | 6 | Narrow audits, overlays, render probes, source diagnostics, and Demo 2.3 failure packets. |
+| `focused_diagnostics` | 7 | Narrow audits, overlays, render probes, source diagnostics, Demo 2.3 failure packets, and enhanced PT surface-filter profiling. |
 
 Help coverage:
 
 | Profile | Entries | Use |
 | --- | ---: | --- |
-| `quick` | 9 | Fast help checks included in default `check_all.py`. |
+| `quick` | 10 | Fast help checks included in default `check_all.py`. |
 | `full` | 53 | Additional help checks included by `check_all.py --full`. |
 | none | 12 | Guards, helpers, or shell scripts without direct argparse help coverage. |
 

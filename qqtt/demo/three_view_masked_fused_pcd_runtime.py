@@ -56,6 +56,10 @@ from qqtt.demo.realtime_masked_edgetam_pcd import (  # noqa: E402
     resolve_initial_masks,
 )
 from qqtt.demo.pcd_filter_fast import voxel_cap_points, voxel_downsample_points  # noqa: E402
+from qqtt.demo.pcd_postprocess import (  # noqa: E402
+    COMPONENT_SELECTION_LARGEST_N_PLUS_GAP,
+    COMPONENT_SELECTION_POLICIES,
+)
 from qqtt.demo.phystwin_volume_filter import (  # noqa: E402
     DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
     DEFAULT_PHYSTWIN_OBJECT_VOLUME_MAX_VOXEL_M,
@@ -291,6 +295,12 @@ DEFAULT_OBJECT_FILTER_VOXEL_M = 0.004
 DEFAULT_CONTROLLER_FILTER_VOXEL_M = 0.003
 DEFAULT_CONTROLLER_RENDER_VOXEL_M = DEFAULT_CONTROLLER_FILTER_VOXEL_M
 DEFAULT_CONTROLLER_RENDER_MAX_POINTS = 10_000
+DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS = 1
+DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS = 2
+DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP
+DEFAULT_ENHANCED_MIN_COMPONENT_POINTS = 32
+DEFAULT_ENHANCED_MIN_COMPONENT_RATIO = 0.0
+DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD = True
 DEFAULT_FILTER_EVERY_N = 3
 DEFAULT_FILTER_BUDGET_MS = 12.0
 DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
@@ -2216,29 +2226,65 @@ def apply_semantic_postprocess(
     phystwin_nb_points: int,
     enhanced_component_voxel_size_m: float,
     enhanced_keep_near_main_gap_m: float,
+    enhanced_keep_top_n_components: int = 1,
+    enhanced_component_selection_policy: str = DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY,
+    enhanced_min_component_points: int = DEFAULT_ENHANCED_MIN_COMPONENT_POINTS,
+    enhanced_min_component_ratio: float = DEFAULT_ENHANCED_MIN_COMPONENT_RATIO,
+    apply_enhanced_component_filter_to_pcd: bool = DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     """Apply the configured semantic PCD cleanup to one fused layer."""
 
     points = _as_points(layer.points_m)
     colors = _as_colors(layer.colors_rgb)
     input_count = int(len(points))
-    if int(filter_cap) > 0:
-        points, capped_colors_or_none = voxel_cap_points(
-            points,
-            colors,
-            max_points=int(filter_cap),
-            voxel_size_m=float(filter_voxel_size_m),
-            rng=np.random.default_rng(0),
-        )
-        colors = _as_colors(np.empty((0, 3), dtype=np.uint8) if capped_colors_or_none is None else capped_colors_or_none)
-    capped_count = int(len(points))
+
+    def _apply_cap(
+        cap_points: np.ndarray,
+        cap_colors: np.ndarray,
+        *,
+        stage: str,
+    ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+        cap_input_count = int(len(cap_points))
+        if int(filter_cap) > 0 and cap_input_count > int(filter_cap):
+            cap_start_s = time.perf_counter()
+            capped_points, capped_colors_or_none = voxel_cap_points(
+                cap_points,
+                cap_colors,
+                max_points=int(filter_cap),
+                voxel_size_m=float(filter_voxel_size_m),
+                rng=np.random.default_rng(0),
+            )
+            capped_colors = _as_colors(
+                np.empty((0, 3), dtype=np.uint8) if capped_colors_or_none is None else capped_colors_or_none
+            )
+            return _as_points(capped_points), capped_colors, {
+                "filter_cap_enabled": True,
+                "filter_cap": int(filter_cap),
+                "filter_cap_input_points": int(cap_input_count),
+                "filter_cap_output_points": int(len(capped_points)),
+                "filter_cap_removed_points": int(max(0, cap_input_count - len(capped_points))),
+                "filter_cap_stage": str(stage),
+                "filter_cap_ms": float(_elapsed_ms(cap_start_s, time.perf_counter())),
+            }
+        return cap_points, cap_colors, {
+            "filter_cap_enabled": bool(int(filter_cap) > 0),
+            "filter_cap": int(filter_cap),
+            "filter_cap_input_points": int(cap_input_count),
+            "filter_cap_output_points": int(cap_input_count),
+            "filter_cap_removed_points": 0,
+            "filter_cap_stage": str(stage),
+            "filter_cap_ms": 0.0,
+        }
+
     if layer.postprocess_mode == POSTPROCESS_NONE:
+        points, colors, cap_stats = _apply_cap(points, colors, stage="after_none_postprocess")
         return points, colors, {
             "enabled": False,
             "mode": POSTPROCESS_NONE,
             "input_point_count": input_count,
-            "capped_point_count": capped_count,
+            "capped_point_count": int(len(points)),
             "output_point_count": int(len(points)),
+            **cap_stats,
         }
     if layer.postprocess_mode == POSTPROCESS_PT_FILTER:
         from qqtt.demo.pcd_postprocess import (
@@ -2252,27 +2298,66 @@ def apply_semantic_postprocess(
             radius_m=float(phystwin_radius_m),
             nb_points=int(phystwin_nb_points),
         )
+        pre_cap_count = int(len(filtered_points))
+        filtered_points, filtered_colors, cap_stats = _apply_cap(
+            filtered_points,
+            filtered_colors,
+            stage="after_radius_postprocess",
+        )
         stats["mode"] = POSTPROCESS_PT_FILTER
         stats["input_point_count"] = input_count
-        stats["capped_point_count"] = capped_count
+        stats["postprocess_output_point_count_before_cap"] = pre_cap_count
+        stats["capped_point_count"] = int(len(filtered_points))
+        stats["output_point_count"] = int(len(filtered_points))
+        stats.update(cap_stats)
         return filtered_points, filtered_colors, stats
     if layer.postprocess_mode == POSTPROCESS_ENHANCED_PT:
-        from qqtt.demo.pcd_postprocess import (
-            apply_enhanced_phystwin_like_postprocess,
-        )
+        if bool(apply_enhanced_component_filter_to_pcd):
+            from qqtt.demo.semantic_surface_filter import filter_semantic_surface_points
 
-        filtered_points, filtered_colors, stats = apply_enhanced_phystwin_like_postprocess(
-            points=points,
-            colors=colors,
-            enabled=True,
-            radius_m=float(phystwin_radius_m),
-            nb_points=int(phystwin_nb_points),
-            component_voxel_size_m=float(enhanced_component_voxel_size_m),
-            keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+            result = filter_semantic_surface_points(
+                points_world=points,
+                colors=colors,
+                enabled=True,
+                radius_m=float(phystwin_radius_m),
+                nb_points=int(phystwin_nb_points),
+                component_voxel_size_m=float(enhanced_component_voxel_size_m),
+                keep_near_main_gap_m=float(enhanced_keep_near_main_gap_m),
+                keep_top_n_components=int(enhanced_keep_top_n_components),
+                component_selection_policy=str(enhanced_component_selection_policy),
+                min_component_points=int(enhanced_min_component_points),
+                min_component_ratio=float(enhanced_min_component_ratio),
+            )
+            filtered_points = _as_points(result.filtered_points)
+            filtered_colors = _as_colors(
+                np.empty((0, 3), dtype=np.uint8) if result.filtered_colors is None else result.filtered_colors
+            )
+            stats = dict(result.stats)
+        else:
+            from qqtt.demo.pcd_postprocess import apply_phystwin_like_radius_postprocess
+
+            filtered_points, filtered_colors, stats = apply_phystwin_like_radius_postprocess(
+                points=points,
+                colors=colors,
+                enabled=True,
+                radius_m=float(phystwin_radius_m),
+                nb_points=int(phystwin_nb_points),
+            )
+            stats["component_filter_enabled"] = False
+            stats["component_filter_disabled_reason"] = "apply_enhanced_component_filter_to_pcd_false"
+        pre_cap_count = int(len(filtered_points))
+        filtered_points, filtered_colors, cap_stats = _apply_cap(
+            filtered_points,
+            filtered_colors,
+            stage="after_enhanced_component_filter",
         )
         stats["mode"] = POSTPROCESS_ENHANCED_PT
         stats["input_point_count"] = input_count
-        stats["capped_point_count"] = capped_count
+        stats["postprocess_output_point_count_before_cap"] = pre_cap_count
+        stats["capped_point_count"] = int(len(filtered_points))
+        stats["output_point_count"] = int(len(filtered_points))
+        stats["apply_enhanced_component_filter_to_pcd"] = bool(apply_enhanced_component_filter_to_pcd)
+        stats.update(cap_stats)
         return filtered_points, filtered_colors, stats
     raise ValueError(f"Unsupported postprocess mode: {layer.postprocess_mode}")
 
@@ -3436,6 +3521,25 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "object_controller_union_before_filter": False,
             "raw_fusion_before_filter": async_fusion_filter_enabled(args),
         },
+        "object_enhanced_keep_top_n_components": int(
+            getattr(args, "object_enhanced_keep_top_n_components", DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS)
+        ),
+        "controller_enhanced_keep_top_n_components": int(
+            getattr(args, "controller_enhanced_keep_top_n_components", DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS)
+        ),
+        "enhanced_component_selection_policy": str(
+            getattr(args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+        ),
+        "enhanced_min_component_points": int(
+            getattr(args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
+        ),
+        "enhanced_min_component_ratio": float(
+            getattr(args, "enhanced_min_component_ratio", DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)
+        ),
+        "apply_enhanced_component_filter_to_pcd": bool(
+            getattr(args, "apply_enhanced_component_filter_to_pcd", DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD)
+        ),
+        "query_and_pcd_surface_filter_shared": "same_config_reuse_when_source_points_identical",
         "filter_scheduler": {
             "enabled": bool(args.enable_pcd_filter) and args.pcd_filter_mode != "none",
             "mode": args.pcd_filter_mode,
@@ -3451,6 +3555,25 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                 "postprocess": args.object_postprocess,
                 "cap": int(args.object_filter_cap),
                 "voxel_size_m": float(args.object_filter_voxel_m),
+                "enhanced_keep_top_n_components": int(
+                    getattr(args, "object_enhanced_keep_top_n_components", DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS)
+                ),
+                "enhanced_component_selection_policy": str(
+                    getattr(args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+                ),
+                "enhanced_min_component_points": int(
+                    getattr(args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
+                ),
+                "enhanced_min_component_ratio": float(
+                    getattr(args, "enhanced_min_component_ratio", DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)
+                ),
+                "apply_enhanced_component_filter_to_pcd": bool(
+                    getattr(
+                        args,
+                        "apply_enhanced_component_filter_to_pcd",
+                        DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD,
+                    )
+                ),
                 "volume": {
                     "voxel_m": float(getattr(args, "object_volume_voxel_m", DEFAULT_PHYSTWIN_OBJECT_VOLUME_VOXEL_M)),
                     "origin_policy": str(getattr(args, "object_volume_origin", PHYSTWIN_VOLUME_ORIGIN_WORLD)),
@@ -3484,6 +3607,29 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                 "postprocess": args.controller_postprocess,
                 "cap": int(args.controller_filter_cap),
                 "voxel_size_m": float(args.controller_filter_voxel_m),
+                "enhanced_keep_top_n_components": int(
+                    getattr(
+                        args,
+                        "controller_enhanced_keep_top_n_components",
+                        DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS,
+                    )
+                ),
+                "enhanced_component_selection_policy": str(
+                    getattr(args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+                ),
+                "enhanced_min_component_points": int(
+                    getattr(args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
+                ),
+                "enhanced_min_component_ratio": float(
+                    getattr(args, "enhanced_min_component_ratio", DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)
+                ),
+                "apply_enhanced_component_filter_to_pcd": bool(
+                    getattr(
+                        args,
+                        "apply_enhanced_component_filter_to_pcd",
+                        DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD,
+                    )
+                ),
                 "render_voxel_m": float(getattr(args, "controller_render_voxel_m", DEFAULT_CONTROLLER_RENDER_VOXEL_M)),
                 "render_voxel_downsample": float(
                     getattr(args, "controller_render_voxel_m", DEFAULT_CONTROLLER_RENDER_VOXEL_M)
@@ -4774,6 +4920,12 @@ class Demo21Runtime:
             "object_volume_occupied_voxels": ("fusion", "object_volume_occupied_voxels"),
             "object_volume_output_points": ("fusion", "object_volume_output_points"),
             "controller_pt_filter_ms": ("fusion", "controller_pt_filter_ms"),
+            "controller_enhanced_pt_ms": ("fusion", "controller_enhanced_pt_ms"),
+            "pcd_object_points_before_component_filter": ("fusion", "pcd_object_points_before_component_filter"),
+            "pcd_object_points_after_component_filter": ("fusion", "pcd_object_points_after_component_filter"),
+            "pcd_controller_points_before_component_filter": ("fusion", "pcd_controller_points_before_component_filter"),
+            "pcd_controller_points_after_component_filter": ("fusion", "pcd_controller_points_after_component_filter"),
+            "pcd_component_filter_removed_ratio": ("fusion", "pcd_component_filter_removed_ratio"),
             "render_total_ms": ("render", "total_ms"),
             "render_queue_wait_ms": ("render", "queue_wait_ms"),
             "render_gpu_to_cpu_copy_ms": ("render", "gpu_to_cpu_copy_ms"),
@@ -8407,17 +8559,67 @@ class Demo21Runtime:
                 phystwin_nb_points=int(self.args.phystwin_nb_points),
                 enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
                 enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
+                enhanced_keep_top_n_components=int(
+                    getattr(self.args, "object_enhanced_keep_top_n_components", DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS)
+                ),
+                enhanced_component_selection_policy=str(
+                    getattr(self.args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+                ),
+                enhanced_min_component_points=int(
+                    getattr(self.args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
+                ),
+                enhanced_min_component_ratio=float(
+                    getattr(self.args, "enhanced_min_component_ratio", DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)
+                ),
+                apply_enhanced_component_filter_to_pcd=bool(
+                    getattr(
+                        self.args,
+                        "apply_enhanced_component_filter_to_pcd",
+                        DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD,
+                    )
+                ),
         )
 
         points = _as_points(layer.points_m)
         colors = _as_colors(layer.colors_rgb)
+        pre_volume_points, pre_volume_colors, component_stats = apply_semantic_postprocess(
+            layer,
+            filter_cap=0,
+            filter_voxel_size_m=float(self.args.object_filter_voxel_m),
+            phystwin_radius_m=float(self.args.phystwin_radius_m),
+            phystwin_nb_points=int(self.args.phystwin_nb_points),
+            enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
+            enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
+            enhanced_keep_top_n_components=int(
+                getattr(self.args, "object_enhanced_keep_top_n_components", DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS)
+            ),
+            enhanced_component_selection_policy=str(
+                getattr(self.args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+            ),
+            enhanced_min_component_points=int(
+                getattr(self.args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
+            ),
+            enhanced_min_component_ratio=float(
+                getattr(self.args, "enhanced_min_component_ratio", DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)
+            ),
+            apply_enhanced_component_filter_to_pcd=bool(
+                getattr(
+                    self.args,
+                    "apply_enhanced_component_filter_to_pcd",
+                    DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD,
+                )
+            ),
+        )
+        points = _as_points(pre_volume_points)
+        colors = _as_colors(pre_volume_colors)
         sampled_points, sampled_colors, stats, _service_filter_ms = self._object_volume_filter_service.filter_points(
             points,
             colors,
         )
         stats["enabled"] = True
         stats["point_control"] = OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME
-        stats["postprocess_bypassed"] = str(layer.postprocess_mode)
+        stats["pre_volume_postprocess"] = component_stats
+        stats["component_filtered_point_count"] = int(len(points))
         sampled_colors = _as_colors(sampled_colors)
         return sampled_points, sampled_colors, stats
 
@@ -8430,6 +8632,29 @@ class Demo21Runtime:
             phystwin_nb_points=int(self.args.phystwin_nb_points),
             enhanced_component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
             enhanced_keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
+            enhanced_keep_top_n_components=int(
+                getattr(
+                    self.args,
+                    "controller_enhanced_keep_top_n_components",
+                    DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS,
+                )
+            ),
+            enhanced_component_selection_policy=str(
+                getattr(self.args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+            ),
+            enhanced_min_component_points=int(
+                getattr(self.args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
+            ),
+            enhanced_min_component_ratio=float(
+                getattr(self.args, "enhanced_min_component_ratio", DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)
+            ),
+            apply_enhanced_component_filter_to_pcd=bool(
+                getattr(
+                    self.args,
+                    "apply_enhanced_component_filter_to_pcd",
+                    DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD,
+                )
+            ),
         )
         stats = dict(stats) if isinstance(stats, dict) else {}
         render_voxel_m = float(getattr(self.args, "controller_render_voxel_m", DEFAULT_CONTROLLER_RENDER_VOXEL_M))
@@ -8536,11 +8761,28 @@ class Demo21Runtime:
         profile_filter: dict[str, Any] = {
             "object_enhanced_pt_ms": float(object_filter_ms),
             "controller_pt_filter_ms": float(controller_filter_ms),
+            "controller_enhanced_pt_ms": float(controller_filter_ms),
             "total_ms": float(filter_ms),
             "input_age_ms": float(input_age_ms),
             "publish_s": self._profile_rel_s(),
             "pending_replacements": int(self.raw_fused_slot.dropped_count),
             "pending_replacements_total": int(self.raw_fused_slot.total_dropped_count),
+            "pcd_object_points_before_component_filter": int(object_filter_stats.get("input_point_count", raw.object_raw_points)),
+            "pcd_object_points_after_component_filter": int(
+                object_filter_stats.get("postprocess_output_point_count_before_cap", len(object_points))
+            ),
+            "pcd_controller_points_before_component_filter": int(
+                controller_filter_stats.get("input_point_count", raw.controller_raw_points)
+            ),
+            "pcd_controller_points_after_component_filter": int(
+                controller_filter_stats.get("postprocess_output_point_count_before_cap", len(controller_points))
+            ),
+            "pcd_object_component_filter_removed_ratio": float(
+                object_filter_stats.get("removed_point_ratio_after_radius", 0.0) or 0.0
+            ),
+            "pcd_controller_component_filter_removed_ratio": float(
+                controller_filter_stats.get("removed_point_ratio_after_radius", 0.0) or 0.0
+            ),
         }
         profile_filter.update(
             self._object_volume_filter_profile_fields(object_filter_stats, object_filter_ms=object_filter_ms)
@@ -8563,10 +8805,29 @@ class Demo21Runtime:
                 "timestamp_source": raw.timestamp_source,
                 "object_enhanced_pt_ms": float(object_filter_ms),
                 "controller_pt_filter_ms": float(controller_filter_ms),
+                "controller_enhanced_pt_ms": float(controller_filter_ms),
                 "filter_ms": float(filter_ms),
                 "raw_fusion_ms": float(raw.raw_fusion_ms),
                 "total_ms": float(raw.raw_fusion_ms + filter_ms),
                 "publish_s": self._profile_rel_s(),
+                "pcd_object_points_before_component_filter": int(
+                    object_filter_stats.get("input_point_count", raw.object_raw_points)
+                ),
+                "pcd_object_points_after_component_filter": int(
+                    object_filter_stats.get("postprocess_output_point_count_before_cap", len(object_points))
+                ),
+                "pcd_controller_points_before_component_filter": int(
+                    controller_filter_stats.get("input_point_count", raw.controller_raw_points)
+                ),
+                "pcd_controller_points_after_component_filter": int(
+                    controller_filter_stats.get("postprocess_output_point_count_before_cap", len(controller_points))
+                ),
+                "pcd_component_filter_removed_ratio": float(
+                    max(
+                        object_filter_stats.get("removed_point_ratio_after_radius", 0.0) or 0.0,
+                        controller_filter_stats.get("removed_point_ratio_after_radius", 0.0) or 0.0,
+                    )
+                ),
                 **object_volume_profile,
                 **self._controller_render_voxel_profile_fields(controller_filter_stats),
             },
@@ -9534,6 +9795,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--phystwin-nb-points", type=int, default=12)
     parser.add_argument("--enhanced-component-voxel-size-m", type=float, default=0.006)
     parser.add_argument("--enhanced-keep-near-main-gap-m", type=float, default=0.035)
+    parser.add_argument(
+        "--object-enhanced-keep-top-n-components",
+        type=int,
+        default=DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS,
+    )
+    parser.add_argument(
+        "--controller-enhanced-keep-top-n-components",
+        type=int,
+        default=DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS,
+    )
+    parser.add_argument(
+        "--enhanced-component-selection-policy",
+        choices=COMPONENT_SELECTION_POLICIES,
+        default=DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY,
+    )
+    parser.add_argument("--enhanced-min-component-points", type=int, default=DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
+    parser.add_argument("--enhanced-min-component-ratio", type=float, default=DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)
+    parser.add_argument(
+        "--apply-enhanced-component-filter-to-pcd",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD,
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",

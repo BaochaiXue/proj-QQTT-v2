@@ -23,6 +23,10 @@ from qqtt.demo.cotracker3_overlay_worker import (
     OVERLAY_DISPLAY_SCOPES,
     TrackingOverlayInputPacket,
 )
+from qqtt.demo.pcd_postprocess import (
+    COMPONENT_SELECTION_LARGEST_N_PLUS_GAP,
+    COMPONENT_SELECTION_POLICIES,
+)
 from qqtt.demo.phystwin_volume_filter import (
     DEFAULT_PHYSTWIN_OBJECT_VOLUME_EMERGENCY_MAX_POINTS,
     DEFAULT_PHYSTWIN_OBJECT_VOLUME_MAX_VOXEL_M,
@@ -75,6 +79,12 @@ GPU_SAMPLING_BACKENDS = ("nvml",)
 OBJECT_POINT_CONTROL_FIXED_CAP = "fixed-cap"
 OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME = "phystwin-volume"
 OBJECT_POINT_CONTROLS = (OBJECT_POINT_CONTROL_FIXED_CAP, OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME)
+DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS = 1
+DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS = 2
+DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP
+DEFAULT_ENHANCED_MIN_COMPONENT_POINTS = 32
+DEFAULT_ENHANCED_MIN_COMPONENT_RATIO = 0.0
+DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD = True
 
 DEFAULT_WIDTH = 848
 DEFAULT_HEIGHT = 480
@@ -354,6 +364,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_PHYSTWIN_OBJECT_VOLUME_POINTS_PER_VOXEL,
     )
+    parser.add_argument(
+        "--object-enhanced-keep-top-n-components",
+        type=int,
+        default=DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS,
+    )
+    parser.add_argument(
+        "--controller-enhanced-keep-top-n-components",
+        type=int,
+        default=DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS,
+    )
+    parser.add_argument(
+        "--enhanced-component-selection-policy",
+        choices=COMPONENT_SELECTION_POLICIES,
+        default=DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY,
+    )
+    parser.add_argument("--enhanced-min-component-points", type=int, default=DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
+    parser.add_argument("--enhanced-min-component-ratio", type=float, default=DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)
+    parser.add_argument(
+        "--apply-enhanced-component-filter-to-pcd",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD,
+    )
     parser.add_argument("--debug-color-by-camera", action="store_true")
     parser.add_argument("--debug-save-per-camera-pcd", action="store_true")
     parser.add_argument("--debug-save-mask-overlays", action="store_true")
@@ -432,6 +464,16 @@ def validate_args(args: argparse.Namespace, *, require_calibration: bool = False
         raise ValueError("--object-volume-emergency-max-points must be >= 0.")
     if int(args.object_volume_points_per_voxel) < 1:
         raise ValueError("--object-volume-points-per-voxel must be >= 1.")
+    if int(args.object_enhanced_keep_top_n_components) < 1:
+        raise ValueError("--object-enhanced-keep-top-n-components must be >= 1.")
+    if int(args.controller_enhanced_keep_top_n_components) < 1:
+        raise ValueError("--controller-enhanced-keep-top-n-components must be >= 1.")
+    if str(args.enhanced_component_selection_policy) not in COMPONENT_SELECTION_POLICIES:
+        raise ValueError(f"--enhanced-component-selection-policy must be one of {COMPONENT_SELECTION_POLICIES}.")
+    if int(args.enhanced_min_component_points) < 1:
+        raise ValueError("--enhanced-min-component-points must be >= 1.")
+    if float(args.enhanced_min_component_ratio) < 0.0:
+        raise ValueError("--enhanced-min-component-ratio must be >= 0.")
     if int(args.edgetam_live_session_keep_frames) < 1:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 1.")
     if bool(args.debug_identity_c2w) and bool(args.debug_invert_c2w):
@@ -503,6 +545,13 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "controller_pcd_cap_stage": CONTROLLER_PCD_CAP_STAGE,
         "controller_pcd_cap_sampling": CONTROLLER_PCD_CAP_SAMPLING,
+        "object_enhanced_keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
+        "controller_enhanced_keep_top_n_components": int(args.controller_enhanced_keep_top_n_components),
+        "enhanced_component_selection_policy": str(args.enhanced_component_selection_policy),
+        "enhanced_min_component_points": int(args.enhanced_min_component_points),
+        "enhanced_min_component_ratio": float(args.enhanced_min_component_ratio),
+        "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
+        "query_and_pcd_surface_filter_shared": "same_config_reuse_when_source_points_identical",
         "cotracker_seed": int(args.cotracker_seed),
         "phystwin_dense_compatible": bool(phystwin_dense_compatible_for_args(args)),
         "cotracker_window_len": DEFAULT_COTRACKER_WINDOW_LEN,
@@ -529,6 +578,12 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "target_ms": float(args.object_volume_target_ms),
             "emergency_max_points": int(args.object_volume_emergency_max_points),
             "points_per_voxel": int(args.object_volume_points_per_voxel),
+            "keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
+            "controller_keep_top_n_components": int(args.controller_enhanced_keep_top_n_components),
+            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "min_component_points": int(args.enhanced_min_component_points),
+            "min_component_ratio": float(args.enhanced_min_component_ratio),
+            "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
         },
         "debug_fusion": {
             "color_by_camera": bool(args.debug_color_by_camera),
@@ -615,6 +670,24 @@ def build_empty_profile_summary(contract: dict[str, Any]) -> dict[str, Any]:
         "controller_pcd_cap_stage": str(contract.get("controller_pcd_cap_stage", CONTROLLER_PCD_CAP_STAGE)),
         "controller_pcd_cap_sampling": str(
             contract.get("controller_pcd_cap_sampling", CONTROLLER_PCD_CAP_SAMPLING)
+        ),
+        "object_enhanced_keep_top_n_components": int(
+            contract.get("object_enhanced_keep_top_n_components", DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS)
+        ),
+        "controller_enhanced_keep_top_n_components": int(
+            contract.get("controller_enhanced_keep_top_n_components", DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS)
+        ),
+        "enhanced_component_selection_policy": str(
+            contract.get("enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+        ),
+        "enhanced_min_component_points": int(contract.get("enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)),
+        "enhanced_min_component_ratio": float(contract.get("enhanced_min_component_ratio", DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)),
+        "apply_enhanced_component_filter_to_pcd": bool(
+            contract.get("apply_enhanced_component_filter_to_pcd", DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD)
+        ),
+        "query_and_pcd_surface_filter_shared": contract.get(
+            "query_and_pcd_surface_filter_shared",
+            "same_config_reuse_when_source_points_identical",
         ),
         "cotracker_seed": int(contract.get("cotracker_seed", DEFAULT_COTRACKER_SEED)),
         "cotracker_update_mode": str(contract.get("cotracker_update_mode", DEFAULT_COTRACKER_UPDATE_MODE)),
@@ -909,6 +982,11 @@ def build_shared_runtime_argv(
         ("--phystwin-nb-points", getattr(args, "phystwin_nb_points", None)),
         ("--enhanced-component-voxel-size-m", getattr(args, "enhanced_component_voxel_size_m", None)),
         ("--enhanced-keep-near-main-gap-m", getattr(args, "enhanced_keep_near_main_gap_m", None)),
+        ("--object-enhanced-keep-top-n-components", getattr(args, "object_enhanced_keep_top_n_components", None)),
+        ("--controller-enhanced-keep-top-n-components", getattr(args, "controller_enhanced_keep_top_n_components", None)),
+        ("--enhanced-component-selection-policy", getattr(args, "enhanced_component_selection_policy", None)),
+        ("--enhanced-min-component-points", getattr(args, "enhanced_min_component_points", None)),
+        ("--enhanced-min-component-ratio", getattr(args, "enhanced_min_component_ratio", None)),
         ("--debug-only-camera-idx", getattr(args, "debug_only_camera_idx", None)),
         ("--debug-fusion-max-saved-groups", getattr(args, "debug_fusion_max_saved_groups", None)),
     ):
@@ -918,6 +996,10 @@ def build_shared_runtime_argv(
         argv.append("--object-volume-adaptive")
     else:
         argv.append("--no-object-volume-adaptive")
+    if bool(getattr(args, "apply_enhanced_component_filter_to_pcd", True)):
+        argv.append("--apply-enhanced-component-filter-to-pcd")
+    else:
+        argv.append("--no-apply-enhanced-component-filter-to-pcd")
     if gpu_sampling_device_indexes is not None:
         argv.extend(["--gpu-sampling-device-indexes", ",".join(str(index) for index in gpu_sampling_device_indexes)])
     if calibration_reference_serials:

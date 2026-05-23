@@ -100,6 +100,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "quick",
     ),
     HarnessEntry(
+        "scripts/harness/profile_enhanced_pt_topn_surface_filter.py",
+        "focused_diagnostics",
+        "Benchmark enhanced PT top-N 3D semantic surface filtering and reuse.",
+        "quick",
+    ),
+    HarnessEntry(
         "scripts/harness/run_demo31_locotrack_s_profiles.py",
         "hardware_external",
         "Rendered Demo 3.1 LocoTrack-S serial vs batch-views profile matrix.",

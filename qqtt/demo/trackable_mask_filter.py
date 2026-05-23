@@ -9,8 +9,9 @@ import numpy as np
 from data_process.depth_backends.geometry import transform_points
 from qqtt.demo.pcd_postprocess import (
     _detect_radius_outlier_indices,
-    apply_enhanced_phystwin_like_postprocess_with_trace,
+    COMPONENT_SELECTION_LARGEST_N_PLUS_GAP,
 )
+from qqtt.demo.semantic_surface_filter import filter_semantic_surface_points
 from qqtt.demo.phystwin_volume_filter import (
     PHYSTWIN_VOLUME_ORIGIN_FRAME_MIN,
     PHYSTWIN_VOLUME_ORIGIN_WORLD,
@@ -45,11 +46,16 @@ class TrackableMaskFilterConfig:
     object_volume_origin: str = PHYSTWIN_VOLUME_ORIGIN_WORLD
     object_volume_points_per_voxel: int = 1
     object_postprocess: str = POSTPROCESS_ENHANCED_PT
-    controller_postprocess: str = POSTPROCESS_PT_FILTER
+    controller_postprocess: str = POSTPROCESS_ENHANCED_PT
     phystwin_radius_m: float = 0.01
     phystwin_nb_points: int = 12
     enhanced_component_voxel_size_m: float = 0.006
     enhanced_keep_near_main_gap_m: float = 0.035
+    object_enhanced_keep_top_n_components: int = 1
+    controller_enhanced_keep_top_n_components: int = 2
+    enhanced_component_selection_policy: str = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP
+    enhanced_min_component_points: int = 32
+    enhanced_min_component_ratio: float = 0.0
     controller_trackable_max_points_per_camera: int = 4999
     seed: int = 42
 
@@ -125,6 +131,10 @@ def _indices_from_postprocess(
     nb_points: int,
     component_voxel_size_m: float,
     keep_near_main_gap_m: float,
+    keep_top_n_components: int,
+    component_selection_policy: str,
+    min_component_points: int,
+    min_component_ratio: float,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     points = np.asarray(points_world, dtype=np.float32).reshape(-1, 3)
     count = int(len(points))
@@ -156,22 +166,25 @@ def _indices_from_postprocess(
             "nb_points": int(nb_points),
         }
     if mode == POSTPROCESS_ENHANCED_PT:
-        dummy_colors = np.zeros((count, 3), dtype=np.uint8)
-        _filtered_points, _filtered_colors, stats, trace = apply_enhanced_phystwin_like_postprocess_with_trace(
-            points=points,
-            colors=dummy_colors,
+        result = filter_semantic_surface_points(
+            points_world=points,
+            colors=None,
             enabled=True,
             radius_m=float(radius_m),
             nb_points=int(nb_points),
             component_voxel_size_m=float(component_voxel_size_m),
             keep_near_main_gap_m=float(keep_near_main_gap_m),
+            keep_top_n_components=int(keep_top_n_components),
+            component_selection_policy=str(component_selection_policy),
+            min_component_points=int(min_component_points),
+            min_component_ratio=float(min_component_ratio),
         )
-        kept_mask = np.asarray(trace.get("kept_mask"), dtype=bool).reshape(-1)
-        keep_idx = np.flatnonzero(kept_mask).astype(np.int64)
-        stats = dict(stats)
+        keep_idx = np.asarray(result.survivor_indices, dtype=np.int64).reshape(-1)
+        stats = dict(result.stats)
         stats["mode"] = POSTPROCESS_ENHANCED_PT
         stats["input_point_count"] = count
         stats["output_point_count"] = int(len(keep_idx))
+        stats["survivor_index_space"] = "source_points_world"
         return keep_idx, stats
     raise ValueError(f"unsupported postprocess mode: {postprocess_mode}")
 
@@ -185,37 +198,46 @@ def _object_survivor_indices(points_world: np.ndarray, config: TrackableMaskFilt
             "input_point_count": 0,
             "output_point_count": 0,
         }
-    if str(config.object_point_control) == "phystwin-volume":
-        origin = np.zeros(3, dtype=np.float32)
-        if str(config.object_volume_origin) == PHYSTWIN_VOLUME_ORIGIN_FRAME_MIN:
-            origin = points.min(axis=0).astype(np.float32)
-        elif str(config.object_volume_origin) != PHYSTWIN_VOLUME_ORIGIN_WORLD:
-            origin = np.zeros(3, dtype=np.float32)
-        started_s = time.perf_counter()
-        keep_idx = phystwin_volume_sample_indices_fast(
-            points,
-            voxel_size_m=float(config.object_volume_voxel_m),
-            origin_world=origin,
-            points_per_voxel=int(config.object_volume_points_per_voxel),
-        )
-        elapsed_ms = float((time.perf_counter() - started_s) * 1000.0)
-        return np.asarray(keep_idx, dtype=np.int64), {
-            "mode": "phystwin-volume",
-            "input_point_count": count,
-            "output_point_count": int(len(keep_idx)),
-            "occupied_voxel_count": int(len(keep_idx)),
-            "voxel_size_m": float(config.object_volume_voxel_m),
-            "origin_policy": str(config.object_volume_origin),
-            "filter_ms": elapsed_ms,
-        }
-    return _indices_from_postprocess(
+    component_keep_idx, component_stats = _indices_from_postprocess(
         points,
         postprocess_mode=str(config.object_postprocess),
         radius_m=float(config.phystwin_radius_m),
         nb_points=int(config.phystwin_nb_points),
         component_voxel_size_m=float(config.enhanced_component_voxel_size_m),
         keep_near_main_gap_m=float(config.enhanced_keep_near_main_gap_m),
+        keep_top_n_components=int(config.object_enhanced_keep_top_n_components),
+        component_selection_policy=str(config.enhanced_component_selection_policy),
+        min_component_points=int(config.enhanced_min_component_points),
+        min_component_ratio=float(config.enhanced_min_component_ratio),
     )
+    component_points = points[np.asarray(component_keep_idx, dtype=np.int64)]
+    if str(config.object_point_control) == "phystwin-volume":
+        origin = np.zeros(3, dtype=np.float32)
+        if str(config.object_volume_origin) == PHYSTWIN_VOLUME_ORIGIN_FRAME_MIN:
+            origin = component_points.min(axis=0).astype(np.float32) if len(component_points) else np.zeros(3, dtype=np.float32)
+        elif str(config.object_volume_origin) != PHYSTWIN_VOLUME_ORIGIN_WORLD:
+            origin = np.zeros(3, dtype=np.float32)
+        started_s = time.perf_counter()
+        volume_keep_idx = phystwin_volume_sample_indices_fast(
+            component_points,
+            voxel_size_m=float(config.object_volume_voxel_m),
+            origin_world=origin,
+            points_per_voxel=int(config.object_volume_points_per_voxel),
+        )
+        elapsed_ms = float((time.perf_counter() - started_s) * 1000.0)
+        keep_idx = np.asarray(component_keep_idx, dtype=np.int64)[np.asarray(volume_keep_idx, dtype=np.int64)]
+        return keep_idx, {
+            "mode": "phystwin-volume",
+            "input_point_count": count,
+            "output_point_count": int(len(keep_idx)),
+            "component_filtered_point_count": int(len(component_keep_idx)),
+            "occupied_voxel_count": int(len(volume_keep_idx)),
+            "voxel_size_m": float(config.object_volume_voxel_m),
+            "origin_policy": str(config.object_volume_origin),
+            "filter_ms": elapsed_ms,
+            "component_filter": component_stats,
+        }
+    return component_keep_idx, component_stats
 
 
 def _controller_survivor_indices(points_world: np.ndarray, config: TrackableMaskFilterConfig) -> tuple[np.ndarray, dict[str, Any]]:
@@ -226,6 +248,10 @@ def _controller_survivor_indices(points_world: np.ndarray, config: TrackableMask
         nb_points=int(config.phystwin_nb_points),
         component_voxel_size_m=float(config.enhanced_component_voxel_size_m),
         keep_near_main_gap_m=float(config.enhanced_keep_near_main_gap_m),
+        keep_top_n_components=int(config.controller_enhanced_keep_top_n_components),
+        component_selection_policy=str(config.enhanced_component_selection_policy),
+        min_component_points=int(config.enhanced_min_component_points),
+        min_component_ratio=float(config.enhanced_min_component_ratio),
     )
 
 
@@ -339,7 +365,27 @@ def summarize_trackable_stats(stats_by_camera: Mapping[int, Mapping[str, Any]]) 
         "controller_filter_by_camera": {},
         "object_filter_mode_by_camera": {},
         "controller_filter_mode_by_camera": {},
+        "object_component_count_by_camera": {},
+        "controller_component_count_by_camera": {},
+        "object_component_point_counts_by_camera": {},
+        "controller_component_point_counts_by_camera": {},
+        "object_top_n_component_point_counts_by_camera": {},
+        "controller_top_n_component_point_counts_by_camera": {},
+        "object_kept_component_indices_by_camera": {},
+        "controller_kept_component_indices_by_camera": {},
+        "object_removed_component_count_by_camera": {},
+        "controller_removed_component_count_by_camera": {},
+        "object_removed_point_count_by_camera": {},
+        "controller_removed_point_count_by_camera": {},
+        "object_component_filter_removed_ratio_by_camera": {},
+        "controller_component_filter_removed_ratio_by_camera": {},
+        "query_pcd_filter_reused_result_by_camera": {},
     }
+
+    def _component_stats(filter_stats: Mapping[str, Any]) -> dict[str, Any]:
+        nested = filter_stats.get("component_filter")
+        return dict(nested) if isinstance(nested, Mapping) else dict(filter_stats)
+
     for camera_idx, raw_stats in stats_by_camera.items():
         idx = int(camera_idx)
         stats = dict(raw_stats)
@@ -359,6 +405,50 @@ def summarize_trackable_stats(stats_by_camera: Mapping[int, Mapping[str, Any]]) 
         summary["controller_filter_by_camera"][idx] = controller_filter
         summary["object_filter_mode_by_camera"][idx] = str(object_filter.get("mode", ""))
         summary["controller_filter_mode_by_camera"][idx] = str(controller_filter.get("mode", ""))
+        object_components = _component_stats(object_filter)
+        controller_components = _component_stats(controller_filter)
+        summary["object_component_count_by_camera"][idx] = int(object_components.get("component_count", 0) or 0)
+        summary["controller_component_count_by_camera"][idx] = int(controller_components.get("component_count", 0) or 0)
+        summary["object_component_point_counts_by_camera"][idx] = list(
+            object_components.get("component_point_counts", []) or []
+        )
+        summary["controller_component_point_counts_by_camera"][idx] = list(
+            controller_components.get("component_point_counts", []) or []
+        )
+        summary["object_top_n_component_point_counts_by_camera"][idx] = list(
+            object_components.get("top_n_component_point_counts", []) or []
+        )
+        summary["controller_top_n_component_point_counts_by_camera"][idx] = list(
+            controller_components.get("top_n_component_point_counts", []) or []
+        )
+        summary["object_kept_component_indices_by_camera"][idx] = list(
+            object_components.get("kept_component_indices", []) or []
+        )
+        summary["controller_kept_component_indices_by_camera"][idx] = list(
+            controller_components.get("kept_component_indices", []) or []
+        )
+        summary["object_removed_component_count_by_camera"][idx] = int(
+            object_components.get("removed_component_count", 0) or 0
+        )
+        summary["controller_removed_component_count_by_camera"][idx] = int(
+            controller_components.get("removed_component_count", 0) or 0
+        )
+        summary["object_removed_point_count_by_camera"][idx] = int(
+            object_components.get("removed_point_count", 0) or 0
+        )
+        summary["controller_removed_point_count_by_camera"][idx] = int(
+            controller_components.get("removed_point_count", 0) or 0
+        )
+        summary["object_component_filter_removed_ratio_by_camera"][idx] = float(
+            object_components.get("removed_point_ratio_after_radius", 0.0) or 0.0
+        )
+        summary["controller_component_filter_removed_ratio_by_camera"][idx] = float(
+            controller_components.get("removed_point_ratio_after_radius", 0.0) or 0.0
+        )
+        summary["query_pcd_filter_reused_result_by_camera"][idx] = bool(
+            object_components.get("query_pcd_filter_reused_result", False)
+            or controller_components.get("query_pcd_filter_reused_result", False)
+        )
     return summary
 
 

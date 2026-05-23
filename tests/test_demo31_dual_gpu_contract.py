@@ -152,6 +152,12 @@ class _FakeSharedRuntimeModule:
         parser.add_argument("--phystwin-nb-points", type=int)
         parser.add_argument("--enhanced-component-voxel-size-m", type=float)
         parser.add_argument("--enhanced-keep-near-main-gap-m", type=float)
+        parser.add_argument("--object-enhanced-keep-top-n-components", type=int)
+        parser.add_argument("--controller-enhanced-keep-top-n-components", type=int)
+        parser.add_argument("--enhanced-component-selection-policy")
+        parser.add_argument("--enhanced-min-component-points", type=int)
+        parser.add_argument("--enhanced-min-component-ratio", type=float)
+        parser.add_argument("--apply-enhanced-component-filter-to-pcd", action=argparse.BooleanOptionalAction)
         parser.add_argument("--controller-render-voxel-m", type=float)
         parser.add_argument("--controller-render-max-points", type=int)
         parser.add_argument("--debug-color-by-camera", action="store_true")
@@ -328,16 +334,28 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["controller_mask_semantics"], "controller_trackable_mask")
         self.assertEqual(contract["object_point_control"], "fixed-cap")
         self.assertEqual(contract["object_postprocess"], "enhanced-pt")
-        self.assertEqual(contract["controller_postprocess"], "pt-filter")
+        self.assertEqual(contract["controller_postprocess"], "enhanced-pt")
         self.assertEqual(contract["trackable_object_filter"]["mode"], "enhanced-pt")
         self.assertEqual(contract["trackable_object_filter"]["point_control"], "fixed-cap")
-        self.assertEqual(contract["trackable_controller_filter"]["mode"], "pt-filter")
+        self.assertEqual(contract["trackable_controller_filter"]["mode"], "enhanced-pt")
         self.assertEqual(contract["object_filter"]["mode"], "enhanced-pt")
         self.assertEqual(contract["object_filter"]["point_control"], "fixed-cap")
-        self.assertEqual(contract["controller_filter"]["mode"], "pt-filter")
+        self.assertEqual(contract["controller_filter"]["mode"], "enhanced-pt")
+        self.assertEqual(contract["object_enhanced_keep_top_n_components"], 1)
+        self.assertEqual(contract["controller_enhanced_keep_top_n_components"], 2)
+        self.assertEqual(contract["enhanced_component_selection_policy"], "largest-n-plus-gap")
+        self.assertEqual(contract["enhanced_min_component_points"], 32)
+        self.assertEqual(contract["enhanced_min_component_ratio"], 0.0)
+        self.assertTrue(contract["apply_enhanced_component_filter_to_pcd"])
+        self.assertEqual(
+            contract["query_and_pcd_surface_filter_shared"],
+            "same_config_reuse_when_source_points_identical",
+        )
+        self.assertEqual(contract["trackable_controller_filter"]["keep_top_n_components"], 2)
+        self.assertEqual(contract["render_controller_filter"]["keep_top_n_components"], 2)
         self.assertEqual(contract["render_object_filter"]["point_control"], "fixed-cap")
         self.assertEqual(contract["render_object_filter"]["postprocess"], "enhanced-pt")
-        self.assertEqual(contract["render_controller_filter"]["postprocess"], "pt-filter")
+        self.assertEqual(contract["render_controller_filter"]["postprocess"], "enhanced-pt")
         self.assertEqual(contract["tracking_sampling"], "controller_pcd_cap_then_torch_randperm_seed_plus_camera_idx")
         self.assertEqual(contract["controller_pcd_max_points_per_camera"], 4999)
         self.assertEqual(contract["controller_pcd_cap_stage"], "before_tracking_query_and_fusion")
@@ -374,8 +392,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracking_pending_fusion_bundle_max_groups"], 128)
         self.assertEqual(
             contract["tracking_render_packet_match_policy"],
-            "exact-then-nearest-pending-pcd-by-group-id",
+            "exact-target-bundle",
         )
+        self.assertEqual(contract["frame_bundle_policy"], "exact-target")
+        self.assertTrue(contract["render_bundle_exact_target_default"])
+        self.assertFalse(contract["tracker_child_receives_full_frame_bundle"])
+        self.assertFalse(contract["tracker_child_receives_depth"])
+        self.assertFalse(contract["tracker_child_receives_intrinsics"])
+        self.assertFalse(contract["tracker_child_receives_c2w"])
         self.assertEqual(contract["pcd_fusion_trigger"], "tracker-result")
         self.assertTrue(contract["tracker_result_gated_fusion"])
         self.assertTrue(contract["render_triggers_pcd_fusion"])
@@ -436,7 +460,11 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("tracker_query_source = union_trackable_mask", output)
         self.assertIn("object_point_control = fixed-cap", output)
         self.assertIn("object_postprocess = enhanced-pt", output)
-        self.assertIn("controller_postprocess = pt-filter", output)
+        self.assertIn("controller_postprocess = enhanced-pt", output)
+        self.assertIn("object_enhanced_keep_top_n_components = 1", output)
+        self.assertIn("controller_enhanced_keep_top_n_components = 2", output)
+        self.assertIn("enhanced_component_selection_policy = largest-n-plus-gap", output)
+        self.assertIn("apply_enhanced_component_filter_to_pcd = true", output)
         self.assertIn("controller_pcd_max_points_per_camera = 4999", output)
         self.assertIn("controller_pcd_cap_stage = before_tracking_query_and_fusion", output)
         self.assertIn("wait_for_tracking_overlay = true", output)
@@ -458,7 +486,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("overlay_render_raw_track_points = false", output)
         self.assertIn("tracking_pending_render_packet_max_groups = 128", output)
         self.assertIn("tracking_pending_fusion_bundle_max_groups = 128", output)
-        self.assertIn("tracking_render_packet_match_policy = exact-then-nearest-pending-pcd-by-group-id", output)
+        self.assertIn("frame_bundle_policy = exact-target", output)
+        self.assertIn("tracking_render_packet_match_policy = exact-target-bundle", output)
         self.assertIn("pcd_fusion_trigger = tracker-result", output)
         self.assertIn("tracker_result_gated_fusion = true", output)
         self.assertIn("render_triggers_pcd_fusion = true", output)
@@ -476,6 +505,38 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("pcd_color_mode = rgb", output)
         self.assertIn("render_waited_for_cotracker = true", output)
         self.assertIn("render_waited_for_fresh_cotracker_result = true", output)
+
+    def test_topn_enhanced_pt_cli_fields_are_in_contract(self) -> None:
+        args = self._parse(
+            [
+                "--camera-ids",
+                "0,1,2",
+                "--controller-enhanced-keep-top-n-components",
+                "3",
+                "--object-enhanced-keep-top-n-components",
+                "2",
+                "--enhanced-component-selection-policy",
+                "largest-n",
+                "--enhanced-min-component-points",
+                "64",
+                "--enhanced-min-component-ratio",
+                "0.01",
+                "--no-apply-enhanced-component-filter-to-pcd",
+            ]
+        )
+
+        contract = demo31_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+
+        self.assertEqual(contract["object_enhanced_keep_top_n_components"], 2)
+        self.assertEqual(contract["controller_enhanced_keep_top_n_components"], 3)
+        self.assertEqual(contract["enhanced_component_selection_policy"], "largest-n")
+        self.assertEqual(contract["enhanced_min_component_points"], 64)
+        self.assertEqual(contract["enhanced_min_component_ratio"], 0.01)
+        self.assertFalse(contract["apply_enhanced_component_filter_to_pcd"])
+        self.assertEqual(contract["trackable_object_filter"]["keep_top_n_components"], 2)
+        self.assertEqual(contract["trackable_controller_filter"]["keep_top_n_components"], 3)
+        self.assertEqual(contract["render_object_filter"]["keep_top_n_components"], 2)
+        self.assertEqual(contract["render_controller_filter"]["keep_top_n_components"], 3)
 
     def test_trackable_mask_policy_disabled_reports_raw_semantic_query_masks(self) -> None:
         args = self._parse(
@@ -858,17 +919,21 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracker_query_source"], "union_trackable_mask")
         self.assertEqual(contract["object_point_control"], "fixed-cap")
         self.assertEqual(contract["object_postprocess"], "enhanced-pt")
-        self.assertEqual(contract["controller_postprocess"], "pt-filter")
+        self.assertEqual(contract["controller_postprocess"], "enhanced-pt")
         self.assertEqual(contract["trackable_object_filter"]["mode"], "enhanced-pt")
         self.assertEqual(contract["trackable_object_filter"]["point_control"], "fixed-cap")
-        self.assertEqual(contract["trackable_controller_filter"]["mode"], "pt-filter")
+        self.assertEqual(contract["trackable_controller_filter"]["mode"], "enhanced-pt")
         self.assertEqual(contract["object_filter"]["mode"], "enhanced-pt")
         self.assertEqual(contract["object_filter"]["point_control"], "fixed-cap")
-        self.assertEqual(contract["controller_filter"]["mode"], "pt-filter")
+        self.assertEqual(contract["controller_filter"]["mode"], "enhanced-pt")
+        self.assertEqual(contract["object_enhanced_keep_top_n_components"], 1)
+        self.assertEqual(contract["controller_enhanced_keep_top_n_components"], 2)
+        self.assertEqual(contract["enhanced_component_selection_policy"], "largest-n-plus-gap")
+        self.assertTrue(contract["apply_enhanced_component_filter_to_pcd"])
         self.assertEqual(contract["render_object_filter"]["point_control"], "fixed-cap")
         self.assertEqual(contract["render_object_filter"]["postprocess"], "enhanced-pt")
         self.assertEqual(contract["controller_trackable_max_points_per_camera"], 4999)
-        self.assertEqual(contract["controller_trackable_cap_stage"], "after_standard_filter")
+        self.assertEqual(contract["controller_trackable_cap_stage"], "after_enhanced_pt_top_n_component_filter")
         self.assertEqual(contract["controller_mask_erode_px"], 0)
         self.assertEqual(contract["controller_mask_erode_stage"], "before_tracking_union_and_trackable_filter")
         self.assertEqual(contract["controller_mask_erode_applies_to"], "tracking_input_and_anchor_masks")
@@ -1259,9 +1324,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("controller_mask_erode_px = 0", output)
         self.assertIn("object_point_control = fixed-cap", output)
         self.assertIn("object_postprocess = enhanced-pt", output)
-        self.assertIn("controller_postprocess = pt-filter", output)
+        self.assertIn("controller_postprocess = enhanced-pt", output)
         self.assertIn("render_object_filter = {'point_control': 'fixed-cap', 'postprocess': 'enhanced-pt'", output)
-        self.assertIn("render_controller_filter = {'postprocess': 'pt-filter'", output)
+        self.assertIn("render_controller_filter = {'postprocess': 'enhanced-pt'", output)
         self.assertIn("'render_voxel_m': 0.003", output)
         self.assertIn("'render_max_points': 10000", output)
         self.assertIn("tracker_visualization_mode = all-tracks-3d-lift", output)
@@ -1345,11 +1410,17 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(shared_args.pcd_color_mode, "rgb")
         self.assertEqual(shared_args.object_point_control, "fixed-cap")
         self.assertEqual(shared_args.object_postprocess, "enhanced-pt")
-        self.assertEqual(shared_args.controller_postprocess, "pt-filter")
+        self.assertEqual(shared_args.controller_postprocess, "enhanced-pt")
         self.assertEqual(shared_args.phystwin_radius_m, 0.01)
         self.assertEqual(shared_args.phystwin_nb_points, 12)
         self.assertEqual(shared_args.enhanced_component_voxel_size_m, 0.006)
         self.assertEqual(shared_args.enhanced_keep_near_main_gap_m, 0.035)
+        self.assertEqual(shared_args.object_enhanced_keep_top_n_components, 1)
+        self.assertEqual(shared_args.controller_enhanced_keep_top_n_components, 2)
+        self.assertEqual(shared_args.enhanced_component_selection_policy, "largest-n-plus-gap")
+        self.assertEqual(shared_args.enhanced_min_component_points, 32)
+        self.assertEqual(shared_args.enhanced_min_component_ratio, 0.0)
+        self.assertTrue(shared_args.apply_enhanced_component_filter_to_pcd)
         self.assertEqual(shared_args.object_volume_voxel_m, 0.005)
         self.assertEqual(shared_args.object_volume_points_per_voxel, 3)
         self.assertEqual(shared_args.depth_source, "realsense")
@@ -2171,7 +2242,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(second_profile["tracking_overlay_render_blocked"])
         self.assertEqual(runtime.demo31_tracking_overlay_render_blocked_count, 0)
 
-    def test_renderer_blocks_nearest_pending_pcd_when_matching_lift_input_is_missing(self) -> None:
+    def test_renderer_blocks_nearest_pending_pcd_by_default(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
         result = TrackingResultLitePacket(
             group_id=1,
@@ -2215,21 +2286,25 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         runtime._publish_next_tracker_driven_render_once(now_s=now_s)
 
         self.assertIsNone(runtime.published_packet)
-        self.assertEqual(runtime.demo31_tracking_result_without_render_packet_count, 0)
-        self.assertEqual(runtime.demo31_tracking_result_nearest_render_packet_count, 1)
-        self.assertEqual(runtime.demo31_tracking_result_without_lift_input_count, 1)
+        self.assertEqual(runtime.demo31_tracking_result_without_render_packet_count, 1)
+        self.assertEqual(runtime.demo31_tracking_result_nearest_render_packet_count, 0)
+        self.assertEqual(runtime.demo31_tracking_result_without_lift_input_count, 0)
+        self.assertEqual(runtime.demo31_frame_bundle_missing_exact_count, 1)
         overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
         self.assertTrue(overlay_profile["overlay_available"])
         self.assertFalse(overlay_profile["tracking_result_has_matching_render_packet"])
-        self.assertTrue(overlay_profile["tracking_result_used_render_packet"])
-        self.assertTrue(overlay_profile["tracking_result_used_nearest_render_packet"])
-        self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "nearest")
-        self.assertEqual(overlay_profile["tracking_render_packet_group_id"], 2)
-        self.assertEqual(overlay_profile["tracking_render_packet_group_delta"], 1)
-        self.assertEqual(overlay_profile["tracking_nearest_render_packet_abs_delta"], 1)
+        self.assertFalse(overlay_profile["tracking_result_used_render_packet"])
+        self.assertFalse(overlay_profile["tracking_result_used_nearest_render_packet"])
+        self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "missing-exact")
+        self.assertIsNone(overlay_profile["tracking_render_packet_group_id"])
+        self.assertIsNone(overlay_profile["tracking_render_packet_group_delta"])
+        self.assertIsNone(overlay_profile["tracking_nearest_render_packet_abs_delta"])
+        self.assertEqual(overlay_profile["tracking_render_packet_match_policy"], "exact-target-bundle")
+        self.assertEqual(overlay_profile["frame_bundle_policy"], "exact-target")
+        self.assertFalse(overlay_profile["same_target_group"])
         self.assertTrue(overlay_profile["tracking_overlay_render_blocked"])
 
-    def test_renderer_uses_nearest_pending_pcd_when_exact_group_was_evicted(self) -> None:
+    def test_renderer_blocks_when_exact_group_was_evicted_by_default(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
         result = TrackingResultLitePacket(
             group_id=1,
@@ -2272,6 +2347,64 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
         runtime._publish_next_tracker_driven_render_once(now_s=now_s)
 
+        self.assertIsNone(runtime.published_packet)
+        self.assertEqual(runtime.demo31_tracking_result_exact_render_packet_count, 0)
+        self.assertEqual(runtime.demo31_tracking_result_nearest_render_packet_count, 0)
+        self.assertEqual(runtime.demo31_frame_bundle_missing_exact_count, 1)
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertFalse(overlay_profile["tracking_result_has_matching_render_packet"])
+        self.assertFalse(overlay_profile["tracking_result_used_render_packet"])
+        self.assertFalse(overlay_profile["tracking_result_used_nearest_render_packet"])
+        self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "missing-exact")
+        self.assertIsNone(overlay_profile["tracking_render_packet_group_id"])
+        self.assertIsNone(overlay_profile["tracking_render_packet_group_delta"])
+        self.assertTrue(overlay_profile["tracking_overlay_render_blocked"])
+
+    def test_renderer_allows_nearest_pending_pcd_only_under_debug_policy(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            publish_range=(1, 1),
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "frame_bundle_policy": "latest-reuse-debug",
+                "tracking_render_packet_match_policy": "exact-then-nearest-debug",
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime.demo31_lift_input_cache.publish(
+            group_id=2,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 1), 2.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+        )
+
+        runtime._publish_render_packet(
+            _FakeRenderPacket(
+                group_id=2,
+                controller_points_m=np.empty((0, 3), dtype=np.float32),
+                controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+            )
+        )
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
         published = runtime.published_packet
         self.assertIsNotNone(published)
         np.testing.assert_allclose(  # type: ignore[union-attr]
@@ -2280,15 +2413,69 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         )
         self.assertEqual(runtime.demo31_tracking_result_exact_render_packet_count, 0)
         self.assertEqual(runtime.demo31_tracking_result_nearest_render_packet_count, 1)
+        self.assertEqual(runtime.demo31_frame_bundle_nearest_fallback_debug_count, 1)
         overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
         self.assertFalse(overlay_profile["tracking_result_has_matching_render_packet"])
         self.assertTrue(overlay_profile["tracking_result_used_render_packet"])
         self.assertTrue(overlay_profile["tracking_result_used_nearest_render_packet"])
         self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "nearest")
+        self.assertEqual(overlay_profile["tracking_render_packet_match_policy"], "exact-then-nearest-debug")
+        self.assertEqual(overlay_profile["frame_bundle_policy"], "latest-reuse-debug")
         self.assertEqual(overlay_profile["tracking_render_packet_group_id"], 2)
         self.assertEqual(overlay_profile["tracking_render_packet_group_delta"], 1)
         self.assertEqual(overlay_profile["render_group_id"], 2)
+        self.assertFalse(overlay_profile["same_target_group"])
         self.assertFalse(overlay_profile["tracking_overlay_render_blocked"])
+
+    def test_strict_source_policy_rejects_reused_mask_tracking_result(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=5,
+            frame_idx=5,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            publish_range=(5, 5),
+            mask_source_group_id=4,
+            mask_age_ms=33.0,
+            mask_reused=True,
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "frame_bundle_policy": "strict-source",
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime._publish_render_packet(
+            _FakeRenderPacket(
+                group_id=5,
+                controller_points_m=np.empty((0, 3), dtype=np.float32),
+                controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+            )
+        )
+
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        self.assertIsNone(runtime.published_packet)
+        self.assertEqual(runtime.demo31_frame_bundle_strict_source_reject_count, 1)
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertEqual(overlay_profile["frame_bundle_policy"], "strict-source")
+        self.assertTrue(overlay_profile["frame_bundle_strict_source_rejected"])
+        self.assertEqual(overlay_profile["tracking_mask_source_group_id"], 4)
+        self.assertTrue(overlay_profile["tracking_mask_reused"])
+        self.assertFalse(overlay_profile["same_target_group"])
+        self.assertFalse(overlay_profile["strict_same_source_frame"])
+        self.assertTrue(overlay_profile["tracking_overlay_render_blocked"])
 
     def test_pending_render_packet_cache_is_bounded(self) -> None:
         runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
@@ -2320,6 +2507,40 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(pending_ids, [2, 3])
         self.assertEqual(runtime.demo31_pending_render_packet_drop_count, 1)
         self.assertEqual(runtime.demo31_snapshot()["tracking_pending_render_packet_max_groups"], 2)
+
+    def test_protected_pending_render_packet_survives_cache_pruning(self) -> None:
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(None),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "tracking_pending_render_packet_max_groups": 2,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+
+        runtime._protect_frame_bundle(1)
+        for group_id in (1, 2, 3):
+            runtime._publish_render_packet(
+                _FakeRenderPacket(
+                    group_id=group_id,
+                    controller_points_m=np.empty((0, 3), dtype=np.float32),
+                    controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+                )
+            )
+
+        with runtime.demo31_pending_render_lock:
+            pending_ids = sorted(runtime.demo31_pending_render_packets)
+        self.assertEqual(pending_ids, [1, 3])
+        self.assertEqual(runtime.demo31_pending_render_packet_drop_count, 1)
+        snapshot = runtime.demo31_snapshot()
+        self.assertEqual(snapshot["protected_bundle_count"], 1)
+        self.assertIn(1, runtime.demo31_protected_frame_bundle_group_ids)
 
     def test_pending_fusion_bundle_cache_is_bounded(self) -> None:
         runtime_cls = demo31_runtime.make_demo31_live_runtime_class(

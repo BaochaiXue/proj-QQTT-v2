@@ -16,6 +16,11 @@ RealSense tracking-overlay lineage.
 - Camera/mask/PCD work stays asynchronous, but rendered results are gated by
   the point tracker: a PCD packet is published only when the matching tracking
   result for that group can be lifted into red tracking points.
+- The default frame-bundle policy is `exact-target`: tracker result, PCD,
+  depth/lift inputs, and surface anchors must share the same target `group_id`.
+  Latest-reuse masks remain allowed but are recorded as provenance; nearest
+  pending PCD fallback is only available with
+  `--tracking-render-packet-match-policy exact-then-nearest-debug`.
 - Demo 3.1 does not use FFS.
 - Demo 3.1 inherits Demo 3.0's online-only object/controller union tracking
   semantics: `--mode exp|demo`, object/controller union masks,
@@ -37,12 +42,13 @@ RealSense tracking-overlay lineage.
   controller mask rather than the broader object/controller union.
 - When the point tracker is not ready, the Open3D window keeps the last valid rendered
   result instead of publishing a new semantic-only PCD frame. Rendered FPS
-  therefore measures track-ready results, not camera/mask-only throughput.
-- Rendered object PCD uses `object_point_control=fixed-cap` plus
-  `object_postprocess=enhanced-pt` by default. Keep controller on `pt-filter`
-  so separated two-hand controller components are not collapsed by the object
-  largest-component prior. Use `--object-point-control phystwin-volume` only as
-  a diagnostic override.
+  therefore measures exact target track-ready results, not camera/mask-only
+  throughput or mixed-frame reuse.
+- Rendered object and controller PCD use enhanced PT by default. Object keeps
+  the top-1 3D component, while controller keeps the top-2 3D components before
+  the controller `<5000` trackable cap, so separated two-hand/towel controller
+  surfaces are not collapsed by the old single-largest prior. Use
+  `--object-point-control phystwin-volume` only as a diagnostic override.
 - Rendered PCD color defaults to live RGB via `--pcd-color-mode rgb`. Use
   `--pcd-color-mode class` only when you want semantic object/controller solid
   colors for debugging.
