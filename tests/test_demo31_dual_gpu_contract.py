@@ -2657,6 +2657,88 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(overlay_profile["tracker_result_triggered_fusion"])
         self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "exact")
 
+    def test_tracker_result_gated_fused_packet_path_caches_exact_batch_bundle(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=11,
+            frame_idx=11,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0]], dtype=np.float32)},
+            publish_range=(11, 11),
+        )
+        client = _FakeProcessClient(result)
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: client,
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(
+                camera_ids=(0,),
+                tracker_visualization_mode="none",
+                enable_pcd_filter=True,
+                pcd_filter_mode="async",
+            ),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "cotracker_input_fps": 30.0,
+                "pcd_fusion_trigger": "tracker-result",
+                "tracker_visualization_mode": "none",
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime._stream_metadata = [{"K_color": np.eye(3, dtype=np.float32)}]
+        runtime._c2w_by_camera = {0: np.eye(4, dtype=np.float32)}
+        depth_group = _FakeDepthGroup(
+            group_id=11,
+            depths={0: _FakeDepthFrame(11, np.ones((1, 1), dtype=np.float32))},
+            per_camera_frame_seq={0: 11},
+        )
+        masks = {
+            0: _FakePacket(
+                11,
+                0,
+                np.array([[False]], dtype=bool),
+                np.array([[True]], dtype=bool),
+                np.zeros((1, 1, 3), dtype=np.uint8),
+            )
+        }
+
+        fused_packet = runtime._build_fused_packet(
+            depth_group=depth_group,
+            masks=masks,
+            ray_cache={},
+            rng=np.random.default_rng(0),
+        )
+
+        self.assertIsInstance(fused_packet, demo31_runtime.Demo31PendingFusionBundle)
+        self.assertFalse(hasattr(runtime, "fused_call"))
+        self.assertEqual(len(client.inputs), 1)
+        self.assertEqual(client.inputs[0].group_id, 11)
+        with runtime.demo31_pending_fusion_lock:
+            self.assertEqual(sorted(runtime.demo31_pending_fusion_bundles), [11])
+
+        runtime._publish_render_packet(fused_packet)
+        self.assertIsNone(runtime.published_packet)
+
+        handled = runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        self.assertTrue(handled)
+        self.assertTrue(hasattr(runtime, "raw_fused_call"))
+        self.assertTrue(hasattr(runtime, "filter_raw_call"))
+        self.assertIsNotNone(runtime.published_packet)
+        self.assertEqual(runtime.published_packet.group_id, 11)  # type: ignore[union-attr]
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertTrue(overlay_profile["tracker_result_gated_fusion"])
+        self.assertTrue(overlay_profile["tracker_result_triggered_fusion"])
+        self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "exact")
+        self.assertEqual(overlay_profile["tracking_render_packet_group_id"], 11)
+        self.assertEqual(overlay_profile["tracking_render_packet_group_delta"], 0)
+
     def test_renderer_warmup_blocks_first_frame_until_tracking_overlay_points_exist(self) -> None:
         runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
             _FakeSharedRuntimeModule,

@@ -3722,11 +3722,6 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             publish_hook: str,
         ) -> Demo31PendingFusionBundle:
             capped_masks = self._cap_demo31_controller_masks(depth_group=depth_group, masks=masks)
-            self._publish_demo31_tracking_input(
-                depth_group=depth_group,
-                masks=capped_masks,
-                publish_hook=publish_hook,
-            )
             bundle = Demo31PendingFusionBundle(
                 group_id=int(depth_group.group_id),
                 created_perf_s=time.perf_counter(),
@@ -3735,6 +3730,11 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 publish_hook=str(publish_hook),
             )
             self._remember_pending_fusion_bundle(bundle)
+            self._publish_demo31_tracking_input(
+                depth_group=depth_group,
+                masks=capped_masks,
+                publish_hook=publish_hook,
+            )
             if hasattr(self, "_profile_update"):
                 self._profile_update(
                     int(depth_group.group_id),
@@ -3825,6 +3825,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             super()._publish_raw_fused_for_async_filter(raw)
 
         def _build_fused_packet(self, *, depth_group: Any, masks: dict[int, Any], ray_cache: dict[int, Any], rng: np.random.Generator):
+            if self._tracker_result_gated_fusion_enabled():
+                return self._defer_fusion_until_tracker_result(
+                    depth_group=depth_group,
+                    masks=masks,
+                    publish_hook="fused_packet",
+                )
             capped_masks = self._cap_demo31_controller_masks(depth_group=depth_group, masks=masks)
             self._publish_demo31_tracking_input(
                 depth_group=depth_group,
@@ -3834,6 +3840,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             return super()._build_fused_packet(depth_group=depth_group, masks=capped_masks, ray_cache=ray_cache, rng=rng)
 
         def _publish_render_packet(self, packet: Any) -> None:
+            if isinstance(packet, Demo31PendingFusionBundle):
+                return
             self._remember_pending_render_packet(packet)
             if not self.demo31_cotracker_enabled:
                 super()._publish_render_packet(packet)
