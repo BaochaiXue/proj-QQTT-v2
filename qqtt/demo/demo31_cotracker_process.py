@@ -43,6 +43,12 @@ COTRACKER_UPDATE_MODE_BATCH = "batch"
 
 
 @dataclass(frozen=True)
+class TrackingInputPublishResult:
+    replaced_count: int = 0
+    replaced_group_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
 class CoTrackerProcessConfig:
     camera_ids: tuple[int, ...] = (0, 1, 2)
     cotracker_gpu: str = "1"
@@ -299,8 +305,16 @@ class CoTrackerProcessHandle:
         if hasattr(self.process, "start"):
             self.process.start()
 
-    def publish_input(self, packet: TrackingInputLitePacket) -> int:
-        return self.input_endpoint.publish_latest(packet)
+    def publish_input(self, packet: TrackingInputLitePacket) -> TrackingInputPublishResult:
+        info = self.input_endpoint.publish_latest_with_info(packet)
+        return TrackingInputPublishResult(
+            replaced_count=int(info.replaced_count),
+            replaced_group_ids=tuple(
+                int(item.group_id)
+                for item in info.replaced_items
+                if hasattr(item, "group_id")
+            ),
+        )
 
     def get_result(self) -> TrackingResultLitePacket | None:
         return self.output_endpoint.take_latest()
@@ -652,6 +666,7 @@ __all__ = [
     "PROCESS_MODE_SPAWN",
     "PROCESS_MODE_SUBPROCESS",
     "PROCESS_MODES",
+    "TrackingInputPublishResult",
     "build_cotracker_process_env",
     "build_cotracker_subprocess_argv",
     "configure_cotracker_cuda_environment",

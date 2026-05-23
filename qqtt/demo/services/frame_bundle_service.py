@@ -40,7 +40,17 @@ class BundleProvenance:
             "render_group_id": self.render_group_id,
         }
         expected = int(self.bundle_group_id)
-        present = [value for value in values.values() if value is not None and isinstance(value, int)]
+        proof_fields = (
+            self.rgb_group_id,
+            self.depth_group_id,
+            self.mask_group_id,
+            self.query_group_id,
+            self.tracker_result_group_id,
+            self.pcd_group_id,
+            self.surface_anchor_group_id,
+            self.render_group_id,
+        )
+        present = [value for value in proof_fields if value is not None and isinstance(value, int)]
         values["same_bundle_rendered"] = bool(present and all(int(value) == expected for value in present))
         return values
 
@@ -147,11 +157,13 @@ class BundleStore:
             return self._bundles.get(int(group_id))
 
     def take_for_tracker_result(self, group_id: int, *, allow_nearest: bool = False) -> BundleStoreMatch:
+        """Consume and return the exact/nearest renderable bundle for a tracker result."""
         gid = int(group_id)
         with self._lock:
             pending_ids = tuple(sorted(int(item) for item in self._renderable_ids_locked()))
             bundle = self._bundles.get(gid)
             if bundle is not None and self._is_renderable_locked(bundle):
+                self._bundles.pop(gid, None)
                 self.exact_match_count += 1
                 return BundleStoreMatch(bundle=bundle, match_mode="exact", pending_ids_before=pending_ids)
             if allow_nearest and pending_ids:
@@ -159,9 +171,10 @@ class BundleStore:
                     pending_ids,
                     key=lambda candidate: (abs(int(candidate) - gid), 0 if int(candidate) >= gid else 1, int(candidate)),
                 )
+                bundle = self._bundles.pop(nearest_gid, None)
                 self.nearest_match_count += 1
                 return BundleStoreMatch(
-                    bundle=self._bundles.get(nearest_gid),
+                    bundle=bundle,
                     match_mode="nearest",
                     pending_ids_before=pending_ids,
                     used_nearest=True,

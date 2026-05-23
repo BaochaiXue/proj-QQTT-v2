@@ -25,6 +25,16 @@ class DemoServicesLatestWinsTests(unittest.TestCase):
         self.assertEqual(endpoint.take_latest(), "new")
         self.assertEqual(endpoint.snapshot()["replaced"], 1)
 
+    def test_latest_wins_queue_reports_replaced_items_without_breaking_count_api(self) -> None:
+        endpoint = LatestWinsQueue()
+
+        self.assertEqual(endpoint.publish_latest("old"), 0)
+        info = endpoint.publish_latest_with_info("new")
+
+        self.assertEqual(info.replaced_count, 1)
+        self.assertEqual(info.replaced_items, ("old",))
+        self.assertEqual(endpoint.take_latest(), "new")
+
 
 if __name__ == "__main__":
     unittest.main()

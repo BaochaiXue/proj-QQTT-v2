@@ -26,6 +26,7 @@ from qqtt.demo.demo31_cotracker_process import (
     CoTrackerProcessConfig,
     PROCESS_MODE_SUBPROCESS,
     PROCESS_MODES,
+    TrackingInputPublishResult,
     start_cotracker_process,
 )
 from qqtt.demo.demo31_dual_gpu_ipc import (
@@ -160,6 +161,8 @@ DEFAULT_CONTROLLER_RENDER_VOXEL_M = 0.003
 DEFAULT_CONTROLLER_RENDER_MAX_POINTS = 10_000
 DEFAULT_LIFT_INPUT_CACHE_GROUPS = 128
 DEFAULT_PENDING_RENDER_PACKET_GROUPS = 128
+DEFAULT_PROTECTED_BUNDLE_TTL_MS = 10_000.0
+DEFAULT_PROTECTED_BUNDLE_MAX_GROUPS = 0
 DEFAULT_BATCH_BUNDLE_POLICY = BATCH_BUNDLE_POLICY_SAME_BUNDLE_LATEST_WINS
 FRAME_BUNDLE_POLICY_EXACT_TARGET = "exact-target"
 FRAME_BUNDLE_POLICY_STRICT_SOURCE = "strict-source"
@@ -1581,6 +1584,18 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         help="Protect exact bundles after tracker input publication until result render/fail releases them.",
     )
     parser.add_argument(
+        "--protected-bundle-ttl-ms",
+        type=float,
+        default=DEFAULT_PROTECTED_BUNDLE_TTL_MS,
+        help="Safety TTL for protected tracker-input bundles that never receive a tracker result.",
+    )
+    parser.add_argument(
+        "--protected-bundle-max-groups",
+        type=int,
+        default=DEFAULT_PROTECTED_BUNDLE_MAX_GROUPS,
+        help="Maximum protected groups before oldest are released. 0 reuses the pending render packet window.",
+    )
+    parser.add_argument(
         "--tracking-render-packet-match-policy",
         choices=TRACKING_RENDER_PACKET_MATCH_POLICIES,
         default=TRACKING_RENDER_PACKET_MATCH_POLICY_EXACT_ONLY,
@@ -1726,6 +1741,10 @@ def validate_args(
         raise ValueError(f"--trackable-query-init-strategy must be one of {TRACKABLE_QUERY_INIT_STRATEGIES}.")
     if int(args.controller_trackable_max_points_per_camera) < 0:
         raise ValueError("--controller-trackable-max-points-per-camera must be >= 0.")
+    if float(args.protected_bundle_ttl_ms) < 0.0:
+        raise ValueError("--protected-bundle-ttl-ms must be >= 0.")
+    if int(args.protected_bundle_max_groups) < 0:
+        raise ValueError("--protected-bundle-max-groups must be >= 0.")
     if int(args.sam31_init_min_mask_pixels) < 1:
         raise ValueError("--sam31-init-min-mask-pixels must be >= 1.")
     if resolved_controller_mask_erode_px(args) < 0:
@@ -2254,6 +2273,8 @@ def build_contract(
         "stage_mailbox_policy": str(args.stage_mailbox_policy),
         "display_last_complete_while_waiting": bool(args.display_last_complete_while_waiting),
         "protect_tracker_input_bundles": bool(args.protect_tracker_input_bundles),
+        "protected_bundle_ttl_ms": float(args.protected_bundle_ttl_ms),
+        "protected_bundle_max_groups": int(args.protected_bundle_max_groups),
         "frame_bundle_policy": str(args.frame_bundle_policy),
         "tracking_render_packet_match_policy": str(args.tracking_render_packet_match_policy),
         "tracker_child_receives_full_frame_bundle": False,
@@ -2509,6 +2530,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "stage_mailbox_policy",
         "display_last_complete_while_waiting",
         "protect_tracker_input_bundles",
+        "protected_bundle_ttl_ms",
+        "protected_bundle_max_groups",
         "frame_bundle_policy",
         "tracking_render_packet_match_policy",
         "same_bundle_render_default",
@@ -3025,6 +3048,11 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_pending_render_packets: dict[int, Any] = {}
             self.demo31_pending_render_lock = threading.Lock()
             self.demo31_protected_frame_bundle_group_ids: set[int] = set()
+            self.demo31_protected_frame_bundle_perf_s: dict[int, float] = {}
+            self.demo31_tracking_input_replaced_group_ids_last: list[int] = []
+            self.demo31_tracking_input_replaced_group_unprotect_count = 0
+            self.demo31_protected_bundle_ttl_unprotect_count = 0
+            self.demo31_protected_bundle_window_unprotect_count = 0
             self.demo31_pending_render_packet_max_groups = max(
                 1,
                 int(
@@ -3649,7 +3677,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 )
             )
             self._protect_frame_bundle(int(depth_group.group_id))
-            replaced_count = self.demo31_process_client.publish_input(
+            publish_result = self.demo31_process_client.publish_input(
                 TrackingInputLitePacket(
                     group_id=int(depth_group.group_id),
                     frame_idx=frame_idx,
@@ -3663,7 +3691,16 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     mask_reused=mask_reused,
                 )
             )
+            if isinstance(publish_result, TrackingInputPublishResult):
+                replaced_count = int(publish_result.replaced_count)
+                replaced_group_ids = [int(item) for item in publish_result.replaced_group_ids]
+            else:
+                replaced_count = int(publish_result or 0)
+                replaced_group_ids = []
+            if replaced_group_ids:
+                self._unprotect_replaced_tracker_input_groups(replaced_group_ids)
             self.demo31_tracking_input_queue_replace_count += int(replaced_count or 0)
+            self._prune_protected_frame_bundles(now_s=now_s)
             self.demo31_last_tracking_input_s = now_s
             if self.demo32_first_tracking_input_publish_s is None and str(self.demo31_contract.get("demo", "")) == "demo3.2":
                 self.demo32_first_tracking_input_publish_s = float(now_s)
@@ -3672,6 +3709,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 {
                     "published": True,
                     "queue_replaced_count": int(replaced_count or 0),
+                    "queue_replaced_group_ids": list(replaced_group_ids),
+                    "queue_replaced_group_unprotect_count": int(len(replaced_group_ids)),
                     "frame_idx": int(frame_idx),
                     "surface_anchor_cache_published": True,
                     "lift_input_cache_published": True,
@@ -3769,6 +3808,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             if not bool(self.demo31_contract.get("protect_tracker_input_bundles", True)):
                 return
             self.demo31_protected_frame_bundle_group_ids.add(gid)
+            self.demo31_protected_frame_bundle_perf_s[gid] = time.perf_counter()
             self.demo31_lift_input_cache.protect(gid)
             self.demo31_surface_anchor_cache.protect(gid)
             self.demo31_frame_bundle_store.protect(gid)
@@ -3776,6 +3816,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
         def _unprotect_frame_bundle(self, group_id: int) -> None:
             gid = int(group_id)
             self.demo31_protected_frame_bundle_group_ids.discard(gid)
+            self.demo31_protected_frame_bundle_perf_s.pop(gid, None)
             self.demo31_lift_input_cache.unprotect(gid)
             self.demo31_surface_anchor_cache.unprotect(gid)
             self.demo31_frame_bundle_store.unprotect(gid)
@@ -3783,6 +3824,73 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 self._prune_pending_render_packets_locked()
             with self.demo31_pending_fusion_lock:
                 self._prune_pending_fusion_bundles_locked()
+
+        def _unprotect_tracker_render_groups(
+            self,
+            overlay_group_id: int,
+            *,
+            render_packet: Any | None = None,
+            render_match_profile: dict[str, Any] | None = None,
+        ) -> None:
+            group_ids = {int(overlay_group_id)}
+            if render_packet is not None and hasattr(render_packet, "group_id"):
+                group_ids.add(int(render_packet.group_id))
+            if render_match_profile:
+                for key in ("bundle_group_id", "tracking_render_packet_group_id"):
+                    value = render_match_profile.get(key)
+                    if isinstance(value, (int, np.integer)):
+                        group_ids.add(int(value))
+            for group_id in sorted(group_ids):
+                self._unprotect_frame_bundle(group_id)
+
+        def _unprotect_replaced_tracker_input_groups(self, group_ids: Sequence[int]) -> None:
+            unique_group_ids = sorted({int(group_id) for group_id in group_ids})
+            self.demo31_tracking_input_replaced_group_ids_last = list(unique_group_ids)
+            for group_id in unique_group_ids:
+                self._unprotect_frame_bundle(group_id)
+            self.demo31_tracking_input_replaced_group_unprotect_count += len(unique_group_ids)
+
+        def _protected_bundle_max_groups(self) -> int:
+            configured = int(self.demo31_contract.get("protected_bundle_max_groups", 0) or 0)
+            if configured > 0:
+                return configured
+            return int(self.demo31_pending_render_packet_max_groups)
+
+        def _prune_protected_frame_bundles(self, *, now_s: float | None = None) -> None:
+            if not self.demo31_protected_frame_bundle_group_ids:
+                return
+            now = time.perf_counter() if now_s is None else float(now_s)
+            ttl_ms = float(self.demo31_contract.get("protected_bundle_ttl_ms", DEFAULT_PROTECTED_BUNDLE_TTL_MS) or 0.0)
+            if ttl_ms > 0.0:
+                expired = [
+                    int(group_id)
+                    for group_id, protected_s in self.demo31_protected_frame_bundle_perf_s.items()
+                    if (now - float(protected_s)) * 1000.0 > ttl_ms
+                ]
+                for group_id in sorted(expired):
+                    self._unprotect_frame_bundle(group_id)
+                self.demo31_protected_bundle_ttl_unprotect_count += len(expired)
+            max_groups = max(1, self._protected_bundle_max_groups())
+            overflow = len(self.demo31_protected_frame_bundle_group_ids) - max_groups
+            if overflow <= 0:
+                return
+            ordered = sorted(
+                self.demo31_protected_frame_bundle_group_ids,
+                key=lambda group_id: (
+                    float(self.demo31_protected_frame_bundle_perf_s.get(int(group_id), 0.0)),
+                    int(group_id),
+                ),
+            )
+            for group_id in ordered[:overflow]:
+                self._unprotect_frame_bundle(int(group_id))
+            self.demo31_protected_bundle_window_unprotect_count += int(overflow)
+
+        def _protected_bundle_oldest_age_ms(self, *, now_s: float | None = None) -> float:
+            if not self.demo31_protected_frame_bundle_perf_s:
+                return 0.0
+            now = time.perf_counter() if now_s is None else float(now_s)
+            oldest_s = min(float(item) for item in self.demo31_protected_frame_bundle_perf_s.values())
+            return float(max(0.0, (now - oldest_s) * 1000.0))
 
         def _pending_group_is_protected(self, group_id: int) -> bool:
             return int(group_id) in self.demo31_protected_frame_bundle_group_ids
@@ -5092,13 +5200,23 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 self.demo31_tracking_overlay_render_blocked_count += 1
                 if tracking_overlay_warmup_blocked:
                     self.demo31_tracking_overlay_warmup_skipped_render_count += 1
-                self._unprotect_frame_bundle(overlay_group_id)
+                self._unprotect_tracker_render_groups(
+                    overlay_group_id,
+                    render_packet=render_packet,
+                    render_match_profile=render_match_profile,
+                )
                 return
             if render_packet is None:
                 if not render_requires_new_tracker:
-                    self._unprotect_frame_bundle(overlay_group_id)
+                    self._unprotect_tracker_render_groups(
+                        overlay_group_id,
+                        render_match_profile=render_match_profile,
+                    )
                     return
-                self._unprotect_frame_bundle(overlay_group_id)
+                self._unprotect_tracker_render_groups(
+                    overlay_group_id,
+                    render_match_profile=render_match_profile,
+                )
                 return
             if self._tracker_result_gated_fusion_enabled():
                 self._drop_pending_fusion_bundles_through(int(render_packet.group_id))
@@ -5108,7 +5226,11 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 self.demo31_tracking_overlay_first_render_group_id = int(render_packet.group_id)
             super()._publish_render_packet(render_packet)
             self.demo31_complete_bundle_render_times_s.append(time.perf_counter())
-            self._unprotect_frame_bundle(overlay_group_id)
+            self._unprotect_tracker_render_groups(
+                overlay_group_id,
+                render_packet=render_packet,
+                render_match_profile=render_match_profile,
+            )
 
         def _remember_pending_render_packet(self, packet: Any) -> None:
             self.demo31_frame_bundle_store.attach_precomputed_render_packet(packet)
@@ -5127,6 +5249,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             if self.demo31_process_client is None:
                 return None
             self._maybe_drain_demo31_process_status()
+            self._prune_protected_frame_bundles(now_s=now_s)
             result = self.demo31_process_client.get_result()
             if result is not None:
                 fresh = fresh_tracking_result_or_none(
@@ -5139,6 +5262,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     self._unprotect_frame_bundle(int(result.group_id))
                 else:
                     self._record_new_tracking_result(fresh, now_s=now_s)
+                    self._prune_protected_frame_bundles(now_s=now_s)
                     return fresh
             return None
 
@@ -5213,6 +5337,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
 
         def demo31_snapshot(self) -> dict[str, Any]:
             self._drain_demo31_process_status()
+            snapshot_now_s = time.perf_counter()
+            self._prune_protected_frame_bundles(now_s=snapshot_now_s)
             process_snapshot = (
                 self.demo31_process_client.snapshot()
                 if self.demo31_process_client is not None and hasattr(self.demo31_process_client, "snapshot")
@@ -5251,6 +5377,17 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 if rendered_bundle_count
                 else 0.0
             )
+            tracker_result_count = int(len(self.demo31_cotracker_publish_times_s))
+            same_bundle_rendered_per_tracker_result_ratio = (
+                float(self.demo31_frame_bundle_exact_render_count / tracker_result_count)
+                if tracker_result_count
+                else 0.0
+            )
+            missing_exact_rate = (
+                float(self.demo31_frame_bundle_missing_exact_count / tracker_result_count)
+                if tracker_result_count
+                else 0.0
+            )
             bundle_store_snapshot = self.demo31_frame_bundle_store.snapshot()
             stage_join_snapshot = (
                 self.stage_join_buffer.snapshot()
@@ -5276,9 +5413,13 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "tracking_input_skip_count": int(self.demo31_tracking_input_skip_count),
                 "tracking_input_queue_replace_count": int(self.demo31_tracking_input_queue_replace_count),
                 "tracking_input_drop_count": int(self.demo31_tracking_input_drop_count),
+                "tracking_input_replaced_group_ids_last": list(self.demo31_tracking_input_replaced_group_ids_last),
+                "tracking_input_replaced_group_unprotect_count": int(
+                    self.demo31_tracking_input_replaced_group_unprotect_count
+                ),
                 "cotracker_input_count": int(len(self.demo31_tracking_input_publish_times_s)),
                 "cotracker_input_fps": float(event_fps(self.demo31_tracking_input_publish_times_s)),
-                "cotracker_result_count": int(len(self.demo31_cotracker_publish_times_s)),
+                "cotracker_result_count": tracker_result_count,
                 "cotracker_publish_fps": float(event_fps(self.demo31_cotracker_publish_times_s)),
                 "display_loop_fps": display_loop_fps,
                 "new_complete_bundle_fps": new_complete_bundle_fps,
@@ -5315,6 +5456,9 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "same_target_group_ratio": same_target_ratio,
                 "strict_same_source_frame_ratio": strict_source_ratio,
                 "same_bundle_rendered_ratio": same_bundle_rendered_ratio,
+                "same_bundle_rendered_among_rendered_ratio": same_bundle_rendered_ratio,
+                "same_bundle_rendered_per_tracker_result_ratio": same_bundle_rendered_per_tracker_result_ratio,
+                "missing_exact_rate": missing_exact_rate,
                 "complete_bundle_rendered_count": int(self.demo31_frame_bundle_exact_render_count),
                 "incomplete_bundle_skip_count": int(self.demo31_frame_bundle_missing_exact_count),
                 "nearest_fallback_count": int(self.demo31_frame_bundle_nearest_fallback_debug_count),
@@ -5322,6 +5466,13 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "frame_bundle_missing_exact_count": int(self.demo31_frame_bundle_missing_exact_count),
                 "nearest_fallback_debug_count": int(self.demo31_frame_bundle_nearest_fallback_debug_count),
                 "protected_bundle_count": protected_bundle_count,
+                "protected_bundle_ttl_ms": float(
+                    self.demo31_contract.get("protected_bundle_ttl_ms", DEFAULT_PROTECTED_BUNDLE_TTL_MS)
+                ),
+                "protected_bundle_max_groups": int(self._protected_bundle_max_groups()),
+                "protected_bundle_ttl_unprotect_count": int(self.demo31_protected_bundle_ttl_unprotect_count),
+                "protected_bundle_window_unprotect_count": int(self.demo31_protected_bundle_window_unprotect_count),
+                "protected_bundle_oldest_age_ms": self._protected_bundle_oldest_age_ms(now_s=snapshot_now_s),
                 "protected_bundle_eviction_avoided_count": int(
                     self.demo31_protected_bundle_eviction_avoided_count
                     + self.demo31_lift_input_cache.snapshot().get("protected_eviction_avoided_count", 0)
@@ -5645,6 +5796,12 @@ class Demo31Runtime:
                         or input_endpoint.get("replaced", 0)
                         or 0
                     ),
+                    "tracking_input_replaced_group_ids_last": list(
+                        snapshot.get("tracking_input_replaced_group_ids_last", [])
+                    ),
+                    "tracking_input_replaced_group_unprotect_count": int(
+                        snapshot.get("tracking_input_replaced_group_unprotect_count", 0) or 0
+                    ),
                     "cotracker_model_ms_median": float(snapshot.get("cotracker_model_ms_median", 0.0) or 0.0),
                     "cotracker_model_ms_p95": float(snapshot.get("cotracker_model_ms_p95", 0.0) or 0.0),
                     "cotracker_e2e_ms_median": float(snapshot.get("cotracker_e2e_ms_median", 0.0) or 0.0),
@@ -5743,6 +5900,23 @@ class Demo31Runtime:
                     "strict_same_source_frame_ratio": float(
                         snapshot.get("strict_same_source_frame_ratio", 0.0) or 0.0
                     ),
+                    "same_bundle_rendered_ratio": float(
+                        snapshot.get("same_bundle_rendered_ratio", 0.0) or 0.0
+                    ),
+                    "same_bundle_rendered_among_rendered_ratio": float(
+                        snapshot.get("same_bundle_rendered_among_rendered_ratio", 0.0) or 0.0
+                    ),
+                    "same_bundle_rendered_per_tracker_result_ratio": float(
+                        snapshot.get("same_bundle_rendered_per_tracker_result_ratio", 0.0) or 0.0
+                    ),
+                    "missing_exact_rate": float(snapshot.get("missing_exact_rate", 0.0) or 0.0),
+                    "complete_bundle_rendered_count": int(
+                        snapshot.get("complete_bundle_rendered_count", 0) or 0
+                    ),
+                    "incomplete_bundle_skip_count": int(
+                        snapshot.get("incomplete_bundle_skip_count", 0) or 0
+                    ),
+                    "nearest_fallback_count": int(snapshot.get("nearest_fallback_count", 0) or 0),
                     "frame_bundle_exact_render_count": int(
                         snapshot.get("frame_bundle_exact_render_count", 0) or 0
                     ),
@@ -5751,6 +5925,17 @@ class Demo31Runtime:
                     ),
                     "nearest_fallback_debug_count": int(snapshot.get("nearest_fallback_debug_count", 0) or 0),
                     "protected_bundle_count": int(snapshot.get("protected_bundle_count", 0) or 0),
+                    "protected_bundle_ttl_ms": float(snapshot.get("protected_bundle_ttl_ms", 0.0) or 0.0),
+                    "protected_bundle_max_groups": int(snapshot.get("protected_bundle_max_groups", 0) or 0),
+                    "protected_bundle_ttl_unprotect_count": int(
+                        snapshot.get("protected_bundle_ttl_unprotect_count", 0) or 0
+                    ),
+                    "protected_bundle_window_unprotect_count": int(
+                        snapshot.get("protected_bundle_window_unprotect_count", 0) or 0
+                    ),
+                    "protected_bundle_oldest_age_ms": float(
+                        snapshot.get("protected_bundle_oldest_age_ms", 0.0) or 0.0
+                    ),
                     "protected_bundle_eviction_avoided_count": int(
                         snapshot.get("protected_bundle_eviction_avoided_count", 0) or 0
                     ),

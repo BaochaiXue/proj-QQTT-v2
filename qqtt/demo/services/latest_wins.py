@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import queue
 import threading
 from typing import Any, Generic, TypeVar
 
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class LatestWinsPublishInfo:
+    replaced_count: int = 0
+    replaced_items: tuple[Any, ...] = field(default_factory=tuple)
 
 
 class LatestValueSlot(Generic[T]):
@@ -59,19 +66,28 @@ class LatestWinsQueue:
         self.put_failures = 0
 
     def publish_latest(self, item: Any) -> int:
-        replaced = self._drain()
+        return int(self.publish_latest_with_info(item).replaced_count)
+
+    def publish_latest_with_info(self, item: Any) -> LatestWinsPublishInfo:
+        replaced_items = self._drain_items()
         try:
             self.queue.put_nowait(item)
         except queue.Full:
-            replaced += self._drain()
+            replaced_items.extend(self._drain_items())
             try:
                 self.queue.put_nowait(item)
             except queue.Full:
                 self.put_failures += 1
-                return replaced
+                return LatestWinsPublishInfo(
+                    replaced_count=len(replaced_items),
+                    replaced_items=tuple(replaced_items),
+                )
         self.published += 1
-        self.replaced += replaced
-        return replaced
+        self.replaced += len(replaced_items)
+        return LatestWinsPublishInfo(
+            replaced_count=len(replaced_items),
+            replaced_items=tuple(replaced_items),
+        )
 
     def take_latest(self) -> Any | None:
         latest = None
@@ -103,17 +119,20 @@ class LatestWinsQueue:
                 pass
 
     def _drain(self) -> int:
-        count = 0
+        return len(self._drain_items())
+
+    def _drain_items(self) -> list[Any]:
+        items: list[Any] = []
         while True:
             try:
-                self.queue.get_nowait()
-                count += 1
+                items.append(self.queue.get_nowait())
             except queue.Empty:
                 break
-        return count
+        return items
 
 
 __all__ = [
     "LatestValueSlot",
     "LatestWinsQueue",
+    "LatestWinsPublishInfo",
 ]

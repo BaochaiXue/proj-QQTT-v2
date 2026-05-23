@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 import unittest
 
-from qqtt.demo.services.frame_bundle_service import BundleStore
+from qqtt.demo.services.frame_bundle_service import BundleProvenance, BundleStore
 
 
 class FrameBundleServiceTests(unittest.TestCase):
@@ -28,6 +28,7 @@ class FrameBundleServiceTests(unittest.TestCase):
         self.assertEqual(match.match_mode, "exact")
         self.assertIs(match.bundle.precomputed_render_packet, packet)  # type: ignore[union-attr]
         self.assertFalse(match.used_nearest)
+        self.assertNotIn(7, store.group_ids())
 
     def test_tracker_result_never_matches_other_bundle_by_default(self) -> None:
         store = BundleStore(max_groups=4)
@@ -47,6 +48,36 @@ class FrameBundleServiceTests(unittest.TestCase):
         self.assertEqual(match.match_mode, "nearest")
         self.assertEqual(match.bundle.group_id, 8)  # type: ignore[union-attr]
         self.assertTrue(match.used_nearest)
+        self.assertNotIn(8, store.group_ids())
+
+    def test_duplicate_tracker_result_cannot_take_consumed_bundle_twice(self) -> None:
+        store = BundleStore(max_groups=4)
+        store.attach_precomputed_render_packet(SimpleNamespace(group_id=9))
+
+        first = store.take_for_tracker_result(9)
+        second = store.take_for_tracker_result(9)
+
+        self.assertEqual(first.match_mode, "exact")
+        self.assertIsNone(second.bundle)
+        self.assertEqual(second.match_mode, "missing-exact")
+
+    def test_bundle_provenance_requires_non_bundle_proof_field(self) -> None:
+        self.assertFalse(BundleProvenance(bundle_group_id=3).asdict()["same_bundle_rendered"])
+        self.assertTrue(
+            BundleProvenance(
+                bundle_group_id=3,
+                depth_group_id=3,
+                tracker_result_group_id=3,
+                render_group_id=3,
+            ).asdict()["same_bundle_rendered"]
+        )
+        self.assertFalse(
+            BundleProvenance(
+                bundle_group_id=3,
+                depth_group_id=3,
+                tracker_result_group_id=4,
+            ).asdict()["same_bundle_rendered"]
+        )
 
     def test_drop_through_keeps_protected_bundle(self) -> None:
         store = BundleStore(max_groups=4)

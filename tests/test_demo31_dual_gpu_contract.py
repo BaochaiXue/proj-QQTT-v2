@@ -5,6 +5,7 @@ import contextlib
 from dataclasses import dataclass
 import io
 import pickle
+import queue
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -12,6 +13,7 @@ import unittest
 import numpy as np
 
 from qqtt.demo import demo31_runtime, demo32_runtime
+from qqtt.demo import demo31_cotracker_process
 from qqtt.demo.demo31_dual_gpu_ipc import TrackingInputLitePacket, TrackingResultLitePacket
 
 
@@ -398,6 +400,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["stage_mailbox_policy"], "latest-only")
         self.assertTrue(contract["display_last_complete_while_waiting"])
         self.assertTrue(contract["protect_tracker_input_bundles"])
+        self.assertEqual(contract["protected_bundle_ttl_ms"], 10000.0)
+        self.assertEqual(contract["protected_bundle_max_groups"], 0)
         self.assertEqual(contract["frame_bundle_policy"], "exact-target")
         self.assertTrue(contract["same_bundle_render_default"])
         self.assertFalse(contract["nearest_fallback_allowed_by_default"])
@@ -496,6 +500,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("stage_mailbox_policy = latest-only", output)
         self.assertIn("display_last_complete_while_waiting = true", output)
         self.assertIn("protect_tracker_input_bundles = true", output)
+        self.assertIn("protected_bundle_ttl_ms = 10000.0", output)
+        self.assertIn("protected_bundle_max_groups = 0", output)
         self.assertIn("frame_bundle_policy = exact-target", output)
         self.assertIn("tracking_render_packet_match_policy = exact-target-bundle", output)
         self.assertIn("same_bundle_render_default = true", output)
@@ -1564,10 +1570,68 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(summary["tracker_pending_drop_count"], 5)
         self.assertNotEqual(summary["cotracker_publish_fps"], 99.0)
 
+    def test_same_bundle_ratios_include_tracker_result_denominator(self) -> None:
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(None),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime.demo31_frame_bundle_exact_render_count = 1
+        runtime.demo31_frame_bundle_missing_exact_count = 99
+        runtime.demo31_cotracker_publish_times_s = [float(item) for item in range(100)]
+
+        snapshot = runtime.demo31_snapshot()
+
+        self.assertEqual(snapshot["same_bundle_rendered_ratio"], 1.0)
+        self.assertEqual(snapshot["same_bundle_rendered_among_rendered_ratio"], 1.0)
+        self.assertAlmostEqual(snapshot["same_bundle_rendered_per_tracker_result_ratio"], 0.01)
+        self.assertAlmostEqual(snapshot["missing_exact_rate"], 0.99)
+
     def test_track_mode_is_not_public_cli(self) -> None:
         parser = demo31_runtime.build_arg_parser()
         with self.assertRaises(SystemExit):
             parser.parse_args(["--dry-run", "--camera-ids", "0,1,2", "--track-mode", "object-only"])
+
+    def test_cotracker_process_publish_input_reports_replaced_group_ids(self) -> None:
+        handle = demo31_cotracker_process.CoTrackerProcessHandle(
+            process=SimpleNamespace(pid=123),
+            input_queue=queue.Queue(maxsize=1),
+            output_queue=queue.Queue(maxsize=1),
+            status_queue=None,
+            stop_event=SimpleNamespace(set=lambda: None),
+        )
+        first = TrackingInputLitePacket(
+            group_id=10,
+            frame_idx=10,
+            timestamp_s=1.0,
+            rgb_by_camera={0: np.zeros((1, 1, 3), dtype=np.uint8)},
+            mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+            object_mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+            controller_mask_by_camera={0: np.zeros((1, 1), dtype=bool)},
+        )
+        second = TrackingInputLitePacket(
+            group_id=11,
+            frame_idx=11,
+            timestamp_s=2.0,
+            rgb_by_camera={0: np.zeros((1, 1, 3), dtype=np.uint8)},
+            mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+            object_mask_by_camera={0: np.ones((1, 1), dtype=bool)},
+            controller_mask_by_camera={0: np.zeros((1, 1), dtype=bool)},
+        )
+
+        self.assertEqual(handle.publish_input(first).replaced_count, 0)
+        result = handle.publish_input(second)
+
+        self.assertEqual(result.replaced_count, 1)
+        self.assertEqual(result.replaced_group_ids, (10,))
 
     def test_latest_reuse_join_buffer_retargets_latest_mask_to_fresh_depth(self) -> None:
         buffer = demo31_runtime.Demo31MaskPolicyJoinBuffer(
@@ -2280,6 +2344,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
             c2w_by_camera={0: np.eye(4, dtype=np.float32)},
             mask_by_camera={0: np.ones((1, 1), dtype=bool)},
         )
+        runtime._protect_frame_bundle(1)
+        runtime._protect_frame_bundle(2)
 
         runtime._publish_render_packet(
             _FakeRenderPacket(
@@ -2499,6 +2565,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["render_group_id"], 2)
         self.assertFalse(overlay_profile["same_target_group"])
         self.assertFalse(overlay_profile["tracking_overlay_render_blocked"])
+        self.assertNotIn(1, runtime.demo31_protected_frame_bundle_group_ids)
+        self.assertNotIn(2, runtime.demo31_protected_frame_bundle_group_ids)
 
     def test_strict_source_policy_rejects_reused_mask_tracking_result(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
@@ -2614,6 +2682,90 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         snapshot = runtime.demo31_snapshot()
         self.assertEqual(snapshot["protected_bundle_count"], 1)
         self.assertIn(1, runtime.demo31_protected_frame_bundle_group_ids)
+
+    def test_replaced_tracker_input_group_is_unprotected(self) -> None:
+        class _ReplacingProcessClient(_FakeProcessClient):
+            def publish_input(self, packet: TrackingInputLitePacket):
+                self.inputs.append(packet)
+                return demo31_runtime.TrackingInputPublishResult(
+                    replaced_count=1,
+                    replaced_group_ids=(7,),
+                )
+
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _ReplacingProcessClient(None),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "cotracker_input_fps": 30.0,
+                "protected_bundle_ttl_ms": 10000.0,
+                "protected_bundle_max_groups": 0,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime._stream_metadata = [{"K_color": np.eye(3, dtype=np.float32)}]
+        runtime._c2w_by_camera = {0: np.eye(4, dtype=np.float32)}
+        runtime._protect_frame_bundle(7)
+
+        runtime._publish_demo31_tracking_input(
+            depth_group=_FakeDepthGroup(
+                group_id=8,
+                depths={0: _FakeDepthFrame(8, np.ones((1, 1), dtype=np.float32))},
+                per_camera_frame_seq={0: 8},
+            ),
+            masks={
+                0: _FakePacket(
+                    8,
+                    0,
+                    np.array([[True]], dtype=bool),
+                    np.array([[True]], dtype=bool),
+                    np.zeros((1, 1, 3), dtype=np.uint8),
+                )
+            },
+            publish_hook="test",
+        )
+
+        self.assertNotIn(7, runtime.demo31_protected_frame_bundle_group_ids)
+        self.assertIn(8, runtime.demo31_protected_frame_bundle_group_ids)
+        snapshot = runtime.demo31_snapshot()
+        self.assertEqual(snapshot["tracking_input_replaced_group_ids_last"], [7])
+        self.assertEqual(snapshot["tracking_input_replaced_group_unprotect_count"], 1)
+
+    def test_protected_bundle_ttl_and_window_release_stale_groups(self) -> None:
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(None),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(camera_ids=(0,)),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "tracking_pending_render_packet_max_groups": 2,
+                "protected_bundle_ttl_ms": 10.0,
+                "protected_bundle_max_groups": 1,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime._protect_frame_bundle(1)
+        runtime.demo31_protected_frame_bundle_perf_s[1] = demo31_runtime.time.perf_counter() - 1.0
+        runtime._prune_protected_frame_bundles(now_s=demo31_runtime.time.perf_counter())
+
+        self.assertNotIn(1, runtime.demo31_protected_frame_bundle_group_ids)
+        self.assertEqual(runtime.demo31_protected_bundle_ttl_unprotect_count, 1)
+
+        runtime._protect_frame_bundle(2)
+        runtime._protect_frame_bundle(3)
+        runtime._prune_protected_frame_bundles(now_s=demo31_runtime.time.perf_counter())
+
+        self.assertEqual(runtime.demo31_protected_frame_bundle_group_ids, {3})
+        self.assertEqual(runtime.demo31_protected_bundle_window_unprotect_count, 1)
 
     def test_pending_fusion_bundle_cache_is_bounded(self) -> None:
         runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
@@ -2892,6 +3044,15 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["tracking_render_packet_match_mode"], "exact")
         self.assertTrue(overlay_profile["same_bundle_rendered"])
         self.assertFalse(overlay_profile["nearest_fallback_used"])
+
+        runtime.published_packet = None
+        handled_again = runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        self.assertTrue(handled_again)
+        self.assertIsNone(runtime.published_packet)
+        self.assertEqual(runtime.demo31_frame_bundle_exact_render_count, 1)
+        duplicate_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self.assertEqual(duplicate_profile["tracking_render_packet_match_mode"], "missing-exact")
 
     def test_tracker_result_gated_uses_precomputed_bundle_packet(self) -> None:
         runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
