@@ -247,9 +247,9 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - serial ONNX-CUDA profiling additionally needs `onnxruntime-gpu` and
     `onnxscript`; current local validation used `onnxruntime-gpu==1.26.0`
     with `CUDAExecutionProvider`
-  - ONNX-CUDA serial is an explicit A/B profiling path only; Demo 3.2 keeps
-    LiteTracker PyTorch batch-views as the default because local profiling made
-    the ONNX serial path slower
+  - ONNX-CUDA serial is an explicit A/B profiling path only; Demo 3.2 defaults
+    to TAPNext++, while LiteTracker PyTorch batch-views remain available through
+    `--cotracker-backend litetracker`
   - PyTorch 2.11 exports LiteTracker ONNX submodules with effective opset 18
     even when the requested CLI opset is 17; Demo 3.2 records both requested
     and actual ONNX opsets
@@ -260,6 +260,7 @@ export TORCH_CUDA_ARCH_LIST=12.0
   - `conda run --no-capture-output -n demo_3_1_max python -m unittest -v tests.test_point_tracker_adapters tests.test_demo31_dual_gpu_contract`
 - Expected use:
   - rendered Demo 3.1 profiling with `tapnextpp` batch-views by default
+  - rendered Demo 3.2 profiling with `tapnextpp` serial by default
   - external CoTracker3 / Track-On2 / LiteTracker adapter A/B without destabilizing
     the default `demo3-max` environment
 

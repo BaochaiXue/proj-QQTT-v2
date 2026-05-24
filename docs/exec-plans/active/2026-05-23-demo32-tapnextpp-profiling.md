@@ -7,8 +7,8 @@ strict same-bundle rendered output for TAPNext++ serial and batch-view modes.
 
 ## Scope
 
-- Keep LiteTracker as the Demo 3.2 default.
-- Allow `--cotracker-backend tapnextpp` for Demo 3.2.
+- TAPNext++ has become the Demo 3.2 default after the serial-vs-batch profile.
+- Keep `--cotracker-backend litetracker` available for Demo 3.2 A/B profiling.
 - Keep FFS batch=3 opt=5, EdgeTAM, strict-source same-bundle render, and
   tracker-child IPC semantics unchanged.
 - Update contract labels, docs, and tests so Demo 3.2 backend identity is not
@@ -24,8 +24,8 @@ strict same-bundle rendered output for TAPNext++ serial and batch-view modes.
 
 ## Results
 
-- Implemented Demo 3.2 TAPNext++ backend support while keeping LiteTracker as
-  the default.
+- Implemented Demo 3.2 TAPNext++ backend support; a later default-policy change
+  made TAPNext++ serial the Demo 3.2 default while keeping LiteTracker explicit.
 - Demo 3.2 contract labels now reflect the selected tracker:
   `tapnextpp_serial`, `tapnextpp_batch3`, and
   `ffs_edgetam_gpu0_tapnextpp_gpu1`.

@@ -8,18 +8,21 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
 - FFS TensorRT depth and SAM3.1/HF EdgeTAM masks share GPU0
 - the tracker child process remains isolated on GPU1
 - the intended order is capture -> FFS depth -> EdgeTAM masks -> tracker
-  batch=3 camera views -> render/diagnostics
-- the tracker backend defaults to `litetracker`, and explicit
-  `--cotracker-backend tapnextpp` is supported for TAPNext++ A/B profiling
-- the default LiteTracker path uses experimental batch-view
-  execution: `--tracking-backend-execution-mode batch-views` and
+  result -> render/diagnostics
+- the tracker backend defaults to `tapnextpp`
+- the default TAPNext++ path uses the currently faster q4096/camera serial
+  execution: `--tracking-backend-execution-mode serial` and
+  `--cotracker-update-mode serial`
+- explicit `--cotracker-backend litetracker` is retained for LiteTracker A/B
+  profiling; that path uses experimental batch-view execution by default:
+  `--tracking-backend-execution-mode batch-views` and
   `--cotracker-update-mode batch`
 - LiteTracker ONNX-CUDA is retained as an explicit serial A/B profiling path,
   not the default live path; local live profiling showed ONNX serial slower
   than the batch-view PyTorch runtime
 - Demo 3.2 uses `--tracker-batch-query-count-policy min-common` by default so
   all three camera views have the same query count for the batch tensor
-- LiteTracker uses lazy query initialization by default: the child process is
+- LiteTracker uses lazy query initialization: the child process is
   ready to receive inputs immediately, and query-dependent tracker state is
   initialized from the first valid RGB + mask packet
 - TAPNext++ uses the same Demo 3.2 strict-source bundle path, with existing
@@ -29,8 +32,8 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
 - warmup fails fast by default if SAM3.1 first-frame init does not produce both
   required masks (`object` and `controller`); use
   `--no-sam31-init-quick-fail-empty-masks` only for debug
-- before that first LiteTracker packet, Demo 3.2 builds enhanced PT trackable
-  masks from FFS depth plus object/controller masks; LiteTracker receives RGB
+- before the first tracker packet, Demo 3.2 builds enhanced PT trackable
+  masks from FFS depth plus object/controller masks; the tracker receives RGB
   plus `union_trackable_mask`, `object_trackable_mask`, and
   `controller_trackable_mask`
 - object/controller enhanced PT defaults are object top-1 and controller top-2
@@ -39,22 +42,21 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
 - `--mode demo` uses the SAM3.1 controller prompt `human hand` while the
   controller semantic remains a hand
 - `--controller-mask-erode-px` shrinks the controller mask before building the
-  tracking union, trackable masks, and anchor inputs; the implicit default is
-  `1` in `--mode demo` (human-hand controller prompt) and `0` in `--mode exp`
+  tracking union, trackable masks, and anchor inputs
 - controller body points are voxel-downsampled before Open3D render with
   `--controller-render-voxel-m 0.003`; this is render-only and does not affect
-  LiteTracker input or red tracking/control markers
+  tracker input or red tracking/control markers
 - depth, intrinsics, and `c2w` remain in the main process for filtering,
-  anchors, and marker validation; they are not sent to the LiteTracker child
-- trackable masks are published to LiteTracker from both fused and async
+  anchors, and marker validation; they are not sent to the tracker child
+- trackable masks are published to the tracker from both fused and async
   raw-fused paths
-- rendered LiteTracker markers use the same strict-source frame bundle by
+- rendered tracker markers use the same strict-source frame bundle by
   default: RGB, FFS depth, mask source, query candidate, tracker input/result,
   rendered PCD, and lift inputs must share the same `group_id`; a tracker result
   without its same-source bundle is an invariant violation, and nearest-frame or
   latest-reuse fallback is debug-only
-- render waits for a LiteTracker result and 3D tracking control markers
-- every visible LiteTracker point with valid depth is eligible for the 3D
+- render waits for a tracker result and 3D tracking control markers
+- every visible tracker point with valid depth is eligible for the 3D
   anchor layer by default (`--tracker-visualization-mode all-tracks-3d-lift`);
   Demo 3.2 does not apply surface-snap matching or semantic bbox rejection in
   this default path
@@ -66,7 +68,7 @@ FFS, EdgeTAM, IPC, and marker helpers, but the public entrypoint runs
 - rendered profiles report all-tracks lift candidate, selected, rendered, cap,
   timing, and exact-depth-group fields so marker count cannot silently explode
 - the Open3D warmup HUD is generated from the active runtime pipeline, so Demo
-  3.2 reports LiteTracker query-init and 3D anchors instead of a hard-coded
+  3.2 reports the active tracker stage and 3D anchors instead of a hard-coded
   Demo 2.3 FFS/EdgeTAM-only status line
 - object/controller semantics stay the current experiment default: object `stuffed animal`, controller `towel`
 
@@ -100,10 +102,10 @@ QQTT_WSLG_OPEN3D_FAST_EXIT=1 conda run --no-capture-output -n demo_3_1_max \
   --gpu-sampling-device-indexes 0,1 \
   --tracker-visualization-mode all-tracks-3d-lift \
   --all-tracks-lift-max-points-per-camera 512 \
-  --profile-json-output docs/generated/demo32_litetracker_ffs_rendered_60s_profile.json
+  --profile-json-output docs/generated/demo32_tapnextpp_ffs_rendered_60s_profile.json
 ```
 
-TAPNext++ serial profiling:
+TAPNext++ serial profiling, explicit form:
 
 ```bash
 QQTT_WSLG_OPEN3D_FAST_EXIT=1 conda run --no-capture-output -n demo_3_1_max \
@@ -117,7 +119,6 @@ QQTT_WSLG_OPEN3D_FAST_EXIT=1 conda run --no-capture-output -n demo_3_1_max \
   --calibrate-path calibrate.pkl \
   --render-mode pointcloud \
   --object-prompt "stuffed animal" \
-  --cotracker-backend tapnextpp \
   --tracking-backend-execution-mode serial \
   --cotracker-query-count 4096 \
   --tracker-visualization-mode all-tracks-3d-lift \
@@ -173,3 +174,25 @@ LiteTracker external defaults are the current local validation paths:
 
 Override them with `--litetracker-repo-dir` and `--litetracker-weights` when
 using another machine.
+
+LiteTracker rendered profiling:
+
+```bash
+QQTT_WSLG_OPEN3D_FAST_EXIT=1 conda run --no-capture-output -n demo_3_1_max \
+  python demo_v3_2/realtime_three_view_litetracker_ffs_dual4090.py \
+  --duration-s 60 \
+  --camera-ids 0,1,2 \
+  --mask-gpu 0 \
+  --cotracker-gpu 1 \
+  --require-two-cuda \
+  --calibrate-path calibrate.pkl \
+  --render-mode pointcloud \
+  --cotracker-backend litetracker \
+  --tracking-backend-execution-mode batch-views \
+  --render-micro-profile \
+  --gpu-sampling \
+  --gpu-sampling-device-indexes 0,1 \
+  --tracker-visualization-mode all-tracks-3d-lift \
+  --all-tracks-lift-max-points-per-camera 512 \
+  --profile-json-output docs/generated/demo32_litetracker_ffs_rendered_60s_profile.json
+```

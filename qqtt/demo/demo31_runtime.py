@@ -96,8 +96,9 @@ from qqtt.tracking.backends.point_tracker_adapter import (
 
 
 PRESET_DEMO31_DUAL4090_HIGHFPS = "demo3.1-dual4090-highfps"
+PRESET_DEMO32_FFS_TAPNEXTPP = "demo3.2-ffs-tapnextpp"
 PRESET_DEMO32_FFS_LITETRACKER = "demo3.2-ffs-litetracker"
-PRESETS = (PRESET_DEMO31_DUAL4090_HIGHFPS, PRESET_DEMO32_FFS_LITETRACKER)
+PRESETS = (PRESET_DEMO31_DUAL4090_HIGHFPS, PRESET_DEMO32_FFS_TAPNEXTPP, PRESET_DEMO32_FFS_LITETRACKER)
 
 FUSION_MASK_POLICY_STRICT = "strict"
 FUSION_MASK_POLICY_LATEST_REUSE = "latest-reuse"
@@ -112,8 +113,10 @@ GPU_PLAN_SPLIT_MASK0_TRACK1 = "split-mask0-track1"
 GPU_PLANS = (GPU_PLAN_SPLIT_MASK0_TRACK1,)
 
 DEFAULT_OUTPUT_ROOT = Path("result/demo31_dual4090_realsense_tapnextpp")
-DEFAULT_DEMO32_OUTPUT_ROOT = Path("result/demo32_ffs_litetracker")
-DEFAULT_DEMO32_TAPNEXTPP_OUTPUT_ROOT = Path("result/demo32_ffs_tapnextpp")
+DEFAULT_DEMO32_TRACKER_BACKEND = TRACKER_BACKEND_TAPNEXTPP
+DEFAULT_DEMO32_OUTPUT_ROOT = Path("result/demo32_ffs_tapnextpp")
+DEFAULT_DEMO32_TAPNEXTPP_OUTPUT_ROOT = DEFAULT_DEMO32_OUTPUT_ROOT
+DEFAULT_DEMO32_LITETRACKER_OUTPUT_ROOT = Path("result/demo32_ffs_litetracker")
 DEFAULT_DEMO31_TRACKER_BACKEND = TRACKER_BACKEND_TAPNEXTPP
 DEMO32_TRACKER_BACKENDS = (TRACKER_BACKEND_LITETRACKER, TRACKER_BACKEND_TAPNEXTPP)
 DEFAULT_RENDER_TARGET_FPS = 60.0
@@ -287,7 +290,7 @@ ProcessClientFactory = Callable[[CoTrackerProcessConfig], Any]
 
 
 def is_demo32_preset(args: argparse.Namespace) -> bool:
-    return str(getattr(args, "preset", "")) == PRESET_DEMO32_FFS_LITETRACKER
+    return str(getattr(args, "preset", "")) in {PRESET_DEMO32_FFS_TAPNEXTPP, PRESET_DEMO32_FFS_LITETRACKER}
 
 
 def demo_label_for_args(args: argparse.Namespace) -> str:
@@ -1164,7 +1167,7 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         description=(
             "Demo 3.1/3.2 dual-4090 realtime visualization. Demo 3.1 uses "
             "RealSense depth plus a point-tracker child process; Demo 3.2 "
-            "uses FFS TensorRT batch=3 opt=5 depth and LiteTracker batch-views by default."
+            "uses FFS TensorRT batch=3 opt=5 depth and TAPNext++ serial tracking by default."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -1173,7 +1176,12 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
     parser.add_argument("--duration-s", type=float, default=120.0)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--profile-json-output", type=Path, default=None)
-    default_output_root = DEFAULT_DEMO32_OUTPUT_ROOT if default_preset == PRESET_DEMO32_FFS_LITETRACKER else DEFAULT_OUTPUT_ROOT
+    if default_preset == PRESET_DEMO32_FFS_TAPNEXTPP:
+        default_output_root = DEFAULT_DEMO32_OUTPUT_ROOT
+    elif default_preset == PRESET_DEMO32_FFS_LITETRACKER:
+        default_output_root = DEFAULT_DEMO32_LITETRACKER_OUTPUT_ROOT
+    else:
+        default_output_root = DEFAULT_OUTPUT_ROOT
     parser.add_argument("--output-root", type=Path, default=default_output_root)
     parser.add_argument("--camera-ids", type=demo3_runtime.parse_camera_ids, default=demo3_runtime.DEFAULT_CAMERA_IDS)
     parser.add_argument("--serials", nargs="*", default=None)
@@ -1364,13 +1372,13 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         "--trackable-mask-build-policy",
         choices=TRACKABLE_MASK_BUILD_POLICIES,
         default=DEFAULT_DEMO32_TRACKABLE_MASK_BUILD_POLICY,
-        help="Demo 3.2 LiteTracker query-init mask build policy.",
+        help="Demo 3.2 tracker query-init mask build policy.",
     )
     parser.add_argument(
         "--trackable-query-init-strategy",
         choices=TRACKABLE_QUERY_INIT_STRATEGIES,
         default=DEFAULT_DEMO32_TRACKABLE_QUERY_INIT_STRATEGY,
-        help="Demo 3.2 LiteTracker query-init strategy.",
+        help="Demo 3.2 tracker query-init strategy.",
     )
     parser.add_argument(
         "--controller-trackable-max-points-per-camera",
@@ -1736,24 +1744,32 @@ def apply_preset_defaults(args: argparse.Namespace, *, explicit_options: set[str
             args.cotracker_input_fps = DEFAULT_COTRACKER_INPUT_FPS
         if "--render-target-fps" not in explicit:
             args.render_target_fps = DEFAULT_RENDER_TARGET_FPS
-    elif args.preset == PRESET_DEMO32_FFS_LITETRACKER:
+    elif is_demo32_preset(args):
         if "--depth-source" not in explicit:
             args.depth_source = demo3_runtime.DEPTH_SOURCE_FFS
         if "--fusion-mask-policy" not in explicit:
             args.fusion_mask_policy = DEFAULT_FUSION_MASK_POLICY
         if "--cotracker-backend" not in explicit and "--tracking-backend" not in explicit:
-            args.cotracker_backend = TRACKER_BACKEND_LITETRACKER
+            args.cotracker_backend = (
+                TRACKER_BACKEND_LITETRACKER
+                if str(args.preset) == PRESET_DEMO32_FFS_LITETRACKER
+                else DEFAULT_DEMO32_TRACKER_BACKEND
+            )
         tracker_backend = normalize_tracker_backend(args.cotracker_backend)
         if "--output-root" not in explicit:
             args.output_root = (
-                DEFAULT_DEMO32_TAPNEXTPP_OUTPUT_ROOT
-                if tracker_backend == TRACKER_BACKEND_TAPNEXTPP
-                else DEFAULT_DEMO32_OUTPUT_ROOT
+                DEFAULT_DEMO32_LITETRACKER_OUTPUT_ROOT
+                if tracker_backend == TRACKER_BACKEND_LITETRACKER
+                else DEFAULT_DEMO32_TAPNEXTPP_OUTPUT_ROOT
             )
         if "--tracking-backend-execution-mode" not in explicit:
-            args.tracking_backend_execution_mode = TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS
+            args.tracking_backend_execution_mode = (
+                TRACKING_BACKEND_EXECUTION_MODE_SERIAL
+                if tracker_backend == TRACKER_BACKEND_TAPNEXTPP
+                else TRACKING_BACKEND_EXECUTION_MODE_BATCH_VIEWS
+            )
         if "--cotracker-update-mode" not in explicit:
-            args.cotracker_update_mode = "batch"
+            args.cotracker_update_mode = effective_legacy_update_mode(args.tracking_backend_execution_mode)
         if "--tracker-batch-query-count-policy" not in explicit:
             args.tracker_batch_query_count_policy = TRACKER_BATCH_QUERY_COUNT_POLICY_MIN_COMMON
         if "--cotracker-prewarm-backends" not in explicit and "--no-cotracker-prewarm-backends" not in explicit:
@@ -2530,6 +2546,7 @@ def build_contract(
 def format_contract(contract: dict[str, Any]) -> str:
     keys = (
         "demo",
+        "preset",
         "input_source",
         "offline_mode_available",
         "dual_gpu_enabled",
@@ -6446,6 +6463,7 @@ __all__ = [
     "FUSION_MASK_POLICY_LATEST_REUSE",
     "FUSION_MASK_POLICY_STRICT",
     "PRESET_DEMO31_DUAL4090_HIGHFPS",
+    "PRESET_DEMO32_FFS_TAPNEXTPP",
     "PRESET_DEMO32_FFS_LITETRACKER",
     "apply_preset_defaults",
     "build_arg_parser",

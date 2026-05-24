@@ -883,7 +883,51 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(contract["tapnextpp_fast_postprocess"])
         self.assertFalse(config.tapnextpp_fast_postprocess)
 
-    def test_demo32_defaults_to_ffs_batch3_litetracker_batch3(self) -> None:
+    def test_demo32_tapnextpp_runtime_default_uses_ffs_tapnextpp_serial(self) -> None:
+        parser = demo32_runtime.build_arg_parser()
+        args = parser.parse_args(["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"])
+        args = demo32_runtime.apply_preset_defaults(
+            args,
+            explicit_options={"--dry-run", "--camera-ids", "--mask-gpu", "--cotracker-gpu"},
+        )
+        demo32_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+        contract = demo32_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+        config = demo31_runtime.build_cotracker_process_config(args)
+
+        self.assertEqual(contract["demo"], "demo3.2")
+        self.assertEqual(contract["preset"], "demo3.2-ffs-tapnextpp")
+        self.assertEqual(str(args.output_root), "result/demo32_ffs_tapnextpp")
+        self.assertEqual(contract["depth_source"], "ffs")
+        self.assertEqual(contract["pipeline_order"][3], "tapnextpp_serial")
+        self.assertEqual(contract["shared_runtime_gpu_placement"], "ffs_edgetam_gpu0_tapnextpp_gpu1")
+        self.assertEqual(contract["ffs_gpu_physical"], 0)
+        self.assertEqual(contract["edgetam_gpu_physical"], 0)
+        self.assertEqual(contract["sam31_gpu_physical"], 0)
+        self.assertIsNone(contract["litetracker_gpu_physical"])
+        self.assertEqual(contract["tapnextpp_gpu_physical"], 1)
+        self.assertEqual(contract["cotracker_backend"], "tapnextpp")
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
+        self.assertEqual(contract["tracker_backend_family"], "tapnext")
+        self.assertEqual(contract["tracking_backend_execution_mode"], "serial")
+        self.assertEqual(contract["cotracker_update_mode"], "serial")
+        self.assertEqual(contract["tracking_backend_batch_dimension"], "none")
+        self.assertEqual(contract["tracking_backend_batch_size"], 1)
+        self.assertTrue(contract["tracking_backend_batch_supported"])
+        self.assertEqual(contract["tracking_backend_batch_support_status"], "true_online_batch_views")
+        self.assertEqual(contract["tracker_prewarm_mode"], "disabled")
+        self.assertFalse(contract["tracker_query_dependent_init"])
+        self.assertEqual(contract["tapnextpp_checkpoint"], "checkpoints/tapnextpp/tapnextpp_ckpt.pt")
+        self.assertEqual(contract["tapnextpp_image_size"], [256, 256])
+        self.assertEqual(contract["tapnextpp_autocast_dtype"], "fp16")
+        self.assertTrue(contract["tapnextpp_fast_postprocess"])
+        self.assertEqual(config.cotracker_backend, "tapnextpp")
+        self.assertEqual(config.backend_execution_mode, "serial")
+        self.assertEqual(config.update_mode, "serial")
+        self.assertEqual(config.tapnextpp_checkpoint, "checkpoints/tapnextpp/tapnextpp_ckpt.pt")
+        self.assertEqual(config.tapnextpp_image_size, (256, 256))
+        self.assertTrue(config.tapnextpp_fast_postprocess)
+
+    def test_demo32_litetracker_preset_defaults_to_ffs_batch3_litetracker_batch3(self) -> None:
         args = self._parse(
             ["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
             default_preset=demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER,
@@ -1213,7 +1257,10 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(contract["tracker_result_required_for_render"])
         self.assertTrue(contract["tracker_marker_required_for_render"])
         self.assertIn("raw_fused_async", contract["tracker_input_publish_hooks"])
-        self.assertEqual(contract["tracker_prewarm_mode"], "lazy_query_init")
+        self.assertEqual(contract["preset"], "demo3.2-ffs-tapnextpp")
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
+        self.assertEqual(contract["tracking_backend_execution_mode"], "serial")
+        self.assertEqual(contract["tracker_prewarm_mode"], "disabled")
         self.assertEqual(contract["tracker_ready_state"], "ready_to_receive_inputs")
 
     def test_demo32_raw_async_path_publishes_litetracker_input_and_surface_anchors(self) -> None:
@@ -1308,6 +1355,11 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(hook_profiles[-1]["surface_anchor_cache_published"])
 
     def test_demo32_explicit_preset_uses_demo32_default_output_root(self) -> None:
+        args = self._parse(
+            ["--dry-run", "--preset", demo31_runtime.PRESET_DEMO32_FFS_TAPNEXTPP, "--camera-ids", "0,1,2"],
+        )
+        self.assertEqual(str(args.output_root), "result/demo32_ffs_tapnextpp")
+
         args = self._parse(
             ["--dry-run", "--preset", demo31_runtime.PRESET_DEMO32_FFS_LITETRACKER, "--camera-ids", "0,1,2"],
         )
@@ -1424,6 +1476,26 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertIn("tracker_batch_query_count_policy = min-common", output)
         self.assertIn("cotracker_update_mode = batch", output)
         self.assertIn("output_root = result/demo32_ffs_litetracker", output)
+        self.assertIn("'trt_batch_size': 3", output)
+
+    def test_demo32_runtime_main_dry_run_prints_ffs_tapnextpp_contract(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = demo32_runtime.main(
+                ["--dry-run", "--camera-ids", "0,1,2", "--mask-gpu", "0", "--cotracker-gpu", "1"],
+                cuda_device_count_provider=lambda: 2,
+            )
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("demo = demo3.2", output)
+        self.assertIn("preset = demo3.2-ffs-tapnextpp", output)
+        self.assertIn("shared_runtime_gpu_placement = ffs_edgetam_gpu0_tapnextpp_gpu1", output)
+        self.assertIn("tapnextpp_gpu_physical = 1", output)
+        self.assertIn("tracker_backend = tapnextpp", output)
+        self.assertIn("tracking_backend_execution_mode = serial", output)
+        self.assertIn("cotracker_update_mode = serial", output)
+        self.assertIn("output_root = result/demo32_ffs_tapnextpp", output)
         self.assertIn("'trt_batch_size': 3", output)
 
     def test_mode_demo_uses_hand_controller_without_changing_gpu_split(self) -> None:

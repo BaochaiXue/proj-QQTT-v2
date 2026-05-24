@@ -122,7 +122,7 @@ fuse object/controller semantic PCDs. Demo 3.1 adds a dual-4090 visualization
 contract where GPU0 owns capture/mask/fusion/render and GPU1 owns CoTracker3 in
 a latest-wins child process. Demo 3.2 reuses that tracker/render contract but
 switches depth to the Demo 2.3 FFS TensorRT builderOptimizationLevel=5 batch=3
-path and defaults to LiteTracker serial. Demo 3.0, Demo 3.1, and Demo 3.2 expose only `--mode exp|demo`
+path and defaults to TAPNext++ serial. Demo 3.0, Demo 3.1, and Demo 3.2 expose only `--mode exp|demo`
 for live semantics; both modes track the object/controller union with
 FuturePhysTwin-compatible dense CoTracker queries while keeping the rendered
 overlay cap separate.

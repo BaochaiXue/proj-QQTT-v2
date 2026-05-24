@@ -35,8 +35,7 @@ object/controller union with the requested per-view budget using torch
 `--cotracker-query-count auto` only when exact 5000-per-view dense sampling is
 needed and the tracker backend/memory budget can support it. The optional
 `--controller-mask-erode-px` parameter shrinks the controller mask before the
-tracking union and anchor/trackable-mask path; its implicit default is `1` in
-`--mode demo` (human-hand controller prompt) and `0` otherwise. Controller body points are
+tracking union and anchor/trackable-mask path. Controller body points are
 render-voxel downsampled before Open3D display with
 `--controller-render-voxel-m` and capped by
 `--controller-render-max-points` (default `10000`); these render-only reductions
@@ -52,15 +51,17 @@ snap each control to the nearest same-camera, same-semantic fused surface point
 within 4 pixels, then draw a red 3D sphere marker with radius 6mm. Direct
 2D-track/depth/intrinsics/c2w lifting is disabled by default and is available
 under `--tracker-visualization-mode legacy-3d-lift` for debugging. Demo 3.2
-uses `--tracker-visualization-mode all-tracks-3d-lift` by default: every
-visible LiteTracker point with valid depth is eligible for a red 3D control
-marker, without surface-snap matching, semantic scope-mask rejection, or
-semantic bbox rejection. To keep this render path bounded, the default all-track
-lift cap is `all_tracks_lift_max_points_per_camera = 512` with
+uses TAPNext++ serial tracking by default, while LiteTracker remains available
+as an explicit A/B backend. Demo 3.2 also uses
+`--tracker-visualization-mode all-tracks-3d-lift` by default: every visible
+tracker point with valid depth is eligible for a red 3D control marker, without
+surface-snap matching, semantic scope-mask rejection, or semantic bbox
+rejection. To keep this render path bounded, the default all-track lift cap is
+`all_tracks_lift_max_points_per_camera = 512` with
 `all_tracks_lift_selection = visible-spread`; pass `0` only for explicit
 all-point debug/quality runs.
 The Open3D warmup HUD is pipeline-aware: Demo 3.2 reports the FFS/EdgeTAM
-path plus LiteTracker query-init and 3D anchors instead of the older fixed
+path plus the active tracker stage and 3D anchors instead of the older fixed
 FFS/EdgeTAM-only message.
 `--overlay-render-raw-track-points` only affects that legacy debug mode. For
 alignment debugging, `--overlay-debug-color-by-camera` colors snapped

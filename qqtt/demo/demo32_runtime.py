@@ -11,13 +11,14 @@ from qqtt.demo import demo31_runtime as demo31
 from qqtt.demo import demo3_runtime
 
 
+PRESET_DEMO32_FFS_TAPNEXTPP = demo31.PRESET_DEMO32_FFS_TAPNEXTPP
 PRESET_DEMO32_FFS_LITETRACKER = demo31.PRESET_DEMO32_FFS_LITETRACKER
 DEMO32_RUNTIME_MODULE = "qqtt.demo.demo32_runtime"
 DEMO32_RUNTIME_OWNER = "demo32_tracker_ffs"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    return demo31.build_arg_parser(default_preset=PRESET_DEMO32_FFS_LITETRACKER)
+    return demo31.build_arg_parser(default_preset=PRESET_DEMO32_FFS_TAPNEXTPP)
 
 
 def apply_preset_defaults(
@@ -127,7 +128,7 @@ def make_demo32_live_runtime_class(
     )
 
     class Demo32LiveRuntime(base_cls):
-        """Demo 3.2-owned live runtime for FFS + LiteTracker control markers."""
+        """Demo 3.2-owned live runtime for FFS + point-tracker control markers."""
 
     Demo32LiveRuntime.__name__ = "Demo32LiveRuntime"
     return Demo32LiveRuntime
@@ -237,6 +238,7 @@ __all__ = [
     "DEMO32_RUNTIME_MODULE",
     "DEMO32_RUNTIME_OWNER",
     "Demo32Runtime",
+    "PRESET_DEMO32_FFS_TAPNEXTPP",
     "PRESET_DEMO32_FFS_LITETRACKER",
     "apply_preset_defaults",
     "build_arg_parser",
