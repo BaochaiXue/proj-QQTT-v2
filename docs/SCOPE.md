@@ -25,6 +25,9 @@ must remain a diagnostic layer around that data product.
 - explicitly isolated experiment-only aligned-case visualization under
   `data_process/visualization/experiments/` and `scripts/harness/experiments/`
 - demo-only realtime point-cloud workflows under `demo_v*`
+- Demo 3.3 may invoke external FuturePhysTwin and MV-SAM3D during warmup to
+  render a diagnostic shape-prior reference layer, with cache artifacts written
+  under the demo output root and outside formal case directories
 - shared tracking diagnostics under `qqtt/tracking` and Demo 3 harness scripts
 - SAM/EdgeTAM mask usage when it is scoped to demo initialization, tracking
   diagnostics, or visualization; masks are not part of the formal aligned-case
@@ -63,3 +66,9 @@ simulation/manipulation pipelines, it does not belong in this repo.
 Experiment-only FFS depth diagnostics are allowed only when they consume
 aligned cases, write diagnostic artifacts outside formal case directories, and
 remain separated from recording / alignment runtime imports.
+
+The only current shape-prior carveout is Demo 3.3 warmup: it may synthesize a
+one-frame FuturePhysTwin-style cache and read `final_data.pkl` from that cache
+for render-only diagnostics. Formal recording, realtime aligned export, and
+`data_process/record_data_align.py` outputs remain unchanged and must not import
+or depend on that path.

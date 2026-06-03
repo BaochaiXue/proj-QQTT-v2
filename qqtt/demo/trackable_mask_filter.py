@@ -9,6 +9,7 @@ import numpy as np
 from data_process.depth_backends.geometry import transform_points
 from qqtt.demo.pcd_postprocess import (
     _detect_radius_outlier_indices,
+    COMPONENT_SELECTION_LARGEST_N,
     COMPONENT_SELECTION_LARGEST_N_PLUS_GAP,
 )
 from qqtt.demo.semantic_surface_filter import filter_semantic_surface_points
@@ -206,7 +207,7 @@ def _object_survivor_indices(points_world: np.ndarray, config: TrackableMaskFilt
         component_voxel_size_m=float(config.enhanced_component_voxel_size_m),
         keep_near_main_gap_m=float(config.enhanced_keep_near_main_gap_m),
         keep_top_n_components=int(config.object_enhanced_keep_top_n_components),
-        component_selection_policy=str(config.enhanced_component_selection_policy),
+        component_selection_policy=COMPONENT_SELECTION_LARGEST_N,
         min_component_points=int(config.enhanced_min_component_points),
         min_component_ratio=float(config.enhanced_min_component_ratio),
     )

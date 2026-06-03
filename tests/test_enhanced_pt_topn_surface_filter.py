@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 import unittest
 
 import numpy as np
@@ -12,6 +13,7 @@ from qqtt.demo.pcd_postprocess import (
 )
 from qqtt.demo.semantic_surface_filter import filter_semantic_surface_points
 from qqtt.demo.three_view_masked_fused_pcd_runtime import (
+    Demo21Runtime,
     FusedLayerCloud,
     POSTPROCESS_ENHANCED_PT,
     apply_semantic_postprocess,
@@ -165,6 +167,41 @@ class EnhancedPtTopNSurfaceFilterTest(unittest.TestCase):
         self.assertEqual(stats["kept_component_indices"], [0])
         self.assertEqual(stats["removed_component_indices"], [1])
         self.assertFalse(np.any(filtered_points[:, 0] > 0.9))
+
+    def test_runtime_object_filter_keeps_one_component_even_when_gap_policy_is_requested(self) -> None:
+        points = np.concatenate([_cluster(0.0, 40), _cluster(0.03, 6)], axis=0)
+        colors = np.zeros((len(points), 3), dtype=np.uint8)
+        layer = FusedLayerCloud(
+            obj_id=2,
+            label="object",
+            postprocess_mode=POSTPROCESS_ENHANCED_PT,
+            points_m=points,
+            colors_rgb=colors,
+            per_camera=(),
+        )
+        runtime = SimpleNamespace(
+            args=SimpleNamespace(
+                object_point_control="fixed-cap",
+                object_filter_cap=0,
+                object_filter_voxel_m=0.004,
+                phystwin_radius_m=0.01,
+                phystwin_nb_points=1,
+                enhanced_component_voxel_size_m=0.01,
+                enhanced_keep_near_main_gap_m=0.05,
+                object_enhanced_keep_top_n_components=1,
+                enhanced_component_selection_policy=COMPONENT_SELECTION_LARGEST_N_PLUS_GAP,
+                enhanced_min_component_points=1,
+                enhanced_min_component_ratio=0.0,
+                apply_enhanced_component_filter_to_pcd=True,
+            )
+        )
+
+        filtered_points, _filtered_colors, stats = Demo21Runtime._filter_object_layer(runtime, layer)
+
+        self.assertEqual(stats["component_selection_policy"], COMPONENT_SELECTION_LARGEST_N)
+        self.assertEqual(stats["kept_component_indices"], [0])
+        self.assertEqual(len(filtered_points), 40)
+        self.assertFalse(np.any((filtered_points[:, 0] > 0.02) & (filtered_points[:, 0] < 0.06)))
 
 
 if __name__ == "__main__":

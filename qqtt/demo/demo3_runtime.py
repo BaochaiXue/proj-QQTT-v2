@@ -24,6 +24,7 @@ from qqtt.demo.cotracker3_overlay_worker import (
     TrackingOverlayInputPacket,
 )
 from qqtt.demo.pcd_postprocess import (
+    COMPONENT_SELECTION_LARGEST_N,
     COMPONENT_SELECTION_LARGEST_N_PLUS_GAP,
     COMPONENT_SELECTION_POLICIES,
 )
@@ -81,7 +82,9 @@ OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME = "phystwin-volume"
 OBJECT_POINT_CONTROLS = (OBJECT_POINT_CONTROL_FIXED_CAP, OBJECT_POINT_CONTROL_PHYSTWIN_VOLUME)
 DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS = 1
 DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS = 2
-DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP
+DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N
+DEFAULT_CONTROLLER_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP
+DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY = DEFAULT_CONTROLLER_ENHANCED_COMPONENT_SELECTION_POLICY
 DEFAULT_ENHANCED_MIN_COMPONENT_POINTS = 32
 DEFAULT_ENHANCED_MIN_COMPONENT_RATIO = 0.0
 DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD = True
@@ -548,6 +551,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "object_enhanced_keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
         "controller_enhanced_keep_top_n_components": int(args.controller_enhanced_keep_top_n_components),
         "enhanced_component_selection_policy": str(args.enhanced_component_selection_policy),
+        "object_enhanced_component_selection_policy": DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY,
+        "controller_enhanced_component_selection_policy": str(args.enhanced_component_selection_policy),
         "enhanced_min_component_points": int(args.enhanced_min_component_points),
         "enhanced_min_component_ratio": float(args.enhanced_min_component_ratio),
         "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
@@ -580,7 +585,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             "points_per_voxel": int(args.object_volume_points_per_voxel),
             "keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
             "controller_keep_top_n_components": int(args.controller_enhanced_keep_top_n_components),
-            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "component_selection_policy": DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY,
             "min_component_points": int(args.enhanced_min_component_points),
             "min_component_ratio": float(args.enhanced_min_component_ratio),
             "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
@@ -679,6 +684,18 @@ def build_empty_profile_summary(contract: dict[str, Any]) -> dict[str, Any]:
         ),
         "enhanced_component_selection_policy": str(
             contract.get("enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+        ),
+        "object_enhanced_component_selection_policy": str(
+            contract.get(
+                "object_enhanced_component_selection_policy",
+                DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY,
+            )
+        ),
+        "controller_enhanced_component_selection_policy": str(
+            contract.get(
+                "controller_enhanced_component_selection_policy",
+                contract.get("enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY),
+            )
         ),
         "enhanced_min_component_points": int(contract.get("enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)),
         "enhanced_min_component_ratio": float(contract.get("enhanced_min_component_ratio", DEFAULT_ENHANCED_MIN_COMPONENT_RATIO)),

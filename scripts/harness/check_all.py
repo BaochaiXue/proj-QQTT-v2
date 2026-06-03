@@ -32,6 +32,7 @@ DEMO_HELP_SCRIPTS: tuple[str, ...] = (
     "demo_v3/realtime_three_view_cotracker3_realsense_overlay.py",
     "demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py",
     "demo_v3_2/realtime_three_view_litetracker_ffs_dual4090.py",
+    "demo_v3_3/realtime_three_view_litetracker_ffs_dual4090.py",
 )
 
 QUICK_HELP_SCRIPTS: tuple[str, ...] = (*BASE_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))
@@ -104,6 +105,7 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_demo31_cotracker_process_config",
     "tests.test_demo31_tapnextpp_onnx_trt_feasibility",
     "tests.test_demo31_tapnextpp_attention_profile",
+    "tests.test_demo33_shape_prior_warmup",
     "tests.test_check_all_smoke",
 )
 

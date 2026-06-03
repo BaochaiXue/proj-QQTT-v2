@@ -37,11 +37,13 @@ RealSense tracking-overlay lineage.
   up to 4096 capped-union points per camera by default while first-frame mask labels decide
   what is rendered. The default overlay scope is `controller`; Demo 3.1 renders
   all visible controller-labeled tracks by default with
-  `--overlay-max-points-per-camera 0`, shown as high-contrast red tracking
-  points. Use `--overlay-debug-color-by-camera` to color those lifted controller
-  overlay points by source camera when diagnosing alignment. The lift mask
-  follows the display scope, so controller overlays must land inside the current
-  controller mask rather than the broader object/controller union.
+  `--overlay-max-points-per-camera 0`, shown as cyan-blue tracking points.
+  Use `--overlay-display-scope union` to render tracked object points at the
+  same time; object points are red and controller points are cyan-blue. Use
+  `--overlay-debug-color-by-camera` to color lifted overlay points by source
+  camera when diagnosing alignment. The lift mask follows the display scope, so
+  controller overlays must land inside the current controller mask rather than
+  the broader object/controller union.
 - When the point tracker is not ready, the Open3D window keeps the last valid rendered
   result instead of publishing a new semantic-only PCD frame. Rendered FPS
   therefore measures strict same-source track-ready results, not camera/mask-only

@@ -17,6 +17,24 @@
 - Runtime role: optional SAM 3.1 sidecar mask generation for aligned-case visualization diagnostics
 - Vendoring policy: keep external, do not copy source or weights into the QQTT repo
 
+## Demo 3.3 FuturePhysTwin / SAM 3D Objects Warmup
+
+- FuturePhysTwin local root: `/home/xinjie/FuturePhysTwin`
+- Original SAM 3D Objects repo: `https://github.com/facebookresearch/sam-3d-objects`
+- Original SAM 3D Objects local root: `/home/xinjie/external/sam-3d-objects`
+- Conda environment: `demo_3_3_max`
+- Demo 3.3 default Python launcher: current Python interpreter. Start Demo 3.3
+  with `conda run --no-capture-output -n demo_3_3_max python ...` so the live
+  runtime, detached completion worker, and FuturePhysTwin/SAM3D route inherit
+  one environment.
+- Runtime role: Demo 3.3 warmup-only single-view shape-prior generation using
+  FuturePhysTwin's `image_upscale.py -> segment_util_image.py ->
+  data_process_sam3d/shape_prior.py -> data_process/align.py ->
+  data_process_sam3d/data_process_sample.py --shape_prior` route
+- Vendoring policy: keep FuturePhysTwin, SAM 3D Objects, checkpoints, and
+  weights external; Demo 3.3 writes only diagnostic cache artifacts under its
+  output root and does not change formal aligned-case outputs
+
 ## CoTracker3
 
 - Official code repo: `https://github.com/facebookresearch/co-tracker`

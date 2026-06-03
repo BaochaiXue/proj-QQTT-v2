@@ -37,6 +37,7 @@ from qqtt.demo.demo31_dual_gpu_ipc import (
 )
 from qqtt.demo.demo31_profile import build_empty_dual_gpu_profile_summary, event_fps, percentile_summary
 from qqtt.demo.pcd_postprocess import (
+    COMPONENT_SELECTION_LARGEST_N,
     COMPONENT_SELECTION_LARGEST_N_PLUS_GAP,
     COMPONENT_SELECTION_POLICIES,
 )
@@ -156,7 +157,9 @@ DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.006
 DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.035
 DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS = 1
 DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS = 2
-DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP
+DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N
+DEFAULT_CONTROLLER_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP
+DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY = DEFAULT_CONTROLLER_ENHANCED_COMPONENT_SELECTION_POLICY
 DEFAULT_ENHANCED_MIN_COMPONENT_POINTS = 32
 DEFAULT_ENHANCED_MIN_COMPONENT_RATIO = 0.0
 DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD = True
@@ -229,6 +232,8 @@ DEFAULT_OVERLAY_CONTROL_POINT_MARKERS = True
 DEFAULT_OVERLAY_CONTROL_POINT_COUNT = 30
 DEFAULT_OVERLAY_CONTROL_POINT_RADIUS_M = 0.01
 DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB = (255, 0, 0)
+DEFAULT_OVERLAY_OBJECT_POINT_COLOR_RGB = (255, 80, 80)
+DEFAULT_OVERLAY_CONTROLLER_POINT_COLOR_RGB = (80, 220, 255)
 DEFAULT_OVERLAY_RENDER_RAW_TRACK_POINTS = False
 TRACKER_VISUALIZATION_MODE_NONE = "none"
 TRACKER_VISUALIZATION_MODE_SURFACE_MARKERS = "3d-surface-markers"
@@ -266,10 +271,13 @@ SURFACE_ANCHOR_LABELS = (
     SURFACE_ANCHOR_LABEL_UNION,
 )
 TRACKER_MARKER_LABEL_COLORS_RGB = {
-    SURFACE_ANCHOR_LABEL_OBJECT: DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB,
-    SURFACE_ANCHOR_LABEL_CONTROLLER: DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB,
+    SURFACE_ANCHOR_LABEL_OBJECT: DEFAULT_OVERLAY_OBJECT_POINT_COLOR_RGB,
+    SURFACE_ANCHOR_LABEL_CONTROLLER: DEFAULT_OVERLAY_CONTROLLER_POINT_COLOR_RGB,
     SURFACE_ANCHOR_LABEL_UNION: (255, 0, 0),
 }
+TRACKING_OVERLAY_COLOR_MODE_SOLID = "solid"
+TRACKING_OVERLAY_COLOR_MODE_SEMANTIC = "semantic"
+TRACKING_OVERLAY_COLOR_MODE_BY_CAMERA = "by_camera"
 OVERLAY_DEBUG_CAMERA_COLORS_RGB = {
     0: (255, 0, 0),
     1: (0, 255, 0),
@@ -346,6 +354,33 @@ def _merge_cotracker_process_snapshot_metrics(
             return value
         return default
 
+    shape_prior_profile = snapshot.get("shape_prior_warmup")
+    if not isinstance(shape_prior_profile, dict):
+        shape_prior_profile = {}
+    for key in (
+        "shape_prior_warmup_enabled",
+        "shape_prior_status",
+        "shape_prior_case_dir",
+        "shape_prior_source_group_id",
+        "shape_prior_coordinate_frame",
+        "shape_prior_units",
+        "shape_prior_ground_policy",
+        "shape_prior_ground_z",
+        "shape_prior_coordinate_validation_status",
+        "shape_prior_coordinate_validation_reason",
+        "shape_prior_object_points0",
+        "shape_prior_surface_points",
+        "shape_prior_interior_points",
+        "shape_prior_structure_points",
+        "shape_prior_raw_structure_points",
+        "shape_prior_render_layer_enabled",
+        "shape_prior_affects_tracker_input",
+        "shape_prior_affects_live_observation_pcd",
+    ):
+        value = shape_prior_profile.get(key, snapshot.get(key))
+        if value is not None:
+            summary[key] = value
+
     summary.update(
         {
             "cotracker_input_fps": _float_value("cotracker_input_fps", worker_key="input_fps"),
@@ -382,6 +417,34 @@ def _merge_cotracker_process_snapshot_metrics(
                 "tracker_model_ms_max_per_group_p95",
                 worker_key="tracker_model_ms_max_per_group_p95",
             ),
+            "surface_snap_ms_p50": _float_value("surface_snap_ms_p50"),
+            "surface_snap_ms_p95": _float_value("surface_snap_ms_p95"),
+            "lift_ms_p50": _float_value("lift_ms_p50"),
+            "lift_ms_p95": _float_value("lift_ms_p95"),
+            "semantic_color_ms_p50": _float_value("semantic_color_ms_p50"),
+            "semantic_color_ms_p95": _float_value("semantic_color_ms_p95"),
+            "bbox_filter_ms_p50": _float_value("bbox_filter_ms_p50"),
+            "bbox_filter_ms_p95": _float_value("bbox_filter_ms_p95"),
+            "overlay_concat_ms_p50": _float_value("overlay_concat_ms_p50"),
+            "overlay_concat_ms_p95": _float_value("overlay_concat_ms_p95"),
+            "control_marker_expand_ms_p50": _float_value("control_marker_expand_ms_p50"),
+            "control_marker_expand_ms_p95": _float_value("control_marker_expand_ms_p95"),
+            "tracker_result_take_ms_p50": _float_value("tracker_result_take_ms_p50"),
+            "tracker_result_take_ms_p95": _float_value("tracker_result_take_ms_p95"),
+            "overlay_processing_ms_p50": _float_value("overlay_processing_ms_p50"),
+            "overlay_processing_ms_p95": _float_value("overlay_processing_ms_p95"),
+            "overlay_unattributed_ms_p50": _float_value("overlay_unattributed_ms_p50"),
+            "overlay_unattributed_ms_p95": _float_value("overlay_unattributed_ms_p95"),
+            "render_packet_match_ms_p50": _float_value("render_packet_match_ms_p50"),
+            "render_packet_match_ms_p95": _float_value("render_packet_match_ms_p95"),
+            "bbox_reference_ms_p50": _float_value("bbox_reference_ms_p50"),
+            "bbox_reference_ms_p95": _float_value("bbox_reference_ms_p95"),
+            "control_point_select_ms_p50": _float_value("control_point_select_ms_p50"),
+            "control_point_select_ms_p95": _float_value("control_point_select_ms_p95"),
+            "frame_provenance_ms_p50": _float_value("frame_provenance_ms_p50"),
+            "frame_provenance_ms_p95": _float_value("frame_provenance_ms_p95"),
+            "render_packet_replace_ms_p50": _float_value("render_packet_replace_ms_p50"),
+            "render_packet_replace_ms_p95": _float_value("render_packet_replace_ms_p95"),
             "per_camera_model_ms_p50_by_camera": snapshot.get(
                 "per_camera_model_ms_p50_by_camera",
                 worker.get("per_camera_model_ms_p50_by_camera", {}),
@@ -479,6 +542,47 @@ def _overlay_color_array(point_count: int, color_rgb: tuple[int, int, int] | np.
     if int(point_count) <= 0:
         return np.empty((0, 3), dtype=np.uint8)
     return np.repeat(np.asarray(color_rgb, dtype=np.uint8).reshape(1, 3), int(point_count), axis=0)
+
+
+def _fit_overlay_label_array(labels: np.ndarray | None, point_count: int) -> np.ndarray:
+    count = max(int(point_count), 0)
+    fitted = np.zeros((count,), dtype=bool)
+    if count == 0 or labels is None:
+        return fitted
+    arr = np.asarray(labels, dtype=bool).reshape(-1)
+    copy_count = min(count, int(arr.shape[0]))
+    if copy_count > 0:
+        fitted[:copy_count] = arr[:copy_count]
+    return fitted
+
+
+def _overlay_color_mode(*, color_by_camera: bool) -> str:
+    if bool(color_by_camera):
+        return TRACKING_OVERLAY_COLOR_MODE_BY_CAMERA
+    return TRACKING_OVERLAY_COLOR_MODE_SEMANTIC
+
+
+def _semantic_overlay_colors(
+    *,
+    point_count: int,
+    query_is_object: np.ndarray | None,
+    query_is_controller: np.ndarray | None,
+    fallback_scope: str,
+) -> np.ndarray:
+    count = max(int(point_count), 0)
+    if count == 0:
+        return np.empty((0, 3), dtype=np.uint8)
+    object_labels = _fit_overlay_label_array(query_is_object, count)
+    controller_labels = _fit_overlay_label_array(query_is_controller, count)
+    if not bool(np.any(object_labels) or np.any(controller_labels)):
+        if str(fallback_scope) == SURFACE_ANCHOR_LABEL_OBJECT:
+            object_labels[:] = True
+        elif str(fallback_scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_CONTROLLER:
+            controller_labels[:] = True
+    colors = _overlay_color_array(count, TRACKER_MARKER_LABEL_COLORS_RGB[SURFACE_ANCHOR_LABEL_UNION])
+    colors[object_labels] = np.asarray(DEFAULT_OVERLAY_OBJECT_POINT_COLOR_RGB, dtype=np.uint8)
+    colors[controller_labels] = np.asarray(DEFAULT_OVERLAY_CONTROLLER_POINT_COLOR_RGB, dtype=np.uint8)
+    return colors.astype(np.uint8, copy=False)
 
 
 def _point_centroid(points: np.ndarray) -> list[float] | None:
@@ -2258,7 +2362,11 @@ def build_contract(
         "render_requires_new_cotracker_result": not bool(args.disable_cotracker),
         "render_reuses_cached_cotracker_result": False,
         "tracking_overlay_color_rgb": [int(v) for v in tracker_marker_color],
-        "tracking_overlay_color_mode": "by_camera" if bool(args.overlay_debug_color_by_camera) else "solid",
+        "tracking_overlay_object_color_rgb": [int(v) for v in DEFAULT_OVERLAY_OBJECT_POINT_COLOR_RGB],
+        "tracking_overlay_controller_color_rgb": [int(v) for v in DEFAULT_OVERLAY_CONTROLLER_POINT_COLOR_RGB],
+        "tracking_overlay_color_mode": _overlay_color_mode(
+            color_by_camera=bool(args.overlay_debug_color_by_camera)
+        ),
         "tracking_overlay_debug_color_by_camera": bool(args.overlay_debug_color_by_camera),
         "tracker_visualization_mode": tracker_visualization_mode,
         "tracker_3d_marker_mode": "surface_snap" if tracker_surface_mode else tracker_visualization_mode,
@@ -2321,7 +2429,7 @@ def build_contract(
             "component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
             "keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
             "keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
-            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "component_selection_policy": DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY,
             "min_component_points": int(args.enhanced_min_component_points),
             "min_component_ratio": float(args.enhanced_min_component_ratio),
         },
@@ -2340,7 +2448,7 @@ def build_contract(
             "mode": str(args.object_postprocess),
             "point_control": str(args.object_point_control),
             "keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
-            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "component_selection_policy": DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY,
             "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
         },
         "controller_filter": {
@@ -2403,6 +2511,10 @@ def build_contract(
             else float(args.overlay_control_point_radius_m)
         ),
         "tracking_control_point_color_rgb": [int(v) for v in tracker_marker_color],
+        "tracking_control_point_object_color_rgb": [int(v) for v in DEFAULT_OVERLAY_OBJECT_POINT_COLOR_RGB],
+        "tracking_control_point_controller_color_rgb": [
+            int(v) for v in DEFAULT_OVERLAY_CONTROLLER_POINT_COLOR_RGB
+        ],
         "tracking_control_point_sampling": (
             f"{args.tracker_control_point_selection}_surface_snap"
             if tracker_surface_mode
@@ -2455,6 +2567,8 @@ def build_contract(
         "object_enhanced_keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
         "controller_enhanced_keep_top_n_components": int(args.controller_enhanced_keep_top_n_components),
         "enhanced_component_selection_policy": str(args.enhanced_component_selection_policy),
+        "object_enhanced_component_selection_policy": DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY,
+        "controller_enhanced_component_selection_policy": str(args.enhanced_component_selection_policy),
         "enhanced_min_component_points": int(args.enhanced_min_component_points),
         "enhanced_min_component_ratio": float(args.enhanced_min_component_ratio),
         "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
@@ -2480,7 +2594,7 @@ def build_contract(
             "component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
             "keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
             "keep_top_n_components": int(args.object_enhanced_keep_top_n_components),
-            "component_selection_policy": str(args.enhanced_component_selection_policy),
+            "component_selection_policy": DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY,
             "min_component_points": int(args.enhanced_min_component_points),
             "min_component_ratio": float(args.enhanced_min_component_ratio),
             "apply_enhanced_component_filter_to_pcd": bool(args.apply_enhanced_component_filter_to_pcd),
@@ -2620,6 +2734,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "all_tracks_lift_selection",
         "tracking_overlay_lift_method",
         "tracking_overlay_color_mode",
+        "tracking_overlay_object_color_rgb",
+        "tracking_overlay_controller_color_rgb",
         "overlay_max_points_per_camera",
         "overlay_display_scope",
         "overlay_bbox_filter_enabled",
@@ -2700,6 +2816,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "object_enhanced_keep_top_n_components",
         "controller_enhanced_keep_top_n_components",
         "enhanced_component_selection_policy",
+        "object_enhanced_component_selection_policy",
+        "controller_enhanced_component_selection_policy",
         "enhanced_min_component_points",
         "enhanced_min_component_ratio",
         "apply_enhanced_component_filter_to_pcd",
@@ -3252,6 +3370,20 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_tracker_model_ms_sum_per_group_samples: list[float] = []
             self.demo31_tracker_model_ms_max_per_group_samples: list[float] = []
             self.demo31_per_camera_model_ms_samples: dict[int, list[float]] = {}
+            self.demo31_overlay_surface_snap_ms_samples: list[float] = []
+            self.demo31_overlay_lift_ms_samples: list[float] = []
+            self.demo31_overlay_semantic_color_ms_samples: list[float] = []
+            self.demo31_overlay_bbox_filter_ms_samples: list[float] = []
+            self.demo31_overlay_concat_ms_samples: list[float] = []
+            self.demo31_overlay_control_marker_expand_ms_samples: list[float] = []
+            self.demo31_overlay_tracker_result_take_ms_samples: list[float] = []
+            self.demo31_overlay_processing_ms_samples: list[float] = []
+            self.demo31_overlay_unattributed_ms_samples: list[float] = []
+            self.demo31_overlay_render_packet_match_ms_samples: list[float] = []
+            self.demo31_overlay_bbox_reference_ms_samples: list[float] = []
+            self.demo31_overlay_control_point_select_ms_samples: list[float] = []
+            self.demo31_overlay_frame_provenance_ms_samples: list[float] = []
+            self.demo31_overlay_render_packet_replace_ms_samples: list[float] = []
             self.demo31_cotracker_publish_times_s: list[float] = []
             self.demo31_overlay_render_group_delta_samples: list[float] = []
             self.demo31_tracking_mask_age_ms_samples: list[float] = []
@@ -3337,6 +3469,34 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "stage_mailbox_pending_drop_count",
                 "tracking_pending_fusion_bundles",
                 "tracking_pending_render_packets",
+                "surface_snap_ms_p50",
+                "surface_snap_ms_p95",
+                "lift_ms_p50",
+                "lift_ms_p95",
+                "semantic_color_ms_p50",
+                "semantic_color_ms_p95",
+                "bbox_filter_ms_p50",
+                "bbox_filter_ms_p95",
+                "overlay_concat_ms_p50",
+                "overlay_concat_ms_p95",
+                "control_marker_expand_ms_p50",
+                "control_marker_expand_ms_p95",
+                "tracker_result_take_ms_p50",
+                "tracker_result_take_ms_p95",
+                "overlay_processing_ms_p50",
+                "overlay_processing_ms_p95",
+                "overlay_unattributed_ms_p50",
+                "overlay_unattributed_ms_p95",
+                "render_packet_match_ms_p50",
+                "render_packet_match_ms_p95",
+                "bbox_reference_ms_p50",
+                "bbox_reference_ms_p95",
+                "control_point_select_ms_p50",
+                "control_point_select_ms_p95",
+                "frame_provenance_ms_p50",
+                "frame_provenance_ms_p95",
+                "render_packet_replace_ms_p50",
+                "render_packet_replace_ms_p95",
             ):
                 if key in snapshot:
                     summary[key] = snapshot[key]
@@ -3756,6 +3916,32 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             )
             return out_union, out_object, out_controller, summary
 
+        def _maybe_build_shape_prior_warmup(
+            self,
+            *,
+            group_id: int,
+            timestamp_s: float,
+            rgb_by_camera: dict[int, np.ndarray],
+            depth_by_camera: dict[int, np.ndarray],
+            object_mask_by_camera: dict[int, np.ndarray],
+            controller_mask_by_camera: dict[int, np.ndarray],
+            intrinsics_by_camera: dict[int, np.ndarray],
+            c2w_by_camera: dict[int, np.ndarray],
+            camera_ids: Sequence[int],
+        ) -> dict[str, Any]:
+            _ = (
+                group_id,
+                timestamp_s,
+                rgb_by_camera,
+                depth_by_camera,
+                object_mask_by_camera,
+                controller_mask_by_camera,
+                intrinsics_by_camera,
+                c2w_by_camera,
+                camera_ids,
+            )
+            return {}
+
         def _publish_demo31_tracking_input(
             self,
             *,
@@ -3808,6 +3994,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     ).reshape(3, 3)
                 if idx in getattr(self, "_c2w_by_camera", {}):
                     c2w_by_camera[idx] = np.asarray(self._c2w_by_camera[idx], dtype=np.float32).reshape(4, 4)
+            raw_object_mask_by_camera = {
+                int(idx): np.ascontiguousarray(np.asarray(mask, dtype=bool))
+                for idx, mask in object_mask_by_camera.items()
+            }
+            raw_controller_mask_by_camera = {
+                int(idx): np.ascontiguousarray(np.asarray(mask, dtype=bool))
+                for idx, mask in controller_mask_by_camera.items()
+            }
             trackable_mask_profile: dict[str, Any] = {}
             mask_by_camera, object_mask_by_camera, controller_mask_by_camera, trackable_mask_profile = (
                 self._apply_demo32_trackable_masks(
@@ -3848,6 +4042,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "query_group_id": int(depth_group.group_id),
                 "surface_anchor_cache_published": False,
                 "trackable_mask": trackable_mask_profile,
+                "shape_prior_warmup": {},
                 "controller_mask_erode_px": int(controller_mask_erode_px),
                 "controller_mask_pixels_before_erode_by_camera": dict(controller_mask_pixels_before_erode_by_camera),
                 "controller_mask_pixels_after_erode_by_camera": dict(controller_mask_pixels_after_erode_by_camera),
@@ -3899,6 +4094,19 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     return
                 profile_payload["same_bundle_input_complete"] = True
                 profile_payload["strict_same_source_frame"] = True
+            shape_prior_profile = self._maybe_build_shape_prior_warmup(
+                group_id=int(depth_group.group_id),
+                timestamp_s=now_s,
+                rgb_by_camera=rgb_by_camera,
+                depth_by_camera=depth_by_camera,
+                object_mask_by_camera=raw_object_mask_by_camera,
+                controller_mask_by_camera=raw_controller_mask_by_camera,
+                intrinsics_by_camera=intrinsics_by_camera,
+                c2w_by_camera=c2w_by_camera,
+                camera_ids=[int(camera_idx) for camera_idx in self.args.camera_ids],
+            )
+            if shape_prior_profile:
+                profile_payload["shape_prior_warmup"] = dict(shape_prior_profile)
             if not should_publish_tracking_input(
                 now_s=now_s,
                 last_publish_s=self.demo31_last_tracking_input_s,
@@ -4374,6 +4582,20 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_points": 0,
                     "overlay_points_by_camera": {},
                     "overlay_ms": 0.0,
+                    "surface_snap_ms": 0.0,
+                    "lift_ms": 0.0,
+                    "semantic_color_ms": 0.0,
+                    "bbox_filter_ms": 0.0,
+                    "overlay_concat_ms": 0.0,
+                    "control_marker_expand_ms": 0.0,
+                    "tracker_result_take_ms": 0.0,
+                    "overlay_processing_ms": 0.0,
+                    "overlay_unattributed_ms": 0.0,
+                    "render_packet_match_ms": 0.0,
+                    "bbox_reference_ms": 0.0,
+                    "control_point_select_ms": 0.0,
+                    "frame_provenance_ms": 0.0,
+                    "render_packet_replace_ms": 0.0,
                     "overlay_group_id": None,
                     "incoming_render_group_id": int(packet.group_id),
                     "render_group_id": int(packet.group_id),
@@ -4414,10 +4636,18 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     time.sleep(0.001)
 
         def _publish_next_tracker_driven_render_once(self, *, now_s: float) -> bool:
+            take_start_s = float(now_s)
             overlay = self._take_fresh_tracking_result(now_s=now_s)
+            overlay_processing_start_s = time.perf_counter()
             if overlay is None:
                 return False
-            self._publish_tracker_driven_render(overlay, overlay_start_s=now_s)
+            tracker_result_take_ms = float((overlay_processing_start_s - take_start_s) * 1000.0)
+            self._publish_tracker_driven_render(
+                overlay,
+                overlay_start_s=now_s,
+                overlay_processing_start_s=overlay_processing_start_s,
+                tracker_result_take_ms=tracker_result_take_ms,
+            )
             return True
 
         def _take_render_packet_for_tracking_result(
@@ -4729,7 +4959,16 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     return True
             return False
 
-        def _publish_tracker_driven_render(self, overlay: TrackingResultLitePacket, *, overlay_start_s: float) -> None:
+        def _publish_tracker_driven_render(
+            self,
+            overlay: TrackingResultLitePacket,
+            *,
+            overlay_start_s: float,
+            overlay_processing_start_s: float | None = None,
+            tracker_result_take_ms: float = 0.0,
+        ) -> None:
+            if overlay_processing_start_s is None:
+                overlay_processing_start_s = overlay_start_s
             render_requires_new_tracker = bool(self.demo31_cotracker_enabled)
             overlay_points = np.empty((0, 3), dtype=np.float32)
             overlay_colors = np.empty((0, 3), dtype=np.uint8)
@@ -4925,6 +5164,22 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             "cotracker_model_ms": float(overlay.model_ms),
                             "cotracker_e2e_ms": float(overlay.e2e_ms),
                             "cross_gpu_cuda_tensor_transfer": False,
+                            "surface_snap_ms": 0.0,
+                            "lift_ms": 0.0,
+                            "semantic_color_ms": 0.0,
+                            "bbox_filter_ms": 0.0,
+                            "overlay_concat_ms": 0.0,
+                            "control_marker_expand_ms": 0.0,
+                            "tracker_result_take_ms": float(tracker_result_take_ms),
+                            "overlay_processing_ms": float(
+                                (time.perf_counter() - overlay_processing_start_s) * 1000.0
+                            ),
+                            "overlay_unattributed_ms": 0.0,
+                            "render_packet_match_ms": 0.0,
+                            "bbox_reference_ms": 0.0,
+                            "control_point_select_ms": 0.0,
+                            "frame_provenance_ms": 0.0,
+                            "render_packet_replace_ms": 0.0,
                         },
                     )
                 self._unprotect_frame_bundle(overlay_group_id)
@@ -4963,10 +5218,32 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             "cotracker_model_ms": float(overlay.model_ms),
                             "cotracker_e2e_ms": float(overlay.e2e_ms),
                             "cross_gpu_cuda_tensor_transfer": False,
+                            "surface_snap_ms": 0.0,
+                            "lift_ms": 0.0,
+                            "semantic_color_ms": 0.0,
+                            "bbox_filter_ms": 0.0,
+                            "overlay_concat_ms": 0.0,
+                            "control_marker_expand_ms": 0.0,
+                            "tracker_result_take_ms": float(tracker_result_take_ms),
+                            "overlay_processing_ms": float(
+                                (time.perf_counter() - overlay_processing_start_s) * 1000.0
+                            ),
+                            "overlay_unattributed_ms": 0.0,
+                            "render_packet_match_ms": 0.0,
+                            "bbox_reference_ms": 0.0,
+                            "control_point_select_ms": 0.0,
+                            "frame_provenance_ms": 0.0,
+                            "render_packet_replace_ms": 0.0,
                         },
                     )
                 self._unprotect_frame_bundle(overlay_group_id)
                 return
+            render_packet_match_ms = 0.0
+            bbox_reference_ms = 0.0
+            control_point_select_ms = 0.0
+            frame_provenance_ms = 0.0
+            render_packet_replace_ms = 0.0
+            render_match_start_s = time.perf_counter()
             render_packet, render_match_profile = self._take_render_packet_for_tracking_result(
                 overlay_group_id,
                 cached_group_ids=(
@@ -4976,6 +5253,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 ),
                 require_exact=bool(surface_marker_mode),
             )
+            render_packet_match_ms += float((time.perf_counter() - render_match_start_s) * 1000.0)
             overlay_render_group_delta = render_match_profile["tracking_render_packet_group_delta"]
             if overlay_render_group_delta is not None:
                 self.demo31_overlay_render_group_delta_samples.append(float(abs(overlay_render_group_delta)))
@@ -4997,6 +5275,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     self.demo31_bundle_taken_lift_input_missing_count += 1
             frame_provenance = None
             all_tracks_lift_ms = 0.0
+            surface_snap_ms = 0.0
+            lift_ms = 0.0
+            semantic_color_ms = 0.0
+            bbox_filter_ms = 0.0
+            overlay_concat_ms = 0.0
+            control_marker_expand_ms = 0.0
             if render_packet is not None:
                 color_by_camera = bool(getattr(self.args, "overlay_debug_color_by_camera", False))
                 lift_mask_scope = str(getattr(self.args, "overlay_display_scope", demo3_runtime.DEFAULT_OVERLAY_DISPLAY_SCOPE))
@@ -5015,10 +5299,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         DEFAULT_OVERLAY_MAX_DISTANCE_FROM_CONTROLLER_M,
                     )
                 )
+                bbox_reference_start_s = time.perf_counter()
                 bbox_reference_points = _semantic_bbox_reference_points(
                     scope=lift_mask_scope,
                     render_packet=render_packet,
                 )
+                bbox_reference_ms += float((time.perf_counter() - bbox_reference_start_s) * 1000.0)
                 marker_parts: list[np.ndarray] = []
                 marker_color_parts: list[np.ndarray] = []
                 if surface_marker_mode and surface_snapshot is not None:
@@ -5042,6 +5328,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             tracker_marker_rejected_by_camera[idx] = visible_count
                             overlay_points_by_camera[idx] = 0
                             continue
+                        snap_start_s = time.perf_counter()
                         snapped = _snap_tracks_to_surface_result(
                             tracks_yx=tracks,
                             visibility=visibility,
@@ -5050,6 +5337,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             max_points=tracker_control_points_per_camera,
                             selection=tracker_control_point_selection,
                         )
+                        surface_snap_ms += float((time.perf_counter() - snap_start_s) * 1000.0)
                         points = snapped.points_world.astype(np.float32, copy=False)
                         tracker_marker_accepted_by_camera[idx] = int(snapped.accepted)
                         tracker_marker_rejected_by_camera[idx] = int(snapped.rejected)
@@ -5062,12 +5350,34 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         overlay_lifted_points_by_camera[idx] = int(len(points))
                         overlay_centroid_before_bbox_by_camera[idx] = _point_centroid(points)
                         overlay_bbox_input_points_by_camera[idx] = int(len(points))
+                        color_start_s = time.perf_counter()
+                        if color_by_camera:
+                            point_colors = _overlay_color_array(len(points), _overlay_debug_color_rgb(idx))
+                        else:
+                            query_is_object = _fit_overlay_label_array(
+                                getattr(overlay, "query_is_object_by_camera", {}).get(idx),
+                                len(tracks),
+                            )
+                            query_is_controller = _fit_overlay_label_array(
+                                getattr(overlay, "query_is_controller_by_camera", {}).get(idx),
+                                len(tracks),
+                            )
+                            point_colors = _semantic_overlay_colors(
+                                point_count=len(points),
+                                query_is_object=query_is_object[snapped.source_indices],
+                                query_is_controller=query_is_controller[snapped.source_indices],
+                                fallback_scope=lift_mask_scope,
+                            )
+                        semantic_color_ms += float((time.perf_counter() - color_start_s) * 1000.0)
                         if bbox_filter_enabled and len(points):
+                            bbox_start_s = time.perf_counter()
                             bbox_keep = _semantic_bbox_keep_mask(points, bbox_reference_points, margin_m=bbox_margin_m)
                             kept = int(np.count_nonzero(bbox_keep))
                             overlay_bbox_kept_points_by_camera[idx] = kept
                             overlay_bbox_rejected_by_camera[idx] = int(len(points)) - kept
                             points = points[bbox_keep]
+                            point_colors = point_colors[bbox_keep]
+                            bbox_filter_ms += float((time.perf_counter() - bbox_start_s) * 1000.0)
                         else:
                             overlay_bbox_kept_points_by_camera[idx] = int(len(points))
                             overlay_bbox_rejected_by_camera[idx] = 0
@@ -5077,12 +5387,13 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             continue
                         snapped_point_chunks.append(points)
                         snapped_camera_id_chunks.append(np.full((len(points),), idx, dtype=np.int32))
-                        color = _surface_marker_color(surface_label, idx, color_by_camera=color_by_camera)
-                        snapped_color_chunks.append(_overlay_color_array(len(points), color))
+                        snapped_color_chunks.append(point_colors)
                     if snapped_point_chunks:
+                        concat_start_s = time.perf_counter()
                         overlay_track_points = np.concatenate(snapped_point_chunks, axis=0).astype(np.float32)
                         overlay_track_colors = np.concatenate(snapped_color_chunks, axis=0).astype(np.uint8)
                         overlay_track_camera_ids = np.concatenate(snapped_camera_id_chunks, axis=0)
+                        overlay_concat_ms += float((time.perf_counter() - concat_start_s) * 1000.0)
                         control_points = overlay_track_points
                         control_camera_ids = overlay_track_camera_ids
                         tracking_control_point_count = int(len(control_points))
@@ -5091,11 +5402,13 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             tracking_control_points_by_camera[int(camera_idx)] = int(
                                 np.count_nonzero(control_camera_ids == int(camera_idx))
                             )
+                        marker_expand_start_s = time.perf_counter()
                         control_marker_points, control_marker_colors = _control_point_marker_cloud(
                             control_points,
                             overlay_track_colors,
                             radius_m=control_point_radius_m,
                         )
+                        control_marker_expand_ms += float((time.perf_counter() - marker_expand_start_s) * 1000.0)
                         tracking_control_marker_points = int(len(control_marker_points))
                         if len(control_marker_points):
                             marker_parts.append(control_marker_points)
@@ -5125,23 +5438,37 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         overlay_input_points_by_camera[idx] = int(len(tracks))
                         tracks_to_lift = tracks
                         visibility_to_lift = visibility
+                        query_is_object = _fit_overlay_label_array(
+                            getattr(overlay, "query_is_object_by_camera", {}).get(idx),
+                            len(tracks),
+                        )
+                        query_is_controller = _fit_overlay_label_array(
+                            getattr(overlay, "query_is_controller_by_camera", {}).get(idx),
+                            len(tracks),
+                        )
+                        query_is_object_to_lift = query_is_object
+                        query_is_controller_to_lift = query_is_controller
                         if all_tracks_lift_mode:
                             visible_candidates = int(np.count_nonzero(visibility > 0.0))
                             cap = int(all_tracks_lift_max_points_per_camera)
                             all_tracks_lift_candidate_count_by_camera[idx] = visible_candidates
                             if cap > 0:
+                                select_start_s = time.perf_counter()
                                 selected_indices = _select_visible_control_indices(
                                     tracks,
                                     visibility,
                                     max_points=cap,
                                     selection=all_tracks_lift_selection,
                                 )
+                                control_point_select_ms += float((time.perf_counter() - select_start_s) * 1000.0)
                                 all_tracks_lift_cap_applied_by_camera[idx] = bool(visible_candidates > len(selected_indices))
                                 all_tracks_lift_rejected_by_cap_by_camera[idx] = int(
                                     max(0, visible_candidates - len(selected_indices))
                                 )
                                 tracks_to_lift = tracks[selected_indices]
                                 visibility_to_lift = visibility[selected_indices]
+                                query_is_object_to_lift = query_is_object[selected_indices]
+                                query_is_controller_to_lift = query_is_controller[selected_indices]
                             else:
                                 all_tracks_lift_cap_applied_by_camera[idx] = False
                                 all_tracks_lift_rejected_by_cap_by_camera[idx] = 0
@@ -5155,6 +5482,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                                 lift_inputs=lift_inputs,
                             )
                         )
+                        lift_start_s = time.perf_counter()
                         lifted = lift_tracks_yx_to_world(
                             tracks_yx=tracks_to_lift,
                             visibility=visibility_to_lift,
@@ -5164,6 +5492,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             depth_scale_m_per_unit=1.0,
                             mask=lift_mask,
                         )
+                        lift_ms += float((time.perf_counter() - lift_start_s) * 1000.0)
                         if all_tracks_lift_mode:
                             tracker_marker_layer_by_camera[idx] = "all-tracks"
                             tracker_marker_accepted_by_camera[idx] = int(len(lifted.points_world))
@@ -5173,15 +5502,29 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             all_tracks_lift_rendered_count_by_camera[idx] = int(len(lifted.points_world))
                         if lifted.points_world.size:
                             points = lifted.points_world.astype(np.float32, copy=False)
+                            color_start_s = time.perf_counter()
+                            if color_by_camera:
+                                point_colors = _overlay_color_array(len(points), _overlay_debug_color_rgb(idx))
+                            else:
+                                point_colors = _semantic_overlay_colors(
+                                    point_count=len(points),
+                                    query_is_object=query_is_object_to_lift[lifted.source_indices],
+                                    query_is_controller=query_is_controller_to_lift[lifted.source_indices],
+                                    fallback_scope=lift_mask_scope,
+                                )
+                            semantic_color_ms += float((time.perf_counter() - color_start_s) * 1000.0)
                             overlay_lifted_points_by_camera[idx] = int(len(points))
                             overlay_centroid_before_bbox_by_camera[idx] = _point_centroid(points)
                             overlay_bbox_input_points_by_camera[idx] = int(len(points))
                             if bbox_filter_enabled:
+                                bbox_start_s = time.perf_counter()
                                 bbox_keep = _semantic_bbox_keep_mask(points, bbox_reference_points, margin_m=bbox_margin_m)
                                 kept = int(np.count_nonzero(bbox_keep))
                                 overlay_bbox_kept_points_by_camera[idx] = kept
                                 overlay_bbox_rejected_by_camera[idx] = int(len(points)) - kept
                                 points = points[bbox_keep]
+                                point_colors = point_colors[bbox_keep]
+                                bbox_filter_ms += float((time.perf_counter() - bbox_start_s) * 1000.0)
                             else:
                                 overlay_bbox_kept_points_by_camera[idx] = int(len(points))
                                 overlay_bbox_rejected_by_camera[idx] = 0
@@ -5193,16 +5536,13 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             lifted_camera_id_chunks.append(np.full((len(points),), idx, dtype=np.int32))
                             overlay_points_by_camera[idx] = int(len(points))
                             overlay_centroid_by_camera[idx] = _point_centroid(points)
-                            color = (
-                                _overlay_debug_color_rgb(idx)
-                                if color_by_camera
-                                else tuple(int(v) for v in demo3_runtime.OVERLAY_COLOR_RGB.tolist())
-                            )
-                            lifted_colors.append(_overlay_color_array(len(points), color))
+                            lifted_colors.append(point_colors)
                     if lifted_points:
+                        concat_start_s = time.perf_counter()
                         overlay_track_points = np.concatenate(lifted_points, axis=0).astype(np.float32)
                         overlay_track_colors = np.concatenate(lifted_colors, axis=0).astype(np.uint8)
                         overlay_track_camera_ids = np.concatenate(lifted_camera_id_chunks, axis=0)
+                        overlay_concat_ms += float((time.perf_counter() - concat_start_s) * 1000.0)
                         if all_tracks_lift_mode:
                             control_points = overlay_track_points
                             control_camera_ids = overlay_track_camera_ids
@@ -5218,15 +5558,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                                     dtype=np.uint8,
                                 )
                             else:
-                                control_colors = _overlay_color_array(
-                                    len(control_points),
-                                    DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB,
-                                )
+                                control_colors = overlay_track_colors
+                            marker_expand_start_s = time.perf_counter()
                             control_marker_points, control_marker_colors = _control_point_marker_cloud(
                                 control_points,
                                 control_colors,
                                 radius_m=control_point_radius_m,
                             )
+                            control_marker_expand_ms += float((time.perf_counter() - marker_expand_start_s) * 1000.0)
                             tracking_control_marker_points = int(len(control_marker_points))
                             if len(control_marker_points):
                                 marker_parts.append(control_marker_points)
@@ -5235,10 +5574,12 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             marker_parts.append(overlay_track_points)
                             marker_color_parts.append(overlay_track_colors)
                         if (not all_tracks_lift_mode) and control_markers_enabled:
+                            select_start_s = time.perf_counter()
                             control_indices = _farthest_point_sample_indices(
                                 overlay_track_points,
                                 control_point_count_requested,
                             )
+                            control_point_select_ms += float((time.perf_counter() - select_start_s) * 1000.0)
                             control_points = overlay_track_points[control_indices]
                             control_camera_ids = overlay_track_camera_ids[control_indices]
                             tracking_control_point_count = int(len(control_points))
@@ -5253,15 +5594,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                                     dtype=np.uint8,
                                 )
                             else:
-                                control_colors = _overlay_color_array(
-                                    len(control_points),
-                                    DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB,
-                                )
+                                control_colors = overlay_track_colors[control_indices]
+                            marker_expand_start_s = time.perf_counter()
                             control_marker_points, control_marker_colors = _control_point_marker_cloud(
                                 control_points,
                                 control_colors,
                                 radius_m=control_point_radius_m,
                             )
+                            control_marker_expand_ms += float((time.perf_counter() - marker_expand_start_s) * 1000.0)
                             tracking_control_marker_points = int(len(control_marker_points))
                             if len(control_marker_points):
                                 marker_parts.append(control_marker_points)
@@ -5269,20 +5609,25 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 if all_tracks_lift_started_s is not None:
                     all_tracks_lift_ms = float((time.perf_counter() - all_tracks_lift_started_s) * 1000.0)
                 if marker_parts:
+                    concat_start_s = time.perf_counter()
                     overlay_points = np.concatenate(marker_parts, axis=0).astype(np.float32)
                     overlay_colors = np.concatenate(marker_color_parts, axis=0).astype(np.uint8)
+                    overlay_concat_ms += float((time.perf_counter() - concat_start_s) * 1000.0)
+                frame_provenance_start_s = time.perf_counter()
                 frame_provenance = self._frame_provenance(
                     overlay=overlay,
                     render_packet=render_packet,
                     lift_inputs=lift_inputs,
                     surface_snapshot=surface_snapshot,
                 )
+                frame_provenance_ms += float((time.perf_counter() - frame_provenance_start_s) * 1000.0)
                 self.demo31_frame_bundle_provenance_count += 1
                 self.demo31_frame_bundle_same_target_count += int(bool(frame_provenance.same_target_group))
                 self.demo31_frame_bundle_strict_same_source_count += int(
                     bool(frame_provenance.strict_same_source_frame)
                 )
                 if len(overlay_points) or inert_visualization_mode:
+                    concat_start_s = time.perf_counter()
                     render_replace_kwargs: dict[str, Any] = {
                         "controller_points_m": np.concatenate(
                             [render_packet.controller_points_m, overlay_points],
@@ -5293,6 +5638,7 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             axis=0,
                         ),
                     }
+                    overlay_concat_ms += float((time.perf_counter() - concat_start_s) * 1000.0)
                     if hasattr(render_packet, "tracker_model_ms"):
                         render_replace_kwargs.update(
                             {
@@ -5316,17 +5662,49 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                                 "tracker_overlay_group_id": int(overlay.group_id),
                             }
                         )
+                    replace_start_s = time.perf_counter()
                     render_packet = replace(
                         render_packet,
                         **render_replace_kwargs,
                     )
+                    render_packet_replace_ms += float((time.perf_counter() - replace_start_s) * 1000.0)
             tracking_overlay_render_blocked = bool(
                 render_requires_new_tracker and len(overlay_points) == 0 and not inert_visualization_mode
             )
             tracking_overlay_warmup_blocked = bool(
                 tracking_overlay_render_blocked and self.demo31_tracking_overlay_first_render_group_id is None
             )
-            overlay_ms = float((time.perf_counter() - overlay_start_s) * 1000.0)
+            overlay_end_s = time.perf_counter()
+            overlay_ms = float((overlay_end_s - overlay_start_s) * 1000.0)
+            overlay_processing_ms = float((overlay_end_s - overlay_processing_start_s) * 1000.0)
+            overlay_substage_ms = float(
+                surface_snap_ms
+                + lift_ms
+                + semantic_color_ms
+                + bbox_filter_ms
+                + overlay_concat_ms
+                + control_marker_expand_ms
+                + render_packet_match_ms
+                + bbox_reference_ms
+                + control_point_select_ms
+                + frame_provenance_ms
+                + render_packet_replace_ms
+            )
+            overlay_unattributed_ms = float(max(0.0, overlay_processing_ms - overlay_substage_ms))
+            self.demo31_overlay_surface_snap_ms_samples.append(float(surface_snap_ms))
+            self.demo31_overlay_lift_ms_samples.append(float(lift_ms))
+            self.demo31_overlay_semantic_color_ms_samples.append(float(semantic_color_ms))
+            self.demo31_overlay_bbox_filter_ms_samples.append(float(bbox_filter_ms))
+            self.demo31_overlay_concat_ms_samples.append(float(overlay_concat_ms))
+            self.demo31_overlay_control_marker_expand_ms_samples.append(float(control_marker_expand_ms))
+            self.demo31_overlay_tracker_result_take_ms_samples.append(float(tracker_result_take_ms))
+            self.demo31_overlay_processing_ms_samples.append(float(overlay_processing_ms))
+            self.demo31_overlay_unattributed_ms_samples.append(float(overlay_unattributed_ms))
+            self.demo31_overlay_render_packet_match_ms_samples.append(float(render_packet_match_ms))
+            self.demo31_overlay_bbox_reference_ms_samples.append(float(bbox_reference_ms))
+            self.demo31_overlay_control_point_select_ms_samples.append(float(control_point_select_ms))
+            self.demo31_overlay_frame_provenance_ms_samples.append(float(frame_provenance_ms))
+            self.demo31_overlay_render_packet_replace_ms_samples.append(float(render_packet_replace_ms))
             profile_group_id = int(overlay_group_id if render_packet is None else render_packet.group_id)
             all_tracks_lift_exact_depth_group = bool(
                 all_tracks_lift_mode
@@ -5354,8 +5732,22 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             list(DEFAULT_OVERLAY_CONTROL_POINT_COLOR_RGB),
                         )
                     ],
-                    "overlay_color_mode": (
-                        "by_camera" if bool(getattr(self.args, "overlay_debug_color_by_camera", False)) else "solid"
+                    "overlay_object_color_rgb": [
+                        int(v)
+                        for v in self.demo31_contract.get(
+                            "tracking_overlay_object_color_rgb",
+                            list(DEFAULT_OVERLAY_OBJECT_POINT_COLOR_RGB),
+                        )
+                    ],
+                    "overlay_controller_color_rgb": [
+                        int(v)
+                        for v in self.demo31_contract.get(
+                            "tracking_overlay_controller_color_rgb",
+                            list(DEFAULT_OVERLAY_CONTROLLER_POINT_COLOR_RGB),
+                        )
+                    ],
+                    "overlay_color_mode": _overlay_color_mode(
+                        color_by_camera=bool(getattr(self.args, "overlay_debug_color_by_camera", False))
                     ),
                     "tracker_visualization_mode": str(tracker_visualization_mode),
                     "tracker_3d_marker_mode": "surface_snap" if surface_marker_mode else str(tracker_visualization_mode),
@@ -5446,6 +5838,20 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "tracking_control_point_centroid": overlay_control_point_centroid,
                     "overlay_render_raw_track_points": bool(render_raw_tracks),
                     "overlay_ms": overlay_ms,
+                    "surface_snap_ms": float(surface_snap_ms),
+                    "lift_ms": float(lift_ms),
+                    "semantic_color_ms": float(semantic_color_ms),
+                    "bbox_filter_ms": float(bbox_filter_ms),
+                    "overlay_concat_ms": float(overlay_concat_ms),
+                    "control_marker_expand_ms": float(control_marker_expand_ms),
+                    "tracker_result_take_ms": float(tracker_result_take_ms),
+                    "overlay_processing_ms": float(overlay_processing_ms),
+                    "overlay_unattributed_ms": float(overlay_unattributed_ms),
+                    "render_packet_match_ms": float(render_packet_match_ms),
+                    "bbox_reference_ms": float(bbox_reference_ms),
+                    "control_point_select_ms": float(control_point_select_ms),
+                    "frame_provenance_ms": float(frame_provenance_ms),
+                    "render_packet_replace_ms": float(render_packet_replace_ms),
                     "overlay_group_id": overlay_group_id,
                     "incoming_render_group_id": int(overlay_group_id),
                     "render_group_id": profile_group_id,
@@ -5750,6 +6156,22 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             overlay_delta = percentile_summary(self.demo31_overlay_render_group_delta_samples)
             tracking_mask_age = percentile_summary(self.demo31_tracking_mask_age_ms_samples)
             tracker_fusion = percentile_summary(self.demo31_tracker_result_fusion_ms_samples)
+            overlay_surface_snap = percentile_summary(self.demo31_overlay_surface_snap_ms_samples)
+            overlay_lift = percentile_summary(self.demo31_overlay_lift_ms_samples)
+            overlay_semantic_color = percentile_summary(self.demo31_overlay_semantic_color_ms_samples)
+            overlay_bbox_filter = percentile_summary(self.demo31_overlay_bbox_filter_ms_samples)
+            overlay_concat = percentile_summary(self.demo31_overlay_concat_ms_samples)
+            overlay_control_marker_expand = percentile_summary(
+                self.demo31_overlay_control_marker_expand_ms_samples
+            )
+            overlay_tracker_result_take = percentile_summary(self.demo31_overlay_tracker_result_take_ms_samples)
+            overlay_processing = percentile_summary(self.demo31_overlay_processing_ms_samples)
+            overlay_unattributed = percentile_summary(self.demo31_overlay_unattributed_ms_samples)
+            overlay_render_packet_match = percentile_summary(self.demo31_overlay_render_packet_match_ms_samples)
+            overlay_bbox_reference = percentile_summary(self.demo31_overlay_bbox_reference_ms_samples)
+            overlay_control_point_select = percentile_summary(self.demo31_overlay_control_point_select_ms_samples)
+            overlay_frame_provenance = percentile_summary(self.demo31_overlay_frame_provenance_ms_samples)
+            overlay_render_packet_replace = percentile_summary(self.demo31_overlay_render_packet_replace_ms_samples)
             with self.demo31_pending_render_lock:
                 pending_render_count = int(len(self.demo31_pending_render_packets))
             with self.demo31_pending_fusion_lock:
@@ -5900,6 +6322,34 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "frame_bundle_strict_source_reject_count": int(self.demo31_frame_bundle_strict_source_reject_count),
                 "overlay_age_ms_median": float(age["median"]),
                 "overlay_age_ms_p95": float(age["p95"]),
+                "surface_snap_ms_p50": float(overlay_surface_snap["median"]),
+                "surface_snap_ms_p95": float(overlay_surface_snap["p95"]),
+                "lift_ms_p50": float(overlay_lift["median"]),
+                "lift_ms_p95": float(overlay_lift["p95"]),
+                "semantic_color_ms_p50": float(overlay_semantic_color["median"]),
+                "semantic_color_ms_p95": float(overlay_semantic_color["p95"]),
+                "bbox_filter_ms_p50": float(overlay_bbox_filter["median"]),
+                "bbox_filter_ms_p95": float(overlay_bbox_filter["p95"]),
+                "overlay_concat_ms_p50": float(overlay_concat["median"]),
+                "overlay_concat_ms_p95": float(overlay_concat["p95"]),
+                "control_marker_expand_ms_p50": float(overlay_control_marker_expand["median"]),
+                "control_marker_expand_ms_p95": float(overlay_control_marker_expand["p95"]),
+                "tracker_result_take_ms_p50": float(overlay_tracker_result_take["median"]),
+                "tracker_result_take_ms_p95": float(overlay_tracker_result_take["p95"]),
+                "overlay_processing_ms_p50": float(overlay_processing["median"]),
+                "overlay_processing_ms_p95": float(overlay_processing["p95"]),
+                "overlay_unattributed_ms_p50": float(overlay_unattributed["median"]),
+                "overlay_unattributed_ms_p95": float(overlay_unattributed["p95"]),
+                "render_packet_match_ms_p50": float(overlay_render_packet_match["median"]),
+                "render_packet_match_ms_p95": float(overlay_render_packet_match["p95"]),
+                "bbox_reference_ms_p50": float(overlay_bbox_reference["median"]),
+                "bbox_reference_ms_p95": float(overlay_bbox_reference["p95"]),
+                "control_point_select_ms_p50": float(overlay_control_point_select["median"]),
+                "control_point_select_ms_p95": float(overlay_control_point_select["p95"]),
+                "frame_provenance_ms_p50": float(overlay_frame_provenance["median"]),
+                "frame_provenance_ms_p95": float(overlay_frame_provenance["p95"]),
+                "render_packet_replace_ms_p50": float(overlay_render_packet_replace["median"]),
+                "render_packet_replace_ms_p95": float(overlay_render_packet_replace["p95"]),
                 "cotracker_model_ms_median": float(model["median"]),
                 "cotracker_model_ms_p95": float(model["p95"]),
                 "cotracker_e2e_ms_median": float(e2e["median"]),
@@ -6248,6 +6698,66 @@ class Demo31Runtime:
                     ),
                     "overlay_age_ms_median": float(snapshot.get("overlay_age_ms_median", 0.0) or 0.0),
                     "overlay_age_ms_p95": float(snapshot.get("overlay_age_ms_p95", 0.0) or 0.0),
+                    "surface_snap_ms_p50": float(snapshot.get("surface_snap_ms_p50", 0.0) or 0.0),
+                    "surface_snap_ms_p95": float(snapshot.get("surface_snap_ms_p95", 0.0) or 0.0),
+                    "lift_ms_p50": float(snapshot.get("lift_ms_p50", 0.0) or 0.0),
+                    "lift_ms_p95": float(snapshot.get("lift_ms_p95", 0.0) or 0.0),
+                    "semantic_color_ms_p50": float(snapshot.get("semantic_color_ms_p50", 0.0) or 0.0),
+                    "semantic_color_ms_p95": float(snapshot.get("semantic_color_ms_p95", 0.0) or 0.0),
+                    "bbox_filter_ms_p50": float(snapshot.get("bbox_filter_ms_p50", 0.0) or 0.0),
+                    "bbox_filter_ms_p95": float(snapshot.get("bbox_filter_ms_p95", 0.0) or 0.0),
+                    "overlay_concat_ms_p50": float(snapshot.get("overlay_concat_ms_p50", 0.0) or 0.0),
+                    "overlay_concat_ms_p95": float(snapshot.get("overlay_concat_ms_p95", 0.0) or 0.0),
+                    "control_marker_expand_ms_p50": float(
+                        snapshot.get("control_marker_expand_ms_p50", 0.0) or 0.0
+                    ),
+                    "control_marker_expand_ms_p95": float(
+                        snapshot.get("control_marker_expand_ms_p95", 0.0) or 0.0
+                    ),
+                    "tracker_result_take_ms_p50": float(
+                        snapshot.get("tracker_result_take_ms_p50", 0.0) or 0.0
+                    ),
+                    "tracker_result_take_ms_p95": float(
+                        snapshot.get("tracker_result_take_ms_p95", 0.0) or 0.0
+                    ),
+                    "overlay_processing_ms_p50": float(
+                        snapshot.get("overlay_processing_ms_p50", 0.0) or 0.0
+                    ),
+                    "overlay_processing_ms_p95": float(
+                        snapshot.get("overlay_processing_ms_p95", 0.0) or 0.0
+                    ),
+                    "overlay_unattributed_ms_p50": float(
+                        snapshot.get("overlay_unattributed_ms_p50", 0.0) or 0.0
+                    ),
+                    "overlay_unattributed_ms_p95": float(
+                        snapshot.get("overlay_unattributed_ms_p95", 0.0) or 0.0
+                    ),
+                    "render_packet_match_ms_p50": float(
+                        snapshot.get("render_packet_match_ms_p50", 0.0) or 0.0
+                    ),
+                    "render_packet_match_ms_p95": float(
+                        snapshot.get("render_packet_match_ms_p95", 0.0) or 0.0
+                    ),
+                    "bbox_reference_ms_p50": float(snapshot.get("bbox_reference_ms_p50", 0.0) or 0.0),
+                    "bbox_reference_ms_p95": float(snapshot.get("bbox_reference_ms_p95", 0.0) or 0.0),
+                    "control_point_select_ms_p50": float(
+                        snapshot.get("control_point_select_ms_p50", 0.0) or 0.0
+                    ),
+                    "control_point_select_ms_p95": float(
+                        snapshot.get("control_point_select_ms_p95", 0.0) or 0.0
+                    ),
+                    "frame_provenance_ms_p50": float(
+                        snapshot.get("frame_provenance_ms_p50", 0.0) or 0.0
+                    ),
+                    "frame_provenance_ms_p95": float(
+                        snapshot.get("frame_provenance_ms_p95", 0.0) or 0.0
+                    ),
+                    "render_packet_replace_ms_p50": float(
+                        snapshot.get("render_packet_replace_ms_p50", 0.0) or 0.0
+                    ),
+                    "render_packet_replace_ms_p95": float(
+                        snapshot.get("render_packet_replace_ms_p95", 0.0) or 0.0
+                    ),
                     "overlay_render_group_delta_median": float(
                         snapshot.get("overlay_render_group_delta_median", 0.0) or 0.0
                     ),

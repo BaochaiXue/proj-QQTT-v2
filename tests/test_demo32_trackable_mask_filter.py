@@ -105,6 +105,40 @@ class Demo32TrackableMaskFilterTest(unittest.TestCase):
         self.assertEqual(result.stats["object_filter"]["mode"], POSTPROCESS_ENHANCED_PT)
         self.assertEqual(result.stats["object_trackable_pixels"], 9)
 
+    def test_object_enhanced_pt_uses_largest_component_not_gap_expansion(self) -> None:
+        depth = np.ones((20, 20), dtype=np.float32)
+        object_mask = np.zeros((20, 20), dtype=bool)
+        object_mask[1:4, 1:4] = True
+        object_mask[1:4, 12:15] = True
+        controller_mask = np.zeros_like(object_mask)
+        intrinsics = np.array([[1000.0, 0.0, 0.0], [0.0, 1000.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+
+        result = build_standard_filter_trackable_masks_for_camera(
+            camera_idx=0,
+            depth_m=depth,
+            object_mask=object_mask,
+            controller_mask=controller_mask,
+            intrinsics=intrinsics,
+            c2w=np.eye(4, dtype=np.float32),
+            config=self._config(
+                object_point_control="fixed-cap",
+                object_postprocess=POSTPROCESS_ENHANCED_PT,
+                controller_postprocess=POSTPROCESS_NONE,
+                phystwin_radius_m=0.003,
+                phystwin_nb_points=1,
+                enhanced_component_voxel_size_m=0.003,
+                enhanced_keep_near_main_gap_m=0.02,
+                enhanced_min_component_points=1,
+            ),
+        )
+
+        expected_object = np.zeros_like(object_mask)
+        expected_object[1:4, 1:4] = True
+        np.testing.assert_array_equal(result.object_mask, expected_object)
+        self.assertEqual(result.stats["object_filter"]["component_selection_policy"], "largest-n")
+        self.assertEqual(result.stats["object_filter"]["kept_component_indices"], [0])
+        self.assertEqual(result.stats["object_trackable_pixels"], 9)
+
     def test_controller_enhanced_top2_keeps_two_separated_valid_components_before_query(self) -> None:
         depth = np.ones((12, 12), dtype=np.float32)
         object_mask = np.zeros((12, 12), dtype=bool)

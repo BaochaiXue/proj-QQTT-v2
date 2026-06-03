@@ -4,17 +4,21 @@ import argparse
 import contextlib
 from dataclasses import dataclass
 import io
+from pathlib import Path
 import pickle
 import queue
+import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 
 import numpy as np
 
-from qqtt.demo import demo31_runtime, demo32_runtime
+from qqtt.demo import demo31_runtime, demo32_runtime, demo33_runtime
 from qqtt.demo import demo31_cotracker_process
 from qqtt.demo.demo31_dual_gpu_ipc import TrackingInputLitePacket, TrackingResultLitePacket
+from qqtt.demo.demo33_shape_prior_warmup import ShapePriorWarmupResult
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,9 @@ class _FakeRenderPacket:
     tracker_publish_to_render_ms: float | None = None
     tracker_source_to_render_ms: float | None = None
     tracker_overlay_group_id: int | None = None
+    shape_prior_points_m: np.ndarray | None = None
+    shape_prior_colors_rgb: np.ndarray | None = None
+    shape_prior_profile: dict[str, object] | None = None
 
 
 class _FakeProcessClient:
@@ -245,6 +252,26 @@ class _FakeSharedRuntimeModule:
 
 
 class Demo31DualGpuContractTest(unittest.TestCase):
+    def _assert_overlay_substage_profile_fields(self, profile: dict[str, object]) -> None:
+        for key in (
+            "surface_snap_ms",
+            "lift_ms",
+            "semantic_color_ms",
+            "bbox_filter_ms",
+            "overlay_concat_ms",
+            "control_marker_expand_ms",
+            "tracker_result_take_ms",
+            "overlay_processing_ms",
+            "overlay_unattributed_ms",
+            "render_packet_match_ms",
+            "bbox_reference_ms",
+            "control_point_select_ms",
+            "frame_provenance_ms",
+            "render_packet_replace_ms",
+        ):
+            self.assertIn(key, profile)
+            self.assertGreaterEqual(float(profile[key]), 0.0)
+
     def _parse(self, argv: list[str], *, default_preset: str = demo31_runtime.PRESET_DEMO31_DUAL4090_HIGHFPS):
         parser = demo31_runtime.build_arg_parser(default_preset=default_preset)
         args = parser.parse_args(argv)
@@ -367,8 +394,10 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertTrue(contract["tracking_overlay_required_for_render"])
         self.assertTrue(contract["render_requires_new_cotracker_result"])
         self.assertFalse(contract["render_reuses_cached_cotracker_result"])
-        self.assertEqual(contract["tracking_overlay_color_rgb"], [255, 0, 0])
-        self.assertEqual(contract["tracking_overlay_color_mode"], "solid")
+        self.assertEqual(contract["tracking_overlay_color_rgb"], [80, 220, 255])
+        self.assertEqual(contract["tracking_overlay_object_color_rgb"], [255, 80, 80])
+        self.assertEqual(contract["tracking_overlay_controller_color_rgb"], [80, 220, 255])
+        self.assertEqual(contract["tracking_overlay_color_mode"], "semantic")
         self.assertFalse(contract["tracking_overlay_debug_color_by_camera"])
         self.assertEqual(contract["tracker_visualization_mode"], "3d-surface-markers")
         self.assertEqual(contract["tracker_3d_marker_mode"], "surface_snap")
@@ -1109,6 +1138,390 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 self.assertEqual(config.tapnextpp_checkpoint, "checkpoints/tapnextpp/tapnextpp_ckpt.pt")
                 self.assertEqual(config.tapnextpp_image_size, (256, 256))
                 self.assertTrue(config.tapnextpp_fast_postprocess)
+
+    def test_demo33_dry_run_contract_enables_shape_prior_warmup(self) -> None:
+        argv = [
+            "--dry-run",
+            "--camera-ids",
+            "0,1,2",
+            "--mask-gpu",
+            "0",
+            "--cotracker-gpu",
+            "1",
+        ]
+        parser = demo33_runtime.build_arg_parser()
+        args = parser.parse_args(argv)
+        args = demo33_runtime.apply_preset_defaults(args, explicit_options=set(argv))
+        demo33_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+
+        contract = demo33_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+        shared_args = demo33_runtime.build_shared_runtime_args(
+            args,
+            shared_runtime_module=_FakeSharedRuntimeModule,
+            live_validation={"active_serials": ["s0", "s1", "s2"]},
+            shared_profile_path=None,
+        )
+
+        self.assertEqual(contract["demo"], "demo3.3")
+        self.assertEqual(contract["runtime_module"], "qqtt.demo.demo33_runtime")
+        self.assertEqual(contract["runtime_owner"], "demo33_shape_prior_warmup")
+        self.assertTrue(contract["shape_prior_warmup_enabled"])
+        self.assertEqual(contract["shape_prior_status"], "pending")
+        self.assertEqual(contract["futurephystwin_root"], "/home/xinjie/FuturePhysTwin")
+        self.assertEqual(contract["futurephystwin_python"], sys.executable)
+        self.assertEqual(contract["sam3d_root"], "/home/xinjie/external/sam-3d-objects")
+        self.assertEqual(contract["shape_prior_camera_idx"], 0)
+        self.assertEqual(contract["shape_prior_coordinate_frame"], "qqtt_world_c2w")
+        self.assertEqual(contract["shape_prior_units"], "meters")
+        self.assertEqual(contract["shape_prior_ground_policy"], "preserve")
+        self.assertEqual(contract["shape_prior_coordinate_validation_status"], "pending")
+        self.assertEqual(contract["shape_prior_execution_mode"], "async_background_thread")
+        self.assertEqual(contract["shape_prior_start_policy"], "after-teardown")
+        self.assertEqual(contract["shape_prior_gpu"], "0")
+        self.assertEqual(contract["shape_prior_cuda_visible_devices"], "0")
+        self.assertEqual(contract["shape_prior_cuda_alloc_conf"], "expandable_segments:True")
+        self.assertTrue(contract["shape_prior_retry_after_teardown"])
+        self.assertTrue(contract["shape_prior_skip_route_visualizations"])
+        self.assertFalse(contract["shape_prior_detached_completion_started"])
+        self.assertEqual(contract["shape_prior_detached_completion_pid"], 0)
+        self.assertEqual(contract["shape_prior_detached_completion_json"], "")
+        self.assertEqual(contract["shape_prior_detached_completion_log"], "")
+        self.assertEqual(contract["shape_prior_detached_completion_wait_for_pid"], 0)
+        self.assertFalse(contract["shape_prior_blocks_tracker_input"])
+        self.assertFalse(contract["shape_prior_blocks_first_render"])
+        self.assertEqual(
+            contract["shape_prior_route"],
+            [
+                "image_upscale.py",
+                "segment_util_image.py",
+                "data_process_sam3d/shape_prior.py",
+                "data_process/align.py",
+                "data_process_sam3d/data_process_sample.py",
+            ],
+        )
+        self.assertFalse(contract["shape_prior_affects_tracker_input"])
+        self.assertFalse(contract["shape_prior_affects_live_observation_pcd"])
+        self.assertEqual(contract["overlay_display_scope"], "union")
+        self.assertTrue(contract["profile_summary_fields"]["shape_prior_warmup_enabled"])
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_status"], "pending")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_coordinate_frame"], "qqtt_world_c2w")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_units"], "meters")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_ground_policy"], "preserve")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_coordinate_validation_status"], "pending")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_execution_mode"], "async_background_thread")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_start_policy"], "after-teardown")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_gpu"], "0")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_cuda_visible_devices"], "0")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_cuda_alloc_conf"], "expandable_segments:True")
+        self.assertTrue(contract["profile_summary_fields"]["shape_prior_retry_after_teardown"])
+        self.assertTrue(contract["profile_summary_fields"]["shape_prior_skip_route_visualizations"])
+        self.assertFalse(contract["profile_summary_fields"]["shape_prior_detached_completion_started"])
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_detached_completion_pid"], 0)
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_detached_completion_json"], "")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_detached_completion_log"], "")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_detached_completion_wait_for_pid"], 0)
+        self.assertFalse(contract["profile_summary_fields"]["shape_prior_blocks_tracker_input"])
+        self.assertFalse(contract["profile_summary_fields"]["shape_prior_blocks_first_render"])
+        self.assertFalse(contract["profile_summary_fields"]["shape_prior_affects_tracker_input"])
+        self.assertFalse(contract["profile_summary_fields"]["shape_prior_affects_live_observation_pcd"])
+        self.assertEqual(shared_args.demo_version_override, "demo3.3")
+        self.assertEqual(shared_args.demo_display_name_override, "Demo 3.3")
+        self.assertTrue(shared_args.shape_prior_warmup_enabled)
+        self.assertEqual(shared_args.shape_prior_start_policy, "after-teardown")
+        self.assertEqual(shared_args.shape_prior_gpu, "auto")
+        self.assertEqual(shared_args.shape_prior_cuda_alloc_conf, "expandable_segments:True")
+        self.assertTrue(shared_args.shape_prior_retry_after_teardown)
+        self.assertTrue(shared_args.shape_prior_skip_route_visualizations)
+        self.assertEqual(shared_args.overlay_display_scope, "union")
+
+    def test_demo33_respects_explicit_overlay_display_scope(self) -> None:
+        argv = [
+            "--dry-run",
+            "--camera-ids",
+            "0,1,2",
+            "--mask-gpu",
+            "0",
+            "--cotracker-gpu",
+            "1",
+            "--overlay-display-scope",
+            "controller",
+        ]
+        parser = demo33_runtime.build_arg_parser()
+        args = parser.parse_args(argv)
+        args = demo33_runtime.apply_preset_defaults(args, explicit_options=set(argv))
+        demo33_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+
+        contract = demo33_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+
+        self.assertEqual(contract["demo"], "demo3.3")
+        self.assertEqual(contract["overlay_display_scope"], "controller")
+
+    def test_demo33_shape_prior_warmup_starts_async_without_blocking_tracker_input(self) -> None:
+        runtime_cls = demo33_runtime.make_demo33_live_runtime_class(_FakeSharedRuntimeModule)
+        runtime = object.__new__(runtime_cls)
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime.args = SimpleNamespace(output_root=tmp)
+            runtime.demo31_contract = {
+                "shape_prior_warmup_enabled": True,
+                "futurephystwin_root": tmp,
+                "futurephystwin_python": "python",
+                "sam3d_root": tmp,
+                "shape_prior_camera_idx": 0,
+                "shape_prior_force": False,
+                "shape_prior_start_policy": "after-first-render",
+                "shape_prior_gpu": "0",
+                "shape_prior_cuda_visible_devices": "0",
+                "shape_prior_cuda_alloc_conf": "expandable_segments:True",
+                "shape_prior_skip_route_visualizations": True,
+                "object_prompt": "stuffed animal",
+                "tracking_controller_label": "towel",
+            }
+            runtime.demo33_shape_prior_result = None
+            runtime.demo33_shape_prior_profile = demo33_runtime._shape_prior_profile_fields(
+                {
+                    "shape_prior_warmup_enabled": True,
+                    "shape_prior_status": "pending",
+                    "shape_prior_execution_mode": "async_background_thread",
+                    "shape_prior_start_policy": "after-first-render",
+                    "shape_prior_gpu": "0",
+                    "shape_prior_cuda_visible_devices": "0",
+                    "shape_prior_cuda_alloc_conf": "expandable_segments:True",
+                }
+            )
+            runtime.demo33_shape_prior_run_id = "async-test"
+            runtime.demo33_shape_prior_runner = None
+            runtime.demo31_tracking_overlay_first_render_group_id = None
+            started = threading.Event()
+            release = threading.Event()
+            original_route = demo33_runtime.run_futurephystwin_single_view_route
+            original_load = demo33_runtime.load_shape_prior_final_data
+
+            def _fake_run_futurephystwin_single_view_route(**kwargs):
+                started.set()
+                self.assertEqual(str(kwargs["config"].cuda_visible_devices), "0")
+                release.wait(timeout=2.0)
+                return [{"stage": "shape_prior_sam3d", "elapsed_ms": 1.0}]
+
+            def _fake_load_shape_prior_final_data(case_dir):
+                profile = {
+                    "shape_prior_status": "ready",
+                    "shape_prior_case_dir": str(case_dir),
+                    "shape_prior_source_group_id": 7,
+                    "shape_prior_coordinate_frame": "qqtt_world_c2w",
+                    "shape_prior_units": "meters",
+                    "shape_prior_ground_policy": "preserve",
+                    "shape_prior_ground_z": 0.0,
+                    "shape_prior_coordinate_validation_status": "valid",
+                    "shape_prior_coordinate_validation_reason": "ok",
+                    "shape_prior_object_points0": 1,
+                    "shape_prior_surface_points": 0,
+                    "shape_prior_interior_points": 0,
+                    "shape_prior_structure_points": 1,
+                    "shape_prior_raw_structure_points": 1,
+                    "shape_prior_render_layer_enabled": True,
+                    "shape_prior_affects_tracker_input": False,
+                    "shape_prior_affects_live_observation_pcd": False,
+                }
+                return ShapePriorWarmupResult(
+                    status="ready",
+                    case_dir=Path(profile["shape_prior_case_dir"]),
+                    object_points0=np.ones((1, 3), dtype=np.float32),
+                    surface_points=np.empty((0, 3), dtype=np.float32),
+                    interior_points=np.empty((0, 3), dtype=np.float32),
+                    structure_points=np.ones((1, 3), dtype=np.float32),
+                    structure_colors_rgb=np.asarray([[150, 150, 150]], dtype=np.uint8),
+                    profile=profile,
+                )
+
+            try:
+                demo33_runtime.run_futurephystwin_single_view_route = _fake_run_futurephystwin_single_view_route
+                demo33_runtime.load_shape_prior_final_data = _fake_load_shape_prior_final_data
+                arrays = {
+                    idx: np.full((2, 2, 3), idx, dtype=np.uint8)
+                    for idx in (0, 1, 2)
+                }
+                depth = {
+                    idx: np.ones((2, 2), dtype=np.float32)
+                    for idx in (0, 1, 2)
+                }
+                masks = {
+                    idx: np.ones((2, 2), dtype=bool)
+                    for idx in (0, 1, 2)
+                }
+                intrinsics = {
+                    idx: np.eye(3, dtype=np.float32)
+                    for idx in (0, 1, 2)
+                }
+                c2w = {
+                    idx: np.eye(4, dtype=np.float32)
+                    for idx in (0, 1, 2)
+                }
+
+                started_s = demo31_runtime.time.perf_counter()
+                profile = runtime_cls._maybe_build_shape_prior_warmup(
+                    runtime,
+                    group_id=7,
+                    timestamp_s=started_s,
+                    rgb_by_camera=arrays,
+                    depth_by_camera=depth,
+                    object_mask_by_camera=masks,
+                    controller_mask_by_camera=masks,
+                    intrinsics_by_camera=intrinsics,
+                    c2w_by_camera=c2w,
+                    camera_ids=[0, 1, 2],
+                )
+                elapsed_ms = (demo31_runtime.time.perf_counter() - started_s) * 1000.0
+
+                self.assertLess(elapsed_ms, 250.0)
+                self.assertFalse(started.wait(timeout=0.05))
+                self.assertEqual(profile["shape_prior_status"], "case_ready")
+                self.assertTrue(profile["shape_prior_snapshot_ready"])
+                self.assertEqual(profile["shape_prior_snapshot_group_id"], 7)
+                self.assertFalse(profile["shape_prior_async_started"])
+                self.assertFalse(profile["shape_prior_async_completed"])
+                self.assertFalse(profile["shape_prior_thread_alive"])
+                self.assertFalse(profile["shape_prior_blocks_tracker_input"])
+                self.assertFalse(profile["shape_prior_blocks_first_render"])
+                self.assertIsNone(runtime.demo33_shape_prior_result)
+
+                runtime.demo31_tracking_overlay_first_render_group_id = 7
+                self.assertTrue(runtime_cls._start_pending_shape_prior_warmup(runtime, "after_first_render"))
+                self.assertTrue(started.wait(timeout=1.0))
+                running_profile = runtime_cls._shape_prior_profile_snapshot(runtime)
+                self.assertEqual(running_profile["shape_prior_status"], "running")
+                self.assertEqual(running_profile["shape_prior_start_trigger"], "after_first_render")
+                self.assertFalse(running_profile["shape_prior_snapshot_ready"])
+                self.assertTrue(running_profile["shape_prior_async_started"])
+                self.assertFalse(running_profile["shape_prior_async_completed"])
+                self.assertTrue(running_profile["shape_prior_thread_alive"])
+                self.assertFalse(running_profile["shape_prior_blocks_tracker_input"])
+                self.assertFalse(running_profile["shape_prior_blocks_first_render"])
+
+                release.set()
+                final_profile = runtime_cls._wait_for_shape_prior_warmup(runtime)
+
+                self.assertEqual(final_profile["shape_prior_status"], "ready")
+                self.assertTrue(final_profile["shape_prior_async_started"])
+                self.assertTrue(final_profile["shape_prior_async_completed"])
+                self.assertFalse(final_profile["shape_prior_thread_alive"])
+                self.assertGreaterEqual(final_profile["shape_prior_async_elapsed_ms"], 0.0)
+                self.assertIsNotNone(runtime.demo33_shape_prior_result)
+            finally:
+                release.set()
+                thread = getattr(runtime, "demo33_shape_prior_thread", None)
+                if thread is not None:
+                    thread.join(timeout=2.0)
+                demo33_runtime.run_futurephystwin_single_view_route = original_route
+                demo33_runtime.load_shape_prior_final_data = original_load
+
+    def test_demo33_shape_prior_attaches_to_tracker_pending_render_packet(self) -> None:
+        runtime_cls = demo33_runtime.make_demo33_live_runtime_class(_FakeSharedRuntimeModule)
+        runtime = object.__new__(runtime_cls)
+        points = np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32)
+        colors = np.asarray([[150, 150, 150]], dtype=np.uint8)
+        runtime.demo33_shape_prior_result = SimpleNamespace(
+            status="ready",
+            structure_points=points,
+            structure_colors_rgb=colors,
+            profile={
+                "shape_prior_status": "ready",
+                "shape_prior_structure_points": 1,
+                "shape_prior_affects_tracker_input": False,
+                "shape_prior_affects_live_observation_pcd": False,
+            },
+        )
+        packet = _FakeRenderPacket(
+            group_id=10,
+            controller_points_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+        )
+
+        attached = runtime_cls._attach_shape_prior_render_layer(runtime, packet)
+
+        np.testing.assert_array_equal(attached.shape_prior_points_m, points)
+        np.testing.assert_array_equal(attached.shape_prior_colors_rgb, colors)
+        self.assertEqual(attached.shape_prior_profile["shape_prior_status"], "ready")
+
+    def test_demo33_invalid_shape_prior_does_not_attach_to_render_packet(self) -> None:
+        runtime_cls = demo33_runtime.make_demo33_live_runtime_class(_FakeSharedRuntimeModule)
+        runtime = object.__new__(runtime_cls)
+        runtime.demo33_shape_prior_result = SimpleNamespace(
+            status="invalid_coordinate_policy",
+            structure_points=np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32),
+            structure_colors_rgb=np.asarray([[150, 150, 150]], dtype=np.uint8),
+            profile={
+                "shape_prior_status": "invalid_coordinate_policy",
+                "shape_prior_coordinate_validation_status": "invalid",
+                "shape_prior_render_layer_enabled": False,
+            },
+        )
+        packet = _FakeRenderPacket(
+            group_id=10,
+            controller_points_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+        )
+
+        attached = runtime_cls._attach_shape_prior_render_layer(runtime, packet)
+
+        self.assertIs(attached, packet)
+        self.assertIsNone(attached.shape_prior_points_m)
+
+    def test_demo33_shape_prior_profile_fields_merge_into_summaries(self) -> None:
+        profile = {
+            "shape_prior_warmup_enabled": True,
+            "shape_prior_status": "ready",
+            "shape_prior_case_dir": "/case",
+            "shape_prior_source_group_id": 9,
+            "shape_prior_coordinate_frame": "qqtt_world_c2w",
+            "shape_prior_units": "meters",
+            "shape_prior_ground_policy": "preserve",
+            "shape_prior_ground_z": 0.0,
+            "shape_prior_coordinate_validation_status": "valid",
+            "shape_prior_coordinate_validation_reason": "ok",
+            "shape_prior_object_points0": 2,
+            "shape_prior_surface_points": 1,
+            "shape_prior_interior_points": 3,
+            "shape_prior_structure_points": 6,
+            "shape_prior_raw_structure_points": 6,
+            "shape_prior_render_layer_enabled": True,
+            "shape_prior_affects_tracker_input": False,
+            "shape_prior_affects_live_observation_pcd": False,
+        }
+
+        payload = demo33_runtime._merge_shape_prior_profile_into_payload({}, profile)
+        self.assertEqual(payload["shape_prior_status"], "ready")
+        self.assertEqual(payload["shape_prior_structure_points"], 6)
+        self.assertEqual(payload["shape_prior_coordinate_validation_status"], "valid")
+        self.assertEqual(payload["shape_prior_ground_policy"], "preserve")
+        self.assertFalse(payload["shape_prior_affects_tracker_input"])
+
+        summary: dict[str, object] = {}
+        demo31_runtime._merge_cotracker_process_snapshot_metrics(summary, {"shape_prior_warmup": profile})
+        self.assertEqual(summary["shape_prior_status"], "ready")
+        self.assertEqual(summary["shape_prior_structure_points"], 6)
+        self.assertEqual(summary["shape_prior_coordinate_validation_status"], "valid")
+        self.assertFalse(summary["shape_prior_affects_live_observation_pcd"])
+
+    def test_demo32_dry_run_contract_does_not_gain_shape_prior_fields(self) -> None:
+        argv = [
+            "--dry-run",
+            "--camera-ids",
+            "0,1,2",
+            "--mask-gpu",
+            "0",
+            "--cotracker-gpu",
+            "1",
+        ]
+        parser = demo32_runtime.build_arg_parser()
+        args = parser.parse_args(argv)
+        args = demo32_runtime.apply_preset_defaults(args, explicit_options=set(argv))
+        demo32_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+        contract = demo32_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+
+        self.assertEqual(contract["demo"], "demo3.2")
+        self.assertEqual(contract["runtime_module"], "qqtt.demo.demo32_runtime")
+        self.assertNotIn("shape_prior_warmup_enabled", contract)
+        self.assertNotIn("shape_prior_status", contract["profile_summary_fields"])
 
     def test_demo32_accepts_litetracker_serial_onnx_runtime(self) -> None:
         args = self._parse(
@@ -2067,9 +2480,11 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         np.testing.assert_allclose(published.controller_points_m[0], np.array([1.0, 2.0, 3.0], dtype=np.float32))  # type: ignore[index]
         np.testing.assert_array_equal(  # type: ignore[union-attr]
             np.unique(published.controller_colors_rgb, axis=0),
-            np.array([[255, 0, 0]], dtype=np.uint8),
+            np.array([[80, 220, 255]], dtype=np.uint8),
         )
         overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self._assert_overlay_substage_profile_fields(overlay_profile)
+        self.assertGreaterEqual(float(overlay_profile["surface_snap_ms"]), 0.0)
         self.assertEqual(overlay_profile["tracker_visualization_mode"], "3d-surface-markers")
         self.assertEqual(overlay_profile["tracker_3d_marker_mode"], "surface_snap")
         self.assertEqual(overlay_profile["tracker_3d_marker_shape"], "sphere")
@@ -2207,9 +2622,86 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["tracking_render_packet_group_delta"], 0)
         self.assertEqual(overlay_profile["overlay_lift_method"], "semantic_projection_grid")
         self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 1})
-        self.assertEqual(overlay_profile["overlay_color_mode"], "solid")
+        self.assertEqual(overlay_profile["overlay_color_mode"], "semantic")
+        self.assertEqual(overlay_profile["overlay_object_color_rgb"], [255, 80, 80])
+        self.assertEqual(overlay_profile["overlay_controller_color_rgb"], [80, 220, 255])
         self.assertTrue(overlay_profile["render_requires_new_cotracker_result"])
         self.assertFalse(overlay_profile["render_reuses_cached_cotracker_result"])
+
+    def test_renderer_colors_tracked_object_and_controller_points_by_semantic_label(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0], [0.0, 1.0]], dtype=np.float32)},
+            camera_visibility={0: np.array([1.0, 1.0], dtype=np.float32)},
+            query_points_yx={0: np.array([[0.0, 0.0], [0.0, 1.0]], dtype=np.float32)},
+            query_is_object_by_camera={0: np.array([True, False], dtype=bool)},
+            query_is_controller_by_camera={0: np.array([False, True], dtype=bool)},
+            publish_range=(1, 1),
+            overlay_display_scope="union",
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(
+                camera_ids=(0,),
+                overlay_debug_color_by_camera=False,
+                overlay_display_scope="union",
+                overlay_reject_outside_semantic_bbox=False,
+                overlay_control_point_markers=False,
+                overlay_render_raw_track_points=True,
+                tracker_visualization_mode=demo31_runtime.TRACKER_VISUALIZATION_MODE_LEGACY_3D_LIFT,
+            ),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "batch_bundle_policy": "same-bundle-latest-wins",
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
+                "tracking_control_point_markers": False,
+                "overlay_render_raw_track_points": True,
+                "tracker_visualization_mode": demo31_runtime.TRACKER_VISUALIZATION_MODE_LEGACY_3D_LIFT,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime.demo31_lift_input_cache.publish(
+            group_id=1,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 2), 1.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 2), dtype=bool)},
+        )
+        packet = _FakeRenderPacket(
+            group_id=1,
+            controller_points_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb=np.empty((0, 3), dtype=np.uint8),
+        )
+
+        runtime._publish_render_packet(packet)
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        published = runtime.published_packet
+        self.assertIsNotNone(published)
+        np.testing.assert_allclose(  # type: ignore[union-attr]
+            published.controller_points_m[-2:],
+            np.array([[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]], dtype=np.float32),
+        )
+        np.testing.assert_array_equal(  # type: ignore[union-attr]
+            published.controller_colors_rgb[-2:],
+            np.array([[255, 80, 80], [80, 220, 255]], dtype=np.uint8),
+        )
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self._assert_overlay_substage_profile_fields(overlay_profile)
+        self.assertEqual(overlay_profile["overlay_color_mode"], "semantic")
+        self.assertEqual(overlay_profile["overlay_lift_mask_scope"], "union")
+        self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 2})
 
     def test_renderer_lifts_overlay_with_semantic_projection_grid_and_camera_debug_color(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
@@ -2455,6 +2947,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         marker_vertices = len(demo31_runtime._SPHERE_MARKER_OFFSETS)
         self.assertEqual(len(published.controller_points_m), 1 + 3 * marker_vertices)  # type: ignore[arg-type]
         overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self._assert_overlay_substage_profile_fields(overlay_profile)
+        self.assertGreaterEqual(float(overlay_profile["lift_ms"]), 0.0)
         self.assertEqual(overlay_profile["tracker_visualization_mode"], "all-tracks-3d-lift")
         self.assertEqual(overlay_profile["tracker_3d_marker_mode"], "all-tracks-3d-lift")
         self.assertTrue(overlay_profile["tracker_direct_depth_lift_used"])
@@ -2615,7 +3109,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(len(published.controller_points_m), 2 * marker_vertices)  # type: ignore[arg-type]
         np.testing.assert_array_equal(  # type: ignore[union-attr]
             np.unique(published.controller_colors_rgb, axis=0),
-            np.array([[255, 0, 0]], dtype=np.uint8),
+            np.array([[80, 220, 255]], dtype=np.uint8),
         )
         overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
         self.assertEqual(overlay_profile["overlay_track_points"], 3)

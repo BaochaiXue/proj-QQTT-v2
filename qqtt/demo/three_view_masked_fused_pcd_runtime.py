@@ -57,6 +57,7 @@ from qqtt.demo.realtime_masked_edgetam_pcd import (  # noqa: E402
 )
 from qqtt.demo.pcd_filter_fast import voxel_cap_points, voxel_downsample_points  # noqa: E402
 from qqtt.demo.pcd_postprocess import (  # noqa: E402
+    COMPONENT_SELECTION_LARGEST_N,
     COMPONENT_SELECTION_LARGEST_N_PLUS_GAP,
     COMPONENT_SELECTION_POLICIES,
 )
@@ -297,7 +298,9 @@ DEFAULT_CONTROLLER_RENDER_VOXEL_M = DEFAULT_CONTROLLER_FILTER_VOXEL_M
 DEFAULT_CONTROLLER_RENDER_MAX_POINTS = 10_000
 DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS = 1
 DEFAULT_CONTROLLER_ENHANCED_KEEP_TOP_N_COMPONENTS = 2
-DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP
+DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N
+DEFAULT_CONTROLLER_ENHANCED_COMPONENT_SELECTION_POLICY = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP
+DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY = DEFAULT_CONTROLLER_ENHANCED_COMPONENT_SELECTION_POLICY
 DEFAULT_ENHANCED_MIN_COMPONENT_POINTS = 32
 DEFAULT_ENHANCED_MIN_COMPONENT_RATIO = 0.0
 DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD = True
@@ -435,6 +438,9 @@ def render_startup_hud_text(args: argparse.Namespace, *, demo_display_name: str 
         if bool(getattr(args, "external_tracker_marker_required", False)):
             tracker_stage += " + 3D anchors"
         stages.append(tracker_stage)
+
+    if bool(getattr(args, "shape_prior_warmup_enabled", False)):
+        stages.append("single-view SAM3D prior")
 
     return f"{display_name} warming up: {' + '.join(stages)}"
 
@@ -1372,6 +1378,9 @@ class FusedPcdPacket:
     tracker_publish_to_render_ms: float | None = None
     tracker_source_to_render_ms: float | None = None
     tracker_overlay_group_id: int | None = None
+    shape_prior_points_m: np.ndarray | None = None
+    shape_prior_colors_rgb: np.ndarray | None = None
+    shape_prior_profile: dict[str, Any] | None = None
 
     @property
     def seq(self) -> int:
@@ -1384,6 +1393,15 @@ class FusedPcdPacket:
     @property
     def controller_point_count(self) -> int:
         return int(self.controller_points_m.shape[0])
+
+    @property
+    def shape_prior_point_count(self) -> int:
+        if self.shape_prior_points_m is None:
+            return 0
+        arr = np.asarray(self.shape_prior_points_m)
+        if arr.size % 3 != 0:
+            return 0
+        return int(arr.reshape(-1, 3).shape[0])
 
 
 PROFILE_FLAG_ATTRS = (
@@ -3530,6 +3548,10 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "enhanced_component_selection_policy": str(
             getattr(args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
         ),
+        "object_enhanced_component_selection_policy": DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY,
+        "controller_enhanced_component_selection_policy": str(
+            getattr(args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+        ),
         "enhanced_min_component_points": int(
             getattr(args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
         ),
@@ -3559,7 +3581,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
                     getattr(args, "object_enhanced_keep_top_n_components", DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS)
                 ),
                 "enhanced_component_selection_policy": str(
-                    getattr(args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+                    DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY
                 ),
                 "enhanced_min_component_points": int(
                     getattr(args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
@@ -5180,6 +5202,24 @@ class Demo21Runtime:
             f"- H2D stream mode: `{payload.get('h2d_stream_mode', 'default')}`",
             "",
         ]
+        shape_prior = payload.get("shape_prior_warmup")
+        if isinstance(shape_prior, dict):
+            lines.extend(
+                [
+                    "## Shape Prior Warmup",
+                    "",
+                    f"- enabled: `{shape_prior.get('shape_prior_warmup_enabled', False)}`",
+                    f"- status: `{shape_prior.get('shape_prior_status', 'disabled')}`",
+                    f"- case dir: `{shape_prior.get('shape_prior_case_dir', '')}`",
+                    f"- object points0: `{int(shape_prior.get('shape_prior_object_points0', 0) or 0)}`",
+                    f"- surface points: `{int(shape_prior.get('shape_prior_surface_points', 0) or 0)}`",
+                    f"- interior points: `{int(shape_prior.get('shape_prior_interior_points', 0) or 0)}`",
+                    f"- structure points: `{int(shape_prior.get('shape_prior_structure_points', 0) or 0)}`",
+                    f"- affects tracker input: `{shape_prior.get('shape_prior_affects_tracker_input', False)}`",
+                    f"- affects live observation PCD: `{shape_prior.get('shape_prior_affects_live_observation_pcd', False)}`",
+                    "",
+                ]
+            )
         if is_demo22:
             lines.insert(14, f"- Demo 2.2 PASS threshold: `{pass_threshold:.2f} FPS`")
             lines.insert(15, f"- Demo 2.2 result: `{pass_status}`")
@@ -8563,7 +8603,7 @@ class Demo21Runtime:
                     getattr(self.args, "object_enhanced_keep_top_n_components", DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS)
                 ),
                 enhanced_component_selection_policy=str(
-                    getattr(self.args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+                    DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY
                 ),
                 enhanced_min_component_points=int(
                     getattr(self.args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
@@ -8594,7 +8634,7 @@ class Demo21Runtime:
                 getattr(self.args, "object_enhanced_keep_top_n_components", DEFAULT_OBJECT_ENHANCED_KEEP_TOP_N_COMPONENTS)
             ),
             enhanced_component_selection_policy=str(
-                getattr(self.args, "enhanced_component_selection_policy", DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY)
+                DEFAULT_OBJECT_ENHANCED_COMPONENT_SELECTION_POLICY
             ),
             enhanced_min_component_points=int(
                 getattr(self.args, "enhanced_min_component_points", DEFAULT_ENHANCED_MIN_COMPONENT_POINTS)
@@ -9221,11 +9261,35 @@ class Demo21Runtime:
             device=device,
             backend=str(self.args.render_backend),
         )
+        shape_prior_state = Open3DSceneTensorLayer(
+            name="demo3_3_shape_prior_canonical",
+            o3d_module=o3d,
+            o3c_module=o3c,
+            rendering_module=rendering,
+            scene=scene_widget.scene,
+            material=material,
+            device=device,
+            backend=str(self.args.render_backend),
+        )
         render_combiner = RenderLayerCombiner()
         camera_ready = {"value": False}
 
+        def shape_prior_layer(packet: FusedPcdPacket) -> tuple[np.ndarray, np.ndarray]:
+            points = getattr(packet, "shape_prior_points_m", None)
+            colors = getattr(packet, "shape_prior_colors_rgb", None)
+            if points is None or colors is None:
+                return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint8)
+            points_arr = np.ascontiguousarray(np.asarray(points, dtype=np.float32).reshape(-1, 3))
+            colors_arr = np.asarray(colors)
+            if colors_arr.size == 0 or colors_arr.size % 3 != 0 or len(colors_arr.reshape(-1, 3)) != len(points_arr):
+                colors_arr = np.tile(np.asarray([[150, 150, 150]], dtype=np.uint8), (len(points_arr), 1))
+            else:
+                colors_arr = np.ascontiguousarray(colors_arr.reshape(-1, 3))
+            return points_arr, colors_arr
+
         def reset_camera(packet: FusedPcdPacket) -> None:
-            points = np.concatenate([packet.object_points_m, packet.controller_points_m], axis=0)
+            prior_points, _prior_colors = shape_prior_layer(packet)
+            points = np.concatenate([packet.object_points_m, packet.controller_points_m, prior_points], axis=0)
             if len(points) == 0:
                 return
             bbox = o3d.geometry.AxisAlignedBoundingBox(points.min(axis=0), points.max(axis=0))
@@ -9242,17 +9306,23 @@ class Demo21Runtime:
                     return
                 wait_packet_ms = _elapsed_ms(packet.created_perf_s, render_started_s)
                 combine_ms = 0.0
+                shape_prior_points, shape_prior_colors = shape_prior_layer(packet)
+                shape_prior_count = int(len(shape_prior_points))
                 if str(getattr(self.args, "render_layer_mode", DEFAULT_RENDER_LAYER_MODE)) == RENDER_LAYER_MODE_COMBINED:
+                    render_layers = [
+                        (packet.object_points_m, packet.object_colors_rgb),
+                        (packet.controller_points_m, packet.controller_colors_rgb),
+                    ]
+                    if shape_prior_count > 0:
+                        render_layers.append((shape_prior_points, shape_prior_colors))
                     combined_points, combined_colors, combine_ms = render_combiner.combine(
-                        (
-                            (packet.object_points_m, packet.object_colors_rgb),
-                            (packet.controller_points_m, packet.controller_colors_rgb),
-                        )
+                        tuple(render_layers)
                     )
                     combined_update = combined_state.update(combined_points, combined_colors)
-                    object_update = controller_update = combined_update
+                    object_update = controller_update = shape_prior_update = combined_update
                     object_update_geometry_ms = 0.0
                     controller_update_geometry_ms = 0.0
+                    shape_prior_update_geometry_ms = 0.0
                     points_update_ms = combined_update.open3d_points_update_ms
                     colors_update_ms = combined_update.open3d_colors_update_ms
                     update_geometry_ms = combined_update.open3d_update_geometry_ms
@@ -9263,27 +9333,53 @@ class Demo21Runtime:
                     set_object_colors_ms = 0.0
                     set_controller_points_ms = 0.0
                     set_controller_colors_ms = 0.0
+                    set_shape_prior_points_ms = 0.0
+                    set_shape_prior_colors_ms = 0.0
                     object_cpu_format_ms = 0.0
                     controller_cpu_format_ms = 0.0
+                    shape_prior_cpu_format_ms = 0.0
                 else:
                     object_update = object_state.update(packet.object_points_m, packet.object_colors_rgb)
                     controller_update = controller_state.update(packet.controller_points_m, packet.controller_colors_rgb)
+                    shape_prior_update = shape_prior_state.update(shape_prior_points, shape_prior_colors)
                     object_update_geometry_ms = object_update.open3d_update_geometry_ms
                     controller_update_geometry_ms = controller_update.open3d_update_geometry_ms
-                    points_update_ms = object_update.open3d_points_update_ms + controller_update.open3d_points_update_ms
-                    colors_update_ms = object_update.open3d_colors_update_ms + controller_update.open3d_colors_update_ms
-                    update_geometry_ms = object_update.open3d_update_geometry_ms + controller_update.open3d_update_geometry_ms
-                    cpu_format_ms = object_update.cpu_format_ms + controller_update.cpu_format_ms
-                    geometry_recreated = bool(object_update.geometry_recreated or controller_update.geometry_recreated)
-                    tensor_rebound = bool(object_update.tensor_rebound or controller_update.tensor_rebound)
+                    shape_prior_update_geometry_ms = shape_prior_update.open3d_update_geometry_ms
+                    points_update_ms = (
+                        object_update.open3d_points_update_ms
+                        + controller_update.open3d_points_update_ms
+                        + shape_prior_update.open3d_points_update_ms
+                    )
+                    colors_update_ms = (
+                        object_update.open3d_colors_update_ms
+                        + controller_update.open3d_colors_update_ms
+                        + shape_prior_update.open3d_colors_update_ms
+                    )
+                    update_geometry_ms = (
+                        object_update.open3d_update_geometry_ms
+                        + controller_update.open3d_update_geometry_ms
+                        + shape_prior_update.open3d_update_geometry_ms
+                    )
+                    cpu_format_ms = object_update.cpu_format_ms + controller_update.cpu_format_ms + shape_prior_update.cpu_format_ms
+                    geometry_recreated = bool(
+                        object_update.geometry_recreated
+                        or controller_update.geometry_recreated
+                        or shape_prior_update.geometry_recreated
+                    )
+                    tensor_rebound = bool(
+                        object_update.tensor_rebound or controller_update.tensor_rebound or shape_prior_update.tensor_rebound
+                    )
                     set_object_points_ms = object_update.open3d_points_update_ms
                     set_object_colors_ms = object_update.open3d_colors_update_ms
                     set_controller_points_ms = controller_update.open3d_points_update_ms
                     set_controller_colors_ms = controller_update.open3d_colors_update_ms
+                    set_shape_prior_points_ms = shape_prior_update.open3d_points_update_ms
+                    set_shape_prior_colors_ms = shape_prior_update.open3d_colors_update_ms
                     object_cpu_format_ms = object_update.cpu_format_ms
                     controller_cpu_format_ms = controller_update.cpu_format_ms
+                    shape_prior_cpu_format_ms = shape_prior_update.cpu_format_ms
                 reset_camera_ms = 0.0
-                if not camera_ready["value"] and (packet.object_point_count + packet.controller_point_count) > 0:
+                if not camera_ready["value"] and (packet.object_point_count + packet.controller_point_count + shape_prior_count) > 0:
                     reset_start_s = time.perf_counter()
                     reset_camera(packet)
                     reset_camera_ms = _elapsed_ms(reset_start_s, time.perf_counter())
@@ -9310,6 +9406,7 @@ class Demo21Runtime:
                 hud_label.text = (
                     f"{render_label} | group={packet.group_id} | "
                     f"object={packet.object_point_count} pts | controller={packet.controller_point_count} pts | "
+                    f"prior={shape_prior_count} pts | "
                     f"skew={packet.capture_temporal_skew_ms:.1f} ms | "
                     f"{depth_label}={packet.ffs_cycle_ms:.1f} ms | "
                     f"hf_edgetam=max {edgetam_max_ms:.1f}/sum {edgetam_sum_ms:.1f} ms | "
@@ -9328,8 +9425,12 @@ class Demo21Runtime:
                     except Exception:
                         pass
                 total_ms = _elapsed_ms(render_started_s, time.perf_counter())
-                points_count = packet.object_point_count + packet.controller_point_count
-                colors_count = int(packet.object_colors_rgb.shape[0] + packet.controller_colors_rgb.shape[0])
+                points_count = packet.object_point_count + packet.controller_point_count + shape_prior_count
+                colors_count = int(
+                    packet.object_colors_rgb.shape[0]
+                    + packet.controller_colors_rgb.shape[0]
+                    + shape_prior_colors.shape[0]
+                )
                 render_profile = RenderMicroProfileRecord(
                     render_packet_id=int(packet.group_id),
                     points_count=int(points_count),
@@ -9352,11 +9453,15 @@ class Demo21Runtime:
                         "render_layer_mode": str(getattr(self.args, "render_layer_mode", DEFAULT_RENDER_LAYER_MODE)),
                         "object_points_count": int(packet.object_point_count),
                         "controller_points_count": int(packet.controller_point_count),
+                        "shape_prior_points_count": int(shape_prior_count),
                         "combine_ms": float(combine_ms),
                         "object_cpu_format_ms": float(object_cpu_format_ms),
                         "controller_cpu_format_ms": float(controller_cpu_format_ms),
+                        "shape_prior_cpu_format_ms": float(shape_prior_cpu_format_ms),
                         "object_update_geometry_ms": float(object_update_geometry_ms),
                         "controller_update_geometry_ms": float(controller_update_geometry_ms),
+                        "shape_prior_update_geometry_ms": float(shape_prior_update_geometry_ms),
+                        "shape_prior_profile": getattr(packet, "shape_prior_profile", None),
                         "render_buffer": self.render_buffer.snapshot(),
                         "render_post_gate": self.render_post_gate.snapshot(),
                     },
@@ -9373,8 +9478,13 @@ class Demo21Runtime:
                         "set_object_colors_ms": float(set_object_colors_ms),
                         "set_controller_points_ms": float(set_controller_points_ms),
                         "set_controller_colors_ms": float(set_controller_colors_ms),
+                        "set_shape_prior_points_ms": float(set_shape_prior_points_ms),
+                        "set_shape_prior_colors_ms": float(set_shape_prior_colors_ms),
                         "object_update_geometry_ms": float(object_update_geometry_ms),
                         "controller_update_geometry_ms": float(controller_update_geometry_ms),
+                        "shape_prior_update_geometry_ms": float(shape_prior_update_geometry_ms),
+                        "shape_prior_points_count": int(shape_prior_count),
+                        "shape_prior_profile": getattr(packet, "shape_prior_profile", None),
                         "open3d_points_update_ms": float(points_update_ms),
                         "open3d_colors_update_ms": float(colors_update_ms),
                         "update_geometry_ms": float(update_geometry_ms),
