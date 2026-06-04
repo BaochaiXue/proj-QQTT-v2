@@ -258,6 +258,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
             "lift_ms",
             "semantic_color_ms",
             "bbox_filter_ms",
+            "query_pcd_semantic_mask_gate_ms",
+            "query_pcd_filter_ms",
             "overlay_concat_ms",
             "control_marker_expand_ms",
             "tracker_result_take_ms",
@@ -409,6 +411,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["tracker_control_point_selection"], "visible-spread")
         self.assertEqual(contract["all_tracks_lift_max_points_per_camera"], 512)
         self.assertEqual(contract["all_tracks_lift_selection"], "visible-spread")
+        self.assertFalse(contract["query_pcd_filter_enabled"])
+        self.assertEqual(contract["query_pcd_filter_max_distance_m"], 0.035)
+        self.assertFalse(contract["query_pcd_semantic_mask_gate_enabled"])
         self.assertEqual(contract["tracking_overlay_lift_method"], "surface_snap")
         self.assertEqual(contract["overlay_max_points_per_camera"], 0)
         self.assertEqual(contract["overlay_display_scope"], "controller")
@@ -1046,6 +1051,11 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(contract["tracker_surface_gate_enabled"])
         self.assertFalse(contract["overlay_bbox_filter_enabled"])
         self.assertEqual(contract["tracking_overlay_lift_method"], "all_tracks_depth_lift")
+        self.assertTrue(contract["query_pcd_filter_enabled"])
+        self.assertEqual(contract["query_pcd_filter_mode"], "enhanced_pt_reference_distance")
+        self.assertEqual(contract["query_pcd_filter_max_distance_m"], 0.035)
+        self.assertTrue(contract["query_pcd_semantic_mask_gate_enabled"])
+        self.assertEqual(contract["query_pcd_semantic_mask_gate_mode"], "current_semantic_mask")
         self.assertEqual(contract["tracking_control_point_count_requested"], 0)
         self.assertEqual(contract["all_tracks_lift_max_points_per_camera"], 512)
         self.assertEqual(contract["all_tracks_lift_selection"], "visible-spread")
@@ -1139,7 +1149,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 self.assertEqual(config.tapnextpp_image_size, (256, 256))
                 self.assertTrue(config.tapnextpp_fast_postprocess)
 
-    def test_demo33_dry_run_contract_enables_shape_prior_warmup(self) -> None:
+    def test_demo33_dry_run_contract_disables_shape_prior_warmup_by_default(self) -> None:
         argv = [
             "--dry-run",
             "--camera-ids",
@@ -1165,8 +1175,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["demo"], "demo3.3")
         self.assertEqual(contract["runtime_module"], "qqtt.demo.demo33_runtime")
         self.assertEqual(contract["runtime_owner"], "demo33_shape_prior_warmup")
-        self.assertTrue(contract["shape_prior_warmup_enabled"])
-        self.assertEqual(contract["shape_prior_status"], "pending")
+        self.assertFalse(contract["shape_prior_warmup_enabled"])
+        self.assertEqual(contract["shape_prior_status"], "disabled")
         self.assertEqual(contract["futurephystwin_root"], "/home/xinjie/FuturePhysTwin")
         self.assertEqual(contract["futurephystwin_python"], sys.executable)
         self.assertEqual(contract["sam3d_root"], "/home/xinjie/external/sam-3d-objects")
@@ -1174,9 +1184,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["shape_prior_coordinate_frame"], "qqtt_world_c2w")
         self.assertEqual(contract["shape_prior_units"], "meters")
         self.assertEqual(contract["shape_prior_ground_policy"], "preserve")
-        self.assertEqual(contract["shape_prior_coordinate_validation_status"], "pending")
-        self.assertEqual(contract["shape_prior_execution_mode"], "async_background_thread")
-        self.assertEqual(contract["shape_prior_start_policy"], "after-teardown")
+        self.assertEqual(contract["shape_prior_coordinate_validation_status"], "disabled")
+        self.assertEqual(contract["shape_prior_execution_mode"], "disabled")
+        self.assertEqual(contract["shape_prior_start_policy"], "disabled")
         self.assertEqual(contract["shape_prior_gpu"], "0")
         self.assertEqual(contract["shape_prior_cuda_visible_devices"], "0")
         self.assertEqual(contract["shape_prior_cuda_alloc_conf"], "expandable_segments:True")
@@ -1202,14 +1212,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(contract["shape_prior_affects_tracker_input"])
         self.assertFalse(contract["shape_prior_affects_live_observation_pcd"])
         self.assertEqual(contract["overlay_display_scope"], "union")
-        self.assertTrue(contract["profile_summary_fields"]["shape_prior_warmup_enabled"])
-        self.assertEqual(contract["profile_summary_fields"]["shape_prior_status"], "pending")
+        self.assertFalse(contract["profile_summary_fields"]["shape_prior_warmup_enabled"])
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_status"], "disabled")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_coordinate_frame"], "qqtt_world_c2w")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_units"], "meters")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_ground_policy"], "preserve")
-        self.assertEqual(contract["profile_summary_fields"]["shape_prior_coordinate_validation_status"], "pending")
-        self.assertEqual(contract["profile_summary_fields"]["shape_prior_execution_mode"], "async_background_thread")
-        self.assertEqual(contract["profile_summary_fields"]["shape_prior_start_policy"], "after-teardown")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_coordinate_validation_status"], "disabled")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_execution_mode"], "disabled")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_start_policy"], "disabled")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_gpu"], "0")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_cuda_visible_devices"], "0")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_cuda_alloc_conf"], "expandable_segments:True")
@@ -1226,13 +1236,47 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(contract["profile_summary_fields"]["shape_prior_affects_live_observation_pcd"])
         self.assertEqual(shared_args.demo_version_override, "demo3.3")
         self.assertEqual(shared_args.demo_display_name_override, "Demo 3.3")
-        self.assertTrue(shared_args.shape_prior_warmup_enabled)
+        self.assertFalse(shared_args.shape_prior_warmup_enabled)
         self.assertEqual(shared_args.shape_prior_start_policy, "after-teardown")
         self.assertEqual(shared_args.shape_prior_gpu, "auto")
         self.assertEqual(shared_args.shape_prior_cuda_alloc_conf, "expandable_segments:True")
         self.assertTrue(shared_args.shape_prior_retry_after_teardown)
         self.assertTrue(shared_args.shape_prior_skip_route_visualizations)
         self.assertEqual(shared_args.overlay_display_scope, "union")
+
+    def test_demo33_dry_run_contract_enables_shape_prior_warmup_when_explicit(self) -> None:
+        argv = [
+            "--dry-run",
+            "--camera-ids",
+            "0,1,2",
+            "--mask-gpu",
+            "0",
+            "--cotracker-gpu",
+            "1",
+            "--shape-prior-warmup",
+        ]
+        parser = demo33_runtime.build_arg_parser()
+        args = parser.parse_args(argv)
+        args = demo33_runtime.apply_preset_defaults(args, explicit_options=set(argv))
+        demo33_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
+
+        contract = demo33_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
+        shared_args = demo33_runtime.build_shared_runtime_args(
+            args,
+            shared_runtime_module=_FakeSharedRuntimeModule,
+            live_validation={"active_serials": ["s0", "s1", "s2"]},
+            shared_profile_path=None,
+        )
+
+        self.assertTrue(contract["shape_prior_warmup_enabled"])
+        self.assertEqual(contract["shape_prior_status"], "pending")
+        self.assertEqual(contract["shape_prior_coordinate_validation_status"], "pending")
+        self.assertEqual(contract["shape_prior_execution_mode"], "async_background_thread")
+        self.assertEqual(contract["shape_prior_start_policy"], "after-teardown")
+        self.assertTrue(contract["profile_summary_fields"]["shape_prior_warmup_enabled"])
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_status"], "pending")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_start_policy"], "after-teardown")
+        self.assertTrue(shared_args.shape_prior_warmup_enabled)
 
     def test_demo33_respects_explicit_overlay_display_scope(self) -> None:
         argv = [
@@ -2888,7 +2932,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 1})
         self.assertEqual(overlay_profile["overlay_world_centroid_by_camera"], {0: [0.0, 0.0, 1.0]})
 
-    def test_all_tracks_anchor_mode_disables_surface_mask_and_bbox_gates(self) -> None:
+    def test_all_tracks_anchor_mode_disables_bbox_but_tracks_semantic_mask_gate(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
         result = TrackingResultLitePacket(
             group_id=1,
@@ -2923,7 +2967,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
             },
             cotracker_process_config=SimpleNamespace(),
         )
-        controller_mask = np.array([[True, False, False]], dtype=bool)
+        controller_mask = np.ones((1, 3), dtype=bool)
         runtime.demo31_lift_input_cache.publish(
             group_id=1,
             timestamp_s=now_s,
@@ -2959,6 +3003,15 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(overlay_profile["overlay_bbox_filter_enabled"])
         self.assertEqual(overlay_profile["overlay_input_points_by_camera"], {0: 3})
         self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 3})
+        self.assertTrue(overlay_profile["query_pcd_filter_enabled"])
+        self.assertTrue(overlay_profile["query_pcd_semantic_mask_gate_enabled"])
+        self.assertEqual(overlay_profile["query_pcd_semantic_mask_gate_mode"], "current_semantic_mask")
+        self.assertEqual(overlay_profile["query_pcd_semantic_mask_gate_input_points_by_camera"], {0: 3})
+        self.assertEqual(overlay_profile["query_pcd_semantic_mask_gate_kept_points_by_camera"], {0: 3})
+        self.assertEqual(overlay_profile["query_pcd_semantic_mask_gate_rejected_by_camera"], {0: 0})
+        self.assertEqual(overlay_profile["query_pcd_filter_input_points_by_camera"], {0: 3})
+        self.assertEqual(overlay_profile["query_pcd_filter_kept_points_by_camera"], {0: 3})
+        self.assertEqual(overlay_profile["query_pcd_filter_rejected_by_camera"], {0: 0})
         self.assertEqual(overlay_profile["overlay_rejected_by_scope_mask_by_camera"], {0: 0})
         self.assertEqual(overlay_profile["overlay_bbox_rejected_by_camera"], {0: 0})
         self.assertEqual(overlay_profile["tracker_marker_accepted_by_camera"], {0: 3})
@@ -2976,6 +3029,162 @@ class Demo31DualGpuContractTest(unittest.TestCase):
             overlay_profile["tracking_control_point_sampling"],
             "visible-spread_all_tracks_depth_lift_cap_512",
         )
+
+    def test_all_tracks_anchor_mode_rejects_query_markers_outside_current_semantic_mask(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]], dtype=np.float32)},
+            camera_visibility={0: np.ones((3,), dtype=np.float32)},
+            query_points_yx={0: np.zeros((3, 2), dtype=np.float32)},
+            query_is_controller_by_camera={0: np.ones((3,), dtype=bool)},
+            publish_range=(1, 1),
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(
+                camera_ids=(0,),
+                tracker_visualization_mode="all-tracks-3d-lift",
+                tracker_3d_marker_radius_m=0.006,
+                overlay_display_scope="union",
+                overlay_reject_outside_semantic_bbox=False,
+                apply_enhanced_component_filter_to_pcd=False,
+            ),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "batch_bundle_policy": "same-bundle-latest-wins",
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
+                "query_pcd_semantic_mask_gate_enabled": True,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        controller_mask = np.array([[True, False, True]], dtype=bool)
+        runtime.demo31_lift_input_cache.publish(
+            group_id=1,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 3), 1.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 3), dtype=bool)},
+            controller_mask_by_camera={0: controller_mask},
+        )
+        packet = _FakeRenderPacket(
+            group_id=1,
+            controller_points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+            controller_colors_rgb=np.array([[200, 200, 200]], dtype=np.uint8),
+        )
+
+        runtime._publish_render_packet(packet)
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        published = runtime.published_packet
+        self.assertIsNotNone(published)
+        marker_vertices = len(demo31_runtime._SPHERE_MARKER_OFFSETS)
+        self.assertEqual(len(published.controller_points_m), 1 + 2 * marker_vertices)  # type: ignore[arg-type]
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self._assert_overlay_substage_profile_fields(overlay_profile)
+        self.assertTrue(overlay_profile["query_pcd_semantic_mask_gate_enabled"])
+        self.assertEqual(overlay_profile["query_pcd_semantic_mask_gate_input_points_by_camera"], {0: 3})
+        self.assertEqual(overlay_profile["query_pcd_semantic_mask_gate_kept_points_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["query_pcd_semantic_mask_gate_rejected_by_camera"], {0: 1})
+        self.assertEqual(overlay_profile["overlay_rejected_by_scope_mask_by_camera"], {0: 1})
+        self.assertEqual(overlay_profile["overlay_rejected_by_depth_or_bounds_by_camera"], {0: 0})
+        self.assertEqual(overlay_profile["query_pcd_filter_input_points_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["query_pcd_filter_kept_points_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["query_pcd_filter_rejected_by_camera"], {0: 0})
+        self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["tracker_marker_accepted_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["tracker_marker_rejected_by_camera"], {0: 1})
+
+    def test_all_tracks_anchor_mode_filters_query_pcd_overlay_with_enhanced_pt(self) -> None:
+        now_s = demo31_runtime.time.perf_counter()
+        result = TrackingResultLitePacket(
+            group_id=1,
+            frame_idx=1,
+            source_timestamp_s=now_s,
+            publish_timestamp_s=now_s,
+            camera_tracks_yx={0: np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0], [0.0, 3.0]], dtype=np.float32)},
+            camera_visibility={0: np.ones((4,), dtype=np.float32)},
+            query_points_yx={0: np.zeros((4, 2), dtype=np.float32)},
+            query_is_controller_by_camera={0: np.ones((4,), dtype=bool)},
+            publish_range=(1, 1),
+        )
+        runtime_cls = demo31_runtime.make_demo31_live_runtime_class(
+            _FakeSharedRuntimeModule,
+            process_client_factory=lambda _config: _FakeProcessClient(result),
+        )
+        runtime = runtime_cls(
+            SimpleNamespace(
+                camera_ids=(0,),
+                tracker_visualization_mode="all-tracks-3d-lift",
+                tracker_3d_marker_radius_m=0.006,
+                overlay_display_scope="union",
+                overlay_reject_outside_semantic_bbox=False,
+                apply_enhanced_component_filter_to_pcd=True,
+                enhanced_min_component_points=1,
+            ),
+            demo31_contract={
+                "fusion_mask_policy": "latest-reuse",
+                "mask_stale_timeout_ms": 250.0,
+                "cotracker_result_stale_timeout_ms": 1500.0,
+                "batch_bundle_policy": "same-bundle-latest-wins",
+                "frame_bundle_policy": "exact-target",
+                "same_bundle_invariant_fail_fast": False,
+            },
+            cotracker_process_config=SimpleNamespace(),
+        )
+        runtime.demo31_lift_input_cache.publish(
+            group_id=1,
+            timestamp_s=now_s,
+            depth_by_camera={0: np.full((1, 4), 1.0, dtype=np.float32)},
+            intrinsics_by_camera={0: np.eye(3, dtype=np.float32)},
+            c2w_by_camera={0: np.eye(4, dtype=np.float32)},
+            mask_by_camera={0: np.ones((1, 4), dtype=bool)},
+            controller_mask_by_camera={0: np.ones((1, 4), dtype=bool)},
+        )
+        packet = _FakeRenderPacket(
+            group_id=1,
+            controller_points_m=np.array(
+                [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [0.05, 0.0, 1.0]],
+                dtype=np.float32,
+            ),
+            controller_colors_rgb=np.array(
+                [[200, 200, 200], [200, 200, 200], [200, 200, 200]],
+                dtype=np.uint8,
+            ),
+        )
+        runtime._publish_render_packet(packet)
+        runtime._publish_next_tracker_driven_render_once(now_s=now_s)
+
+        published = runtime.published_packet
+        self.assertIsNotNone(published)
+        marker_vertices = len(demo31_runtime._SPHERE_MARKER_OFFSETS)
+        self.assertEqual(len(published.controller_points_m), 3 + 2 * marker_vertices)  # type: ignore[arg-type]
+        overlay_profile = runtime.profile_updates[-1][1]["demo31_tracking_overlay"]
+        self._assert_overlay_substage_profile_fields(overlay_profile)
+        self.assertTrue(overlay_profile["query_pcd_filter_enabled"])
+        self.assertEqual(overlay_profile["query_pcd_filter_mode"], "enhanced_pt_reference_distance")
+        self.assertEqual(overlay_profile["query_pcd_filter_max_distance_m"], 0.035)
+        self.assertEqual(overlay_profile["query_pcd_filter_input_points_by_camera"], {0: 4})
+        self.assertEqual(overlay_profile["query_pcd_filter_kept_points_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["query_pcd_filter_rejected_by_camera"], {0: 2})
+        stats = overlay_profile["query_pcd_filter_stats_by_camera"][0]
+        self.assertEqual(stats["max_reference_distance_m"], 0.035)
+        self.assertEqual(stats["groups"]["controller"]["reference_point_count"], 3)
+        self.assertEqual(overlay_profile["overlay_points_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["tracker_marker_accepted_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["tracker_marker_rejected_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["tracking_control_point_count"], 2)
+        self.assertEqual(overlay_profile["tracking_control_marker_points"], 2 * marker_vertices)
 
     def test_all_tracks_anchor_mode_applies_render_cap_per_camera(self) -> None:
         now_s = demo31_runtime.time.perf_counter()
@@ -3041,6 +3250,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(overlay_profile["all_tracks_lift_candidate_count_by_camera"], {0: 5})
         self.assertEqual(overlay_profile["all_tracks_lift_selected_count_by_camera"], {0: 2})
         self.assertEqual(overlay_profile["all_tracks_lift_rendered_count_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["query_pcd_filter_input_points_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["query_pcd_filter_kept_points_by_camera"], {0: 2})
+        self.assertEqual(overlay_profile["query_pcd_filter_rejected_by_camera"], {0: 0})
         self.assertEqual(overlay_profile["all_tracks_lift_rejected_by_cap_by_camera"], {0: 3})
         self.assertEqual(overlay_profile["all_tracks_lift_cap_applied_by_camera"], {0: True})
         self.assertEqual(overlay_profile["tracking_control_point_count"], 2)

@@ -163,6 +163,7 @@ DEFAULT_ENHANCED_COMPONENT_SELECTION_POLICY = DEFAULT_CONTROLLER_ENHANCED_COMPON
 DEFAULT_ENHANCED_MIN_COMPONENT_POINTS = 32
 DEFAULT_ENHANCED_MIN_COMPONENT_RATIO = 0.0
 DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD = True
+DEFAULT_QUERY_PCD_SEMANTIC_MASK_GATE = True
 DEFAULT_CONTROLLER_MASK_ERODE_PX = 0
 DEFAULT_DEMO_MODE_CONTROLLER_MASK_ERODE_PX = 0
 DEFAULT_CONTROLLER_RENDER_VOXEL_M = 0.003
@@ -228,6 +229,7 @@ DEFAULT_WAIT_FOR_TRACKING_OVERLAY = True
 DEFAULT_DEMO31_OVERLAY_MAX_POINTS_PER_CAMERA = 0
 DEFAULT_OVERLAY_REJECT_OUTSIDE_SEMANTIC_BBOX = True
 DEFAULT_OVERLAY_MAX_DISTANCE_FROM_CONTROLLER_M = 0.15
+DEFAULT_QUERY_PCD_FILTER_MAX_DISTANCE_M = DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M
 DEFAULT_OVERLAY_CONTROL_POINT_MARKERS = True
 DEFAULT_OVERLAY_CONTROL_POINT_COUNT = 30
 DEFAULT_OVERLAY_CONTROL_POINT_RADIUS_M = 0.01
@@ -425,6 +427,23 @@ def _merge_cotracker_process_snapshot_metrics(
             "semantic_color_ms_p95": _float_value("semantic_color_ms_p95"),
             "bbox_filter_ms_p50": _float_value("bbox_filter_ms_p50"),
             "bbox_filter_ms_p95": _float_value("bbox_filter_ms_p95"),
+            "query_pcd_semantic_mask_gate_ms_p50": _float_value("query_pcd_semantic_mask_gate_ms_p50"),
+            "query_pcd_semantic_mask_gate_ms_p95": _float_value("query_pcd_semantic_mask_gate_ms_p95"),
+            "query_pcd_semantic_mask_gate_input_count": _int_value("query_pcd_semantic_mask_gate_input_count"),
+            "query_pcd_semantic_mask_gate_kept_count": _int_value("query_pcd_semantic_mask_gate_kept_count"),
+            "query_pcd_semantic_mask_gate_rejected_count": _int_value(
+                "query_pcd_semantic_mask_gate_rejected_count"
+            ),
+            "query_pcd_semantic_mask_gate_rejected_ratio": _float_value(
+                "query_pcd_semantic_mask_gate_rejected_ratio"
+            ),
+            "query_pcd_filter_ms_p50": _float_value("query_pcd_filter_ms_p50"),
+            "query_pcd_filter_ms_p95": _float_value("query_pcd_filter_ms_p95"),
+            "query_pcd_filter_max_distance_m": _float_value("query_pcd_filter_max_distance_m"),
+            "query_pcd_filter_input_count": _int_value("query_pcd_filter_input_count"),
+            "query_pcd_filter_kept_count": _int_value("query_pcd_filter_kept_count"),
+            "query_pcd_filter_rejected_count": _int_value("query_pcd_filter_rejected_count"),
+            "query_pcd_filter_rejected_ratio": _float_value("query_pcd_filter_rejected_ratio"),
             "overlay_concat_ms_p50": _float_value("overlay_concat_ms_p50"),
             "overlay_concat_ms_p95": _float_value("overlay_concat_ms_p95"),
             "control_marker_expand_ms_p50": _float_value("control_marker_expand_ms_p50"),
@@ -583,6 +602,271 @@ def _semantic_overlay_colors(
     colors[object_labels] = np.asarray(DEFAULT_OVERLAY_OBJECT_POINT_COLOR_RGB, dtype=np.uint8)
     colors[controller_labels] = np.asarray(DEFAULT_OVERLAY_CONTROLLER_POINT_COLOR_RGB, dtype=np.uint8)
     return colors.astype(np.uint8, copy=False)
+
+
+@dataclass(frozen=True)
+class QueryOverlayFilterResult:
+    keep_mask: np.ndarray
+    stats: dict[str, Any]
+
+
+def _query_overlay_semantic_mask_gate(
+    *,
+    tracks_yx: np.ndarray,
+    query_is_object: np.ndarray | None,
+    query_is_controller: np.ndarray | None,
+    fallback_scope: str,
+    object_mask: np.ndarray | None,
+    controller_mask: np.ndarray | None,
+    union_mask: np.ndarray | None,
+    enabled: bool,
+) -> QueryOverlayFilterResult:
+    tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+    input_count = int(len(tracks))
+    keep_mask = np.ones((input_count,), dtype=bool)
+    stats: dict[str, Any] = {
+        "enabled": bool(enabled),
+        "mode": "current_semantic_mask" if bool(enabled) else "disabled",
+        "input_point_count": input_count,
+        "output_point_count": input_count,
+        "rejected_point_count": 0,
+        "groups": {},
+    }
+    if (not bool(enabled)) or input_count == 0:
+        return QueryOverlayFilterResult(keep_mask=keep_mask, stats=stats)
+
+    object_labels = _fit_overlay_label_array(query_is_object, input_count)
+    controller_labels = _fit_overlay_label_array(query_is_controller, input_count)
+    if not bool(np.any(object_labels) or np.any(controller_labels)):
+        if str(fallback_scope) == SURFACE_ANCHOR_LABEL_OBJECT:
+            object_labels[:] = True
+        elif str(fallback_scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_CONTROLLER:
+            controller_labels[:] = True
+
+    def _mask_or_none(mask: np.ndarray | None) -> np.ndarray | None:
+        if mask is None:
+            return None
+        arr = np.asarray(mask, dtype=bool)
+        if arr.ndim < 2 or arr.size == 0:
+            return None
+        return arr
+
+    object_mask_bool = _mask_or_none(object_mask)
+    controller_mask_bool = _mask_or_none(controller_mask)
+    union_mask_bool = _mask_or_none(union_mask)
+    if union_mask_bool is None:
+        masks = [mask for mask in (object_mask_bool, controller_mask_bool) if mask is not None]
+        if masks and all(mask.shape[:2] == masks[0].shape[:2] for mask in masks):
+            union_mask_bool = np.logical_or.reduce(masks)
+
+    yy = np.rint(tracks[:, 0]).astype(np.int64)
+    xx = np.rint(tracks[:, 1]).astype(np.int64)
+
+    def _sample_group(label: str, group_mask: np.ndarray, mask: np.ndarray | None) -> None:
+        group_indices = np.flatnonzero(group_mask)
+        group_count = int(len(group_indices))
+        group_stats: dict[str, Any] = {
+            "input_point_count": group_count,
+            "output_point_count": group_count,
+            "rejected_point_count": 0,
+            "mask_available": mask is not None,
+        }
+        if group_count == 0:
+            stats["groups"][label] = group_stats
+            return
+        if mask is None:
+            group_stats["disabled_reason"] = "semantic_mask_unavailable"
+            stats["groups"][label] = group_stats
+            return
+
+        height, width = mask.shape[:2]
+        local_y = yy[group_indices]
+        local_x = xx[group_indices]
+        in_bounds = (local_y >= 0) & (local_y < height) & (local_x >= 0) & (local_x < width)
+        local_keep = np.zeros((group_count,), dtype=bool)
+        if bool(np.any(in_bounds)):
+            valid_local = np.flatnonzero(in_bounds)
+            local_keep[valid_local] = mask[local_y[valid_local], local_x[valid_local]]
+        keep_mask[group_indices[~local_keep]] = False
+        kept = int(np.count_nonzero(local_keep))
+        group_stats.update(
+            {
+                "output_point_count": kept,
+                "rejected_point_count": int(group_count - kept),
+                "mask_shape": [int(height), int(width)],
+                "out_of_bounds_point_count": int(group_count - np.count_nonzero(in_bounds)),
+            }
+        )
+        stats["groups"][label] = group_stats
+
+    controller_group = controller_labels
+    object_group = object_labels & ~controller_labels
+    unlabeled_group = ~(controller_group | object_group)
+    _sample_group("object", object_group, object_mask_bool if object_mask_bool is not None else union_mask_bool)
+    _sample_group(
+        "controller",
+        controller_group,
+        controller_mask_bool if controller_mask_bool is not None else union_mask_bool,
+    )
+    _sample_group("unlabeled", unlabeled_group, union_mask_bool)
+
+    kept_count = int(np.count_nonzero(keep_mask))
+    stats["output_point_count"] = kept_count
+    stats["rejected_point_count"] = int(input_count - kept_count)
+    stats["unlabeled_point_count"] = int(np.count_nonzero(unlabeled_group))
+    return QueryOverlayFilterResult(keep_mask=keep_mask, stats=stats)
+
+
+def _filter_query_overlay_points_with_enhanced_pt(
+    *,
+    points_world: np.ndarray,
+    query_is_object: np.ndarray | None,
+    query_is_controller: np.ndarray | None,
+    fallback_scope: str,
+    object_reference_points: np.ndarray,
+    controller_reference_points: np.ndarray,
+    enabled: bool,
+    max_reference_distance_m: float,
+    min_component_points: int,
+) -> QueryOverlayFilterResult:
+    points = np.asarray(points_world, dtype=np.float32).reshape(-1, 3)
+    input_count = int(len(points))
+
+    keep_mask = np.ones((input_count,), dtype=bool)
+    stats: dict[str, Any] = {
+        "enabled": bool(enabled),
+        "mode": "enhanced_pt_reference_distance" if bool(enabled) else "disabled",
+        "input_point_count": input_count,
+        "output_point_count": input_count,
+        "rejected_point_count": 0,
+        "max_reference_distance_m": float(max_reference_distance_m),
+        "groups": {},
+    }
+    if (not bool(enabled)) or input_count == 0:
+        return QueryOverlayFilterResult(keep_mask=keep_mask, stats=stats)
+
+    object_labels = _fit_overlay_label_array(query_is_object, input_count)
+    controller_labels = _fit_overlay_label_array(query_is_controller, input_count)
+    if not bool(np.any(object_labels) or np.any(controller_labels)):
+        if str(fallback_scope) == SURFACE_ANCHOR_LABEL_OBJECT:
+            object_labels[:] = True
+        elif str(fallback_scope) == demo3_runtime.OVERLAY_DISPLAY_SCOPE_CONTROLLER:
+            controller_labels[:] = True
+
+    group_specs = (
+        ("object", object_labels & ~controller_labels, np.asarray(object_reference_points, dtype=np.float32).reshape(-1, 3)),
+        ("controller", controller_labels, np.asarray(controller_reference_points, dtype=np.float32).reshape(-1, 3)),
+    )
+    for label, group_mask, reference_points in group_specs:
+        group_indices = np.flatnonzero(group_mask)
+        group_count = int(len(group_indices))
+        reference_count = int(len(reference_points))
+        group_stats: dict[str, Any] = {
+            "input_point_count": group_count,
+            "output_point_count": group_count,
+            "rejected_point_count": 0,
+            "reference_point_count": reference_count,
+        }
+        if group_count == 0:
+            stats["groups"][label] = group_stats
+            continue
+        if reference_count < int(min_component_points):
+            group_stats["disabled_reason"] = "insufficient_enhanced_pt_reference_points"
+            stats["groups"][label] = group_stats
+            continue
+
+        group_points = points[group_indices]
+        local_keep = _points_near_reference_mask(
+            group_points,
+            reference_points,
+            max_distance_m=float(max_reference_distance_m),
+        )
+        keep_mask[group_indices[~local_keep]] = False
+        kept = int(np.count_nonzero(local_keep))
+        group_stats.update(
+            {
+                "output_point_count": kept,
+                "rejected_point_count": int(group_count - kept),
+            }
+        )
+        stats["groups"][label] = group_stats
+
+    unlabeled_mask = ~(object_labels | controller_labels)
+    unlabeled_count = int(np.count_nonzero(unlabeled_mask))
+    if unlabeled_count:
+        union_reference = np.concatenate(
+            [
+                np.asarray(object_reference_points, dtype=np.float32).reshape(-1, 3),
+                np.asarray(controller_reference_points, dtype=np.float32).reshape(-1, 3),
+            ],
+            axis=0,
+        )
+        group_indices = np.flatnonzero(unlabeled_mask)
+        if len(union_reference) >= int(min_component_points):
+            local_keep = _points_near_reference_mask(
+                points[group_indices],
+                union_reference,
+                max_distance_m=float(max_reference_distance_m),
+            )
+            keep_mask[group_indices[~local_keep]] = False
+            kept = int(np.count_nonzero(local_keep))
+            stats["groups"]["unlabeled"] = {
+                "input_point_count": unlabeled_count,
+                "output_point_count": kept,
+                "rejected_point_count": int(unlabeled_count - kept),
+                "reference_point_count": int(len(union_reference)),
+            }
+        else:
+            stats["groups"]["unlabeled"] = {
+                "input_point_count": unlabeled_count,
+                "output_point_count": unlabeled_count,
+                "rejected_point_count": 0,
+                "reference_point_count": int(len(union_reference)),
+                "disabled_reason": "insufficient_enhanced_pt_reference_points",
+            }
+
+    kept_count = int(np.count_nonzero(keep_mask))
+    stats["output_point_count"] = kept_count
+    stats["rejected_point_count"] = int(input_count - kept_count)
+    stats["unlabeled_point_count"] = unlabeled_count
+    return QueryOverlayFilterResult(keep_mask=keep_mask, stats=stats)
+
+
+def _points_near_reference_mask(
+    points: np.ndarray,
+    reference_points: np.ndarray,
+    *,
+    max_distance_m: float,
+    chunk_size: int = 512,
+) -> np.ndarray:
+    query = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    reference = np.asarray(reference_points, dtype=np.float32).reshape(-1, 3)
+    if len(query) == 0:
+        return np.empty((0,), dtype=bool)
+    if len(reference) == 0:
+        return np.ones((len(query),), dtype=bool)
+    threshold2 = float(max_distance_m) * float(max_distance_m)
+    try:
+        from scipy.spatial import cKDTree
+
+        tree = cKDTree(reference.astype(np.float64, copy=False))
+        distances, _indices = tree.query(
+            query.astype(np.float64, copy=False),
+            k=1,
+            distance_upper_bound=float(max_distance_m),
+        )
+        return np.isfinite(distances) & (distances <= float(max_distance_m))
+    except Exception:
+        pass
+    keep = np.zeros((len(query),), dtype=bool)
+    step = max(int(chunk_size), 1)
+    ref64 = reference.astype(np.float32, copy=False)
+    for start in range(0, len(query), step):
+        chunk = query[start : start + step].astype(np.float32, copy=False)
+        deltas = chunk[:, None, :] - ref64[None, :, :]
+        min_d2 = np.min(np.sum(deltas * deltas, axis=2), axis=1)
+        keep[start : start + len(chunk)] = min_d2 <= threshold2
+    return keep
 
 
 def _point_centroid(points: np.ndarray) -> list[float] | None:
@@ -1669,6 +1953,24 @@ def build_arg_parser(*, default_preset: str = PRESET_DEMO31_DUAL4090_HIGHFPS) ->
         help="Semantic bbox margin, in meters, for controller-scope overlay outlier rejection.",
     )
     parser.add_argument(
+        "--query-pcd-filter-max-distance-m",
+        type=float,
+        default=DEFAULT_QUERY_PCD_FILTER_MAX_DISTANCE_M,
+        help=(
+            "Render-only all-tracks/query marker distance gate to the already enhanced-PT filtered semantic PCD, "
+            "in meters. This does not change tracker input or tracked query count."
+        ),
+    )
+    parser.add_argument(
+        "--query-pcd-semantic-mask-gate",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_QUERY_PCD_SEMANTIC_MASK_GATE,
+        help=(
+            "Render-only all-tracks/query marker gate against the current object/controller masks before 3D lift. "
+            "This removes mask-outside marker speckles without changing tracker input or tracked query count."
+        ),
+    )
+    parser.add_argument(
         "--overlay-control-point-markers",
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_OVERLAY_CONTROL_POINT_MARKERS,
@@ -2059,6 +2361,8 @@ def validate_args(
         raise ValueError(f"--overlay-display-scope must be one of {demo3_runtime.OVERLAY_DISPLAY_SCOPES}.")
     if float(args.overlay_max_distance_from_controller_m) < 0.0:
         raise ValueError("--overlay-max-distance-from-controller-m must be non-negative.")
+    if float(args.query_pcd_filter_max_distance_m) < 0.0:
+        raise ValueError("--query-pcd-filter-max-distance-m must be non-negative.")
     if int(args.overlay_control_point_count) < 0:
         raise ValueError("--overlay-control-point-count must be >= 0.")
     if float(args.overlay_control_point_radius_m) < 0.0:
@@ -2381,6 +2685,17 @@ def build_contract(
         "tracker_control_point_selection": str(args.tracker_control_point_selection),
         "all_tracks_lift_max_points_per_camera": int(args.all_tracks_lift_max_points_per_camera),
         "all_tracks_lift_selection": str(args.all_tracks_lift_selection),
+        "query_pcd_filter_enabled": bool(args.apply_enhanced_component_filter_to_pcd and tracker_all_tracks_mode),
+        "query_pcd_filter_mode": (
+            "enhanced_pt_reference_distance"
+            if bool(args.apply_enhanced_component_filter_to_pcd and tracker_all_tracks_mode)
+            else "disabled"
+        ),
+        "query_pcd_filter_max_distance_m": float(args.query_pcd_filter_max_distance_m),
+        "query_pcd_semantic_mask_gate_enabled": bool(args.query_pcd_semantic_mask_gate and tracker_all_tracks_mode),
+        "query_pcd_semantic_mask_gate_mode": (
+            "current_semantic_mask" if bool(args.query_pcd_semantic_mask_gate and tracker_all_tracks_mode) else "disabled"
+        ),
         "tracking_overlay_lift_method": (
             "surface_snap"
             if tracker_surface_mode
@@ -2993,6 +3308,7 @@ def build_shared_runtime_args(
     shared_args.overlay_display_scope = str(args.overlay_display_scope)
     shared_args.overlay_reject_outside_semantic_bbox = bool(args.overlay_reject_outside_semantic_bbox)
     shared_args.overlay_max_distance_from_controller_m = float(args.overlay_max_distance_from_controller_m)
+    shared_args.query_pcd_filter_max_distance_m = float(args.query_pcd_filter_max_distance_m)
     shared_args.trackable_mask_build_policy = str(args.trackable_mask_build_policy)
     shared_args.trackable_query_init_strategy = str(args.trackable_query_init_strategy)
     shared_args.controller_trackable_max_points_per_camera = int(args.controller_trackable_max_points_per_camera)
@@ -3374,6 +3690,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_overlay_lift_ms_samples: list[float] = []
             self.demo31_overlay_semantic_color_ms_samples: list[float] = []
             self.demo31_overlay_bbox_filter_ms_samples: list[float] = []
+            self.demo31_overlay_query_pcd_semantic_mask_gate_ms_samples: list[float] = []
+            self.demo31_overlay_query_pcd_semantic_mask_gate_input_count = 0
+            self.demo31_overlay_query_pcd_semantic_mask_gate_kept_count = 0
+            self.demo31_overlay_query_pcd_semantic_mask_gate_rejected_count = 0
+            self.demo31_overlay_query_pcd_filter_ms_samples: list[float] = []
+            self.demo31_overlay_query_pcd_filter_input_count = 0
+            self.demo31_overlay_query_pcd_filter_kept_count = 0
+            self.demo31_overlay_query_pcd_filter_rejected_count = 0
             self.demo31_overlay_concat_ms_samples: list[float] = []
             self.demo31_overlay_control_marker_expand_ms_samples: list[float] = []
             self.demo31_overlay_tracker_result_take_ms_samples: list[float] = []
@@ -3477,6 +3801,19 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "semantic_color_ms_p95",
                 "bbox_filter_ms_p50",
                 "bbox_filter_ms_p95",
+                "query_pcd_semantic_mask_gate_ms_p50",
+                "query_pcd_semantic_mask_gate_ms_p95",
+                "query_pcd_semantic_mask_gate_input_count",
+                "query_pcd_semantic_mask_gate_kept_count",
+                "query_pcd_semantic_mask_gate_rejected_count",
+                "query_pcd_semantic_mask_gate_rejected_ratio",
+                "query_pcd_filter_ms_p50",
+                "query_pcd_filter_ms_p95",
+                "query_pcd_filter_max_distance_m",
+                "query_pcd_filter_input_count",
+                "query_pcd_filter_kept_count",
+                "query_pcd_filter_rejected_count",
+                "query_pcd_filter_rejected_ratio",
                 "overlay_concat_ms_p50",
                 "overlay_concat_ms_p95",
                 "control_marker_expand_ms_p50",
@@ -4586,6 +4923,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "lift_ms": 0.0,
                     "semantic_color_ms": 0.0,
                     "bbox_filter_ms": 0.0,
+                    "query_pcd_semantic_mask_gate_ms": 0.0,
+                    "query_pcd_filter_ms": 0.0,
                     "overlay_concat_ms": 0.0,
                     "control_marker_expand_ms": 0.0,
                     "tracker_result_take_ms": 0.0,
@@ -4596,6 +4935,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "control_point_select_ms": 0.0,
                     "frame_provenance_ms": 0.0,
                     "render_packet_replace_ms": 0.0,
+                    "query_pcd_filter_enabled": False,
+                    "query_pcd_semantic_mask_gate_enabled": False,
+                    "query_pcd_semantic_mask_gate_input_points_by_camera": {},
+                    "query_pcd_semantic_mask_gate_kept_points_by_camera": {},
+                    "query_pcd_semantic_mask_gate_rejected_by_camera": {},
+                    "query_pcd_filter_input_points_by_camera": {},
+                    "query_pcd_filter_kept_points_by_camera": {},
+                    "query_pcd_filter_rejected_by_camera": {},
                     "overlay_group_id": None,
                     "incoming_render_group_id": int(packet.group_id),
                     "render_group_id": int(packet.group_id),
@@ -4980,6 +5327,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             overlay_bbox_input_points_by_camera: dict[int, int] = {}
             overlay_bbox_kept_points_by_camera: dict[int, int] = {}
             overlay_bbox_rejected_by_camera: dict[int, int] = {}
+            query_pcd_filter_input_points_by_camera: dict[int, int] = {}
+            query_pcd_filter_kept_points_by_camera: dict[int, int] = {}
+            query_pcd_filter_rejected_by_camera: dict[int, int] = {}
+            query_pcd_filter_stats_by_camera: dict[int, dict[str, Any]] = {}
+            query_pcd_semantic_mask_gate_input_points_by_camera: dict[int, int] = {}
+            query_pcd_semantic_mask_gate_kept_points_by_camera: dict[int, int] = {}
+            query_pcd_semantic_mask_gate_rejected_by_camera: dict[int, int] = {}
+            query_pcd_semantic_mask_gate_stats_by_camera: dict[int, dict[str, Any]] = {}
             all_tracks_lift_candidate_count_by_camera: dict[int, int] = {}
             all_tracks_lift_selected_count_by_camera: dict[int, int] = {}
             all_tracks_lift_rendered_count_by_camera: dict[int, int] = {}
@@ -5131,6 +5486,26 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             overlay_render_group_delta: int | None = None
             render_packet = None
             overlay_group_id = int(overlay.group_id)
+            query_pcd_filter_enabled = bool(
+                getattr(
+                    self.args,
+                    "apply_enhanced_component_filter_to_pcd",
+                    self.demo31_contract.get(
+                        "apply_enhanced_component_filter_to_pcd",
+                        DEFAULT_APPLY_ENHANCED_COMPONENT_FILTER_TO_PCD,
+                    ),
+                )
+            ) and all_tracks_lift_mode
+            query_pcd_semantic_mask_gate_enabled = bool(
+                getattr(
+                    self.args,
+                    "query_pcd_semantic_mask_gate",
+                    self.demo31_contract.get(
+                        "query_pcd_semantic_mask_gate_enabled",
+                        DEFAULT_QUERY_PCD_SEMANTIC_MASK_GATE,
+                    ),
+                )
+            ) and all_tracks_lift_mode
             if self._tracker_result_gated_fusion_enabled() and not self._tracking_result_has_visible_tracks(overlay):
                 self.demo31_tracker_result_fusion_skipped_count += 1
                 self.demo31_tracking_overlay_render_blocked_count += 1
@@ -5168,6 +5543,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             "lift_ms": 0.0,
                             "semantic_color_ms": 0.0,
                             "bbox_filter_ms": 0.0,
+                            "query_pcd_semantic_mask_gate_ms": 0.0,
+                            "query_pcd_filter_ms": 0.0,
                             "overlay_concat_ms": 0.0,
                             "control_marker_expand_ms": 0.0,
                             "tracker_result_take_ms": float(tracker_result_take_ms),
@@ -5180,6 +5557,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             "control_point_select_ms": 0.0,
                             "frame_provenance_ms": 0.0,
                             "render_packet_replace_ms": 0.0,
+                            "query_pcd_filter_enabled": False,
+                            "query_pcd_semantic_mask_gate_enabled": False,
+                            "query_pcd_semantic_mask_gate_input_points_by_camera": {},
+                            "query_pcd_semantic_mask_gate_kept_points_by_camera": {},
+                            "query_pcd_semantic_mask_gate_rejected_by_camera": {},
+                            "query_pcd_filter_input_points_by_camera": {},
+                            "query_pcd_filter_kept_points_by_camera": {},
+                            "query_pcd_filter_rejected_by_camera": {},
                         },
                     )
                 self._unprotect_frame_bundle(overlay_group_id)
@@ -5222,6 +5607,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             "lift_ms": 0.0,
                             "semantic_color_ms": 0.0,
                             "bbox_filter_ms": 0.0,
+                            "query_pcd_semantic_mask_gate_ms": 0.0,
+                            "query_pcd_filter_ms": 0.0,
                             "overlay_concat_ms": 0.0,
                             "control_marker_expand_ms": 0.0,
                             "tracker_result_take_ms": float(tracker_result_take_ms),
@@ -5234,6 +5621,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             "control_point_select_ms": 0.0,
                             "frame_provenance_ms": 0.0,
                             "render_packet_replace_ms": 0.0,
+                            "query_pcd_filter_enabled": False,
+                            "query_pcd_semantic_mask_gate_enabled": False,
+                            "query_pcd_semantic_mask_gate_input_points_by_camera": {},
+                            "query_pcd_semantic_mask_gate_kept_points_by_camera": {},
+                            "query_pcd_semantic_mask_gate_rejected_by_camera": {},
+                            "query_pcd_filter_input_points_by_camera": {},
+                            "query_pcd_filter_kept_points_by_camera": {},
+                            "query_pcd_filter_rejected_by_camera": {},
                         },
                     )
                 self._unprotect_frame_bundle(overlay_group_id)
@@ -5279,6 +5674,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             lift_ms = 0.0
             semantic_color_ms = 0.0
             bbox_filter_ms = 0.0
+            query_pcd_semantic_mask_gate_ms = 0.0
+            query_pcd_filter_ms = 0.0
             overlay_concat_ms = 0.0
             control_marker_expand_ms = 0.0
             if render_packet is not None:
@@ -5473,6 +5870,34 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                                 all_tracks_lift_cap_applied_by_camera[idx] = False
                                 all_tracks_lift_rejected_by_cap_by_camera[idx] = 0
                             all_tracks_lift_selected_count_by_camera[idx] = int(len(tracks_to_lift))
+                            mask_gate_start_s = time.perf_counter()
+                            mask_gate = _query_overlay_semantic_mask_gate(
+                                tracks_yx=tracks_to_lift,
+                                query_is_object=query_is_object_to_lift,
+                                query_is_controller=query_is_controller_to_lift,
+                                fallback_scope=lift_mask_scope,
+                                object_mask=lift_inputs.object_mask_by_camera.get(idx),
+                                controller_mask=lift_inputs.controller_mask_by_camera.get(idx),
+                                union_mask=lift_inputs.mask_by_camera.get(idx),
+                                enabled=bool(query_pcd_semantic_mask_gate_enabled),
+                            )
+                            query_pcd_semantic_mask_gate_ms += float(
+                                (time.perf_counter() - mask_gate_start_s) * 1000.0
+                            )
+                            query_pcd_semantic_mask_gate_input_points_by_camera[idx] = int(len(tracks_to_lift))
+                            mask_gate_keep = np.asarray(mask_gate.keep_mask, dtype=bool).reshape(-1)
+                            if mask_gate_keep.shape[0] != len(tracks_to_lift):
+                                mask_gate_keep = np.ones((len(tracks_to_lift),), dtype=bool)
+                            if not bool(np.all(mask_gate_keep)):
+                                tracks_to_lift = tracks_to_lift[mask_gate_keep]
+                                visibility_to_lift = visibility_to_lift[mask_gate_keep]
+                                query_is_object_to_lift = query_is_object_to_lift[mask_gate_keep]
+                                query_is_controller_to_lift = query_is_controller_to_lift[mask_gate_keep]
+                            query_pcd_semantic_mask_gate_kept_points_by_camera[idx] = int(len(tracks_to_lift))
+                            query_pcd_semantic_mask_gate_rejected_by_camera[idx] = int(
+                                query_pcd_semantic_mask_gate_input_points_by_camera.get(idx, 0) - len(tracks_to_lift)
+                            )
+                            query_pcd_semantic_mask_gate_stats_by_camera[idx] = dict(mask_gate.stats)
                         lift_mask = (
                             None
                             if all_tracks_lift_mode
@@ -5495,26 +5920,69 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         lift_ms += float((time.perf_counter() - lift_start_s) * 1000.0)
                         if all_tracks_lift_mode:
                             tracker_marker_layer_by_camera[idx] = "all-tracks"
-                            tracker_marker_accepted_by_camera[idx] = int(len(lifted.points_world))
-                            tracker_marker_rejected_by_camera[idx] = int(
-                                overlay_input_points_by_camera[idx] - len(lifted.points_world)
-                            )
-                            all_tracks_lift_rendered_count_by_camera[idx] = int(len(lifted.points_world))
+                            tracker_marker_accepted_by_camera[idx] = 0
+                            tracker_marker_rejected_by_camera[idx] = int(overlay_input_points_by_camera[idx])
+                            all_tracks_lift_rendered_count_by_camera[idx] = 0
+                            query_pcd_filter_input_points_by_camera[idx] = int(len(lifted.points_world))
+                            query_pcd_filter_kept_points_by_camera[idx] = int(len(lifted.points_world))
+                            query_pcd_filter_rejected_by_camera[idx] = 0
                         if lifted.points_world.size:
                             points = lifted.points_world.astype(np.float32, copy=False)
+                            lifted_query_is_object = query_is_object_to_lift[lifted.source_indices]
+                            lifted_query_is_controller = query_is_controller_to_lift[lifted.source_indices]
                             color_start_s = time.perf_counter()
                             if color_by_camera:
                                 point_colors = _overlay_color_array(len(points), _overlay_debug_color_rgb(idx))
                             else:
                                 point_colors = _semantic_overlay_colors(
                                     point_count=len(points),
-                                    query_is_object=query_is_object_to_lift[lifted.source_indices],
-                                    query_is_controller=query_is_controller_to_lift[lifted.source_indices],
+                                    query_is_object=lifted_query_is_object,
+                                    query_is_controller=lifted_query_is_controller,
                                     fallback_scope=lift_mask_scope,
                                 )
                             semantic_color_ms += float((time.perf_counter() - color_start_s) * 1000.0)
                             overlay_lifted_points_by_camera[idx] = int(len(points))
                             overlay_centroid_before_bbox_by_camera[idx] = _point_centroid(points)
+                            if all_tracks_lift_mode:
+                                query_filter_start_s = time.perf_counter()
+                                query_filter = _filter_query_overlay_points_with_enhanced_pt(
+                                    points_world=points,
+                                    query_is_object=lifted_query_is_object,
+                                    query_is_controller=lifted_query_is_controller,
+                                    fallback_scope=lift_mask_scope,
+                                    object_reference_points=_packet_points(render_packet, "object_points_m"),
+                                    controller_reference_points=_packet_points(render_packet, "controller_points_m"),
+                                    enabled=bool(query_pcd_filter_enabled),
+                                    max_reference_distance_m=float(
+                                        getattr(
+                                            self.args,
+                                            "query_pcd_filter_max_distance_m",
+                                            self.demo31_contract.get(
+                                                "query_pcd_filter_max_distance_m",
+                                                DEFAULT_QUERY_PCD_FILTER_MAX_DISTANCE_M,
+                                            ),
+                                        )
+                                    ),
+                                    min_component_points=int(
+                                        getattr(
+                                            self.args,
+                                            "enhanced_min_component_points",
+                                            DEFAULT_ENHANCED_MIN_COMPONENT_POINTS,
+                                        )
+                                    ),
+                                )
+                                query_pcd_filter_ms += float((time.perf_counter() - query_filter_start_s) * 1000.0)
+                                query_keep = np.asarray(query_filter.keep_mask, dtype=bool).reshape(-1)
+                                if query_keep.shape[0] != len(points):
+                                    query_keep = np.ones((len(points),), dtype=bool)
+                                if not bool(np.all(query_keep)):
+                                    points = points[query_keep]
+                                    point_colors = point_colors[query_keep]
+                                query_pcd_filter_kept_points_by_camera[idx] = int(len(points))
+                                query_pcd_filter_rejected_by_camera[idx] = int(
+                                    query_pcd_filter_input_points_by_camera.get(idx, 0) - len(points)
+                                )
+                                query_pcd_filter_stats_by_camera[idx] = dict(query_filter.stats)
                             overlay_bbox_input_points_by_camera[idx] = int(len(points))
                             if bbox_filter_enabled:
                                 bbox_start_s = time.perf_counter()
@@ -5531,11 +5999,21 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                             if len(points) == 0:
                                 overlay_points_by_camera[idx] = 0
                                 overlay_centroid_by_camera[idx] = None
+                                if all_tracks_lift_mode:
+                                    tracker_marker_accepted_by_camera[idx] = 0
+                                    tracker_marker_rejected_by_camera[idx] = int(overlay_input_points_by_camera[idx])
+                                    all_tracks_lift_rendered_count_by_camera[idx] = 0
                                 continue
                             lifted_points.append(points)
                             lifted_camera_id_chunks.append(np.full((len(points),), idx, dtype=np.int32))
                             overlay_points_by_camera[idx] = int(len(points))
                             overlay_centroid_by_camera[idx] = _point_centroid(points)
+                            if all_tracks_lift_mode:
+                                tracker_marker_accepted_by_camera[idx] = int(len(points))
+                                tracker_marker_rejected_by_camera[idx] = int(
+                                    overlay_input_points_by_camera[idx] - len(points)
+                                )
+                                all_tracks_lift_rendered_count_by_camera[idx] = int(len(points))
                             lifted_colors.append(point_colors)
                     if lifted_points:
                         concat_start_s = time.perf_counter()
@@ -5682,6 +6160,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 + lift_ms
                 + semantic_color_ms
                 + bbox_filter_ms
+                + query_pcd_semantic_mask_gate_ms
+                + query_pcd_filter_ms
                 + overlay_concat_ms
                 + control_marker_expand_ms
                 + render_packet_match_ms
@@ -5695,6 +6175,28 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             self.demo31_overlay_lift_ms_samples.append(float(lift_ms))
             self.demo31_overlay_semantic_color_ms_samples.append(float(semantic_color_ms))
             self.demo31_overlay_bbox_filter_ms_samples.append(float(bbox_filter_ms))
+            self.demo31_overlay_query_pcd_semantic_mask_gate_ms_samples.append(
+                float(query_pcd_semantic_mask_gate_ms)
+            )
+            self.demo31_overlay_query_pcd_semantic_mask_gate_input_count += int(
+                sum(int(value) for value in query_pcd_semantic_mask_gate_input_points_by_camera.values())
+            )
+            self.demo31_overlay_query_pcd_semantic_mask_gate_kept_count += int(
+                sum(int(value) for value in query_pcd_semantic_mask_gate_kept_points_by_camera.values())
+            )
+            self.demo31_overlay_query_pcd_semantic_mask_gate_rejected_count += int(
+                sum(int(value) for value in query_pcd_semantic_mask_gate_rejected_by_camera.values())
+            )
+            self.demo31_overlay_query_pcd_filter_ms_samples.append(float(query_pcd_filter_ms))
+            self.demo31_overlay_query_pcd_filter_input_count += int(
+                sum(int(value) for value in query_pcd_filter_input_points_by_camera.values())
+            )
+            self.demo31_overlay_query_pcd_filter_kept_count += int(
+                sum(int(value) for value in query_pcd_filter_kept_points_by_camera.values())
+            )
+            self.demo31_overlay_query_pcd_filter_rejected_count += int(
+                sum(int(value) for value in query_pcd_filter_rejected_by_camera.values())
+            )
             self.demo31_overlay_concat_ms_samples.append(float(overlay_concat_ms))
             self.demo31_overlay_control_marker_expand_ms_samples.append(float(control_marker_expand_ms))
             self.demo31_overlay_tracker_result_take_ms_samples.append(float(tracker_result_take_ms))
@@ -5794,7 +6296,10 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_input_points_by_camera": dict(overlay_input_points_by_camera),
                     "overlay_points_by_camera": dict(overlay_points_by_camera),
                     "overlay_rejected_by_scope_mask_by_camera": (
-                        {int(camera_idx): 0 for camera_idx in overlay_input_points_by_camera}
+                        {
+                            int(camera_idx): int(query_pcd_semantic_mask_gate_rejected_by_camera.get(int(camera_idx), 0))
+                            for camera_idx in overlay_input_points_by_camera
+                        }
                         if all_tracks_lift_mode
                         else {
                             int(camera_idx): int(input_count)
@@ -5803,7 +6308,14 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                         }
                     ),
                     "overlay_rejected_by_depth_or_bounds_by_camera": {
-                        int(camera_idx): int(input_count) - int(overlay_lifted_points_by_camera.get(int(camera_idx), 0))
+                        int(camera_idx): int(
+                            (
+                                query_pcd_semantic_mask_gate_kept_points_by_camera.get(int(camera_idx), input_count)
+                                if all_tracks_lift_mode
+                                else input_count
+                            )
+                        )
+                        - int(overlay_lifted_points_by_camera.get(int(camera_idx), 0))
                         for camera_idx, input_count in overlay_input_points_by_camera.items()
                     },
                     "overlay_bbox_filter_enabled": bool(bbox_filter_enabled),
@@ -5820,6 +6332,40 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "overlay_bbox_input_points_by_camera": dict(overlay_bbox_input_points_by_camera),
                     "overlay_bbox_kept_points_by_camera": dict(overlay_bbox_kept_points_by_camera),
                     "overlay_bbox_rejected_by_camera": dict(overlay_bbox_rejected_by_camera),
+                    "query_pcd_filter_enabled": bool(query_pcd_filter_enabled),
+                    "query_pcd_filter_mode": (
+                        "enhanced_pt_reference_distance" if bool(query_pcd_filter_enabled) else "disabled"
+                    ),
+                    "query_pcd_semantic_mask_gate_enabled": bool(query_pcd_semantic_mask_gate_enabled),
+                    "query_pcd_semantic_mask_gate_mode": (
+                        "current_semantic_mask" if bool(query_pcd_semantic_mask_gate_enabled) else "disabled"
+                    ),
+                    "query_pcd_semantic_mask_gate_input_points_by_camera": dict(
+                        query_pcd_semantic_mask_gate_input_points_by_camera
+                    ),
+                    "query_pcd_semantic_mask_gate_kept_points_by_camera": dict(
+                        query_pcd_semantic_mask_gate_kept_points_by_camera
+                    ),
+                    "query_pcd_semantic_mask_gate_rejected_by_camera": dict(
+                        query_pcd_semantic_mask_gate_rejected_by_camera
+                    ),
+                    "query_pcd_semantic_mask_gate_stats_by_camera": dict(
+                        query_pcd_semantic_mask_gate_stats_by_camera
+                    ),
+                    "query_pcd_filter_max_distance_m": float(
+                        getattr(
+                            self.args,
+                            "query_pcd_filter_max_distance_m",
+                            self.demo31_contract.get(
+                                "query_pcd_filter_max_distance_m",
+                                DEFAULT_QUERY_PCD_FILTER_MAX_DISTANCE_M,
+                            ),
+                        )
+                    ),
+                    "query_pcd_filter_input_points_by_camera": dict(query_pcd_filter_input_points_by_camera),
+                    "query_pcd_filter_kept_points_by_camera": dict(query_pcd_filter_kept_points_by_camera),
+                    "query_pcd_filter_rejected_by_camera": dict(query_pcd_filter_rejected_by_camera),
+                    "query_pcd_filter_stats_by_camera": dict(query_pcd_filter_stats_by_camera),
                     "overlay_world_centroid_by_camera_before_bbox": dict(overlay_centroid_before_bbox_by_camera),
                     "overlay_world_centroid_by_camera": dict(overlay_centroid_by_camera),
                     "tracking_control_point_markers": bool(control_markers_enabled),
@@ -5842,6 +6388,8 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                     "lift_ms": float(lift_ms),
                     "semantic_color_ms": float(semantic_color_ms),
                     "bbox_filter_ms": float(bbox_filter_ms),
+                    "query_pcd_semantic_mask_gate_ms": float(query_pcd_semantic_mask_gate_ms),
+                    "query_pcd_filter_ms": float(query_pcd_filter_ms),
                     "overlay_concat_ms": float(overlay_concat_ms),
                     "control_marker_expand_ms": float(control_marker_expand_ms),
                     "tracker_result_take_ms": float(tracker_result_take_ms),
@@ -6160,6 +6708,10 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
             overlay_lift = percentile_summary(self.demo31_overlay_lift_ms_samples)
             overlay_semantic_color = percentile_summary(self.demo31_overlay_semantic_color_ms_samples)
             overlay_bbox_filter = percentile_summary(self.demo31_overlay_bbox_filter_ms_samples)
+            overlay_query_pcd_semantic_mask_gate = percentile_summary(
+                self.demo31_overlay_query_pcd_semantic_mask_gate_ms_samples
+            )
+            overlay_query_pcd_filter = percentile_summary(self.demo31_overlay_query_pcd_filter_ms_samples)
             overlay_concat = percentile_summary(self.demo31_overlay_concat_ms_samples)
             overlay_control_marker_expand = percentile_summary(
                 self.demo31_overlay_control_marker_expand_ms_samples
@@ -6330,6 +6882,46 @@ def make_demo31_live_runtime_class(shared_runtime_module: Any, *, process_client
                 "semantic_color_ms_p95": float(overlay_semantic_color["p95"]),
                 "bbox_filter_ms_p50": float(overlay_bbox_filter["median"]),
                 "bbox_filter_ms_p95": float(overlay_bbox_filter["p95"]),
+                "query_pcd_semantic_mask_gate_ms_p50": float(
+                    overlay_query_pcd_semantic_mask_gate["median"]
+                ),
+                "query_pcd_semantic_mask_gate_ms_p95": float(overlay_query_pcd_semantic_mask_gate["p95"]),
+                "query_pcd_semantic_mask_gate_input_count": int(
+                    self.demo31_overlay_query_pcd_semantic_mask_gate_input_count
+                ),
+                "query_pcd_semantic_mask_gate_kept_count": int(
+                    self.demo31_overlay_query_pcd_semantic_mask_gate_kept_count
+                ),
+                "query_pcd_semantic_mask_gate_rejected_count": int(
+                    self.demo31_overlay_query_pcd_semantic_mask_gate_rejected_count
+                ),
+                "query_pcd_semantic_mask_gate_rejected_ratio": (
+                    float(
+                        self.demo31_overlay_query_pcd_semantic_mask_gate_rejected_count
+                        / self.demo31_overlay_query_pcd_semantic_mask_gate_input_count
+                    )
+                    if self.demo31_overlay_query_pcd_semantic_mask_gate_input_count
+                    else 0.0
+                ),
+                "query_pcd_filter_ms_p50": float(overlay_query_pcd_filter["median"]),
+                "query_pcd_filter_ms_p95": float(overlay_query_pcd_filter["p95"]),
+                "query_pcd_filter_max_distance_m": float(
+                    self.demo31_contract.get(
+                        "query_pcd_filter_max_distance_m",
+                        DEFAULT_QUERY_PCD_FILTER_MAX_DISTANCE_M,
+                    )
+                ),
+                "query_pcd_filter_input_count": int(self.demo31_overlay_query_pcd_filter_input_count),
+                "query_pcd_filter_kept_count": int(self.demo31_overlay_query_pcd_filter_kept_count),
+                "query_pcd_filter_rejected_count": int(self.demo31_overlay_query_pcd_filter_rejected_count),
+                "query_pcd_filter_rejected_ratio": (
+                    float(
+                        self.demo31_overlay_query_pcd_filter_rejected_count
+                        / self.demo31_overlay_query_pcd_filter_input_count
+                    )
+                    if self.demo31_overlay_query_pcd_filter_input_count
+                    else 0.0
+                ),
                 "overlay_concat_ms_p50": float(overlay_concat["median"]),
                 "overlay_concat_ms_p95": float(overlay_concat["p95"]),
                 "control_marker_expand_ms_p50": float(overlay_control_marker_expand["median"]),
@@ -6706,6 +7298,35 @@ class Demo31Runtime:
                     "semantic_color_ms_p95": float(snapshot.get("semantic_color_ms_p95", 0.0) or 0.0),
                     "bbox_filter_ms_p50": float(snapshot.get("bbox_filter_ms_p50", 0.0) or 0.0),
                     "bbox_filter_ms_p95": float(snapshot.get("bbox_filter_ms_p95", 0.0) or 0.0),
+                    "query_pcd_semantic_mask_gate_ms_p50": float(
+                        snapshot.get("query_pcd_semantic_mask_gate_ms_p50", 0.0) or 0.0
+                    ),
+                    "query_pcd_semantic_mask_gate_ms_p95": float(
+                        snapshot.get("query_pcd_semantic_mask_gate_ms_p95", 0.0) or 0.0
+                    ),
+                    "query_pcd_semantic_mask_gate_input_count": int(
+                        snapshot.get("query_pcd_semantic_mask_gate_input_count", 0) or 0
+                    ),
+                    "query_pcd_semantic_mask_gate_kept_count": int(
+                        snapshot.get("query_pcd_semantic_mask_gate_kept_count", 0) or 0
+                    ),
+                    "query_pcd_semantic_mask_gate_rejected_count": int(
+                        snapshot.get("query_pcd_semantic_mask_gate_rejected_count", 0) or 0
+                    ),
+                    "query_pcd_semantic_mask_gate_rejected_ratio": float(
+                        snapshot.get("query_pcd_semantic_mask_gate_rejected_ratio", 0.0) or 0.0
+                    ),
+                    "query_pcd_filter_ms_p50": float(snapshot.get("query_pcd_filter_ms_p50", 0.0) or 0.0),
+                    "query_pcd_filter_ms_p95": float(snapshot.get("query_pcd_filter_ms_p95", 0.0) or 0.0),
+                    "query_pcd_filter_max_distance_m": float(
+                        snapshot.get("query_pcd_filter_max_distance_m", 0.0) or 0.0
+                    ),
+                    "query_pcd_filter_input_count": int(snapshot.get("query_pcd_filter_input_count", 0) or 0),
+                    "query_pcd_filter_kept_count": int(snapshot.get("query_pcd_filter_kept_count", 0) or 0),
+                    "query_pcd_filter_rejected_count": int(snapshot.get("query_pcd_filter_rejected_count", 0) or 0),
+                    "query_pcd_filter_rejected_ratio": float(
+                        snapshot.get("query_pcd_filter_rejected_ratio", 0.0) or 0.0
+                    ),
                     "overlay_concat_ms_p50": float(snapshot.get("overlay_concat_ms_p50", 0.0) or 0.0),
                     "overlay_concat_ms_p95": float(snapshot.get("overlay_concat_ms_p95", 0.0) or 0.0),
                     "control_marker_expand_ms_p50": float(

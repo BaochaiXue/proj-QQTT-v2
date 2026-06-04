@@ -67,8 +67,9 @@ Experiment-only FFS depth diagnostics are allowed only when they consume
 aligned cases, write diagnostic artifacts outside formal case directories, and
 remain separated from recording / alignment runtime imports.
 
-The only current shape-prior carveout is Demo 3.3 warmup: it may synthesize a
-one-frame FuturePhysTwin-style cache and read `final_data.pkl` from that cache
-for render-only diagnostics. Formal recording, realtime aligned export, and
+The only current shape-prior carveout is the explicitly enabled Demo 3.3
+warmup: it may synthesize a one-frame FuturePhysTwin-style cache and read
+`final_data.pkl` from that cache for render-only diagnostics. Demo 3.3 keeps
+this path disabled by default. Formal recording, realtime aligned export, and
 `data_process/record_data_align.py` outputs remain unchanged and must not import
 or depend on that path.

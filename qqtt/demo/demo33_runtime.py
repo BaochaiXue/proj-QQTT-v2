@@ -53,6 +53,7 @@ SHAPE_PRIOR_START_POLICIES = (
     SHAPE_PRIOR_START_POLICY_AFTER_FIRST_RENDER,
     SHAPE_PRIOR_START_POLICY_IMMEDIATE,
 )
+DEFAULT_SHAPE_PRIOR_WARMUP = False
 
 
 def _resolve_shape_prior_gpu(args: argparse.Namespace) -> str:
@@ -65,7 +66,7 @@ def _resolve_shape_prior_gpu(args: argparse.Namespace) -> str:
 
 
 def _shape_prior_contract_fields(args: argparse.Namespace) -> dict[str, Any]:
-    enabled = bool(getattr(args, "shape_prior_warmup", True))
+    enabled = bool(getattr(args, "shape_prior_warmup", DEFAULT_SHAPE_PRIOR_WARMUP))
     case_template = Path(getattr(args, "output_root", "result/demo32_ffs_tapnextpp"))
     case_template = case_template / "demo33_shape_prior_warmup" / "<run_id>" / "case"
     start_policy = str(
@@ -204,8 +205,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     group.add_argument(
         "--shape-prior-warmup",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Run the Demo 3.3 FuturePhysTwin/SAM3D shape-prior warmup once from a first-frame snapshot.",
+        default=DEFAULT_SHAPE_PRIOR_WARMUP,
+        help=(
+            "Run the Demo 3.3 FuturePhysTwin/SAM3D shape-prior warmup once from "
+            "a first-frame snapshot. Disabled by default for the live demo."
+        ),
     )
     group.add_argument("--futurephystwin-root", type=Path, default=DEFAULT_FUTUREPHYSTWIN_ROOT)
     group.add_argument("--futurephystwin-python", default=DEFAULT_FUTUREPHYSTWIN_PYTHON)
@@ -278,7 +282,7 @@ def validate_args(
         require_calibration=require_calibration,
         cuda_device_count_provider=cuda_device_count_provider,
     )
-    if not bool(getattr(args, "shape_prior_warmup", True)):
+    if not bool(getattr(args, "shape_prior_warmup", DEFAULT_SHAPE_PRIOR_WARMUP)):
         return
     camera_id_list = [int(item) for item in getattr(args, "camera_ids", [])]
     camera_ids = set(camera_id_list)
@@ -382,7 +386,9 @@ def build_shared_runtime_args(
     shared_args.demo_version_override = "demo3.3"
     shared_args.demo_display_name_override = "Demo 3.3"
     shared_args.demo33_independent_runtime = True
-    shared_args.shape_prior_warmup_enabled = bool(getattr(args, "shape_prior_warmup", True))
+    shared_args.shape_prior_warmup_enabled = bool(
+        getattr(args, "shape_prior_warmup", DEFAULT_SHAPE_PRIOR_WARMUP)
+    )
     shared_args.futurephystwin_root = str(getattr(args, "futurephystwin_root", DEFAULT_FUTUREPHYSTWIN_ROOT))
     shared_args.futurephystwin_python = str(getattr(args, "futurephystwin_python", DEFAULT_FUTUREPHYSTWIN_PYTHON))
     shared_args.sam3d_root = str(getattr(args, "sam3d_root", DEFAULT_SAM3D_ROOT))
