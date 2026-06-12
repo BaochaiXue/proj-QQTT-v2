@@ -13,6 +13,7 @@ REQUIRED_FILES = (
     "scripts/harness/README.md",
     "scripts/harness/_catalog.py",
     "scripts/harness/check_all.py",
+    "scripts/harness/check_scope.py",
     "scripts/harness/summarize_demo23_failure_packet.py",
 )
 
@@ -20,6 +21,8 @@ REQUIRED_TEXT = {
     "AGENTS.md": (
         "scripts/harness/README.md",
         "docs/HARNESS_ENGINEERING.md",
+        "Single-Camera Branch Policy",
+        "git push origin single-camera",
     ),
     "docs/HARNESS_ENGINEERING.md": (
         "Demo 2.3 Failure Packet",
@@ -31,6 +34,8 @@ REQUIRED_TEXT = {
     "scripts/harness/README.md": (
         "docs/HARNESS_ENGINEERING.md",
         "summarize_demo23_failure_packet.py",
+        "Single-Camera Branch Safety",
+        "git push origin single-camera",
     ),
     "scripts/harness/_catalog.py": (
         "scripts/harness/check_harness_engineering.py",
@@ -39,6 +44,11 @@ REQUIRED_TEXT = {
     "scripts/harness/check_all.py": (
         "scripts/harness/check_harness_engineering.py",
         "tests.test_demo23_harness_engineering_smoke",
+    ),
+    "scripts/harness/check_scope.py": (
+        "BRANCH_POLICY_REQUIRED_TEXT",
+        "Single-Camera Branch Policy",
+        "Single-Camera Branch Safety",
     ),
 }
 

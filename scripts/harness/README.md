@@ -29,6 +29,14 @@ architecture in the source-of-truth docs below, keep generated evidence under
 If a claim is important enough for a future agent to rely on, make it
 repository-local and link it from one of these layers.
 
+## Single-Camera Branch Safety
+
+Single-camera-specific modifications belong on the `single-camera` branch.
+Before editing single-camera behavior, confirm `git branch --show-current`
+prints `single-camera`; if it does not, switch with `git switch single-camera`.
+Do not commit or push single-camera changes directly to `main`. The validated
+push target for that work is `git push origin single-camera`.
+
 ## Harness Contract
 
 - Public harness scripts are thin entrypoints. Reusable calibration, geometry,

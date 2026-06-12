@@ -26,3 +26,10 @@ class AgentsScopeContractSmokeTest(unittest.TestCase):
         self.assertIn("services/ffs_remote/", content)
         self.assertIn("qqtt/tracking/", content)
         self.assertIn("formal recording/alignment code must not depend on those layers", content)
+
+    def test_agents_mentions_single_camera_branch_policy(self) -> None:
+        content = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("Single-Camera Branch Policy", content)
+        self.assertIn("single-camera-specific modifications must be made, committed, and pushed on the `single-camera` branch", content)
+        self.assertIn("Do not commit or push single-camera changes directly to `main`", content)
+        self.assertIn("git push origin single-camera", content)

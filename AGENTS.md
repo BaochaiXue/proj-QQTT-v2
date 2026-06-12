@@ -67,19 +67,28 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - Treat `FFS-SAM-RS` and `FFS-max-sam31-rs` as FFS/SAM/RealSense stack environments; do not use them as the default for EdgeTAM + RS + FFS integrated demo work unless a task explicitly asks for that comparison.
 - Keep external EdgeTAM repos, FFS repos, SAM checkpoints, and other weights outside this repo; reference them by documented local path.
 
+## Single-Camera Branch Policy
+
+- All single-camera-specific modifications must be made, committed, and pushed on the `single-camera` branch.
+- Before any single-camera change, run `git branch --show-current` and confirm it prints `single-camera`; if it does not, switch with `git switch single-camera` before editing.
+- Do not commit or push single-camera changes directly to `main`, and do not merge `single-camera` into `main` unless the user explicitly asks for that merge.
+- For single-camera work, the post-validation push target is `git push origin single-camera`, not `git push origin main`.
+- Keep `main` protected as the existing 3-camera baseline until the user explicitly changes the repo-wide default.
+
 ## Required Workflow For Future Changes
 
 1. Before modifying files, run `git pull --ff-only origin main` and confirm the local branch is up to date with GitHub.
-2. Start with an exec plan under `docs/exec-plans/active/` for any non-trivial change.
-3. Keep changes inside the documented camera preview / calibration / recording / alignment core or the sanctioned demo / proxy / tracking diagnostic scope.
-4. Update docs and tests in the same change when behavior changes.
-5. Run deterministic checks before finishing:
+2. For single-camera-specific work, confirm the current branch is `single-camera` before editing.
+3. Start with an exec plan under `docs/exec-plans/active/` for any non-trivial change.
+4. Keep changes inside the documented camera preview / calibration / recording / alignment core or the sanctioned demo / proxy / tracking diagnostic scope.
+5. Update docs and tests in the same change when behavior changes.
+6. Run deterministic checks before finishing:
    - `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
    - use `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full` when the change is broad enough that the default quick profile is not sufficient
-6. For external dependency proof-of-life work, record exact commands and outcomes under `docs/generated/`.
-7. For FFS changes, keep weights external and validate both deterministic tests and manual hardware outcomes.
-8. For comparison visualization changes, validate the calibration loader and non-interactive render path.
-9. After committing validated modifications, push them to GitHub with `git push origin main` unless the user explicitly says not to push.
+7. For external dependency proof-of-life work, record exact commands and outcomes under `docs/generated/`.
+8. For FFS changes, keep weights external and validate both deterministic tests and manual hardware outcomes.
+9. For comparison visualization changes, validate the calibration loader and non-interactive render path.
+10. After committing validated modifications, push them to GitHub with `git push origin single-camera` for single-camera work, otherwise `git push origin main`, unless the user explicitly says not to push.
 
 ## Invariants
 

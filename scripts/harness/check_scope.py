@@ -82,6 +82,21 @@ ENV_INSTALL_BANNED_FRAGMENTS = [
     "kornia",
 ]
 
+BRANCH_POLICY_REQUIRED_TEXT = {
+    "AGENTS.md": [
+        "Single-Camera Branch Policy",
+        "single-camera-specific modifications must be made, committed, and pushed on the `single-camera` branch",
+        "Do not commit or push single-camera changes directly to `main`",
+        "git push origin single-camera",
+    ],
+    "scripts/harness/README.md": [
+        "Single-Camera Branch Safety",
+        "Single-camera-specific modifications belong on the `single-camera` branch",
+        "Do not commit or push single-camera changes directly to `main`",
+        "git push origin single-camera",
+    ],
+}
+
 
 def check_absent(path_strings: list[str], errors: list[str]) -> None:
     for relative in path_strings:
@@ -129,6 +144,18 @@ def check_env_install(errors: list[str]) -> None:
             errors.append(f"env_install/env_install.sh still references banned dependency: {fragment}")
 
 
+def check_single_camera_branch_policy(errors: list[str]) -> None:
+    for relpath, fragments in BRANCH_POLICY_REQUIRED_TEXT.items():
+        path = ROOT / relpath
+        if not path.exists():
+            errors.append(f"Missing branch-policy file: {relpath}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        for fragment in fragments:
+            if fragment not in text:
+                errors.append(f"{relpath} missing single-camera branch-policy fragment: {fragment}")
+
+
 def main() -> int:
     errors: list[str] = []
     check_absent(FORBIDDEN_DIRS, errors)
@@ -138,6 +165,7 @@ def main() -> int:
     check_qqtt_exports(errors)
     check_readme_scope(errors)
     check_env_install(errors)
+    check_single_camera_branch_policy(errors)
 
     if errors:
         print("Scope check failed:")
