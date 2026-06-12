@@ -119,4 +119,4 @@ This `single-camera` branch handles single-camera RealSense preview, calibration
 - Harness engineering: `docs/HARNESS_ENGINEERING.md`, `scripts/harness/README.md`
 - User workflows: `docs/WORKFLOWS.md`
 - Manual validation: `docs/HARDWARE_VALIDATION.md`
-- Active/completed execution plans: `docs/exec-plans/`
+- Active execution plans: `docs/exec-plans/active/`

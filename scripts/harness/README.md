@@ -24,7 +24,7 @@ architecture in the source-of-truth docs below, keep generated evidence under
 | Harness catalog | `scripts/harness/_catalog.py` | Machine-checkable list of public harness entrypoints, categories, summaries, and help coverage. |
 | Harness guards | `scripts/harness/check_*.py` | Mechanical enforcement for scope, catalog coverage, visual architecture, experiments, and legacy Demo 2.2 boundaries. |
 | Current evidence | `docs/generated/harness_engineering_compact_index.md` | Compact index for generated validation artifacts and current harness claims. |
-| Plans | `docs/exec-plans/active/`, `docs/exec-plans/completed/` | Versioned intent, decisions, validation, and follow-up state for non-trivial changes. |
+| Active plans | `docs/exec-plans/active/` | Current intent, decisions, validation, and follow-up state for non-trivial changes. |
 
 If a claim is important enough for a future agent to rely on, make it
 repository-local and link it from one of these layers.

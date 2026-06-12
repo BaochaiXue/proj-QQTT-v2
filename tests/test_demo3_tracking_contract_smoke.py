@@ -1,21 +1,11 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
 from qqtt.demo import demo22_runtime as demo22
 
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
 class Demo3TrackingContractSmokeTest(unittest.TestCase):
-    def test_contract_doc_exists(self) -> None:
-        path = ROOT / "docs" / "demo3_tracking_backend_overlay_contract.md"
-        text = path.read_text(encoding="utf-8")
-        self.assertIn("multi-backend tracking benchmark", text)
-        self.assertIn("coordinate order y,x", text)
-
     def test_demo22_runtime_contains_disabled_tracking_overlay_contract(self) -> None:
         argv = [
             "--dry-run",

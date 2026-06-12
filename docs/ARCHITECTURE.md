@@ -92,9 +92,7 @@ data product.
 - `qqtt/demo/**`
 - `services/ffs_remote/**`
 - `qqtt/tracking/**`
-- `docs/demo31_dual4090_runtime_contract.md`
 - `docs/demo3_highperf_tracking_backends.md`
-- `docs/demo3_tracking_backend_overlay_contract.md`
 
 ### Tooling / Harness
 
