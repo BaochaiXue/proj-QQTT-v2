@@ -54,7 +54,10 @@ class RealtimeExportState:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Realtime native RealSense RGB-D export to a PhysTwin-compatible aligned case.",
+        description=(
+            "Realtime native RealSense RGB-D export to a PhysTwin-compatible aligned case. "
+            "The single-camera branch defaults to one camera."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--case_name", type=str, default=None)

@@ -38,7 +38,10 @@ def _resolve_path(path: str) -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Record synchronized multi-camera RealSense raw data.",
+        description=(
+            "Record RealSense raw data. The single-camera branch defaults to "
+            "one camera; pass --num-cam or --serials for explicit multi-camera runs."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--case_name", type=str, default=None)

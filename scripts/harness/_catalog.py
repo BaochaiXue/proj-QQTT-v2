@@ -39,7 +39,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
     HarnessEntry(
         "scripts/harness/check_demo22_boundaries.py",
         "checks",
-        "Guard Demo 2.2 dependency separation and render replay harness cataloging.",
+        "Guard legacy Demo 2.2 dependency separation and render replay harness cataloging.",
     ),
     HarnessEntry(
         "scripts/harness/check_scope.py",

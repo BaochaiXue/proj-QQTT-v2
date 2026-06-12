@@ -13,11 +13,20 @@ if str(ROOT) not in sys.path:
 from scripts.harness._catalog import CATALOG
 
 
-FORBIDDEN_DEMO_IMPORT_PREFIXES = ("demo_v1", "demo_v2", "demo_v2_1", "demo_v2_1_5")
-DEMO22_FILES = (
+FORBIDDEN_DEMO_IMPORT_PREFIXES = (
+    "demo_v1",
+    "demo_v2",
+    "demo_v2_1",
+    "demo_v2_1_5",
+    "demo_v2_2",
+    "demo_v2_3",
+)
+LEGACY_VERSIONED_DEMO22_FILES = (
     ROOT / "demo_v2_2" / "realtime_three_view_async_filtered_fused_pcd.py",
     ROOT / "demo_v2_2" / "runtime.py",
     ROOT / "demo_v2_2" / "render_fastpath.py",
+)
+DEMO22_FILES = (
     ROOT / "qqtt" / "demo" / "demo22_runtime.py",
 )
 REQUIRED_HARNESS_ENTRY = "scripts/harness/benchmark_demo22_render_replay.py"
@@ -33,6 +42,11 @@ def _import_name(node: ast.AST) -> str | None:
 
 def collect_violations() -> list[str]:
     violations: list[str] = []
+    for path in LEGACY_VERSIONED_DEMO22_FILES:
+        if path.exists():
+            violations.append(
+                f"Legacy versioned Demo 2.2 entrypoint remains in single-camera branch: {path.relative_to(ROOT)}"
+            )
     for path in DEMO22_FILES:
         if not path.exists():
             violations.append(f"Missing Demo 2.2 boundary file: {path.relative_to(ROOT)}")
@@ -63,7 +77,7 @@ def main() -> int:
         for item in violations:
             print(f"[demo22-boundary] {item}")
         return 1
-    print("[demo22-boundary] Demo 2.2 dependency and harness boundary checks passed")
+    print("[demo22-boundary] Legacy Demo 2.2 dependency and harness boundary checks passed")
     return 0
 
 

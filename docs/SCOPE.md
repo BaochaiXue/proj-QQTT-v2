@@ -2,10 +2,11 @@
 
 ## Repo Charter
 
-This repository handles 3-camera RealSense preview, calibration, synchronized
-RGB-D recording, aligned case generation, native-vs-FFS comparison
-visualization, and sanctioned realtime demo/proxy diagnostics built on those
-camera streams.
+This `single-camera` branch handles single-camera RealSense preview,
+calibration, synchronized RGB-D recording, aligned case generation,
+native-vs-FFS comparison visualization, and sanctioned realtime demo/proxy
+diagnostics built on that camera stream. The `main` branch remains the
+protected 3-camera baseline.
 
 The formal data product still stops at aligned cases written by
 `data_process/record_data_align.py` and realtime native aligned export from
@@ -15,7 +16,7 @@ must remain a diagnostic layer around that data product.
 ## In Scope
 
 - RealSense preview and debugging
-- calibration of a 3-camera D400 setup
+- calibration of a single D400 camera by default, with explicit multi-camera validation still allowed
 - synchronized RGB-D recording
 - trimming and timestamp alignment of recorded cases
 - packaging aligned cases under `data/`
@@ -24,7 +25,8 @@ must remain a diagnostic layer around that data product.
 - aligned depth-backend comparison visualization utilities
 - explicitly isolated experiment-only aligned-case visualization under
   `data_process/visualization/experiments/` and `scripts/harness/experiments/`
-- demo-only realtime point-cloud workflows under `demo_v*`
+- demo-only realtime point-cloud workflows under `demo_v*` and
+  `single_demo_v3*`
 - Demo 3.3 may invoke external FuturePhysTwin and MV-SAM3D during warmup to
   render a diagnostic shape-prior reference layer, with cache artifacts written
   under the demo output root and outside formal case directories

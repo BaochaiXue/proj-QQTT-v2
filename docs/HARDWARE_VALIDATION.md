@@ -6,20 +6,20 @@ Hardware checks are manual. CI does not attempt to validate RealSense behavior.
 
 Current connected cameras:
 
-- `239222303506` - Intel RealSense D455
-- `239222300433` - Intel RealSense D455
 - `239222300781` - Intel RealSense D455
 
-Design assumption: treat the active setup as 3 homogeneous D455 devices on one D400-family code path.
+Design assumption for the `single-camera` branch: treat the active setup as one
+D455 on the shared D400-family code path. The `main` branch remains the
+protected 3-camera baseline.
 
 ## Checklist
 
 ### Viewer
 
-- 3 D400 cameras are connected
+- 1 D400 camera is connected
 - `python cameras_viewer.py` launches successfully
-- each camera shows live color and depth
-- each panel reports negotiated `configured fps` plus live `measured fps`
+- the camera shows live color and depth
+- the panel reports negotiated `configured fps` plus live `measured fps`
 - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo <repo>` launches successfully with the default TensorRT engine path
 - default TensorRT viewer / visualization FFS uses checkpoint `20-30-48`, `valid_iters=4`, two-stage ONNX/TensorRT, and a `builder_optimization_level=5` engine
 - current `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5` success is a static replay / TensorRT proxy result, not a live PyTorch realtime claim
@@ -59,7 +59,7 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
   - checker size: 30 mm
   - marker size: 22 mm
   - dictionary: `DICT_5X5_250`
-- `python cameras_calibrate.py` detects the ChArUco board from all 3 cameras
+- `python cameras_calibrate.py` detects the ChArUco board from the active camera
 - calibration opens color streams only; depth streams are not required for
   ChArUco pose estimation
 - selected RGB exposure values match the current rig defaults:
@@ -77,8 +77,7 @@ Design assumption: treat the active setup as 3 homogeneous D455 devices on one D
 
 - `python record_data.py --case_name smoke_case --capture_mode rgbd` creates `data_collect/smoke_case/`
 - per-camera `color/<camera>/<step>.png` files are written
-- per-camera RGB brightness is visually comparable across the three current rig
-  serials with the shared calibration/recording color-control defaults
+- per-camera RGB brightness uses the shared calibration/recording color-control defaults
 - per-camera `depth/<camera>/<step>.npy` files are written for `rgbd`
 - per-camera `ir_left/<camera>/<step>.png` and `ir_right/<camera>/<step>.png` are written for `stereo_ir`
 - `metadata.json` exists

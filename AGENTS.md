@@ -2,7 +2,7 @@
 
 ## Repo Charter
 
-This repository handles 3-camera RealSense preview, calibration, synchronized recording, aligned case generation, native-vs-FFS comparison visualization for aligned cases, and sanctioned realtime demo/proxy/tracking diagnostics built on those camera streams.
+This `single-camera` branch handles single-camera RealSense preview, calibration, synchronized recording, aligned case generation, native-vs-FFS comparison visualization for aligned cases, and sanctioned realtime demo/proxy/tracking diagnostics built on that camera stream. The `main` branch remains the protected 3-camera baseline until the user explicitly changes the repo-wide default.
 
 ## Current Experiment Convention
 
@@ -20,10 +20,13 @@ This repository handles 3-camera RealSense preview, calibration, synchronized re
 - `data_process/depth_backends/`: shared FFS geometry + runner used by production alignment and harness scripts
 - `data_process/visualization/`: aligned-case comparison visualization package
 - `data_process/visualization/experiments/`: experiment-only visualization workflows; formal recording/alignment code must not import this package
-- `demo_v0_2/`, `demo_v0_3/`: remote FFS replay / proxy experiments
-- `demo_v1/`, `demo_v2/`: single-camera realtime point-cloud demo lineage
-- `demo_v2_1/`, `demo_v2_1_5/`, `demo_v2_2/`: three-camera semantic fused-PCD demo lineage
-- `demo_v3_2/`: Demo 3.2 FFS batch=3 opt=5 depth plus LiteTracker serial tracking overlay
+- `scripts/harness/realtime_single_camera_pointcloud.py`: branch-default single-camera realtime point-cloud demo entrypoint
+- `qqtt/demo/realtime_single_camera_pointcloud.py`: shared single-camera realtime point-cloud demo implementation
+- `single_demo_v3/`: copied Demo 3 surface converted to one-camera RealSense masked PCD
+- `single_demo_v3_1/`: copied Demo 3.1 surface converted to one-camera RealSense masked PCD
+- `single_demo_v3_2/`: copied Demo 3.2 surface converted to one-camera FFS masked PCD
+- `single_demo_v3_3/`: copied Demo 3.3 surface converted to one-camera FFS masked PCD
+- `qqtt/demo/single_demo_v3_runtime.py`: shared single Demo 3.x contract and live delegate wrapper
 - `services/ffs_remote/`: remote FFS request/response and staged proxy services for demo/profiling use
 - `qqtt/env/camera/`: shared RealSense camera runtime
 - `qqtt/env/camera/preflight.py`: record-time probe/preflight decision table

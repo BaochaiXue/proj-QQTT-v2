@@ -27,12 +27,10 @@ FULL_ONLY_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
 
 DEMO_HELP_SCRIPTS: tuple[str, ...] = (
     "scripts/demo_v0_3/prepare_ir_triplet_100kits.py",
-    "demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py",
-    "demo_v2_3/realtime_three_view_dual_gpu_async_filtered_fused_pcd.py",
-    "demo_v3/realtime_three_view_cotracker3_realsense_overlay.py",
-    "demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py",
-    "demo_v3_2/realtime_three_view_litetracker_ffs_dual4090.py",
-    "demo_v3_3/realtime_three_view_litetracker_ffs_dual4090.py",
+    "single_demo_v3/realtime_single_camera_realsense_masked_pcd.py",
+    "single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py",
+    "single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py",
+    "single_demo_v3_3/realtime_single_camera_ffs_masked_pcd.py",
 )
 
 QUICK_HELP_SCRIPTS: tuple[str, ...] = (*BASE_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))
@@ -58,6 +56,7 @@ def _unique(items: tuple[str, ...]) -> tuple[str, ...]:
 QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_agents_scope_contract_smoke",
     "tests.test_recording_metadata_schema_v2",
+    "tests.test_single_camera_defaults_smoke",
     "tests.test_cameras_viewer_fps_smoke",
     "tests.test_camera_color_controls",
     "tests.test_record_preflight_policy_smoke",
@@ -78,8 +77,6 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_sam31_still_object_benchmark_smoke",
     "tests.test_sam21_checkpoint_ladder_panel_smoke",
     "tests.test_demo_v03_prepare_ir_triplets_smoke",
-    "tests.test_demo_v2_2_async_filtered_fused_pcd_smoke",
-    "tests.test_demo_v2_3_dual_gpu_smoke",
     "tests.test_demo23_harness_engineering_smoke",
     "tests.test_demo3_tracking_contract_smoke",
     "tests.test_demo3_tracking_sampling_smoke",
@@ -93,6 +90,7 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_demo3_tracking_vpi_stub_smoke",
     "tests.test_demo3_tracking_backend_benchmark_fake_smoke",
     "tests.test_demo3_contract",
+    "tests.test_single_demo_v3_runtime",
     "tests.test_demo3_cotracker_worker",
     "tests.test_demo3_overlay_lift",
     "tests.test_litetracker_onnx_adapter_contract",

@@ -22,7 +22,7 @@ architecture in the source-of-truth docs below, keep generated evidence under
 | Harness engineering | `docs/HARNESS_ENGINEERING.md` | Agent-first operating model, stable harness interfaces, and Demo 2.3 failure-packet contract. |
 | Workflows | `docs/WORKFLOWS.md` | Operator commands and expected manual procedures. |
 | Harness catalog | `scripts/harness/_catalog.py` | Machine-checkable list of public harness entrypoints, categories, summaries, and help coverage. |
-| Harness guards | `scripts/harness/check_*.py` | Mechanical enforcement for scope, catalog coverage, visual architecture, experiments, and Demo 2.2 boundaries. |
+| Harness guards | `scripts/harness/check_*.py` | Mechanical enforcement for scope, catalog coverage, visual architecture, experiments, and legacy Demo 2.2 boundaries. |
 | Current evidence | `docs/generated/harness_engineering_compact_index.md` | Compact index for generated validation artifacts and current harness claims. |
 | Plans | `docs/exec-plans/active/`, `docs/exec-plans/completed/` | Versioned intent, decisions, validation, and follow-up state for non-trivial changes. |
 
@@ -58,7 +58,7 @@ push target for that work is `git push origin single-camera`.
 
 | Category | Count | Meaning |
 | --- | ---: | --- |
-| `checks` | 7 | Repo, scope, architecture, experiment-boundary, Demo 2.2 boundary, harness-engineering, and catalog guards. |
+| `checks` | 7 | Repo, scope, architecture, experiment-boundary, legacy Demo 2.2 boundary, harness-engineering, and catalog guards. |
 | `hardware_external` | 13 | RealSense, FFS, SAM, TensorRT, WSLg/Open3D, and static replay probes. |
 | `mask_support` | 4 | SAM mask generation, helper code, object-case registry, and reprojection support. |
 | `formal_cleanup` | 1 | Downstream cleanup for `data/different_types/`. |

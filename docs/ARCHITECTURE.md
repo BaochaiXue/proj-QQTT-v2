@@ -80,14 +80,12 @@ data product.
 
 ### Sanctioned Demo / Proxy / Tracking Diagnostics
 
-- `demo_v0_2/**`
-- `demo_v0_3/**`
-- `demo_v1/**`
-- `demo_v2/**`
-- `demo_v2_1/**`
-- `demo_v2_1_5/**`
-- `demo_v2_2/**`
-- `demo_v2_3/**`
+- `scripts/harness/realtime_single_camera_pointcloud.py`
+- `qqtt/demo/realtime_single_camera_pointcloud.py`
+- `single_demo_v3/**`
+- `single_demo_v3_1/**`
+- `single_demo_v3_2/**`
+- `single_demo_v3_3/**`
 - `demo_v3/**`
 - `demo_v3_1/**`
 - `demo_v3_2/**`

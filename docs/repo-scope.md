@@ -7,9 +7,9 @@ and tracking-diagnostic layers that exercise those camera streams.
 
 ## In Scope
 
-- 3-camera RealSense viewer / debug
-- multi-camera calibration
-- multi-camera RGB-D recording
+- single-camera RealSense viewer / debug by default
+- single-camera calibration by default
+- single-camera RGB-D recording by default
 - aligned case generation up to `data_process/record_data_align.py`
 - optional proof-of-life tooling that evaluates an external stereo backend without modifying the main pipeline
 - standalone hardware capability probing that supports future camera-only integration decisions

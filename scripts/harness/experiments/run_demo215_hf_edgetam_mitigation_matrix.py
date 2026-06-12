@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from demo_v2_2 import runtime  # noqa: E402
+from qqtt.demo import demo22_runtime as runtime  # noqa: E402
 
 
 DEFAULT_JSON = ROOT / "docs/generated/demo215_hf_edgetam_gpu_underutilization_mitigation.json"

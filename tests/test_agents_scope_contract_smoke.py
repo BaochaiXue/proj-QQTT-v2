@@ -22,7 +22,8 @@ class AgentsScopeContractSmokeTest(unittest.TestCase):
     def test_agents_mentions_sanctioned_demo_proxy_tracking_scope(self) -> None:
         content = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("sanctioned realtime demo/proxy/tracking diagnostics", content)
-        self.assertIn("demo_v2_1/", content)
+        self.assertIn("scripts/harness/realtime_single_camera_pointcloud.py", content)
+        self.assertIn("qqtt/demo/realtime_single_camera_pointcloud.py", content)
         self.assertIn("services/ffs_remote/", content)
         self.assertIn("qqtt/tracking/", content)
         self.assertIn("formal recording/alignment code must not depend on those layers", content)

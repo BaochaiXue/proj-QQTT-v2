@@ -6,7 +6,7 @@
 python cameras_viewer.py
 ```
 
-Use this to verify that all 3 cameras enumerate and stream correctly before calibration or recording.
+Use this to verify that the active D455 enumerates and streams correctly before calibration or recording. This `single-camera` branch defaults to one camera; pass `--max-cams` or `--serials` only for explicit multi-camera validation.
 
 Each panel now shows both the negotiated stream `configured fps` and a per-camera `measured fps` computed from the recent valid color+depth delivery rate, so fallback startup profiles and live stalls are easier to see during preview.
 
@@ -22,14 +22,14 @@ For a hand-held single-D455 realtime point-cloud demo in the camera color
 frame:
 
 ```bash
-conda run -n FFS-SAM-RS python demo_v2/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60
+conda run -n FFS-SAM-RS python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60
 ```
 
 For the same single-camera viewer using live FFS depth from the D455 IR stereo
 pair and repo-local two-stage TensorRT artifact:
 
 ```bash
-conda run -n FFS-SAM-RS python demo_v2/realtime_single_camera_pointcloud.py \
+conda run -n FFS-SAM-RS python scripts/harness/realtime_single_camera_pointcloud.py \
   --profile 848x480 --fps 60 --depth-source ffs --view-mode camera --debug
 ```
 
@@ -38,7 +38,7 @@ defaults before importing Open3D, so the direct command uses Mesa `d3d12` instea
 of accidentally trying Zink/Vulkan:
 
 ```bash
-python demo_v2/realtime_single_camera_pointcloud.py \
+python scripts/harness/realtime_single_camera_pointcloud.py \
   --depth-source realsense \
   --profile 848x480 \
   --fps 30 \
@@ -53,7 +53,7 @@ sets `QQTT_WSLG_OPEN3D_FAST_EXIT=1`, so the harness stops the camera pipeline
 and exits directly when the Open3D window closes, avoiding the WSLg
 Open3D/Filament teardown crash. Use `QQTT_DISABLE_WSLG_OPEN3D_DEFAULTS=1` only
 when intentionally testing a different WSLg GL configuration. The
-`demo_v2/run_wslg_open3d.sh` wrapper remains available for standalone Open3D
+`scripts/harness/run_wslg_open3d.sh` wrapper remains available for standalone Open3D
 probes or other Python scripts.
 
 This demo streams one D455. The default `--depth-source realsense` captures
@@ -90,7 +90,7 @@ When diagnosing depth-to-render cost, enable the profiler HUD and `1 Hz`
 console timing summary:
 
 ```bash
-conda run -n FFS-SAM-RS python demo_v2/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60 --debug
+conda run -n FFS-SAM-RS python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60 --debug
 ```
 
 The profiler reports camera wait, RealSense align, frame copy, valid-depth image
@@ -111,23 +111,15 @@ Orbit point-cloud mode defaults to `--max-points 200000 --point-size 1.0` so
 the draw path is less dominated by point rasterization; pass explicit values
 when you want denser or larger splats for inspection.
 
-The single-camera coordinate contract above applies only to
-`demo_v2/realtime_single_camera_pointcloud.py`. Demo 2.1, Demo 2.1.5, Demo 2.2,
-Demo 3.0, Demo 3.1, and Demo 3.2 keep their public entrypoints under their versioned
-folders, but shared three-camera fused-PCD runtime code lives under
-`qqtt/demo/`. These demos require `calibrate.pkl` when world fusion is enabled,
-load camera-to-world transforms after `CameraSystem` startup, transform each
-camera's backprojected masked RGB-D points into the shared world frame, then
-fuse object/controller semantic PCDs. Demo 3.1 adds a dual-4090 visualization
-contract where GPU0 owns capture/mask/fusion/render and GPU1 owns CoTracker3 in
-a latest-wins child process. Demo 3.2 reuses that tracker/render contract but
-switches depth to the Demo 2.3 FFS TensorRT builderOptimizationLevel=5 batch=3
-path and defaults to TAPNext++ serial. Demo 3.0, Demo 3.1, and Demo 3.2 expose only `--mode exp|demo`
-for live semantics; both modes track the object/controller union with
-FuturePhysTwin-compatible dense CoTracker queries while keeping the rendered
-overlay cap separate.
+The single-camera coordinate contract above applies to
+`scripts/harness/realtime_single_camera_pointcloud.py` and its implementation in
+`qqtt/demo/realtime_single_camera_pointcloud.py`. Versioned Demo 2.2 / Demo 2.3
+three-view entrypoints are not part of the `single-camera` branch command
+surface; use `main` for the protected 3-camera baseline. Demo 3.x diagnostic
+entrypoints remain historical/sanctioned diagnostics, but they are not the
+branch-default single-camera demo path.
 
-For Demo 2.2, Demo 2.3, Demo 3.0, Demo 3.1, and Demo 3.2 performance claims, use the
+For Demo 3.0, Demo 3.1, and Demo 3.2 performance claims, use the
 rendered point-cloud path when reporting rendered FPS. A `--render-mode none`
 run is useful for upstream isolation, but it must not be described as rendered
 FPS. Finite-duration Open3D runs now stop workers and write summary/profile
@@ -136,50 +128,42 @@ Open3D/Filament teardown hang or crash should not eat the profile JSON. On
 workstations where Open3D teardown is still unreliable, run through
 `scripts/harness/run_wslg_open3d.sh` or set `QQTT_WSLG_OPEN3D_FAST_EXIT=1`.
 
-Rendered profile command templates:
+Rendered profile command templates for single Demo 3 diagnostics:
 
 ```bash
 scripts/harness/run_wslg_open3d.sh \
   conda run --no-capture-output -n demo_2_max \
-  python demo_v2_2/realtime_three_view_async_filtered_fused_pcd.py \
+  python single_demo_v3/realtime_single_camera_realsense_masked_pcd.py \
   --duration-s 120 \
-  --warmup-s 40 \
-  --gpu-sampling \
-  --render-micro-profile \
-  --profile-json-output docs/generated/demo22_rendered_pointcloud_profile.json
-
-scripts/harness/run_wslg_open3d.sh \
-  conda run --no-capture-output -n demo_2_max \
-  python demo_v2_3/realtime_three_view_dual_gpu_async_filtered_fused_pcd.py \
-  --fps 30 \
-  --duration-s 120 \
-  --warmup-s 40 \
-  --gpu-sampling \
-  --gpu-sampling-device-indexes 0,1 \
-  --render-mode pointcloud \
-  --render-micro-profile \
-  --profile-json-output docs/generated/demo23_rendered_pointcloud_profile.json
-
-scripts/harness/run_wslg_open3d.sh \
-  conda run --no-capture-output -n demo_2_max \
-  python demo_v3/realtime_three_view_cotracker3_realsense_overlay.py \
-  --duration-s 120 \
+  --camera-ids 0 \
   --render-mode pointcloud \
   --profile-json-output docs/generated/demo3_rendered_pointcloud_profile.json
 
 scripts/harness/run_wslg_open3d.sh \
   conda run --no-capture-output -n demo_2_max \
-  python demo_v3_1/realtime_three_view_cotracker3_realsense_overlay_dual4090.py \
+  python single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py \
   --duration-s 120 \
+  --camera-ids 0 \
   --render-mode pointcloud \
   --profile-json-output docs/generated/demo31_rendered_pointcloud_profile.json
 
 scripts/harness/run_wslg_open3d.sh \
-  conda run --no-capture-output -n demo_3_1_max \
-  python demo_v3_2/realtime_three_view_litetracker_ffs_dual4090.py \
+  conda run --no-capture-output -n demo_2_max \
+  python single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
   --duration-s 120 \
+  --camera-ids 0 \
   --render-mode pointcloud \
   --profile-json-output docs/generated/demo32_rendered_pointcloud_profile.json
+```
+
+For the branch-default single-camera demo profile, use:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python scripts/harness/realtime_single_camera_pointcloud.py \
+  --profile 848x480 \
+  --fps 30 \
+  --debug
 ```
 
 When interpreting those profiles, check `render_backpressure_count`,
@@ -527,13 +511,16 @@ infer that the same physical devices moved to new rig positions.
 Useful options:
 
 ```bash
-python cameras_calibrate.py --width 1280 --height 720 --fps 5 --num-cam 3
-python cameras_calibrate.py --serials 239222303506 239222300412 239222300781
+python cameras_calibrate.py --width 1280 --height 720 --fps 5
+python cameras_calibrate.py --serials 239222300781
 python cameras_calibrate.py --exposure 70 --gain 60
 python cameras_calibrate.py --calibration-board legacy-4x5-50mm
 python cameras_calibrate.py --calibration-samples 3
 python cameras_calibrate.py --calibration-world-frame robopil-rx180
 ```
+
+For an intentional multi-camera validation on this branch, pass `--num-cam` or
+a complete ordered `--serials` list explicitly.
 
 `CameraSystem` applies shared per-serial RGB exposure overrides for the current
 lab rig before calibration and recording. As of the May 19, 2026 brightness
@@ -639,7 +626,7 @@ python record_data.py --case_name smoke_case --capture_mode stereo_ir --serials 
 ## 4. Realtime Native Aligned Export
 
 Use this native RGB-D baseline when the goal is to produce a growing
-PhysTwin-compatible formal case directly from live 3-camera RealSense capture:
+PhysTwin-compatible formal case directly from live single-camera RealSense capture:
 
 ```bash
 python record_data_realtime_align.py --case_name native_rt_baseline
@@ -650,16 +637,16 @@ and intentionally keeps only the formal downstream interface:
 
 - `calibrate.pkl`
 - `metadata.json`
-- `color/0|1|2/<frame>.png`
-- `depth/0|1|2/<frame>.npy`
+- `color/0/<frame>.png`
+- `depth/0/<frame>.npy`
 
 It does not write mp4 sidecars, `metadata_ext.json`, FFS outputs, PCD outputs,
 or debug files inside the case. Runtime stats are written outside the formal
 case under `data/different_types_real_time/_logs/`.
 
-The realtime baseline FPS is defined as complete synchronized 3-camera RGB-D
-frame sets written per second, not per-camera capture FPS and not visualization
-render FPS.
+The realtime baseline FPS is defined as complete written RGB-D frame sets per
+second, not visualization render FPS. Explicit multi-camera runs still report
+complete synchronized frame sets.
 
 ## 5. Align
 
@@ -770,7 +757,7 @@ The cleanup keeps the formal downstream layout minimal, but it may also preserve
 If those RGB sidecars are missing, execute mode auto-generates them from `color/<camera>/*.png` before removing non-formal extras.
 
 All `record_data_align.py` outputs normalize `calibrate.pkl` into the case
-camera order (`color/0`, `1`, `2`) instead of preserving a separate
+camera order (`color/<camera>`) instead of preserving a separate
 calibration-reference order, so direct PhysTwin-style `c2ws[camera_idx]` reads
 the matching pose. In aligned metadata, `calibration_reference_serials` describes
 that emitted case-order `calibrate.pkl`; the original source calibration order is
@@ -782,8 +769,8 @@ downstream formal consumers depend on them.
 
 After cleanup, each case keeps only:
 
-- `color/0|1|2`
-- `depth/0|1|2`
+- `color/<camera>`
+- `depth/<camera>`
 - `calibrate.pkl`
 - `metadata.json`
 

@@ -1,6 +1,6 @@
 # proj-QQTT-v2
 
-This repository handles 3-camera RealSense preview, calibration, synchronized raw capture, aligned case generation, native-vs-FFS comparison visualization for aligned cases, and sanctioned realtime demo/proxy diagnostics built on those camera streams.
+This `single-camera` branch handles single-camera RealSense preview, calibration, synchronized raw capture, aligned case generation, native-vs-FFS comparison visualization for aligned cases, and sanctioned realtime demo/proxy diagnostics built on that camera stream. The `main` branch remains the protected 3-camera baseline.
 
 ## Scope
 
@@ -8,7 +8,7 @@ This repo has a narrow core data-product boundary plus a sanctioned demo and
 diagnostic layer. It supports:
 
 1. RealSense camera preview / debugging
-2. multi-camera calibration
+2. single-camera calibration by default, with explicit multi-camera options still available
 3. synchronized recording with:
    - default RealSense RGB-D
    - optional raw D455 IR stereo capture
@@ -33,7 +33,7 @@ See [docs/SCOPE.md](docs/SCOPE.md) for the exact boundary.
 
 ## Hardware Assumptions
 
-- 3 Intel RealSense D400-series cameras
+- 1 Intel RealSense D400-series camera by default on this branch
 - a ChArUco calibration board
 - Windows or Linux with librealsense-compatible device access
 - optional footswitch or keyboard input for recording
@@ -80,23 +80,20 @@ conda run -n FFS-SAM-RS python cameras_viewer_FFS.py
 Single-D455 realtime demo:
 
 ```bash
-conda run -n FFS-SAM-RS python demo_v2/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60
+conda run -n FFS-SAM-RS python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60
 ```
 
-See [demo_v2/README.md](demo_v2/README.md) for native RealSense, FFS depth,
-and WSLg/Open3D commands. `demo_v1/` is kept as the baseline copy.
-
-Three-camera fused semantic PCD demos:
+The single-camera demo implementation lives under `qqtt/demo/`; the harness
+wrapper sets up the repo path and is the branch-default command surface.
+Versioned Demo 2.2 / Demo 2.3 three-view entrypoints are not part of this
+single-camera branch surface; use `main` for that protected 3-camera baseline.
+Copied Demo 3.x experiments for this branch live under `single_demo_v3*` and
+default to exactly one RealSense camera:
 
 ```bash
-conda run --no-capture-output -n demo_2_max \
-  python demo_v2_1/realtime_three_view_masked_fused_pcd.py --preset demo2.2-staged-parallel-5fps
+python single_demo_v3/realtime_single_camera_realsense_masked_pcd.py --dry-run
+python single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
-
-See [demo_v2_1/README.md](demo_v2_1/README.md) for Demo 2.1.5 / Demo 2.2.
-These demos read `calibrate.pkl`, backproject each camera in its local camera
-frame, transform points with the corresponding camera-to-world `c2w`, and fuse
-object/controller semantic PCDs in the shared world frame.
 
 True no-render FFS throughput probe:
 
@@ -193,7 +190,7 @@ Important:
 
 ## Calibration
 
-Calibrate the 3-camera setup:
+Calibrate the single-camera setup:
 
 ```bash
 python cameras_calibrate.py --help
@@ -207,6 +204,9 @@ Current calibration defaults are optimized for board detection rather than live 
 ```bash
 python cameras_calibrate.py --width 1280 --height 720 --fps 5
 ```
+
+The shared default camera count is `1` on this branch. Use `--num-cam` or
+`--serials` only when deliberately running a multi-camera validation.
 
 ## Recording
 

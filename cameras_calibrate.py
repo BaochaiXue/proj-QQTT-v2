@@ -17,7 +17,10 @@ CALIBRATION_WORLD_FRAME_CHOICES = ("opencv-board-native", "robopil-rx180")
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Calibrate a 3-camera RealSense setup with a ChArUco board.",
+        description=(
+            "Calibrate the single-camera RealSense branch with a ChArUco board. "
+            "Pass --num-cam or --serials for explicit multi-camera calibration."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--width", type=int, default=CALIBRATE_DEFAULT_WIDTH)
@@ -90,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help=(
-            "Number of accepted full-rig calibration samples to collect. "
+            "Number of accepted calibration samples to collect. "
             "The best single sample is still written to preserve calibrate.pkl semantics."
         ),
     )
