@@ -27,12 +27,10 @@
   with `conda run --no-capture-output -n demo_3_3_max python ...` so the live
   runtime, detached completion worker, and FuturePhysTwin/SAM3D route inherit
   one environment.
-- Runtime role: explicitly enabled Demo 3.3 warmup-only single-view
-  shape-prior generation using FuturePhysTwin's `image_upscale.py ->
-  segment_util_image.py -> data_process_sam3d/shape_prior.py ->
-  data_process/align.py -> data_process_sam3d/data_process_sample.py
-  --shape_prior` route. Demo 3.3 keeps this disabled by default for live demo
-  runs.
+- Runtime role: Demo 3.3 warmup-only single-view shape-prior generation using
+  FuturePhysTwin's `image_upscale.py -> segment_util_image.py ->
+  data_process_sam3d/shape_prior.py -> data_process/align.py ->
+  data_process_sam3d/data_process_sample.py --shape_prior` route
 - Vendoring policy: keep FuturePhysTwin, SAM 3D Objects, checkpoints, and
   weights external; Demo 3.3 writes only diagnostic cache artifacts under its
   output root and does not change formal aligned-case outputs

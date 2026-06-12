@@ -1149,7 +1149,7 @@ class Demo31DualGpuContractTest(unittest.TestCase):
                 self.assertEqual(config.tapnextpp_image_size, (256, 256))
                 self.assertTrue(config.tapnextpp_fast_postprocess)
 
-    def test_demo33_dry_run_contract_disables_shape_prior_warmup_by_default(self) -> None:
+    def test_demo33_dry_run_contract_enables_shape_prior_warmup(self) -> None:
         argv = [
             "--dry-run",
             "--camera-ids",
@@ -1175,8 +1175,8 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["demo"], "demo3.3")
         self.assertEqual(contract["runtime_module"], "qqtt.demo.demo33_runtime")
         self.assertEqual(contract["runtime_owner"], "demo33_shape_prior_warmup")
-        self.assertFalse(contract["shape_prior_warmup_enabled"])
-        self.assertEqual(contract["shape_prior_status"], "disabled")
+        self.assertTrue(contract["shape_prior_warmup_enabled"])
+        self.assertEqual(contract["shape_prior_status"], "pending")
         self.assertEqual(contract["futurephystwin_root"], "/home/xinjie/FuturePhysTwin")
         self.assertEqual(contract["futurephystwin_python"], sys.executable)
         self.assertEqual(contract["sam3d_root"], "/home/xinjie/external/sam-3d-objects")
@@ -1184,9 +1184,9 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertEqual(contract["shape_prior_coordinate_frame"], "qqtt_world_c2w")
         self.assertEqual(contract["shape_prior_units"], "meters")
         self.assertEqual(contract["shape_prior_ground_policy"], "preserve")
-        self.assertEqual(contract["shape_prior_coordinate_validation_status"], "disabled")
-        self.assertEqual(contract["shape_prior_execution_mode"], "disabled")
-        self.assertEqual(contract["shape_prior_start_policy"], "disabled")
+        self.assertEqual(contract["shape_prior_coordinate_validation_status"], "pending")
+        self.assertEqual(contract["shape_prior_execution_mode"], "async_background_thread")
+        self.assertEqual(contract["shape_prior_start_policy"], "after-teardown")
         self.assertEqual(contract["shape_prior_gpu"], "0")
         self.assertEqual(contract["shape_prior_cuda_visible_devices"], "0")
         self.assertEqual(contract["shape_prior_cuda_alloc_conf"], "expandable_segments:True")
@@ -1212,14 +1212,14 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(contract["shape_prior_affects_tracker_input"])
         self.assertFalse(contract["shape_prior_affects_live_observation_pcd"])
         self.assertEqual(contract["overlay_display_scope"], "union")
-        self.assertFalse(contract["profile_summary_fields"]["shape_prior_warmup_enabled"])
-        self.assertEqual(contract["profile_summary_fields"]["shape_prior_status"], "disabled")
+        self.assertTrue(contract["profile_summary_fields"]["shape_prior_warmup_enabled"])
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_status"], "pending")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_coordinate_frame"], "qqtt_world_c2w")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_units"], "meters")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_ground_policy"], "preserve")
-        self.assertEqual(contract["profile_summary_fields"]["shape_prior_coordinate_validation_status"], "disabled")
-        self.assertEqual(contract["profile_summary_fields"]["shape_prior_execution_mode"], "disabled")
-        self.assertEqual(contract["profile_summary_fields"]["shape_prior_start_policy"], "disabled")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_coordinate_validation_status"], "pending")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_execution_mode"], "async_background_thread")
+        self.assertEqual(contract["profile_summary_fields"]["shape_prior_start_policy"], "after-teardown")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_gpu"], "0")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_cuda_visible_devices"], "0")
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_cuda_alloc_conf"], "expandable_segments:True")
@@ -1236,47 +1236,13 @@ class Demo31DualGpuContractTest(unittest.TestCase):
         self.assertFalse(contract["profile_summary_fields"]["shape_prior_affects_live_observation_pcd"])
         self.assertEqual(shared_args.demo_version_override, "demo3.3")
         self.assertEqual(shared_args.demo_display_name_override, "Demo 3.3")
-        self.assertFalse(shared_args.shape_prior_warmup_enabled)
+        self.assertTrue(shared_args.shape_prior_warmup_enabled)
         self.assertEqual(shared_args.shape_prior_start_policy, "after-teardown")
         self.assertEqual(shared_args.shape_prior_gpu, "auto")
         self.assertEqual(shared_args.shape_prior_cuda_alloc_conf, "expandable_segments:True")
         self.assertTrue(shared_args.shape_prior_retry_after_teardown)
         self.assertTrue(shared_args.shape_prior_skip_route_visualizations)
         self.assertEqual(shared_args.overlay_display_scope, "union")
-
-    def test_demo33_dry_run_contract_enables_shape_prior_warmup_when_explicit(self) -> None:
-        argv = [
-            "--dry-run",
-            "--camera-ids",
-            "0,1,2",
-            "--mask-gpu",
-            "0",
-            "--cotracker-gpu",
-            "1",
-            "--shape-prior-warmup",
-        ]
-        parser = demo33_runtime.build_arg_parser()
-        args = parser.parse_args(argv)
-        args = demo33_runtime.apply_preset_defaults(args, explicit_options=set(argv))
-        demo33_runtime.validate_args(args, cuda_device_count_provider=lambda: 2)
-
-        contract = demo33_runtime.build_contract(args, cuda_device_count_provider=lambda: 2)
-        shared_args = demo33_runtime.build_shared_runtime_args(
-            args,
-            shared_runtime_module=_FakeSharedRuntimeModule,
-            live_validation={"active_serials": ["s0", "s1", "s2"]},
-            shared_profile_path=None,
-        )
-
-        self.assertTrue(contract["shape_prior_warmup_enabled"])
-        self.assertEqual(contract["shape_prior_status"], "pending")
-        self.assertEqual(contract["shape_prior_coordinate_validation_status"], "pending")
-        self.assertEqual(contract["shape_prior_execution_mode"], "async_background_thread")
-        self.assertEqual(contract["shape_prior_start_policy"], "after-teardown")
-        self.assertTrue(contract["profile_summary_fields"]["shape_prior_warmup_enabled"])
-        self.assertEqual(contract["profile_summary_fields"]["shape_prior_status"], "pending")
-        self.assertEqual(contract["profile_summary_fields"]["shape_prior_start_policy"], "after-teardown")
-        self.assertTrue(shared_args.shape_prior_warmup_enabled)
 
     def test_demo33_respects_explicit_overlay_display_scope(self) -> None:
         argv = [

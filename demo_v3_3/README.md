@@ -1,20 +1,18 @@
 # Demo 3.3 Single-View Shape-Prior Warmup
 
-Demo 3.3 is the experimental shape-prior-capable variant of Demo 3.2. It keeps
-the Demo 3.2 FFS + EdgeTAM + TAPNext++/LiteTracker live path unchanged. The
-FuturePhysTwin/SAM3D warmup-only canonical reference layer is available for
-diagnostics, but it is disabled by default because the live demo does not use
-the generated gray reference layer. The current experiment object remains
-`stuffed animal` with controller `towel`.
+Demo 3.3 is the experimental shape-prior warmup variant of Demo 3.2. It keeps
+the Demo 3.2 FFS + EdgeTAM + TAPNext++/LiteTracker live path unchanged, then
+adds one warmup-only canonical reference layer for the current experiment
+object: `stuffed animal` with controller `towel`.
 
-When `--shape-prior-warmup` is explicitly enabled, Demo 3.3 snapshots the
-complete RGB-D/mask/calibration bundle during the first valid strict-source
-tracking input. The heavy FuturePhysTwin/SAM3D route starts after live teardown
-by default, once the FFS/EdgeTAM and tracker workers have released GPU memory.
-Tracker input and first-render warmup therefore do not wait on SAM3D or compete
-with it during the latency-sensitive startup window, while the shape-prior
-artifact is still generated and validated from the captured live snapshot. The
-frame0-only FuturePhysTwin-style case is written under:
+During the first valid strict-source tracking input, Demo 3.3 snapshots the
+complete RGB-D/mask/calibration bundle. By default the heavy
+FuturePhysTwin/SAM3D route starts after live teardown, once the FFS/EdgeTAM and
+tracker workers have released GPU memory. Tracker input and first-render warmup
+therefore do not wait on SAM3D or compete with it during the latency-sensitive
+startup window, while the shape-prior artifact is still generated and
+validated from the captured live snapshot. The frame0-only FuturePhysTwin-style
+case is written under:
 
 ```text
 <output-root>/demo33_shape_prior_warmup/<run_id>/case/
@@ -44,11 +42,8 @@ controller points render cyan-blue. Demo 3.3 defaults to
 `--overlay-debug-color-by-camera` temporarily overrides semantic colors for
 camera-alignment debugging.
 
-With the default-off setting, the profile reports `shape_prior_status =
-disabled`, `shape_prior_warmup_enabled = False`, and no gray canonical layer is
-generated or attached. When `--shape-prior-warmup` is enabled, the warmup
-profile reports `shape_prior_execution_mode = async_background_thread`,
-`shape_prior_start_policy = after-teardown`,
+The warmup profile reports `shape_prior_execution_mode =
+async_background_thread`, `shape_prior_start_policy = after-teardown`,
 `shape_prior_blocks_tracker_input = False`, and
 `shape_prior_blocks_first_render = False`. Under
 `QQTT_WSLG_OPEN3D_FAST_EXIT=1`, Demo 3.3 records a detached after-teardown
@@ -72,7 +67,7 @@ attachment.
 
 Demo 3.3-specific CLI:
 
-- `--shape-prior-warmup / --no-shape-prior-warmup`, default off
+- `--shape-prior-warmup / --no-shape-prior-warmup`, default on
 - `--futurephystwin-root`, default `/home/xinjie/FuturePhysTwin`
 - `--futurephystwin-python`, default current Python interpreter. Launch Demo 3.3 with
   `conda run --no-capture-output -n demo_3_3_max python ...` to keep live runtime
@@ -99,7 +94,7 @@ conda run --no-capture-output -n demo_3_3_max \
   --calibrate-path calibrate.pkl
 ```
 
-Short hardware validation with shape-prior warmup disabled:
+Short hardware validation:
 
 ```bash
 QQTT_WSLG_OPEN3D_FAST_EXIT=1 conda run --no-capture-output -n demo_3_3_max \
@@ -114,20 +109,10 @@ QQTT_WSLG_OPEN3D_FAST_EXIT=1 conda run --no-capture-output -n demo_3_3_max \
   --render-micro-profile \
   --gpu-sampling \
   --gpu-sampling-device-indexes 0,1 \
-  --profile-json-output docs/generated/demo33_default_no_shape_prior_60s_profile.json
+  --profile-json-output docs/generated/demo33_shape_prior_warmup_60s_profile.json
 ```
 
-Expected manual result: no gray canonical prior is generated or attached by
-default. Red object-tracking markers and cyan-blue controller tracking markers
-continue to come only from live depth/tracks.
-
-Shape-prior diagnostic validation can still be run by adding:
-
-```bash
---shape-prior-warmup
-```
-
-Expected diagnostic result: after warmup, a gray canonical prior appears around
+Expected manual result: after warmup, a gray canonical prior appears around
 the stuffed animal while red object-tracking markers and cyan-blue controller
 tracking markers continue to come only from live depth/tracks. If fast-exit is
 enabled, the live profile may first show `shape_prior_status = case_ready`; the

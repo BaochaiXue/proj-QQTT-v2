@@ -53,7 +53,7 @@ SHAPE_PRIOR_START_POLICIES = (
     SHAPE_PRIOR_START_POLICY_AFTER_FIRST_RENDER,
     SHAPE_PRIOR_START_POLICY_IMMEDIATE,
 )
-DEFAULT_SHAPE_PRIOR_WARMUP = False
+DEFAULT_SHAPE_PRIOR_WARMUP = True
 
 
 def _resolve_shape_prior_gpu(args: argparse.Namespace) -> str:
@@ -206,10 +206,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--shape-prior-warmup",
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_SHAPE_PRIOR_WARMUP,
-        help=(
-            "Run the Demo 3.3 FuturePhysTwin/SAM3D shape-prior warmup once from "
-            "a first-frame snapshot. Disabled by default for the live demo."
-        ),
+        help="Run the Demo 3.3 FuturePhysTwin/SAM3D shape-prior warmup once from a first-frame snapshot.",
     )
     group.add_argument("--futurephystwin-root", type=Path, default=DEFAULT_FUTUREPHYSTWIN_ROOT)
     group.add_argument("--futurephystwin-python", default=DEFAULT_FUTUREPHYSTWIN_PYTHON)
