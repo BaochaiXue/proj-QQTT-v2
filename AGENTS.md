@@ -22,11 +22,11 @@ This `single-camera` branch handles single-camera RealSense preview, calibration
 - `data_process/visualization/experiments/`: experiment-only visualization workflows; formal recording/alignment code must not import this package
 - `scripts/harness/realtime_single_camera_pointcloud.py`: branch-default single-camera realtime point-cloud demo entrypoint
 - `qqtt/demo/realtime_single_camera_pointcloud.py`: shared single-camera realtime point-cloud demo implementation
-- `single_demo_v3/`: copied Demo 3 surface converted to one-camera RealSense masked PCD
-- `single_demo_v3_1/`: copied Demo 3.1 surface converted to one-camera RealSense masked PCD
-- `single_demo_v3_2/`: copied Demo 3.2 surface converted to one-camera FFS masked PCD
-- `single_demo_v3_3/`: copied Demo 3.3 surface converted to one-camera FFS masked PCD
-- `qqtt/demo/single_demo_v3_runtime.py`: shared single Demo 3.x contract and live delegate wrapper
+- `single_demo_v3/`: one-camera RealSense masked PCD demo
+- `single_demo_v3_1/`: one-camera RealSense masked PCD demo
+- `single_demo_v3_2/`: one-camera FFS masked PCD demo
+- `single_demo_v3_3/`: one-camera FFS masked PCD demo
+- `qqtt/demo/single_demo_v3_runtime.py`: shared single Demo 3.x launcher
 - `services/ffs_remote/`: remote FFS request/response and staged proxy services for demo/profiling use
 - `qqtt/env/camera/`: shared RealSense camera runtime
 - `qqtt/env/camera/preflight.py`: record-time probe/preflight decision table

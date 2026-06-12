@@ -87,8 +87,8 @@ The single-camera demo implementation lives under `qqtt/demo/`; the harness
 wrapper sets up the repo path and is the branch-default command surface.
 Versioned Demo 2.2 / Demo 2.3 three-view entrypoints are not part of this
 single-camera branch surface; use `main` for that protected 3-camera baseline.
-Copied Demo 3.x experiments for this branch live under `single_demo_v3*` and
-default to exactly one RealSense camera:
+Single Demo 3.x entrypoints for this branch live under `single_demo_v3*` and
+open exactly one RealSense camera:
 
 ```bash
 python single_demo_v3/realtime_single_camera_realsense_masked_pcd.py --dry-run

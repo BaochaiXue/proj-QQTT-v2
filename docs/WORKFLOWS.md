@@ -128,32 +128,26 @@ Open3D/Filament teardown hang or crash should not eat the profile JSON. On
 workstations where Open3D teardown is still unreliable, run through
 `scripts/harness/run_wslg_open3d.sh` or set `QQTT_WSLG_OPEN3D_FAST_EXIT=1`.
 
-Rendered profile command templates for single Demo 3 diagnostics:
+Rendered command templates for single Demo 3 diagnostics:
 
 ```bash
 scripts/harness/run_wslg_open3d.sh \
   conda run --no-capture-output -n demo_2_max \
   python single_demo_v3/realtime_single_camera_realsense_masked_pcd.py \
   --duration-s 120 \
-  --camera-ids 0 \
-  --render-mode pointcloud \
-  --profile-json-output docs/generated/demo3_rendered_pointcloud_profile.json
+  --render-mode pointcloud
 
 scripts/harness/run_wslg_open3d.sh \
   conda run --no-capture-output -n demo_2_max \
   python single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py \
   --duration-s 120 \
-  --camera-ids 0 \
-  --render-mode pointcloud \
-  --profile-json-output docs/generated/demo31_rendered_pointcloud_profile.json
+  --render-mode pointcloud
 
 scripts/harness/run_wslg_open3d.sh \
   conda run --no-capture-output -n demo_2_max \
   python single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
   --duration-s 120 \
-  --camera-ids 0 \
-  --render-mode pointcloud \
-  --profile-json-output docs/generated/demo32_rendered_pointcloud_profile.json
+  --render-mode pointcloud
 ```
 
 For the branch-default single-camera demo profile, use:
