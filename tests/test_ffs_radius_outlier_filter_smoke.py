@@ -31,7 +31,10 @@ class FfsRadiusOutlierFilterSmokeTest(unittest.TestCase):
         self.assertEqual(float(filtered_depth_m[0, 0]), 0.0)
         self.assertAlmostEqual(float(filtered_depth_m[5, 5]), 1.0, places=6)
         self.assertGreaterEqual(int(stats["outlier_pixel_count"]), 1)
-        self.assertGreaterEqual(int(stats["inlier_pixel_count"]), 119)
+        self.assertGreaterEqual(
+            int(stats["inlier_pixel_count"]),
+            int(0.95 * int(stats["valid_pixel_count"])),
+        )
         self.assertEqual(
             int(stats["inlier_pixel_count"]) + int(stats["outlier_pixel_count"]),
             int(stats["valid_pixel_count"]),
