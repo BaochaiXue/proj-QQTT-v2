@@ -5,8 +5,10 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ROOT_STR = str(ROOT)
+if ROOT_STR in sys.path:
+    sys.path.remove(ROOT_STR)
+sys.path.insert(0, ROOT_STR)
 
 from scripts.harness._catalog import CATALOG
 

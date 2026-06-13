@@ -32,16 +32,6 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "Guard that every harness Python file is categorized here.",
     ),
     HarnessEntry(
-        "scripts/harness/check_harness_engineering.py",
-        "checks",
-        "Guard agent-first harness engineering map and Demo 2.3 failure-packet wiring.",
-    ),
-    HarnessEntry(
-        "scripts/harness/check_demo22_boundaries.py",
-        "checks",
-        "Guard legacy Demo 2.2 dependency separation and render replay harness cataloging.",
-    ),
-    HarnessEntry(
         "scripts/harness/check_scope.py",
         "checks",
         "Repo scope guard for removed or forbidden legacy surfaces.",
@@ -52,99 +42,9 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "Visualization layering and file-size guard.",
     ),
     HarnessEntry(
-        "scripts/harness/experiments/check_demo3_tracking_backends.py",
-        "experiments",
-        "Report Demo 3 tracking backend availability without requiring optional dependencies.",
-        "quick",
-    ),
-    HarnessEntry(
-        "scripts/harness/experiments/check_demo3_tracking_backend_stack.py",
-        "experiments",
-        "Probe Demo 3 high-performance tracking backend stack and optional dependencies.",
-        "quick",
-    ),
-    HarnessEntry(
-        "scripts/harness/experiments/run_demo3_tracking_backend_benchmark.py",
-        "experiments",
-        "Offline Demo 3 tracking backend benchmark with PhysTwin-compatible track outputs.",
-        "quick",
-    ),
-    HarnessEntry(
-        "scripts/harness/experiments/run_demo3_onnx_trt_probe.py",
-        "experiments",
-        "Non-fatal ONNX Runtime CUDA/TensorRT EP probe for exportable tracking models.",
-        "quick",
-    ),
-    HarnessEntry(
-        "scripts/harness/experiments/probe_demo31_tapnextpp_onnx_trt_feasibility.py",
-        "experiments",
-        "Isolated TAPNext++ recurrent ONNX/TensorRT feasibility probe for Demo 3.1.",
-        "quick",
-    ),
-    HarnessEntry(
-        "scripts/harness/experiments/profile_demo31_tapnextpp_attention_kernels.py",
-        "experiments",
-        "Model-only TAPNext++ recurrent attention kernel profiler for Demo 3.1.",
-        "quick",
-    ),
-    HarnessEntry(
-        "scripts/harness/visualize_demo3_tracking_pcd_overlay.py",
-        "focused_diagnostics",
-        "Offline Demo 3 fused PCD overlay export for lifted tracking anchors and trails.",
-        "quick",
-    ),
-    HarnessEntry(
-        "scripts/harness/summarize_demo23_failure_packet.py",
-        "focused_diagnostics",
-        "Build a compact Demo 2.3 FPS/fused-PCD failure packet from generated evidence.",
-        "quick",
-    ),
-    HarnessEntry(
-        "scripts/harness/profile_enhanced_pt_topn_surface_filter.py",
-        "focused_diagnostics",
-        "Benchmark enhanced PT top-N 3D semantic surface filtering and reuse.",
-        "quick",
-    ),
-    HarnessEntry(
-        "scripts/harness/run_demo31_locotrack_s_profiles.py",
-        "hardware_external",
-        "Rendered Demo 3.1 LocoTrack-S serial vs batch-views profile matrix.",
-        "full",
-    ),
-    HarnessEntry(
-        "scripts/harness/summarize_demo31_locotrack_s_profiles.py",
-        "hardware_external",
-        "Summarize rendered Demo 3.1 LocoTrack-S profile JSON files.",
-        "full",
-    ),
-    HarnessEntry(
-        "scripts/harness/run_demo31_tapnextpp_q1365_profiles.py",
-        "hardware_external",
-        "Rendered Demo 3.1 TAPNext++ q1365/view serial vs batch-views profiles.",
-        "full",
-    ),
-    HarnessEntry(
-        "scripts/harness/summarize_demo31_tapnextpp_profiles.py",
-        "hardware_external",
-        "Summarize rendered Demo 3.1 TAPNext++ profile JSON files.",
-        "full",
-    ),
-    HarnessEntry(
-        "scripts/harness/benchmark_demo31_tapnextpp_model_only.py",
-        "hardware_external",
-        "Synthetic TAPNext++ model-only benchmark without RealSense or Open3D.",
-        "full",
-    ),
-    HarnessEntry(
-        "scripts/harness/summarize_demo31_tapnextpp_model_only.py",
-        "hardware_external",
-        "Summarize synthetic TAPNext++ model-only benchmark JSON files.",
-        "full",
-    ),
-    HarnessEntry(
         "scripts/harness/benchmark_ffs_configs.py",
         "hardware_external",
-        "Saved-pair PyTorch FFS config screening; not live 3-camera realtime.",
+        "Saved-pair PyTorch FFS config screening for single-camera FFS depth work.",
         "full",
     ),
     HarnessEntry(
@@ -354,12 +254,6 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_demo215_hf_edgetam_mitigation_matrix.py",
-        "experiments",
-        "Demo 2.1.5 HF EdgeTAM mitigation benchmark matrix/report generator.",
-        "full",
-    ),
-    HarnessEntry(
         "scripts/harness/experiments/run_sloth_set2_hf_edgetam_streaming_pcd_xor_gif.py",
         "experiments",
         "Render Sloth Set 2 HF EdgeTAM streaming fused-PCD XOR GIF against SAM3.1.",
@@ -399,18 +293,6 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "scripts/harness/experiments/run_still_object_round1_projection_panel.py",
         "experiments",
         "Still-object round1 native/FFS projected-PCD removal board.",
-    ),
-    HarnessEntry(
-        "scripts/harness/experiments/visual_compare_enhanced_phystwin_postprocess_pcd.py",
-        "experiments",
-        "No cleanup vs PhysTwin-like radius cleanup vs enhanced component cleanup.",
-        "full",
-    ),
-    HarnessEntry(
-        "scripts/harness/experiments/visual_compare_enhanced_phystwin_removed_overlay.py",
-        "experiments",
-        "Removed-point overlay and optional IR-pair board.",
-        "full",
     ),
     HarnessEntry(
         "scripts/harness/experiments/visual_compare_ffs_confidence_filter_pcd.py",
@@ -482,12 +364,6 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "scripts/harness/audit_ffs_left_right.py",
         "focused_diagnostics",
         "Focused FFS left/right ordering audit.",
-        "full",
-    ),
-    HarnessEntry(
-        "scripts/harness/benchmark_demo22_render_replay.py",
-        "focused_diagnostics",
-        "Headless Demo 2.2 render packet replay microbenchmark.",
         "full",
     ),
     HarnessEntry(

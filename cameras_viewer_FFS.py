@@ -46,7 +46,6 @@ from data_process.depth_backends import (
     FastFoundationStereoTensorRTRunner,
     align_depth_to_color,
     load_tensorrt_model_config,
-    resolve_tensorrt_engine_static_batch_size,
     resolve_single_engine_tensorrt_model_path,
     resolve_tensorrt_image_transform,
 )
@@ -74,7 +73,7 @@ SHARED_WORKER_IDLE_SLEEP_S = 0.005
 DEFAULT_FFS_TRT_MODEL_DIR = DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
 DEPTH_RENDER_MODE_CHOICES = ("colormap", "fps_placeholder")
 RENDER_MODE_CHOICES = ("panel", "none")
-FFS_BATCH_MODE_CHOICES = ("off", "strict3")
+FFS_BATCH_MODE_CHOICES = ("off",)
 
 
 def _intrinsics_to_matrix(intrinsics: Any) -> list[list[float]]:
@@ -443,18 +442,17 @@ def _effective_stats_log_interval_s(
 
 
 def _validate_ffs_batch_mode_args(*, worker_mode: str, batch_mode: str) -> None:
-    if str(batch_mode) == "strict3" and str(worker_mode) != "shared":
-        raise ValueError("--ffs_batch_mode strict3 requires --ffs_worker_mode shared.")
+    del worker_mode
+    if str(batch_mode) != "off":
+        raise ValueError("--ffs_batch_mode only supports off on the single-camera branch.")
 
 
 def _validate_ffs_batch_mode_active_camera_count(
     *, batch_mode: str, active_camera_count: int
 ) -> None:
-    if str(batch_mode) == "strict3" and int(active_camera_count) != 3:
-        raise ValueError(
-            "--ffs_batch_mode strict3 requires exactly 3 active cameras after startup. "
-            f"Got active_camera_count={int(active_camera_count)}."
-        )
+    del active_camera_count
+    if str(batch_mode) != "off":
+        raise ValueError("--ffs_batch_mode only supports off on the single-camera branch.")
 
 
 def _build_ffs_runner(
@@ -535,43 +533,6 @@ def _drain_shared_worker_next_request(
     return None, None, cursor, closed
 
 
-def _drain_shared_worker_strict_batch_requests(
-    *,
-    camera_order: List[int],
-    request_queues: dict[int, Any],
-    pending_payloads: dict[int, Any],
-    closed_camera_indices: set[int],
-) -> tuple[list[tuple[int, Any]] | None, dict[int, Any], set[int]]:
-    pending = dict(pending_payloads)
-    closed = set(int(idx) for idx in closed_camera_indices)
-    for camera_idx in camera_order:
-        camera_idx = int(camera_idx)
-        if camera_idx in closed:
-            continue
-        while True:
-            try:
-                payload = request_queues[camera_idx].get_nowait()
-            except queue.Empty:
-                break
-            if payload is None:
-                closed.add(camera_idx)
-                pending.pop(camera_idx, None)
-                break
-            pending[camera_idx] = payload
-
-    active_camera_order = [
-        int(camera_idx) for camera_idx in camera_order if int(camera_idx) not in closed
-    ]
-    if len(active_camera_order) != len(camera_order):
-        return None, pending, closed
-    if any(camera_idx not in pending for camera_idx in active_camera_order):
-        return None, pending, closed
-    batch_payloads = [
-        (camera_idx, pending.pop(camera_idx)) for camera_idx in active_camera_order
-    ]
-    return batch_payloads, pending, closed
-
-
 def _resolve_ffs_worker_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     backend = str(args.ffs_backend)
     if not args.ffs_repo.exists():
@@ -591,7 +552,6 @@ def _resolve_ffs_worker_kwargs(args: argparse.Namespace) -> dict[str, Any]:
         "trt_root": None,
         "trt_engine_height": None,
         "trt_engine_width": None,
-        "trt_static_batch_size": None,
     }
     if backend == "pytorch":
         if args.ffs_model_path is None:
@@ -637,18 +597,6 @@ def _resolve_ffs_worker_kwargs(args: argparse.Namespace) -> dict[str, Any]:
         if not args.ffs_trt_root.exists():
             raise FileNotFoundError(f"Missing --ffs_trt_root: {args.ffs_trt_root}")
         worker_kwargs["trt_root"] = str(args.ffs_trt_root.resolve())
-    if str(args.ffs_batch_mode) == "strict3":
-        trt_static_batch_size = resolve_tensorrt_engine_static_batch_size(
-            trt_mode=str(trt_mode),
-            model_dir=args.ffs_trt_model_dir,
-            trt_root=args.ffs_trt_root,
-        )
-        if int(trt_static_batch_size) != 3:
-            raise ValueError(
-                "--ffs_batch_mode strict3 requires TensorRT engines with static batch dimension 3. "
-                f"Got trt_static_batch_size={int(trt_static_batch_size)} under {args.ffs_trt_model_dir}."
-            )
-        worker_kwargs["trt_static_batch_size"] = int(trt_static_batch_size)
     return worker_kwargs
 
 
@@ -792,11 +740,10 @@ def _ffs_worker_loop(
     trt_root: str | None,
     trt_engine_height: int | None,
     trt_engine_width: int | None,
-    trt_static_batch_size: int | None,
     geometry: dict[str, Any],
     output_shape: tuple[int, int],
 ) -> None:
-    del batch_mode, trt_static_batch_size
+    del batch_mode
     result_frame_times: deque[float] = deque()
     try:
         runner = _build_ffs_runner(
@@ -894,11 +841,10 @@ def _shared_ffs_worker_loop(
     trt_root: str | None,
     trt_engine_height: int | None,
     trt_engine_width: int | None,
-    trt_static_batch_size: int | None,
     geometries: dict[int, dict[str, Any]],
     output_shapes: dict[int, tuple[int, int]],
 ) -> None:
-    del trt_engine_height, trt_engine_width, trt_static_batch_size
+    del batch_mode, trt_engine_height, trt_engine_width
     camera_order = sorted(int(idx) for idx in request_queues.keys())
     result_frame_times: dict[int, deque[float]] = {
         int(camera_idx): deque() for camera_idx in camera_order
@@ -930,95 +876,7 @@ def _shared_ffs_worker_loop(
 
     cursor = 0
     closed_camera_indices: set[int] = set()
-    pending_batch_payloads: dict[int, Any] = {}
     while True:
-        if str(batch_mode) == "strict3":
-            batch_payloads, pending_batch_payloads, closed_camera_indices = (
-                _drain_shared_worker_strict_batch_requests(
-                    camera_order=camera_order,
-                    request_queues=request_queues,
-                    pending_payloads=pending_batch_payloads,
-                    closed_camera_indices=closed_camera_indices,
-                )
-            )
-            if len(closed_camera_indices) >= len(camera_order):
-                return
-            if batch_payloads is None:
-                if closed_camera_indices:
-                    return
-                time.sleep(SHARED_WORKER_IDLE_SLEEP_S)
-                continue
-
-            try:
-                infer_start_s = time.perf_counter()
-                batch_samples = [
-                    {
-                        "left_image": payload["ir_left"],
-                        "right_image": payload["ir_right"],
-                        "K_ir_left": np.asarray(
-                            geometries[int(camera_idx)]["K_ir_left"], dtype=np.float32
-                        ),
-                        "baseline_m": float(
-                            geometries[int(camera_idx)]["ir_baseline_m"]
-                        ),
-                    }
-                    for camera_idx, payload in batch_payloads
-                ]
-                run_outputs = runner.run_batch(batch_samples)
-                if len(run_outputs) != len(batch_payloads):
-                    raise RuntimeError(
-                        "FFS runner returned a mismatched batch result count. "
-                        f"Expected {len(batch_payloads)} got {len(run_outputs)}."
-                    )
-                result_time_s = time.perf_counter()
-                for (camera_idx, payload), run_output in zip(
-                    batch_payloads, run_outputs
-                ):
-                    camera_idx = int(camera_idx)
-                    geometry = geometries[camera_idx]
-                    output_shape = output_shapes[camera_idx]
-                    serial = str(camera_serials[camera_idx])
-                    result_payload = {
-                        "camera_idx": camera_idx,
-                        "serial": serial,
-                        "capture_seq": int(payload["capture_seq"]),
-                    }
-                    if _should_publish_depth_color(render_mode=render_mode):
-                        result_payload["depth_color_m"] = _reproject_ffs_depth_to_color(
-                            np.asarray(run_output["depth_ir_left_m"], dtype=np.float32),
-                            K_ir_left=np.asarray(
-                                run_output["K_ir_left_used"], dtype=np.float32
-                            ),
-                            T_ir_left_to_color=np.asarray(
-                                geometry["T_ir_left_to_color"], dtype=np.float32
-                            ),
-                            K_color=np.asarray(geometry["K_color"], dtype=np.float32),
-                            output_shape=output_shape,
-                        )
-                    _update_recent_frame_times(
-                        result_frame_times[camera_idx],
-                        now_s=result_time_s,
-                        frame_received=True,
-                    )
-                    result_payload["worker_ffs_fps"] = _compute_measured_fps(
-                        result_frame_times[camera_idx]
-                    )
-                    result_payload["inference_s"] = float(result_time_s - infer_start_s)
-                    result_payload["result_time_s"] = result_time_s
-                    _put_latest(result_queues[camera_idx], result_payload)
-            except Exception as exc:
-                for camera_idx, _ in batch_payloads:
-                    camera_idx = int(camera_idx)
-                    _put_latest(
-                        result_queues[camera_idx],
-                        {
-                            "camera_idx": camera_idx,
-                            "serial": str(camera_serials[camera_idx]),
-                            "error": f"{type(exc).__name__}: {exc}",
-                        },
-                    )
-            continue
-
         camera_idx, payload, cursor, closed_camera_indices = (
             _drain_shared_worker_next_request(
                 camera_order=camera_order,

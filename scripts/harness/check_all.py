@@ -7,8 +7,10 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ROOT_STR = str(ROOT)
+if ROOT_STR in sys.path:
+    sys.path.remove(ROOT_STR)
+sys.path.insert(0, ROOT_STR)
 
 from scripts.harness._catalog import help_scripts
 
@@ -26,7 +28,6 @@ FULL_ONLY_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
 )
 
 DEMO_HELP_SCRIPTS: tuple[str, ...] = (
-    "scripts/demo_v0_3/prepare_ir_triplet_100kits.py",
     "single_demo_v3/realtime_single_camera_realsense_masked_pcd.py",
     "single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py",
     "single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py",
@@ -76,34 +77,7 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_ffs_remove_invisible_mask_smoke",
     "tests.test_sam31_still_object_benchmark_smoke",
     "tests.test_sam21_checkpoint_ladder_panel_smoke",
-    "tests.test_demo_v03_prepare_ir_triplets_smoke",
-    "tests.test_demo23_harness_engineering_smoke",
-    "tests.test_demo3_tracking_contract_smoke",
-    "tests.test_demo3_tracking_sampling_smoke",
-    "tests.test_demo3_tracking_io_smoke",
-    "tests.test_demo3_tracking_lift_smoke",
-    "tests.test_demo3_tracking_registry_smoke",
-    "tests.test_demo3_tracking_harness_smoke",
-    "tests.test_demo3_tracking_backend_availability_smoke",
-    "tests.test_demo3_tracking_onnx_trt_config_smoke",
-    "tests.test_demo3_tracking_nvofa_stub_smoke",
-    "tests.test_demo3_tracking_vpi_stub_smoke",
-    "tests.test_demo3_tracking_backend_benchmark_fake_smoke",
-    "tests.test_demo3_contract",
     "tests.test_single_demo_v3_runtime",
-    "tests.test_demo3_cotracker_worker",
-    "tests.test_demo3_overlay_lift",
-    "tests.test_litetracker_onnx_adapter_contract",
-    "tests.test_phystwin_volume_filter",
-    "tests.test_object_volume_filter_service",
-    "tests.test_semantic_fusion_service",
-    "tests.test_demo31_dual_gpu_contract",
-    "tests.test_demo32_trackable_mask_filter",
-    "tests.test_demo31_ipc_latest_wins",
-    "tests.test_demo31_cotracker_process_config",
-    "tests.test_demo31_tapnextpp_onnx_trt_feasibility",
-    "tests.test_demo31_tapnextpp_attention_profile",
-    "tests.test_demo33_shape_prior_warmup",
     "tests.test_check_all_smoke",
 )
 
@@ -131,8 +105,6 @@ FULL_ONLY_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_sam31_mask_helper_smoke",
     "tests.test_camera_system_partial_stall_smoke",
     "tests.test_single_realsense_recovery_smoke",
-    "tests.test_enhanced_phystwin_postprocess_pcd_compare_smoke",
-    "tests.test_enhanced_phystwin_removed_overlay_smoke",
     "tests.test_ffs_native_like_depth_postprocess_smoke",
     "tests.test_ffs_radius_outlier_filter_smoke",
     "tests.test_ffs_tensorrt_single_engine_smoke",
@@ -228,8 +200,6 @@ PYTEST_BATCHES: tuple[tuple[str, ...], ...] = (
 
 CHECK_COMMANDS: tuple[tuple[str, ...], ...] = (
     ("scripts/harness/check_harness_catalog.py",),
-    ("scripts/harness/check_harness_engineering.py",),
-    ("scripts/harness/check_demo22_boundaries.py",),
     ("scripts/harness/check_experiment_boundaries.py",),
     ("scripts/harness/check_visual_architecture.py",),
     ("-m", "scripts.harness.check_scope"),
@@ -240,7 +210,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run deterministic repo validation. Default is the fast quick profile; "
-            "pass --full for the broader legacy validation set."
+            "pass --full for the broader single-camera validation set."
         )
     )
     parser.add_argument(

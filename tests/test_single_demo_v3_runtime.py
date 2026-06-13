@@ -25,19 +25,15 @@ LEGACY_MULTI_CAMERA_FIELDS = {
     "calibrate_pkl_required",
     "calibrate_pkl_loaded",
     "calibration_transform_count",
-    "ffs_batch3_required",
     "point_tracker_enabled",
     "point_tracker_live_stage",
     "tracking_backend_execution_mode",
     "tracking_backend_batch_size",
     "tracking_backend_model_instances_expected",
-    "dual_gpu_enabled",
     "required_cuda_devices",
     "require_two_cuda",
     "cross_gpu_cuda_tensor_transfer",
     "strict_source_three_camera_bundle",
-    "shape_prior_warmup_enabled",
-    "shape_prior_live_stage",
     "removed_three_camera_work",
 }
 
@@ -69,7 +65,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["controller_prompt"], "towel")
         self.assert_legacy_fields_removed(contract)
 
-    def test_demo32_contract_is_single_camera_ffs_batch_one(self) -> None:
+    def test_ffs_contract_is_single_camera_ffs_batch_one(self) -> None:
         args = self._parse(runtime.DEMO_VERSION_3_2, ["--dry-run"])
         contract = runtime.build_contract(args)
 
@@ -97,7 +93,6 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             "--calibrate-path",
             "--depth-source",
             "--live-delegate",
-            "--shape-prior-warmup",
         )
         for option in removed_args:
             with self.subTest(option=option):
@@ -140,7 +135,6 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertIn("ffs_trt_batch_size = 1", output)
             self.assertNotIn("requires_three_realsense", output)
             self.assertNotIn("multi_camera_world_fusion", output)
-            self.assertNotIn("shape_prior", output)
 
             payload = json.loads(profile.read_text(encoding="utf-8"))
             self.assertEqual(payload["contract"]["camera_count"], 1)

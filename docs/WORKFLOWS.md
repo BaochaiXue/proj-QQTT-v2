@@ -6,471 +6,53 @@
 python cameras_viewer.py
 ```
 
-Use this to verify that the active D455 enumerates and streams correctly before calibration or recording. This `single-camera` branch defaults to one camera; pass `--max-cams` or `--serials` only for explicit multi-camera validation.
+Use this to verify that the active D455 enumerates and streams correctly before
+calibration or recording. This `single-camera` branch defaults to one camera;
+pass `--max-cams` or `--serials` only for explicit multi-camera validation.
 
-Each panel now shows both the negotiated stream `configured fps` and a per-camera `measured fps` computed from the recent valid color+depth delivery rate, so fallback startup profiles and live stalls are easier to see during preview.
-
-Display-fit bounds are resolved once at viewer startup instead of probing the
-screen on every frame. If you change monitor/layout mid-session, restart the
-viewer so it can re-evaluate the available screen size.
-
-Native preview now uses one background capture thread per active camera and a
-latest-frame render loop in the main thread, so preview freshness no longer
-depends on the render loop reaching every `wait_for_frames()` call in order.
-
-For a hand-held single-D455 realtime point-cloud demo in the camera color
-frame:
+Single-D455 realtime point-cloud demo:
 
 ```bash
-conda run -n FFS-SAM-RS python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60
-```
-
-For the same single-camera viewer using live FFS depth from the D455 IR stereo
-pair and repo-local two-stage TensorRT artifact:
-
-```bash
-conda run -n FFS-SAM-RS python scripts/harness/realtime_single_camera_pointcloud.py \
-  --profile 848x480 --fps 60 --depth-source ffs --view-mode camera --debug
-```
-
-On this WSLg workstation, the realtime harness applies the required Open3D GUI
-defaults before importing Open3D, so the direct command uses Mesa `d3d12` instead
-of accidentally trying Zink/Vulkan:
-
-```bash
-python scripts/harness/realtime_single_camera_pointcloud.py \
-  --depth-source realsense \
+conda run -n demo_2_max --no-capture-output \
+  python scripts/harness/realtime_single_camera_pointcloud.py \
   --profile 848x480 \
-  --fps 30 \
-  --view-mode orbit
+  --fps 60 \
+  --view-mode camera
 ```
 
-The harness clears common EGL/Vulkan override variables, sets an empty
-`WAYLAND_DISPLAY` to prefer XWayland on this rig, sets `EGL_PLATFORM=x11`,
-defaults `GALLIUM_DRIVER=d3d12`, `MESA_LOADER_DRIVER_OVERRIDE=d3d12`, and uses
-`MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA` when no adapter is already set. It also
-sets `QQTT_WSLG_OPEN3D_FAST_EXIT=1`, so the harness stops the camera pipeline
-and exits directly when the Open3D window closes, avoiding the WSLg
-Open3D/Filament teardown crash. Use `QQTT_DISABLE_WSLG_OPEN3D_DEFAULTS=1` only
-when intentionally testing a different WSLg GL configuration. The
-`scripts/harness/run_wslg_open3d.sh` wrapper remains available for standalone Open3D
-probes or other Python scripts.
-
-This demo streams one D455. The default `--depth-source realsense` captures
-`color + depth` and aligns native depth to color; `--depth-source ffs` captures
-`color + infrared(1) + infrared(2)`, runs the default two-stage TensorRT FFS
-engine with runner-internal pinned/fixed buffer reuse for live batch-1, publishes
-raw IR-left metric depth, aligns FFS metric depth into the color frame in the
-render-prep stage with cached projection coefficients and a Numba fused z-buffer
-path when available, and renders RGB in the same
-`camera_color_frame` contract. The coordinate contract is meters, `x`
-right, `y` down, and `z` forward; it does not read `calibrate.pkl` or apply any
-multi-camera world transform. Use `--help` to see the supported capture rates and profiles
-(`--fps {5,15,30,60}` and `--profile {848x480,640x480}`). The HUD reports render
-FPS, host receive-to-render latency, point count, stale capture/depth/render
-drops, selected depth source, and the selected serial/profile/fps. Camera-view defaults preserve density (`--stride 1`,
-`--max-points 0`) and do not apply a far-depth clip (`--depth-max-m 0.0`).
-Set `--depth-max-m 1.5` or another positive value only when you want a near
-tabletop/room subset. The default view mode is first-person camera projection
-(`--view-mode camera`), using the D455 color intrinsics; use `--view-mode orbit`
-for the older third-person point-cloud view. The default render backend is
-`--render-backend auto`: camera view uses the fast `image` backend, which
-preserves all aligned valid depth pixels and skips `depth -> XYZ -> Open3D
-geometry -> camera projection`; orbit view uses the full `pointcloud` backend
-and defaults to `--max-points 200000` to reduce Open3D update pressure. Use
-`--max-points 0` with orbit when you explicitly want uncapped density, and use
-`--render-backend pointcloud` when you explicitly need Open3D point-cloud
-geometry in camera view. Point-cloud backprojection defaults to
-`--backproject-backend auto`, which uses Numba in `FFS-SAM-RS` for the
-stride-1 projection-grid path and falls back to NumPy otherwise; pass
-`--backproject-backend numpy` to force the pure NumPy path. `--latency-target-ms`
-is only a warning threshold.
-
-When diagnosing depth-to-render cost, enable the profiler HUD and `1 Hz`
-console timing summary:
-
-```bash
-conda run -n FFS-SAM-RS python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 60 --debug
-```
-
-The profiler reports camera wait, RealSense align, frame copy, valid-depth image
-masking or the selected backprojection backend, FFS TensorRT and FFS color-align
-time when `--depth-source ffs` is active, Open3D image/geometry conversion,
-Open3D image/geometry update, total receive-to-render latency, the active
-`backproject_backend`, startup-preserving total drop counters, after-warmup
-drop counters, last-window drop deltas, and the `depth_to_render_ms` subtotal
-excluding camera wait.
-
-The Open3D UI uses a coalesced `post_to_main_thread` request when render-prep
-publishes a packet; it pulls only the latest prepared image or point-cloud
-packet and does not enqueue one GUI callback per packet.
-Do not replace this with a fixed-60Hz UI scheduler. Manual orbit validation
-showed timer-driven pulls can be throttled by GUI/SceneWidget draw cadence and
-create steady render-slot drops even when CPU update timings look small.
-Orbit point-cloud mode defaults to `--max-points 200000 --point-size 1.0` so
-the draw path is less dominated by point rasterization; pass explicit values
-when you want denser or larger splats for inspection.
-
-The single-camera coordinate contract above applies to
-`scripts/harness/realtime_single_camera_pointcloud.py` and its implementation in
-`qqtt/demo/realtime_single_camera_pointcloud.py`. Versioned Demo 2.2 / Demo 2.3
-three-view entrypoints are not part of the `single-camera` branch command
-surface; use `main` for the protected 3-camera baseline. Demo 3.x diagnostic
-entrypoints remain historical/sanctioned diagnostics, but they are not the
-branch-default single-camera demo path.
-
-For Demo 3.0, Demo 3.1, and Demo 3.2 performance claims, use the
-rendered point-cloud path when reporting rendered FPS. A `--render-mode none`
-run is useful for upstream isolation, but it must not be described as rendered
-FPS. Finite-duration Open3D runs now stop workers and write summary/profile
-artifacts before requesting Open3D window/app teardown, so a later
-Open3D/Filament teardown hang or crash should not eat the profile JSON. On
-workstations where Open3D teardown is still unreliable, run through
-`scripts/harness/run_wslg_open3d.sh` or set `QQTT_WSLG_OPEN3D_FAST_EXIT=1`.
-
-Rendered command templates for single Demo 3 diagnostics:
-
-```bash
-scripts/harness/run_wslg_open3d.sh \
-  conda run --no-capture-output -n demo_2_max \
-  python single_demo_v3/realtime_single_camera_realsense_masked_pcd.py \
-  --duration-s 120 \
-  --render-mode pointcloud
-
-scripts/harness/run_wslg_open3d.sh \
-  conda run --no-capture-output -n demo_2_max \
-  python single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py \
-  --duration-s 120 \
-  --render-mode pointcloud
-
-scripts/harness/run_wslg_open3d.sh \
-  conda run --no-capture-output -n demo_2_max \
-  python single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
-  --duration-s 120 \
-  --render-mode pointcloud
-```
-
-For the branch-default single-camera demo profile, use:
+FFS depth mode for the same demo:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python scripts/harness/realtime_single_camera_pointcloud.py \
   --profile 848x480 \
   --fps 30 \
+  --depth-source ffs \
+  --view-mode camera \
   --debug
 ```
 
-When interpreting those profiles, check `render_backpressure_count`,
-`render_total_ms`, `render_buffer_dropped_total`, and the upstream publish FPS
-together. If rendered FPS tracks fusion/filter FPS and render backpressure is
-zero, the bottleneck is upstream supply rather than Open3D rendering.
-
-When you want a cheaper native-viewer throughput probe, replace the depth
-colormap with a black placeholder that only reports received depth FPS:
+Versioned single-camera masked PCD demos:
 
 ```bash
-python cameras_viewer.py --depth-render-mode fps_placeholder
+python single_demo_v3/realtime_single_camera_realsense_masked_pcd.py --dry-run
+python single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py --dry-run
+python single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
+python single_demo_v3_3/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
-The viewer uses the same `TURBO` metric-depth colormap as the aligned-case depth diagnostics. Keep the display range explicit when you want preview colors to match later panels:
-
-```bash
-python cameras_viewer.py --depth-vis-min-m 0.1 --depth-vis-max-m 3.0
-```
-
-FFS preview for live RGB plus color-aligned FFS depth now defaults to the repo-local `20-30-48 / iter4 / builderOpt5` TensorRT path. Run viewer, proxy, and visualization experiments from `FFS-SAM-RS` unless a task explicitly names another environment:
+Live FFS preview:
 
 ```bash
 conda run -n FFS-SAM-RS python cameras_viewer_FFS.py
 ```
 
-Use this as a debug viewer only:
-
-- top = live RGB
-- bottom = latest available color-aligned FFS depth
-- overlay = negotiated stream profile plus live `capture` and `ffs` fps
-- preview favors freshness over completeness and may drop stale stereo work while FFS catches up
-
-Performance boundary:
-
-- live PyTorch 3-camera FFS is still not realtime on the RTX 5090 laptop
-- the best measured PyTorch live 3-camera setting, `20-30-48 / valid_iters=4 / scale=0.5`, reached about `22.6` aggregate FFS FPS, or about `7.5` FPS per camera
-- the `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5` result is a separate static replay / TensorRT proxy target result
-- do not report static replay or TensorRT proxy numbers as "live PyTorch 3-camera realtime"
-
-When you want a cheaper FFS-viewer throughput probe, replace the lower FFS
-depth colormap with a black placeholder that only reports received FFS FPS:
-
-```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --depth-render-mode fps_placeholder
-```
-
-When you want a true no-render throughput probe, disable panel rendering and
-skip the worker-side color reprojection entirely:
+Use `--render-mode none` when you want a throughput probe that skips panel
+assembly and `cv2.imshow()`:
 
 ```bash
 conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --render-mode none
 ```
-
-Notes:
-
-- `--render-mode none` disables panel assembly and `cv2.imshow()`
-- worker processes stop producing color-aligned depth maps in this mode
-- if `--stats-log-interval-s` is omitted, the viewer falls back to `1 Hz` console stats so FFS FPS remains visible
-
-Live FFS mode selection is now:
-
-- `--ffs_backend tensorrt --ffs_trt_mode two_stage`
-  - default live path
-  - default external repo: sibling `../Fast-FoundationStereo`, resolved from the QQTT repo root
-  - default model directory: `data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864/`
-  - official-style two-stage TensorRT path: `feature_runner.engine` + Triton GWC + `post_runner.engine`
-  - requires a working Triton kernel runtime in the active Python environment
-- `--ffs_backend pytorch`
-  - current original PyTorch path
-- `--ffs_backend tensorrt --ffs_trt_mode single_engine`
-  - single-engine TensorRT path
-  - requires an explicit single-engine model directory
-
-If you explicitly want the current original PyTorch viewer path instead of the default two-stage TensorRT engines:
-
-```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo ../Fast-FoundationStereo --ffs_model_path ../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_valid_iters 4
-```
-
-If you want the single-engine TensorRT viewer path:
-
-```bash
-python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir /path/to/single_engine_trt_dir
-```
-
-Worker topology defaults to one FFS worker process per active camera:
-
-- `--ffs_worker_mode per_camera`
-  - current default
-  - one worker process per active camera
-- `--ffs_worker_mode shared`
-  - one shared worker process handles all active cameras sequentially
-  - keeps per-camera latest-only request/result queues
-  - useful when you want to reduce model duplication and compare shared-worker behavior explicitly
-
-Shared-worker live preview:
-
-```bash
-python cameras_viewer_FFS.py --ffs_worker_mode shared
-```
-
-Strict 3-camera batch live preview:
-
-- `--ffs_batch_mode strict3`
-  - requires `--ffs_worker_mode shared`
-  - requires exactly 3 active cameras
-  - batches the 3 latest camera IR pairs into one shared FFS forward pass
-- PyTorch batch mode reuses the current checkpoint path
-- TensorRT batch mode requires batch-3 artifact directories instead of the current batch-1 directories
-  - current machine-side batch-3 TRT proof-of-life status is recorded in `docs/generated/ffs_batch3_viewer_validation.md`
-
-PyTorch batch example:
-
-```bash
-conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo ../Fast-FoundationStereo --ffs_model_path ../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_valid_iters 4 --ffs_worker_mode shared --ffs_batch_mode strict3
-```
-
-Two-stage TensorRT batch example:
-
-```bash
-python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_trt_model_dir data/ffs_proof_of_life/trt_two_stage_batch3_864x480_wsl --ffs_worker_mode shared --ffs_batch_mode strict3
-```
-
-Single-engine TensorRT batch example:
-
-```bash
-python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_trt_model_dir data/ffs_proof_of_life/trt_single_engine_batch3_864x480_wsl_fp32 --ffs_worker_mode shared --ffs_batch_mode strict3
-```
-
-Saved-pair FFS speed / tradeoff benchmark:
-
-```bash
-python scripts/harness/benchmark_ffs_configs.py --aligned_root ./data --case_ref static/ffs_30_static_round3_20260414 --camera_idx 0 --frame_idx 0 1 2 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\20-26-39\model_best_bp2_serialize.pth --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\20-30-48\model_best_bp2_serialize.pth --scale 1.0 0.75 0.5 --valid_iters 8 4 --max_disp 192 --warmup_runs 2 --repeats 4 --target_fps 15 25 30 --out_dir ./data/ffs_benchmarks/my_tradeoff_run
-```
-
-This benchmark-only workflow:
-
-- loads aligned `ir_left` / `ir_right` plus FFS geometry from one aligned case
-- sweeps checkpoint / `scale` / `valid_iters` / `max_disp`
-- reports warmup-adjusted latency, FPS, and peak GPU memory
-- compares each config against the chosen reference config after nearest-neighbor resize back to the reference depth shape
-- writes:
-  - `summary.json`
-  - `report.md`
-
-Use this first when the main question is:
-
-- which current PyTorch FFS configs are worth promoting into a real live 3-camera test?
-- how much reference-depth drift appears when we lower `scale` or `valid_iters`?
-- which config is the best compromise for a target FPS threshold?
-
-Important QQTT performance rule:
-
-- New viewer, proxy, and visualization experiments default to `FFS-SAM-RS`, checkpoint `20-30-48`, `valid_iters=4`, and the level-5 two-stage ONNX/TRT artifact unless the experiment explicitly needs PyTorch logits.
-- Current target-reaching `builderOptimizationLevel=5` numbers are static replay / TensorRT proxy numbers, not proof that live PyTorch 3-camera FFS is realtime.
-- Current live PyTorch 3-camera status is red: best recorded `scale=0.5` reached about `22.6` aggregate FFS FPS and about `7.5` FPS per camera.
-- For our actual RealSense setup, benchmark at the native recorded image size `848x480`.
-- If the FFS/TensorRT model shape needs a multiple of `32`, use `848x480 -> 864x480` padding and unpad the result. Do not resize to `640x480` and use that number as the QQTT runtime.
-- `640x480` results are only official-table reproduction/control numbers and must be labeled as not representative of the real QQTT image size.
-
-Static-round TRT matrix replay + PPTX:
-
-```bash
-conda run -n FFS-SAM-RS python scripts/harness/run_ffs_static_replay_matrix.py --output_root ./result/ffs_static_replay_matrix_my_run --artifact_root ./result/_archived_obsolete/ffs_static_replay_matrix_20260422_sequential_obsolete_fullrun/artifacts --reuse_artifacts
-```
-
-This harness is the current offline static replay / TensorRT proxy workflow for the three static aligned FFS rounds. It:
-
-- uses:
-  - `static/ffs_30_static_round1_20260410_235202`
-  - `static/ffs_30_static_round2_20260414`
-  - `static/ffs_30_static_round3_20260414`
-- expands the fixed matrix:
-  - `model ∈ {23-36-37, 20-26-39, 20-30-48}`
-  - `scale ∈ {1.0, 0.75, 0.5}`
-  - `valid_iters ∈ {8, 4, 2}`
-  - `engine ∈ {single_engine_fp32, two_stage_fp16}`
-- benchmarks `3` views simultaneously within each round using `3` subprocess workers and `batch=1`
-- each worker warms up on frames `0..9`, measures frames `0..29`, and records `FPS = 30 / elapsed_seconds`
-- exports:
-  - `manifest.json`
-  - `results.csv`
-  - `mask_cache/`
-  - `experiments/<experiment_id>/summary.json`
-  - `ppt/ffs_static_replay_matrix.pptx`
-- PPT layout:
-  - `1` slide per experiment
-  - top-of-slide summary text = setting + 9 FPS values
-  - main image = frame-10 masked FFS-only `3x3` PCD board
-
-Operator notes:
-
-- use `FFS-SAM-RS` for new static replay / TensorRT proxy visualization runs
-- ensure `python-pptx` and `onnx` are installed in that environment
-- point `--artifact_root` at an existing artifact tree when you want fresh benchmark results without rebuilding TRT engines
-- the harness uses `stuffed animal` as the mask prompt
-- on the current machine, if SAM 3.1 checkpoint resolution is unavailable, the harness falls back to the existing static frame-0 stuffed-animal masks and copies them to frame 10 for this static-only workflow
-
-Static-round masked FFS confidence panels:
-
-```bash
-conda run -n FFS-SAM-RS python scripts/harness/experiments/visualize_ffs_static_confidence_panels.py
-```
-
-This offline static-only workflow:
-
-- reruns PyTorch FFS on frame `0` for:
-  - `static/ffs_30_static_round1_20260410_235202`
-  - `static/ffs_30_static_round2_20260414`
-  - `static/ffs_30_static_round3_20260414`
-- reuses the existing static stuffed-animal FFS mask cache from:
-  - `masked_pointcloud_compare_round1_frame_0000_stuffed_animal`
-  - `masked_pointcloud_compare_round2_frame_0000_stuffed_animal`
-  - `masked_pointcloud_compare_round3_frame_0000_stuffed_animal`
-- derives two confidence proxies from the captured classifier logits:
-  - `margin`
-  - `max_softmax`
-- aligns both FFS depth and confidence to color coordinates
-- writes one `3x3` masked board per metric and per round:
-  - row 1 = masked RGB for cameras `0/1/2`
-  - row 2 = masked color-aligned FFS depth for cameras `0/1/2`
-  - row 3 = masked color-aligned confidence for cameras `0/1/2`
-- uses a fixed `[0.0, 1.0]` confidence legend with `COLORMAP_VIRIDIS`
-- writes:
-  - `round1/margin_board.png`
-  - `round1/max_softmax_board.png`
-  - `round1/summary.json`
-  - same for `round2/` and `round3/`
-  - top-level `summary.json`
-
-Use this when the question is specifically:
-
-- where is FFS uncertain on the static object, per camera?
-- do `margin` and `max_softmax` show the same uncertain regions?
-- how does masked confidence compare across static rounds under the exact same layout?
-
-Static-round masked FFS confidence + PCD panels:
-
-```bash
-conda run -n FFS-SAM-RS python scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py
-```
-
-This offline static-only workflow:
-
-- reruns PyTorch FFS on frame `0` for:
-  - `static/ffs_30_static_round1_20260410_235202`
-  - `static/ffs_30_static_round2_20260414`
-  - `static/ffs_30_static_round3_20260414`
-- reuses the same existing static stuffed-animal FFS mask cache as the depth-row confidence workflow
-- derives two confidence proxies from the captured classifier logits:
-  - `margin`
-  - `max_softmax`
-- aligns confidence to color coordinates, samples it at each reconstructed point's `source_pixel_uv`, and carries that confidence into the fused masked cloud
-- rebuilds a fused masked FFS point cloud from the same rerun depth and renders it under the 3 original color camera pinhole views
-- writes one `3x3` board per metric and per round:
-  - row 1 = masked RGB for cameras `0/1/2`
-  - row 2 = fused masked FFS PCD rendered from cameras `0/1/2`
-  - row 3 = the exact same fused masked FFS PCD rendered from cameras `0/1/2`, but colored by the selected point confidence metric
-- uses a fixed `[0.0, 1.0]` confidence legend with `COLORMAP_VIRIDIS`
-- writes:
-  - `round1/margin_board.png`
-  - `round1/max_softmax_board.png`
-  - `round1/summary.json`
-  - same for `round2/` and `round3/`
-  - top-level `summary.json`
-
-Use this when the question is specifically:
-
-- does low-confidence FFS geometry also look weak in the fused masked point cloud?
-- how does the fused masked FFS object look from the exact 3 RGB camera views?
-- do `margin` and `max_softmax` confidence highlight the same failure regions as the PCD row?
-
-Realistic live 3-camera FFS benchmark:
-
-```bash
-python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-interval-s 5 --ffs_repo ../Fast-FoundationStereo --ffs_model_path ../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth --ffs_scale 0.5 --ffs_valid_iters 4 --ffs_max_disp 192
-```
-
-Use this when the main question is the real online path:
-
-- 3 cameras streaming at once
-- either 3 per-camera FFS workers or 1 shared FFS worker, depending on `--ffs_worker_mode`
-- latest-only queue pressure
-- actual viewer-side `capture` vs `ffs` throughput
-
-The live viewer now supports:
-
-- `--serials`
-  - optional explicit preview order; omit it to use stable sorted serial order
-- `--duration-s`
-  - auto-stops after the requested benchmark window
-- `--stats-log-interval-s`
-  - prints aggregate and per-camera runtime stats to stdout
-
-The logged stats include:
-
-- aggregate capture fps across all cameras
-- aggregate FFS result fps across all cameras
-- per-camera capture fps
-- per-camera FFS fps
-- latest per-camera inference ms
-- per-camera `seq_gap` between the latest captured frame id and the latest completed FFS result id
-
-Treat this live 3-camera viewer benchmark as the authoritative online-setting measurement. The saved-pair benchmark above is still useful for offline checkpoint/parameter screening, but it is not a substitute for simultaneous 3-camera runtime behavior.
-
-Current live PyTorch status:
-
-- not realtime for 3 cameras on the RTX 5090 laptop
-- best recorded live PyTorch setting: `20-30-48 / valid_iters=4 / scale=0.5 / max_disp=192`
-- aggregate FFS FPS: about `22.6`
-- per-camera FFS FPS: about `7.5`
-- keep this conclusion separate from static replay / TensorRT proxy results
 
 ## 2. Calibrate
 
@@ -479,28 +61,8 @@ python cameras_calibrate.py
 ```
 
 The default target is the current lab Calib.io ChArUco board:
-`calibio-12x9-30mm` (`12x9`, 30 mm checker size, 22 mm marker size,
-ArUco `DICT_5X5_250`). This matches the new board and the lab reference
-calibration script.
-
-This writes `calibrate.pkl` and `calibrate_metadata.json` in the repo root by
-default. The metadata sidecar records the serial order that the transforms in
-`calibrate.pkl` use, along with the calibration board profile, RealSense color
-distortion metadata, reprojection corner counts, and the calibration world-frame
-convention.
-
-Calibration opens only the RealSense color streams. ChArUco pose estimation uses
-RGB images plus color intrinsics/distortion, so depth is intentionally disabled
-during calibration.
-
-`calibrate.pkl` remains the compatibility artifact: a calibration-time ordered
-list of `camera_to_world_c2w` 4x4 transforms. Additional schema/convention
-details live in `calibrate_metadata.json` so existing QQTT and PhysTwin readers
-that consume only `calibrate.pkl` continue to work.
-
-If cameras have been physically swapped on the rig, rerun calibration before
-recording. Serial checks can catch a wrong or replaced device, but they cannot
-infer that the same physical devices moved to new rig positions.
+`calibio-12x9-30mm`. This writes `calibrate.pkl` and
+`calibrate_metadata.json` in the repo root by default.
 
 Useful options:
 
@@ -508,53 +70,13 @@ Useful options:
 python cameras_calibrate.py --width 1280 --height 720 --fps 5
 python cameras_calibrate.py --serials 239222300781
 python cameras_calibrate.py --exposure 70 --gain 60
-python cameras_calibrate.py --calibration-board legacy-4x5-50mm
-python cameras_calibrate.py --calibration-samples 3
-python cameras_calibrate.py --calibration-world-frame robopil-rx180
 ```
 
-For an intentional multi-camera validation on this branch, pass `--num-cam` or
-a complete ordered `--serials` list explicitly.
-
-`CameraSystem` applies shared per-serial RGB exposure overrides for the current
-lab rig before calibration and recording. As of the May 19, 2026 brightness
-probe, the defaults are `239222300412=156`, `239222300781=156`, and
-`239222303506=180` with gain `60`. The `--exposure` and `--gain` values are the
-base manual settings for unknown serials or one-off runs.
-
-The old `legacy-4x5-50mm` board profile remains available only for reproducing
-older calibrations and is deprecated for new rig calibration. For a one-off
-custom target, override the selected profile with `--board-squares-x`,
-`--board-squares-y`, `--board-square-size-mm`, `--board-marker-size-mm`, and
-`--board-dictionary`.
-
-The default world frame is `opencv-board-native`, QQTT's native ChArUco board
-frame. `robopil-rx180` is available only when matching the yfang/Robopil
-converted board-frame convention. To import a yfang-style `cam_params.pkl`
-without changing the QQTT `calibrate.pkl` contract:
-
-```bash
-python scripts/convert_robopil_cam_params_to_qqtt_calibrate.py \
-  --input assets/calib_params/cam_params.pkl \
-  --output calibrate.pkl \
-  --serials 239222303506 239222300412 239222300781 \
-  --overwrite
-```
+Rerun calibration after any physical camera-position change.
 
 ## 3. Record
 
-```bash
-python record_data.py --case_name my_case --capture_mode rgbd
-```
-
-If `--case_name` is omitted, a timestamp is used.
-
-The recorder writes raw data to `data_collect/<case_name>/`.
-It uses the same shared per-serial RGB exposure/gain defaults as calibration, so
-raw recordings and newly written calibration files start from matched camera
-brightness unless `--exposure` or `--gain` is explicitly overridden.
-
-Default RealSense path:
+Default RealSense RGB-D path:
 
 ```bash
 python record_data.py --case_name my_case --capture_mode rgbd
@@ -566,61 +88,15 @@ Optional FFS raw capture path:
 python record_data.py --case_name my_case --capture_mode stereo_ir --emitter on
 ```
 
-Current preflight policy:
-
-- `rgbd`
-  - supported directly
-  - no D455 IR-pair probe gate
-- `stereo_ir`
-  - probe-aware
-  - unsupported profile remains allowed experimentally with a warning
-- `both_eval`
-  - probe-aware
-  - unsupported profile remains allowed experimentally with a warning
-
-`record_data.py` now prints a preflight summary before recording, including:
-
-- selected or pending serials
-- requested profile
-- probe support result
-- current repo policy
-- whether recording is allowed
-
-If `--serials` is omitted, the first summary is intentionally provisional:
-
-- stage = `before camera discovery`
-- serials = `<pending>`
-
-After `CameraSystem` resolves the actual camera serials, `record_data.py` prints a second summary:
-
-- stage = `after camera discovery`
-- final support / blocked / experimental / unknown status for the discovered serial set
-
-When `calibrate_metadata.json` exists next to `calibrate.pkl`, recording uses
-that sidecar as the calibration reference serial order and copies it into the
-raw case. If the sidecar is missing, the old fallback remains available but
-prints a warning to rerun calibration after any physical rig change.
-
-When `--max_frames` is used, recording now fails fast if one or more cameras stop making progress while others continue, instead of waiting indefinitely for the slowest camera to catch up.
-
-If a camera drops during or immediately after stop, the worker now exits cleanly instead of emitting a secondary inactive-pipeline traceback during reconnect handling.
-
-Optional non-interactive short capture:
+Short non-interactive smoke capture:
 
 ```bash
 python record_data.py --case_name smoke_case --capture_mode rgbd --max_frames 5 --disable-keyboard-listener
 ```
 
-Optional single-camera selection for validation:
-
-```bash
-python record_data.py --case_name smoke_case --capture_mode stereo_ir --serials 239222300781 --max_frames 5 --disable-keyboard-listener
-```
+Raw recordings are written under `data_collect/<case_name>/`.
 
 ## 4. Realtime Native Aligned Export
-
-Use this native RGB-D baseline when the goal is to produce a growing
-PhysTwin-compatible formal case directly from live single-camera RealSense capture:
 
 ```bash
 python record_data_realtime_align.py --case_name native_rt_baseline
@@ -634,13 +110,8 @@ and intentionally keeps only the formal downstream interface:
 - `color/0/<frame>.png`
 - `depth/0/<frame>.npy`
 
-It does not write mp4 sidecars, `metadata_ext.json`, FFS outputs, PCD outputs,
-or debug files inside the case. Runtime stats are written outside the formal
-case under `data/different_types_real_time/_logs/`.
-
-The realtime baseline FPS is defined as complete written RGB-D frame sets per
-second, not visualization render FPS. Explicit multi-camera runs still report
-complete synchronized frame sets.
+Runtime stats are written outside the formal case under
+`data/different_types_real_time/_logs/`.
 
 ## 5. Align
 
@@ -654,724 +125,52 @@ Optional mp4 generation:
 python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --write_mp4
 ```
 
-Optional output location override:
-
-```bash
-python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --output_path ./data
-```
-
-The grouped `data/<type>/<case_name>/` layout applies to aligned cases under `data/`, not to raw recordings under `data_collect/`.
-
-Grouped aligned layouts are supported by choosing a grouped output root. For example:
-
-```bash
-python record_data.py --case_name my_case --capture_mode rgbd
-python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend realsense --output_path ./data/static
-```
-
-This keeps the aligned case under `data/static/my_case/` while the raw recording remains under `data_collect/my_case/`.
-
-Future aligned cases now write:
-
-- `metadata.json`
-  - old `proj-QQTT` compatible aligned fields only
-- `metadata_ext.json`
-  - QQTT extension fields such as depth backend, stream layout, calibration-reference serials, and FFS geometry/config metadata
-
-Visualization case resolution now accepts either:
-
-- a relative grouped ref such as `static/my_case`
-- a unique bare case name such as `my_case` when it appears only once under `aligned_root`
-
 Optional FFS backend:
 
 ```bash
-python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --write_ffs_float_m
+python data_process/record_data_align.py \
+  --case_name my_case \
+  --start 0 \
+  --end 120 \
+  --depth_backend ffs \
+  --ffs_repo ../Fast-FoundationStereo \
+  --ffs_model_path ../Fast-FoundationStereo/weights/23-36-37/model_best_bp2_serialize.pth \
+  --write_ffs_float_m
 ```
 
-Optional FFS native-like postprocess during alignment:
+`realsense` remains the default backend. `ffs` requires raw `ir_left` /
+`ir_right` plus runtime geometry metadata. `both` remains an explicit
+comparison path.
+
+## 6. Compare Native vs FFS
+
+Per-camera diagnostic panels:
 
 ```bash
-python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --ffs_native_like_postprocess
+python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --write_mp4 --use_float_ffs_depth_when_available
 ```
 
-This keeps canonical FFS compatibility depth unchanged and additionally writes:
-
-- `depth_ffs_native_like_postprocess/`
-- `depth_ffs_native_like_postprocess_float_m/`
-
-Optional PyTorch logits confidence filtering during FFS alignment:
+Cross-view reprojection comparison:
 
 ```bash
-python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --ffs_confidence_mode max_softmax --ffs_confidence_threshold 0.6 --ffs_confidence_depth_min_m 0.2 --ffs_confidence_depth_max_m 1.5
+python scripts/harness/visual_compare_reprojection.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --camera_pair 0,1 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
-Confidence-filtered FFS depth remains uint16 depth with invalid or rejected
-pixels encoded as zero. Float-meter depth is still only written when
-`--write_ffs_float_m` is explicitly passed. See
-`docs/ffs_confidence_filtering.md` for sweep usage and threshold tradeoffs.
-
-Optional Open3D radius-outlier filtering during alignment:
-
-```bash
-python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend ffs --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --ffs_radius_outlier_filter --ffs_radius_outlier_radius_m 0.01 --ffs_radius_outlier_nb_points 40 --write_ffs_float_m
-```
-
-This PhysTwin-style filtering:
-
-- runs on each per-camera color-aligned FFS depth frame
-- applies Open3D `remove_radius_outlier(nb_points=40, radius=0.01)` by default
-- writes the filtered result as the main aligned FFS depth
-- archives the unfiltered raw FFS depth beside it
-- does not change native `depth/` when `--depth_backend both`
-
-Experimental comparison backend:
-
-```bash
-python data_process/record_data_align.py --case_name my_case --start 0 --end 120 --depth_backend both --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --ffs_model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth
-```
-
-Important:
-
-- `realsense` remains the default backend.
-- `ffs` requires raw `ir_left` / `ir_right` plus runtime geometry metadata.
-- `both` is experimental and should only be used when the hardware probe says the same-take stream set is supported.
-- current repo visualization loaders merge `metadata.json` and `metadata_ext.json` automatically when both are present
-- `ffs_raw` triplet workflows now prefer archived raw FFS depth when present and otherwise fall back to legacy pre-archive `depth_ffs*`
-
-For downstream-facing formal exports under `data/different_types/`, use the cleanup script after alignment:
-
-```bash
-python scripts/harness/cleanup_different_types_cases.py --root ./data/different_types --case_name sloth_base_motion_native --case_name sloth_base_motion_ffs
-```
-
-Default behavior is `dry-run`. Add `--execute` to apply the cleanup in place.
-
-The cleanup keeps the formal downstream layout minimal, but it may also preserve optional `color/0.mp4`, `color/1.mp4`, and `color/2.mp4` sidecars for consumers that require per-camera RGB videos.
-If those RGB sidecars are missing, execute mode auto-generates them from `color/<camera>/*.png` before removing non-formal extras.
-
-All `record_data_align.py` outputs normalize `calibrate.pkl` into the case
-camera order (`color/<camera>`) instead of preserving a separate
-calibration-reference order, so direct PhysTwin-style `c2ws[camera_idx]` reads
-the matching pose. In aligned metadata, `calibration_reference_serials` describes
-that emitted case-order `calibrate.pkl`; the original source calibration order is
-kept as `source_calibration_reference_serials` in `metadata_ext.json`. When
-`record_data_align.py` writes directly under
-`data/different_types/<case_name>/`, it also auto-generates those
-`color/<camera>.mp4` sidecars even if `--write_mp4` was not passed, because
-downstream formal consumers depend on them.
-
-After cleanup, each case keeps only:
-
-- `color/<camera>`
-- `depth/<camera>`
-- `calibrate.pkl`
-- `metadata.json`
-
-This formal downstream export is intentionally narrower than the repo's internal aligned-case comparison contract and deletes `metadata_ext.json`, IR streams, FFS raw archives such as `*_original*`, and FFS auxiliary depth directories.
-
-## 6. Compare
-
-Start with single-camera panels:
-
-```bash
-python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case static/native_case --ffs_case static/ffs_case --write_mp4 --use_float_ffs_depth_when_available
-```
-
-Optional FFS native-like postprocess in the panel workflow:
-
-```bash
-python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --use_float_ffs_depth_when_available --ffs_native_like_postprocess
-```
-
-Use this to judge:
-
-- per-camera holes / invalid regions
-- depth edge quality
-- local surface smoothness
-- ROI crops on the same spatial region
-
-When `--ffs_native_like_postprocess` is enabled:
-
-- the workflow prefers aligned `depth_ffs_native_like_postprocess*` streams when present
-- otherwise it computes the same FFS native-like postprocess on the fly before rendering the panels
-- `summary.json` records whether FFS native-like postprocessing was enabled and which FFS depth source was used per frame
-
-For the static native/FFS fused object-PCD experiment across round 1-3 frame 0:
-
-```bash
-python scripts/harness/experiments/visual_compare_native_ffs_fused_pcd.py --aligned_root ./data --frame_idx 0
-```
-
-This diagnostic-only workflow writes one masked object `3x3` PCD board per static round:
-
-- rows: `Native depth`, `Original FFS`, `Fused depth`
-- columns: `Cam0`, `Cam1`, `Cam2`
-- fused rule: keep every valid native depth pixel and use same-pixel FFS only where native depth is missing
-- reuses the existing static SAM object masks, erodes them inward by `--mask_erode_pixels` (`1px` by default), and renders only the masked object PCD
-- applies display-only PhysTwin-like radius-neighbor cleanup to each fused row before rendering
-- does not write fused depth back into any aligned case
-
-For professor-/review-quality static boards, use the publication-style preset:
-
-```bash
-python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --preset review_quality --camera_ids 0 1 2 --use_float_ffs_depth_when_available
-```
-
-The upgraded panel workflow now:
-
-- uses a larger title strip with case id, camera id, and frame id
-- keeps native and FFS depth panels on the exact same depth range
-- overlays ROI boxes on both RGB and depth panels
-- accepts named ROIs via `--roi name:x0,y0,x1,y1`
-- enlarges ROI detail panels
-- can add `RGB vs Depth Edges` comparison panels through the `review_quality` preset or `--show_edge_overlay`
-- writes per-frame summary metrics into `summary.json`, including:
-  - valid pixel ratios
-  - median / p90 absolute depth difference
-  - ROI-specific median absolute depth difference
-
-Then run cross-view reprojection diagnostics:
-
-```bash
-python scripts/harness/visual_compare_reprojection.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --camera_pair 0,1 --camera_pair 0,2 --write_mp4 --use_float_ffs_depth_when_available
-```
-
-Use this to judge:
-- which depth is more multi-view consistent
-- which source depth produces lower reprojection residuals in the target camera
-- whether failures are localized to one camera pair or happen everywhere
-
-To diagnose where floating-point outliers come from and project them back onto masked RGB/depth views without changing any aligned outputs:
-
-```bash
-python scripts/harness/diagnose_floating_point_sources.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --text_prompt sloth --use_float_ffs_depth_when_available
-```
-
-This diagnostic-only workflow:
-
-- loads aligned `color + depth` data only; it does not rewrite `depth/`, metadata, or calibration artifacts
-- can optionally reuse existing `sam31_masks` when `--text_prompt` is provided so all overlays are masked to the target object
-- applies a PhysTwin-style radius outlier rule independently to `Native` and `FFS`
-- projects each outlier back to its source RGB and depth image and classifies it as `occlusion`, `edge`, `dark`, or `other`
-- uses the same viewer depth colormap defaults for valid depth colors: Turbo over `[0.10, 3.00] m`
-- writes:
-  - `native/frames/*.png`
-  - `ffs/frames/*.png`
-  - `comparison_frames/*.png`
-  - `00_outlier_projection_board.png` for single-frame runs
-  - `native/per_frame_metrics.json`
-  - `ffs/per_frame_metrics.json`
-  - `summary.json`
-  - optional `comparison.mp4` when `--write_mp4` is enabled
-
-Use this to judge:
-
-- whether most outliers cluster around the masked object boundary in RGB/depth
-- whether they are concentrated in dark image regions
-- whether they disappear under cross-view support and instead look like occlusion failures
-- which camera contributes most of the outliers on each source path
-
-For triplet time-axis point-cloud videos across `Native`, `FFS raw`, and `FFS postprocess`:
-
-```bash
-python scripts/harness/visual_compare_depth_triplet_video.py --aligned_root ./data --realsense_case dynamics/native_case --ffs_case dynamics/ffs_case
-```
-
-This workflow:
-
-- writes `native_open3d.mp4`, `ffs_raw_open3d.mp4`, and `ffs_postprocess_open3d.mp4`
-- uses aligned RGB colors for all 3 videos
-- keeps one shared `auto_table_bbox` crop and one shared `oblique` view across all variants
-- applies a vertical image flip to correct the Open3D hidden-window capture orientation
-
-For single-frame point-cloud quality diagnosis before and after SAM 3.1 masking:
-
-```bash
-python scripts/harness/visual_compare_masked_pointcloud.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --text_prompt sloth
-```
-
-This workflow:
-
-- keeps `PhysTwin` only as a reference design; it does not import or depend on that repo
-- prefers existing `sam31_masks/` sidecars when present
-- otherwise can generate workflow-local SAM 3.1 sidecars through QQTT's own helper path
-- fuses 4 fixed-view variants under one shared crop and one shared oblique Open3D camera:
-  - `Native Unmasked`
-  - `Native Masked`
-  - `FFS Unmasked`
-  - `FFS Masked`
-- writes:
-  - `01_masked_pointcloud_board.png`
-  - `summary.json`
-  - `debug/native_mask_overlay_cam*.png`
-  - `debug/ffs_mask_overlay_cam*.png`
-  - `debug/native_unmasked_fused.ply`
-  - `debug/native_masked_fused.ply`
-  - `debug/ffs_unmasked_fused.ply`
-  - `debug/ffs_masked_fused.ply`
-
-Use this when the question is specifically:
-
-- does background suppression change the apparent Native-vs-FFS point-cloud quality?
-- do we get a cleaner object-focused compare after masking?
-- how much point count is removed by masking per camera and per source?
-
-For single-frame masked point-cloud diagnosis under the 3 original calibrated camera views:
-
-```bash
-python scripts/harness/visual_compare_masked_camera_views.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --text_prompt sloth
-```
-
-To compare after applying the same PhysTwin `data_process_mask.py`-style mask refinement to both `Native` and `FFS` before rendering:
-
-```bash
-python scripts/harness/visual_compare_masked_camera_views.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --text_prompt sloth --native_depth_postprocess --ffs_native_like_postprocess
-```
-
-This workflow:
-
-- reuses the same QQTT-local `sam31_masks` resolution / generation policy as `visual_compare_masked_pointcloud.py`
-- uses the 3 real calibrated camera extrinsics from `calibrate.pkl`
-- uses the original per-camera `K_color` pinhole projection when rendering point clouds so each Open3D panel matches the corresponding RGB view scale more closely
-- can optionally apply the same PhysTwin `data_process_mask.py` semantics to either source after mask loading:
-  - build the fused masked object-only cloud
-  - run Open3D `remove_radius_outlier(nb_points=40, radius=0.01)`
-  - clear the rejected source pixels from each camera mask
-- does not depend on aligned `depth_ffs_native_like_postprocess*` auxiliary depth streams for this workflow
-- fixes one exact original camera view per column:
-  - `Cam0`
-  - `Cam1`
-  - `Cam2`
-- writes one `1x3` masked RGB reference board with the background zeroed outside the resolved mask
-- keeps one shared masked-object crop across the fixed-view point-cloud board
-- renders:
-  - default `2x3` board when zero or one postprocess flag is enabled:
-    - top row = masked `Native`
-    - bottom row = masked `FFS`
-  - `4x3` board when both `--native_depth_postprocess` and `--ffs_native_like_postprocess` are enabled:
-    - row 1 = `Native`
-    - row 2 = `Native + PS`
-    - row 3 = `FFS`
-    - row 4 = `FFS + PS`
-- in `4x3` mode the raw and `PS` rows reuse the same per-column original camera viewpoint and shared object crop
-- writes:
-  - `00_masked_rgb_board.png`
-  - `01_masked_camera_view_board.png`
-  - `summary.json`
-  - `debug/masked_rgb_cam*.png`
-  - `debug/native_cam*.png`
-  - `debug/ffs_cam*.png`
-  - `debug/native_mask_overlay_cam*.png`
-  - `debug/ffs_mask_overlay_cam*.png`
-  - `debug/native_masked_fused.ply`
-  - `debug/ffs_masked_fused.ply`
-
-Use this when the question is specifically:
-
-- how do `Native` and `FFS` look from the exact 3 original camera viewpoints?
-- if we fix the camera extrinsics, where does FFS geometry break relative to native depth?
-- does masking still leave visible floating fragments when judged from the original camera views?
-
-For professor-facing 3-view point-cloud match diagnosis, start with the single match board:
-
-```bash
-python scripts/harness/visual_make_match_board.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0
-```
-
-Default top-level outputs are only:
-
-- `01_pointcloud_match_board.png`
-- `match_board_summary.json`
-
-This board is intentionally narrow:
-
-- rows:
-  - `Native`
-  - `FFS`
-- columns:
-  - `Source attribution`
-  - `Support count`
-  - `Mismatch residual`
-
-The match angle is object-aware and match-oriented:
-
-- supported-hemisphere only
-- prefers higher object-only multi-camera support
-- prefers lower object-only mismatch residual
-- still requires enough projected object area to stay readable
-- penalizes table/context dominance
-- penalizes thin edge-on silhouettes
-
-All clutter is gated off by default:
-
-- no debug directory
-- no videos
-- no orbit keyframe sheets
-- no extra top-level figures
-
-Enable those only when needed:
-
-```bash
-python scripts/harness/visual_make_match_board.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --write_debug
-```
-
-When `--write_debug` is enabled, selection-specific artifacts stay under `debug/`, for example:
-
-- `debug/match_angle_candidates.json`
-
-For a three-figure slide pack that reuses the same object-first compare stack but answers a broader presentation question, use:
-
-```bash
-python scripts/harness/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0
-```
-
-Default top-level outputs are only:
-
-- `01_hero_compare.png`
-- `02_merge_evidence.png`
-- `03_truth_board.png`
-- `summary.json`
-
-Selection/debug artifacts stay under `debug/` only when requested.
-
-Use the single-frame object-centric coverage-aware orbit compare when you need the richer fused-cloud diagnostics behind that single board:
-
-Same-case comparison when an aligned case contains both native and FFS depth:
+Single-frame object-centric compare:
 
 ```bash
 python scripts/harness/visual_compare_turntable.py --case_name my_case --aligned_root ./data --frame_idx 0
 ```
 
-Fallback two-case comparison when `both_eval` is not supported:
+Professor-facing summary pack:
 
 ```bash
-python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --scene_crop_mode auto_object_bbox
+python scripts/harness/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0
 ```
 
-When the automatic object crop still includes too much tabletop, provide per-camera RGB boxes so only object pixels are fused:
+## 7. Validation
 
 ```bash
-python scripts/harness/visual_compare_turntable.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --renderer fallback --scene_crop_mode auto_object_bbox --manual_image_roi_json docs/generated/object_only_manual_image_roi_native_30_static_frame_0000.json
+conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
+conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full
 ```
-
-The turntable workflow:
-
-- selects one aligned frame
-- reuses the fused native and fused FFS cloud loader
-- computes an object ROI from the cropped tabletop scene before orbit generation
-- visualizes the 3 real camera frusta from `calibrate.pkl`
-- keeps `calibrate.pkl` as the raw calibration-board `c2w` frame on disk
-- now defaults to a visualization-only `semantic_world` display frame so:
-  - tabletop appears horizontal
-  - cameras appear above the object/table
-  - top/front/side views are human-readable
-- still allows raw rendering for debugging:
-  - `--display_frame calibration_world`
-- defaults to `observed_hemisphere` instead of naive full-360
-- defaults to `object_component_mode=graph_union`
-- infers the supported viewing arc from the real camera azimuth layout
-- renders a large side-by-side compare:
-  - left = Native
-  - right = FFS
-- writes clean slide-ready hero stills first:
-  - `hero_compare_geom.png`
-  - `hero_compare_rgb.png`
-- uses the exact same orbit path for Native and FFS
-- automatically writes geometry, RGB, and support-count products in one run
-- automatically writes source-attribution and mismatch products in the same run
-- optionally applies `--manual_image_roi_json` before fusion to suppress tabletop pixels when the object itself should dominate the professor-facing render
-- when `--manual_image_roi_json` is present, runs an object-first selection path:
-  - full dense camera clouds are loaded first
-  - per-camera object masks are built before context subsampling
-  - a seeded object union bbox drives crop / focus / orbit
-  - `--max_points_per_camera` becomes the context-layer cap instead of an early object-point cap
-- when `--manual_image_roi_json` is absent, the default auto-object path now adds an explicit refinement loop:
-  - pass1 coarse world ROI from fused object-above-table points
-  - projected per-camera coarse bbox generation
-  - automatic per-camera foreground-mask refinement
-  - pass2 world ROI rebuilt from those per-camera masked object points
-  - final compare uses pass2 ROI plus pass2 masks
-- uses a larger orthographic top-view position map so the real calibrated camera positions stay readable without stretching the inset
-- produces:
-  - `hero_compare_geom.png`
-  - `hero_compare_rgb.png`
-  - `scene_overview_with_cameras.png`
-  - `scene_overview_calibration_frame.png`
-  - `orbit_compare_geom.mp4`
-  - `orbit_compare_geom.gif`
-  - `orbit_compare_rgb.mp4`
-  - `orbit_compare_rgb.gif`
-  - `orbit_compare_support.mp4`
-  - `orbit_compare_support.gif`
-  - `orbit_compare_source.mp4`
-  - `orbit_compare_source.gif`
-  - `orbit_compare_mismatch.mp4`
-  - `orbit_compare_mismatch.gif`
-  - `turntable_keyframes_geom.png`
-  - `turntable_keyframes_rgb.png`
-  - `turntable_keyframes_support.png`
-  - `turntable_keyframes_source.png`
-  - `turntable_keyframes_source_split.png`
-  - `turntable_keyframes_mismatch.png`
-  - `support_metrics.json`
-  - `source_metrics.json`
-  - `mismatch_metrics.json`
-  - `source_attribution_legend.png`
-  - `object_roi_pass1_world.json`
-  - `object_roi_pass2_world.json`
-  - `per_camera_auto_bbox/cam*.json`
-  - `debug/per_camera_object_mask_overlay/*.png`
-  - `debug/per_camera_object_cloud/*.png`
-  - `debug/fused_object_only/*`
-  - `debug/fused_object_context/*`
-  - `debug/compare_debug_metrics.json`
-  - per-angle `frames_source/*.png`, `frames_source_split/*.png`, and `frames_mismatch/*.png`
-  - per-angle `frames_geom/*.png`, `frames_rgb/*.png`, and `frames_support/*.png`
-
-The user-facing compare commands are unchanged, but the implementation stack is now split more cleanly:
-
-- harness CLIs stay thin
-- workflow modules coordinate steps
-- shared case IO, crop math, view planning, artifact writing, and layouts live in dedicated modules under `data_process/visualization/`
-
-For the current internal map and migration notes, see:
-
-- `docs/generated/README.md`
-- `docs/generated/visual_stack_cleanup_inventory.md`
-- `docs/generated/visual_stack_cleanup_validation.md`
-
-Use `full_360` only when you explicitly want the unsupported backside visualization to appear, with warnings:
-
-```bash
-python scripts/harness/visual_compare_turntable.py --case_name my_case --orbit_mode full_360 --show_unsupported_warning
-```
-
-The old 2x3 near-camera board remains available only as a secondary mode:
-
-```bash
-python scripts/harness/visual_compare_turntable.py --case_name my_case --layout_mode camera_neighborhood_grid --orbit_mode camera_neighborhood --num_orbit_steps 6 --orbit_degrees 30
-```
-
-When teddy/head/ear regions are still incomplete, inspect the debug artifacts in this order:
-
-- `debug/per_camera_object_mask_overlay/*.png`
-- `debug/per_camera_object_cloud/*.png`
-- `debug/fused_object_only/*.png`
-- `debug/compare_debug_metrics.json`
-
-If the head is missing already in the per-camera overlays, tighten `--manual_image_roi_json` before rerunning. If the per-camera overlays look correct but the fused object remains weak, use the support render to confirm whether the missing region is mostly only 1-camera supported.
-
-Single-frame triplet fused PLY compare:
-
-Use this when the question is specifically “for one aligned frame, how do `Native`, `FFS raw`, and `FFS postprocess` differ after fusing all 3 cameras into calibration-world point clouds?”, and you only need `.ply` outputs plus a compact summary:
-
-```bash
-python scripts/harness/visual_compare_depth_triplet_ply.py --aligned_root ./data --realsense_case native_30_static_20260410_235202 --ffs_case ffs_30_static_20260410_235202 --frame_idx 0
-```
-
-This workflow:
-
-- selects one aligned frame only
-- keeps raw `calibration_world` coordinates
-- fuses all 3 cameras for exactly 3 variants:
-- `native`
-- `ffs_raw`
-- `ffs_postprocess`
-- reuses aligned `depth/` for Native
-- prefers archived raw FFS depth for `ffs_raw`:
-  - `depth_ffs_float_m_original/`
-  - `depth_ffs_original/`
-  - `depth_original/` when the aligned case itself is FFS-backed
-- otherwise falls back to legacy pre-archive `depth_ffs*`
-- prefers aligned `depth_ffs_native_like_postprocess*` for `ffs_postprocess`
-- otherwise applies the same native-like depth postprocess on the fly before fusion
-- writes:
-  - `ply_fullscene/native_frame_<idx>_fused_fullscene.ply`
-  - `ply_fullscene/ffs_raw_frame_<idx>_fused_fullscene.ply`
-  - `ply_fullscene/ffs_postprocess_frame_<idx>_fused_fullscene.ply`
-  - `summary.json`
-
-Default point-cloud filtering in this generic triplet workflow now keeps only valid depth `> 0m` and clips points beyond `1.5m`. Override `--depth_min_m` / `--depth_max_m` if you need a wider export.
-
-Raw multi-frame Rerun remove-invisible compare:
-
-Use this when the main question is not slide composition, but “how do the fused full-scene point clouds evolve over time, and what exactly changes when `remove_invisible` is on vs off?”:
-
-```bash
-python scripts/harness/visual_compare_rerun.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --rerun_output viewer_and_rrd --viewer_layout horizontal_triple
-```
-
-This workflow:
-
-- uses the full shared aligned frame range by default
-- can force a `1x3` horizontal viewer layout so `native`, `ffs_remove_1`, and `ffs_remove_0` stay side by side while you scrub time
-- keeps raw calibration-world coordinates
-- fuses all 3 cameras into one full-scene cloud for each variant
-- re-runs FFS from aligned `ir_left` / `ir_right` instead of reusing the aligned `depth/` output
-- derives both `ffs_remove_1` and `ffs_remove_0` from the same disparity so the only intended delta is the overlap invalidation
-- logs only 3 entity paths to Rerun:
-  - `native`
-  - `ffs_remove_1`
-  - `ffs_remove_0`
-- writes:
-  - `pointcloud_compare.rrd`
-  - `ply_fullscene/native_frame_<idx>_fused_fullscene.ply`
-  - `ply_fullscene/ffs_remove_1_frame_<idx>_fused_fullscene.ply`
-  - `ply_fullscene/ffs_remove_0_frame_<idx>_fused_fullscene.ply`
-  - `summary.json`
-
-Default point-cloud filtering in this generic Rerun workflow now keeps only valid depth `> 0m` and clips points beyond `1.5m`. Override `--depth_min_m` / `--depth_max_m` if you need a wider export.
-
-Use `--rerun_output rrd_only` when you want a non-interactive run that still saves the timeline for later replay.
-
-Focused stereo-depth audits:
-
-Use the point-cloud-only stereo-order registration board when the main question is not “which one looks prettier,” but “does current left/right or swapped left/right produce tighter 3-view 3D alignment?”:
-
-```bash
-python scripts/harness/visual_compare_stereo_order_pcd.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth
-```
-
-Default top-level outputs are only:
-
-- `01_stereo_order_registration_board.png`
-- `match_board_summary.json`
-
-This board is intentionally narrow:
-
-- rows:
-  - `Native`
-  - `FFS-current`
-  - `FFS-swapped`
-- columns:
-  - `Oblique`
-  - `Top`
-  - `Front`
-  - `Side`
-
-Interpret it like this:
-
-- thinner, tighter, less color-separated surfaces = better 3-camera registration
-- thicker shells and stronger red/green/blue fringing = worse registration
-- if `FFS-swapped` collapses more tightly than `FFS-current`, current left/right ordering stays suspicious
-
-All panels are:
-
-- point-cloud-only
-- colored only by source camera
-- rendered in the same display frame
-- rendered with the same frame / ROI / crop / view scaling semantics
-
-By default this board also uses `semantic_world` display coordinates for readability:
-
-- table approximately horizontal
-- cameras above the table/object
-- top/front/side columns consistent with human intuition
-
-Switch back to raw calibration display only when you explicitly want to inspect the original ChArUco world:
-
-```bash
-python scripts/harness/visual_compare_stereo_order_pcd.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --display_frame calibration_world
-```
-
-Optional closeup/debug outputs stay gated:
-
-```bash
-python scripts/harness/visual_compare_stereo_order_pcd.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --write_closeup --write_debug
-```
-
-Across the current professor-facing workflows, the output rule is now explicit:
-
-- top-level directory contains only the intended product artifacts for that workflow
-- optional diagnostics go under `debug/`
-- selection summaries use shared typed contracts for display-frame, angle-selection, and product/debug artifact sets
-
-Use a left/right audit on one aligned FFS case, one camera, and one frame when you want to verify that the repo is really feeding Fast-FoundationStereo the correct IR ordering:
-
-```bash
-python scripts/harness/audit_ffs_left_right.py --aligned_root ./data --ffs_case ffs_case --frame_idx 0 --camera_idx 0 --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth --face_patches_json docs/generated/box_face_patches_static_frame_0000.json
-```
-
-This writes:
-
-- `left_right_audit.json`
-- `left_right_audit_board.png`
-
-Use fixed face patches when you want to compare smoothness / noise on planar surfaces rather than on the whole scene:
-
-```bash
-python scripts/harness/compare_face_smoothness.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0 --face_patches_json docs/generated/box_face_patches_static_frame_0000.json --ffs_repo C:\Users\zhang\external\Fast-FoundationStereo --model_path C:\Users\zhang\external\Fast-FoundationStereo\weights\23-36-37\model_best_bp2_serialize.pth
-```
-
-This writes:
-
-- `face_quality_board.png`
-
-Interpret these face-patch metrics as:
-
-- better = higher valid depth ratio
-- better = lower plane-fit RMSE
-- better = lower MAD
-- better = lower p90 point-to-plane residual
-
-Frame semantics note:
-
-- `calibrate.pkl` remains raw calibration-board `c2w`
-- professor-facing turntable and stereo-order point-cloud workflows now default to a visualization-only `semantic_world` display frame inferred from:
-  - the fitted tabletop plane
-  - the current camera centers
-- this transform is applied only in memory for visualization
-- `scene_overview_calibration_frame.png` and `scene_overview_semantic_frame.png` make the distinction explicit
-- raw calibration-world display is still available through `--display_frame calibration_world`
-
-Use the new merge-diagnostic outputs like this:
-
-- `source`:
-  - semi-transparent overlay by source camera
-  - red = `Cam0`
-  - green = `Cam1`
-  - blue = `Cam2`
-  - use this to spot fringing and double surfaces
-- `source_split`:
-  - inspect which camera is actually providing or missing the teddy head
-- `mismatch`:
-  - high residual = poor 3-view merge agreement
-  - low residual = stable overlap
-- `support`:
-  - still useful, but it only answers “how many cameras agree,” not “which cameras disagree”
-
-Keep the older fused-cloud temporal video workflow only as a secondary diagnostic:
-
-Same-case comparison when an aligned case contains both native and FFS depth:
-
-```bash
-python scripts/harness/visual_compare_depth_video.py --case_name my_case --aligned_root ./data --preset tabletop_compare_2x3 --write_mp4
-```
-
-Fallback two-case comparison when `both_eval` is not supported:
-
-```bash
-python scripts/harness/visual_compare_depth_video.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --renderer fallback --preset tabletop_compare_2x3 --write_mp4 --use_float_ffs_depth_when_available
-```
-
-The temporal comparison workflow:
-
-- decodes compatible depth to meters
-- deprojects with `K_color`
-- transforms to world using `calibrate.pkl`
-- fuses the aligned camera clouds
-- can render from the 3 real calibrated camera poses
-- applies a world-space tabletop crop before framing
-- can move the effective viewpoint closer to the tabletop via `--view_distance_scale`
-- supports `perspective` and `orthographic` projection in the fallback renderer
-- uses denser splat-like fallback rendering for tabletop inspection
-- can compose a single `2x3` output:
-
-This generic fused point-cloud compare path now defaults to valid depth `> 0m` and a `1.5m` far clip so tabletop scenes shed distant background geometry by default. Override `--depth_min_m` / `--depth_max_m` when you need a wider range.
-  - row 1 = Native
-  - row 2 = FFS
-  - columns = camera 0 / 1 / 2 viewpoints
-- recommends geometry-first rendering (`neutral_gray_shaded`) for judging shape
-- keeps `color_by_rgb` available as a secondary reference view
-- the `tabletop_compare_2x3` preset currently uses `color_by_height` plus orthographic tabletop framing as the most robust readable default

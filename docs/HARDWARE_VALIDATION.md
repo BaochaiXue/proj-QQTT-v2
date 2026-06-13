@@ -4,7 +4,7 @@ Hardware checks are manual. CI does not attempt to validate RealSense behavior.
 
 ## Active Hardware Inventory
 
-Current connected cameras:
+Current connected camera:
 
 - `239222300781` - Intel RealSense D455
 
@@ -12,46 +12,41 @@ Design assumption for the `single-camera` branch: treat the active setup as one
 D455 on the shared D400-family code path. The `main` branch remains the
 protected 3-camera baseline.
 
-## Checklist
+## Viewer Checklist
 
-### Viewer
+- 1 D400 camera is connected.
+- `python cameras_viewer.py` launches successfully.
+- the camera shows live color and depth.
+- the panel reports negotiated configured FPS plus live measured FPS.
+- `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo <repo>` launches successfully when FFS assets are available.
+- optional PyTorch FFS mode launches successfully when requested explicitly:
 
-- 1 D400 camera is connected
-- `python cameras_viewer.py` launches successfully
-- the camera shows live color and depth
-- the panel reports negotiated `configured fps` plus live `measured fps`
-- `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo <repo>` launches successfully with the default TensorRT engine path
-- default TensorRT viewer / visualization FFS uses checkpoint `20-30-48`, `valid_iters=4`, two-stage ONNX/TensorRT, and a `builder_optimization_level=5` engine
-- current `20-30-48 / valid_iters=4 / 848x480 -> 864x480 / builderOptimizationLevel=5` success is a static replay / TensorRT proxy result, not a live PyTorch realtime claim
-- current live PyTorch 3-camera status remains not realtime: best recorded `scale=0.5` reached about `22.6` aggregate FFS FPS, or about `7.5` FPS per camera
-- each FFS panel shows live RGB on top and color-aligned FFS depth on bottom
-- each FFS panel reports negotiated profile plus live `capture` and `ffs` fps
-- default worker topology launches successfully:
-  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo <repo>`
-  - startup logs report `FFS worker topology: per_camera`
-  - startup logs report `848x480` capture is symmetrically padded to the `864x480` TRT engine, not resized down
-- optional shared-worker viewer mode launches successfully when requested explicitly:
-  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_repo <repo> --ffs_worker_mode shared`
-  - startup logs report `FFS worker topology: shared`
-- optional strict 3-camera batch mode launches successfully when requested explicitly:
-  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo <repo> --ffs_model_path <weights> --ffs_worker_mode shared --ffs_batch_mode strict3`
-  - startup logs report `batch_mode=strict3`
-  - startup validation rejects non-shared worker mode or fewer/more than 3 active cameras
-- optional PyTorch viewer mode launches successfully when requested explicitly:
-  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo <repo> --ffs_model_path <weights>`
-- optional two-stage TensorRT viewer mode launches successfully with prebuilt engines:
-  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_repo <repo> --ffs_trt_model_dir <engine_dir> --ffs_trt_root <tensorrt_root>`
-  - strict batch mode requires a batch-3 engine directory such as `trt_two_stage_batch3_864x480_wsl`
-- optional single-engine TensorRT viewer mode launches successfully with an explicit single-engine engine directory:
-  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode single_engine --ffs_repo <repo> --ffs_trt_model_dir <single_engine_dir> --ffs_trt_root <tensorrt_root>`
-  - strict batch mode requires a batch-3 single-engine directory such as `trt_single_engine_batch3_864x480_wsl_fp32`
-  - if engine size differs from capture size, startup output reports whether frames will be symmetrically padded or resized before inference
-- timed benchmark mode works:
-  - `conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --duration-s 20 --stats-log-interval-s 5 --ffs_repo <repo> --ffs_model_path <weights>`
-  - stdout prints aggregate and per-camera runtime stats during the run
-  - both TensorRT modes should also print aggregate and per-camera runtime stats when `--ffs_backend tensorrt` is selected
+```bash
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend pytorch --ffs_repo <repo> --ffs_model_path <weights>
+```
 
-### Calibration
+- optional TensorRT FFS mode launches successfully with prebuilt engines:
+
+```bash
+conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ffs_trt_mode two_stage --ffs_repo <repo> --ffs_trt_model_dir <engine_dir> --ffs_trt_root <tensorrt_root>
+```
+
+## Single-Camera Demo Checklist
+
+- branch-default realtime demo opens exactly one RealSense camera:
+
+```bash
+conda run -n demo_2_max --no-capture-output python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 30 --debug
+```
+
+- single demo dry-runs report `camera_count = 1`:
+
+```bash
+python single_demo_v3/realtime_single_camera_realsense_masked_pcd.py --dry-run
+python single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
+```
+
+## Calibration Checklist
 
 - `python cameras_calibrate.py` uses the current lab Calib.io ChArUco board by default:
   - profile: `calibio-12x9-30mm`
@@ -59,55 +54,37 @@ protected 3-camera baseline.
   - checker size: 30 mm
   - marker size: 22 mm
   - dictionary: `DICT_5X5_250`
-- `python cameras_calibrate.py` detects the ChArUco board from the active camera
-- calibration opens color streams only; depth streams are not required for
-  ChArUco pose estimation
-- selected RGB exposure values match the current rig defaults:
-  `239222300412=156`, `239222300781=156`, `239222303506=180`; gain remains `60`
-- calibration completes without reprojection failure
-- `calibrate.pkl` is written in the repo root
-- `calibrate.pkl` remains a calibration-order list of camera-to-world `4x4` transforms
-- `calibrate_metadata.json` is written next to it and records the calibration serial order, board profile, world-frame convention, color distortion coefficients, and per-camera corner counts
-- `calibrate_metadata.json` reports `distortion_used: true` when all selected color streams exposed RealSense distortion coefficients
-- the old `legacy-4x5-50mm` board is deprecated and should only be selected explicitly for legacy reproduction
-- yfang/Robopil `cam_params.pkl` files are converted with `scripts/convert_robopil_cam_params_to_qqtt_calibrate.py`; they are not used directly as QQTT `calibrate.pkl`
-- rerun calibration after any physical camera-position swap on the rig
+- calibration opens color streams only.
+- calibration completes without reprojection failure.
+- `calibrate.pkl` is written in the repo root.
+- `calibrate_metadata.json` records serial order, board profile, world-frame
+  convention, color distortion coefficients, and corner counts.
+- rerun calibration after any physical camera-position change.
 
-### Recording
+## Recording Checklist
 
-- `python record_data.py --case_name smoke_case --capture_mode rgbd` creates `data_collect/smoke_case/`
-- per-camera `color/<camera>/<step>.png` files are written
-- per-camera RGB brightness uses the shared calibration/recording color-control defaults
-- per-camera `depth/<camera>/<step>.npy` files are written for `rgbd`
-- per-camera `ir_left/<camera>/<step>.png` and `ir_right/<camera>/<step>.png` are written for `stereo_ir`
-- `metadata.json` exists
-- `calibrate.pkl` is copied into the case if available
-- `calibrate_metadata.json` is copied into the case when available
-- short `--max_frames` runs fail quickly instead of hanging forever when one camera stalls and the others keep advancing
+- `python record_data.py --case_name smoke_case --capture_mode rgbd` creates `data_collect/smoke_case/`.
+- `color/0/<step>.png` files are written.
+- `depth/0/<step>.npy` files are written for `rgbd`.
+- `ir_left/0/<step>.png` and `ir_right/0/<step>.png` are written for `stereo_ir`.
+- `metadata.json` exists.
+- `calibrate.pkl` is copied into the case if available.
+- `calibrate_metadata.json` is copied into the case when available.
+- short `--max_frames` runs fail quickly instead of hanging forever when the camera stalls.
 
-### Alignment
+## Alignment Checklist
 
-- `python data_process/record_data_align.py --case_name smoke_case --start <start> --end <end> --depth_backend realsense` completes
-- aligned case exists under `data/smoke_case/`
-- grouped aligned layouts such as `data/static/smoke_case/` are also valid when `--output_path` points at a grouped aligned root
-- aligned `metadata.json` exists
-- aligned `metadata_ext.json` exists for QQTT extension fields
-- aligned `color/` exists
-- aligned `depth/` exists for `realsense` and `ffs`
-- aligned `calibrate.pkl` is normalized to aligned case camera order, so
-  `c2ws[camera_idx]` matches `metadata["serial_numbers"][camera_idx]`
-- aligned `metadata_ext.json["calibration_reference_serials"]` matches that
-  emitted case-order `calibrate.pkl`
-- aligned `depth_ffs/` exists only for `both`
-- optional `--write_mp4` produces per-camera mp4 files if ffmpeg is installed
+- `python data_process/record_data_align.py --case_name smoke_case --start <start> --end <end> --depth_backend realsense` completes.
+- aligned case exists under `data/smoke_case/`.
+- aligned `metadata.json` exists.
+- aligned `metadata_ext.json` exists for QQTT extension fields.
+- aligned `color/0/` exists.
+- aligned `depth/0/` exists for `realsense` and `ffs`.
+- aligned `calibrate.pkl` is normalized to aligned case camera order.
+- optional `--write_mp4` produces per-camera mp4 files if ffmpeg is installed.
 
-### Current D455 Notes
+## Current D455 Notes
 
-- latest stream probe result: `ir_pair` is stable on all 3 cameras
-- latest stream probe result: `rgb_ir_pair` is not stable on all 3 cameras
-- latest targeted `30s` revalidation still failed stability thresholds for 3-camera `rgbd_ir_pair` at `848x480@30`, emitter `on`
-- short `30`-frame `both_eval` bursts can succeed, but long-duration stability is still not proven
-- `record_data.py --capture_mode both_eval` is now warning-allowed experimentally rather than blocked by default
-- same-take `rgbd_ir_pair` should still not be promised as a default supported workflow on this machine
-- integrated `stereo_ir -> ffs` path has been validated on serial `239222300781`
-- fallback two-case comparison video workflow has been validated on serial `239222300781`
+- integrated `stereo_ir -> ffs` path has been validated on serial `239222300781`.
+- fallback two-case comparison video workflow has been validated on serial `239222300781`.
+- `both_eval` remains experimental and should not be promised as the default workflow.

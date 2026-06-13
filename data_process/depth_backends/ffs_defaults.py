@@ -26,11 +26,3 @@ DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR = (
     / "engines"
     / "model_20-30-48_iters_4_res_480x864"
 )
-DEFAULT_FFS_TRT_BATCH3_TWO_STAGE_MODEL_DIR = (
-    REPO_ROOT
-    / "data"
-    / "experiments"
-    / "ffs_trt_4090_848x480_pad864_builderopt5_batch3"
-    / "engines"
-    / "model_20-30-48_iters_4_res_480x864_batch3"
-)

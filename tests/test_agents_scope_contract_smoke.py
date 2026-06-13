@@ -19,13 +19,13 @@ class AgentsScopeContractSmokeTest(unittest.TestCase):
         self.assertIn("scripts/harness/visual_compare_depth_triplet_video.py", content)
         self.assertIn("scripts/harness/visual_compare_rerun.py", content)
 
-    def test_agents_mentions_sanctioned_demo_proxy_tracking_scope(self) -> None:
+    def test_agents_mentions_sanctioned_demo_proxy_scope(self) -> None:
         content = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-        self.assertIn("sanctioned realtime demo/proxy/tracking diagnostics", content)
+        self.assertIn("sanctioned single-camera", content)
+        self.assertIn("realtime demo/proxy diagnostics", content)
         self.assertIn("scripts/harness/realtime_single_camera_pointcloud.py", content)
         self.assertIn("qqtt/demo/realtime_single_camera_pointcloud.py", content)
         self.assertIn("services/ffs_remote/", content)
-        self.assertIn("qqtt/tracking/", content)
         self.assertIn("formal recording/alignment code must not depend on those layers", content)
 
     def test_agents_mentions_single_camera_branch_policy(self) -> None:

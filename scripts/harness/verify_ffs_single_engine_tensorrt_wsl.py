@@ -19,7 +19,7 @@ from data_process.depth_backends import DEFAULT_FFS_REPO
 from scripts.harness.verify_ffs_tensorrt_wsl import build_engine_from_onnx
 
 DEFAULT_MODEL_PATH = DEFAULT_FFS_REPO / "weights" / "23-36-37" / "model_best_bp2_serialize.pth"
-DEFAULT_OUT_DIR = ROOT / "data" / "ffs_proof_of_life" / "trt_single_engine_batch3_864x480_wsl_fp32"
+DEFAULT_OUT_DIR = ROOT / "data" / "ffs_proof_of_life" / "trt_single_engine_864x480_wsl_fp32"
 
 
 def _disable_torch_compile(torch_module) -> None:
@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR))
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--width", type=int, default=864)
-    parser.add_argument("--batch_size", type=int, default=3)
+    parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--valid_iters", type=int, default=4)
     parser.add_argument("--max_disp", type=int, default=192)
     parser.add_argument("--workspace_gib", type=int, default=8)
