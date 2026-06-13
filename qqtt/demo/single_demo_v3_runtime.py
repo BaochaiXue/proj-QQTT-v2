@@ -207,6 +207,10 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--input-source recording requires --recording-case")
         if args.depth_source != DEPTH_SOURCE_REALSENSE:
             raise ValueError("recording replay currently supports only Single Demo 3 / 3.1 RealSense RGB-D")
+        if str(args.render_mode) != "pointcloud":
+            raise ValueError("--input-source recording requires --render-mode pointcloud")
+        if str(args.track_mode) == TRACK_MODE_NONE:
+            raise ValueError("--input-source recording requires --track-mode controller-object")
     elif args.recording_case is not None:
         raise ValueError("--recording-case requires --input-source recording")
     if float(args.duration_s) < 0.0:

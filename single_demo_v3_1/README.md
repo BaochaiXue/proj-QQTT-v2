@@ -29,9 +29,11 @@ conda run --no-capture-output -n demo_2_max \
   --input-source recording \
   --recording-case data_collect/sloth_hand_rgbd_2min_20260612_221051 \
   --mode demo \
+  --render-mode pointcloud \
   --replay-fps 30
 ```
 
 In replay mode, the first numerically sorted camera-0 RGB-D frame becomes demo
 `seq=0` for SAM3.1 initialization, then subsequent frames are emitted at the
-requested replay FPS.
+requested replay FPS. Demo 3/3.1 recording replay is required to use the
+masked point-cloud render path with controller-object tracking.

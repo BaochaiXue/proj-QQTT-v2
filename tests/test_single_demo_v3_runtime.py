@@ -183,12 +183,18 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(contract["replay_fps_source"], "metadata")
             self.assertIsNone(contract["serial"])
             self.assertEqual(contract["controller_prompt"], "human hand")
+            self.assertEqual(contract["track_mode"], "controller-object")
+            self.assertEqual(contract["render_mode"], "pointcloud")
 
             delegate = runtime.build_live_delegate_argv(args)
             self.assertIn("--input-source", delegate)
             self.assertIn("recording", delegate)
             self.assertIn("--recording-case", delegate)
             self.assertIn(str(case_dir), delegate)
+            self.assertIn("--render-mode", delegate)
+            self.assertIn("pointcloud", delegate)
+            self.assertIn("--track-mode", delegate)
+            self.assertIn("controller-object", delegate)
             self.assertNotIn("--serial", delegate)
 
     def test_recording_mode_skips_live_serial_validation(self) -> None:
@@ -199,8 +205,6 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                     "recording",
                     "--recording-case",
                     "data_collect/example_rgbd",
-                    "--render-mode",
-                    "none",
                 ],
                 demo_version=runtime.DEMO_VERSION_3_1,
                 connected_serials_provider=lambda: (_ for _ in ()).throw(AssertionError("serial check should not run")),
@@ -209,6 +213,40 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("--input-source", masked_main.call_args.args[0])
         self.assertIn("recording", masked_main.call_args.args[0])
+        self.assertIn("--render-mode", masked_main.call_args.args[0])
+        self.assertIn("pointcloud", masked_main.call_args.args[0])
+
+    def test_recording_mode_requires_pointcloud_render_path(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_1,
+            [
+                "--input-source",
+                "recording",
+                "--recording-case",
+                "data_collect/example_rgbd",
+                "--render-mode",
+                "none",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires --render-mode pointcloud"):
+            runtime.validate_args(args)
+
+    def test_recording_mode_requires_controller_object_tracking(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_1,
+            [
+                "--input-source",
+                "recording",
+                "--recording-case",
+                "data_collect/example_rgbd",
+                "--track-mode",
+                "none",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires --track-mode controller-object"):
+            runtime.validate_args(args)
 
     def test_recording_mode_rejects_ffs_versions(self) -> None:
         args = self._parse(
