@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 
 import numpy as np
@@ -102,6 +104,44 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             )
 
             self.assertEqual(code, 0)
+
+    def test_recording_capture_holds_after_seq_zero_until_first_segmentation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            case_dir = self._write_case(Path(tmp_dir), steps=(2, 3, 4))
+            args = masked_demo.build_parser().parse_args(
+                [
+                    "--input-source",
+                    "recording",
+                    "--recording-case",
+                    str(case_dir),
+                    "--replay-fps",
+                    "100",
+                    "--depth-source",
+                    "realsense",
+                    "--render-mode",
+                    "none",
+                    "--track-mode",
+                    "object-only",
+                    "--pcd-mode",
+                    "none",
+                ]
+            )
+            demo = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+            demo.recording_source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=100)
+
+            thread = threading.Thread(target=demo._capture_recording_worker, daemon=True)
+            thread.start()
+            time.sleep(0.05)
+            self.assertEqual(demo.capture_slot.latest_seq(), 0)
+
+            demo._recording_first_frame_segmented.set()
+            deadline = time.time() + 1.0
+            while time.time() < deadline and demo.capture_slot.latest_seq() < 1:
+                time.sleep(0.01)
+            self.assertGreaterEqual(demo.capture_slot.latest_seq(), 1)
+            demo.stop_event.set()
+            thread.join(timeout=1.0)
+            self.assertFalse(thread.is_alive())
 
 
 if __name__ == "__main__":

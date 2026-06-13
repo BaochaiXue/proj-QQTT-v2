@@ -1550,6 +1550,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.ffs_remote_client: FfsRemoteDepthClient | None = None
         self.remote_quality_client: FfsRemoteDepthClient | None = None
         self.recording_source: RecordedRgbdFrameSource | None = None
+        self._recording_first_frame_segmented = threading.Event()
         self._warned_remote_engine_contract = False
 
     @property
@@ -1719,8 +1720,26 @@ class RealtimeMaskedEdgeTamPcdDemo:
         assert self.recording_source is not None
         source = self.recording_source
         frame_period_s = 1.0 / float(source.effective_fps)
+        try:
+            first_packet = source.read_packet(seq=0)
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                print(f"[ERROR] recording replay failed: {type(exc).__name__}: {exc}", flush=True)
+            self.stop_event.set()
+            return
+        self.capture_slot.put(first_packet)
+        self.capture_stats.record(first_packet.receive_perf_s)
+        if source.frame_count <= 1:
+            self.stop_event.set()
+            return
+        if self.args.track_mode != "none":
+            while not self.stop_event.is_set():
+                if self._recording_first_frame_segmented.wait(timeout=0.01):
+                    break
+            if self.stop_event.is_set():
+                return
         replay_start_s = time.perf_counter()
-        for seq in range(source.frame_count):
+        for seq in range(1, source.frame_count):
             if self.stop_event.is_set():
                 break
             wait_start_s = time.perf_counter()
@@ -1942,6 +1961,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 )
                 self.mask_slot.put(first_packet)
                 self.seg_stats.record(first_packet.process_done_perf_s)
+                if self.args.input_source == INPUT_SOURCE_RECORDING:
+                    self._recording_first_frame_segmented.set()
                 last_seq = first_frame.seq
                 while not self.stop_event.is_set():
                     frame = self.capture_slot.get_latest_after(last_seq)
