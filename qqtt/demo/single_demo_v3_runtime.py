@@ -19,6 +19,10 @@ DEMO_VERSIONS = (DEMO_VERSION_3, DEMO_VERSION_3_1, DEMO_VERSION_3_2, DEMO_VERSIO
 DEPTH_SOURCE_REALSENSE = "realsense"
 DEPTH_SOURCE_FFS = "ffs"
 
+INPUT_SOURCE_LIVE = "live"
+INPUT_SOURCE_RECORDING = "recording"
+INPUT_SOURCES = (INPUT_SOURCE_LIVE, INPUT_SOURCE_RECORDING)
+
 MODE_EXP = "exp"
 MODE_DEMO = "demo"
 MODES = (MODE_EXP, MODE_DEMO)
@@ -55,6 +59,7 @@ VERSION_LABELS = {
 }
 
 ConnectedSerialsProvider = Callable[[], Sequence[str]]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def normalize_demo_version(demo_version: str) -> str:
@@ -128,6 +133,24 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
     parser.add_argument("--serial", default=None, help="Single RealSense serial to open. Defaults to first detected serial.")
     parser.add_argument("--profile", choices=single_pcd.SUPPORTED_PROFILES, default=single_pcd.DEFAULT_PROFILE)
     parser.add_argument("--fps", type=int, choices=single_pcd.SUPPORTED_CAPTURE_FPS, default=single_pcd.DEFAULT_FPS)
+    parser.add_argument(
+        "--input-source",
+        choices=INPUT_SOURCES,
+        default=INPUT_SOURCE_LIVE,
+        help="Frame source. recording replays one raw RGB-D data_collect case as the camera stream.",
+    )
+    parser.add_argument(
+        "--recording-case",
+        type=Path,
+        default=None,
+        help="Raw data_collect case folder for --input-source recording.",
+    )
+    parser.add_argument(
+        "--replay-fps",
+        type=float,
+        default=0.0,
+        help="Replay FPS for --input-source recording. Use 0 to read metadata fps.",
+    )
     if depth_source == DEPTH_SOURCE_FFS:
         parser.add_argument("--ffs-repo", type=Path, default=single_pcd.DEFAULT_FFS_REPO)
         parser.add_argument("--ffs-trt-model-dir", type=Path, default=single_pcd.DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR)
@@ -175,6 +198,17 @@ def apply_preset_defaults(
 def validate_args(args: argparse.Namespace) -> None:
     version = normalize_demo_version(getattr(args, "single_demo_version", DEMO_VERSION_3))
     args.depth_source = DEFAULT_DEPTH_SOURCES[version]
+    if str(args.input_source) not in INPUT_SOURCES:
+        raise ValueError(f"--input-source must be one of {INPUT_SOURCES}")
+    if float(args.replay_fps) < 0.0:
+        raise ValueError("--replay-fps must be >= 0")
+    if str(args.input_source) == INPUT_SOURCE_RECORDING:
+        if args.recording_case is None:
+            raise ValueError("--input-source recording requires --recording-case")
+        if args.depth_source != DEPTH_SOURCE_REALSENSE:
+            raise ValueError("recording replay currently supports only Single Demo 3 / 3.1 RealSense RGB-D")
+    elif args.recording_case is not None:
+        raise ValueError("--recording-case requires --input-source recording")
     if float(args.duration_s) < 0.0:
         raise ValueError("--duration-s must be >= 0")
     if int(args.fps) not in single_pcd.SUPPORTED_CAPTURE_FPS:
@@ -185,6 +219,36 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"--track-mode must be one of {TRACK_MODES}")
 
 
+def _read_recording_metadata_fps(case_path: Path | None) -> float | None:
+    if case_path is None:
+        return None
+    metadata_path = Path(case_path).expanduser()
+    if not metadata_path.is_absolute():
+        metadata_path = REPO_ROOT / metadata_path
+    metadata_path = metadata_path / "metadata.json"
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    try:
+        fps = float(metadata.get("fps", 0.0))
+    except (TypeError, ValueError):
+        return None
+    return fps if fps > 0.0 else None
+
+
+def _contract_replay_fps(args: argparse.Namespace) -> tuple[float | None, str | None]:
+    if str(args.input_source) != INPUT_SOURCE_RECORDING:
+        return None, None
+    requested = float(args.replay_fps)
+    if requested > 0.0:
+        return requested, "cli"
+    metadata_fps = _read_recording_metadata_fps(args.recording_case)
+    if metadata_fps is not None:
+        return metadata_fps, "metadata"
+    return None, "metadata_unresolved"
+
+
 def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     version = normalize_demo_version(getattr(args, "single_demo_version", DEMO_VERSION_3))
     depth_source = DEFAULT_DEPTH_SOURCES[version]
@@ -193,15 +257,24 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     prompts = _mode_prompts(str(args.mode))
     controller_prompt = str(getattr(args, "controller_prompt", None) or prompts["controller_prompt"])
     controller_label = DEFAULT_DEMO_CONTROLLER_LABEL if str(args.mode) == MODE_DEMO else controller_prompt
+    input_source = str(args.input_source)
+    contract_input_source = (
+        "recording_rgbd_single_camera" if input_source == INPUT_SOURCE_RECORDING else "live_realsense_single_camera"
+    )
+    replay_fps, replay_fps_source = _contract_replay_fps(args)
     contract: dict[str, Any] = {
         "demo": f"single-demo{version}",
         "demo_version": version,
         "demo_display_name": VERSION_LABELS[version],
         "runtime_module": "qqtt.demo.single_demo_v3_runtime",
         "live_delegate_module": "qqtt.demo.realtime_masked_edgetam_pcd",
-        "input_source": "live_realsense_single_camera",
+        "input_source": contract_input_source,
+        "input_source_mode": input_source,
+        "recording_case": None if args.recording_case is None else str(args.recording_case),
+        "replay_fps": replay_fps,
+        "replay_fps_source": replay_fps_source,
         "camera_count": 1,
-        "serial": None if args.serial is None else str(args.serial),
+        "serial": None if input_source == INPUT_SOURCE_RECORDING or args.serial is None else str(args.serial),
         "coordinate_frame": single_pcd.COORDINATE_FRAME,
         "depth_source": depth_source,
         "depth_pipeline": depth_pipeline,
@@ -239,6 +312,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "demo",
         "demo_display_name",
         "input_source",
+        "recording_case",
+        "replay_fps",
         "camera_count",
         "serial",
         "depth_source",
@@ -290,6 +365,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.profile),
         "--fps",
         str(int(args.fps)),
+        "--input-source",
+        str(args.input_source),
         "--depth-source",
         str(args.depth_source),
         "--duration-s",
@@ -305,9 +382,14 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         "--point-size",
         str(float(args.point_size)),
     ]
-    serial = active_serial or args.serial
-    if serial:
-        argv.extend(["--serial", str(serial)])
+    if str(args.input_source) == INPUT_SOURCE_RECORDING:
+        argv.extend(["--recording-case", str(args.recording_case)])
+        if float(args.replay_fps) > 0.0:
+            argv.extend(["--replay-fps", str(float(args.replay_fps))])
+    if str(args.input_source) != INPUT_SOURCE_RECORDING:
+        serial = active_serial or args.serial
+        if serial:
+            argv.extend(["--serial", str(serial)])
     if str(args.depth_source) == DEPTH_SOURCE_FFS:
         argv.extend(["--ffs-repo", str(args.ffs_repo), "--ffs-trt-model-dir", str(args.ffs_trt_model_dir)])
         if args.ffs_trt_root is not None:
@@ -342,8 +424,11 @@ def main(
             print(format_contract(contract))
             _write_profile(args.profile_json_output, {"contract": contract, "summary": contract["profile_summary_fields"]})
             return 0
-        live_validation = validate_live_contract(args, connected_serials_provider=connected_serials_provider)
-        delegate_argv = build_live_delegate_argv(args, active_serial=live_validation["active_serial"])
+        if str(args.input_source) == INPUT_SOURCE_RECORDING:
+            delegate_argv = build_live_delegate_argv(args)
+        else:
+            live_validation = validate_live_contract(args, connected_serials_provider=connected_serials_provider)
+            delegate_argv = build_live_delegate_argv(args, active_serial=live_validation["active_serial"])
         return int(masked_pcd.main(delegate_argv))
     except (FileNotFoundError, RuntimeError, ValueError, argparse.ArgumentTypeError) as exc:
         print(str(exc), file=sys.stderr)
@@ -355,6 +440,8 @@ __all__ = [
     "DEMO_VERSION_3_1",
     "DEMO_VERSION_3_2",
     "DEMO_VERSION_3_3",
+    "INPUT_SOURCE_LIVE",
+    "INPUT_SOURCE_RECORDING",
     "MODE_DEMO",
     "MODE_EXP",
     "apply_preset_defaults",

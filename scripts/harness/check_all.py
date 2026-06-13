@@ -77,6 +77,7 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_ffs_remove_invisible_mask_smoke",
     "tests.test_sam31_still_object_benchmark_smoke",
     "tests.test_sam21_checkpoint_ladder_panel_smoke",
+    "tests.test_recorded_rgbd_replay_source",
     "tests.test_single_demo_v3_runtime",
     "tests.test_check_all_smoke",
 )

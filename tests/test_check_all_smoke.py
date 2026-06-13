@@ -35,6 +35,7 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertNotIn("tests.test_visual_compare_reprojection_smoke", flat_items)
         self.assertNotIn("tests.test_visual_compare_turntable_smoke", flat_items)
         self.assertIn("tests.test_single_camera_defaults_smoke", flat_items)
+        self.assertIn("tests.test_recorded_rgbd_replay_source", flat_items)
         self.assertIn("tests.test_single_demo_v3_runtime", flat_items)
 
     def test_full_profile_keeps_pytest_and_broader_command_surface(self) -> None:

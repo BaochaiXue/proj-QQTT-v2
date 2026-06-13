@@ -20,3 +20,18 @@ conda run --no-capture-output -n demo_2_max \
   python single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py \
   --mode exp
 ```
+
+RGB-D recording replay:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py \
+  --input-source recording \
+  --recording-case data_collect/sloth_hand_rgbd_2min_20260612_221051 \
+  --mode demo \
+  --replay-fps 30
+```
+
+In replay mode, the first numerically sorted camera-0 RGB-D frame becomes demo
+`seq=0` for SAM3.1 initialization, then subsequent frames are emitted at the
+requested replay FPS.

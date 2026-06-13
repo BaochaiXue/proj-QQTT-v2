@@ -102,6 +102,9 @@ TRACK_MODES = (TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY, TRACK_MODE_
 DEFAULT_TRACK_MODE = "controller-object"
 DEPTH_SOURCES = ("ffs", "ffs_remote", "realsense", "none")
 DEFAULT_DEPTH_SOURCE = "ffs"
+INPUT_SOURCE_LIVE = "live"
+INPUT_SOURCE_RECORDING = "recording"
+INPUT_SOURCES = (INPUT_SOURCE_LIVE, INPUT_SOURCE_RECORDING)
 PCD_MODES = ("masked", "none")
 DEFAULT_PCD_MODE = "masked"
 RENDER_MODES = ("pointcloud", "none")
@@ -201,6 +204,200 @@ class FramePacket:
     t_ir_left_to_color: np.ndarray | None = None
     k_color: np.ndarray | None = None
     ir_baseline_m: float = 0.0
+
+
+@dataclass(frozen=True)
+class RecordedRgbdFrameRef:
+    step: int
+    timestamp_s: float
+    color_path: Path
+    depth_path: Path
+
+
+class _NoopPipeline:
+    def stop(self) -> None:
+        return
+
+
+class RecordedRgbdFrameSource:
+    def __init__(self, case_path: str | Path, *, replay_fps: float = 0.0, camera_index: int = 0) -> None:
+        self.case_path = _resolve_path(case_path)
+        self.camera_index = int(camera_index)
+        self.metadata_path = self.case_path / "metadata.json"
+        if not self.metadata_path.is_file():
+            raise FileNotFoundError(f"recording metadata not found: {self.metadata_path}")
+        try:
+            metadata = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"recording metadata is not valid JSON: {self.metadata_path}") from exc
+        self.metadata: dict[str, Any] = metadata
+        streams_present = {str(item) for item in metadata.get("streams_present", [])}
+        if not {"color", "depth"}.issubset(streams_present):
+            raise ValueError("recording replay requires streams_present to include color and depth")
+        recording_by_camera = metadata.get("recording")
+        if not isinstance(recording_by_camera, dict):
+            raise ValueError("recording metadata must contain a recording object")
+        camera_key = str(self.camera_index)
+        camera_recording = recording_by_camera.get(camera_key)
+        if not isinstance(camera_recording, dict) or not camera_recording:
+            raise ValueError(f"recording metadata has no frames for camera {self.camera_index}")
+        self.k_color = self._camera_matrix(metadata, "K_color", fallback_key="intrinsics")
+        self.intrinsics = CameraIntrinsics(
+            fx=float(self.k_color[0, 0]),
+            fy=float(self.k_color[1, 1]),
+            cx=float(self.k_color[0, 2]),
+            cy=float(self.k_color[1, 2]),
+        )
+        self.depth_scale_m_per_unit = self._camera_float(metadata, "depth_scale_m_per_unit")
+        self.serial = self._camera_string(metadata, "serial_numbers", default=f"recording-cam{self.camera_index}")
+        self.width, self.height = self._resolve_dimensions(metadata)
+        self.effective_fps = self._resolve_replay_fps(float(replay_fps), metadata)
+        self.frames = self._build_frame_refs(camera_recording)
+
+    @property
+    def frame_count(self) -> int:
+        return len(self.frames)
+
+    @property
+    def steps(self) -> list[int]:
+        return [frame.step for frame in self.frames]
+
+    def make_runtime(self) -> RealtimeCameraRuntime:
+        return RealtimeCameraRuntime(
+            pipeline=_NoopPipeline(),
+            align=None,
+            serial=self.serial,
+            intrinsics=self.intrinsics,
+            depth_scale_m_per_unit=self.depth_scale_m_per_unit,
+            k_color=self.k_color,
+        )
+
+    def read_packet(
+        self,
+        *,
+        seq: int,
+        wait_ms: float = 0.0,
+        receive_perf_s: float | None = None,
+        frame_copy_ms: float | None = None,
+    ) -> FramePacket:
+        ref = self.frames[int(seq)]
+        copy_start_s = time.perf_counter()
+        color_bgr = self._load_color_bgr(ref.color_path)
+        depth_u16 = self._load_depth_u16(ref.depth_path)
+        copy_done_s = time.perf_counter()
+        if color_bgr.shape[:2] != depth_u16.shape:
+            raise ValueError(
+                f"recording color/depth shape mismatch for step {ref.step}: "
+                f"{tuple(color_bgr.shape[:2])} vs {tuple(depth_u16.shape)}"
+            )
+        if tuple(color_bgr.shape[:2]) != (self.height, self.width):
+            raise ValueError(
+                f"recording frame shape {tuple(color_bgr.shape[:2])} does not match metadata "
+                f"height/width {(self.height, self.width)} for step {ref.step}"
+            )
+        receive_s = copy_done_s if receive_perf_s is None else float(receive_perf_s)
+        copy_ms = _elapsed_ms(copy_start_s, copy_done_s) if frame_copy_ms is None else float(frame_copy_ms)
+        return FramePacket(
+            seq=int(seq),
+            color_bgr=color_bgr,
+            depth_source="realsense",
+            intrinsics=self.intrinsics,
+            depth_scale_m_per_unit=self.depth_scale_m_per_unit,
+            receive_perf_s=receive_s,
+            timing=PipelineTiming(wait_ms=float(wait_ms), align_ms=0.0, frame_copy_ms=copy_ms),
+            depth_u16=depth_u16,
+            k_color=self.k_color,
+        )
+
+    def _camera_matrix(self, metadata: dict[str, Any], key: str, *, fallback_key: str | None = None) -> np.ndarray:
+        values = metadata.get(key)
+        if values is None and fallback_key is not None:
+            values = metadata.get(fallback_key)
+        if not isinstance(values, list) or self.camera_index >= len(values) or values[self.camera_index] is None:
+            raise ValueError(f"recording metadata missing {key} for camera {self.camera_index}")
+        matrix = np.asarray(values[self.camera_index], dtype=np.float32)
+        if matrix.shape != (3, 3):
+            raise ValueError(f"recording metadata {key}[{self.camera_index}] must be 3x3")
+        if float(matrix[0, 0]) <= 0.0 or float(matrix[1, 1]) <= 0.0:
+            raise ValueError(f"recording metadata {key}[{self.camera_index}] has non-positive focal length")
+        return np.ascontiguousarray(matrix, dtype=np.float32)
+
+    def _camera_float(self, metadata: dict[str, Any], key: str) -> float:
+        values = metadata.get(key)
+        if not isinstance(values, list) or self.camera_index >= len(values) or values[self.camera_index] is None:
+            raise ValueError(f"recording metadata missing {key} for camera {self.camera_index}")
+        value = float(values[self.camera_index])
+        if value <= 0.0:
+            raise ValueError(f"recording metadata {key}[{self.camera_index}] must be positive")
+        return value
+
+    def _camera_string(self, metadata: dict[str, Any], key: str, *, default: str) -> str:
+        values = metadata.get(key)
+        if isinstance(values, list) and self.camera_index < len(values) and values[self.camera_index] is not None:
+            return str(values[self.camera_index])
+        return default
+
+    def _resolve_dimensions(self, metadata: dict[str, Any]) -> tuple[int, int]:
+        wh = metadata.get("WH")
+        if not isinstance(wh, list) or len(wh) != 2:
+            raise ValueError("recording metadata missing WH")
+        width = int(wh[0])
+        height = int(wh[1])
+        if width <= 0 or height <= 0:
+            raise ValueError("recording metadata WH must be positive")
+        return width, height
+
+    def _resolve_replay_fps(self, replay_fps: float, metadata: dict[str, Any]) -> float:
+        fps = float(metadata.get("fps", 0.0)) if replay_fps <= 0.0 else float(replay_fps)
+        if fps <= 0.0:
+            raise ValueError("recording replay FPS must be positive or metadata fps must be positive")
+        return fps
+
+    def _build_frame_refs(self, camera_recording: dict[str, Any]) -> list[RecordedRgbdFrameRef]:
+        refs: list[RecordedRgbdFrameRef] = []
+        color_dir = self.case_path / "color" / str(self.camera_index)
+        depth_dir = self.case_path / "depth" / str(self.camera_index)
+        for step_text, timestamp in sorted(camera_recording.items(), key=lambda item: int(item[0])):
+            step = int(step_text)
+            color_path = color_dir / f"{step}.png"
+            depth_path = depth_dir / f"{step}.npy"
+            if not color_path.is_file():
+                raise FileNotFoundError(f"recording color frame missing: {color_path}")
+            if not depth_path.is_file():
+                raise FileNotFoundError(f"recording depth frame missing: {depth_path}")
+            refs.append(
+                RecordedRgbdFrameRef(
+                    step=step,
+                    timestamp_s=float(timestamp),
+                    color_path=color_path,
+                    depth_path=depth_path,
+                )
+            )
+        if not refs:
+            raise ValueError(f"recording has no complete RGB-D frames for camera {self.camera_index}")
+        return refs
+
+    def _load_color_bgr(self, path: Path) -> np.ndarray:
+        try:
+            from PIL import Image
+
+            with Image.open(path) as image:
+                rgb = np.asarray(image.convert("RGB"))
+        except Exception as exc:
+            raise ValueError(f"failed to load recording color frame {path}: {exc}") from exc
+        return np.ascontiguousarray(rgb[:, :, ::-1], dtype=np.uint8)
+
+    def _load_depth_u16(self, path: Path) -> np.ndarray:
+        try:
+            depth = np.load(path)
+        except Exception as exc:
+            raise ValueError(f"failed to load recording depth frame {path}: {exc}") from exc
+        depth_u16 = np.asarray(depth)
+        if depth_u16.ndim != 2:
+            raise ValueError(f"recording depth frame must be 2D: {path}")
+        if depth_u16.dtype != np.uint16:
+            depth_u16 = depth_u16.astype(np.uint16, copy=False)
+        return np.ascontiguousarray(depth_u16)
 
 
 @dataclass(frozen=True)
@@ -351,6 +548,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--serial", default=None, help="Optional RealSense D400 serial. Defaults to first detected D400.")
     parser.add_argument("--profile", choices=SUPPORTED_PROFILES, default=DEFAULT_PROFILE, help="Capture profile.")
     parser.add_argument("--fps", choices=SUPPORTED_CAPTURE_FPS, type=int, default=DEFAULT_FPS, help="Capture FPS.")
+    parser.add_argument(
+        "--input-source",
+        choices=INPUT_SOURCES,
+        default=INPUT_SOURCE_LIVE,
+        help="Frame source. recording replays a raw single-camera RGB-D data_collect case.",
+    )
+    parser.add_argument(
+        "--recording-case",
+        type=Path,
+        default=None,
+        help="Raw data_collect case folder for --input-source recording.",
+    )
+    parser.add_argument(
+        "--replay-fps",
+        type=float,
+        default=0.0,
+        help="Replay FPS for --input-source recording. Use 0 to read metadata fps.",
+    )
     parser.add_argument(
         "--depth-source",
         choices=DEPTH_SOURCES,
@@ -615,8 +830,21 @@ def pcd_filter_enabled(args: argparse.Namespace) -> bool:
 
 def validate_args(args: argparse.Namespace) -> None:
     parse_profile(args.profile)
+    if args.input_source not in INPUT_SOURCES:
+        raise ValueError(f"--input-source must be one of {', '.join(INPUT_SOURCES)}")
     if args.depth_source not in DEPTH_SOURCES:
         raise ValueError(f"--depth-source must be one of {', '.join(DEPTH_SOURCES)}")
+    if float(args.replay_fps) < 0.0:
+        raise ValueError("--replay-fps must be >= 0")
+    if args.input_source == INPUT_SOURCE_RECORDING:
+        if args.recording_case is None:
+            raise ValueError("--input-source recording requires --recording-case")
+        if args.depth_source != "realsense":
+            raise ValueError("--input-source recording currently supports only --depth-source realsense")
+        if bool(args.enable_remote_ffs_quality):
+            raise ValueError("--input-source recording does not include IR frames for remote FFS quality")
+    elif args.recording_case is not None:
+        raise ValueError("--recording-case requires --input-source recording")
     if args.demo_preset == "local-ffs-professor" and args.depth_source != "ffs":
         raise ValueError("--demo-preset local-ffs-professor requires --depth-source ffs")
     if args.depth_min_m < 0:
@@ -1321,6 +1549,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         ] | None = None
         self.ffs_remote_client: FfsRemoteDepthClient | None = None
         self.remote_quality_client: FfsRemoteDepthClient | None = None
+        self.recording_source: RecordedRgbdFrameSource | None = None
         self._warned_remote_engine_contract = False
 
     @property
@@ -1360,7 +1589,23 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if pcd_filter_enabled(self.args) and str(self.args.pcd_filter_mode) == "async":
             self.filter_worker = AsyncPcdFilterWorker(self._filter_pcd_input)
             self.filter_worker.start()
-        self.runtime = _start_realsense_pipeline(self.args)
+        if self.args.input_source == INPUT_SOURCE_RECORDING:
+            self.recording_source = RecordedRgbdFrameSource(
+                self.args.recording_case,
+                replay_fps=float(self.args.replay_fps),
+            )
+            self.width = self.recording_source.width
+            self.height = self.recording_source.height
+            self.runtime = self.recording_source.make_runtime()
+            print(
+                "[recording-replay] "
+                f"case={self.recording_source.case_path} frames={self.recording_source.frame_count} "
+                f"fps={self.recording_source.effective_fps:g} first_step={self.recording_source.steps[0]} "
+                f"serial={self.recording_source.serial}",
+                flush=True,
+            )
+        else:
+            self.runtime = _start_realsense_pipeline(self.args)
         try:
             self.ray_x, self.ray_y = build_projection_grid(
                 width=self.width,
@@ -1388,6 +1633,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             except Exception:
                 pass
             self.runtime = None
+        self.recording_source = None
         if self.ffs_remote_client is not None:
             self.ffs_remote_client.close()
             self.ffs_remote_client = None
@@ -1469,8 +1715,39 @@ class RealtimeMaskedEdgeTamPcdDemo:
         except KeyboardInterrupt:
             self.stop_event.set()
 
+    def _capture_recording_worker(self) -> None:
+        assert self.recording_source is not None
+        source = self.recording_source
+        frame_period_s = 1.0 / float(source.effective_fps)
+        replay_start_s = time.perf_counter()
+        for seq in range(source.frame_count):
+            if self.stop_event.is_set():
+                break
+            wait_start_s = time.perf_counter()
+            target_s = replay_start_s + (float(seq) * frame_period_s)
+            wait_s = target_s - wait_start_s
+            if wait_s > 0.0 and self.stop_event.wait(wait_s):
+                break
+            wait_done_s = time.perf_counter()
+            try:
+                packet = source.read_packet(
+                    seq=seq,
+                    wait_ms=_elapsed_ms(wait_start_s, wait_done_s),
+                )
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    print(f"[ERROR] recording replay failed: {type(exc).__name__}: {exc}", flush=True)
+                self.stop_event.set()
+                break
+            self.capture_slot.put(packet)
+            self.capture_stats.record(packet.receive_perf_s)
+        self.stop_event.set()
+
     def _capture_worker(self) -> None:
         assert self.runtime is not None
+        if self.args.input_source == INPUT_SOURCE_RECORDING:
+            self._capture_recording_worker()
+            return
         seq = 0
         pipeline = self.runtime.pipeline
         align = self.runtime.align
@@ -1586,7 +1863,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "inference_state_device": self.args.device,
             "video_storage_device": self.args.device,
             "frame_by_frame_streaming": True,
-            "offline_video_input_used": False,
+            "offline_video_input_used": self.args.input_source == INPUT_SOURCE_RECORDING,
+            "input_source": self.args.input_source,
+            "recording_case": str(self.args.recording_case) if self.args.input_source == INPUT_SOURCE_RECORDING else None,
+            "replay_fps": (
+                self.recording_source.effective_fps
+                if self.args.input_source == INPUT_SOURCE_RECORDING and self.recording_source is not None
+                else None
+            ),
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
             "ffs_remote_endpoint": self.args.ffs_remote_endpoint if self.args.depth_source == "ffs_remote" else None,

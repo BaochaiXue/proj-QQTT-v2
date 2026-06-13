@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from qqtt.demo import single_demo_v3_runtime as runtime
 
@@ -56,6 +57,9 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["demo"], "single-demo3")
         self.assertEqual(contract["camera_count"], 1)
         self.assertEqual(contract["input_source"], "live_realsense_single_camera")
+        self.assertEqual(contract["input_source_mode"], "live")
+        self.assertIsNone(contract["recording_case"])
+        self.assertIsNone(contract["replay_fps"])
         self.assertEqual(contract["live_delegate_module"], "qqtt.demo.realtime_masked_edgetam_pcd")
         self.assertEqual(contract["depth_source"], "realsense")
         self.assertEqual(contract["depth_pipeline"], "realsense_native")
@@ -149,6 +153,76 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
         self.assertEqual(validation["active_serial"], "s0")
         self.assertNotIn("active_serials", validation)
+
+    def test_recording_contract_uses_rgbd_input_source_and_metadata_fps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            case_dir = Path(tmp_dir) / "case"
+            case_dir.mkdir()
+            (case_dir / "metadata.json").write_text(json.dumps({"fps": 30}), encoding="utf-8")
+            args = self._parse(
+                runtime.DEMO_VERSION_3_1,
+                [
+                    "--input-source",
+                    "recording",
+                    "--recording-case",
+                    str(case_dir),
+                    "--serial",
+                    "s0",
+                    "--mode",
+                    "demo",
+                ],
+            )
+
+            runtime.validate_args(args)
+            contract = runtime.build_contract(args)
+
+            self.assertEqual(contract["input_source"], "recording_rgbd_single_camera")
+            self.assertEqual(contract["input_source_mode"], "recording")
+            self.assertEqual(contract["recording_case"], str(case_dir))
+            self.assertEqual(contract["replay_fps"], 30.0)
+            self.assertEqual(contract["replay_fps_source"], "metadata")
+            self.assertIsNone(contract["serial"])
+            self.assertEqual(contract["controller_prompt"], "human hand")
+
+            delegate = runtime.build_live_delegate_argv(args)
+            self.assertIn("--input-source", delegate)
+            self.assertIn("recording", delegate)
+            self.assertIn("--recording-case", delegate)
+            self.assertIn(str(case_dir), delegate)
+            self.assertNotIn("--serial", delegate)
+
+    def test_recording_mode_skips_live_serial_validation(self) -> None:
+        with mock.patch.object(runtime.masked_pcd, "main", return_value=0) as masked_main:
+            code = runtime.main(
+                [
+                    "--input-source",
+                    "recording",
+                    "--recording-case",
+                    "data_collect/example_rgbd",
+                    "--render-mode",
+                    "none",
+                ],
+                demo_version=runtime.DEMO_VERSION_3_1,
+                connected_serials_provider=lambda: (_ for _ in ()).throw(AssertionError("serial check should not run")),
+            )
+
+        self.assertEqual(code, 0)
+        self.assertIn("--input-source", masked_main.call_args.args[0])
+        self.assertIn("recording", masked_main.call_args.args[0])
+
+    def test_recording_mode_rejects_ffs_versions(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "recording",
+                "--recording-case",
+                "data_collect/example_rgbd",
+            ],
+        )
+
+        with self.assertRaises(ValueError):
+            runtime.validate_args(args)
 
 
 if __name__ == "__main__":

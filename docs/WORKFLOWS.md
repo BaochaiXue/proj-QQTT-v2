@@ -41,6 +41,21 @@ python single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 python single_demo_v3_3/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
+Replay a raw RGB-D recording through Demo 3.1 as the camera stream:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py \
+  --input-source recording \
+  --recording-case data_collect/sloth_hand_rgbd_2min_20260612_221051 \
+  --mode demo \
+  --replay-fps 30
+```
+
+The first numerically sorted camera-0 RGB-D step becomes demo `seq=0` for
+SAM3.1 initialization. Recording replay is currently supported for Demo 3 /
+3.1 RealSense RGB-D only; FFS Demo 3.2 / 3.3 needs IR left/right recordings.
+
 Live FFS preview:
 
 ```bash
