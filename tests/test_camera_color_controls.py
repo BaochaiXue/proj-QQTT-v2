@@ -20,7 +20,7 @@ class CameraColorControlsTest(unittest.TestCase):
             DEFAULT_COLOR_EXPOSURE_OVERRIDES,
             {
                 "239222300412": 156.0,
-                "239222300781": 156.0,
+                "239222300781": 70.0,
                 "239222303506": 180.0,
             },
         )
@@ -33,7 +33,7 @@ class CameraColorControlsTest(unittest.TestCase):
             serial_numbers=["239222300412", "239222300781", "239222303506"],
             label="exposure",
         )
-        self.assertEqual(values, [156.0, 156.0, 180.0])
+        self.assertEqual(values, [156.0, 70.0, 180.0])
 
     def test_accepts_explicit_per_camera_values(self) -> None:
         values = resolve_per_camera_control_values(

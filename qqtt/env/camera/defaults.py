@@ -8,11 +8,11 @@ DEFAULT_EXPOSURE = 70.0
 DEFAULT_GAIN = 60.0
 DEFAULT_WHITE_BALANCE = 3800.0
 
-# Current 3-D455 lab rig color controls, measured on 2026-05-19 at
-# 1280x720/30fps against the Calib.io 12x9 ChArUco board.
+# Current lab-rig color controls. The single-camera top-down demo camera was
+# rechecked on 2026-06-13 against the sloth/cloth tabletop scene.
 DEFAULT_COLOR_EXPOSURE_OVERRIDES = {
     "239222300412": 156.0,
-    "239222300781": 156.0,
+    "239222300781": 70.0,
     "239222303506": 180.0,
 }
 DEFAULT_COLOR_GAIN_OVERRIDES = {}
