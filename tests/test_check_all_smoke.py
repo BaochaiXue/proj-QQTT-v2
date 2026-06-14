@@ -37,6 +37,7 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertIn("tests.test_single_camera_defaults_smoke", flat_items)
         self.assertIn("tests.test_recorded_rgbd_replay_source", flat_items)
         self.assertIn("tests.test_single_demo_v3_runtime", flat_items)
+        self.assertIn("tests.test_single_demo_tapnextpp_overlay", flat_items)
 
     def test_full_profile_keeps_pytest_and_broader_command_surface(self) -> None:
         commands = check_all.build_commands(python="python", profile="full")

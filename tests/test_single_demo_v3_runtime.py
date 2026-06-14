@@ -65,6 +65,11 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["depth_pipeline"], "realsense_native")
         self.assertFalse(contract["uses_ffs"])
         self.assertIsNone(contract["ffs_trt_batch_size"])
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
+        self.assertEqual(contract["tracker_backend_family"], "tapnext")
+        self.assertEqual(contract["tracker_query_count"], 4096)
+        self.assertEqual(contract["tracker_display_scope"], "union")
+        self.assertEqual(contract["tracker_visualization_mode"], "all_tracks_3d_lift")
         self.assertEqual(contract["object_prompt"], "stuffed animal")
         self.assertEqual(contract["controller_prompt"], "towel")
         self.assert_legacy_fields_removed(contract)
@@ -79,6 +84,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["depth_pipeline"], "ffs_tensorrt_batch1")
         self.assertTrue(contract["uses_ffs"])
         self.assertEqual(contract["ffs_trt_batch_size"], 1)
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
         self.assert_legacy_fields_removed(contract)
 
         delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
@@ -88,6 +94,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertIn("ffs", delegate)
         self.assertIn("--controller-prompt", delegate)
         self.assertIn("towel", delegate)
+        self.assertIn("--tracker-backend", delegate)
+        self.assertIn("tapnextpp", delegate)
 
     def test_old_multi_camera_options_are_not_public_cli(self) -> None:
         parser = runtime.build_arg_parser(demo_version=runtime.DEMO_VERSION_3)
@@ -185,6 +193,10 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(contract["controller_prompt"], "human hand")
             self.assertEqual(contract["track_mode"], "controller-object")
             self.assertEqual(contract["render_mode"], "pointcloud")
+            self.assertEqual(contract["tracker_backend"], "tapnextpp")
+            self.assertEqual(contract["tracker_device"], "cuda:1")
+            self.assertEqual(contract["tracker_query_source"], "object_controller_union_mask")
+            self.assertEqual(contract["tracker_visualization_mode"], "all_tracks_3d_lift")
 
             delegate = runtime.build_live_delegate_argv(args)
             self.assertIn("--input-source", delegate)
@@ -195,6 +207,10 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertIn("pointcloud", delegate)
             self.assertIn("--track-mode", delegate)
             self.assertIn("controller-object", delegate)
+            self.assertIn("--tracker-backend", delegate)
+            self.assertIn("tapnextpp", delegate)
+            self.assertIn("--tracker-display-scope", delegate)
+            self.assertIn("union", delegate)
             self.assertNotIn("--serial", delegate)
 
     def test_recording_mode_skips_live_serial_validation(self) -> None:
@@ -215,6 +231,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertIn("recording", masked_main.call_args.args[0])
         self.assertIn("--render-mode", masked_main.call_args.args[0])
         self.assertIn("pointcloud", masked_main.call_args.args[0])
+        self.assertIn("--tracker-backend", masked_main.call_args.args[0])
+        self.assertIn("tapnextpp", masked_main.call_args.args[0])
 
     def test_recording_mode_requires_pointcloud_render_path(self) -> None:
         args = self._parse(
@@ -247,6 +265,36 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "requires --track-mode controller-object"):
             runtime.validate_args(args)
+
+    def test_recording_mode_requires_tapnextpp_tracker(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_1,
+            [
+                "--input-source",
+                "recording",
+                "--recording-case",
+                "data_collect/example_rgbd",
+                "--tracker-backend",
+                "none",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires --tracker-backend tapnextpp"):
+            runtime.validate_args(args)
+
+    def test_headless_render_auto_disables_tracker_when_not_explicit(self) -> None:
+        args = self._parse(runtime.DEMO_VERSION_3_1, ["--render-mode", "none"])
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+
+        self.assertEqual(contract["track_mode"], "none")
+        self.assertEqual(contract["tracker_backend"], "none")
+        self.assertEqual(contract["tracker_visualization_mode"], "none")
+        delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
+        self.assertIn("--tracker-backend", delegate)
+        self.assertIn("none", delegate)
+        self.assertIn("--pcd-mode", delegate)
+        self.assertIn("none", delegate)
 
     def test_recording_mode_rejects_ffs_versions(self) -> None:
         args = self._parse(

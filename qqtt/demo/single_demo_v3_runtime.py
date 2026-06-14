@@ -36,6 +36,8 @@ DEFAULT_EXP_CONTROLLER_PROMPT = "towel"
 DEFAULT_DEMO_CONTROLLER_PROMPT = "human hand"
 DEFAULT_DEMO_CONTROLLER_LABEL = "hand"
 DEFAULT_MODE = MODE_EXP
+DEFAULT_TRACKER_BACKEND = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
+DEFAULT_TRACKER_DEVICE = "cuda:1"
 
 DEFAULT_OUTPUT_ROOTS = {
     DEMO_VERSION_3: Path("result/single_demo_v3_realsense_masked_pcd"),
@@ -174,6 +176,29 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         default=masked_pcd.DEFAULT_RENDER_MODE,
         help="Render mode for the single-camera masked point-cloud delegate.",
     )
+    parser.add_argument(
+        "--tracker-backend",
+        choices=masked_pcd.TRACKER_BACKENDS,
+        default=DEFAULT_TRACKER_BACKEND,
+        help="Point-tracker overlay backend. Demo 3.1 recording replay uses TAPNext++ by default.",
+    )
+    parser.add_argument("--tracker-device", default=DEFAULT_TRACKER_DEVICE)
+    parser.add_argument("--tracker-query-count", type=int, default=masked_pcd.DEFAULT_TRACKER_QUERY_COUNT)
+    parser.add_argument("--tracker-seed", type=int, default=masked_pcd.DEFAULT_TRACKER_SEED)
+    parser.add_argument(
+        "--tracker-display-scope",
+        choices=masked_pcd.TRACKER_DISPLAY_SCOPES,
+        default=masked_pcd.DEFAULT_TRACKER_DISPLAY_SCOPE,
+    )
+    parser.add_argument("--tracker-overlay-max-points", type=int, default=512)
+    parser.add_argument("--tracker-marker-point-size", type=float, default=masked_pcd.DEFAULT_TRACKER_MARKER_POINT_SIZE)
+    parser.add_argument("--tapnet-repo-dir", type=Path, default=masked_pcd.DEFAULT_TAPNET_REPO_DIR)
+    parser.add_argument("--tapnextpp-checkpoint", type=Path, default=masked_pcd.DEFAULT_TAPNEXTPP_CHECKPOINT)
+    parser.add_argument("--tapnextpp-image-size", default="256,256")
+    parser.add_argument("--tapnextpp-autocast-dtype", choices=("fp16", "bf16", "fp32"), default="fp16")
+    parser.add_argument("--tapnextpp-compile", action="store_true")
+    parser.add_argument("--no-tapnextpp-fast-postprocess", dest="tapnextpp_fast_postprocess", action="store_false")
+    parser.set_defaults(tapnextpp_fast_postprocess=True)
     parser.add_argument("--point-size", type=float, default=2.0)
     return parser
 
@@ -192,12 +217,17 @@ def apply_preset_defaults(
         args.controller_prompt = _mode_prompts(str(args.mode))["controller_prompt"]
     if "--track-mode" not in explicit and str(args.render_mode) == "none":
         args.track_mode = TRACK_MODE_NONE
+    if "--tracker-backend" not in explicit and (
+        str(args.render_mode) == "none" or str(args.track_mode) == TRACK_MODE_NONE
+    ):
+        args.tracker_backend = masked_pcd.TRACKER_BACKEND_NONE
     return args
 
 
 def validate_args(args: argparse.Namespace) -> None:
     version = normalize_demo_version(getattr(args, "single_demo_version", DEMO_VERSION_3))
     args.depth_source = DEFAULT_DEPTH_SOURCES[version]
+    args.tracker_backend = masked_pcd.normalize_tracker_backend(str(args.tracker_backend))
     if str(args.input_source) not in INPUT_SOURCES:
         raise ValueError(f"--input-source must be one of {INPUT_SOURCES}")
     if float(args.replay_fps) < 0.0:
@@ -211,6 +241,8 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--input-source recording requires --render-mode pointcloud")
         if str(args.track_mode) == TRACK_MODE_NONE:
             raise ValueError("--input-source recording requires --track-mode controller-object")
+        if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
+            raise ValueError("--input-source recording requires --tracker-backend tapnextpp")
     elif args.recording_case is not None:
         raise ValueError("--recording-case requires --input-source recording")
     if float(args.duration_s) < 0.0:
@@ -221,6 +253,19 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"--profile must be one of {single_pcd.SUPPORTED_PROFILES}")
     if str(args.track_mode) not in TRACK_MODES:
         raise ValueError(f"--track-mode must be one of {TRACK_MODES}")
+    if int(args.tracker_query_count) < 0:
+        raise ValueError("--tracker-query-count must be >= 0")
+    if int(args.tracker_overlay_max_points) < 0:
+        raise ValueError("--tracker-overlay-max-points must be >= 0")
+    if float(args.tracker_marker_point_size) <= 0:
+        raise ValueError("--tracker-marker-point-size must be positive")
+    if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE:
+        if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
+            raise ValueError("single demo tracker backend currently supports only tapnextpp")
+        if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
+            raise ValueError("--tracker-backend tapnextpp requires --track-mode controller-object")
+        if str(args.render_mode) != "pointcloud":
+            raise ValueError("--tracker-backend tapnextpp requires --render-mode pointcloud")
 
 
 def _read_recording_metadata_fps(case_path: Path | None) -> float | None:
@@ -293,6 +338,27 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "controller_label": controller_label,
         "track_mode": str(args.track_mode),
         "render_mode": str(args.render_mode),
+        "tracker_backend": str(args.tracker_backend),
+        "tracker_backend_family": (
+            "tapnext" if str(args.tracker_backend) == masked_pcd.TRACKER_BACKEND_TAPNEXTPP else "none"
+        ),
+        "tracker_device": str(args.tracker_device),
+        "tracker_query_count": int(args.tracker_query_count),
+        "tracker_query_source": (
+            "object_controller_union_mask" if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE else None
+        ),
+        "tracker_display_scope": str(args.tracker_display_scope),
+        "tracker_visualization_mode": (
+            "all_tracks_3d_lift" if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE else "none"
+        ),
+        "tracker_overlay_max_points": int(args.tracker_overlay_max_points),
+        "tracker_marker_point_size": float(args.tracker_marker_point_size),
+        "tapnet_repo_dir": str(args.tapnet_repo_dir),
+        "tapnextpp_checkpoint": str(args.tapnextpp_checkpoint),
+        "tapnextpp_image_size": str(args.tapnextpp_image_size),
+        "tapnextpp_autocast_dtype": str(args.tapnextpp_autocast_dtype),
+        "tapnextpp_compile": bool(args.tapnextpp_compile),
+        "tapnextpp_fast_postprocess": bool(args.tapnextpp_fast_postprocess),
         "profile": str(args.profile),
         "fps": int(args.fps),
         "duration_s": float(args.duration_s),
@@ -307,6 +373,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "rendered_fps": 0.0,
         "capture_fps": 0.0,
         "mask_fps": 0.0,
+        "tracker_fps": 0.0,
     }
     return contract
 
@@ -326,6 +393,10 @@ def format_contract(contract: dict[str, Any]) -> str:
         "ffs_trt_batch_size",
         "mask_source",
         "track_mode",
+        "tracker_backend",
+        "tracker_device",
+        "tracker_query_count",
+        "tracker_display_scope",
         "object_prompt",
         "controller_prompt",
         "render_mode",
@@ -379,6 +450,28 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.track_mode),
         "--render-mode",
         str(args.render_mode),
+        "--tracker-backend",
+        str(args.tracker_backend),
+        "--tracker-device",
+        str(args.tracker_device),
+        "--tracker-query-count",
+        str(int(args.tracker_query_count)),
+        "--tracker-seed",
+        str(int(args.tracker_seed)),
+        "--tracker-display-scope",
+        str(args.tracker_display_scope),
+        "--tracker-overlay-max-points",
+        str(int(args.tracker_overlay_max_points)),
+        "--tracker-marker-point-size",
+        str(float(args.tracker_marker_point_size)),
+        "--tapnet-repo-dir",
+        str(args.tapnet_repo_dir),
+        "--tapnextpp-checkpoint",
+        str(args.tapnextpp_checkpoint),
+        "--tapnextpp-image-size",
+        str(args.tapnextpp_image_size),
+        "--tapnextpp-autocast-dtype",
+        str(args.tapnextpp_autocast_dtype),
         "--object-prompt",
         str(args.object_prompt),
         "--controller-prompt",
@@ -398,6 +491,10 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.extend(["--ffs-repo", str(args.ffs_repo), "--ffs-trt-model-dir", str(args.ffs_trt_model_dir)])
         if args.ffs_trt_root is not None:
             argv.extend(["--ffs-trt-root", str(args.ffs_trt_root)])
+    if bool(args.tapnextpp_compile):
+        argv.append("--tapnextpp-compile")
+    if not bool(args.tapnextpp_fast_postprocess):
+        argv.append("--no-tapnextpp-fast-postprocess")
     if bool(args.debug):
         argv.append("--debug")
     if str(args.track_mode) == TRACK_MODE_NONE:

@@ -1,7 +1,8 @@
 # Single Demo 3.2: FFS Masked PCD
 
 Single Demo 3.2 is the single-camera FFS masked PCD demo. It runs one
-RealSense camera and local FFS depth with TensorRT batch size one.
+RealSense camera and local FFS depth with TensorRT batch size one, and exposes
+the same TAPNext++ point-tracker overlay controls used by Single Demo 3.1.
 
 The current experiment defaults remain object `stuffed animal` and controller
 `towel`. `--mode demo` switches the controller prompt to `human hand`.
