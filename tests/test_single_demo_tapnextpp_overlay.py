@@ -110,6 +110,26 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(len(selected), 2)
         self.assertNotIn(1, selected.tolist())
 
+    def test_render_point_cap_limits_display_layer_without_random_jitter(self) -> None:
+        points = np.arange(24, dtype=np.float32).reshape(8, 3)
+        colors = np.arange(24, dtype=np.uint8).reshape(8, 3)
+
+        capped_points, capped_colors = demo.cap_render_points(points, colors, max_points=5)
+
+        self.assertEqual(capped_points.shape, (5, 3))
+        self.assertEqual(capped_colors.shape, (5, 3))
+        np.testing.assert_array_equal(capped_points, points[[0, 1, 3, 5, 7]])
+        np.testing.assert_array_equal(capped_colors, colors[[0, 1, 3, 5, 7]])
+
+    def test_render_point_cap_zero_keeps_original_arrays(self) -> None:
+        points = np.zeros((8, 3), dtype=np.float32)
+        colors = np.zeros((8, 3), dtype=np.uint8)
+
+        capped_points, capped_colors = demo.cap_render_points(points, colors, max_points=0)
+
+        self.assertIs(capped_points, points)
+        self.assertIs(capped_colors, colors)
+
     def test_tracker_worker_publishes_lifted_marker_packet_with_fake_adapter(self) -> None:
         args = self._tracker_args()
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)

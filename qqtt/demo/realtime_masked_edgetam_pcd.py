@@ -117,6 +117,7 @@ PCD_MODES = ("masked", "none")
 DEFAULT_PCD_MODE = "masked"
 RENDER_MODES = ("pointcloud", "none")
 DEFAULT_RENDER_MODE = "pointcloud"
+DEFAULT_RENDER_MAX_POINTS_PER_LAYER = 5000
 PCD_FILTER_MODES = ("async", "sync", "none")
 PCD_FILTER_NONE = "none"
 PCD_FILTER_PT_FILTER = "pt-filter"
@@ -884,6 +885,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Point-cloud colors. rgb uses the live color frame; class uses fixed controller/object colors.",
     )
     parser.add_argument(
+        "--render-max-points-per-layer",
+        type=int,
+        default=DEFAULT_RENDER_MAX_POINTS_PER_LAYER,
+        help="Final Open3D display cap per semantic PCD layer. 0 renders every PCD point.",
+    )
+    parser.add_argument(
         "--enable-pcd-filter",
         action="store_true",
         help="Enable capped point-cloud filtering. Async mode never blocks capture, EdgeTAM, FFS, or render.",
@@ -988,6 +995,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pcd-max-points must be >= 0")
     if args.pcd_stride < 1:
         raise ValueError("--pcd-stride must be >= 1")
+    if int(args.render_max_points_per_layer) < 0:
+        raise ValueError("--render-max-points-per-layer must be >= 0")
     if args.point_size <= 0:
         raise ValueError("--point-size must be positive")
     if args.pcd_filter_mode not in PCD_FILTER_MODES:
@@ -1732,6 +1741,26 @@ def _select_visible_spread_indices(tracks_yx: np.ndarray, visibility: np.ndarray
     return visible[np.asarray(selected_local, dtype=np.int64)].astype(np.int64)
 
 
+def cap_render_points(
+    points_xyz_m: np.ndarray,
+    colors_rgb_u8: np.ndarray,
+    *,
+    max_points: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    if int(max_points) < 0:
+        raise ValueError("max_points must be >= 0")
+    point_count = int(points_xyz_m.shape[0])
+    if int(colors_rgb_u8.shape[0]) != point_count:
+        raise ValueError("points and colors must have the same length")
+    if int(max_points) == 0 or point_count <= int(max_points):
+        return points_xyz_m, colors_rgb_u8
+    indices = np.linspace(0, point_count - 1, int(max_points), dtype=np.int64)
+    return (
+        np.ascontiguousarray(points_xyz_m[indices], dtype=np.float32),
+        np.ascontiguousarray(colors_rgb_u8[indices], dtype=np.uint8),
+    )
+
+
 def _latest_tracker_arrays(result: Any) -> tuple[np.ndarray, np.ndarray]:
     tracks = np.asarray(result.tracks_yx, dtype=np.float32)
     visibility = np.asarray(result.visibility, dtype=np.float32)
@@ -2214,6 +2243,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "pcd_mode": self.args.pcd_mode,
             "pcd_max_points": int(self.args.pcd_max_points),
             "pcd_stride": int(self.args.pcd_stride),
+            "render_max_points_per_layer": int(self.args.render_max_points_per_layer),
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE,
             "object_filter": self.args.object_filter,
@@ -3591,14 +3621,32 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 min_capacity=max(0, int(min_capacity)),
             )
 
-        def update_layer(layer: Open3DSceneTensorLayer, points_xyz_m: np.ndarray, colors_rgb_u8: np.ndarray) -> tuple[float, float]:
-            update = layer.update(points_xyz_m, colors_rgb_u8)
+        def update_layer(
+            layer: Open3DSceneTensorLayer,
+            points_xyz_m: np.ndarray,
+            colors_rgb_u8: np.ndarray,
+            *,
+            max_points: int = 0,
+        ) -> tuple[float, float]:
+            cap_start_s = time.perf_counter()
+            display_points, display_colors = cap_render_points(
+                points_xyz_m,
+                colors_rgb_u8,
+                max_points=int(max_points),
+            )
+            cap_ms = _elapsed_ms(cap_start_s, time.perf_counter())
+            update = layer.update(display_points, display_colors)
             open3d_ms = float(update.open3d_update_geometry_ms)
             if update.points_count == 0:
                 open3d_ms += float(update.open3d_remove_geometry_ms)
-            return float(update.cpu_format_ms), open3d_ms
+            return float(update.cpu_format_ms) + cap_ms, open3d_ms
 
-        pcd_layer_capacity = int(self.args.pcd_max_points) if int(self.args.pcd_max_points) > 0 else 0
+        pcd_caps = [
+            int(value)
+            for value in (self.args.pcd_max_points, self.args.render_max_points_per_layer)
+            if int(value) > 0
+        ]
+        pcd_layer_capacity = min(pcd_caps) if pcd_caps else 0
         tracker_layer_capacity = int(self.args.tracker_overlay_max_points)
         if tracker_layer_capacity <= 0:
             tracker_layer_capacity = int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS
@@ -3641,11 +3689,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     controller_state,
                     packet.controller_xyz_m,
                     packet.controller_colors_rgb_u8,
+                    max_points=int(self.args.render_max_points_per_layer),
                 )
                 object_convert_ms, object_update_ms = update_layer(
                     object_state,
                     packet.object_xyz_m,
                     packet.object_colors_rgb_u8,
+                    max_points=int(self.args.render_max_points_per_layer),
                 )
             if marker_packet is not None:
                 last_marker_seq["value"] = marker_packet.seq
@@ -3772,6 +3822,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
     ) -> str:
         status = "late" if timing.receive_to_render_ms > self.args.latency_target_ms else "ok"
         max_points = "uncapped" if self.args.pcd_max_points == 0 else str(self.args.pcd_max_points)
+        render_cap = (
+            "uncapped"
+            if int(self.args.render_max_points_per_layer) == 0
+            else str(int(self.args.render_max_points_per_layer))
+        )
         depth_line = f"depth: {self.args.depth_source}  color={self.args.pcd_color_mode}"
         preset_text = "" if self.args.demo_preset == "none" else f"  preset={self.args.demo_preset}"
         if tracker_enabled(self.args):
@@ -3833,7 +3888,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"capture/seg/pcd/tracker/render FPS: {self.capture_stats.fps:.1f} / {self.seg_stats.fps:.1f} / "
             f"{self.pcd_stats.fps:.1f} / {self.tracker_stats.fps:.1f} / {self.render_stats.render_fps:.1f}\n"
             f"latency: {timing.receive_to_render_ms:.1f} ms ({status}, target {self.args.latency_target_ms:.1f} ms)\n"
-            f"points controller/object: {packet.controller_point_count} / {packet.object_point_count}  max/object: {max_points}\n"
+            f"points controller/object: {packet.controller_point_count} / {packet.object_point_count}  "
+            f"pcd max/object: {max_points}  render max/layer: {render_cap}\n"
             f"{tracker_line}\n"
             f"{filter_line}\n"
             f"{filter_points_line}\n"

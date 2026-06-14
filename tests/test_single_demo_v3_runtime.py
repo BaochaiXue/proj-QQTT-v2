@@ -76,6 +76,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["tracker_visualization_mode"], "all_tracks_3d_lift")
         self.assertEqual(contract["pcd_max_points"], 60000)
         self.assertEqual(contract["pcd_stride"], 1)
+        self.assertEqual(contract["render_max_points_per_layer"], 5000)
         self.assertFalse(contract["pcd_filter_enabled"])
         self.assertEqual(contract["point_size"], 2.0)
         self.assertEqual(contract["object_prompt"], "stuffed animal")
@@ -221,6 +222,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertIn("union", delegate)
             self.assertEqual(_option_value(delegate, "--pcd-max-points"), "60000")
             self.assertEqual(_option_value(delegate, "--pcd-stride"), "1")
+            self.assertEqual(_option_value(delegate, "--render-max-points-per-layer"), "5000")
             self.assertNotIn("--serial", delegate)
 
     def test_pointcloud_load_controls_are_forwarded_to_delegate(self) -> None:
@@ -235,6 +237,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 "1.2",
                 "--pcd-color-mode",
                 "class",
+                "--render-max-points-per-layer",
+                "4096",
                 "--enable-pcd-filter",
                 "--point-size",
                 "1.5",
@@ -248,12 +252,14 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["pcd_stride"], 2)
         self.assertEqual(contract["depth_max_m"], 1.2)
         self.assertEqual(contract["pcd_color_mode"], "class")
+        self.assertEqual(contract["render_max_points_per_layer"], 4096)
         self.assertTrue(contract["pcd_filter_enabled"])
         self.assertEqual(contract["point_size"], 1.5)
         self.assertEqual(_option_value(delegate, "--pcd-max-points"), "20000")
         self.assertEqual(_option_value(delegate, "--pcd-stride"), "2")
         self.assertEqual(_option_value(delegate, "--depth-max-m"), "1.2")
         self.assertEqual(_option_value(delegate, "--pcd-color-mode"), "class")
+        self.assertEqual(_option_value(delegate, "--render-max-points-per-layer"), "4096")
         self.assertEqual(_option_value(delegate, "--point-size"), "1.5")
         self.assertIn("--enable-pcd-filter", delegate)
 
@@ -266,9 +272,24 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pcd-stride"):
             runtime.validate_args(bad_stride)
 
+        bad_render_cap = self._parse(runtime.DEMO_VERSION_3_1, ["--render-max-points-per-layer", "-1"])
+        with self.assertRaisesRegex(ValueError, "render-max-points-per-layer"):
+            runtime.validate_args(bad_render_cap)
+
         headless_filter = self._parse(runtime.DEMO_VERSION_3_1, ["--render-mode", "none", "--enable-pcd-filter"])
         with self.assertRaisesRegex(ValueError, "enable-pcd-filter"):
             runtime.validate_args(headless_filter)
+
+    def test_demo31_demo32_demo33_default_to_5000_render_points_per_layer(self) -> None:
+        for version in (runtime.DEMO_VERSION_3_1, runtime.DEMO_VERSION_3_2, runtime.DEMO_VERSION_3_3):
+            with self.subTest(version=version):
+                args = self._parse(version, [])
+                runtime.validate_args(args)
+                contract = runtime.build_contract(args)
+                delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
+
+                self.assertEqual(contract["render_max_points_per_layer"], 5000)
+                self.assertEqual(_option_value(delegate, "--render-max-points-per-layer"), "5000")
 
     def test_recording_mode_skips_live_serial_validation(self) -> None:
         with mock.patch.object(runtime.masked_pcd, "main", return_value=0) as masked_main:

@@ -204,6 +204,11 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
     parser.add_argument("--pcd-max-points", type=int, default=60000)
     parser.add_argument("--pcd-stride", type=int, default=1)
     parser.add_argument("--pcd-color-mode", choices=("rgb", "class"), default="rgb")
+    parser.add_argument(
+        "--render-max-points-per-layer",
+        type=int,
+        default=masked_pcd.DEFAULT_RENDER_MAX_POINTS_PER_LAYER,
+    )
     parser.add_argument("--enable-pcd-filter", action="store_true")
     parser.add_argument("--point-size", type=float, default=2.0)
     return parser
@@ -273,6 +278,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pcd-max-points must be >= 0")
     if int(args.pcd_stride) < 1:
         raise ValueError("--pcd-stride must be >= 1")
+    if int(args.render_max_points_per_layer) < 0:
+        raise ValueError("--render-max-points-per-layer must be >= 0")
     if float(args.point_size) <= 0:
         raise ValueError("--point-size must be positive")
     if bool(args.enable_pcd_filter) and str(args.track_mode) == TRACK_MODE_NONE:
@@ -382,6 +389,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "pcd_max_points": int(args.pcd_max_points),
         "pcd_stride": int(args.pcd_stride),
         "pcd_color_mode": str(args.pcd_color_mode),
+        "render_max_points_per_layer": int(args.render_max_points_per_layer),
         "pcd_filter_enabled": bool(args.enable_pcd_filter),
         "point_size": float(args.point_size),
         "profile": str(args.profile),
@@ -427,6 +435,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "render_mode",
         "pcd_max_points",
         "pcd_stride",
+        "render_max_points_per_layer",
         "pcd_filter_enabled",
         "point_size",
     )
@@ -511,6 +520,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(int(args.pcd_stride)),
         "--pcd-color-mode",
         str(args.pcd_color_mode),
+        "--render-max-points-per-layer",
+        str(int(args.render_max_points_per_layer)),
         "--object-prompt",
         str(args.object_prompt),
         "--controller-prompt",
