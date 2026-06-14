@@ -136,6 +136,8 @@ DEFAULT_FILTER_RADIUS_M = 0.01
 DEFAULT_FILTER_NB_POINTS = 40
 DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.01
 DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.0
+DEFAULT_OBJECT_FILTER_KEEP_COMPONENTS = 1
+DEFAULT_CONTROLLER_FILTER_KEEP_COMPONENTS = 2
 CONTROLLER_ID = 1
 OBJECT_ID = 2
 OBJECT_LABELS = {CONTROLLER_ID: "controller", OBJECT_ID: "object"}
@@ -1015,6 +1017,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--controller-filter", choices=PCD_FILTERS, default=PCD_FILTER_PT_FILTER)
     parser.add_argument("--object-filter-cap", type=int, default=20_000)
     parser.add_argument("--controller-filter-cap", type=int, default=20_000)
+    parser.add_argument(
+        "--object-filter-keep-components",
+        type=int,
+        default=DEFAULT_OBJECT_FILTER_KEEP_COMPONENTS,
+        help="Connected components to keep when --object-filter enhanced-pt is used.",
+    )
+    parser.add_argument(
+        "--controller-filter-keep-components",
+        type=int,
+        default=DEFAULT_CONTROLLER_FILTER_KEEP_COMPONENTS,
+        help="Connected components to keep when --controller-filter enhanced-pt is used.",
+    )
     parser.add_argument("--object-filter-voxel-m", type=float, default=0.004)
     parser.add_argument("--controller-filter-voxel-m", type=float, default=0.003)
     parser.add_argument(
@@ -1109,9 +1123,19 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--point-size must be positive")
     if args.pcd_filter_mode not in PCD_FILTER_MODES:
         raise ValueError(f"--pcd-filter-mode must be one of {', '.join(PCD_FILTER_MODES)}")
-    for flag in ("object_filter_cap", "controller_filter_cap", "filter_min_cap"):
+    for flag in (
+        "object_filter_cap",
+        "controller_filter_cap",
+        "filter_min_cap",
+        "object_filter_keep_components",
+        "controller_filter_keep_components",
+    ):
         if int(getattr(args, flag)) < 0:
             raise ValueError(f"--{flag.replace('_', '-')} must be >= 0")
+    if int(args.object_filter_keep_components) < 1:
+        raise ValueError("--object-filter-keep-components must be >= 1")
+    if int(args.controller_filter_keep_components) < 1:
+        raise ValueError("--controller-filter-keep-components must be >= 1")
     if int(args.object_filter_cap) > 0 and int(args.filter_min_cap) > int(args.object_filter_cap):
         raise ValueError("--filter-min-cap must be <= --object-filter-cap when object cap is enabled")
     if int(args.controller_filter_cap) > 0 and int(args.filter_min_cap) > int(args.controller_filter_cap):
@@ -2363,6 +2387,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "controller_filter": self.args.controller_filter,
             "object_filter_cap": int(self.args.object_filter_cap),
             "controller_filter_cap": int(self.args.controller_filter_cap),
+            "object_filter_keep_components": int(self.args.object_filter_keep_components),
+            "controller_filter_keep_components": int(self.args.controller_filter_keep_components),
             "filter_every_n": int(self.args.filter_every_n),
             "filter_budget_ms": float(self.args.filter_budget_ms),
             "render_mode": self.args.render_mode,
@@ -2796,6 +2822,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         mode: str,
         cap: int,
         voxel_size_m: float,
+        keep_components: int,
         rng: np.random.Generator,
     ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
         raw_points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
@@ -2849,6 +2876,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 nb_points=int(self.args.filter_nb_points),
                 component_voxel_size_m=float(self.args.enhanced_component_voxel_size_m),
                 keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
+                keep_top_n_components=int(keep_components),
             )
         else:
             raise ValueError(f"unsupported PCD filter mode: {mode}")
@@ -2863,6 +2891,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "output_points": int(len(filtered_points)),
             "cap": int(cap),
             "voxel_size_m": float(voxel_size_m),
+            "keep_components": int(keep_components),
             "cap_ms": float(cap_ms),
             "filter_ms": float(filter_ms),
         }
@@ -2875,6 +2904,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             mode=str(self.args.object_filter),
             cap=int(item.object_cap),
             voxel_size_m=float(item.object_voxel_size_m),
+            keep_components=int(self.args.object_filter_keep_components),
             rng=np.random.default_rng(int(item.seq) * 2 + 17),
         )
         controller_points, controller_colors, controller_stats = self._apply_single_pcd_filter(
@@ -2883,6 +2913,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             mode=str(self.args.controller_filter),
             cap=int(item.controller_cap),
             voxel_size_m=float(item.controller_voxel_size_m),
+            keep_components=int(self.args.controller_filter_keep_components),
             rng=np.random.default_rng(int(item.seq) * 2 + 19),
         )
         done_s = time.perf_counter()

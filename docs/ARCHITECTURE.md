@@ -33,6 +33,9 @@ aligned-case data product.
   single-camera point-cloud demo implementation.
 - `qqtt/demo/single_demo_v3_runtime.py`: shared launcher for the
   `demo_v3*` entrypoints.
+- `qqtt/demo/realtime_masked_edgetam_pcd.py`: shared masked PCD runtime. Its
+  enhanced component filter defaults keep one object component and two
+  controller components, matching single-object plus two-hand demo scenes.
 - `services/ffs_remote/`: single-camera remote FFS depth request/response
   protocol and server/client utilities.
 

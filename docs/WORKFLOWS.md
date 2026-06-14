@@ -56,7 +56,10 @@ The default fake-live case is
 numerically sorted camera-0 step becomes demo `seq=0` for SAM3.1
 initialization. Demo 3 / 3.1 consume replayed RGB-D; Demo 3.2 / 3.3 consume
 replayed RGB plus IR stereo and compute FFS depth. Playback stops cleanly at
-the end of the recording. Fake-live runs in demo mode.
+the end of the recording. Fake-live runs in demo mode. When enhanced PCD
+component filtering is enabled, object filtering keeps one main component while
+controller filtering keeps two main components so two-hand controllers are not
+dropped as disconnected noise.
 
 Live FFS preview:
 

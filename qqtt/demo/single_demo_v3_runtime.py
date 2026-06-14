@@ -226,6 +226,18 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         default=masked_pcd.DEFAULT_RENDER_MAX_POINTS_PER_LAYER,
     )
     parser.add_argument("--enable-pcd-filter", action="store_true")
+    parser.add_argument(
+        "--object-filter-keep-components",
+        type=int,
+        default=masked_pcd.DEFAULT_OBJECT_FILTER_KEEP_COMPONENTS,
+        help="Enhanced PCD component count for object filtering.",
+    )
+    parser.add_argument(
+        "--controller-filter-keep-components",
+        type=int,
+        default=masked_pcd.DEFAULT_CONTROLLER_FILTER_KEEP_COMPONENTS,
+        help="Enhanced PCD component count for controller filtering; default keeps two hand components.",
+    )
     parser.add_argument("--point-size", type=float, default=2.0)
     return parser
 
@@ -298,6 +310,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pcd-stride must be >= 1")
     if int(args.render_max_points_per_layer) < 0:
         raise ValueError("--render-max-points-per-layer must be >= 0")
+    if int(args.object_filter_keep_components) < 1:
+        raise ValueError("--object-filter-keep-components must be >= 1")
+    if int(args.controller_filter_keep_components) < 1:
+        raise ValueError("--controller-filter-keep-components must be >= 1")
     if float(args.point_size) <= 0:
         raise ValueError("--point-size must be positive")
     if bool(args.enable_pcd_filter) and str(args.track_mode) == TRACK_MODE_NONE:
@@ -412,6 +428,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "pcd_color_mode": str(args.pcd_color_mode),
         "render_max_points_per_layer": int(args.render_max_points_per_layer),
         "pcd_filter_enabled": bool(args.enable_pcd_filter),
+        "object_filter_keep_components": int(args.object_filter_keep_components),
+        "controller_filter_keep_components": int(args.controller_filter_keep_components),
         "point_size": float(args.point_size),
         "profile": str(args.profile),
         "fps": int(args.fps),
@@ -543,6 +561,10 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.pcd_color_mode),
         "--render-max-points-per-layer",
         str(int(args.render_max_points_per_layer)),
+        "--object-filter-keep-components",
+        str(int(args.object_filter_keep_components)),
+        "--controller-filter-keep-components",
+        str(int(args.controller_filter_keep_components)),
         "--object-prompt",
         str(args.object_prompt),
         "--controller-prompt",
