@@ -14,6 +14,7 @@ single-camera `data_collect` recording.
   alias.
 - Use `data_collect/sloth_both_eval_2min_e45_g35_20260614_155543` as the
   default fake-live case.
+- Use demo mode for fake-live.
 - Replay the first complete recorded step as runtime `seq=0`, wait for
   first-frame segmentation, then emit later frames at metadata or CLI FPS.
 - Support RealSense-native fake-live from RGB-D and FFS fake-live from IR

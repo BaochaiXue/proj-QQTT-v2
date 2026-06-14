@@ -146,8 +146,8 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         choices=INPUT_SOURCES,
         default=INPUT_SOURCE_LIVE,
         help=(
-            "Frame source. fake-live replays a raw single-camera data_collect case at camera cadence; "
-            "recording is kept as a compatibility alias for explicit replay cases."
+            "Frame source. fake-live replays a raw single-camera data_collect case at camera cadence "
+            "and uses demo mode; recording is kept as a compatibility alias for explicit replay cases."
         ),
     )
     parser.add_argument(
@@ -240,6 +240,8 @@ def apply_preset_defaults(
     if "--output-root" not in explicit:
         args.output_root = DEFAULT_OUTPUT_ROOTS[version]
     args.depth_source = DEFAULT_DEPTH_SOURCES[version]
+    if str(args.input_source) == INPUT_SOURCE_FAKE_LIVE:
+        args.mode = MODE_DEMO
     if "--controller-prompt" not in explicit or args.controller_prompt is None:
         args.controller_prompt = _mode_prompts(str(args.mode))["controller_prompt"]
     if "--track-mode" not in explicit and str(args.render_mode) == "none":

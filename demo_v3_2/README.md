@@ -17,7 +17,7 @@ Fake-live replay:
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
   --input-source fake-live \
-  --mode exp \
+  --mode demo \
   --replay-fps 30
 ```
 
@@ -25,4 +25,5 @@ The default fake-live case
 `data_collect/sloth_both_eval_2min_e45_g35_20260614_155543` includes
 `color/`, `depth/`, `ir_left/`, `ir_right/`, and IR calibration metadata. Demo
 3.2 ignores native depth for the FFS path and computes color-aligned depth from
-the replayed IR stereo frames, matching the live camera contract.
+the replayed IR stereo frames, matching the live camera contract. Fake-live runs
+in demo mode.

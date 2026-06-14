@@ -242,11 +242,14 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertEqual(contract["input_source_mode"], "fake-live")
                 self.assertEqual(contract["recording_case"], str(runtime.DEFAULT_FAKE_LIVE_CASE))
                 self.assertIsNone(contract["serial"])
+                self.assertEqual(contract["semantic_mode"], "demo")
+                self.assertEqual(contract["controller_prompt"], "human hand")
                 self.assertEqual(contract["depth_source"], expected_depth)
                 self.assertIn("--input-source", delegate)
                 self.assertIn("fake-live", delegate)
                 self.assertIn("--recording-case", delegate)
                 self.assertIn(str(runtime.DEFAULT_FAKE_LIVE_CASE), delegate)
+                self.assertEqual(_option_value(delegate, "--controller-prompt"), "human hand")
                 self.assertNotIn("--serial", delegate)
 
     def test_fake_live_case_alias_is_forwarded_to_delegate(self) -> None:
@@ -267,8 +270,30 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
         self.assertEqual(contract["recording_case"], "data_collect/custom_case")
         self.assertEqual(contract["replay_fps"], 30.0)
+        self.assertEqual(contract["semantic_mode"], "demo")
+        self.assertEqual(contract["controller_prompt"], "human hand")
         self.assertEqual(_option_value(delegate, "--recording-case"), "data_collect/custom_case")
         self.assertEqual(_option_value(delegate, "--replay-fps"), "30.0")
+        self.assertEqual(_option_value(delegate, "--controller-prompt"), "human hand")
+
+    def test_fake_live_forces_demo_mode_even_with_stale_exp_mode(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_1,
+            [
+                "--input-source",
+                "fake-live",
+                "--mode",
+                "exp",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(args.mode, "demo")
+        self.assertEqual(contract["semantic_mode"], "demo")
+        self.assertEqual(contract["controller_prompt"], "human hand")
+        self.assertEqual(_option_value(delegate, "--controller-prompt"), "human hand")
 
     def test_pointcloud_load_controls_are_forwarded_to_delegate(self) -> None:
         args = self._parse(

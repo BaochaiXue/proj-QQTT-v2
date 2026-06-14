@@ -17,11 +17,11 @@ Fake-live replay:
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_3/realtime_single_camera_ffs_masked_pcd.py \
   --input-source fake-live \
-  --mode exp \
+  --mode demo \
   --replay-fps 30
 ```
 
 Fake-live defaults to
 `data_collect/sloth_both_eval_2min_e45_g35_20260614_155543`. The first complete
 recorded frame is used as runtime `seq=0`; later frames stream at metadata or
-CLI FPS and playback stops cleanly at EOF.
+CLI FPS and playback stops cleanly at EOF. Fake-live runs in demo mode.
