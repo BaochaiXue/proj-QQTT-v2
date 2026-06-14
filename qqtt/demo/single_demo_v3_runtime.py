@@ -199,6 +199,12 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
     parser.add_argument("--tapnextpp-compile", action="store_true")
     parser.add_argument("--no-tapnextpp-fast-postprocess", dest="tapnextpp_fast_postprocess", action="store_false")
     parser.set_defaults(tapnextpp_fast_postprocess=True)
+    parser.add_argument("--depth-min-m", type=float, default=0.2)
+    parser.add_argument("--depth-max-m", type=float, default=1.5)
+    parser.add_argument("--pcd-max-points", type=int, default=60000)
+    parser.add_argument("--pcd-stride", type=int, default=1)
+    parser.add_argument("--pcd-color-mode", choices=("rgb", "class"), default="rgb")
+    parser.add_argument("--enable-pcd-filter", action="store_true")
     parser.add_argument("--point-size", type=float, default=2.0)
     return parser
 
@@ -259,6 +265,18 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--tracker-overlay-max-points must be >= 0")
     if float(args.tracker_marker_point_size) <= 0:
         raise ValueError("--tracker-marker-point-size must be positive")
+    if float(args.depth_min_m) < 0:
+        raise ValueError("--depth-min-m must be >= 0")
+    if float(args.depth_max_m) > 0 and float(args.depth_max_m) <= float(args.depth_min_m):
+        raise ValueError("--depth-max-m must be <=0 or greater than --depth-min-m")
+    if int(args.pcd_max_points) < 0:
+        raise ValueError("--pcd-max-points must be >= 0")
+    if int(args.pcd_stride) < 1:
+        raise ValueError("--pcd-stride must be >= 1")
+    if float(args.point_size) <= 0:
+        raise ValueError("--point-size must be positive")
+    if bool(args.enable_pcd_filter) and str(args.track_mode) == TRACK_MODE_NONE:
+        raise ValueError("--enable-pcd-filter requires --track-mode controller-object")
     if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE:
         if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
             raise ValueError("single demo tracker backend currently supports only tapnextpp")
@@ -359,6 +377,13 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "tapnextpp_autocast_dtype": str(args.tapnextpp_autocast_dtype),
         "tapnextpp_compile": bool(args.tapnextpp_compile),
         "tapnextpp_fast_postprocess": bool(args.tapnextpp_fast_postprocess),
+        "depth_min_m": float(args.depth_min_m),
+        "depth_max_m": float(args.depth_max_m),
+        "pcd_max_points": int(args.pcd_max_points),
+        "pcd_stride": int(args.pcd_stride),
+        "pcd_color_mode": str(args.pcd_color_mode),
+        "pcd_filter_enabled": bool(args.enable_pcd_filter),
+        "point_size": float(args.point_size),
         "profile": str(args.profile),
         "fps": int(args.fps),
         "duration_s": float(args.duration_s),
@@ -400,6 +425,10 @@ def format_contract(contract: dict[str, Any]) -> str:
         "object_prompt",
         "controller_prompt",
         "render_mode",
+        "pcd_max_points",
+        "pcd_stride",
+        "pcd_filter_enabled",
+        "point_size",
     )
     lines = []
     for key in keys:
@@ -472,6 +501,16 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.tapnextpp_image_size),
         "--tapnextpp-autocast-dtype",
         str(args.tapnextpp_autocast_dtype),
+        "--depth-min-m",
+        str(float(args.depth_min_m)),
+        "--depth-max-m",
+        str(float(args.depth_max_m)),
+        "--pcd-max-points",
+        str(int(args.pcd_max_points)),
+        "--pcd-stride",
+        str(int(args.pcd_stride)),
+        "--pcd-color-mode",
+        str(args.pcd_color_mode),
         "--object-prompt",
         str(args.object_prompt),
         "--controller-prompt",
@@ -495,6 +534,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.append("--tapnextpp-compile")
     if not bool(args.tapnextpp_fast_postprocess):
         argv.append("--no-tapnextpp-fast-postprocess")
+    if bool(args.enable_pcd_filter):
+        argv.append("--enable-pcd-filter")
     if bool(args.debug):
         argv.append("--debug")
     if str(args.track_mode) == TRACK_MODE_NONE:

@@ -37,7 +37,6 @@ if str(REPO_ROOT) not in sys.path:
 from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     CameraIntrinsics,
     CoalescedPostGate,
-    ColorFloat32Buffer,
     DEFAULT_FFS_REPO,
     DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
     FfsIrToColorAligner,
@@ -52,9 +51,7 @@ from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     apply_wslg_open3d_env_defaults,
     build_projection_grid,
     camera_intrinsics_from_rs,
-    ensure_float32_c_contiguous,
     parse_profile,
-    pointcloud_update_requires_readd,
     resolve_serial,
     rs_extrinsics_to_matrix,
     rs_intrinsics_to_matrix,
@@ -62,6 +59,7 @@ from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     validate_ffs_paths,
     warm_up_numba_ffs_align,
 )
+from qqtt.demo.render_fastpath import Open3DSceneTensorLayer  # noqa: E402
 from qqtt.demo.pcd_filter_fast import (  # noqa: E402
     AsyncPcdFilterWorker,
     FilterBudgetController,
@@ -3581,72 +3579,32 @@ class RealtimeMaskedEdgeTamPcdDemo:
         tracker_material.shader = "defaultUnlit"
         tracker_material.point_size = float(self.args.tracker_marker_point_size)
 
-        class GeometryState:
-            def __init__(self, name: str, state_material: object) -> None:
-                self.name = name
-                self.material = state_material
-                self.pcd = o3d.t.geometry.PointCloud(device)
-                self.color_buffer = ColorFloat32Buffer()
-                self.refs: dict[str, np.ndarray | None] = {"points": None, "colors": None}
-                self.added = False
-                self.capacity = 0
-                self.warned = False
+        def make_geometry_layer(name: str, material: object, *, min_capacity: int = 0) -> Open3DSceneTensorLayer:
+            return Open3DSceneTensorLayer(
+                name=name,
+                o3d_module=o3d,
+                o3c_module=o3c,
+                rendering_module=rendering,
+                scene=scene_widget.scene,
+                material=material,
+                device=device,
+                min_capacity=max(0, int(min_capacity)),
+            )
 
-            def update(self, points_xyz_m: np.ndarray, colors_rgb_u8: np.ndarray) -> tuple[float, float]:
-                convert_start_s = time.perf_counter()
-                points = ensure_float32_c_contiguous(points_xyz_m)
-                colors = self.color_buffer.convert(colors_rgb_u8)
-                self.refs["points"] = points
-                self.refs["colors"] = colors
-                self.pcd.point.positions = o3c.Tensor.from_numpy(points)
-                self.pcd.point.colors = o3c.Tensor.from_numpy(colors)
-                convert_ms = _elapsed_ms(convert_start_s, time.perf_counter())
+        def update_layer(layer: Open3DSceneTensorLayer, points_xyz_m: np.ndarray, colors_rgb_u8: np.ndarray) -> tuple[float, float]:
+            update = layer.update(points_xyz_m, colors_rgb_u8)
+            open3d_ms = float(update.open3d_update_geometry_ms)
+            if update.points_count == 0:
+                open3d_ms += float(update.open3d_remove_geometry_ms)
+            return float(update.cpu_format_ms), open3d_ms
 
-                update_start_s = time.perf_counter()
-                if points.shape[0] == 0:
-                    if self.added:
-                        try:
-                            scene_widget.scene.remove_geometry(self.name)
-                        except Exception:
-                            pass
-                    self.added = False
-                    self.capacity = 0
-                    return convert_ms, _elapsed_ms(update_start_s, time.perf_counter())
-
-                if pointcloud_update_requires_readd(
-                    geometry_added=self.added,
-                    current_capacity=self.capacity,
-                    point_count=int(points.shape[0]),
-                ):
-                    if self.added:
-                        try:
-                            scene_widget.scene.remove_geometry(self.name)
-                        except Exception:
-                            pass
-                    scene_widget.scene.add_geometry(self.name, self.pcd, self.material)
-                    self.added = True
-                    self.capacity = int(points.shape[0])
-                else:
-                    try:
-                        flags = rendering.Scene.UPDATE_POINTS_FLAG | rendering.Scene.UPDATE_COLORS_FLAG
-                        scene_widget.scene.scene.update_geometry(self.name, self.pcd, flags)
-                        self.capacity = max(self.capacity, int(points.shape[0]))
-                    except Exception as exc:
-                        if not self.warned:
-                            print(f"[WARN] update_geometry fallback for {self.name}: {type(exc).__name__}: {exc}", flush=True)
-                            self.warned = True
-                        try:
-                            scene_widget.scene.remove_geometry(self.name)
-                        except Exception:
-                            pass
-                        scene_widget.scene.add_geometry(self.name, self.pcd, self.material)
-                        self.added = True
-                        self.capacity = int(points.shape[0])
-                return convert_ms, _elapsed_ms(update_start_s, time.perf_counter())
-
-        controller_state = GeometryState(GEOMETRY_CONTROLLER, pcd_material)
-        object_state = GeometryState(GEOMETRY_OBJECT, pcd_material)
-        tracker_state = GeometryState(GEOMETRY_TRACKER, tracker_material)
+        pcd_layer_capacity = int(self.args.pcd_max_points) if int(self.args.pcd_max_points) > 0 else 0
+        tracker_layer_capacity = int(self.args.tracker_overlay_max_points)
+        if tracker_layer_capacity <= 0:
+            tracker_layer_capacity = int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS
+        controller_state = make_geometry_layer(GEOMETRY_CONTROLLER, pcd_material, min_capacity=pcd_layer_capacity)
+        object_state = make_geometry_layer(GEOMETRY_OBJECT, pcd_material, min_capacity=pcd_layer_capacity)
+        tracker_state = make_geometry_layer(GEOMETRY_TRACKER, tracker_material, min_capacity=tracker_layer_capacity)
         camera_initialized = {"value": False}
         render_post_gate = CoalescedPostGate()
         last_render_seq = {"value": -1}
@@ -3679,18 +3637,21 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if packet is not None:
                 last_render_seq["value"] = packet.seq
                 latest_render_packet["value"] = packet
-                controller_convert_ms, controller_update_ms = controller_state.update(
+                controller_convert_ms, controller_update_ms = update_layer(
+                    controller_state,
                     packet.controller_xyz_m,
                     packet.controller_colors_rgb_u8,
                 )
-                object_convert_ms, object_update_ms = object_state.update(
+                object_convert_ms, object_update_ms = update_layer(
+                    object_state,
                     packet.object_xyz_m,
                     packet.object_colors_rgb_u8,
                 )
             if marker_packet is not None:
                 last_marker_seq["value"] = marker_packet.seq
                 latest_marker_packet["value"] = marker_packet
-                tracker_convert_ms, tracker_update_ms = tracker_state.update(
+                tracker_convert_ms, tracker_update_ms = update_layer(
+                    tracker_state,
                     marker_packet.marker_xyz_m,
                     marker_packet.marker_colors_rgb_u8,
                 )

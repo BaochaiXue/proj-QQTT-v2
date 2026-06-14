@@ -216,9 +216,12 @@ class Open3DSceneTensorLayer:
         material: Any,
         device: Any,
         backend: str = DEFAULT_RENDER_BACKEND,
+        min_capacity: int = 0,
     ) -> None:
         if backend not in RENDER_BACKENDS:
             raise ValueError(f"unsupported render backend {backend!r}")
+        if int(min_capacity) < 0:
+            raise ValueError("min_capacity must be >= 0")
         self.name = str(name)
         self.o3d = o3d_module
         self.o3c = o3c_module
@@ -231,12 +234,17 @@ class Open3DSceneTensorLayer:
         self.added = False
         self.point_count = 0
         self.capacity = 0
+        self.min_capacity = int(min_capacity)
         self._points_buffer = PointsFloat32InplaceBuffer()
         self._colors_buffer = ColorFloat32InplaceBuffer()
         self._refs: dict[str, np.ndarray | None] = {"points": None, "colors": None}
 
     def update(self, points_xyz_m: np.ndarray, colors_rgb_u8: np.ndarray) -> RenderLayerUpdate:
         format_start_s = time.perf_counter()
+        if points_xyz_m.ndim != 2 or points_xyz_m.shape[1] != 3:
+            raise ValueError("points_xyz_m must be an Nx3 array")
+        if colors_rgb_u8.ndim != 2 or colors_rgb_u8.shape[1] != 3:
+            raise ValueError("colors_rgb_u8 must be an Nx3 array")
         n_points = int(points_xyz_m.shape[0])
         if n_points == 0:
             remove_ms = 0.0
@@ -266,10 +274,17 @@ class Open3DSceneTensorLayer:
         if colors_rgb_u8.shape[0] != n_points:
             raise ValueError("points and colors must have the same length")
 
+        old_capacity = int(self.capacity)
+        next_capacity = max(old_capacity, n_points, int(self.min_capacity))
+        capacity_changed = next_capacity != old_capacity
         points_update_start_s = time.perf_counter()
         if self.backend == RENDER_BACKEND_LEGACY_INPLACE:
-            points = self._points_buffer.copy_into(points_xyz_m)
-            tensor_rebound = self.point_count != n_points or self._refs["points"] is None
+            points = self._points_buffer.ensure(next_capacity)
+            np.copyto(points[:n_points], points_xyz_m, casting="unsafe")
+            if next_capacity > n_points:
+                points[n_points:, 0:2] = np.float32(0.0)
+                points[n_points:, 2] = np.float32(-1.0)
+            tensor_rebound = capacity_changed or self._refs["points"] is None
             if tensor_rebound:
                 self._refs["points"] = points
                 self.pcd.point.positions = self.o3c.Tensor.from_numpy(points)
@@ -282,8 +297,11 @@ class Open3DSceneTensorLayer:
 
         colors_update_start_s = time.perf_counter()
         if self.backend == RENDER_BACKEND_LEGACY_INPLACE:
-            colors = self._colors_buffer.convert_into(colors_rgb_u8)
-            colors_rebound = self.point_count != n_points or self._refs["colors"] is None
+            colors = self._colors_buffer.ensure(next_capacity)
+            np.multiply(colors_rgb_u8, np.float32(1.0 / 255.0), out=colors[:n_points], casting="unsafe")
+            if next_capacity > n_points:
+                colors[n_points:] = np.float32(0.0)
+            colors_rebound = capacity_changed or self._refs["colors"] is None
             if colors_rebound:
                 self._refs["colors"] = colors
                 self.pcd.point.colors = self.o3c.Tensor.from_numpy(colors)
@@ -300,8 +318,11 @@ class Open3DSceneTensorLayer:
         add_ms = 0.0
         remove_ms = 0.0
         recreated = False
-        point_count_changed = self.added and n_points != self.point_count
-        needs_readd = not self.added or point_count_changed
+        if self.backend == RENDER_BACKEND_LEGACY_INPLACE:
+            needs_readd = not self.added or capacity_changed
+        else:
+            point_count_changed = self.added and n_points != self.point_count
+            needs_readd = not self.added or point_count_changed
         if needs_readd:
             if self.added:
                 remove_start_s = time.perf_counter()
@@ -332,7 +353,7 @@ class Open3DSceneTensorLayer:
                 recreated = True
         update_ms = elapsed_ms(update_start_s)
         self.point_count = n_points
-        self.capacity = max(self.capacity, n_points)
+        self.capacity = next_capacity
         return RenderLayerUpdate(
             points_count=n_points,
             colors_count=int(colors_rgb_u8.shape[0]),

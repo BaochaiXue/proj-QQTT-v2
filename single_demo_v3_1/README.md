@@ -24,6 +24,17 @@ conda run --no-capture-output -n demo_2_max \
   --mode exp
 ```
 
+Lower-VRAM GUI example:
+
+```bash
+conda run --no-capture-output -n demo_2_max \
+  python single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py \
+  --mode exp \
+  --pcd-max-points 20000 \
+  --pcd-stride 2 \
+  --enable-pcd-filter
+```
+
 RGB-D recording replay:
 
 ```bash
