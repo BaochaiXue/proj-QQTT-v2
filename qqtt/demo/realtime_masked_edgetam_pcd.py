@@ -159,6 +159,7 @@ DEFAULT_TRACKER_SEED = 42
 DEFAULT_TRACKER_MARKER_COLOR_RGB = (255, 0, 0)
 DEFAULT_TRACKER_MARKER_POINT_SIZE = 8.0
 DEBUG_LOG_INTERVAL_S = 1.0
+FATAL_HUD_PREFIX = "FATAL WORKER ERROR"
 WARMUP_HUD_TEXT = (
     "System warming up. Keep one steady pose.\n"
     "SAM3.1 first-frame initialization and compiled EdgeTAM startup are running..."
@@ -251,6 +252,16 @@ class FramePacket:
     t_ir_left_to_color: np.ndarray | None = None
     k_color: np.ndarray | None = None
     ir_baseline_m: float = 0.0
+
+
+@dataclass(frozen=True)
+class FatalWorkerError:
+    stage: str
+    exc_type: str
+    message: str
+
+    def log_message(self) -> str:
+        return f"{self.stage} failed: {self.exc_type}: {self.message}"
 
 
 @dataclass(frozen=True)
@@ -1808,6 +1819,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self._tracker_query_is_object: np.ndarray | None = None
         self._tracker_query_is_controller: np.ndarray | None = None
         self._warned_remote_engine_contract = False
+        self._fatal_error_lock = threading.Lock()
+        self._fatal_error: FatalWorkerError | None = None
 
     @property
     def intrinsics(self) -> CameraIntrinsics:
@@ -1820,6 +1833,33 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.runtime is None:
             return "<not-started>"
         return self.runtime.serial
+
+    def _fatal_error_snapshot(self) -> FatalWorkerError | None:
+        with self._fatal_error_lock:
+            return self._fatal_error
+
+    def _record_fatal_worker_error(self, stage: str, exc: BaseException) -> FatalWorkerError:
+        fatal = FatalWorkerError(stage=str(stage), exc_type=type(exc).__name__, message=str(exc))
+        should_notify = False
+        with self._fatal_error_lock:
+            if self._fatal_error is None:
+                self._fatal_error = fatal
+                should_notify = True
+            else:
+                fatal = self._fatal_error
+        if should_notify:
+            print(f"[FATAL] {fatal.log_message()}", flush=True)
+            self.stop_event.set()
+            self._request_render_update()
+        return fatal
+
+    def _format_fatal_hud(self, fatal: FatalWorkerError) -> str:
+        return (
+            f"{FATAL_HUD_PREFIX}\n"
+            f"{fatal.stage} failed\n"
+            f"{fatal.exc_type}: {fatal.message}\n"
+            "Closing Open3D viewer; check the terminal log for details."
+        )
 
     def run(self) -> int:
         apply_wslg_open3d_env_defaults()
@@ -1876,7 +1916,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 self._run_open3d_viewer()
         finally:
             self.stop()
-        return 0
+        return 2 if self._fatal_error_snapshot() is not None else 0
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -1957,8 +1997,19 @@ class RealtimeMaskedEdgeTamPcdDemo:
             workers.append(("remote-quality", self._remote_ffs_quality_worker))
         if self.args.debug and self.args.render_mode == "none":
             workers.append(("debug", self._headless_debug_worker))
+
+        def worker_runner(worker_name: str, worker_target: Callable[[], None]) -> Callable[[], None]:
+            def run_worker() -> None:
+                try:
+                    worker_target()
+                except Exception as exc:
+                    if not self.stop_event.is_set():
+                        self._record_fatal_worker_error(f"{worker_name} worker", exc)
+
+            return run_worker
+
         for name, target in workers:
-            thread = threading.Thread(target=target, name=f"masked-edgetam-{name}", daemon=True)
+            thread = threading.Thread(target=worker_runner(name, target), name=f"masked-edgetam-{name}", daemon=True)
             thread.start()
             self._threads.append(thread)
 
@@ -1982,8 +2033,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             first_packet = source.read_packet(seq=0)
         except Exception as exc:
             if not self.stop_event.is_set():
-                print(f"[ERROR] recording replay failed: {type(exc).__name__}: {exc}", flush=True)
-            self.stop_event.set()
+                self._record_fatal_worker_error("recording replay", exc)
             return
         self.capture_slot.put(first_packet)
         self.capture_stats.record(first_packet.receive_perf_s)
@@ -2013,8 +2063,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 )
             except Exception as exc:
                 if not self.stop_event.is_set():
-                    print(f"[ERROR] recording replay failed: {type(exc).__name__}: {exc}", flush=True)
-                self.stop_event.set()
+                    self._record_fatal_worker_error("recording replay", exc)
                 break
             self.capture_slot.put(packet)
             self.capture_stats.record(packet.receive_perf_s)
@@ -2034,8 +2083,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 frames = pipeline.wait_for_frames()
             except Exception as exc:
                 if not self.stop_event.is_set():
-                    print(f"[ERROR] RealSense capture failed: {type(exc).__name__}: {exc}", flush=True)
-                self.stop_event.set()
+                    self._record_fatal_worker_error("RealSense capture", exc)
                 break
             receive_perf_s = time.perf_counter()
             align_start_s = receive_perf_s
@@ -2254,15 +2302,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
                             add_prompt=False,
                         )
                     except Exception as exc:
-                        print(f"[ERROR] EdgeTAM segmentation failed: {type(exc).__name__}: {exc}", flush=True)
-                        self.stop_event.set()
+                        self._record_fatal_worker_error("EdgeTAM segmentation", exc)
                         break
                     self.mask_slot.put(packet)
                     self.seg_stats.record(packet.process_done_perf_s)
         except Exception as exc:
             if not self.stop_event.is_set():
-                print(f"[ERROR] segmentation worker failed: {type(exc).__name__}: {exc}", flush=True)
-            self.stop_event.set()
+                self._record_fatal_worker_error("segmentation worker", exc)
 
     def _build_tracker_adapter(self) -> Any:
         config = PointTrackerAdapterConfig(
@@ -2453,8 +2499,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 self._request_render_update()
         except Exception as exc:
             if not self.stop_event.is_set():
-                print(f"[ERROR] TAPNext++ tracker worker failed: {type(exc).__name__}: {exc}", flush=True)
-            self.stop_event.set()
+                self._record_fatal_worker_error("TAPNext++ tracker worker", exc)
 
     def _wait_for_first_frame(self) -> FramePacket | None:
         while not self.stop_event.is_set():
@@ -3608,6 +3653,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         last_marker_seq = {"value": -1}
         latest_render_packet: dict[str, MaskedPcdPacket | None] = {"value": None}
         latest_marker_packet: dict[str, TrackerMarkerPacket | None] = {"value": None}
+        fatal_exit_posted = {"value": False}
 
         def reset_camera() -> None:
             intrinsic_matrix = np.array(
@@ -3673,6 +3719,22 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
         def render_latest_on_main_thread() -> None:
             try:
+                fatal = self._fatal_error_snapshot()
+                if fatal is not None:
+                    hud_label.text = self._format_fatal_hud(fatal)
+                    hud_label.text_color = gui.Color(1.0, 0.25, 0.20)
+                    fatal_exit_posted["value"] = True
+                    print(f"[FATAL] closing Open3D viewer after {fatal.log_message()}", flush=True)
+                    if hasattr(window, "post_redraw"):
+                        try:
+                            window.post_redraw()
+                        except Exception:
+                            pass
+                    try:
+                        app.quit()
+                    except Exception:
+                        pass
+                    return
                 if self.stop_event.is_set():
                     return
                 rendered = render_latest()
@@ -3683,7 +3745,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
                         pass
             finally:
                 render_post_gate.mark_done()
-                if (
+                if self._fatal_error_snapshot() is not None and not fatal_exit_posted["value"]:
+                    request_render_update()
+                elif (
                     not self.stop_event.is_set()
                     and (
                         self.render_slot.latest_seq() > last_render_seq["value"]
@@ -3693,7 +3757,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     request_render_update()
 
         def request_render_update() -> None:
-            if self.stop_event.is_set():
+            if self.stop_event.is_set() and self._fatal_error_snapshot() is None:
                 return
             if not render_post_gate.try_mark_pending():
                 return

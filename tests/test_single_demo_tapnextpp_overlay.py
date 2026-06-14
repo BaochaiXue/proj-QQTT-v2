@@ -138,6 +138,41 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(packet.marker_colors_rgb_u8.shape, (packet.marker_count, 3))
         self.assertTrue(np.all(packet.marker_xyz_m[:, 2] > 0.0))
 
+    def test_fatal_worker_error_records_once_and_requests_render_update(self) -> None:
+        args = demo.build_parser().parse_args(["--render-mode", "none", "--track-mode", "none", "--pcd-mode", "none"])
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        render_requests: list[int] = []
+        runtime._request_render_update = lambda: render_requests.append(1)
+
+        first = runtime._record_fatal_worker_error("EdgeTAM segmentation", RuntimeError("cuda oom"))
+        second = runtime._record_fatal_worker_error("TAPNext++ tracker", RuntimeError("later failure"))
+
+        self.assertIs(first, second)
+        self.assertTrue(runtime.stop_event.is_set())
+        self.assertEqual(render_requests, [1])
+        self.assertEqual(first.stage, "EdgeTAM segmentation")
+        self.assertIn("cuda oom", runtime._format_fatal_hud(first))
+
+    def test_worker_thread_wrapper_records_unhandled_fatal_error(self) -> None:
+        args = demo.build_parser().parse_args(["--render-mode", "none", "--track-mode", "none", "--pcd-mode", "none"])
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+
+        def fail_capture() -> None:
+            raise RuntimeError("synthetic capture failure")
+
+        runtime._capture_worker = fail_capture  # type: ignore[method-assign]
+        runtime._start_threads()
+        deadline = time.time() + 1.0
+        while time.time() < deadline and runtime._fatal_error_snapshot() is None:
+            time.sleep(0.01)
+        runtime.stop()
+
+        fatal = runtime._fatal_error_snapshot()
+        self.assertIsNotNone(fatal)
+        assert fatal is not None
+        self.assertEqual(fatal.stage, "capture worker")
+        self.assertIn("synthetic capture failure", fatal.message)
+
 
 if __name__ == "__main__":
     unittest.main()
