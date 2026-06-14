@@ -46,7 +46,9 @@ aligned-case data product.
   spatial spreading rather than random or raw-order truncation. Its EdgeTAM path
   is a frame-by-frame live session, not an offline batch video path; runtime
   state is bounded to a recent 64-frame window by default for fake-live and live
-  stability.
+  stability. Local FFS depth is serialized and cached by sequence inside the
+  runtime so PCD and tracker threads share color-aligned depth without entering
+  one TensorRT runner concurrently.
 - `services/ffs_remote/`: single-camera remote FFS depth request/response
   protocol and server/client utilities.
 

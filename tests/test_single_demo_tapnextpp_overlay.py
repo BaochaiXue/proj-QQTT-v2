@@ -35,6 +35,41 @@ class _FakeTapNextAdapter:
         )
 
 
+class _FakeFfsRunner:
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.active = 0
+        self.max_active = 0
+        self.lock = threading.Lock()
+
+    def run_pair(
+        self,
+        left: np.ndarray,
+        right: np.ndarray,
+        *,
+        K_ir_left: np.ndarray,
+        baseline_m: float,
+    ) -> dict[str, np.ndarray]:
+        _ = right, baseline_m
+        with self.lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            self.call_count += 1
+            call_idx = self.call_count
+        time.sleep(0.02)
+        with self.lock:
+            self.active -= 1
+        return {
+            "depth_ir_left_m": np.full(left.shape, 0.25 + float(call_idx), dtype=np.float32),
+            "K_ir_left_used": np.asarray(K_ir_left, dtype=np.float32),
+        }
+
+
+class _FakeFfsAligner:
+    def align(self, depth_ir_left_m: np.ndarray) -> np.ndarray:
+        return np.asarray(depth_ir_left_m, dtype=np.float32) + np.float32(1.0)
+
+
 class SingleDemoTapNextOverlayTest(unittest.TestCase):
     def _tracker_args(self):
         args = demo.build_parser().parse_args(
@@ -75,6 +110,33 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             controller_mask=controller,
             object_mask=obj,
             depth_u16=depth,
+        )
+
+    def _ffs_mask_packet(self, seq: int) -> demo.MaskPacket:
+        controller = np.zeros((4, 4), dtype=bool)
+        obj = np.zeros((4, 4), dtype=bool)
+        color = np.zeros((4, 4, 3), dtype=np.uint8)
+        ir_left = np.full((4, 4), 32 + int(seq), dtype=np.uint8)
+        ir_right = np.full((4, 4), 64 + int(seq), dtype=np.uint8)
+        return demo.MaskPacket(
+            seq=int(seq),
+            color_bgr=color,
+            depth_source="ffs",
+            intrinsics=CameraIntrinsics(fx=100.0, fy=100.0, cx=0.0, cy=0.0),
+            depth_scale_m_per_unit=1.0,
+            receive_perf_s=time.perf_counter(),
+            process_done_perf_s=time.perf_counter(),
+            dropped_capture_frames=0,
+            timing=demo.PipelineTiming(),
+            controller_mask=controller,
+            object_mask=obj,
+            depth_u16=None,
+            ir_left_u8=ir_left,
+            ir_right_u8=ir_right,
+            k_ir_left=np.eye(3, dtype=np.float32),
+            t_ir_left_to_color=np.eye(4, dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            ir_baseline_m=0.05,
         )
 
     def test_display_visibility_scopes_query_labels(self) -> None:
@@ -197,6 +259,45 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         assert fatal is not None
         self.assertEqual(fatal.stage, "capture worker")
         self.assertIn("synthetic capture failure", fatal.message)
+
+    def test_local_ffs_depth_is_cached_per_sequence(self) -> None:
+        args = demo.build_parser().parse_args(["--depth-source", "ffs"])
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runner = _FakeFfsRunner()
+        runtime.ffs_runner = runner
+        runtime._get_ir_to_color_aligner = lambda **_kwargs: _FakeFfsAligner()  # type: ignore[method-assign]
+        packet = self._ffs_mask_packet(seq=7)
+
+        first_depth, first_ffs_ms, first_align_ms = runtime._compute_ffs_depth_color_m(packet)
+        second_depth, second_ffs_ms, second_align_ms = runtime._compute_ffs_depth_color_m(packet)
+
+        self.assertEqual(runner.call_count, 1)
+        self.assertIs(first_depth, second_depth)
+        self.assertEqual(first_ffs_ms, second_ffs_ms)
+        self.assertEqual(first_align_ms, second_align_ms)
+        np.testing.assert_allclose(first_depth, np.full((4, 4), 2.25, dtype=np.float32))
+
+    def test_local_ffs_runner_is_serialized_across_sequences(self) -> None:
+        args = demo.build_parser().parse_args(["--depth-source", "ffs"])
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runner = _FakeFfsRunner()
+        runtime.ffs_runner = runner
+        runtime._get_ir_to_color_aligner = lambda **_kwargs: _FakeFfsAligner()  # type: ignore[method-assign]
+        packets = [self._ffs_mask_packet(seq=11), self._ffs_mask_packet(seq=12)]
+        outputs: list[np.ndarray] = []
+
+        def compute(packet: demo.MaskPacket) -> None:
+            outputs.append(runtime._compute_ffs_depth_color_m(packet)[0])
+
+        threads = [threading.Thread(target=compute, args=(packet,)) for packet in packets]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=1.0)
+
+        self.assertEqual(runner.call_count, 2)
+        self.assertEqual(runner.max_active, 1)
+        self.assertEqual(len(outputs), 2)
 
 
 if __name__ == "__main__":

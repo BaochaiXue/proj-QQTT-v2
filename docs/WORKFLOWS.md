@@ -73,7 +73,10 @@ density. The render cap uses deterministic spatial spreading rather than random
 or raw-order truncation. EdgeTAM still runs as a frame-by-frame live session
 rather than an offline batch video path, but the live session retains only the
 recent 64-frame state window by default so fake-live replay does not accumulate
-the entire two-minute stream on the GPU.
+the entire two-minute stream on the GPU. For Demo 3.2 / 3.3 local FFS, the
+runtime serializes TensorRT depth execution and caches a small number of
+color-aligned FFS depth frames by sequence so PCD rendering and TAPNext++ marker
+lifting do not enter the same TensorRT runner concurrently.
 
 Live FFS preview:
 

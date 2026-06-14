@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import deque
+from collections import OrderedDict, deque
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 import gc
@@ -148,6 +148,7 @@ DEFAULT_OBJECT_FILTER_MIN_RAW_RETAIN_RATIO = 0.0
 DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO = 0.5
 DEFAULT_FILTER_MAX_AGE_FRAMES = 3
 DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
+DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES = 8
 CONTROLLER_ID = 1
 OBJECT_ID = 2
 OBJECT_LABELS = {CONTROLLER_ID: "controller", OBJECT_ID: "object"}
@@ -2018,6 +2019,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         )
         self._last_debug_log_s = 0.0
         self.ffs_runner: object | None = None
+        self._local_ffs_lock = threading.Lock()
+        self._local_ffs_depth_cache: OrderedDict[int, tuple[np.ndarray, float, float]] = OrderedDict()
         self.ir_to_color_aligner: FfsIrToColorAligner | None = None
         self._ir_to_color_aligner_key: tuple[
             tuple[int, int],
@@ -2158,6 +2161,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.filter_worker is not None:
             self.filter_worker.stop()
             self.filter_worker = None
+        with self._local_ffs_lock:
+            self._local_ffs_depth_cache.clear()
 
     def _create_ffs_runner(self) -> object:
         try:
@@ -2421,6 +2426,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             ),
             "track_mode": self.args.track_mode,
             "depth_source": self.args.depth_source,
+            "local_ffs_depth_cache_frames": (
+                DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES if self.args.depth_source == "ffs" else None
+            ),
             "ffs_remote_endpoint": self.args.ffs_remote_endpoint if self.args.depth_source == "ffs_remote" else None,
             "ffs_remote_return": self.args.ffs_remote_return if self.args.depth_source == "ffs_remote" else None,
             "ffs_remote_compress": self.args.ffs_remote_compress if self.args.depth_source == "ffs_remote" else None,
@@ -3465,6 +3473,19 @@ class RealtimeMaskedEdgeTamPcdDemo:
         depth_color_m, ffs_ms, ffs_align_ms = self._compute_ffs_depth_color_m(packet)
         return depth_color_m, ffs_ms, ffs_align_ms, 0.0, 0.0, 0.0, 0.0
 
+    def _get_cached_local_ffs_depth(self, seq: int) -> tuple[np.ndarray, float, float] | None:
+        cached = self._local_ffs_depth_cache.get(int(seq))
+        if cached is None:
+            return None
+        self._local_ffs_depth_cache.move_to_end(int(seq))
+        return cached
+
+    def _put_cached_local_ffs_depth(self, seq: int, value: tuple[np.ndarray, float, float]) -> None:
+        self._local_ffs_depth_cache[int(seq)] = value
+        self._local_ffs_depth_cache.move_to_end(int(seq))
+        while len(self._local_ffs_depth_cache) > DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES:
+            self._local_ffs_depth_cache.popitem(last=False)
+
     def _compute_ffs_depth_color_m(self, packet: MaskPacket | FramePacket) -> tuple[np.ndarray, float, float]:
         runner = self.ffs_runner
         if runner is None:
@@ -3479,31 +3500,38 @@ class RealtimeMaskedEdgeTamPcdDemo:
         ):
             raise RuntimeError("FFS packet is missing IR stereo calibration/data")
 
-        ffs_start_s = time.perf_counter()
-        output = runner.run_pair(
-            packet.ir_left_u8,
-            packet.ir_right_u8,
-            K_ir_left=packet.k_ir_left,
-            baseline_m=float(packet.ir_baseline_m),
-        )
-        ffs_done_s = time.perf_counter()
-        depth_ir_left_m = np.asarray(output["depth_ir_left_m"], dtype=np.float32)
-        k_ir_left_used = np.asarray(output.get("K_ir_left_used", packet.k_ir_left), dtype=np.float32)
-        align_start_s = time.perf_counter()
-        aligner = self._get_ir_to_color_aligner(
-            depth_shape=depth_ir_left_m.shape,
-            color_shape=packet.color_bgr.shape[:2],
-            k_ir_left=k_ir_left_used,
-            t_ir_left_to_color=packet.t_ir_left_to_color,
-            k_color=packet.k_color,
-        )
-        depth_color_m = np.ascontiguousarray(aligner.align(depth_ir_left_m), dtype=np.float32)
-        align_done_s = time.perf_counter()
-        return (
-            depth_color_m,
-            _elapsed_ms(ffs_start_s, ffs_done_s),
-            _elapsed_ms(align_start_s, align_done_s),
-        )
+        with self._local_ffs_lock:
+            cached = self._get_cached_local_ffs_depth(int(packet.seq))
+            if cached is not None:
+                return cached
+
+            ffs_start_s = time.perf_counter()
+            output = runner.run_pair(
+                packet.ir_left_u8,
+                packet.ir_right_u8,
+                K_ir_left=packet.k_ir_left,
+                baseline_m=float(packet.ir_baseline_m),
+            )
+            ffs_done_s = time.perf_counter()
+            depth_ir_left_m = np.asarray(output["depth_ir_left_m"], dtype=np.float32)
+            k_ir_left_used = np.asarray(output.get("K_ir_left_used", packet.k_ir_left), dtype=np.float32)
+            align_start_s = time.perf_counter()
+            aligner = self._get_ir_to_color_aligner(
+                depth_shape=depth_ir_left_m.shape,
+                color_shape=packet.color_bgr.shape[:2],
+                k_ir_left=k_ir_left_used,
+                t_ir_left_to_color=packet.t_ir_left_to_color,
+                k_color=packet.k_color,
+            )
+            depth_color_m = np.ascontiguousarray(aligner.align(depth_ir_left_m), dtype=np.float32)
+            align_done_s = time.perf_counter()
+            result = (
+                depth_color_m,
+                _elapsed_ms(ffs_start_s, ffs_done_s),
+                _elapsed_ms(align_start_s, align_done_s),
+            )
+            self._put_cached_local_ffs_depth(int(packet.seq), result)
+            return result
 
     def _compute_remote_ffs_depth_color_m(
         self,
