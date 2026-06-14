@@ -58,8 +58,15 @@ initialization. Demo 3 / 3.1 consume replayed RGB-D; Demo 3.2 / 3.3 consume
 replayed RGB plus IR stereo and compute FFS depth. Playback stops cleanly at
 the end of the recording. Fake-live runs in demo mode. When enhanced PCD
 component filtering is enabled, object filtering keeps one main component while
-controller filtering keeps two main components so two-hand controllers are not
-dropped as disconnected noise.
+controller filtering defaults to enhanced-pt and keeps two main components so
+two-hand controllers are not dropped as disconnected noise. Demo 3.x Open3D
+windows start in a third-person orbit view; pass `--view-mode camera` for the
+RealSense camera view. The realtime filter also falls back to the current
+capped PCD if filtering would erase a nonempty semantic layer, and async filter
+outputs older than three frames do not replace the current raw frame. The
+controller layer also falls back to capped current-frame PCD when filtering
+would retain less than half of its capped points, prioritizing two-hand
+visibility over aggressive cleanup.
 
 Live FFS preview:
 

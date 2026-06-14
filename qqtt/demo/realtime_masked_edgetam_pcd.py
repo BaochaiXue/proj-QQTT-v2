@@ -120,6 +120,8 @@ DEFAULT_PCD_MODE = "masked"
 RENDER_MODES = ("pointcloud", "none")
 DEFAULT_RENDER_MODE = "pointcloud"
 DEFAULT_RENDER_MAX_POINTS_PER_LAYER = 5000
+VIEW_MODES = ("orbit", "camera")
+DEFAULT_VIEW_MODE = "orbit"
 PCD_FILTER_MODES = ("async", "sync", "none")
 PCD_FILTER_NONE = "none"
 PCD_FILTER_PT_FILTER = "pt-filter"
@@ -136,8 +138,13 @@ DEFAULT_FILTER_RADIUS_M = 0.01
 DEFAULT_FILTER_NB_POINTS = 40
 DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.01
 DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.0
+DEFAULT_OBJECT_FILTER = PCD_FILTER_ENHANCED_PT
+DEFAULT_CONTROLLER_FILTER = PCD_FILTER_ENHANCED_PT
 DEFAULT_OBJECT_FILTER_KEEP_COMPONENTS = 1
 DEFAULT_CONTROLLER_FILTER_KEEP_COMPONENTS = 2
+DEFAULT_OBJECT_FILTER_MIN_RETAIN_RATIO = 0.0
+DEFAULT_CONTROLLER_FILTER_MIN_RETAIN_RATIO = 0.5
+DEFAULT_FILTER_MAX_AGE_FRAMES = 3
 CONTROLLER_ID = 1
 OBJECT_ID = 2
 OBJECT_LABELS = {CONTROLLER_ID: "controller", OBJECT_ID: "object"}
@@ -886,6 +893,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Render stage mode. Use none for headless profiling.",
     )
     parser.add_argument(
+        "--view-mode",
+        choices=VIEW_MODES,
+        default=DEFAULT_VIEW_MODE,
+        help="Initial Open3D view. orbit starts from a third-person view; camera uses RealSense color intrinsics.",
+    )
+    parser.add_argument(
         "--tracker-backend",
         choices=TRACKER_BACKENDS,
         default=DEFAULT_TRACKER_BACKEND,
@@ -1013,8 +1026,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="async",
         help="Point-cloud filter scheduling mode. Requires --enable-pcd-filter unless set to none.",
     )
-    parser.add_argument("--object-filter", choices=PCD_FILTERS, default=PCD_FILTER_ENHANCED_PT)
-    parser.add_argument("--controller-filter", choices=PCD_FILTERS, default=PCD_FILTER_PT_FILTER)
+    parser.add_argument("--object-filter", choices=PCD_FILTERS, default=DEFAULT_OBJECT_FILTER)
+    parser.add_argument("--controller-filter", choices=PCD_FILTERS, default=DEFAULT_CONTROLLER_FILTER)
     parser.add_argument("--object-filter-cap", type=int, default=20_000)
     parser.add_argument("--controller-filter-cap", type=int, default=20_000)
     parser.add_argument(
@@ -1036,6 +1049,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=3,
         help="Submit capped PCD filtering every N PCD packets. Async mode renders the latest available filtered output.",
+    )
+    parser.add_argument(
+        "--filter-max-age-frames",
+        type=int,
+        default=DEFAULT_FILTER_MAX_AGE_FRAMES,
+        help="Maximum async filtered-output age in frames before rendering raw current PCD instead.",
     )
     parser.add_argument(
         "--filter-budget-ms",
@@ -1098,6 +1117,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"--input-source must be one of {', '.join(INPUT_SOURCES)}")
     if args.depth_source not in DEPTH_SOURCES:
         raise ValueError(f"--depth-source must be one of {', '.join(DEPTH_SOURCES)}")
+    if str(args.view_mode) not in VIEW_MODES:
+        raise ValueError(f"--view-mode must be one of {', '.join(VIEW_MODES)}")
     if float(args.replay_fps) < 0.0:
         raise ValueError("--replay-fps must be >= 0")
     if args.input_source == INPUT_SOURCE_FAKE_LIVE and args.recording_case is None:
@@ -1129,6 +1150,7 @@ def validate_args(args: argparse.Namespace) -> None:
         "filter_min_cap",
         "object_filter_keep_components",
         "controller_filter_keep_components",
+        "filter_max_age_frames",
     ):
         if int(getattr(args, flag)) < 0:
             raise ValueError(f"--{flag.replace('_', '-')} must be >= 0")
@@ -2389,9 +2411,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "controller_filter_cap": int(self.args.controller_filter_cap),
             "object_filter_keep_components": int(self.args.object_filter_keep_components),
             "controller_filter_keep_components": int(self.args.controller_filter_keep_components),
+            "object_filter_min_retain_ratio": float(DEFAULT_OBJECT_FILTER_MIN_RETAIN_RATIO),
+            "controller_filter_min_retain_ratio": float(DEFAULT_CONTROLLER_FILTER_MIN_RETAIN_RATIO),
             "filter_every_n": int(self.args.filter_every_n),
+            "filter_max_age_frames": int(self.args.filter_max_age_frames),
             "filter_budget_ms": float(self.args.filter_budget_ms),
             "render_mode": self.args.render_mode,
+            "view_mode": str(self.args.view_mode),
             "tracker_backend": str(self.args.tracker_backend),
             "tracker_device": str(self.args.tracker_device),
             "tracker_query_count": int(self.args.tracker_query_count),
@@ -2823,6 +2849,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         cap: int,
         voxel_size_m: float,
         keep_components: int,
+        min_retain_ratio: float,
         rng: np.random.Generator,
     ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
         raw_points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
@@ -2838,6 +2865,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         capped_colors = np.asarray(capped_colors_or_none, dtype=np.uint8).reshape(-1, 3)
         cap_ms = _elapsed_ms(cap_start_s, time.perf_counter())
 
+        fallback_to_capped = False
+        fallback_reason = ""
         filter_start_s = time.perf_counter()
         if mode == PCD_FILTER_NONE:
             filtered_points = np.asarray(capped_points, dtype=np.float32).reshape(-1, 3)
@@ -2884,11 +2913,33 @@ class RealtimeMaskedEdgeTamPcdDemo:
         filter_ms = _elapsed_ms(filter_start_s, time.perf_counter())
         filtered_points = np.ascontiguousarray(filtered_points, dtype=np.float32).reshape(-1, 3)
         filtered_colors = np.ascontiguousarray(filtered_colors, dtype=np.uint8).reshape(-1, 3)
+        filter_output_points = int(len(filtered_points))
+        capped_point_count = int(len(capped_points))
+        retain_ratio = float(filter_output_points / max(1, capped_point_count))
+        if filter_output_points == 0 and int(len(capped_points)) > 0:
+            filtered_points = np.ascontiguousarray(capped_points, dtype=np.float32).reshape(-1, 3)
+            filtered_colors = np.ascontiguousarray(capped_colors, dtype=np.uint8).reshape(-1, 3)
+            fallback_to_capped = True
+            fallback_reason = "empty_filter_output"
+        elif (
+            float(min_retain_ratio) > 0.0
+            and capped_point_count > 0
+            and retain_ratio < float(min_retain_ratio)
+        ):
+            filtered_points = np.ascontiguousarray(capped_points, dtype=np.float32).reshape(-1, 3)
+            filtered_colors = np.ascontiguousarray(capped_colors, dtype=np.uint8).reshape(-1, 3)
+            fallback_to_capped = True
+            fallback_reason = "low_filter_retain_ratio"
         return filtered_points, filtered_colors, {
             "mode": str(mode),
             "raw_points": int(len(raw_points)),
-            "cap_points": int(len(capped_points)),
+            "cap_points": capped_point_count,
             "output_points": int(len(filtered_points)),
+            "filter_output_points": filter_output_points,
+            "filter_retain_ratio": retain_ratio,
+            "min_retain_ratio": float(min_retain_ratio),
+            "fallback_to_capped": bool(fallback_to_capped),
+            "fallback_reason": fallback_reason,
             "cap": int(cap),
             "voxel_size_m": float(voxel_size_m),
             "keep_components": int(keep_components),
@@ -2905,6 +2956,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             cap=int(item.object_cap),
             voxel_size_m=float(item.object_voxel_size_m),
             keep_components=int(self.args.object_filter_keep_components),
+            min_retain_ratio=float(DEFAULT_OBJECT_FILTER_MIN_RETAIN_RATIO),
             rng=np.random.default_rng(int(item.seq) * 2 + 17),
         )
         controller_points, controller_colors, controller_stats = self._apply_single_pcd_filter(
@@ -2914,6 +2966,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             cap=int(item.controller_cap),
             voxel_size_m=float(item.controller_voxel_size_m),
             keep_components=int(self.args.controller_filter_keep_components),
+            min_retain_ratio=float(DEFAULT_CONTROLLER_FILTER_MIN_RETAIN_RATIO),
             rng=np.random.default_rng(int(item.seq) * 2 + 19),
         )
         done_s = time.perf_counter()
@@ -2954,6 +3007,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "output_fps": float(stats.get("output_fps", self.filter_output_stats.fps)),
             "pending_replace_count": int(stats.get("pending_replace_count", 0)) + int(self._filter_submit_skip_count),
         }
+
+    def _filter_output_is_fresh(self, *, packet_seq: int, output: FilterOutput) -> bool:
+        age_frames = max(0, int(packet_seq) - int(output.seq))
+        return age_frames <= int(self.args.filter_max_age_frames)
 
     def _filter_telemetry_from_output(
         self,
@@ -3168,11 +3225,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
                             if int(latest.seq) != self._last_filter_output_seq_recorded:
                                 self.filter_output_stats.record(latest.output_perf_s)
                                 self._last_filter_output_seq_recorded = int(latest.seq)
-                            render_controller_xyz = latest.controller_xyz
-                            render_controller_colors = latest.controller_rgb
-                            render_object_xyz = latest.object_xyz
-                            render_object_colors = latest.object_rgb
-                            using_filtered = True
+                            if self._filter_output_is_fresh(packet_seq=mask_packet.seq, output=latest):
+                                render_controller_xyz = latest.controller_xyz
+                                render_controller_colors = latest.controller_rgb
+                                render_object_xyz = latest.object_xyz
+                                render_object_colors = latest.object_rgb
+                                using_filtered = True
                         if mask_packet.seq % int(self.args.filter_every_n) == 0:
                             if not worker.is_busy():
                                 worker.submit_latest(
@@ -3553,11 +3611,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 latest = self.filter_worker.latest_output()
                 if latest is not None:
                     filter_output = latest
-                    render_controller_xyz = latest.controller_xyz
-                    render_controller_colors = latest.controller_rgb
-                    render_object_xyz = latest.object_xyz
-                    render_object_colors = latest.object_rgb
-                    using_filtered = True
+                    if self._filter_output_is_fresh(packet_seq=mask_packet.seq, output=latest):
+                        render_controller_xyz = latest.controller_xyz
+                        render_controller_colors = latest.controller_rgb
+                        render_object_xyz = latest.object_xyz
+                        render_object_colors = latest.object_rgb
+                        using_filtered = True
                 if mask_packet.seq % int(self.args.filter_every_n) == 0:
                     if not self.filter_worker.is_busy():
                         self.filter_worker.submit_latest(
@@ -3806,17 +3865,24 @@ class RealtimeMaskedEdgeTamPcdDemo:
         fatal_exit_posted = {"value": False}
 
         def reset_camera() -> None:
-            intrinsic_matrix = np.array(
-                [
-                    [self.intrinsics.fx, 0.0, self.intrinsics.cx],
-                    [0.0, self.intrinsics.fy, self.intrinsics.cy],
-                    [0.0, 0.0, 1.0],
-                ],
-                dtype=np.float64,
-            )
-            extrinsic = np.eye(4, dtype=np.float64)
-            bounds = o3d.geometry.AxisAlignedBoundingBox([-10.0, -10.0, 0.01], [10.0, 10.0, 20.0])
-            scene_widget.setup_camera(intrinsic_matrix, extrinsic, self.width, self.height, bounds)
+            if str(self.args.view_mode) == "camera":
+                intrinsic_matrix = np.array(
+                    [
+                        [self.intrinsics.fx, 0.0, self.intrinsics.cx],
+                        [0.0, self.intrinsics.fy, self.intrinsics.cy],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float64,
+                )
+                extrinsic = np.eye(4, dtype=np.float64)
+                bounds = o3d.geometry.AxisAlignedBoundingBox([-10.0, -10.0, 0.01], [10.0, 10.0, 20.0])
+                scene_widget.setup_camera(intrinsic_matrix, extrinsic, self.width, self.height, bounds)
+                return
+            try:
+                scene_widget.look_at([0.0, 0.0, 0.8], [0.0, 0.0, -1.0], [0.0, -1.0, 0.0])
+            except Exception:
+                bounds = o3d.geometry.AxisAlignedBoundingBox([-0.5, -0.35, 0.1], [0.5, 0.35, 1.5])
+                scene_widget.setup_camera(60.0, bounds, [0.0, 0.0, 0.8])
 
         def render_latest() -> bool:
             packet = self.render_slot.get_latest_after(last_render_seq["value"])

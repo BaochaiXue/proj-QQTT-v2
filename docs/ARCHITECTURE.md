@@ -34,8 +34,13 @@ aligned-case data product.
 - `qqtt/demo/single_demo_v3_runtime.py`: shared launcher for the
   `demo_v3*` entrypoints.
 - `qqtt/demo/realtime_masked_edgetam_pcd.py`: shared masked PCD runtime. Its
-  enhanced component filter defaults keep one object component and two
-  controller components, matching single-object plus two-hand demo scenes.
+  object and controller filters default to enhanced-pt; object filtering keeps
+  one component and controller filtering keeps two components, matching
+  single-object plus two-hand demo scenes. It starts Open3D in a third-person
+  orbit view by default, falls back to capped current-frame PCD when filtering
+  would empty a nonempty layer, falls back for controller output that retains
+  less than half of its capped points, and rejects async filtered outputs older
+  than three frames for rendering.
 - `services/ffs_remote/`: single-camera remote FFS depth request/response
   protocol and server/client utilities.
 

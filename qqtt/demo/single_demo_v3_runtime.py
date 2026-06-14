@@ -193,6 +193,12 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         help="Render mode for the single-camera masked point-cloud delegate.",
     )
     parser.add_argument(
+        "--view-mode",
+        choices=masked_pcd.VIEW_MODES,
+        default=masked_pcd.DEFAULT_VIEW_MODE,
+        help="Initial Open3D view. orbit starts from a third-person view; camera uses RealSense color intrinsics.",
+    )
+    parser.add_argument(
         "--tracker-backend",
         choices=masked_pcd.TRACKER_BACKENDS,
         default=DEFAULT_TRACKER_BACKEND,
@@ -237,6 +243,12 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         type=int,
         default=masked_pcd.DEFAULT_CONTROLLER_FILTER_KEEP_COMPONENTS,
         help="Enhanced PCD component count for controller filtering; default keeps two hand components.",
+    )
+    parser.add_argument(
+        "--filter-max-age-frames",
+        type=int,
+        default=masked_pcd.DEFAULT_FILTER_MAX_AGE_FRAMES,
+        help="Maximum async filtered-output age in frames before rendering raw current PCD instead.",
     )
     parser.add_argument("--point-size", type=float, default=2.0)
     return parser
@@ -294,6 +306,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"--profile must be one of {single_pcd.SUPPORTED_PROFILES}")
     if str(args.track_mode) not in TRACK_MODES:
         raise ValueError(f"--track-mode must be one of {TRACK_MODES}")
+    if str(args.view_mode) not in masked_pcd.VIEW_MODES:
+        raise ValueError(f"--view-mode must be one of {masked_pcd.VIEW_MODES}")
     if int(args.tracker_query_count) < 0:
         raise ValueError("--tracker-query-count must be >= 0")
     if int(args.tracker_overlay_max_points) < 0:
@@ -314,6 +328,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--object-filter-keep-components must be >= 1")
     if int(args.controller_filter_keep_components) < 1:
         raise ValueError("--controller-filter-keep-components must be >= 1")
+    if int(args.filter_max_age_frames) < 0:
+        raise ValueError("--filter-max-age-frames must be >= 0")
     if float(args.point_size) <= 0:
         raise ValueError("--point-size must be positive")
     if bool(args.enable_pcd_filter) and str(args.track_mode) == TRACK_MODE_NONE:
@@ -400,6 +416,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "controller_label": controller_label,
         "track_mode": str(args.track_mode),
         "render_mode": str(args.render_mode),
+        "view_mode": str(args.view_mode),
         "tracker_backend": str(args.tracker_backend),
         "tracker_backend_family": (
             "tapnext" if str(args.tracker_backend) == masked_pcd.TRACKER_BACKEND_TAPNEXTPP else "none"
@@ -430,6 +447,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "pcd_filter_enabled": bool(args.enable_pcd_filter),
         "object_filter_keep_components": int(args.object_filter_keep_components),
         "controller_filter_keep_components": int(args.controller_filter_keep_components),
+        "filter_max_age_frames": int(args.filter_max_age_frames),
         "point_size": float(args.point_size),
         "profile": str(args.profile),
         "fps": int(args.fps),
@@ -472,10 +490,12 @@ def format_contract(contract: dict[str, Any]) -> str:
         "object_prompt",
         "controller_prompt",
         "render_mode",
+        "view_mode",
         "pcd_max_points",
         "pcd_stride",
         "render_max_points_per_layer",
         "pcd_filter_enabled",
+        "filter_max_age_frames",
         "point_size",
     )
     lines = []
@@ -527,6 +547,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.track_mode),
         "--render-mode",
         str(args.render_mode),
+        "--view-mode",
+        str(args.view_mode),
         "--tracker-backend",
         str(args.tracker_backend),
         "--tracker-device",
@@ -565,6 +587,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(int(args.object_filter_keep_components)),
         "--controller-filter-keep-components",
         str(int(args.controller_filter_keep_components)),
+        "--filter-max-age-frames",
+        str(int(args.filter_max_age_frames)),
         "--object-prompt",
         str(args.object_prompt),
         "--controller-prompt",

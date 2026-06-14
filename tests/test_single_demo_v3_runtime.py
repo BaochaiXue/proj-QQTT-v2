@@ -202,6 +202,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(contract["controller_prompt"], "human hand")
             self.assertEqual(contract["track_mode"], "controller-object")
             self.assertEqual(contract["render_mode"], "pointcloud")
+            self.assertEqual(contract["view_mode"], "orbit")
             self.assertEqual(contract["tracker_backend"], "tapnextpp")
             self.assertEqual(contract["tracker_device"], "cuda:1")
             self.assertEqual(contract["tracker_query_source"], "object_controller_union_mask")
@@ -309,10 +310,14 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 "class",
                 "--render-max-points-per-layer",
                 "4096",
+                "--view-mode",
+                "camera",
                 "--enable-pcd-filter",
                 "--object-filter-keep-components",
                 "1",
                 "--controller-filter-keep-components",
+                "2",
+                "--filter-max-age-frames",
                 "2",
                 "--point-size",
                 "1.5",
@@ -327,17 +332,21 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["depth_max_m"], 1.2)
         self.assertEqual(contract["pcd_color_mode"], "class")
         self.assertEqual(contract["render_max_points_per_layer"], 4096)
+        self.assertEqual(contract["view_mode"], "camera")
         self.assertTrue(contract["pcd_filter_enabled"])
         self.assertEqual(contract["object_filter_keep_components"], 1)
         self.assertEqual(contract["controller_filter_keep_components"], 2)
+        self.assertEqual(contract["filter_max_age_frames"], 2)
         self.assertEqual(contract["point_size"], 1.5)
         self.assertEqual(_option_value(delegate, "--pcd-max-points"), "20000")
         self.assertEqual(_option_value(delegate, "--pcd-stride"), "2")
         self.assertEqual(_option_value(delegate, "--depth-max-m"), "1.2")
         self.assertEqual(_option_value(delegate, "--pcd-color-mode"), "class")
         self.assertEqual(_option_value(delegate, "--render-max-points-per-layer"), "4096")
+        self.assertEqual(_option_value(delegate, "--view-mode"), "camera")
         self.assertEqual(_option_value(delegate, "--object-filter-keep-components"), "1")
         self.assertEqual(_option_value(delegate, "--controller-filter-keep-components"), "2")
+        self.assertEqual(_option_value(delegate, "--filter-max-age-frames"), "2")
         self.assertEqual(_option_value(delegate, "--point-size"), "1.5")
         self.assertIn("--enable-pcd-filter", delegate)
 
@@ -362,6 +371,10 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "controller-filter-keep-components"):
             runtime.validate_args(bad_controller_components)
 
+        bad_filter_age = self._parse(runtime.DEMO_VERSION_3_1, ["--filter-max-age-frames", "-1"])
+        with self.assertRaisesRegex(ValueError, "filter-max-age-frames"):
+            runtime.validate_args(bad_filter_age)
+
         headless_filter = self._parse(runtime.DEMO_VERSION_3_1, ["--render-mode", "none", "--enable-pcd-filter"])
         with self.assertRaisesRegex(ValueError, "enable-pcd-filter"):
             runtime.validate_args(headless_filter)
@@ -375,11 +388,15 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
 
                 self.assertEqual(contract["render_max_points_per_layer"], 5000)
+                self.assertEqual(contract["view_mode"], "orbit")
                 self.assertEqual(contract["object_filter_keep_components"], 1)
                 self.assertEqual(contract["controller_filter_keep_components"], 2)
+                self.assertEqual(contract["filter_max_age_frames"], 3)
                 self.assertEqual(_option_value(delegate, "--render-max-points-per-layer"), "5000")
+                self.assertEqual(_option_value(delegate, "--view-mode"), "orbit")
                 self.assertEqual(_option_value(delegate, "--object-filter-keep-components"), "1")
                 self.assertEqual(_option_value(delegate, "--controller-filter-keep-components"), "2")
+                self.assertEqual(_option_value(delegate, "--filter-max-age-frames"), "3")
 
     def test_recording_mode_skips_live_serial_validation(self) -> None:
         with mock.patch.object(runtime.masked_pcd, "main", return_value=0) as masked_main:
