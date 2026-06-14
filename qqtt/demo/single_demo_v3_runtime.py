@@ -221,6 +221,12 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
     parser.add_argument("--tapnextpp-compile", action="store_true")
     parser.add_argument("--no-tapnextpp-fast-postprocess", dest="tapnextpp_fast_postprocess", action="store_false")
     parser.set_defaults(tapnextpp_fast_postprocess=True)
+    parser.add_argument(
+        "--edgetam-live-session-keep-frames",
+        type=int,
+        default=masked_pcd.DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES,
+        help="Recent streamed EdgeTAM frames/outputs retained in live session state; 0 disables pruning.",
+    )
     parser.add_argument("--depth-min-m", type=float, default=0.2)
     parser.add_argument("--depth-max-m", type=float, default=1.5)
     parser.add_argument("--pcd-max-points", type=int, default=60000)
@@ -324,6 +330,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pcd-stride must be >= 1")
     if int(args.render_max_points_per_layer) < 0:
         raise ValueError("--render-max-points-per-layer must be >= 0")
+    if int(args.edgetam_live_session_keep_frames) < 0:
+        raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
     if int(args.object_filter_keep_components) < 1:
         raise ValueError("--object-filter-keep-components must be >= 1")
     if int(args.controller_filter_keep_components) < 1:
@@ -438,6 +446,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "tapnextpp_autocast_dtype": str(args.tapnextpp_autocast_dtype),
         "tapnextpp_compile": bool(args.tapnextpp_compile),
         "tapnextpp_fast_postprocess": bool(args.tapnextpp_fast_postprocess),
+        "edgetam_live_session_keep_frames": int(args.edgetam_live_session_keep_frames),
         "depth_min_m": float(args.depth_min_m),
         "depth_max_m": float(args.depth_max_m),
         "pcd_max_points": int(args.pcd_max_points),
@@ -496,6 +505,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "render_max_points_per_layer",
         "pcd_filter_enabled",
         "filter_max_age_frames",
+        "edgetam_live_session_keep_frames",
         "point_size",
     )
     lines = []
@@ -571,6 +581,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.tapnextpp_image_size),
         "--tapnextpp-autocast-dtype",
         str(args.tapnextpp_autocast_dtype),
+        "--edgetam-live-session-keep-frames",
+        str(int(args.edgetam_live_session_keep_frames)),
         "--depth-min-m",
         str(float(args.depth_min_m)),
         "--depth-max-m",

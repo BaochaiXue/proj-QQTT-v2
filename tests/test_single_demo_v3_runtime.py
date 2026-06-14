@@ -203,6 +203,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(contract["track_mode"], "controller-object")
             self.assertEqual(contract["render_mode"], "pointcloud")
             self.assertEqual(contract["view_mode"], "orbit")
+            self.assertEqual(contract["edgetam_live_session_keep_frames"], 64)
             self.assertEqual(contract["tracker_backend"], "tapnextpp")
             self.assertEqual(contract["tracker_device"], "cuda:1")
             self.assertEqual(contract["tracker_query_source"], "object_controller_union_mask")
@@ -319,6 +320,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 "2",
                 "--filter-max-age-frames",
                 "2",
+                "--edgetam-live-session-keep-frames",
+                "32",
                 "--point-size",
                 "1.5",
             ],
@@ -337,6 +340,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["object_filter_keep_components"], 1)
         self.assertEqual(contract["controller_filter_keep_components"], 2)
         self.assertEqual(contract["filter_max_age_frames"], 2)
+        self.assertEqual(contract["edgetam_live_session_keep_frames"], 32)
         self.assertEqual(contract["point_size"], 1.5)
         self.assertEqual(_option_value(delegate, "--pcd-max-points"), "20000")
         self.assertEqual(_option_value(delegate, "--pcd-stride"), "2")
@@ -347,6 +351,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--object-filter-keep-components"), "1")
         self.assertEqual(_option_value(delegate, "--controller-filter-keep-components"), "2")
         self.assertEqual(_option_value(delegate, "--filter-max-age-frames"), "2")
+        self.assertEqual(_option_value(delegate, "--edgetam-live-session-keep-frames"), "32")
         self.assertEqual(_option_value(delegate, "--point-size"), "1.5")
         self.assertIn("--enable-pcd-filter", delegate)
 
@@ -375,6 +380,10 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "filter-max-age-frames"):
             runtime.validate_args(bad_filter_age)
 
+        bad_keep_frames = self._parse(runtime.DEMO_VERSION_3_1, ["--edgetam-live-session-keep-frames", "-1"])
+        with self.assertRaisesRegex(ValueError, "edgetam-live-session-keep-frames"):
+            runtime.validate_args(bad_keep_frames)
+
         headless_filter = self._parse(runtime.DEMO_VERSION_3_1, ["--render-mode", "none", "--enable-pcd-filter"])
         with self.assertRaisesRegex(ValueError, "enable-pcd-filter"):
             runtime.validate_args(headless_filter)
@@ -392,11 +401,13 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertEqual(contract["object_filter_keep_components"], 1)
                 self.assertEqual(contract["controller_filter_keep_components"], 2)
                 self.assertEqual(contract["filter_max_age_frames"], 3)
+                self.assertEqual(contract["edgetam_live_session_keep_frames"], 64)
                 self.assertEqual(_option_value(delegate, "--render-max-points-per-layer"), "5000")
                 self.assertEqual(_option_value(delegate, "--view-mode"), "orbit")
                 self.assertEqual(_option_value(delegate, "--object-filter-keep-components"), "1")
                 self.assertEqual(_option_value(delegate, "--controller-filter-keep-components"), "2")
                 self.assertEqual(_option_value(delegate, "--filter-max-age-frames"), "3")
+                self.assertEqual(_option_value(delegate, "--edgetam-live-session-keep-frames"), "64")
 
     def test_recording_mode_skips_live_serial_validation(self) -> None:
         with mock.patch.object(runtime.masked_pcd, "main", return_value=0) as masked_main:

@@ -110,16 +110,21 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(len(selected), 2)
         self.assertNotIn(1, selected.tolist())
 
-    def test_render_point_cap_limits_display_layer_without_random_jitter(self) -> None:
-        points = np.arange(24, dtype=np.float32).reshape(8, 3)
-        colors = np.arange(24, dtype=np.uint8).reshape(8, 3)
+    def test_render_point_cap_uses_deterministic_spatial_spread(self) -> None:
+        left = np.array([[float(idx) * 0.001, 0.0, 0.5] for idx in range(10)], dtype=np.float32)
+        right = left + np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        points = np.vstack([left, right])
+        colors = np.arange(points.shape[0] * 3, dtype=np.uint8).reshape(-1, 3)
 
-        capped_points, capped_colors = demo.cap_render_points(points, colors, max_points=5)
+        capped_points, capped_colors = demo.cap_render_points(points, colors, max_points=6)
+        capped_points_again, capped_colors_again = demo.cap_render_points(points, colors, max_points=6)
 
-        self.assertEqual(capped_points.shape, (5, 3))
-        self.assertEqual(capped_colors.shape, (5, 3))
-        np.testing.assert_array_equal(capped_points, points[[0, 1, 3, 5, 7]])
-        np.testing.assert_array_equal(capped_colors, colors[[0, 1, 3, 5, 7]])
+        self.assertEqual(capped_points.shape, (6, 3))
+        self.assertEqual(capped_colors.shape, (6, 3))
+        self.assertGreater(np.count_nonzero(capped_points[:, 0] < 0.5), 0)
+        self.assertGreater(np.count_nonzero(capped_points[:, 0] > 0.5), 0)
+        np.testing.assert_array_equal(capped_points, capped_points_again)
+        np.testing.assert_array_equal(capped_colors, capped_colors_again)
 
     def test_render_point_cap_zero_keeps_original_arrays(self) -> None:
         points = np.zeros((8, 3), dtype=np.float32)

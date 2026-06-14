@@ -66,7 +66,14 @@ capped PCD if filtering would erase a nonempty semantic layer, and async filter
 outputs older than three frames do not replace the current raw frame. The
 controller layer also falls back to capped current-frame PCD when filtering
 would retain less than half of its capped points, prioritizing two-hand
-visibility over aggressive cleanup.
+visibility over aggressive cleanup; if voxel capping makes the controller
+filter output less than half of the raw semantic controller points, it falls
+back to raw current-frame controller PCD and lets the render cap handle display
+density. The render cap uses deterministic spatial spreading rather than random
+or raw-order truncation. EdgeTAM still runs as a frame-by-frame live session
+rather than an offline batch video path, but the live session retains only the
+recent 64-frame state window by default so fake-live replay does not accumulate
+the entire two-minute stream on the GPU.
 
 Live FFS preview:
 

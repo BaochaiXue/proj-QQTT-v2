@@ -19,10 +19,15 @@ object points, plus async filtered outputs older than the current frame.
   components.
 - Fall back to capped current-frame controller PCD when controller filtering
   retains less than half of its capped points.
+- Fall back to raw current-frame controller PCD when controller filtering keeps
+  less than half of the raw semantic controller points, because voxel capping
+  can already be too sparse for two hands.
 - Start Demo 3.x Open3D windows from a third-person orbit view by default,
   with the original camera view available via `--view-mode camera`.
 - Surface the age guard through Demo 3.x launcher contract/argv.
 - Add focused unit tests for empty-filter fallback and stale-filter rejection.
+- Keep the EdgeTAM live session bounded to recent frames/outputs so fake-live
+  replay does not accumulate the whole two-minute stream in GPU session state.
 
 ## Validation
 

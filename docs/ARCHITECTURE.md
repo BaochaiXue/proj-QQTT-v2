@@ -39,8 +39,14 @@ aligned-case data product.
   single-object plus two-hand demo scenes. It starts Open3D in a third-person
   orbit view by default, falls back to capped current-frame PCD when filtering
   would empty a nonempty layer, falls back for controller output that retains
-  less than half of its capped points, and rejects async filtered outputs older
-  than three frames for rendering.
+  less than half of its capped points, falls back to raw current-frame
+  controller PCD when voxel capping makes the controller output less than half
+  of the raw semantic controller points, and rejects async filtered outputs
+  older than three frames for rendering. Render-point caps use deterministic
+  spatial spreading rather than random or raw-order truncation. Its EdgeTAM path
+  is a frame-by-frame live session, not an offline batch video path; runtime
+  state is bounded to a recent 64-frame window by default for fake-live and live
+  stability.
 - `services/ffs_remote/`: single-camera remote FFS depth request/response
   protocol and server/client utilities.
 

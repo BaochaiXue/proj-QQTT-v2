@@ -18,6 +18,7 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertIn("--object-filter-keep-components OBJECT_FILTER_KEEP_COMPONENTS", help_text)
         self.assertIn("--controller-filter-keep-components CONTROLLER_FILTER_KEEP_COMPONENTS", help_text)
         self.assertIn("--filter-max-age-frames FILTER_MAX_AGE_FRAMES", help_text)
+        self.assertIn("--edgetam-live-session-keep-frames EDGETAM_LIVE_SESSION_KEEP_FRAMES", help_text)
 
         args = masked_demo.build_parser().parse_args([])
         self.assertEqual(args.object_filter, "enhanced-pt")
@@ -25,6 +26,7 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertEqual(args.object_filter_keep_components, 1)
         self.assertEqual(args.controller_filter_keep_components, 2)
         self.assertEqual(args.filter_max_age_frames, 3)
+        self.assertEqual(args.edgetam_live_session_keep_frames, 64)
         self.assertEqual(args.view_mode, "orbit")
 
         bad_object = masked_demo.build_parser().parse_args(["--object-filter-keep-components", "0"])
@@ -38,6 +40,10 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         bad_age = masked_demo.build_parser().parse_args(["--filter-max-age-frames", "-1"])
         with self.assertRaisesRegex(ValueError, "filter-max-age-frames"):
             masked_demo.validate_args(bad_age)
+
+        bad_keep_frames = masked_demo.build_parser().parse_args(["--edgetam-live-session-keep-frames", "-1"])
+        with self.assertRaisesRegex(ValueError, "edgetam-live-session-keep-frames"):
+            masked_demo.validate_args(bad_keep_frames)
 
     def test_enhanced_controller_keeps_two_components_by_default(self) -> None:
         args = masked_demo.build_parser().parse_args(
@@ -136,7 +142,9 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertTrue(output.stats["object"]["fallback_to_capped"])
         self.assertTrue(output.stats["controller"]["fallback_to_capped"])
         self.assertEqual(output.stats["object"]["fallback_reason"], "empty_filter_output")
-        self.assertEqual(output.stats["controller"]["fallback_reason"], "empty_filter_output")
+        self.assertEqual(output.stats["controller"]["fallback_reason"], "empty_filter_output_raw")
+        self.assertEqual(output.stats["object"]["fallback_source"], "capped")
+        self.assertEqual(output.stats["controller"]["fallback_source"], "raw")
 
     def test_controller_filter_falls_back_when_retain_ratio_is_too_low(self) -> None:
         args = masked_demo.build_parser().parse_args(
@@ -189,8 +197,69 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertEqual(output.controller_xyz.shape[0], points.shape[0])
         self.assertEqual(output.stats["controller"]["filter_output_points"], 3)
         self.assertAlmostEqual(output.stats["controller"]["filter_retain_ratio"], 0.3)
+        self.assertAlmostEqual(output.stats["controller"]["raw_retain_ratio"], 0.3)
         self.assertTrue(output.stats["controller"]["fallback_to_capped"])
-        self.assertEqual(output.stats["controller"]["fallback_reason"], "low_filter_retain_ratio")
+        self.assertEqual(output.stats["controller"]["fallback_reason"], "low_filter_raw_retain_ratio")
+        self.assertEqual(output.stats["controller"]["fallback_source"], "raw")
+
+    def test_controller_filter_falls_back_to_raw_when_voxel_cap_is_too_sparse(self) -> None:
+        args = masked_demo.build_parser().parse_args([])
+        demo_instance = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        points = np.array(
+            [[float(idx) * 0.001, 0.0, 0.50] for idx in range(20)],
+            dtype=np.float32,
+        )
+        colors = np.full((points.shape[0], 3), 63, dtype=np.uint8)
+
+        output_points, _output_colors, stats = demo_instance._apply_single_pcd_filter(
+            points=points,
+            colors=colors,
+            mode=masked_demo.PCD_FILTER_NONE,
+            cap=5,
+            voxel_size_m=0.01,
+            keep_components=2,
+            min_retain_ratio=masked_demo.DEFAULT_CONTROLLER_FILTER_MIN_RETAIN_RATIO,
+            min_raw_retain_ratio=masked_demo.DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO,
+            rng=np.random.default_rng(1),
+        )
+
+        self.assertLess(stats["cap_points"], points.shape[0])
+        self.assertEqual(stats["filter_output_points"], stats["cap_points"])
+        self.assertEqual(output_points.shape[0], points.shape[0])
+        self.assertEqual(stats["fallback_reason"], "low_filter_raw_retain_ratio")
+        self.assertEqual(stats["fallback_source"], "raw")
+
+    def test_edgetam_live_session_prunes_old_streaming_state(self) -> None:
+        args = masked_demo.build_parser().parse_args(["--edgetam-live-session-keep-frames", "4"])
+        demo_instance = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.processed_frames = {idx: f"frame-{idx}" for idx in range(10)}
+                self.output_dict_per_obj = {
+                    0: {
+                        "cond_frame_outputs": {0: {"keep": True}},
+                        "non_cond_frame_outputs": {idx: {"out": idx} for idx in range(10)},
+                    },
+                    1: {
+                        "cond_frame_outputs": {0: {"keep": True}},
+                        "non_cond_frame_outputs": {idx: {"out": idx} for idx in range(10)},
+                    },
+                }
+                self.frames_tracked_per_obj = {
+                    0: {idx: {"reverse": False} for idx in range(10)},
+                    1: {idx: {"reverse": False} for idx in range(10)},
+                }
+
+        session = FakeSession()
+        demo_instance._prune_edgetam_live_session(session, current_frame_idx=9)
+
+        self.assertEqual(sorted(session.processed_frames), [6, 7, 8, 9])
+        for output_dict in session.output_dict_per_obj.values():
+            self.assertEqual(sorted(output_dict["cond_frame_outputs"]), [0])
+            self.assertEqual(sorted(output_dict["non_cond_frame_outputs"]), [6, 7, 8, 9])
+        for tracked_frames in session.frames_tracked_per_obj.values():
+            self.assertEqual(sorted(tracked_frames), [6, 7, 8, 9])
 
     def test_async_filter_output_must_be_recent_enough_to_render(self) -> None:
         args = masked_demo.build_parser().parse_args(["--filter-max-age-frames", "3"])

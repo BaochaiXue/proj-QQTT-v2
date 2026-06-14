@@ -144,7 +144,10 @@ DEFAULT_OBJECT_FILTER_KEEP_COMPONENTS = 1
 DEFAULT_CONTROLLER_FILTER_KEEP_COMPONENTS = 2
 DEFAULT_OBJECT_FILTER_MIN_RETAIN_RATIO = 0.0
 DEFAULT_CONTROLLER_FILTER_MIN_RETAIN_RATIO = 0.5
+DEFAULT_OBJECT_FILTER_MIN_RAW_RETAIN_RATIO = 0.0
+DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO = 0.5
 DEFAULT_FILTER_MAX_AGE_FRAMES = 3
+DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
 CONTROLLER_ID = 1
 OBJECT_ID = 2
 OBJECT_LABELS = {CONTROLLER_ID: "controller", OBJECT_ID: "object"}
@@ -650,9 +653,15 @@ class PcdFilterTelemetry:
     object_raw_points: int = 0
     object_cap_points: int = 0
     object_output_points: int = 0
+    object_prefallback_points: int = 0
+    object_raw_retain_ratio: float = 0.0
+    object_fallback_reason: str = ""
     controller_raw_points: int = 0
     controller_cap_points: int = 0
     controller_output_points: int = 0
+    controller_prefallback_points: int = 0
+    controller_raw_retain_ratio: float = 0.0
+    controller_fallback_reason: str = ""
     object_filter_cap: int = 0
     controller_filter_cap: int = 0
     filter_submit_fps: float = 0.0
@@ -984,6 +993,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="Inference device, usually cuda.")
     parser.add_argument("--dtype", choices=("bfloat16", "float16", "float32"), default=DEFAULT_DTYPE, help="Inference dtype.")
     parser.add_argument(
+        "--edgetam-live-session-keep-frames",
+        type=int,
+        default=DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES,
+        help="Keep this many recent streamed EdgeTAM frames/outputs in live session state; 0 disables pruning.",
+    )
+    parser.add_argument(
         "--compile-mode",
         choices=COMPILE_MODES,
         default=DEFAULT_COMPILE_MODE,
@@ -1138,6 +1153,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pcd-max-points must be >= 0")
     if args.pcd_stride < 1:
         raise ValueError("--pcd-stride must be >= 1")
+    if int(args.edgetam_live_session_keep_frames) < 0:
+        raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
     if int(args.render_max_points_per_layer) < 0:
         raise ValueError("--render-max-points-per-layer must be >= 0")
     if args.point_size <= 0:
@@ -1908,7 +1925,24 @@ def cap_render_points(
         raise ValueError("points and colors must have the same length")
     if int(max_points) == 0 or point_count <= int(max_points):
         return points_xyz_m, colors_rgb_u8
-    indices = np.linspace(0, point_count - 1, int(max_points), dtype=np.int64)
+    points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
+    finite = np.isfinite(points).all(axis=1)
+    finite_indices = np.flatnonzero(finite)
+    if len(finite_indices) > 0:
+        finite_points = points[finite_indices]
+        mins = finite_points.min(axis=0)
+        spans = finite_points.max(axis=0) - mins
+        safe_spans = np.where(spans > np.float32(1e-6), spans, np.float32(1.0))
+        quantized = np.floor((finite_points - mins) / safe_spans * np.float32(1023.0)).astype(np.int32)
+        ordered = finite_indices[np.lexsort((quantized[:, 2], quantized[:, 1], quantized[:, 0]))]
+        if len(ordered) >= int(max_points):
+            indices = ordered[np.linspace(0, len(ordered) - 1, int(max_points), dtype=np.int64)]
+        else:
+            extras = np.flatnonzero(~finite)
+            fill_count = int(max_points) - len(ordered)
+            indices = np.concatenate([ordered, extras[:fill_count]]).astype(np.int64, copy=False)
+    else:
+        indices = np.linspace(0, point_count - 1, int(max_points), dtype=np.int64)
     return (
         np.ascontiguousarray(points_xyz_m[indices], dtype=np.float32),
         np.ascontiguousarray(colors_rgb_u8[indices], dtype=np.uint8),
@@ -2223,6 +2257,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.capture_stats.record(first_packet.receive_perf_s)
         if source.frame_count <= 1:
             self.stop_event.set()
+            self._request_render_update()
             return
         if self.args.track_mode != "none":
             while not self.stop_event.is_set():
@@ -2252,6 +2287,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             self.capture_slot.put(packet)
             self.capture_stats.record(packet.receive_perf_s)
         self.stop_event.set()
+        self._request_render_update()
 
     def _capture_worker(self) -> None:
         assert self.runtime is not None
@@ -2372,6 +2408,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "inference_state_device": self.args.device,
             "video_storage_device": self.args.device,
             "frame_by_frame_streaming": True,
+            "edgetam_live_session_keep_frames": int(self.args.edgetam_live_session_keep_frames),
             "offline_video_input_used": _is_replay_input_source(str(self.args.input_source)),
             "input_source": self.args.input_source,
             "recording_case": (
@@ -2413,6 +2450,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "controller_filter_keep_components": int(self.args.controller_filter_keep_components),
             "object_filter_min_retain_ratio": float(DEFAULT_OBJECT_FILTER_MIN_RETAIN_RATIO),
             "controller_filter_min_retain_ratio": float(DEFAULT_CONTROLLER_FILTER_MIN_RETAIN_RATIO),
+            "object_filter_min_raw_retain_ratio": float(DEFAULT_OBJECT_FILTER_MIN_RAW_RETAIN_RATIO),
+            "controller_filter_min_raw_retain_ratio": float(DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO),
             "filter_every_n": int(self.args.filter_every_n),
             "filter_max_age_frames": int(self.args.filter_max_age_frames),
             "filter_budget_ms": float(self.args.filter_budget_ms),
@@ -2708,6 +2747,38 @@ class RealtimeMaskedEdgeTamPcdDemo:
         dtype = torch_module.bfloat16 if self.args.dtype == "bfloat16" else torch_module.float16
         return torch_module.autocast("cuda", dtype=dtype)
 
+    def _prune_edgetam_live_session(self, session: Any, *, current_frame_idx: int) -> None:
+        keep_frames = int(self.args.edgetam_live_session_keep_frames)
+        if keep_frames <= 0:
+            return
+        min_frame_idx = int(current_frame_idx) - keep_frames + 1
+
+        processed_frames = getattr(session, "processed_frames", None)
+        if isinstance(processed_frames, dict):
+            for frame_idx in list(processed_frames):
+                if int(frame_idx) < min_frame_idx:
+                    processed_frames.pop(frame_idx, None)
+
+        output_dict_per_obj = getattr(session, "output_dict_per_obj", None)
+        if isinstance(output_dict_per_obj, dict):
+            for output_dict in output_dict_per_obj.values():
+                if not isinstance(output_dict, dict):
+                    continue
+                non_cond_outputs = output_dict.get("non_cond_frame_outputs")
+                if isinstance(non_cond_outputs, dict):
+                    for frame_idx in list(non_cond_outputs):
+                        if int(frame_idx) < min_frame_idx:
+                            non_cond_outputs.pop(frame_idx, None)
+
+        frames_tracked_per_obj = getattr(session, "frames_tracked_per_obj", None)
+        if isinstance(frames_tracked_per_obj, dict):
+            for tracked_frames in frames_tracked_per_obj.values():
+                if not isinstance(tracked_frames, dict):
+                    continue
+                for frame_idx in list(tracked_frames):
+                    if int(frame_idx) < min_frame_idx:
+                        tracked_frames.pop(frame_idx, None)
+
     def _run_segmentation_frame(
         self,
         *,
@@ -2746,7 +2817,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     self.args.device,
                     lambda: processor.add_inputs_to_inference_session(
                         inference_session=session,
-                        frame_idx=0,
+                        frame_idx=int(frame.seq),
                         obj_ids=prompt_obj_ids,
                         input_masks=prompt_masks,
                     ),
@@ -2760,7 +2831,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 device=self.args.device,
                 profile_sync=bool(self.args.profile_sync),
                 profile_cuda_events=bool(self.args.profile_cuda_events),
-                fn=lambda: model(inference_session=session, frame=pixel_values),
+                fn=lambda: model(inference_session=session, frame=pixel_values, frame_idx=int(frame.seq)),
             )
             post_masks, postprocess_ms, postprocess_pre_sync_ms, postprocess_post_sync_ms = _time_runtime_ms(
                 torch_module,
@@ -2783,6 +2854,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         controller_mask = masks_by_id.get(CONTROLLER_ID)
         if controller_mask is None:
             controller_mask = np.zeros_like(reference_mask, dtype=bool)
+        self._prune_edgetam_live_session(session, current_frame_idx=int(output.frame_idx))
         process_done_s = time.perf_counter()
         timing = replace(
             frame.timing,
@@ -2850,6 +2922,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         voxel_size_m: float,
         keep_components: int,
         min_retain_ratio: float,
+        min_raw_retain_ratio: float,
         rng: np.random.Generator,
     ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
         raw_points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
@@ -2867,6 +2940,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
         fallback_to_capped = False
         fallback_reason = ""
+        fallback_source = "none"
         filter_start_s = time.perf_counter()
         if mode == PCD_FILTER_NONE:
             filtered_points = np.asarray(capped_points, dtype=np.float32).reshape(-1, 3)
@@ -2914,13 +2988,32 @@ class RealtimeMaskedEdgeTamPcdDemo:
         filtered_points = np.ascontiguousarray(filtered_points, dtype=np.float32).reshape(-1, 3)
         filtered_colors = np.ascontiguousarray(filtered_colors, dtype=np.uint8).reshape(-1, 3)
         filter_output_points = int(len(filtered_points))
+        raw_point_count = int(len(raw_points))
         capped_point_count = int(len(capped_points))
         retain_ratio = float(filter_output_points / max(1, capped_point_count))
+        raw_retain_ratio = float(filter_output_points / max(1, raw_point_count))
         if filter_output_points == 0 and int(len(capped_points)) > 0:
-            filtered_points = np.ascontiguousarray(capped_points, dtype=np.float32).reshape(-1, 3)
-            filtered_colors = np.ascontiguousarray(capped_colors, dtype=np.uint8).reshape(-1, 3)
+            if float(min_raw_retain_ratio) > 0.0:
+                filtered_points = np.ascontiguousarray(raw_points, dtype=np.float32).reshape(-1, 3)
+                filtered_colors = np.ascontiguousarray(raw_colors, dtype=np.uint8).reshape(-1, 3)
+                fallback_reason = "empty_filter_output_raw"
+                fallback_source = "raw"
+            else:
+                filtered_points = np.ascontiguousarray(capped_points, dtype=np.float32).reshape(-1, 3)
+                filtered_colors = np.ascontiguousarray(capped_colors, dtype=np.uint8).reshape(-1, 3)
+                fallback_reason = "empty_filter_output"
+                fallback_source = "capped"
             fallback_to_capped = True
-            fallback_reason = "empty_filter_output"
+        elif (
+            float(min_raw_retain_ratio) > 0.0
+            and raw_point_count > 0
+            and raw_retain_ratio < float(min_raw_retain_ratio)
+        ):
+            filtered_points = np.ascontiguousarray(raw_points, dtype=np.float32).reshape(-1, 3)
+            filtered_colors = np.ascontiguousarray(raw_colors, dtype=np.uint8).reshape(-1, 3)
+            fallback_to_capped = True
+            fallback_reason = "low_filter_raw_retain_ratio"
+            fallback_source = "raw"
         elif (
             float(min_retain_ratio) > 0.0
             and capped_point_count > 0
@@ -2930,16 +3023,20 @@ class RealtimeMaskedEdgeTamPcdDemo:
             filtered_colors = np.ascontiguousarray(capped_colors, dtype=np.uint8).reshape(-1, 3)
             fallback_to_capped = True
             fallback_reason = "low_filter_retain_ratio"
+            fallback_source = "capped"
         return filtered_points, filtered_colors, {
             "mode": str(mode),
-            "raw_points": int(len(raw_points)),
+            "raw_points": raw_point_count,
             "cap_points": capped_point_count,
             "output_points": int(len(filtered_points)),
             "filter_output_points": filter_output_points,
             "filter_retain_ratio": retain_ratio,
+            "raw_retain_ratio": raw_retain_ratio,
             "min_retain_ratio": float(min_retain_ratio),
+            "min_raw_retain_ratio": float(min_raw_retain_ratio),
             "fallback_to_capped": bool(fallback_to_capped),
             "fallback_reason": fallback_reason,
+            "fallback_source": fallback_source,
             "cap": int(cap),
             "voxel_size_m": float(voxel_size_m),
             "keep_components": int(keep_components),
@@ -2957,6 +3054,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             voxel_size_m=float(item.object_voxel_size_m),
             keep_components=int(self.args.object_filter_keep_components),
             min_retain_ratio=float(DEFAULT_OBJECT_FILTER_MIN_RETAIN_RATIO),
+            min_raw_retain_ratio=float(DEFAULT_OBJECT_FILTER_MIN_RAW_RETAIN_RATIO),
             rng=np.random.default_rng(int(item.seq) * 2 + 17),
         )
         controller_points, controller_colors, controller_stats = self._apply_single_pcd_filter(
@@ -2967,6 +3065,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             voxel_size_m=float(item.controller_voxel_size_m),
             keep_components=int(self.args.controller_filter_keep_components),
             min_retain_ratio=float(DEFAULT_CONTROLLER_FILTER_MIN_RETAIN_RATIO),
+            min_raw_retain_ratio=float(DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO),
             rng=np.random.default_rng(int(item.seq) * 2 + 19),
         )
         done_s = time.perf_counter()
@@ -3031,9 +3130,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 object_raw_points=int(object_raw_points),
                 object_cap_points=int(object_cap_points),
                 object_output_points=int(object_cap_points),
+                object_prefallback_points=int(object_cap_points),
+                object_raw_retain_ratio=1.0 if int(object_raw_points) > 0 else 0.0,
                 controller_raw_points=int(controller_raw_points),
                 controller_cap_points=int(controller_cap_points),
                 controller_output_points=int(controller_cap_points),
+                controller_prefallback_points=int(controller_cap_points),
+                controller_raw_retain_ratio=1.0 if int(controller_raw_points) > 0 else 0.0,
                 object_filter_cap=int(self.object_filter_budget.cap),
                 controller_filter_cap=int(self.controller_filter_budget.cap),
                 filter_submit_fps=float(worker_stats["submit_fps"]),
@@ -3058,9 +3161,15 @@ class RealtimeMaskedEdgeTamPcdDemo:
             object_raw_points=int(object_stats.get("raw_points", object_raw_points)),
             object_cap_points=int(object_stats.get("cap_points", object_cap_points)),
             object_output_points=int(object_stats.get("output_points", object_cap_points)),
+            object_prefallback_points=int(object_stats.get("filter_output_points", object_cap_points)),
+            object_raw_retain_ratio=float(object_stats.get("raw_retain_ratio", 0.0)),
+            object_fallback_reason=str(object_stats.get("fallback_reason", "")),
             controller_raw_points=int(controller_stats.get("raw_points", controller_raw_points)),
             controller_cap_points=int(controller_stats.get("cap_points", controller_cap_points)),
             controller_output_points=int(controller_stats.get("output_points", controller_cap_points)),
+            controller_prefallback_points=int(controller_stats.get("filter_output_points", controller_cap_points)),
+            controller_raw_retain_ratio=float(controller_stats.get("raw_retain_ratio", 0.0)),
+            controller_fallback_reason=str(controller_stats.get("fallback_reason", "")),
             object_filter_cap=int(object_stats.get("cap", self.object_filter_budget.cap)),
             controller_filter_cap=int(controller_stats.get("cap", self.controller_filter_budget.cap)),
             filter_submit_fps=float(worker_stats["submit_fps"]),
@@ -3957,6 +4066,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
                         pass
                     return
                 if self.stop_event.is_set():
+                    try:
+                        app.quit()
+                    except Exception:
+                        pass
                     return
                 rendered = render_latest()
                 if rendered and hasattr(window, "post_redraw"):
@@ -3978,8 +4091,6 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     request_render_update()
 
         def request_render_update() -> None:
-            if self.stop_event.is_set() and self._fatal_error_snapshot() is None:
-                return
             if not render_post_gate.try_mark_pending():
                 return
             try:
@@ -4068,8 +4179,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
             filter_points_line = (
                 "filter pts controller raw/cap/out="
                 f"{filter_info.controller_raw_points}/{filter_info.controller_cap_points}/{filter_info.controller_output_points}  "
+                f"pre={filter_info.controller_prefallback_points} raw-r={filter_info.controller_raw_retain_ratio:.2f}  "
                 "object raw/cap/out="
-                f"{filter_info.object_raw_points}/{filter_info.object_cap_points}/{filter_info.object_output_points}"
+                f"{filter_info.object_raw_points}/{filter_info.object_cap_points}/{filter_info.object_output_points}  "
+                f"pre={filter_info.object_prefallback_points} raw-r={filter_info.object_raw_retain_ratio:.2f}"
             )
         else:
             filter_line = "filter: off"
@@ -4173,11 +4286,19 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"filter_age_frames={int(filter_info.filter_age_frames)} "
             f"filter_age_ms={filter_info.filter_age_ms:.1f} "
             f"object_filter_input_points={int(filter_info.object_raw_points)} "
+            f"object_filter_cap_limit={int(filter_info.object_filter_cap)} "
             f"object_filter_cap_points={int(filter_info.object_cap_points)} "
+            f"object_filter_prefallback_points={int(filter_info.object_prefallback_points)} "
             f"object_filter_output_points={int(filter_info.object_output_points)} "
+            f"object_filter_raw_retain_ratio={filter_info.object_raw_retain_ratio:.3f} "
+            f"object_filter_fallback_reason={filter_info.object_fallback_reason or 'none'} "
             f"controller_filter_input_points={int(filter_info.controller_raw_points)} "
+            f"controller_filter_cap_limit={int(filter_info.controller_filter_cap)} "
             f"controller_filter_cap_points={int(filter_info.controller_cap_points)} "
+            f"controller_filter_prefallback_points={int(filter_info.controller_prefallback_points)} "
             f"controller_filter_output_points={int(filter_info.controller_output_points)} "
+            f"controller_filter_raw_retain_ratio={filter_info.controller_raw_retain_ratio:.3f} "
+            f"controller_filter_fallback_reason={filter_info.controller_fallback_reason or 'none'} "
             f"controller_points={int(controller_points)} "
             f"object_points={int(object_points)} "
             f"dropped_capture={int(dropped_capture_frames)} "
