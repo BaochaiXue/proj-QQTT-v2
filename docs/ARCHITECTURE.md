@@ -43,9 +43,10 @@ aligned-case data product.
   controller PCD when voxel capping makes the controller output less than half
   of the raw semantic controller points, and rejects async filtered outputs
   older than three frames for rendering. Render-point caps use deterministic
-  spatial spreading rather than random or raw-order truncation. Its EdgeTAM path
-  is a frame-by-frame live session, not an offline batch video path; runtime
-  state is bounded to a recent 64-frame window by default for fake-live and live
+  coarse spatial bucket balancing so sparse separated controller regions are not
+  hidden by denser regions when the display layer is capped. Its EdgeTAM path is
+  a frame-by-frame live session, not an offline batch video path; runtime state
+  is bounded to a recent 64-frame window by default for fake-live and live
   stability. Local FFS depth is serialized and cached by sequence inside the
   runtime so PCD and tracker threads share color-aligned depth without entering
   one TensorRT runner concurrently.

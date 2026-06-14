@@ -69,8 +69,9 @@ would retain less than half of its capped points, prioritizing two-hand
 visibility over aggressive cleanup; if voxel capping makes the controller
 filter output less than half of the raw semantic controller points, it falls
 back to raw current-frame controller PCD and lets the render cap handle display
-density. The render cap uses deterministic spatial spreading rather than random
-or raw-order truncation. EdgeTAM still runs as a frame-by-frame live session
+density. The render cap uses deterministic coarse spatial bucket balancing so a
+sparse separated controller region is not hidden by a denser region when the
+display layer is capped. EdgeTAM still runs as a frame-by-frame live session
 rather than an offline batch video path, but the live session retains only the
 recent 64-frame state window by default so fake-live replay does not accumulate
 the entire two-minute stream on the GPU. For Demo 3.2 / 3.3 local FFS, the

@@ -120,6 +120,7 @@ DEFAULT_PCD_MODE = "masked"
 RENDER_MODES = ("pointcloud", "none")
 DEFAULT_RENDER_MODE = "pointcloud"
 DEFAULT_RENDER_MAX_POINTS_PER_LAYER = 5000
+DEFAULT_RENDER_CAP_GRID_BINS = 8
 VIEW_MODES = ("orbit", "camera")
 DEFAULT_VIEW_MODE = "orbit"
 PCD_FILTER_MODES = ("async", "sync", "none")
@@ -1934,14 +1935,59 @@ def cap_render_points(
         mins = finite_points.min(axis=0)
         spans = finite_points.max(axis=0) - mins
         safe_spans = np.where(spans > np.float32(1e-6), spans, np.float32(1.0))
-        quantized = np.floor((finite_points - mins) / safe_spans * np.float32(1023.0)).astype(np.int32)
-        ordered = finite_indices[np.lexsort((quantized[:, 2], quantized[:, 1], quantized[:, 0]))]
-        if len(ordered) >= int(max_points):
-            indices = ordered[np.linspace(0, len(ordered) - 1, int(max_points), dtype=np.int64)]
+        grid_bins = max(1, int(DEFAULT_RENDER_CAP_GRID_BINS))
+        quantized = np.floor((finite_points - mins) / safe_spans * np.float32(grid_bins - 1)).astype(np.int32)
+        quantized = np.clip(quantized, 0, grid_bins - 1)
+        keys = np.ravel_multi_index(quantized.T, (grid_bins, grid_bins, grid_bins)).astype(np.int64, copy=False)
+        order = np.argsort(keys, kind="stable")
+        sorted_keys = keys[order]
+        sorted_indices = finite_indices[order]
+        _unique_keys, bucket_starts, bucket_counts = np.unique(
+            sorted_keys,
+            return_index=True,
+            return_counts=True,
+        )
+        bucket_count = int(len(bucket_counts))
+        if bucket_count <= 0:
+            indices = np.linspace(0, point_count - 1, int(max_points), dtype=np.int64)
+        elif bucket_count >= int(max_points):
+            bucket_ids = np.linspace(0, bucket_count - 1, int(max_points), dtype=np.int64)
+            local_offsets = np.asarray(bucket_counts[bucket_ids] // 2, dtype=np.int64)
+            indices = sorted_indices[bucket_starts[bucket_ids] + local_offsets]
         else:
-            extras = np.flatnonzero(~finite)
-            fill_count = int(max_points) - len(ordered)
-            indices = np.concatenate([ordered, extras[:fill_count]]).astype(np.int64, copy=False)
+            quotas = np.ones(bucket_count, dtype=np.int64)
+            remaining = int(max_points) - bucket_count
+            extra_capacity = np.maximum(bucket_counts.astype(np.int64) - 1, 0)
+            if remaining > 0 and np.any(extra_capacity > 0):
+                weights = np.sqrt(extra_capacity.astype(np.float64))
+                raw_extra = remaining * weights / max(float(weights.sum()), 1.0)
+                extra = np.minimum(np.floor(raw_extra).astype(np.int64), extra_capacity)
+                quotas += extra
+                remaining = int(max_points) - int(quotas.sum())
+                if remaining > 0:
+                    residual = raw_extra - np.floor(raw_extra)
+                    candidate_order = np.argsort(-residual, kind="stable")
+                    for bucket_id in candidate_order:
+                        if remaining <= 0:
+                            break
+                        available = int(bucket_counts[bucket_id]) - int(quotas[bucket_id])
+                        if available <= 0:
+                            continue
+                        add = min(available, remaining)
+                        quotas[bucket_id] += add
+                        remaining -= add
+            selected: list[np.ndarray] = []
+            for start, count, quota in zip(bucket_starts, bucket_counts, quotas, strict=True):
+                take = min(int(count), int(quota))
+                if take <= 0:
+                    continue
+                local = np.linspace(0, int(count) - 1, take, dtype=np.int64)
+                selected.append(sorted_indices[int(start) + local])
+            indices = np.concatenate(selected).astype(np.int64, copy=False) if selected else np.empty((0,), dtype=np.int64)
+            if len(indices) < int(max_points):
+                extras = np.flatnonzero(~finite)
+                fill_count = int(max_points) - len(indices)
+                indices = np.concatenate([indices, extras[:fill_count]]).astype(np.int64, copy=False)
     else:
         indices = np.linspace(0, point_count - 1, int(max_points), dtype=np.int64)
     return (

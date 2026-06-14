@@ -188,6 +188,45 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         np.testing.assert_array_equal(capped_points, capped_points_again)
         np.testing.assert_array_equal(capped_colors, capped_colors_again)
 
+    def test_render_point_cap_balances_sparse_separated_region(self) -> None:
+        dense = np.array(
+            [
+                [
+                    0.001 * float(sample % 10),
+                    0.02 * float(y_bin) + 0.0001 * float(sample),
+                    0.50 + 0.02 * float(z_bin),
+                ]
+                for y_bin in range(8)
+                for z_bin in range(8)
+                for sample in range(100)
+            ],
+            dtype=np.float32,
+        )
+        sparse = np.array(
+            [
+                [
+                    1.0 + 0.01 * float(sample % 5),
+                    0.02 * float(y_bin) + 0.0002 * float(sample),
+                    0.50 + 0.02 * float(z_bin),
+                ]
+                for y_bin in range(4)
+                for z_bin in range(4)
+                for sample in range(5)
+            ],
+            dtype=np.float32,
+        )
+        points = np.vstack([dense, sparse])
+        colors = np.arange(points.shape[0] * 3, dtype=np.uint8).reshape(-1, 3)
+
+        capped_points, capped_colors = demo.cap_render_points(points, colors, max_points=72)
+        capped_points_again, capped_colors_again = demo.cap_render_points(points, colors, max_points=72)
+
+        self.assertEqual(capped_points.shape, (72, 3))
+        self.assertEqual(capped_colors.shape, (72, 3))
+        self.assertGreaterEqual(np.count_nonzero(capped_points[:, 0] > 0.5), 8)
+        np.testing.assert_array_equal(capped_points, capped_points_again)
+        np.testing.assert_array_equal(capped_colors, capped_colors_again)
+
     def test_render_point_cap_zero_keeps_original_arrays(self) -> None:
         points = np.zeros((8, 3), dtype=np.float32)
         colors = np.zeros((8, 3), dtype=np.uint8)
