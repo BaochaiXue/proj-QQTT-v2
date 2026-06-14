@@ -16,10 +16,10 @@ aligned-case data product.
 - `record_data_realtime_align.py`
 - `data_process/record_data_align.py`
 - `scripts/harness/realtime_single_camera_pointcloud.py`
-- `single_demo_v3/realtime_single_camera_realsense_masked_pcd.py`
-- `single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py`
-- `single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py`
-- `single_demo_v3_3/realtime_single_camera_ffs_masked_pcd.py`
+- `demo_v3/realtime_single_camera_realsense_masked_pcd.py`
+- `demo_v3_1/realtime_single_camera_realsense_masked_pcd.py`
+- `demo_v3_2/realtime_single_camera_ffs_masked_pcd.py`
+- `demo_v3_3/realtime_single_camera_ffs_masked_pcd.py`
 
 ## Shared Packages
 
@@ -32,7 +32,7 @@ aligned-case data product.
 - `qqtt/demo/realtime_single_camera_pointcloud.py`: branch-default live
   single-camera point-cloud demo implementation.
 - `qqtt/demo/single_demo_v3_runtime.py`: shared launcher for the
-  `single_demo_v3*` entrypoints.
+  `demo_v3*` entrypoints.
 - `services/ffs_remote/`: single-camera remote FFS depth request/response
   protocol and server/client utilities.
 

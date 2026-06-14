@@ -193,7 +193,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             runtime.validate_args(args)
             contract = runtime.build_contract(args)
 
-            self.assertEqual(contract["input_source"], "recording_rgbd_single_camera")
+            self.assertEqual(contract["input_source"], "recording_single_camera")
             self.assertEqual(contract["input_source_mode"], "recording")
             self.assertEqual(contract["recording_case"], str(case_dir))
             self.assertEqual(contract["replay_fps"], 30.0)
@@ -224,6 +224,51 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(_option_value(delegate, "--pcd-stride"), "1")
             self.assertEqual(_option_value(delegate, "--render-max-points-per-layer"), "5000")
             self.assertNotIn("--serial", delegate)
+
+    def test_fake_live_uses_default_case_and_allows_ffs_versions(self) -> None:
+        for version, expected_depth in (
+            (runtime.DEMO_VERSION_3, "realsense"),
+            (runtime.DEMO_VERSION_3_1, "realsense"),
+            (runtime.DEMO_VERSION_3_2, "ffs"),
+            (runtime.DEMO_VERSION_3_3, "ffs"),
+        ):
+            with self.subTest(version=version):
+                args = self._parse(version, ["--input-source", "fake-live"])
+                runtime.validate_args(args)
+                contract = runtime.build_contract(args)
+                delegate = runtime.build_live_delegate_argv(args)
+
+                self.assertEqual(contract["input_source"], "fake_live_recorded_single_camera")
+                self.assertEqual(contract["input_source_mode"], "fake-live")
+                self.assertEqual(contract["recording_case"], str(runtime.DEFAULT_FAKE_LIVE_CASE))
+                self.assertIsNone(contract["serial"])
+                self.assertEqual(contract["depth_source"], expected_depth)
+                self.assertIn("--input-source", delegate)
+                self.assertIn("fake-live", delegate)
+                self.assertIn("--recording-case", delegate)
+                self.assertIn(str(runtime.DEFAULT_FAKE_LIVE_CASE), delegate)
+                self.assertNotIn("--serial", delegate)
+
+    def test_fake_live_case_alias_is_forwarded_to_delegate(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--fake-live-case",
+                "data_collect/custom_case",
+                "--replay-fps",
+                "30",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(contract["recording_case"], "data_collect/custom_case")
+        self.assertEqual(contract["replay_fps"], 30.0)
+        self.assertEqual(_option_value(delegate, "--recording-case"), "data_collect/custom_case")
+        self.assertEqual(_option_value(delegate, "--replay-fps"), "30.0")
 
     def test_pointcloud_load_controls_are_forwarded_to_delegate(self) -> None:
         args = self._parse(
@@ -374,7 +419,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertIn("--pcd-mode", delegate)
         self.assertIn("none", delegate)
 
-    def test_recording_mode_rejects_ffs_versions(self) -> None:
+    def test_recording_alias_accepts_ffs_versions_when_case_is_explicit(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_2,
             [
@@ -385,8 +430,14 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             ],
         )
 
-        with self.assertRaises(ValueError):
-            runtime.validate_args(args)
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(contract["input_source_mode"], "recording")
+        self.assertEqual(contract["depth_source"], "ffs")
+        self.assertIn("recording", delegate)
+        self.assertIn("--recording-case", delegate)
 
 
 if __name__ == "__main__":

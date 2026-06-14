@@ -14,16 +14,29 @@ from qqtt.demo import realtime_masked_edgetam_pcd as masked_demo
 
 
 class RecordedRgbdReplaySourceTest(unittest.TestCase):
-    def _write_case(self, root: Path, *, steps: tuple[int, ...] = (10, 2)) -> Path:
+    def _write_case(
+        self,
+        root: Path,
+        *,
+        steps: tuple[int, ...] = (10, 2),
+        fps: float = 30,
+        include_ir: bool = False,
+    ) -> Path:
         case_dir = root / "case"
         (case_dir / "color" / "0").mkdir(parents=True)
         (case_dir / "depth" / "0").mkdir(parents=True)
+        if include_ir:
+            (case_dir / "ir_left" / "0").mkdir(parents=True)
+            (case_dir / "ir_right" / "0").mkdir(parents=True)
+        streams_present = ["color", "depth"]
+        if include_ir:
+            streams_present.extend(["ir_left", "ir_right"])
         metadata = {
             "schema_version": "qqtt_recording_v2",
             "serial_numbers": ["s0"],
-            "capture_mode": "rgbd",
-            "streams_present": ["color", "depth"],
-            "fps": 30,
+            "capture_mode": "both_eval" if include_ir else "rgbd",
+            "streams_present": streams_present,
+            "fps": fps,
             "WH": [3, 2],
             "K_color": [
                 [
@@ -35,12 +48,40 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             "depth_scale_m_per_unit": [0.001],
             "recording": {"0": {str(step): float(step) for step in steps}},
         }
+        if include_ir:
+            metadata.update(
+                {
+                    "K_ir_left": [
+                        [
+                            [3.0, 0.0, 1.0],
+                            [0.0, 3.0, 0.5],
+                            [0.0, 0.0, 1.0],
+                        ]
+                    ],
+                    "T_ir_left_to_color": [
+                        [
+                            [1.0, 0.0, 0.0, -0.05],
+                            [0.0, 1.0, 0.0, 0.0],
+                            [0.0, 0.0, 1.0, 0.0],
+                            [0.0, 0.0, 0.0, 1.0],
+                        ]
+                    ],
+                    "ir_baseline_m": [0.095],
+                }
+            )
         (case_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
         for step in steps:
             rgb = np.zeros((2, 3, 3), dtype=np.uint8)
             rgb[:, :] = (step, step + 1, step + 2)
             Image.fromarray(rgb, mode="RGB").save(case_dir / "color" / "0" / f"{step}.png")
             np.save(case_dir / "depth" / "0" / f"{step}.npy", np.full((2, 3), step, dtype=np.uint16))
+            if include_ir:
+                Image.fromarray(np.full((2, 3), step, dtype=np.uint8), mode="L").save(
+                    case_dir / "ir_left" / "0" / f"{step}.png"
+                )
+                Image.fromarray(np.full((2, 3), step + 1, dtype=np.uint8), mode="L").save(
+                    case_dir / "ir_right" / "0" / f"{step}.png"
+                )
         return case_dir
 
     def test_numeric_step_order_remaps_first_complete_frame_to_seq_zero(self) -> None:
@@ -64,6 +105,7 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             np.testing.assert_array_equal(packet.k_color, np.array(source.k_color, dtype=np.float32))
             self.assertEqual(packet.color_bgr[0, 0].tolist(), [4, 3, 2])
             self.assertEqual(packet.depth_u16[0, 0].item(), 2)
+            self.assertIsNone(packet.ir_left_u8)
 
     def test_missing_metadata_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -77,6 +119,38 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
 
             with self.assertRaises(FileNotFoundError):
                 masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=30.0)
+
+    def test_metadata_fps_zero_defaults_to_30fps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            case_dir = self._write_case(Path(tmp_dir), steps=(2,), fps=0)
+
+            source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=0.0)
+
+            self.assertEqual(source.effective_fps, 30.0)
+
+    def test_ffs_fake_live_packet_uses_ir_stereo_without_native_depth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            case_dir = self._write_case(Path(tmp_dir), include_ir=True)
+
+            source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=0.0, depth_source="ffs")
+            packet = source.read_packet(seq=0)
+
+            self.assertEqual(packet.depth_source, "ffs")
+            self.assertIsNone(packet.depth_u16)
+            self.assertIsNotNone(packet.ir_left_u8)
+            self.assertIsNotNone(packet.ir_right_u8)
+            self.assertEqual(packet.ir_left_u8[0, 0].item(), 2)
+            self.assertEqual(packet.ir_right_u8[0, 0].item(), 3)
+            self.assertAlmostEqual(packet.ir_baseline_m, 0.095)
+            np.testing.assert_array_equal(packet.k_ir_left, np.asarray(source.k_ir_left, dtype=np.float32))
+            np.testing.assert_array_equal(packet.t_ir_left_to_color, np.asarray(source.t_ir_left_to_color, dtype=np.float32))
+
+    def test_ffs_fake_live_requires_ir_stereo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            case_dir = self._write_case(Path(tmp_dir))
+
+            with self.assertRaisesRegex(ValueError, "ir_left and ir_right"):
+                masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=30.0, depth_source="ffs")
 
     def test_headless_recording_replay_smoke_finishes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

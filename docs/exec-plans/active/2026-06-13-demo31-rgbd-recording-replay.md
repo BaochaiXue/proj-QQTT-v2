@@ -11,7 +11,8 @@ it were a live RealSense camera.
 
 - Add `--input-source {live,recording}`, `--recording-case`, and `--replay-fps`
   to the shared single Demo 3.x launcher.
-- Support recording replay only for RealSense-native Demo 3 / 3.1.
+- Superseded on 2026-06-14 by Demo 3.x fake-live replay: RealSense-native Demo
+  3 / 3.1 consume RGB-D and FFS Demo 3.2 / 3.3 consume IR stereo.
 - Read RGB-D raw recordings from `metadata.json`, `color/0/*.png`, and
   `depth/0/*.npy`; sort camera-0 metadata steps numerically and remap the first
   complete frame to demo `seq=0`.

@@ -111,8 +111,10 @@ DEFAULT_TRACK_MODE = "controller-object"
 DEPTH_SOURCES = ("ffs", "ffs_remote", "realsense", "none")
 DEFAULT_DEPTH_SOURCE = "ffs"
 INPUT_SOURCE_LIVE = "live"
+INPUT_SOURCE_FAKE_LIVE = "fake-live"
 INPUT_SOURCE_RECORDING = "recording"
-INPUT_SOURCES = (INPUT_SOURCE_LIVE, INPUT_SOURCE_RECORDING)
+INPUT_SOURCES = (INPUT_SOURCE_LIVE, INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_RECORDING)
+DEFAULT_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_2min_e45_g35_20260614_155543")
 PCD_MODES = ("masked", "none")
 DEFAULT_PCD_MODE = "masked"
 RENDER_MODES = ("pointcloud", "none")
@@ -268,7 +270,9 @@ class RecordedRgbdFrameRef:
     step: int
     timestamp_s: float
     color_path: Path
-    depth_path: Path
+    depth_path: Path | None = None
+    ir_left_path: Path | None = None
+    ir_right_path: Path | None = None
 
 
 class _NoopPipeline:
@@ -277,9 +281,21 @@ class _NoopPipeline:
 
 
 class RecordedRgbdFrameSource:
-    def __init__(self, case_path: str | Path, *, replay_fps: float = 0.0, camera_index: int = 0) -> None:
+    def __init__(
+        self,
+        case_path: str | Path,
+        *,
+        replay_fps: float = 0.0,
+        camera_index: int = 0,
+        depth_source: str = "realsense",
+    ) -> None:
         self.case_path = _resolve_path(case_path)
         self.camera_index = int(camera_index)
+        self.depth_source = str(depth_source)
+        if self.depth_source not in DEPTH_SOURCES:
+            raise ValueError(f"recording replay depth_source must be one of {DEPTH_SOURCES}")
+        self.requires_depth = self.depth_source == "realsense"
+        self.requires_ir = self.depth_source in {"ffs", "ffs_remote"}
         self.metadata_path = self.case_path / "metadata.json"
         if not self.metadata_path.is_file():
             raise FileNotFoundError(f"recording metadata not found: {self.metadata_path}")
@@ -289,8 +305,12 @@ class RecordedRgbdFrameSource:
             raise ValueError(f"recording metadata is not valid JSON: {self.metadata_path}") from exc
         self.metadata: dict[str, Any] = metadata
         streams_present = {str(item) for item in metadata.get("streams_present", [])}
-        if not {"color", "depth"}.issubset(streams_present):
-            raise ValueError("recording replay requires streams_present to include color and depth")
+        if "color" not in streams_present:
+            raise ValueError("recording replay requires streams_present to include color")
+        if self.requires_depth and "depth" not in streams_present:
+            raise ValueError("RealSense recording replay requires streams_present to include depth")
+        if self.requires_ir and not {"ir_left", "ir_right"}.issubset(streams_present):
+            raise ValueError("FFS fake-live replay requires streams_present to include ir_left and ir_right")
         recording_by_camera = metadata.get("recording")
         if not isinstance(recording_by_camera, dict):
             raise ValueError("recording metadata must contain a recording object")
@@ -309,6 +329,21 @@ class RecordedRgbdFrameSource:
         self.serial = self._camera_string(metadata, "serial_numbers", default=f"recording-cam{self.camera_index}")
         self.width, self.height = self._resolve_dimensions(metadata)
         self.effective_fps = self._resolve_replay_fps(float(replay_fps), metadata)
+        self.k_ir_left: np.ndarray | None = None
+        self.t_ir_left_to_color: np.ndarray | None = None
+        self.ir_baseline_m = 0.0
+        self.has_ir_stereo = False
+        if {"ir_left", "ir_right"}.issubset(streams_present):
+            try:
+                self.k_ir_left = self._camera_matrix(metadata, "K_ir_left")
+                self.t_ir_left_to_color = self._camera_transform(metadata, "T_ir_left_to_color")
+                self.ir_baseline_m = self._camera_baseline(metadata)
+                self.has_ir_stereo = True
+            except ValueError:
+                if self.requires_ir:
+                    raise
+        if self.requires_ir and not self.has_ir_stereo:
+            raise ValueError("FFS fake-live replay requires IR stereo calibration in metadata")
         self.frames = self._build_frame_refs(camera_recording)
 
     @property
@@ -327,6 +362,9 @@ class RecordedRgbdFrameSource:
             intrinsics=self.intrinsics,
             depth_scale_m_per_unit=self.depth_scale_m_per_unit,
             k_color=self.k_color,
+            k_ir_left=self.k_ir_left,
+            t_ir_left_to_color=self.t_ir_left_to_color,
+            ir_baseline_m=float(self.ir_baseline_m),
         )
 
     def read_packet(
@@ -340,12 +378,21 @@ class RecordedRgbdFrameSource:
         ref = self.frames[int(seq)]
         copy_start_s = time.perf_counter()
         color_bgr = self._load_color_bgr(ref.color_path)
-        depth_u16 = self._load_depth_u16(ref.depth_path)
+        depth_u16 = self._load_depth_u16(ref.depth_path) if ref.depth_path is not None else None
+        ir_left_u8 = self._load_gray_u8(ref.ir_left_path) if ref.ir_left_path is not None else None
+        ir_right_u8 = self._load_gray_u8(ref.ir_right_path) if ref.ir_right_path is not None else None
         copy_done_s = time.perf_counter()
-        if color_bgr.shape[:2] != depth_u16.shape:
+        if depth_u16 is not None and color_bgr.shape[:2] != depth_u16.shape:
             raise ValueError(
                 f"recording color/depth shape mismatch for step {ref.step}: "
                 f"{tuple(color_bgr.shape[:2])} vs {tuple(depth_u16.shape)}"
+            )
+        if (ir_left_u8 is None) != (ir_right_u8 is None):
+            raise ValueError(f"recording IR pair is incomplete for step {ref.step}")
+        if ir_left_u8 is not None and ir_left_u8.shape != ir_right_u8.shape:
+            raise ValueError(
+                f"recording IR left/right shape mismatch for step {ref.step}: "
+                f"{tuple(ir_left_u8.shape)} vs {tuple(ir_right_u8.shape)}"
             )
         if tuple(color_bgr.shape[:2]) != (self.height, self.width):
             raise ValueError(
@@ -357,13 +404,18 @@ class RecordedRgbdFrameSource:
         return FramePacket(
             seq=int(seq),
             color_bgr=color_bgr,
-            depth_source="realsense",
+            depth_source=self.depth_source,
             intrinsics=self.intrinsics,
             depth_scale_m_per_unit=self.depth_scale_m_per_unit,
             receive_perf_s=receive_s,
             timing=PipelineTiming(wait_ms=float(wait_ms), align_ms=0.0, frame_copy_ms=copy_ms),
             depth_u16=depth_u16,
+            ir_left_u8=ir_left_u8,
+            ir_right_u8=ir_right_u8,
+            k_ir_left=self.k_ir_left if ir_left_u8 is not None else None,
+            t_ir_left_to_color=self.t_ir_left_to_color if ir_left_u8 is not None else None,
             k_color=self.k_color,
+            ir_baseline_m=float(self.ir_baseline_m) if ir_left_u8 is not None else 0.0,
         )
 
     def _camera_matrix(self, metadata: dict[str, Any], key: str, *, fallback_key: str | None = None) -> np.ndarray:
@@ -378,6 +430,28 @@ class RecordedRgbdFrameSource:
         if float(matrix[0, 0]) <= 0.0 or float(matrix[1, 1]) <= 0.0:
             raise ValueError(f"recording metadata {key}[{self.camera_index}] has non-positive focal length")
         return np.ascontiguousarray(matrix, dtype=np.float32)
+
+    def _camera_transform(self, metadata: dict[str, Any], key: str) -> np.ndarray:
+        values = metadata.get(key)
+        if not isinstance(values, list) or self.camera_index >= len(values) or values[self.camera_index] is None:
+            raise ValueError(f"recording metadata missing {key} for camera {self.camera_index}")
+        matrix = np.asarray(values[self.camera_index], dtype=np.float32)
+        if matrix.shape != (4, 4):
+            raise ValueError(f"recording metadata {key}[{self.camera_index}] must be 4x4")
+        return np.ascontiguousarray(matrix, dtype=np.float32)
+
+    def _camera_baseline(self, metadata: dict[str, Any]) -> float:
+        values = metadata.get("ir_baseline_m")
+        if isinstance(values, list) and self.camera_index < len(values) and values[self.camera_index] is not None:
+            value = float(values[self.camera_index])
+            if value <= 0.0:
+                raise ValueError(f"recording metadata ir_baseline_m[{self.camera_index}] must be positive")
+            return value
+        transform = self._camera_transform(metadata, "T_ir_left_to_right")
+        baseline = float(np.linalg.norm(transform[:3, 3]))
+        if baseline <= 0.0:
+            raise ValueError(f"recording metadata T_ir_left_to_right[{self.camera_index}] has non-positive baseline")
+        return baseline
 
     def _camera_float(self, metadata: dict[str, Any], key: str) -> float:
         values = metadata.get(key)
@@ -407,31 +481,43 @@ class RecordedRgbdFrameSource:
     def _resolve_replay_fps(self, replay_fps: float, metadata: dict[str, Any]) -> float:
         fps = float(metadata.get("fps", 0.0)) if replay_fps <= 0.0 else float(replay_fps)
         if fps <= 0.0:
-            raise ValueError("recording replay FPS must be positive or metadata fps must be positive")
+            return 30.0
         return fps
 
     def _build_frame_refs(self, camera_recording: dict[str, Any]) -> list[RecordedRgbdFrameRef]:
         refs: list[RecordedRgbdFrameRef] = []
         color_dir = self.case_path / "color" / str(self.camera_index)
         depth_dir = self.case_path / "depth" / str(self.camera_index)
+        ir_left_dir = self.case_path / "ir_left" / str(self.camera_index)
+        ir_right_dir = self.case_path / "ir_right" / str(self.camera_index)
         for step_text, timestamp in sorted(camera_recording.items(), key=lambda item: int(item[0])):
             step = int(step_text)
             color_path = color_dir / f"{step}.png"
             depth_path = depth_dir / f"{step}.npy"
             if not color_path.is_file():
                 raise FileNotFoundError(f"recording color frame missing: {color_path}")
-            if not depth_path.is_file():
+            if self.requires_depth and not depth_path.is_file():
                 raise FileNotFoundError(f"recording depth frame missing: {depth_path}")
+            ir_left_path = ir_left_dir / f"{step}.png"
+            ir_right_path = ir_right_dir / f"{step}.png"
+            if self.requires_ir:
+                if not ir_left_path.is_file():
+                    raise FileNotFoundError(f"recording IR left frame missing: {ir_left_path}")
+                if not ir_right_path.is_file():
+                    raise FileNotFoundError(f"recording IR right frame missing: {ir_right_path}")
+            optional_ir_pair = self.has_ir_stereo and ir_left_path.is_file() and ir_right_path.is_file()
             refs.append(
                 RecordedRgbdFrameRef(
                     step=step,
                     timestamp_s=float(timestamp),
                     color_path=color_path,
-                    depth_path=depth_path,
+                    depth_path=depth_path if self.requires_depth else None,
+                    ir_left_path=ir_left_path if self.requires_ir or optional_ir_pair else None,
+                    ir_right_path=ir_right_path if self.requires_ir or optional_ir_pair else None,
                 )
             )
         if not refs:
-            raise ValueError(f"recording has no complete RGB-D frames for camera {self.camera_index}")
+            raise ValueError(f"recording has no complete fake-live frames for camera {self.camera_index}")
         return refs
 
     def _load_color_bgr(self, path: Path) -> np.ndarray:
@@ -455,6 +541,16 @@ class RecordedRgbdFrameSource:
         if depth_u16.dtype != np.uint16:
             depth_u16 = depth_u16.astype(np.uint16, copy=False)
         return np.ascontiguousarray(depth_u16)
+
+    def _load_gray_u8(self, path: Path) -> np.ndarray:
+        try:
+            from PIL import Image
+
+            with Image.open(path) as image:
+                gray = np.asarray(image.convert("L"))
+        except Exception as exc:
+            raise ValueError(f"failed to load recording IR frame {path}: {exc}") from exc
+        return np.ascontiguousarray(gray, dtype=np.uint8)
 
 
 @dataclass(frozen=True)
@@ -618,6 +714,10 @@ def _parse_rgb_triplet(value: str) -> tuple[int, int, int]:
     return rgb  # type: ignore[return-value]
 
 
+def _is_replay_input_source(input_source: str) -> bool:
+    return str(input_source) in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_RECORDING}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -633,19 +733,29 @@ def build_parser() -> argparse.ArgumentParser:
         "--input-source",
         choices=INPUT_SOURCES,
         default=INPUT_SOURCE_LIVE,
-        help="Frame source. recording replays a raw single-camera RGB-D data_collect case.",
+        help=(
+            "Frame source. fake-live replays a raw single-camera data_collect case at camera cadence; "
+            "recording is kept as a compatibility alias."
+        ),
     )
     parser.add_argument(
         "--recording-case",
         type=Path,
         default=None,
-        help="Raw data_collect case folder for --input-source recording.",
+        help="Raw data_collect case folder for --input-source recording or fake-live.",
+    )
+    parser.add_argument(
+        "--fake-live-case",
+        dest="recording_case",
+        type=Path,
+        default=None,
+        help=f"Alias for --recording-case. fake-live defaults to {DEFAULT_FAKE_LIVE_CASE}.",
     )
     parser.add_argument(
         "--replay-fps",
         type=float,
         default=0.0,
-        help="Replay FPS for --input-source recording. Use 0 to read metadata fps.",
+        help="Replay FPS for --input-source recording or fake-live. Use 0 to read metadata fps.",
     )
     parser.add_argument(
         "--depth-source",
@@ -976,15 +1086,13 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"--depth-source must be one of {', '.join(DEPTH_SOURCES)}")
     if float(args.replay_fps) < 0.0:
         raise ValueError("--replay-fps must be >= 0")
-    if args.input_source == INPUT_SOURCE_RECORDING:
+    if args.input_source == INPUT_SOURCE_FAKE_LIVE and args.recording_case is None:
+        args.recording_case = DEFAULT_FAKE_LIVE_CASE
+    if _is_replay_input_source(str(args.input_source)):
         if args.recording_case is None:
-            raise ValueError("--input-source recording requires --recording-case")
-        if args.depth_source != "realsense":
-            raise ValueError("--input-source recording currently supports only --depth-source realsense")
-        if bool(args.enable_remote_ffs_quality):
-            raise ValueError("--input-source recording does not include IR frames for remote FFS quality")
+            raise ValueError(f"--input-source {args.input_source} requires --recording-case or --fake-live-case")
     elif args.recording_case is not None:
-        raise ValueError("--recording-case requires --input-source recording")
+        raise ValueError("--recording-case/--fake-live-case requires --input-source recording or fake-live")
     if args.demo_preset == "local-ffs-professor" and args.depth_source != "ffs":
         raise ValueError("--demo-preset local-ffs-professor requires --depth-source ffs")
     if args.depth_min_m < 0:
@@ -1913,19 +2021,22 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if pcd_filter_enabled(self.args) and str(self.args.pcd_filter_mode) == "async":
             self.filter_worker = AsyncPcdFilterWorker(self._filter_pcd_input)
             self.filter_worker.start()
-        if self.args.input_source == INPUT_SOURCE_RECORDING:
+        if _is_replay_input_source(str(self.args.input_source)):
             self.recording_source = RecordedRgbdFrameSource(
                 self.args.recording_case,
                 replay_fps=float(self.args.replay_fps),
+                depth_source=str(self.args.depth_source),
             )
             self.width = self.recording_source.width
             self.height = self.recording_source.height
             self.runtime = self.recording_source.make_runtime()
+            replay_label = "fake-live" if self.args.input_source == INPUT_SOURCE_FAKE_LIVE else "recording-replay"
             print(
-                "[recording-replay] "
+                f"[{replay_label}] "
                 f"case={self.recording_source.case_path} frames={self.recording_source.frame_count} "
                 f"fps={self.recording_source.effective_fps:g} first_step={self.recording_source.steps[0]} "
-                f"serial={self.recording_source.serial}",
+                f"serial={self.recording_source.serial} depth_source={self.recording_source.depth_source} "
+                f"ir_stereo={str(self.recording_source.has_ir_stereo).lower()}",
                 flush=True,
             )
         else:
@@ -2098,7 +2209,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
     def _capture_worker(self) -> None:
         assert self.runtime is not None
-        if self.args.input_source == INPUT_SOURCE_RECORDING:
+        if _is_replay_input_source(str(self.args.input_source)):
             self._capture_recording_worker()
             return
         seq = 0
@@ -2215,12 +2326,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "inference_state_device": self.args.device,
             "video_storage_device": self.args.device,
             "frame_by_frame_streaming": True,
-            "offline_video_input_used": self.args.input_source == INPUT_SOURCE_RECORDING,
+            "offline_video_input_used": _is_replay_input_source(str(self.args.input_source)),
             "input_source": self.args.input_source,
-            "recording_case": str(self.args.recording_case) if self.args.input_source == INPUT_SOURCE_RECORDING else None,
+            "recording_case": (
+                str(self.args.recording_case) if _is_replay_input_source(str(self.args.input_source)) else None
+            ),
             "replay_fps": (
                 self.recording_source.effective_fps
-                if self.args.input_source == INPUT_SOURCE_RECORDING and self.recording_source is not None
+                if _is_replay_input_source(str(self.args.input_source)) and self.recording_source is not None
                 else None
             ),
             "track_mode": self.args.track_mode,
@@ -2307,7 +2420,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 )
                 self.mask_slot.put(first_packet)
                 self.seg_stats.record(first_packet.process_done_perf_s)
-                if self.args.input_source == INPUT_SOURCE_RECORDING:
+                if _is_replay_input_source(str(self.args.input_source)):
                     self._recording_first_frame_segmented.set()
                 last_seq = first_frame.seq
                 while not self.stop_event.is_set():

@@ -26,7 +26,7 @@ export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
   - SAM 3.1 / EdgeTAM dependencies used by the single-camera masked PCD demo
 - Expected use:
   - `scripts/harness/realtime_single_camera_pointcloud.py`
-  - `single_demo_v3*`
+  - `demo_v3*`
   - deterministic checks
   - integrated local demo work where switching specialized envs is the main friction
 - Validation command:

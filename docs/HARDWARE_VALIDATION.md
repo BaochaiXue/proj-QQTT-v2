@@ -42,8 +42,8 @@ conda run -n demo_2_max --no-capture-output python scripts/harness/realtime_sing
 - single demo dry-runs report `camera_count = 1`:
 
 ```bash
-python single_demo_v3/realtime_single_camera_realsense_masked_pcd.py --dry-run
-python single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
+python demo_v3/realtime_single_camera_realsense_masked_pcd.py --dry-run
+python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
 ## Calibration Checklist

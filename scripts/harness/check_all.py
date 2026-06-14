@@ -28,10 +28,10 @@ FULL_ONLY_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
 )
 
 DEMO_HELP_SCRIPTS: tuple[str, ...] = (
-    "single_demo_v3/realtime_single_camera_realsense_masked_pcd.py",
-    "single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py",
-    "single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py",
-    "single_demo_v3_3/realtime_single_camera_ffs_masked_pcd.py",
+    "demo_v3/realtime_single_camera_realsense_masked_pcd.py",
+    "demo_v3_1/realtime_single_camera_realsense_masked_pcd.py",
+    "demo_v3_2/realtime_single_camera_ffs_masked_pcd.py",
+    "demo_v3_3/realtime_single_camera_ffs_masked_pcd.py",
 )
 
 QUICK_HELP_SCRIPTS: tuple[str, ...] = (*BASE_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))
