@@ -3,6 +3,7 @@
 from typing import Optional, Callable, Dict
 import os
 import enum
+import queue
 import time
 import json
 import numpy as np
@@ -163,6 +164,7 @@ class SingleRealsense(mp.Process):
         self.command_queue = command_queue
         self.intrinsics_array = intrinsics_array
         self.metadata_queue = mp.Queue(maxsize=1)
+        self.startup_error_queue = mp.Queue(maxsize=1)
         self.metadata_cache = None
 
     @staticmethod
@@ -199,24 +201,36 @@ class SingleRealsense(mp.Process):
             self.end_wait()
             self.close_ipc()
 
-    def start_wait(self):
-        self.ready_event.wait()
+    def start_wait(self, timeout_s=None):
+        if not self.ready_event.wait(timeout=None if timeout_s is None else max(0.0, float(timeout_s))):
+            self.stop_event.set()
+            raise TimeoutError(
+                f"RealSense camera {self.serial_number} did not produce a first frame "
+                f"within {float(timeout_s):.1f}s."
+            )
+        startup_error = self._pop_startup_error()
+        if startup_error is not None:
+            raise RuntimeError(f"RealSense camera {self.serial_number} failed during startup: {startup_error}")
+        if not self.is_alive():
+            raise RuntimeError(f"RealSense camera {self.serial_number} exited before startup completed.")
 
     def end_wait(self):
         self.join()
 
     def close_ipc(self):
-        queue = getattr(self, "metadata_queue", None)
-        if queue is not None:
+        for queue_attr in ("metadata_queue", "startup_error_queue"):
+            queue_obj = getattr(self, queue_attr, None)
+            if queue_obj is None:
+                continue
             try:
-                queue.cancel_join_thread()
+                queue_obj.cancel_join_thread()
             except Exception:
                 pass
             try:
-                queue.close()
+                queue_obj.close()
             except Exception:
                 pass
-            self.metadata_queue = None
+            setattr(self, queue_attr, None)
 
     @property
     def is_ready(self):
@@ -283,10 +297,38 @@ class SingleRealsense(mp.Process):
         scale = self.intrinsics_array.get()[-1]
         return scale
 
-    def get_stream_metadata(self):
+    def _put_startup_error(self, message: str):
+        queue_obj = getattr(self, "startup_error_queue", None)
+        if queue_obj is None:
+            return
+        try:
+            queue_obj.put_nowait(str(message))
+        except Exception:
+            pass
+
+    def _pop_startup_error(self):
+        queue_obj = getattr(self, "startup_error_queue", None)
+        if queue_obj is None:
+            return None
+        try:
+            return queue_obj.get_nowait()
+        except queue.Empty:
+            return None
+        except Exception:
+            return None
+
+    def get_stream_metadata(self, timeout_s=5.0):
         assert self.ready_event.is_set()
         if self.metadata_cache is None:
-            self.metadata_cache = self.metadata_queue.get()
+            startup_error = self._pop_startup_error()
+            if startup_error is not None:
+                raise RuntimeError(f"RealSense camera {self.serial_number} failed during startup: {startup_error}")
+            try:
+                self.metadata_cache = self.metadata_queue.get(timeout=float(timeout_s))
+            except queue.Empty as exc:
+                raise TimeoutError(
+                    f"Timed out waiting for RealSense camera {self.serial_number} stream metadata."
+                ) from exc
         return self.metadata_cache
 
     def depth_process(self, depth_frame):
@@ -543,6 +585,8 @@ class SingleRealsense(mp.Process):
             if self.verbose:
                 print(f"[SingleRealsense {self.serial_number}] Main loop started.")
 
+        startup_ready = False
+        startup_exception = None
         try:
             init_device()
             # put frequency regulation
@@ -691,6 +735,7 @@ class SingleRealsense(mp.Process):
 
                 # signal ready
                 if iter_idx == 0:
+                    startup_ready = True
                     self.ready_event.set()
 
                 # perf
@@ -746,13 +791,21 @@ class SingleRealsense(mp.Process):
                         put_start_time = command["put_start_time"]
 
                 iter_idx += 1
+        except BaseException as exc:
+            startup_exception = exc
+            if not self.stop_event.is_set():
+                self._put_startup_error(f"{type(exc).__name__}: {exc}")
+            raise
         finally:
             self._stop_pipeline_safely()
             try:
                 rs_config.disable_all_streams()
             except Exception:
                 pass
-            self.ready_event.set()
+            if not startup_ready:
+                if not self.stop_event.is_set() and startup_exception is None:
+                    self._put_startup_error("worker exited before producing a first frame")
+                self.ready_event.set()
 
         if self.verbose:
             print(f"[SingleRealsense {self.serial_number}] Exiting worker process.")

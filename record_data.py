@@ -30,6 +30,7 @@ _PROJECT_ROOT = next(
     ),
     Path(__file__).resolve().parent,
 )
+DEFAULT_CAMERA_START_TIMEOUT_S = 30.0
 
 
 def _resolve_path(path: str) -> Path:
@@ -88,6 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Record this many frames per camera then stop automatically.",
+    )
+    parser.add_argument(
+        "--camera-start-timeout-s",
+        type=float,
+        default=DEFAULT_CAMERA_START_TIMEOUT_S,
+        help="Fail camera startup if no first frame arrives within this many seconds.",
     )
     parser.add_argument(
         "--disable-keyboard-listener",
@@ -173,6 +180,7 @@ def main() -> int:
         gain=args.gain,
         calibration_reference_serials=calibration_reference_serials,
         enable_keyboard_listener=not args.disable_keyboard_listener,
+        camera_start_timeout_s=args.camera_start_timeout_s,
     )
     if not effective_serials:
         effective_serials = camera_system.serial_numbers

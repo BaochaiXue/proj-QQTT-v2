@@ -34,6 +34,7 @@ np.set_printoptions(suppress=True)
 
 DEFAULT_EXPOSURE_OVERRIDES = DEFAULT_COLOR_EXPOSURE_OVERRIDES
 DEFAULT_GAIN_OVERRIDES = DEFAULT_COLOR_GAIN_OVERRIDES
+DEFAULT_CAMERA_START_TIMEOUT_S = 30.0
 
 CAPTURE_MODE_CONFIGS = {
     "color": {
@@ -161,6 +162,7 @@ class CameraSystem:
         gain_overrides=None,
         calibration_reference_serials=None,
         enable_keyboard_listener=True,
+        camera_start_timeout_s=DEFAULT_CAMERA_START_TIMEOUT_S,
     ):
         self.WH = WH
         self.fps = fps
@@ -247,9 +249,13 @@ class CameraSystem:
         self.realsense.set_exposure(exposure=exposure_values, gain=gain_values)
         self.realsense.set_white_balance(white_balance)
 
-        self.realsense.start()
-        time.sleep(3)
-        self.stream_metadata = self.realsense.get_stream_metadata()
+        try:
+            self.realsense.start(start_timeout_s=camera_start_timeout_s)
+            time.sleep(3)
+            self.stream_metadata = self.realsense.get_stream_metadata()
+        except Exception:
+            self.stop(wait=True)
+            raise
         self.recording = False
         self.end = False
         if enable_keyboard_listener:

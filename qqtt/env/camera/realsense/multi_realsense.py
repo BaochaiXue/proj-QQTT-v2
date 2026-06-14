@@ -96,14 +96,18 @@ class MultiRealsense:
                 is_ready = False
         return is_ready
 
-    def start(self, wait=True, put_start_time=None):
+    def start(self, wait=True, put_start_time=None, start_timeout_s=None):
         if put_start_time is None:
             put_start_time = time.time()
         for camera in self._cameras_in_logical_order():
             camera.start(wait=False, put_start_time=put_start_time)
 
         if wait:
-            self.start_wait()
+            try:
+                self.start_wait(timeout_s=start_timeout_s)
+            except Exception:
+                self.stop(wait=True)
+                raise
 
     def stop(self, wait=True):
         for camera in self._cameras_in_logical_order():
@@ -112,10 +116,16 @@ class MultiRealsense:
         if wait:
             self.stop_wait()
 
-    def start_wait(self):
+    def start_wait(self, timeout_s=None):
+        deadline_s = None
+        if timeout_s is not None:
+            deadline_s = time.monotonic() + max(0.0, float(timeout_s))
         for camera in self._cameras_in_logical_order():
+            remaining_s = None
+            if deadline_s is not None:
+                remaining_s = max(0.0, deadline_s - time.monotonic())
             print("processing camera {}".format(camera.serial_number))
-            camera.start_wait()
+            camera.start_wait(timeout_s=remaining_s)
 
     def stop_wait(self, timeout_s=5.0):
         for camera in self._cameras_in_logical_order():

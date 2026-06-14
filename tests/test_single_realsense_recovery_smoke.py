@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 import threading
 import unittest
 
@@ -26,6 +27,29 @@ class _ProfileLookupFailsPipeline:
 
 
 class SingleRealsenseRecoverySmokeTest(unittest.TestCase):
+    def test_start_wait_timeout_sets_stop_event(self) -> None:
+        worker = SingleRealsense.__new__(SingleRealsense)
+        worker.serial_number = "test-serial"
+        worker.stop_event = threading.Event()
+        worker.ready_event = threading.Event()
+
+        with self.assertRaisesRegex(TimeoutError, "did not produce a first frame"):
+            worker.start_wait(timeout_s=0.01)
+
+        self.assertTrue(worker.stop_event.is_set())
+
+    def test_start_wait_surfaces_worker_startup_error(self) -> None:
+        worker = SingleRealsense.__new__(SingleRealsense)
+        worker.serial_number = "test-serial"
+        worker.stop_event = threading.Event()
+        worker.ready_event = threading.Event()
+        worker.ready_event.set()
+        worker.startup_error_queue = queue.Queue()
+        worker.startup_error_queue.put("RuntimeError: synthetic startup failure")
+
+        with self.assertRaisesRegex(RuntimeError, "synthetic startup failure"):
+            worker.start_wait(timeout_s=0.01)
+
     def test_stop_requested_skips_recovery_after_wait_error(self) -> None:
         worker = SingleRealsense.__new__(SingleRealsense)
         worker.serial_number = "test-serial"

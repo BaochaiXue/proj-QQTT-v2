@@ -303,6 +303,45 @@ class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
             self.assertTrue((root / "sidecar_case" / "calibrate.pkl").is_file())
             self.assertTrue((root / "sidecar_case" / "calibrate_metadata.json").is_file())
 
+    def test_camera_start_timeout_cli_is_passed_to_camera_system(self) -> None:
+        _FakeCameraSystem.last_instance = None
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            argv = [
+                "record_data.py",
+                "--case_name",
+                "timeout_case",
+                "--output_dir",
+                tmp_dir,
+                "--serials",
+                "a",
+                "--camera-start-timeout-s",
+                "4.5",
+                "--disable-keyboard-listener",
+            ]
+            with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch.object(
+                record_data,
+                "evaluate_capture_preflight",
+                side_effect=[
+                    _decision(
+                        capture_mode="rgbd",
+                        operator_status="supported",
+                        allowed_to_record=True,
+                        serials=["a"],
+                        reason="ok",
+                    ),
+                    _decision(
+                        capture_mode="rgbd",
+                        operator_status="supported",
+                        allowed_to_record=True,
+                        serials=["a"],
+                        reason="ok",
+                    ),
+                ],
+            ), patch("sys.argv", argv):
+                self.assertEqual(record_data.main(), 0)
+
+            self.assertEqual(_FakeCameraSystem.last_instance.kwargs["camera_start_timeout_s"], 4.5)
+
 
 if __name__ == "__main__":
     unittest.main()
