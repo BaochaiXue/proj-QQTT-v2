@@ -569,6 +569,14 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         with self.assertRaisesRegex(demo.LosslessPipelineError, "expected seq 1, got 2"):
             queue.put(self._mask_packet(seq=2))
 
+    def test_lossless_controller_filter_budget_can_drop_below_default_min_cap(self) -> None:
+        args = self._tracker_args()
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+
+        self.assertEqual(runtime.object_filter_budget.min_cap, int(args.filter_min_cap))
+        self.assertLess(runtime.controller_filter_budget.min_cap, int(args.filter_min_cap))
+        self.assertEqual(runtime.controller_filter_budget.min_cap, demo.DEFAULT_LOSSLESS_CONTROLLER_FILTER_MIN_CAP)
+
     def test_same_seq_pairer_holds_later_complete_pair_until_missing_seq_arrives(self) -> None:
         pairer = demo.SameSeqPairer(max_backlog_frames=4)
 
@@ -657,6 +665,73 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(runtime.lossless_paired_render_queue.latest_seq(), -1)
         self.assertEqual(runtime.lossless_paired_render_queue.pending_count(), 0)
 
+    def test_slow_lossless_output_worker_does_not_block_pairer_submission(self) -> None:
+        args = self._tracker_args()
+        args.render_mode = "none"
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime._reset_lossless_state()
+        entered_seq0_publish = threading.Event()
+        release_seq0_publish = threading.Event()
+        published: list[int] = []
+        errors: list[BaseException] = []
+
+        def pair_for(seq: int) -> demo.PairedBuildResult:
+            return demo.PairedBuildResult(
+                seq=seq,
+                pcd_result=demo.PcdBuildResult(
+                    packet=self._pcd_packet(seq=seq),
+                    depth_m=None,
+                    mask_packet=self._mask_packet(seq=seq),
+                ),
+                tracker_packet=self._tracker_packet(seq=seq),
+            )
+
+        def fake_publish(
+            pcd_result: demo.PcdBuildResult,
+            tracker_packet: demo.TrackerMarkerPacket,
+        ) -> demo.PairedRenderPacket:
+            seq = int(pcd_result.packet.seq)
+            if seq == 0:
+                entered_seq0_publish.set()
+                self.assertTrue(release_seq0_publish.wait(timeout=1.0))
+            published.append(seq)
+            return demo.PairedRenderPacket(
+                seq=seq,
+                pcd_packet=pcd_result.packet,
+                tracker_packet=tracker_packet,
+            )
+
+        def publish(pair: demo.PairedBuildResult) -> None:
+            try:
+                runtime._publish_pairer_outputs([pair])
+            except BaseException as exc:  # pragma: no cover - re-raised below
+                errors.append(exc)
+
+        runtime._publish_strict_render_pair = fake_publish  # type: ignore[method-assign]
+
+        output_thread = threading.Thread(target=runtime._lossless_pair_output_worker, daemon=True)
+        output_thread.start()
+        publish(pair_for(0))
+        self.assertTrue(entered_seq0_publish.wait(timeout=1.0))
+
+        acquired = runtime._lossless_pairer_lock.acquire(timeout=0.1)
+        self.assertTrue(acquired)
+        if acquired:
+            runtime._lossless_pairer_lock.release()
+
+        publish(pair_for(1))
+        self.assertEqual(published, [])
+        self.assertEqual(runtime.lossless_pair_output_queue.pending_count(), 1)
+
+        runtime.lossless_pair_output_queue.close()
+        release_seq0_publish.set()
+        output_thread.join(timeout=1.0)
+
+        self.assertFalse(output_thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(published, [0, 1])
+        self.assertEqual(runtime._lossless_next_publish_seq, 2)
+
     def test_pcd_visual_mode_with_tracker_start_threads_uses_parallel_lossless_workers(self) -> None:
         args = self._tracker_args()
         args.demo_visual_mode = demo.DEMO_VISUAL_MODE_PCD
@@ -686,6 +761,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             started.append("tracker")
             runtime.stop_event.set()
 
+        def lossless_pair_output_worker() -> None:
+            started.append("pair-output")
+
         runtime._capture_worker = capture_worker  # type: ignore[method-assign]
         runtime._seg_worker = seg_worker  # type: ignore[method-assign]
         runtime._strict_paired_worker = strict_pair_worker  # type: ignore[method-assign]
@@ -693,6 +771,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         runtime._pcd_worker = pcd_worker  # type: ignore[method-assign]
         runtime._lossless_pcd_worker = lossless_pcd_worker  # type: ignore[method-assign]
         runtime._lossless_tracker_worker = lossless_tracker_worker  # type: ignore[method-assign]
+        runtime._lossless_pair_output_worker = lossless_pair_output_worker  # type: ignore[method-assign]
 
         runtime._start_threads()
         deadline = time.time() + 1.0
@@ -702,6 +781,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
 
         self.assertIn("pcd", started)
         self.assertIn("tracker", started)
+        self.assertIn("pair-output", started)
         self.assertNotIn("strict-pair", started)
         self.assertNotIn("old-tracker", started)
         self.assertNotIn("old-pcd", started)

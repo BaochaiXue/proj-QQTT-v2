@@ -258,6 +258,35 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertEqual(stats["fallback_reason"], "low_filter_raw_retain_ratio")
         self.assertEqual(stats["fallback_source"], "raw")
 
+    def test_controller_filter_skips_when_voxel_cap_makes_raw_retain_impossible(self) -> None:
+        args = masked_demo.build_parser().parse_args([])
+        demo_instance = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        points = np.array(
+            [[float(idx) * 0.002, 0.0, 0.50] for idx in range(40)],
+            dtype=np.float32,
+        )
+        colors = np.full((points.shape[0], 3), 127, dtype=np.uint8)
+
+        output_points, _output_colors, stats = demo_instance._apply_single_pcd_filter(
+            points=points,
+            colors=colors,
+            mode=masked_demo.PCD_FILTER_ENHANCED_PT,
+            cap=10,
+            voxel_size_m=0.001,
+            keep_components=2,
+            min_retain_ratio=masked_demo.DEFAULT_CONTROLLER_FILTER_MIN_RETAIN_RATIO,
+            min_raw_retain_ratio=masked_demo.DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO,
+            rng=np.random.default_rng(5),
+        )
+
+        self.assertLess(stats["cap_points"], points.shape[0])
+        self.assertLess(stats["cap_points"] / points.shape[0], stats["min_raw_retain_ratio"])
+        self.assertEqual(output_points.shape[0], points.shape[0])
+        self.assertEqual(stats["filter_output_points"], stats["cap_points"])
+        self.assertEqual(stats["fallback_reason"], "skip_filter_low_cap_raw_retain_ratio")
+        self.assertEqual(stats["fallback_source"], "raw")
+        self.assertEqual(stats["filter_ms"], 0.0)
+
     def test_edgetam_live_session_prunes_old_streaming_state(self) -> None:
         args = masked_demo.build_parser().parse_args(["--edgetam-live-session-keep-frames", "4"])
         demo_instance = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
