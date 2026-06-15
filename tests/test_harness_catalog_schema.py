@@ -51,7 +51,7 @@ class HarnessCatalogSchemaTest(unittest.TestCase):
         grouped = _catalog.entries_by_lifecycle()
         self.assertIn("guards", grouped)
         self.assertIn("validation", grouped)
-        self.assertIn("scripts/harness/check_scope.py", [entry.path for entry in grouped["guards"]])
+        self.assertIn("scripts/harness/guards/check_scope.py", [entry.path for entry in grouped["guards"]])
         self.assertIn("scripts/harness/validation/run.py", [entry.path for entry in grouped["validation"]])
         self.assertNotIn("checks", grouped)
         self.assertFalse(hasattr(_catalog, "entries_by_category"))
