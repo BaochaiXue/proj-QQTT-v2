@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 import numpy as np
+from PIL import Image
 
 from scripts.harness.render_demo32_headless_capture import render_capture_to_video
 
@@ -16,6 +17,7 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             capture_dir = Path(tmp) / "capture"
             (capture_dir / "pcd").mkdir(parents=True)
             (capture_dir / "ffs_depth").mkdir()
+            (capture_dir / "rgb").mkdir()
             (capture_dir / "query_trajectory").mkdir()
             metadata = {
                 "width": 32,
@@ -32,11 +34,14 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                 object_rgb_u8=np.array([[0, 255, 0]], dtype=np.uint8),
             )
             np.save(capture_dir / "ffs_depth" / "000000.npy", np.ones((24, 32), dtype=np.float32))
+            Image.fromarray(np.full((24, 32, 3), 64, dtype=np.uint8)).save(capture_dir / "rgb" / "000000.png")
             np.savez(
                 capture_dir / "query_trajectory" / "000000.npz",
                 marker_xyz_m=np.array([[0.0, 0.0, 0.5], [0.05, 0.0, 0.6]], dtype=np.float32),
                 marker_rgb_u8=np.array([[255, 32, 32], [32, 255, 255]], dtype=np.uint8),
                 query_rgb_u8=np.array([[255, 32, 32], [32, 255, 255]], dtype=np.uint8),
+                tracks_yx=np.array([[12.0, 16.0], [12.0, 18.0]], dtype=np.float32),
+                visibility=np.ones((2,), dtype=np.float32),
                 query_indices=np.array([0, 1], dtype=np.int64),
                 query_is_object=np.array([False, True], dtype=bool),
                 query_is_controller=np.array([True, False], dtype=bool),
@@ -46,6 +51,7 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                 "seq": 0,
                 "pcd_path": "pcd/000000.npz",
                 "ffs_depth_path": "ffs_depth/000000.npy",
+                "rgb_path": "rgb/000000.png",
                 "query_trajectory_path": "query_trajectory/000000.npz",
             }
             (capture_dir / "frames.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
@@ -56,19 +62,22 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             self.assertTrue(output.is_file())
             self.assertEqual(summary["frame_count"], 1)
             self.assertEqual(summary["saved_pcd_source"], "enhanced_pt_filtered")
-            self.assertEqual(summary["query_overlay"], "current_points_only_rainbow_identity")
+            self.assertEqual(summary["query_overlay"], "phystwin_rgb_current_points_only")
             self.assertEqual(summary["query_color_mode"], "phystwin_rainbow_identity")
             self.assertEqual(summary["query_match_policy"], "exact_same_seq_only")
             self.assertEqual(summary["missing_query_frames"], 0)
+            self.assertEqual(summary["rendered_counts"][0]["controller_points"], 0)
+            self.assertEqual(summary["rendered_counts"][0]["object_points"], 0)
             self.assertEqual(summary["rendered_counts"][0]["query_controller_points"], 1)
             self.assertEqual(summary["rendered_counts"][0]["query_object_points"], 1)
-            self.assertTrue((capture_dir / "render_summary.json").is_file())
+            self.assertTrue((capture_dir / "video.render_summary.json").is_file())
 
     def test_render_does_not_fallback_to_previous_query_trajectory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             capture_dir = Path(tmp) / "capture"
             (capture_dir / "pcd").mkdir(parents=True)
             (capture_dir / "ffs_depth").mkdir()
+            (capture_dir / "rgb").mkdir()
             (capture_dir / "query_trajectory").mkdir()
             metadata = {
                 "width": 32,
@@ -86,10 +95,15 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                     object_rgb_u8=np.array([[0, 255, 0]], dtype=np.uint8),
                 )
                 np.save(capture_dir / "ffs_depth" / f"{seq:06d}.npy", np.ones((24, 32), dtype=np.float32))
+                Image.fromarray(np.full((24, 32, 3), 32 + seq, dtype=np.uint8)).save(
+                    capture_dir / "rgb" / f"{seq:06d}.png"
+                )
             np.savez(
                 capture_dir / "query_trajectory" / "000000.npz",
                 marker_xyz_m=np.array([[0.0, 0.0, 0.5]], dtype=np.float32),
                 marker_rgb_u8=np.array([[255, 32, 32]], dtype=np.uint8),
+                tracks_yx=np.array([[12.0, 16.0]], dtype=np.float32),
+                visibility=np.ones((1,), dtype=np.float32),
                 query_indices=np.array([0], dtype=np.int64),
                 query_is_object=np.array([False], dtype=bool),
                 query_is_controller=np.array([True], dtype=bool),
@@ -100,12 +114,14 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                     "seq": 0,
                     "pcd_path": "pcd/000000.npz",
                     "ffs_depth_path": "ffs_depth/000000.npy",
+                    "rgb_path": "rgb/000000.png",
                     "query_trajectory_path": "query_trajectory/000000.npz",
                 },
                 {
                     "seq": 1,
                     "pcd_path": "pcd/000001.npz",
                     "ffs_depth_path": "ffs_depth/000001.npy",
+                    "rgb_path": "rgb/000001.png",
                     "query_trajectory_path": "query_trajectory/000001.npz",
                 },
             ]

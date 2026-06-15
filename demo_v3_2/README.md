@@ -11,9 +11,9 @@ Dry-run:
 python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
-Fake-live replay defaults to tracking visualization: filtered RGB PCD plus
-PhysTwin-style rainbow query points. The PCD and query markers are rendered only
-from strict same-seq pairs.
+Fake-live replay defaults to live tracking visualization: filtered RGB PCD plus
+PhysTwin-style rainbow query points. The live PCD and query markers are rendered
+only from strict same-seq pairs.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
@@ -60,9 +60,9 @@ and cached by frame sequence so point-cloud rendering and TAPNext++ marker lift
 can share depth without concurrent TensorRT context use.
 
 Headless enhanced-pt capture keeps the fake-live realtime pipeline running but
-does not open Open3D. It saves only sync enhanced-pt filtered PCD, color-aligned
-FFS depth, EdgeTAM controller/object masks, and TAPNext++ query trajectory
-artifacts:
+does not open Open3D. It saves only sync enhanced-pt filtered PCD, RGB frames,
+color-aligned FFS depth, EdgeTAM controller/object masks, and TAPNext++ query
+trajectory artifacts:
 
 Demo 3.2 keeps the FFS object mask cleanup at 3px erosion by default, but the
 controller PCD mask defaults to 0px erosion so small hand/controller regions are
@@ -81,17 +81,29 @@ conda run -n demo_2_max --no-capture-output \
   --headless-capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke
 ```
 
-Render the saved artifacts offline. In `tracking` mode, the helper overlays
-current-frame query points only, using the saved PhysTwin-style rainbow identity
-colors; no historical trajectory lines are drawn. It only uses exact same-seq
-query trajectory files, so missing query frames are counted rather than silently
-matched to an older tracker output. In `pcd` mode, no query points are drawn.
+Render the saved artifacts offline. In `pcd` mode, the helper draws only the
+enhanced-pt filtered RGB point cloud. In `tracking` mode, the helper follows the
+FuturePhysTwin 2D tracker view: RGB frame background plus current-frame query
+points only, with stable `gist_rainbow` colors assigned from each query point's
+initial y coordinate. No PCD and no historical trajectory lines are drawn in the
+offline tracking video. It only uses exact same-seq query trajectory files, so
+missing query frames are counted rather than silently matched to an older
+tracker output.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python scripts/harness/render_demo32_headless_capture.py \
   --capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke \
-  --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video.mp4 \
+  --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video_query_phystwin.mp4 \
   --fps 30 \
   --demo-visual-mode tracking
+```
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python scripts/harness/render_demo32_headless_capture.py \
+  --capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke \
+  --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video_pcd_only.mp4 \
+  --fps 30 \
+  --demo-visual-mode pcd
 ```

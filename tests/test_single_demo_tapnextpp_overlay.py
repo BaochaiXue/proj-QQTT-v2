@@ -10,7 +10,7 @@ import unittest
 import numpy as np
 
 from qqtt.demo import realtime_masked_edgetam_pcd as demo
-from qqtt.demo.query_rainbow import query_rainbow_colors_rgb_u8
+from qqtt.demo.query_rainbow import query_rainbow_colors_from_points_yx_rgb_u8, query_rainbow_colors_rgb_u8
 from qqtt.demo.realtime_single_camera_pointcloud import CameraIntrinsics
 from qqtt.tracking.base import TrackingResult
 
@@ -292,12 +292,17 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertIs(capped_colors, colors)
 
     def test_query_rainbow_colors_are_deterministic_identity_colors(self) -> None:
-        first = query_rainbow_colors_rgb_u8(8)
-        second = query_rainbow_colors_rgb_u8(8)
+        points_yx = np.array(
+            [[0.0, 0.0], [3.0, 1.0], [6.0, 2.0], [9.0, 3.0], [12.0, 4.0]],
+            dtype=np.float32,
+        )
+        first = query_rainbow_colors_from_points_yx_rgb_u8(points_yx)
+        second = query_rainbow_colors_from_points_yx_rgb_u8(points_yx)
 
         np.testing.assert_array_equal(first, second)
-        self.assertEqual(first.shape, (8, 3))
+        self.assertEqual(first.shape, (5, 3))
         self.assertGreater(np.unique(first, axis=0).shape[0], 4)
+        np.testing.assert_array_equal(first, query_rainbow_colors_from_points_yx_rgb_u8(points_yx + np.array([0.0, 99.0], dtype=np.float32)))
 
     def test_tracker_lift_mask_uses_current_union_mask_and_erosion(self) -> None:
         packet = self._mask_packet()
@@ -436,12 +441,14 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 },
             )
             now = time.perf_counter()
+            query_points_yx = np.array([[1.0, 1.0]], dtype=np.float32)
+            query_rgb_u8 = query_rainbow_colors_from_points_yx_rgb_u8(query_points_yx)
             tracker_packet = demo.TrackerMarkerPacket(
                 seq=0,
                 marker_xyz_m=np.array([[0.0, 0.0, 0.5]], dtype=np.float32),
-                marker_colors_rgb_u8=query_rainbow_colors_rgb_u8(1),
-                query_rgb_u8=query_rainbow_colors_rgb_u8(1),
-                query_points_yx=np.array([[1.0, 1.0]], dtype=np.float32),
+                marker_colors_rgb_u8=query_rgb_u8,
+                query_rgb_u8=query_rgb_u8,
+                query_points_yx=query_points_yx,
                 tracks_yx=np.array([[1.0, 1.0]], dtype=np.float32),
                 visibility=np.ones((1,), dtype=np.float32),
                 query_is_object=np.array([True], dtype=bool),
@@ -471,11 +478,13 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["saved_pcd_source"], "enhanced_pt_filtered")
             self.assertEqual(metadata["saved_mask_source"], "edgetam_binary_masks")
+            self.assertEqual(metadata["saved_rgb_source"], "segmentation_color_bgr")
             rows = [json.loads(line) for line in (output_dir / "frames.jsonl").read_text(encoding="utf-8").splitlines()]
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["filter_telemetry"]["mode"], "sync")
             self.assertTrue((output_dir / rows[0]["pcd_path"]).is_file())
             self.assertTrue((output_dir / rows[0]["ffs_depth_path"]).is_file())
+            self.assertTrue((output_dir / rows[0]["rgb_path"]).is_file())
             self.assertTrue((output_dir / rows[0]["query_trajectory_path"]).is_file())
             self.assertTrue((output_dir / rows[0]["mask_path"]).is_file())
             self.assertEqual(rows[0]["controller_mask_pixels"], int(np.count_nonzero(mask_packet.controller_mask)))
@@ -497,8 +506,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(int(mask_payload["controller_pcd_mask_erode_pixels"][0]), 0)
             trajectory = np.load(output_dir / rows[0]["query_trajectory_path"], allow_pickle=False)
             np.testing.assert_array_equal(trajectory["query_indices"], np.array([0], dtype=np.int64))
-            np.testing.assert_array_equal(trajectory["query_rgb_u8"], query_rainbow_colors_rgb_u8(1))
-            np.testing.assert_array_equal(trajectory["marker_rgb_u8"], query_rainbow_colors_rgb_u8(1))
+            np.testing.assert_array_equal(trajectory["query_rgb_u8"], query_rgb_u8)
+            np.testing.assert_array_equal(trajectory["marker_rgb_u8"], query_rgb_u8)
 
     def test_tracker_worker_publishes_lifted_marker_packet_with_fake_adapter(self) -> None:
         args = self._tracker_args()

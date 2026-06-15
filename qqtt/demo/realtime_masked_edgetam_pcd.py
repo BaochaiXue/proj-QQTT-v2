@@ -82,7 +82,7 @@ from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_VALID_ITERS,
 )
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world  # noqa: E402
-from qqtt.demo.query_rainbow import query_rainbow_colors_rgb_u8  # noqa: E402
+from qqtt.demo.query_rainbow import query_rainbow_colors_from_points_yx_rgb_u8  # noqa: E402
 from qqtt.tracking.backends.point_tracker_adapter import (  # noqa: E402
     TRACKER_BACKEND_NONE,
     TRACKER_BACKEND_TAPNEXTPP,
@@ -738,6 +738,7 @@ class HeadlessCaptureWriter:
         self.output_dir = _resolve_path(output_dir)
         self.pcd_dir = self.output_dir / "pcd"
         self.depth_dir = self.output_dir / "ffs_depth"
+        self.rgb_dir = self.output_dir / "rgb"
         self.trajectory_dir = self.output_dir / "query_trajectory"
         self.mask_dir = self.output_dir / "masks"
         self.frames_path = self.output_dir / "frames.jsonl"
@@ -747,6 +748,7 @@ class HeadlessCaptureWriter:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.pcd_dir.mkdir(parents=True, exist_ok=True)
         self.depth_dir.mkdir(parents=True, exist_ok=True)
+        self.rgb_dir.mkdir(parents=True, exist_ok=True)
         self.trajectory_dir.mkdir(parents=True, exist_ok=True)
         self.mask_dir.mkdir(parents=True, exist_ok=True)
         self.frames_path.write_text("", encoding="utf-8")
@@ -754,6 +756,7 @@ class HeadlessCaptureWriter:
         payload["headless_capture_enabled"] = True
         payload["saved_pcd_source"] = HEADLESS_CAPTURE_SAVED_PCD_SOURCE
         payload["saved_mask_source"] = "edgetam_binary_masks"
+        payload["saved_rgb_source"] = "segmentation_color_bgr"
         payload["output_dir"] = str(self.output_dir)
         self.metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -782,8 +785,10 @@ class HeadlessCaptureWriter:
         seq_name = f"{int(packet.seq):06d}"
         pcd_path = self.pcd_dir / f"{seq_name}.npz"
         depth_path = self.depth_dir / f"{seq_name}.npy"
+        rgb_path = self.rgb_dir / f"{seq_name}.png"
         query_path = self.trajectory_dir / f"{seq_name}.npz"
         mask_path = self.mask_dir / f"{seq_name}.npz"
+        _bgr_to_pil_rgb(mask_packet.color_bgr).save(rgb_path)
         np.save(
             depth_path,
             np.ascontiguousarray(depth_m, dtype=np.float32),
@@ -823,6 +828,7 @@ class HeadlessCaptureWriter:
             "seq": int(packet.seq),
             "pcd_path": self._relative(pcd_path),
             "ffs_depth_path": self._relative(depth_path),
+            "rgb_path": self._relative(rgb_path),
             "query_trajectory_path": self._relative(query_path),
             "mask_path": self._relative(mask_path),
             "controller_point_count": int(packet.controller_point_count),
@@ -3061,7 +3067,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         )
         adapter.initialize([], query_points)
         self._tracker_query_points_yx = np.ascontiguousarray(query_points, dtype=np.float32)
-        self._tracker_query_rgb_u8 = query_rainbow_colors_rgb_u8(len(query_points))
+        self._tracker_query_rgb_u8 = query_rainbow_colors_from_points_yx_rgb_u8(query_points)
         self._tracker_query_is_object = np.ascontiguousarray(query_is_object, dtype=bool)
         self._tracker_query_is_controller = np.ascontiguousarray(query_is_controller, dtype=bool)
         self._tracker_consistent_visible = np.ones((len(query_points),), dtype=bool)

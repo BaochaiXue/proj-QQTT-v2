@@ -63,6 +63,18 @@ def _trajectory_path_for_frame(
     return trajectory_by_seq.get(seq)
 
 
+def _read_rgb_frame_bgr(*, capture_dir: Path, frame: dict[str, Any], width: int, height: int) -> np.ndarray:
+    if "rgb_path" not in frame:
+        raise RuntimeError("tracking render requires rgb_path in frames.jsonl; rerun headless capture")
+    rgb_path = _resolve_capture_path(capture_dir, str(frame["rgb_path"]))
+    image = cv2.imread(str(rgb_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise RuntimeError(f"failed to read RGB frame: {rgb_path}")
+    if image.shape[:2] != (int(height), int(width)):
+        image = cv2.resize(image, (int(width), int(height)), interpolation=cv2.INTER_LINEAR)
+    return np.ascontiguousarray(image, dtype=np.uint8)
+
+
 def _project_points(points_xyz: np.ndarray, intrinsics: dict[str, Any], *, width: int, height: int) -> tuple[np.ndarray, np.ndarray]:
     points = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
     if points.size == 0:
@@ -120,33 +132,58 @@ def _draw_projected_points(
 def _draw_query_points(
     image_bgr: np.ndarray,
     trajectory_path: Path,
-    intrinsics: dict[str, Any],
     *,
     marker_radius: int,
 ) -> tuple[int, int, int]:
     if not trajectory_path.is_file():
         return 0, 0, 0
     payload = np.load(trajectory_path, allow_pickle=False)
-    marker_xyz = np.asarray(payload["marker_xyz_m"], dtype=np.float32).reshape(-1, 3)
+    tracks_yx = np.asarray(payload["tracks_yx"], dtype=np.float32).reshape(-1, 2)
     query_indices = np.asarray(payload["query_indices"], dtype=np.int64).reshape(-1)
     if "query_is_object" in payload.files:
         query_is_object = np.asarray(payload["query_is_object"], dtype=bool).reshape(-1)
     else:
-        query_is_object = np.ones((len(marker_xyz),), dtype=bool)
+        query_is_object = np.ones((len(tracks_yx),), dtype=bool)
     if "query_is_controller" in payload.files:
         query_is_controller = np.asarray(payload["query_is_controller"], dtype=bool).reshape(-1)
     else:
-        query_is_controller = np.zeros((len(marker_xyz),), dtype=bool)
+        query_is_controller = np.zeros((len(tracks_yx),), dtype=bool)
     if "marker_rgb_u8" in payload.files:
         marker_rgb_u8 = np.asarray(payload["marker_rgb_u8"], dtype=np.uint8).reshape(-1, 3)
+    elif "query_rgb_u8" in payload.files:
+        query_rgb_u8 = np.asarray(payload["query_rgb_u8"], dtype=np.uint8).reshape(-1, 3)
+        marker_rgb_u8 = np.zeros((len(query_indices), 3), dtype=np.uint8)
+        valid_indices = (query_indices >= 0) & (query_indices < len(query_rgb_u8))
+        marker_rgb_u8[valid_indices] = query_rgb_u8[query_indices[valid_indices]]
     else:
         query_count = int(payload["query_count"][0]) if "query_count" in payload.files else None
         marker_rgb_u8 = query_rainbow_colors_for_indices(query_indices, query_count=query_count)
-    count = min(len(marker_xyz), len(query_indices), len(query_is_object), len(query_is_controller), len(marker_rgb_u8))
+    if "visibility" in payload.files:
+        visibility = np.asarray(payload["visibility"], dtype=np.float32).reshape(-1)
+    else:
+        visibility = np.ones((len(tracks_yx),), dtype=np.float32)
+    count = min(
+        len(tracks_yx),
+        len(query_indices),
+        len(query_is_object),
+        len(query_is_controller),
+        len(marker_rgb_u8),
+        len(visibility),
+    )
     if count == 0:
         return 0, 0, 0
     height, width = image_bgr.shape[:2]
-    uv, valid = _project_points(marker_xyz[:count], intrinsics, width=width, height=height)
+    y = np.rint(tracks_yx[:count, 0]).astype(np.int32)
+    x = np.rint(tracks_yx[:count, 1]).astype(np.int32)
+    valid = (
+        np.isfinite(tracks_yx[:count]).all(axis=1)
+        & (visibility[:count] > np.float32(0.5))
+        & (x >= 0)
+        & (x < int(width))
+        & (y >= 0)
+        & (y < int(height))
+    )
+    uv = np.stack([x, y], axis=1)
     visible_uv = uv[valid]
     visible_is_object = query_is_object[:count][valid]
     visible_is_controller = query_is_controller[:count][valid]
@@ -223,27 +260,11 @@ def render_capture_to_video(
     try:
         for frame in frames:
             image = np.zeros((height, width, 3), dtype=np.uint8)
-            pcd_path = _resolve_capture_path(capture_dir, str(frame["pcd_path"]))
-            pcd = np.load(pcd_path, allow_pickle=False)
-            controller_count = _draw_projected_points(
-                image,
-                pcd["controller_xyz_m"],
-                pcd["controller_rgb_u8"],
-                intrinsics,
-                point_size=int(point_size),
-                max_points=int(max_render_points),
-            )
-            object_count = _draw_projected_points(
-                image,
-                pcd["object_xyz_m"],
-                pcd["object_rgb_u8"],
-                intrinsics,
-                point_size=int(point_size),
-                max_points=int(max_render_points),
-            )
+            controller_count = object_count = 0
             query_count = query_object_count = query_controller_count = 0
             query_path = None
             if str(demo_visual_mode) == "tracking":
+                image = _read_rgb_frame_bgr(capture_dir=capture_dir, frame=frame, width=width, height=height)
                 query_path = _trajectory_path_for_frame(
                     capture_dir=capture_dir,
                     frame=frame,
@@ -255,9 +276,27 @@ def render_capture_to_video(
                     query_count, query_object_count, query_controller_count = _draw_query_points(
                         image,
                         query_path,
-                        intrinsics,
                         marker_radius=int(query_point_radius),
                     )
+            else:
+                pcd_path = _resolve_capture_path(capture_dir, str(frame["pcd_path"]))
+                pcd = np.load(pcd_path, allow_pickle=False)
+                controller_count = _draw_projected_points(
+                    image,
+                    pcd["controller_xyz_m"],
+                    pcd["controller_rgb_u8"],
+                    intrinsics,
+                    point_size=int(point_size),
+                    max_points=int(max_render_points),
+                )
+                object_count = _draw_projected_points(
+                    image,
+                    pcd["object_xyz_m"],
+                    pcd["object_rgb_u8"],
+                    intrinsics,
+                    point_size=int(point_size),
+                    max_points=int(max_render_points),
+                )
             writer.write(image)
             rendered_counts.append(
                 {
@@ -280,13 +319,13 @@ def render_capture_to_video(
         "image_size": [int(width), int(height)],
         "saved_pcd_source": metadata.get("saved_pcd_source"),
         "demo_visual_mode": str(demo_visual_mode),
-        "query_overlay": "current_points_only_rainbow_identity" if str(demo_visual_mode) == "tracking" else "none",
+        "query_overlay": "phystwin_rgb_current_points_only" if str(demo_visual_mode) == "tracking" else "none",
         "query_color_mode": "phystwin_rainbow_identity" if str(demo_visual_mode) == "tracking" else "none",
         "query_match_policy": "exact_same_seq_only",
         "missing_query_frames": int(missing_query_frames),
         "rendered_counts": rendered_counts,
     }
-    summary_path = output.with_name("render_summary.json")
+    summary_path = output.with_suffix(".render_summary.json")
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return summary
 
