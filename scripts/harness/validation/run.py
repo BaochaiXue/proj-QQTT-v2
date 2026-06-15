@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 ROOT_STR = str(ROOT)
 if ROOT_STR in sys.path:
     sys.path.remove(ROOT_STR)
@@ -33,15 +33,6 @@ DEMO_HELP_SCRIPTS: tuple[str, ...] = (
     "demo_v3_2/realtime_single_camera_ffs_masked_pcd.py",
     "demo_v3_3/realtime_single_camera_ffs_masked_pcd.py",
 )
-
-QUICK_HELP_SCRIPTS: tuple[str, ...] = (*BASE_FORMAL_HELP_SCRIPTS, *help_scripts("quick"))
-FULL_HELP_SCRIPTS: tuple[str, ...] = (
-    *BASE_FORMAL_HELP_SCRIPTS,
-    *FULL_ONLY_FORMAL_HELP_SCRIPTS,
-    *DEMO_HELP_SCRIPTS,
-    *help_scripts("full"),
-)
-
 
 def _unique(items: tuple[str, ...]) -> tuple[str, ...]:
     seen: set[str] = set()
@@ -85,8 +76,6 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_render_fastpath",
     "tests.test_check_all_smoke",
 )
-
-QUICK_UNITTEST_BATCHES: tuple[tuple[str, ...], ...] = (QUICK_UNITTEST_MODULES,)
 
 FULL_ONLY_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_cameras_viewer_ffs_smoke",
@@ -194,7 +183,9 @@ FULL_ONLY_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_cleanup_different_types_cases_smoke",
 )
 
-FULL_UNITTEST_MODULES: tuple[str, ...] = _unique((*QUICK_UNITTEST_MODULES, *FULL_ONLY_UNITTEST_MODULES))
+SMOKE_UNITTEST_MODULES: tuple[str, ...] = QUICK_UNITTEST_MODULES
+DETERMINISTIC_ONLY_UNITTEST_MODULES: tuple[str, ...] = FULL_ONLY_UNITTEST_MODULES
+EXHAUSTIVE_ONLY_UNITTEST_MODULES: tuple[str, ...] = ()
 
 PYTEST_BATCHES: tuple[tuple[str, ...], ...] = (
     (
@@ -214,28 +205,26 @@ CHECK_COMMANDS: tuple[tuple[str, ...], ...] = (
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run deterministic repo validation. Default is the fast quick profile; "
-            "pass --full for the broader single-camera validation set."
+            "Run repo validation profiles. Default is smoke; hardware profile lists "
+            "manual commands unless --run-hardware is passed."
         )
     )
     parser.add_argument(
         "--profile",
-        choices=("quick", "full"),
-        default="quick",
-        help="Validation profile to run. Defaults to quick.",
+        choices=("smoke", "deterministic", "hardware", "exhaustive"),
+        default="smoke",
+        help="Validation profile to run. Defaults to smoke.",
     )
     parser.add_argument(
-        "--full",
-        action="store_const",
-        const="full",
-        dest="profile",
-        help="Shortcut for --profile full.",
+        "--run-hardware",
+        action="store_true",
+        help="Run hardware profile commands instead of listing them for manual execution.",
     )
     return parser.parse_args(argv)
 
 
 def run(cmd: list[str]) -> None:
-    print(f"[check] {' '.join(cmd)}")
+    print(f"[validation] {' '.join(cmd)}")
     subprocess.run(cmd, check=True, cwd=ROOT)
 
 
@@ -261,31 +250,66 @@ def _pytest_commands(*, python: str) -> list[list[str]]:
     return [[python, "-m", "pytest", *batch] for batch in PYTEST_BATCHES]
 
 
-def build_commands(*, python: str, profile: str) -> list[list[str]]:
-    if profile == "quick":
-        return [
-            *_help_commands(python=python, scripts=QUICK_HELP_SCRIPTS),
+def _profile_unittest_batches(profile: str) -> tuple[tuple[str, ...], ...]:
+    if profile == "smoke":
+        return (SMOKE_UNITTEST_MODULES,)
+    if profile == "deterministic":
+        modules = _unique((*SMOKE_UNITTEST_MODULES, *DETERMINISTIC_ONLY_UNITTEST_MODULES))
+        return tuple((module,) for module in modules)
+    if profile == "exhaustive":
+        modules = _unique(
+            (*SMOKE_UNITTEST_MODULES, *DETERMINISTIC_ONLY_UNITTEST_MODULES, *EXHAUSTIVE_ONLY_UNITTEST_MODULES)
+        )
+        return tuple((module,) for module in modules)
+    if profile == "hardware":
+        return ()
+    raise ValueError(f"Unsupported profile: {profile}")
+
+
+def _formal_scripts_for_profile(profile: str) -> tuple[str, ...]:
+    if profile == "smoke":
+        return BASE_FORMAL_HELP_SCRIPTS
+    if profile in {"deterministic", "exhaustive"}:
+        return _unique((*BASE_FORMAL_HELP_SCRIPTS, *FULL_ONLY_FORMAL_HELP_SCRIPTS, *DEMO_HELP_SCRIPTS))
+    if profile == "hardware":
+        return ()
+    raise ValueError(f"Unsupported profile: {profile}")
+
+
+def _catalog_help_commands(*, python: str, profile: str, include_manual: bool = False) -> list[list[str]]:
+    return [[python, script, "--help"] for script in help_scripts(profile, include_manual=include_manual)]
+
+
+def build_commands(*, python: str, profile: str, run_hardware: bool = False) -> list[list[str]]:
+    if profile == "hardware" and not run_hardware:
+        return []
+    if profile == "hardware":
+        return _catalog_help_commands(python=python, profile=profile, include_manual=True)
+    if profile in {"smoke", "deterministic", "exhaustive"}:
+        commands = [
+            *_help_commands(python=python, scripts=_formal_scripts_for_profile(profile)),
+            *_catalog_help_commands(python=python, profile=profile),
             *_check_commands(python=python),
-            *_unittest_commands(python=python, module_batches=QUICK_UNITTEST_BATCHES),
+            *_unittest_commands(python=python, module_batches=_profile_unittest_batches(profile)),
         ]
-    if profile == "full":
-        full_unittest_batches = tuple((module,) for module in FULL_UNITTEST_MODULES)
-        return [
-            *_help_commands(python=python, scripts=FULL_HELP_SCRIPTS),
-            *_check_commands(python=python),
-            *_unittest_commands(python=python, module_batches=full_unittest_batches),
-            *_pytest_commands(python=python),
-        ]
+        if profile == "exhaustive":
+            commands.extend(_pytest_commands(python=python))
+        return commands
     raise ValueError(f"Unsupported profile: {profile}")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     python = sys.executable
-    print(f"[check] profile={args.profile}")
-    for cmd in build_commands(python=python, profile=args.profile):
+    print(f"[validation] profile={args.profile}")
+    if args.profile == "hardware" and not args.run_hardware:
+        print("[validation] hardware profile is manual; pass --run-hardware to run these commands:")
+        for cmd in _catalog_help_commands(python=python, profile=args.profile, include_manual=True):
+            print(f"[validation] {' '.join(cmd)}")
+        return 0
+    for cmd in build_commands(python=python, profile=args.profile, run_hardware=args.run_hardware):
         run(cmd)
-    print(f"[check] {args.profile} deterministic checks passed")
+    print(f"[validation] {args.profile} checks passed")
     return 0
 
 

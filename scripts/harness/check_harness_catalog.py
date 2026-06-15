@@ -18,6 +18,7 @@ PRIVATE_PYTHON_FILES = {
     HARNESS_ROOT / "__init__.py",
     HARNESS_ROOT / "_catalog.py",
     HARNESS_ROOT / "experiments" / "__init__.py",
+    HARNESS_ROOT / "validation" / "__init__.py",
 }
 KNOWN_CATEGORIES = {
     "checks",

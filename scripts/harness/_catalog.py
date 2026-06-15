@@ -61,10 +61,10 @@ class HarnessEntry:
 
 CATALOG: tuple[HarnessEntry, ...] = (
     HarnessEntry(
-        "scripts/harness/check_all.py",
-        "guards",
-        "repo",
-        "Deterministic quick/full validation runner.",
+        "scripts/harness/validation/run.py",
+        "validation",
+        "runner",
+        "Catalog-driven validation profile runner.",
         "smoke",
     ),
     HarnessEntry(
@@ -586,12 +586,6 @@ _PLANNED_LIFECYCLE_ENTRIES: tuple[HarnessEntry, ...] = (
         "repo",
         "Repo scope guard for removed or forbidden legacy surfaces.",
         "smoke",
-    ),
-    HarnessEntry(
-        "scripts/harness/validation/run.py",
-        "validation",
-        "runner",
-        "Catalog-driven validation profile runner.",
     ),
 )
 
