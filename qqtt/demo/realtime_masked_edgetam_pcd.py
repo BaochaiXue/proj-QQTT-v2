@@ -137,6 +137,7 @@ LOCAL_FFS_PROFESSOR_LATENCY_TARGET_MS = 120.0
 LOCAL_FFS_PROFESSOR_FILTER_CAP = 20000
 DEFAULT_FILTER_RADIUS_M = 0.01
 DEFAULT_FILTER_NB_POINTS = 40
+DEFAULT_PCD_MASK_ERODE_PIXELS = 0
 DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.01
 DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.0
 DEFAULT_OBJECT_FILTER = PCD_FILTER_ENHANCED_PT
@@ -1027,6 +1028,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Point-cloud colors. rgb uses the live color frame; class uses fixed controller/object colors.",
     )
     parser.add_argument(
+        "--pcd-mask-erode-pixels",
+        type=int,
+        default=DEFAULT_PCD_MASK_ERODE_PIXELS,
+        help="Erode controller/object masks by this many pixels before RGB-D point-cloud backprojection.",
+    )
+    parser.add_argument(
         "--render-max-points-per-layer",
         type=int,
         default=DEFAULT_RENDER_MAX_POINTS_PER_LAYER,
@@ -1155,6 +1162,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pcd-max-points must be >= 0")
     if args.pcd_stride < 1:
         raise ValueError("--pcd-stride must be >= 1")
+    if int(args.pcd_mask_erode_pixels) < 0:
+        raise ValueError("--pcd-mask-erode-pixels must be >= 0")
     if int(args.edgetam_live_session_keep_frames) < 0:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
     if int(args.render_max_points_per_layer) < 0:
@@ -1396,6 +1405,33 @@ def _masked_sample_indices(
         rows = rows[indices]
         cols = cols[indices]
     return rows.astype(np.int64, copy=False), cols.astype(np.int64, copy=False)
+
+
+def erode_binary_mask(mask: np.ndarray, *, erode_pixels: int) -> np.ndarray:
+    pixels = int(erode_pixels)
+    if pixels < 0:
+        raise ValueError("erode_pixels must be >= 0")
+    mask_bool = np.asarray(mask, dtype=bool)
+    if pixels == 0 or mask_bool.size == 0 or not np.any(mask_bool):
+        return np.ascontiguousarray(mask_bool)
+
+    eroded = mask_bool
+    for _ in range(pixels):
+        padded = np.pad(eroded, 1, mode="constant", constant_values=False)
+        eroded = (
+            padded[:-2, :-2]
+            & padded[:-2, 1:-1]
+            & padded[:-2, 2:]
+            & padded[1:-1, :-2]
+            & padded[1:-1, 1:-1]
+            & padded[1:-1, 2:]
+            & padded[2:, :-2]
+            & padded[2:, 1:-1]
+            & padded[2:, 2:]
+        )
+        if not np.any(eroded):
+            break
+    return np.ascontiguousarray(eroded)
 
 
 def backproject_masked_rgbd(
@@ -2493,6 +2529,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "pcd_mode": self.args.pcd_mode,
             "pcd_max_points": int(self.args.pcd_max_points),
             "pcd_stride": int(self.args.pcd_stride),
+            "pcd_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
             "render_max_points_per_layer": int(self.args.render_max_points_per_layer),
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE,
@@ -3306,6 +3343,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 object_mask = mask_packet.object_mask
                 ray_x_for_pcd = ray_x
                 ray_y_for_pcd = ray_y
+            pcd_mask_erode_pixels = int(self.args.pcd_mask_erode_pixels)
+            if pcd_mask_erode_pixels > 0:
+                controller_mask = erode_binary_mask(controller_mask, erode_pixels=pcd_mask_erode_pixels)
+                object_mask = erode_binary_mask(object_mask, erode_pixels=pcd_mask_erode_pixels)
             empty_pcd_timing = {
                 "pcd_mask_intersection_ms": 0.0,
                 "pcd_select_ms": 0.0,

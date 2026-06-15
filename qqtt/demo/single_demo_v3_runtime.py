@@ -45,6 +45,7 @@ FFS_SURFACE_FILTER_NB_POINTS = 8
 FFS_SURFACE_COMPONENT_VOXEL_SIZE_M = 0.015
 FFS_SURFACE_FILTER_EVERY_N = 1
 FFS_SURFACE_FILTER_MAX_AGE_FRAMES = 1
+FFS_SURFACE_MASK_ERODE_PIXELS = 3
 
 DEFAULT_OUTPUT_ROOTS = {
     DEMO_VERSION_3: Path("result/single_demo_v3_realsense_masked_pcd"),
@@ -237,6 +238,7 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
     parser.add_argument("--pcd-max-points", type=int, default=60000)
     parser.add_argument("--pcd-stride", type=int, default=1)
     parser.add_argument("--pcd-color-mode", choices=("rgb", "class"), default="rgb")
+    parser.add_argument("--pcd-mask-erode-pixels", type=int, default=masked_pcd.DEFAULT_PCD_MASK_ERODE_PIXELS)
     parser.add_argument(
         "--render-max-points-per-layer",
         type=int,
@@ -330,6 +332,8 @@ def apply_preset_defaults(
             args.filter_every_n = FFS_SURFACE_FILTER_EVERY_N
         if "--filter-max-age-frames" not in explicit:
             args.filter_max_age_frames = FFS_SURFACE_FILTER_MAX_AGE_FRAMES
+        if "--pcd-mask-erode-pixels" not in explicit:
+            args.pcd_mask_erode_pixels = FFS_SURFACE_MASK_ERODE_PIXELS
     return args
 
 
@@ -402,6 +406,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--filter-every-n must be >= 1")
     if int(args.filter_max_age_frames) < 0:
         raise ValueError("--filter-max-age-frames must be >= 0")
+    if int(args.pcd_mask_erode_pixels) < 0:
+        raise ValueError("--pcd-mask-erode-pixels must be >= 0")
     if float(args.filter_budget_ms) < 0:
         raise ValueError("--filter-budget-ms must be >= 0")
     if int(args.filter_min_cap) < 0:
@@ -534,6 +540,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "pcd_max_points": int(args.pcd_max_points),
         "pcd_stride": int(args.pcd_stride),
         "pcd_color_mode": str(args.pcd_color_mode),
+        "pcd_mask_erode_pixels": int(args.pcd_mask_erode_pixels),
         "render_max_points_per_layer": int(args.render_max_points_per_layer),
         "pcd_filter_enabled": bool(args.enable_pcd_filter),
         "pcd_filter_mode": str(args.pcd_filter_mode if bool(args.enable_pcd_filter) else masked_pcd.PCD_FILTER_NONE),
@@ -599,6 +606,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "view_mode",
         "pcd_max_points",
         "pcd_stride",
+        "pcd_mask_erode_pixels",
         "render_max_points_per_layer",
         "pcd_filter_enabled",
         "pcd_filter_mode",
@@ -697,6 +705,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(int(args.pcd_stride)),
         "--pcd-color-mode",
         str(args.pcd_color_mode),
+        "--pcd-mask-erode-pixels",
+        str(int(args.pcd_mask_erode_pixels)),
         "--render-max-points-per-layer",
         str(int(args.render_max_points_per_layer)),
         "--pcd-filter-mode",

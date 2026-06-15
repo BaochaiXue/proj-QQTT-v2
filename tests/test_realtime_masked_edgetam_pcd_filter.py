@@ -18,6 +18,7 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertIn("--object-filter-keep-components OBJECT_FILTER_KEEP_COMPONENTS", help_text)
         self.assertIn("--controller-filter-keep-components CONTROLLER_FILTER_KEEP_COMPONENTS", help_text)
         self.assertIn("--filter-max-age-frames FILTER_MAX_AGE_FRAMES", help_text)
+        self.assertIn("--pcd-mask-erode-pixels PCD_MASK_ERODE_PIXELS", help_text)
         self.assertIn("--edgetam-live-session-keep-frames EDGETAM_LIVE_SESSION_KEEP_FRAMES", help_text)
 
         args = masked_demo.build_parser().parse_args([])
@@ -26,6 +27,7 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertEqual(args.object_filter_keep_components, 1)
         self.assertEqual(args.controller_filter_keep_components, 2)
         self.assertEqual(args.filter_max_age_frames, 3)
+        self.assertEqual(args.pcd_mask_erode_pixels, 0)
         self.assertEqual(args.edgetam_live_session_keep_frames, 64)
         self.assertEqual(args.view_mode, "orbit")
 
@@ -41,9 +43,32 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "filter-max-age-frames"):
             masked_demo.validate_args(bad_age)
 
+        bad_erode = masked_demo.build_parser().parse_args(["--pcd-mask-erode-pixels", "-1"])
+        with self.assertRaisesRegex(ValueError, "pcd-mask-erode-pixels"):
+            masked_demo.validate_args(bad_erode)
+
         bad_keep_frames = masked_demo.build_parser().parse_args(["--edgetam-live-session-keep-frames", "-1"])
         with self.assertRaisesRegex(ValueError, "edgetam-live-session-keep-frames"):
             masked_demo.validate_args(bad_keep_frames)
+
+    def test_pcd_mask_erode_shrinks_binary_mask(self) -> None:
+        mask = np.zeros((7, 7), dtype=bool)
+        mask[1:6, 1:6] = True
+
+        eroded_once = masked_demo.erode_binary_mask(mask, erode_pixels=1)
+        expected_once = np.zeros_like(mask)
+        expected_once[2:5, 2:5] = True
+        self.assertTrue(np.array_equal(eroded_once, expected_once))
+
+        eroded_twice = masked_demo.erode_binary_mask(mask, erode_pixels=2)
+        expected_twice = np.zeros_like(mask)
+        expected_twice[3, 3] = True
+        self.assertTrue(np.array_equal(eroded_twice, expected_twice))
+
+        unchanged = masked_demo.erode_binary_mask(mask, erode_pixels=0)
+        self.assertTrue(np.array_equal(unchanged, mask))
+        with self.assertRaisesRegex(ValueError, "erode_pixels"):
+            masked_demo.erode_binary_mask(mask, erode_pixels=-1)
 
     def test_enhanced_controller_keeps_two_components_by_default(self) -> None:
         args = masked_demo.build_parser().parse_args(
