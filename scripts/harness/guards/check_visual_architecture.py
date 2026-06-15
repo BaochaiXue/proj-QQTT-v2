@@ -41,17 +41,17 @@ LOW_LEVEL_MODULES = {
 FILE_LENGTH_LIMITS = {
     ROOT / "data_process" / "visualization" / "pointcloud_compare.py": 700,
     ROOT / "data_process" / "visualization" / "turntable_compare.py": 2450,
-    ROOT / "scripts" / "harness" / "visual_compare_depth_panels.py": 220,
-    ROOT / "scripts" / "harness" / "visual_compare_reprojection.py": 220,
-    ROOT / "scripts" / "harness" / "visual_compare_depth_video.py": 220,
-    ROOT / "scripts" / "harness" / "visual_compare_depth_triplet_ply.py": 220,
-    ROOT / "scripts" / "harness" / "visual_compare_depth_triplet_video.py": 220,
-    ROOT / "scripts" / "harness" / "visual_compare_turntable.py": 260,
-    ROOT / "scripts" / "harness" / "visual_make_professor_triptych.py": 260,
-    ROOT / "scripts" / "harness" / "visual_make_match_board.py": 260,
-    ROOT / "scripts" / "harness" / "visual_compare_stereo_order_pcd.py": 260,
-    ROOT / "scripts" / "harness" / "audit_ffs_left_right.py": 220,
-    ROOT / "scripts" / "harness" / "compare_face_smoothness.py": 220,
+    SCRIPTS_ROOT / "diagnostics" / "depth" / "visual_compare_depth_panels.py": 220,
+    SCRIPTS_ROOT / "diagnostics" / "depth" / "visual_compare_reprojection.py": 220,
+    SCRIPTS_ROOT / "diagnostics" / "depth" / "visual_compare_depth_video.py": 220,
+    SCRIPTS_ROOT / "diagnostics" / "depth" / "visual_compare_depth_triplet_ply.py": 220,
+    SCRIPTS_ROOT / "diagnostics" / "depth" / "visual_compare_depth_triplet_video.py": 220,
+    SCRIPTS_ROOT / "diagnostics" / "visualization" / "visual_compare_turntable.py": 260,
+    SCRIPTS_ROOT / "diagnostics" / "visualization" / "visual_make_professor_triptych.py": 260,
+    SCRIPTS_ROOT / "diagnostics" / "visualization" / "visual_make_match_board.py": 260,
+    SCRIPTS_ROOT / "diagnostics" / "visualization" / "visual_compare_stereo_order_pcd.py": 260,
+    SCRIPTS_ROOT / "diagnostics" / "depth" / "audit_ffs_left_right.py": 220,
+    SCRIPTS_ROOT / "diagnostics" / "depth" / "compare_face_smoothness.py": 220,
 }
 
 

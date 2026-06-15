@@ -21,8 +21,10 @@ def _find_repo_root(start: Path) -> Path:
 
 
 ROOT = _find_repo_root(Path(__file__).resolve())
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ROOT_STR = str(ROOT)
+if ROOT_STR in sys.path:
+    sys.path.remove(ROOT_STR)
+sys.path.insert(0, ROOT_STR)
 
 from scripts.harness.support.object_case_registry import get_raw_object_capture_spec
 from scripts.harness.support.sam31_mask_helper import (

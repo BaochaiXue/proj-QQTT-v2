@@ -32,7 +32,7 @@ if str(ROOT) not in sys.path:
 
 from data_process.visualization.io_artifacts import write_image, write_json, write_ply_ascii
 from data_process.visualization.io_case import load_case_frame_camera_clouds, load_case_metadata
-from scripts.harness.experiments import run_hf_edgetam_streaming_realcase as hf_stream
+from scripts.harness.experiments.edgetam import run_hf_edgetam_streaming_realcase as hf_stream
 
 
 CASE_KEY = "sloth_set_2_motion_ffs"

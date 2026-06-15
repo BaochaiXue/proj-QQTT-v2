@@ -241,7 +241,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
         self.assertEqual(board.shape, (84 + 38 + 2 * 12, 28 + 3 * 16, 3))
 
     def test_edgetam_round1_cli_defaults_to_compiled_mode(self) -> None:
-        from scripts.harness.experiments.run_sam21_checkpoint_ladder_3x5_gifs import parse_args
+        from scripts.harness.experiments.sam.run_sam21_checkpoint_ladder_3x5_gifs import parse_args
 
         args = parse_args(["--edgetam-round1-3x6"])
         self.assertEqual(args.edgetam_compile_mode, ladder.EDGETAM_COMPILE_NO_POS_CACHE)
@@ -435,7 +435,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             )
 
     def test_hf_edgetam_custom_case_args_and_mask_label(self) -> None:
-        from scripts.harness.experiments import run_hf_edgetam_streaming_realcase as hf_stream
+        from scripts.harness.experiments.edgetam import run_hf_edgetam_streaming_realcase as hf_stream
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -504,7 +504,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             self.assertEqual(int(loaded.sum()), 20)
 
     def test_hf_edgetam_compile_target_selection_is_explicit(self) -> None:
-        from scripts.harness.experiments import run_hf_edgetam_streaming_realcase as hf_stream
+        from scripts.harness.experiments.edgetam import run_hf_edgetam_streaming_realcase as hf_stream
 
         class DummyModule:
             pass
@@ -550,7 +550,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             hf_stream.torch = old_torch
 
     def test_hf_edgetam_hand_object_mapping_is_stable(self) -> None:
-        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+        from scripts.harness.experiments.edgetam import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
 
         objects = hand_pcd.tracked_objects("stuffed animal", "hand")
         self.assertEqual({obj.obj_id: obj.label for obj in objects}, {1: "stuffed animal", 2: "hand"})
@@ -566,7 +566,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
         )
 
     def test_hf_edgetam_hand_object_mask_writer_schema(self) -> None:
-        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+        from scripts.harness.experiments.edgetam import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -608,7 +608,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             self.assertEqual(int(loaded_hand.sum()), int(hand_mask.sum()))
 
     def test_hf_edgetam_hand_object_extracts_masks_by_output_object_ids(self) -> None:
-        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+        from scripts.harness.experiments.edgetam import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
 
         class FakeOutput:
             object_ids = [2, 1]
@@ -623,7 +623,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
         self.assertEqual(int(masks[1].sum()), 12)
 
     def test_hf_edgetam_builds_object_two_hands_init_root(self) -> None:
-        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+        from scripts.harness.experiments.edgetam import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -689,7 +689,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             self.assertEqual(int(loaded_right.sum()), int(right_mask.sum()))
 
     def test_hf_edgetam_hand_object_pcd_panel_smoke_writes_2x3_outputs(self) -> None:
-        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+        from scripts.harness.experiments.edgetam import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -748,7 +748,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             )
 
     def test_hf_edgetam_object_two_hands_pcd_panel_smoke_writes_3x3_outputs(self) -> None:
-        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+        from scripts.harness.experiments.edgetam import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -804,7 +804,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             )
 
     def test_hf_edgetam_hand_object_enhanced_pcd_panel_smoke(self) -> None:
-        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+        from scripts.harness.experiments.edgetam import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -859,7 +859,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             )
 
     def test_hf_edgetam_controller_row_can_use_pt_filter_override(self) -> None:
-        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+        from scripts.harness.experiments.edgetam import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -916,7 +916,7 @@ class Sam21CheckpointLadderPanelSmokeTest(unittest.TestCase):
             self.assertTrue(Path(summary["gif_path"]).is_file())
 
     def test_hf_edgetam_manipulator_rows_default_to_pt_filter_with_enhanced_object_mode(self) -> None:
-        from scripts.harness.experiments import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
+        from scripts.harness.experiments.edgetam import run_sloth_set2_hf_edgetam_hand_object_pcd_gif as hand_pcd
 
         objects = (
             hand_pcd.TrackedObject(1, "stuffed animal", "stuffed animal"),

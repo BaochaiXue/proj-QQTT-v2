@@ -8,7 +8,7 @@ import unittest
 import numpy as np
 from PIL import Image
 
-from scripts.harness.render_demo32_headless_capture import render_capture_to_video
+from scripts.harness.diagnostics.demo.render_demo32_headless_capture import render_capture_to_video
 
 
 class Demo32HeadlessRenderHelperTest(unittest.TestCase):

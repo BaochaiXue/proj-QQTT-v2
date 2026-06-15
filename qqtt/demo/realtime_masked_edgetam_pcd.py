@@ -2241,7 +2241,7 @@ def extract_object_masks_from_hf_output(output: Any, post_masks: Any) -> dict[in
 
 
 def _load_hf_streaming_runtime() -> Any:
-    from scripts.harness.experiments import run_hf_edgetam_streaming_realcase as hf_stream
+    from scripts.harness.experiments.edgetam import run_hf_edgetam_streaming_realcase as hf_stream
 
     hf_stream._load_runtime_dependencies()
     return hf_stream

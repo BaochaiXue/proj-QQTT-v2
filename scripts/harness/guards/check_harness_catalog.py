@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -30,6 +31,22 @@ PRIVATE_PYTHON_FILES = {
 PACKAGE_INIT_FILES = {path for path in HARNESS_ROOT.rglob("__init__.py")}
 
 
+def _tracked_harness_cache_artifacts() -> list[Path]:
+    result = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "scripts/harness/**/__pycache__/*",
+            "scripts/harness/__pycache__/*",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [Path(line) for line in result.stdout.splitlines() if line]
+
+
 def _is_under(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -43,8 +60,8 @@ def collect_violations() -> list[str]:
     entry_paths = [ROOT / entry.path for entry in CATALOG]
     unique_paths = set(entry_paths)
 
-    for path in sorted(HARNESS_ROOT.rglob("__pycache__")):
-        violations.append(f"Committed harness cache directory: {path.relative_to(ROOT)}")
+    for path in _tracked_harness_cache_artifacts():
+        violations.append(f"Committed harness cache artifact: {path}")
 
     if len(unique_paths) != len(entry_paths):
         seen: set[Path] = set()

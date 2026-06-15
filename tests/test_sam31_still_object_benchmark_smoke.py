@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from scripts.harness.benchmark_sam31_still_object_views import (
+from scripts.harness.benchmarks.sam.benchmark_sam31_still_object_views import (
     CameraBenchmarkTiming,
     _limited_frame_source,
     build_average_summary,

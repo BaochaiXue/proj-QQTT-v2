@@ -18,8 +18,15 @@ class HarnessCatalogGuardTest(unittest.TestCase):
         self.assertEqual(check_harness_catalog.collect_violations(), [])
 
     def test_no_harness_pycache_directories_are_committed(self) -> None:
-        pycache_dirs = sorted(check_harness_catalog.HARNESS_ROOT.rglob("__pycache__"))
-        self.assertEqual(pycache_dirs, [])
+        runtime_cache = check_harness_catalog.HARNESS_ROOT / "__pycache__"
+        runtime_cache.mkdir()
+
+        violations = check_harness_catalog.collect_violations()
+
+        self.assertFalse(
+            any("harness cache" in violation for violation in violations),
+            violations,
+        )
 
     def test_root_has_no_public_python_or_shell_entrypoints(self) -> None:
         allowed = {
