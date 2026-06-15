@@ -129,6 +129,20 @@ def _effective_controller_pcd_mask_erode_pixels(args: argparse.Namespace) -> int
     return int(value)
 
 
+def _edgetam_tracking_identities(args: argparse.Namespace) -> list[str]:
+    track_mode = str(args.track_mode)
+    two_hands = str(args.controller_instance_mode) == masked_pcd.CONTROLLER_INSTANCE_MODE_TWO_HANDS
+    if track_mode == TRACK_MODE_NONE:
+        return []
+    if track_mode == TRACK_MODE_CONTROLLER_OBJECT:
+        return ["hand_a", "object", "hand_b"] if two_hands else ["controller", "object"]
+    if track_mode == masked_pcd.TRACK_MODE_OBJECT_ONLY:
+        return ["object"]
+    if track_mode == masked_pcd.TRACK_MODE_CONTROLLER_ONLY:
+        return ["hand_a", "hand_b"] if two_hands else ["controller"]
+    return []
+
+
 def _is_replay_input_source(input_source: str) -> bool:
     return str(input_source) in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_RECORDING}
 
@@ -247,6 +261,12 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         "--controller-prompt",
         default=None,
         help="Override the controller prompt. Defaults to towel in exp mode and human hand in demo mode.",
+    )
+    parser.add_argument(
+        "--controller-instance-mode",
+        choices=masked_pcd.CONTROLLER_INSTANCE_MODES,
+        default=masked_pcd.CONTROLLER_INSTANCE_MODE_SINGLE,
+        help="Use two-hands to propagate hand_a and hand_b as separate EdgeTAM controller identities.",
     )
     parser.add_argument(
         "--track-mode",
@@ -400,6 +420,12 @@ def apply_preset_defaults(
         args.mode = MODE_DEMO
     if "--controller-prompt" not in explicit or args.controller_prompt is None:
         args.controller_prompt = _mode_prompts(str(args.mode))["controller_prompt"]
+    if "--controller-instance-mode" not in explicit:
+        prompt = str(args.controller_prompt).strip().lower()
+        if str(args.mode) == MODE_DEMO and "hand" in prompt:
+            args.controller_instance_mode = masked_pcd.CONTROLLER_INSTANCE_MODE_TWO_HANDS
+        else:
+            args.controller_instance_mode = masked_pcd.CONTROLLER_INSTANCE_MODE_SINGLE
     headless_capture = _headless_capture_requested(args, version)
     filtered_visual = _filtered_visual_mode_requested(args, version)
     if headless_capture:
@@ -445,6 +471,8 @@ def apply_preset_defaults(
                 args.tracker_overlay_max_points = 0
     if "--track-mode" not in explicit and str(args.render_mode) == "none" and not headless_capture:
         args.track_mode = TRACK_MODE_NONE
+        if "--controller-instance-mode" not in explicit:
+            args.controller_instance_mode = masked_pcd.CONTROLLER_INSTANCE_MODE_SINGLE
     if "--tracker-backend" not in explicit and (
         (str(args.render_mode) == "none" and not headless_capture) or str(args.track_mode) == TRACK_MODE_NONE
     ):
@@ -698,6 +726,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "object_prompt": str(args.object_prompt),
         "controller_prompt": controller_prompt,
         "controller_label": controller_label,
+        "controller_instance_mode": str(args.controller_instance_mode),
+        "edgetam_tracking_identities": _edgetam_tracking_identities(args),
         "track_mode": str(args.track_mode),
         "render_mode": str(args.render_mode),
         "demo_visual_mode": str(args.demo_visual_mode),
@@ -797,6 +827,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracker_display_scope",
         "object_prompt",
         "controller_prompt",
+        "controller_instance_mode",
+        "edgetam_tracking_identities",
         "render_mode",
         "demo_visual_mode",
         "headless_capture_enabled",
@@ -960,6 +992,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.object_prompt),
         "--controller-prompt",
         str(args.controller_prompt),
+        "--controller-instance-mode",
+        str(args.controller_instance_mode),
         "--point-size",
         str(float(args.point_size)),
     ]

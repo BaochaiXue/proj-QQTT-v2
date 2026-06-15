@@ -134,9 +134,9 @@ def _draw_query_points(
     trajectory_path: Path,
     *,
     marker_radius: int,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int, int]:
     if not trajectory_path.is_file():
-        return 0, 0, 0
+        return 0, 0, 0, 0, 0
     payload = np.load(trajectory_path, allow_pickle=False)
     tracks_yx = np.asarray(payload["tracks_yx"], dtype=np.float32).reshape(-1, 2)
     query_indices = np.asarray(payload["query_indices"], dtype=np.int64).reshape(-1)
@@ -162,6 +162,10 @@ def _draw_query_points(
         visibility = np.asarray(payload["visibility"], dtype=np.float32).reshape(-1)
     else:
         visibility = np.ones((len(tracks_yx),), dtype=np.float32)
+    if "query_controller_instance_id" in payload.files:
+        query_controller_instance_id = np.asarray(payload["query_controller_instance_id"], dtype=np.int64).reshape(-1)
+    else:
+        query_controller_instance_id = np.zeros((len(tracks_yx),), dtype=np.int64)
     count = min(
         len(tracks_yx),
         len(query_indices),
@@ -169,9 +173,10 @@ def _draw_query_points(
         len(query_is_controller),
         len(marker_rgb_u8),
         len(visibility),
+        len(query_controller_instance_id),
     )
     if count == 0:
-        return 0, 0, 0
+        return 0, 0, 0, 0, 0
     height, width = image_bgr.shape[:2]
     y = np.rint(tracks_yx[:count, 0]).astype(np.int32)
     x = np.rint(tracks_yx[:count, 1]).astype(np.int32)
@@ -187,6 +192,7 @@ def _draw_query_points(
     visible_uv = uv[valid]
     visible_is_object = query_is_object[:count][valid]
     visible_is_controller = query_is_controller[:count][valid]
+    visible_controller_instance_id = query_controller_instance_id[:count][valid]
     visible_colors_bgr = marker_rgb_u8[:count][valid][:, ::-1]
     radius = max(1, int(marker_radius))
 
@@ -221,7 +227,9 @@ def _draw_query_points(
             cv2.LINE_AA,
         )
         controller_count += 1
-    return int(object_count + controller_count), int(object_count), int(controller_count)
+    hand_a_count = int(np.count_nonzero(visible_controller_instance_id == 1))
+    hand_b_count = int(np.count_nonzero(visible_controller_instance_id == 2))
+    return int(object_count + controller_count), int(object_count), int(controller_count), hand_a_count, hand_b_count
 
 
 def render_capture_to_video(
@@ -262,6 +270,7 @@ def render_capture_to_video(
             image = np.zeros((height, width, 3), dtype=np.uint8)
             controller_count = object_count = 0
             query_count = query_object_count = query_controller_count = 0
+            query_hand_a_count = query_hand_b_count = 0
             query_path = None
             if str(demo_visual_mode) == "tracking":
                 image = _read_rgb_frame_bgr(capture_dir=capture_dir, frame=frame, width=width, height=height)
@@ -273,7 +282,13 @@ def render_capture_to_video(
                 if query_path is None or not query_path.is_file():
                     missing_query_frames += 1
                 else:
-                    query_count, query_object_count, query_controller_count = _draw_query_points(
+                    (
+                        query_count,
+                        query_object_count,
+                        query_controller_count,
+                        query_hand_a_count,
+                        query_hand_b_count,
+                    ) = _draw_query_points(
                         image,
                         query_path,
                         marker_radius=int(query_point_radius),
@@ -306,6 +321,8 @@ def render_capture_to_video(
                     "query_points": int(query_count),
                     "query_object_points": int(query_object_count),
                     "query_controller_points": int(query_controller_count),
+                    "query_hand_a_points": int(query_hand_a_count),
+                    "query_hand_b_points": int(query_hand_b_count),
                     "query_trajectory_exact": int(query_path is not None and query_path.is_file()),
                 }
             )
@@ -323,6 +340,13 @@ def render_capture_to_video(
         "query_color_mode": "phystwin_rainbow_identity" if str(demo_visual_mode) == "tracking" else "none",
         "query_match_policy": "exact_same_seq_only",
         "missing_query_frames": int(missing_query_frames),
+        "query_count_totals": {
+            "hand_a": int(sum(item["query_hand_a_points"] for item in rendered_counts)),
+            "hand_b": int(sum(item["query_hand_b_points"] for item in rendered_counts)),
+            "controller": int(sum(item["query_controller_points"] for item in rendered_counts)),
+            "object": int(sum(item["query_object_points"] for item in rendered_counts)),
+            "all": int(sum(item["query_points"] for item in rendered_counts)),
+        },
         "rendered_counts": rendered_counts,
     }
     summary_path = output.with_suffix(".render_summary.json")

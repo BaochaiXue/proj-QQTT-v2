@@ -60,9 +60,12 @@ the end of the recording. Fake-live runs in demo mode. When enhanced PCD
 component filtering is enabled, object filtering keeps one main component while
 controller filtering defaults to enhanced-pt and keeps two main components so
 two-hand controllers are not dropped as disconnected noise. Demo 3.x Open3D
-windows start in a third-person orbit view; pass `--view-mode camera` for the
-RealSense camera view. The realtime filter also falls back to the current
-capped PCD if filtering would erase a nonempty semantic layer, and async filter
+tracks demo-mode `human hand` controllers as three EdgeTAM identities
+(`hand_a`, `object`, `hand_b`) while keeping the controller PCD/depth mask as
+`hand_a | hand_b`; frame-0 needs two separable hands for that mode. Demo 3.x
+Open3D windows start in a third-person orbit view; pass `--view-mode camera`
+for the RealSense camera view. The realtime filter also falls back to the
+current capped PCD if filtering would erase a nonempty semantic layer, and async filter
 outputs older than three frames do not replace the current raw frame. The
 controller layer also falls back to capped current-frame PCD when filtering
 would retain less than half of its capped points, prioritizing two-hand

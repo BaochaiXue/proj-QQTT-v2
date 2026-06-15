@@ -304,6 +304,201 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertGreater(np.unique(first, axis=0).shape[0], 4)
         np.testing.assert_array_equal(first, query_rainbow_colors_from_points_yx_rgb_u8(points_yx + np.array([0.0, 99.0], dtype=np.float32)))
 
+    def test_split_controller_hand_instances_sorts_masks_by_initial_x(self) -> None:
+        right = np.zeros((5, 8), dtype=bool)
+        left = np.zeros((5, 8), dtype=bool)
+        right[1:4, 5:7] = True
+        left[1:4, 1:3] = True
+
+        hand_a, hand_b = demo.split_controller_hand_instances([right, left], label="human hand")
+
+        np.testing.assert_array_equal(hand_a, left)
+        np.testing.assert_array_equal(hand_b, right)
+
+    def test_split_controller_hand_instances_splits_union_connected_components(self) -> None:
+        union = np.zeros((5, 8), dtype=bool)
+        union[1:4, 1:3] = True
+        union[1:4, 5:7] = True
+
+        hand_a, hand_b = demo.split_controller_hand_instances([union], label="human hand")
+
+        self.assertEqual(int(np.count_nonzero(hand_a)), 6)
+        self.assertEqual(int(np.count_nonzero(hand_b)), 6)
+        self.assertLess(np.argwhere(hand_a)[:, 1].mean(), np.argwhere(hand_b)[:, 1].mean())
+        np.testing.assert_array_equal(np.logical_or(hand_a, hand_b), union)
+
+    def test_split_controller_hand_instances_fails_fast_for_one_component(self) -> None:
+        one_hand = np.zeros((5, 8), dtype=bool)
+        one_hand[1:4, 1:4] = True
+
+        with self.assertRaisesRegex(RuntimeError, "requires two visible hands"):
+            demo.split_controller_hand_instances([one_hand], label="human hand")
+
+    def test_query_target_labels_and_per_target_visibility_are_instance_gated(self) -> None:
+        hand_a = np.zeros((4, 6), dtype=bool)
+        obj = np.zeros((4, 6), dtype=bool)
+        hand_b = np.zeros((4, 6), dtype=bool)
+        hand_a[:, 0:2] = True
+        obj[:, 2:4] = True
+        hand_b[:, 4:6] = True
+        controller = np.logical_or(hand_a, hand_b)
+        query_points = np.array([[1.0, 1.0], [1.0, 4.0], [1.0, 2.0]], dtype=np.float32)
+
+        query_is_object, query_is_controller, target_id, controller_instance_id = demo._classify_query_targets_yx(
+            query_points,
+            object_mask=obj,
+            hand_a_mask=hand_a,
+            hand_b_mask=hand_b,
+            controller_mask=controller,
+        )
+
+        np.testing.assert_array_equal(target_id, np.array([demo.HAND_A_ID, demo.HAND_B_ID, demo.OBJECT_ID]))
+        np.testing.assert_array_equal(
+            controller_instance_id,
+            np.array(
+                [
+                    demo.QUERY_CONTROLLER_INSTANCE_HAND_A,
+                    demo.QUERY_CONTROLLER_INSTANCE_HAND_B,
+                    demo.QUERY_CONTROLLER_INSTANCE_NONE,
+                ],
+                dtype=np.int64,
+            ),
+        )
+        np.testing.assert_array_equal(query_is_object, np.array([False, False, True]))
+        np.testing.assert_array_equal(query_is_controller, np.array([True, True, False]))
+
+        mask_packet = self._mask_packet()
+        mask_packet = demo.MaskPacket(
+            seq=mask_packet.seq,
+            color_bgr=np.zeros((4, 6, 3), dtype=np.uint8),
+            depth_source=mask_packet.depth_source,
+            intrinsics=mask_packet.intrinsics,
+            depth_scale_m_per_unit=mask_packet.depth_scale_m_per_unit,
+            receive_perf_s=mask_packet.receive_perf_s,
+            process_done_perf_s=mask_packet.process_done_perf_s,
+            dropped_capture_frames=mask_packet.dropped_capture_frames,
+            timing=mask_packet.timing,
+            controller_mask=controller,
+            object_mask=obj,
+            hand_a_mask=hand_a,
+            hand_b_mask=hand_b,
+            depth_u16=np.full((4, 6), 1000, dtype=np.uint16),
+        )
+        swapped_tracks = np.array([[1.0, 4.0], [1.0, 1.0], [1.0, 2.0]], dtype=np.float32)
+        visibility = demo._tracker_per_target_visibility(
+            swapped_tracks,
+            np.ones((3,), dtype=np.float32),
+            mask_packet=mask_packet,
+            query_target_id=target_id,
+        )
+
+        np.testing.assert_array_equal(visibility, np.array([0.0, 0.0, 1.0], dtype=np.float32))
+
+    def test_three_identity_segmentation_prompt_and_controller_union(self) -> None:
+        class _FakeTensor:
+            def to(self, *, device, dtype):
+                _ = device, dtype
+                return self
+
+        class _FakeInputs:
+            pixel_values = [_FakeTensor()]
+            original_sizes = [(4, 6)]
+
+        class _FakeProcessor:
+            def __init__(self) -> None:
+                self.prompt_obj_ids: list[int] | None = None
+                self.prompt_masks: list[np.ndarray] | None = None
+
+            def __call__(self, *, images, device, return_tensors):
+                _ = images, device, return_tensors
+                return _FakeInputs()
+
+            def add_inputs_to_inference_session(self, *, inference_session, frame_idx, obj_ids, input_masks):
+                _ = inference_session, frame_idx
+                self.prompt_obj_ids = list(obj_ids)
+                self.prompt_masks = [np.asarray(mask, dtype=bool) for mask in input_masks]
+                return None
+
+            def post_process_masks(self, pred_masks, *, original_sizes, binarize):
+                _ = pred_masks, original_sizes, binarize
+                return [
+                    [
+                        np.asarray(self.prompt_masks[0], dtype=bool),
+                        np.asarray(self.prompt_masks[1], dtype=bool),
+                        np.asarray(self.prompt_masks[2], dtype=bool),
+                    ]
+                ]
+
+        class _FakeModelOutput:
+            frame_idx = 0
+            object_ids = [demo.HAND_A_ID, demo.OBJECT_ID, demo.HAND_B_ID]
+            pred_masks = object()
+
+        class _FakeModel:
+            def __call__(self, *, inference_session, frame, frame_idx):
+                _ = inference_session, frame, frame_idx
+                return _FakeModelOutput()
+
+        class _FakeTorch:
+            bfloat16 = object()
+            float16 = object()
+
+            @staticmethod
+            def inference_mode():
+                class _Ctx:
+                    def __enter__(self):
+                        return None
+
+                    def __exit__(self, exc_type, exc, tb):
+                        return False
+
+                return _Ctx()
+
+        args = self._tracker_args()
+        args.controller_instance_mode = demo.CONTROLLER_INSTANCE_MODE_TWO_HANDS
+        args.device = "cpu"
+        args.dtype = "float32"
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        processor = _FakeProcessor()
+        hand_a = np.zeros((4, 6), dtype=bool)
+        obj = np.zeros((4, 6), dtype=bool)
+        hand_b = np.zeros((4, 6), dtype=bool)
+        hand_a[:, 0:2] = True
+        obj[:, 2:4] = True
+        hand_b[:, 4:6] = True
+        frame = self._mask_packet()
+        packet = runtime._run_segmentation_frame(
+            hf_stream=object(),
+            torch_module=_FakeTorch(),
+            dtype=np.float32,
+            model=_FakeModel(),
+            processor=processor,
+            session=object(),
+            frame=demo.FramePacket(
+                seq=0,
+                color_bgr=np.zeros((4, 6, 3), dtype=np.uint8),
+                depth_source=frame.depth_source,
+                intrinsics=frame.intrinsics,
+                depth_scale_m_per_unit=frame.depth_scale_m_per_unit,
+                receive_perf_s=frame.receive_perf_s,
+                timing=demo.PipelineTiming(),
+                depth_u16=np.full((4, 6), 1000, dtype=np.uint16),
+            ),
+            initial_masks=demo.InitialMaskBundle(
+                controller_mask=np.logical_or(hand_a, hand_b),
+                object_mask=obj,
+                hand_a_mask=hand_a,
+                hand_b_mask=hand_b,
+            ),
+            add_prompt=True,
+        )
+
+        self.assertEqual(processor.prompt_obj_ids, [demo.HAND_A_ID, demo.OBJECT_ID, demo.HAND_B_ID])
+        np.testing.assert_array_equal(packet.hand_a_mask, hand_a)
+        np.testing.assert_array_equal(packet.hand_b_mask, hand_b)
+        np.testing.assert_array_equal(packet.object_mask, obj)
+        np.testing.assert_array_equal(packet.controller_mask, np.logical_or(hand_a, hand_b))
+
     def test_tracker_lift_mask_uses_current_union_mask_and_erosion(self) -> None:
         packet = self._mask_packet()
 
@@ -458,6 +653,11 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 query_count=1,
                 consistent_visible_count=1,
                 query_indices=np.array([0], dtype=np.int64),
+                query_target_id=np.array([demo.OBJECT_ID], dtype=np.int64),
+                query_controller_instance_id=np.array([demo.QUERY_CONTROLLER_INSTANCE_NONE], dtype=np.int64),
+                query_all_target_id=np.array([demo.OBJECT_ID], dtype=np.int64),
+                query_all_controller_instance_id=np.array([demo.QUERY_CONTROLLER_INSTANCE_NONE], dtype=np.int64),
+                object_query_count=1,
             )
 
             mask_packet = self._mask_packet()
@@ -473,6 +673,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 pcd_mask_erode_pixels=1,
                 object_pcd_mask_erode_pixels=3,
                 controller_pcd_mask_erode_pixels=0,
+                tracker_packet=tracker_packet,
             )
 
             metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
@@ -489,8 +690,13 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertTrue((output_dir / rows[0]["mask_path"]).is_file())
             self.assertEqual(rows[0]["controller_mask_pixels"], int(np.count_nonzero(mask_packet.controller_mask)))
             self.assertEqual(rows[0]["object_mask_pixels"], int(np.count_nonzero(mask_packet.object_mask)))
+            self.assertEqual(rows[0]["hand_a_mask_pixels"], int(np.count_nonzero(mask_packet.controller_mask)))
+            self.assertEqual(rows[0]["hand_b_mask_pixels"], 0)
             self.assertEqual(rows[0]["controller_pcd_mask_pixels"], int(np.count_nonzero(pcd_mask)))
             self.assertEqual(rows[0]["object_pcd_mask_pixels"], 0)
+            self.assertEqual(rows[0]["hand_a_query_count"], 0)
+            self.assertEqual(rows[0]["hand_b_query_count"], 0)
+            self.assertEqual(rows[0]["object_query_count"], 1)
             self.assertEqual(rows[0]["pcd_mask_erode_pixels"], 1)
             self.assertEqual(rows[0]["object_pcd_mask_erode_pixels"], 3)
             self.assertEqual(rows[0]["controller_pcd_mask_erode_pixels"], 0)
@@ -499,6 +705,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             mask_payload = np.load(output_dir / rows[0]["mask_path"], allow_pickle=False)
             np.testing.assert_array_equal(mask_payload["controller_mask"], mask_packet.controller_mask)
             np.testing.assert_array_equal(mask_payload["object_mask"], mask_packet.object_mask)
+            np.testing.assert_array_equal(mask_payload["hand_a_mask"], mask_packet.controller_mask)
+            np.testing.assert_array_equal(mask_payload["hand_b_mask"], np.zeros_like(mask_packet.controller_mask))
             np.testing.assert_array_equal(mask_payload["controller_pcd_mask"], pcd_mask)
             self.assertEqual(int(mask_payload["pcd_stride"][0]), 2)
             self.assertEqual(int(mask_payload["pcd_mask_erode_pixels"][0]), 1)
@@ -508,6 +716,12 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             np.testing.assert_array_equal(trajectory["query_indices"], np.array([0], dtype=np.int64))
             np.testing.assert_array_equal(trajectory["query_rgb_u8"], query_rgb_u8)
             np.testing.assert_array_equal(trajectory["marker_rgb_u8"], query_rgb_u8)
+            np.testing.assert_array_equal(trajectory["query_target_id"], np.array([demo.OBJECT_ID], dtype=np.int64))
+            np.testing.assert_array_equal(
+                trajectory["query_controller_instance_id"],
+                np.array([demo.QUERY_CONTROLLER_INSTANCE_NONE], dtype=np.int64),
+            )
+            self.assertEqual(int(trajectory["object_query_count"][0]), 1)
 
     def test_tracker_worker_publishes_lifted_marker_packet_with_fake_adapter(self) -> None:
         args = self._tracker_args()

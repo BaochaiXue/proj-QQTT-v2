@@ -158,9 +158,12 @@ DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO = 0.5
 DEFAULT_FILTER_MAX_AGE_FRAMES = 3
 DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
 DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES = 8
-CONTROLLER_ID = 1
+HAND_A_ID = 1
 OBJECT_ID = 2
+HAND_B_ID = 3
+CONTROLLER_ID = HAND_A_ID
 OBJECT_LABELS = {CONTROLLER_ID: "controller", OBJECT_ID: "object"}
+THREE_IDENTITY_OBJECT_LABELS = {HAND_A_ID: "hand_a", OBJECT_ID: "object", HAND_B_ID: "hand_b"}
 CONTROLLER_COLOR_RGB = (255, 96, 32)
 OBJECT_COLOR_RGB = (64, 180, 255)
 GEOMETRY_CONTROLLER = "masked_edgetam_controller"
@@ -178,9 +181,15 @@ TRACKER_DISPLAY_SCOPES = (
 )
 DEFAULT_TRACKER_DISPLAY_SCOPE = TRACKER_DISPLAY_SCOPE_UNION
 DEFAULT_TRACKER_BACKEND = TRACKER_BACKEND_NONE
-DEFAULT_TRACKER_QUERY_COUNT = 4096
+DEFAULT_TRACKER_QUERY_COUNT = PHYSTWIN_DENSE_QUERY_POINTS
 DEFAULT_TRACKER_SEED = 42
 DEFAULT_TRACKER_MARKER_POINT_SIZE = 8.0
+CONTROLLER_INSTANCE_MODE_SINGLE = "single"
+CONTROLLER_INSTANCE_MODE_TWO_HANDS = "two-hands"
+CONTROLLER_INSTANCE_MODES = (CONTROLLER_INSTANCE_MODE_SINGLE, CONTROLLER_INSTANCE_MODE_TWO_HANDS)
+QUERY_CONTROLLER_INSTANCE_NONE = 0
+QUERY_CONTROLLER_INSTANCE_HAND_A = 1
+QUERY_CONTROLLER_INSTANCE_HAND_B = 2
 HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "enhanced_pt_filtered"
 DEBUG_LOG_INTERVAL_S = 1.0
 FATAL_HUD_PREFIX = "FATAL WORKER ERROR"
@@ -577,6 +586,14 @@ class RecordedRgbdFrameSource:
 
 
 @dataclass(frozen=True)
+class InitialMaskBundle:
+    controller_mask: np.ndarray
+    object_mask: np.ndarray
+    hand_a_mask: np.ndarray | None = None
+    hand_b_mask: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
 class MaskPacket:
     seq: int
     color_bgr: np.ndarray
@@ -589,6 +606,8 @@ class MaskPacket:
     timing: PipelineTiming
     controller_mask: np.ndarray
     object_mask: np.ndarray
+    hand_a_mask: np.ndarray | None = None
+    hand_b_mask: np.ndarray | None = None
     depth_u16: np.ndarray | None = None
     ir_left_u8: np.ndarray | None = None
     ir_right_u8: np.ndarray | None = None
@@ -647,6 +666,13 @@ class TrackerMarkerPacket:
     backend: str = TRACKER_BACKEND_TAPNEXTPP
     display_scope: str = DEFAULT_TRACKER_DISPLAY_SCOPE
     query_indices: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=np.int64))
+    query_target_id: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=np.int64))
+    query_controller_instance_id: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=np.int64))
+    query_all_target_id: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=np.int64))
+    query_all_controller_instance_id: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=np.int64))
+    hand_a_query_count: int = 0
+    hand_b_query_count: int = 0
+    object_query_count: int = 0
 
     @property
     def marker_count(self) -> int:
@@ -778,6 +804,7 @@ class HeadlessCaptureWriter:
         pcd_mask_erode_pixels: int,
         object_pcd_mask_erode_pixels: int,
         controller_pcd_mask_erode_pixels: int,
+        tracker_packet: TrackerMarkerPacket | None = None,
     ) -> None:
         filter_info = packet.filter_telemetry
         if not (filter_info.enabled and filter_info.mode == "sync" and filter_info.render_using_filtered):
@@ -798,6 +825,8 @@ class HeadlessCaptureWriter:
             seq=np.asarray([int(packet.seq)], dtype=np.int64),
             controller_mask=np.ascontiguousarray(mask_packet.controller_mask, dtype=bool),
             object_mask=np.ascontiguousarray(mask_packet.object_mask, dtype=bool),
+            hand_a_mask=np.ascontiguousarray(_mask_packet_hand_a_mask(mask_packet), dtype=bool),
+            hand_b_mask=np.ascontiguousarray(_mask_packet_hand_b_mask(mask_packet), dtype=bool),
             controller_pcd_mask=np.ascontiguousarray(controller_pcd_mask, dtype=bool),
             object_pcd_mask=np.ascontiguousarray(object_pcd_mask, dtype=bool),
             pcd_stride=np.asarray([int(pcd_stride)], dtype=np.int64),
@@ -835,11 +864,16 @@ class HeadlessCaptureWriter:
             "object_point_count": int(packet.object_point_count),
             "controller_mask_pixels": int(np.count_nonzero(mask_packet.controller_mask)),
             "object_mask_pixels": int(np.count_nonzero(mask_packet.object_mask)),
+            "hand_a_mask_pixels": int(np.count_nonzero(_mask_packet_hand_a_mask(mask_packet))),
+            "hand_b_mask_pixels": int(np.count_nonzero(_mask_packet_hand_b_mask(mask_packet))),
             "controller_pcd_mask_pixels": int(np.count_nonzero(controller_pcd_mask)),
             "object_pcd_mask_pixels": int(np.count_nonzero(object_pcd_mask)),
             "pcd_mask_erode_pixels": int(pcd_mask_erode_pixels),
             "controller_pcd_mask_erode_pixels": int(controller_pcd_mask_erode_pixels),
             "object_pcd_mask_erode_pixels": int(object_pcd_mask_erode_pixels),
+            "hand_a_query_count": int(tracker_packet.hand_a_query_count) if tracker_packet is not None else 0,
+            "hand_b_query_count": int(tracker_packet.hand_b_query_count) if tracker_packet is not None else 0,
+            "object_query_count": int(tracker_packet.object_query_count) if tracker_packet is not None else 0,
             "receive_perf_s": float(packet.receive_perf_s),
             "process_done_perf_s": float(packet.process_done_perf_s),
             "timing": asdict(packet.timing),
@@ -866,8 +900,18 @@ class HeadlessCaptureWriter:
             visibility=np.ascontiguousarray(packet.visibility, dtype=np.float32),
             query_is_object=np.ascontiguousarray(packet.query_is_object, dtype=bool),
             query_is_controller=np.ascontiguousarray(packet.query_is_controller, dtype=bool),
+            query_target_id=np.ascontiguousarray(packet.query_target_id, dtype=np.int64),
+            query_controller_instance_id=np.ascontiguousarray(packet.query_controller_instance_id, dtype=np.int64),
+            query_all_target_id=np.ascontiguousarray(packet.query_all_target_id, dtype=np.int64),
+            query_all_controller_instance_id=np.ascontiguousarray(
+                packet.query_all_controller_instance_id,
+                dtype=np.int64,
+            ),
             query_count=np.asarray([int(packet.query_count)], dtype=np.int64),
             consistent_visible_count=np.asarray([int(packet.consistent_visible_count)], dtype=np.int64),
+            hand_a_query_count=np.asarray([int(packet.hand_a_query_count)], dtype=np.int64),
+            hand_b_query_count=np.asarray([int(packet.hand_b_query_count)], dtype=np.int64),
+            object_query_count=np.asarray([int(packet.object_query_count)], dtype=np.int64),
             model_ms=np.asarray([float(packet.model_ms)], dtype=np.float32),
             lift_ms=np.asarray([float(packet.lift_ms)], dtype=np.float32),
             e2e_ms=np.asarray([float(packet.e2e_ms)], dtype=np.float32),
@@ -1181,6 +1225,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="SAM3.1 prompt label to union as controller in sam31-first-frame mode.",
     )
     parser.add_argument(
+        "--controller-instance-mode",
+        choices=CONTROLLER_INSTANCE_MODES,
+        default=CONTROLLER_INSTANCE_MODE_SINGLE,
+        help="Use two-hands to propagate hand_a and hand_b as separate EdgeTAM controller identities.",
+    )
+    parser.add_argument(
         "--object-prompt",
         default="stuffed animal",
         help="SAM3.1 prompt label to use as object in sam31-first-frame mode.",
@@ -1375,6 +1425,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--recording-case/--fake-live-case requires --input-source recording or fake-live")
     if args.demo_preset == "local-ffs-professor" and args.depth_source != "ffs":
         raise ValueError("--demo-preset local-ffs-professor requires --depth-source ffs")
+    if str(args.controller_instance_mode) not in CONTROLLER_INSTANCE_MODES:
+        raise ValueError(f"--controller-instance-mode must be one of {', '.join(CONTROLLER_INSTANCE_MODES)}")
+    if str(args.controller_instance_mode) == CONTROLLER_INSTANCE_MODE_TWO_HANDS and not controller_tracking_enabled(args):
+        raise ValueError("--controller-instance-mode two-hands requires controller tracking")
     if args.depth_min_m < 0:
         raise ValueError("--depth-min-m must be >= 0")
     if args.depth_max_m > 0 and args.depth_max_m <= args.depth_min_m:
@@ -1843,6 +1897,14 @@ def object_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> boo
     return str(track_mode) in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY}
 
 
+def three_identity_controller_enabled(args: argparse.Namespace) -> bool:
+    return bool(
+        controller_tracking_enabled(args)
+        and str(getattr(args, "controller_instance_mode", CONTROLLER_INSTANCE_MODE_SINGLE))
+        == CONTROLLER_INSTANCE_MODE_TWO_HANDS
+    )
+
+
 def object_id_labels(track_mode: str = DEFAULT_TRACK_MODE) -> dict[int, str]:
     if track_mode == TRACK_MODE_NONE:
         return {}
@@ -1855,8 +1917,28 @@ def object_id_labels(track_mode: str = DEFAULT_TRACK_MODE) -> dict[int, str]:
     raise ValueError(f"unsupported track mode: {track_mode}")
 
 
+def active_object_id_labels(args: argparse.Namespace) -> dict[int, str]:
+    track_mode = str(args.track_mode)
+    if track_mode == TRACK_MODE_NONE:
+        return {}
+    if track_mode == TRACK_MODE_OBJECT_ONLY:
+        return {OBJECT_ID: THREE_IDENTITY_OBJECT_LABELS[OBJECT_ID]}
+    if track_mode == TRACK_MODE_CONTROLLER_ONLY:
+        if three_identity_controller_enabled(args):
+            return {
+                HAND_A_ID: THREE_IDENTITY_OBJECT_LABELS[HAND_A_ID],
+                HAND_B_ID: THREE_IDENTITY_OBJECT_LABELS[HAND_B_ID],
+            }
+        return {CONTROLLER_ID: OBJECT_LABELS[CONTROLLER_ID]}
+    if track_mode == TRACK_MODE_CONTROLLER_OBJECT:
+        if three_identity_controller_enabled(args):
+            return dict(THREE_IDENTITY_OBJECT_LABELS)
+        return dict(OBJECT_LABELS)
+    raise ValueError(f"unsupported track mode: {track_mode}")
+
+
 def active_object_ids(args: argparse.Namespace) -> list[int]:
-    return list(object_id_labels(str(args.track_mode)).keys())
+    return list(active_object_id_labels(args).keys())
 
 
 def _coerce_object_ids(value: Any) -> list[int]:
@@ -1978,6 +2060,78 @@ def _union_masks(masks: list[np.ndarray], *, label: str) -> np.ndarray:
     return np.ascontiguousarray(output)
 
 
+def _mask_area(mask: np.ndarray) -> int:
+    return int(np.count_nonzero(np.asarray(mask, dtype=bool)))
+
+
+def _mask_centroid_x(mask: np.ndarray) -> float:
+    coords = np.argwhere(np.asarray(mask, dtype=bool))
+    if coords.size == 0:
+        return float("inf")
+    return float(coords[:, 1].mean())
+
+
+def _connected_components_by_area(mask: np.ndarray) -> list[np.ndarray]:
+    mask_bool = np.asarray(mask, dtype=bool)
+    if not np.any(mask_bool):
+        return []
+    try:
+        import cv2  # noqa: PLC0415
+
+        count, labels, stats, _centroids = cv2.connectedComponentsWithStats(mask_bool.astype(np.uint8), 8)
+        components: list[tuple[int, np.ndarray]] = []
+        for label_idx in range(1, int(count)):
+            area = int(stats[label_idx, cv2.CC_STAT_AREA])
+            if area > 0:
+                components.append((area, labels == label_idx))
+        components.sort(key=lambda item: item[0], reverse=True)
+        return [np.ascontiguousarray(component, dtype=bool) for _area, component in components]
+    except Exception:
+        # Small fallback for test/minimal environments without cv2.
+        height, width = mask_bool.shape[:2]
+        seen = np.zeros_like(mask_bool, dtype=bool)
+        components = []
+        for start_y, start_x in np.argwhere(mask_bool):
+            if seen[start_y, start_x]:
+                continue
+            stack = [(int(start_y), int(start_x))]
+            seen[start_y, start_x] = True
+            coords: list[tuple[int, int]] = []
+            while stack:
+                y, x = stack.pop()
+                coords.append((y, x))
+                for ny in (y - 1, y, y + 1):
+                    for nx in (x - 1, x, x + 1):
+                        if ny == y and nx == x:
+                            continue
+                        if 0 <= ny < height and 0 <= nx < width and mask_bool[ny, nx] and not seen[ny, nx]:
+                            seen[ny, nx] = True
+                            stack.append((ny, nx))
+            component = np.zeros_like(mask_bool, dtype=bool)
+            yy, xx = np.asarray(coords, dtype=np.int64).T
+            component[yy, xx] = True
+            components.append(component)
+        components.sort(key=_mask_area, reverse=True)
+        return [np.ascontiguousarray(component, dtype=bool) for component in components]
+
+
+def split_controller_hand_instances(controller_masks: list[np.ndarray], *, label: str) -> tuple[np.ndarray, np.ndarray]:
+    masks = [np.ascontiguousarray(mask, dtype=bool) for mask in controller_masks if _mask_area(mask) > 0]
+    if len(masks) >= 2:
+        candidates = sorted(masks, key=_mask_area, reverse=True)[:2]
+    elif len(masks) == 1:
+        candidates = _connected_components_by_area(masks[0])[:2]
+    else:
+        candidates = []
+    if len(candidates) < 2:
+        raise RuntimeError(
+            f"SAM3.1 did not produce two separable controller masks for {label!r}; "
+            "three-identity demo requires two visible hands in frame 0"
+        )
+    candidates = sorted(candidates, key=_mask_centroid_x)
+    return np.ascontiguousarray(candidates[0], dtype=bool), np.ascontiguousarray(candidates[1], dtype=bool)
+
+
 def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> float:
     started_s = time.perf_counter()
     helper = sys.modules.get("scripts.harness.sam31_mask_helper")
@@ -2024,7 +2178,7 @@ def trim_sam31_cuda_allocator(device: str = DEFAULT_DEVICE) -> float:
     return _elapsed_ms(started_s, time.perf_counter())
 
 
-def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
+def run_sam31_first_frame_mask_bundle(color_bgr: np.ndarray, args: argparse.Namespace) -> InitialMaskBundle:
     from scripts.harness.sam31_mask_helper import parse_text_prompts, run_image_segmentation
 
     prompt_labels = []
@@ -2034,7 +2188,7 @@ def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace)
         prompt_labels.append(str(args.controller_prompt))
     if not prompt_labels:
         empty = np.zeros(tuple(color_bgr.shape[:2]), dtype=bool)
-        return empty, empty
+        return InitialMaskBundle(controller_mask=empty, object_mask=empty)
     text_prompt = ",".join(prompt_labels)
     keep_runtime_until_all_cameras_init = bool(
         getattr(args, "sam31_keep_runtime_until_all_cameras_init", False)
@@ -2061,6 +2215,7 @@ def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace)
     masks_by_label = result["masks_by_label"]
     object_mask: np.ndarray | None = None
     controller_mask: np.ndarray | None = None
+    controller_masks: list[np.ndarray] = []
     if object_tracking_enabled(args):
         object_label = parse_text_prompts(str(args.object_prompt))[0]
         object_mask = _union_masks(
@@ -2073,15 +2228,35 @@ def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace)
         controller_mask = _union_masks(controller_masks, label=args.controller_prompt)
     if object_mask is None and controller_mask is None:
         empty = np.zeros(tuple(color_bgr.shape[:2]), dtype=bool)
-        return empty, empty
+        return InitialMaskBundle(controller_mask=empty, object_mask=empty)
     if object_mask is None:
         object_mask = np.zeros_like(controller_mask, dtype=bool)
     if controller_mask is None:
-        return np.zeros_like(object_mask, dtype=bool), object_mask
-    return controller_mask, object_mask
+        empty_controller = np.zeros_like(object_mask, dtype=bool)
+        return InitialMaskBundle(controller_mask=empty_controller, object_mask=object_mask)
+    if three_identity_controller_enabled(args):
+        hand_a_mask, hand_b_mask = split_controller_hand_instances(
+            controller_masks,
+            label=str(args.controller_prompt),
+        )
+        controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
+    else:
+        hand_a_mask = np.ascontiguousarray(controller_mask, dtype=bool)
+        hand_b_mask = np.zeros_like(hand_a_mask, dtype=bool)
+    return InitialMaskBundle(
+        controller_mask=np.ascontiguousarray(controller_mask, dtype=bool),
+        object_mask=np.ascontiguousarray(object_mask, dtype=bool),
+        hand_a_mask=np.ascontiguousarray(hand_a_mask, dtype=bool),
+        hand_b_mask=np.ascontiguousarray(hand_b_mask, dtype=bool),
+    )
 
 
-def resolve_initial_masks(frame: FramePacket, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
+def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
+    bundle = run_sam31_first_frame_mask_bundle(color_bgr, args)
+    return bundle.controller_mask, bundle.object_mask
+
+
+def resolve_initial_mask_bundle(frame: FramePacket, args: argparse.Namespace) -> InitialMaskBundle:
     expected_shape = tuple(frame.color_bgr.shape[:2])
     if args.init_mode == "saved-masks":
         object_mask = (
@@ -2096,18 +2271,37 @@ def resolve_initial_masks(frame: FramePacket, args: argparse.Namespace) -> tuple
         )
         if object_mask is None and controller_mask is None:
             empty = np.zeros(expected_shape, dtype=bool)
-            return empty, empty
+            return InitialMaskBundle(controller_mask=empty, object_mask=empty)
         if object_mask is None:
             object_mask = np.zeros_like(controller_mask, dtype=bool)
         if controller_mask is None:
             controller_mask = np.zeros_like(object_mask, dtype=bool)
-        return controller_mask, object_mask
+        if three_identity_controller_enabled(args):
+            hand_a_mask, hand_b_mask = split_controller_hand_instances(
+                [controller_mask],
+                label=str(args.controller_prompt),
+            )
+            controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
+        else:
+            hand_a_mask = np.ascontiguousarray(controller_mask, dtype=bool)
+            hand_b_mask = np.zeros_like(hand_a_mask, dtype=bool)
+        return InitialMaskBundle(
+            controller_mask=np.ascontiguousarray(controller_mask, dtype=bool),
+            object_mask=np.ascontiguousarray(object_mask, dtype=bool),
+            hand_a_mask=np.ascontiguousarray(hand_a_mask, dtype=bool),
+            hand_b_mask=np.ascontiguousarray(hand_b_mask, dtype=bool),
+        )
     if args.init_mode == "sam31-first-frame":
-        controller_mask, object_mask = run_sam31_first_frame_masks(frame.color_bgr, args)
-        if controller_mask.shape != expected_shape or object_mask.shape != expected_shape:
+        bundle = run_sam31_first_frame_mask_bundle(frame.color_bgr, args)
+        if bundle.controller_mask.shape != expected_shape or bundle.object_mask.shape != expected_shape:
             raise RuntimeError("SAM3.1 frame-0 masks do not match captured frame shape")
-        return controller_mask, object_mask
+        return bundle
     raise ValueError(f"unsupported init mode: {args.init_mode}")
+
+
+def resolve_initial_masks(frame: FramePacket, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
+    bundle = resolve_initial_mask_bundle(frame, args)
+    return bundle.controller_mask, bundle.object_mask
 
 
 def tracker_enabled(args: argparse.Namespace) -> bool:
@@ -2147,6 +2341,18 @@ def _tracker_union_mask(mask_packet: MaskPacket) -> np.ndarray:
     return np.logical_or(controller, obj)
 
 
+def _mask_packet_hand_a_mask(mask_packet: MaskPacket) -> np.ndarray:
+    if mask_packet.hand_a_mask is None:
+        return np.asarray(mask_packet.controller_mask, dtype=bool)
+    return np.asarray(mask_packet.hand_a_mask, dtype=bool)
+
+
+def _mask_packet_hand_b_mask(mask_packet: MaskPacket) -> np.ndarray:
+    if mask_packet.hand_b_mask is None:
+        return np.zeros_like(np.asarray(mask_packet.controller_mask, dtype=bool), dtype=bool)
+    return np.asarray(mask_packet.hand_b_mask, dtype=bool)
+
+
 def _classify_query_points_yx(
     query_points_yx: np.ndarray,
     *,
@@ -2163,6 +2369,40 @@ def _classify_query_points_yx(
     yy = np.clip(np.rint(points[:, 0]).astype(np.int64), 0, height - 1)
     xx = np.clip(np.rint(points[:, 1]).astype(np.int64), 0, width - 1)
     return object_bool[yy, xx].astype(bool), controller_bool[yy, xx].astype(bool)
+
+
+def _classify_query_targets_yx(
+    query_points_yx: np.ndarray,
+    *,
+    object_mask: np.ndarray,
+    hand_a_mask: np.ndarray,
+    hand_b_mask: np.ndarray,
+    controller_mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    points = np.asarray(query_points_yx, dtype=np.float32).reshape(-1, 2)
+    if len(points) == 0:
+        empty_bool = np.empty((0,), dtype=bool)
+        empty_int = np.empty((0,), dtype=np.int64)
+        return empty_bool, empty_bool, empty_int, empty_int
+    object_bool = np.asarray(object_mask, dtype=bool)
+    hand_a_bool = np.asarray(hand_a_mask, dtype=bool)
+    hand_b_bool = np.asarray(hand_b_mask, dtype=bool)
+    controller_bool = np.asarray(controller_mask, dtype=bool)
+    height, width = object_bool.shape[:2]
+    yy = np.clip(np.rint(points[:, 0]).astype(np.int64), 0, height - 1)
+    xx = np.clip(np.rint(points[:, 1]).astype(np.int64), 0, width - 1)
+    in_hand_a = hand_a_bool[yy, xx]
+    in_hand_b = hand_b_bool[yy, xx] & ~in_hand_a
+    in_object = object_bool[yy, xx] & ~(in_hand_a | in_hand_b)
+    in_controller = controller_bool[yy, xx] | in_hand_a | in_hand_b
+    target_id = np.zeros((len(points),), dtype=np.int64)
+    target_id[in_object] = OBJECT_ID
+    target_id[in_hand_a] = HAND_A_ID
+    target_id[in_hand_b] = HAND_B_ID
+    controller_instance_id = np.zeros((len(points),), dtype=np.int64)
+    controller_instance_id[in_hand_a] = QUERY_CONTROLLER_INSTANCE_HAND_A
+    controller_instance_id[in_hand_b] = QUERY_CONTROLLER_INSTANCE_HAND_B
+    return in_object.astype(bool), in_controller.astype(bool), target_id, controller_instance_id
 
 
 def _tracker_display_visibility(
@@ -2185,6 +2425,47 @@ def _tracker_display_visibility(
         fitted[: min(len(labels), len(fitted))] = labels[: min(len(labels), len(fitted))]
         labels = fitted
     return np.where(labels, vis, 0.0).astype(np.float32)
+
+
+def _tracker_per_target_visibility(
+    tracks_yx: np.ndarray,
+    visibility: np.ndarray,
+    *,
+    mask_packet: MaskPacket,
+    query_target_id: np.ndarray,
+) -> np.ndarray:
+    tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+    vis = np.asarray(visibility, dtype=np.float32).reshape(-1)
+    target_id = np.asarray(query_target_id, dtype=np.int64).reshape(-1)
+    count = min(len(tracks), len(vis), len(target_id))
+    output = np.zeros((len(vis),), dtype=np.float32)
+    if count == 0:
+        return output
+    object_mask = np.asarray(mask_packet.object_mask, dtype=bool)
+    hand_a_mask = _mask_packet_hand_a_mask(mask_packet)
+    hand_b_mask = _mask_packet_hand_b_mask(mask_packet)
+    height, width = object_mask.shape[:2]
+    yy = np.rint(tracks[:count, 0]).astype(np.int64)
+    xx = np.rint(tracks[:count, 1]).astype(np.int64)
+    finite_tracks = np.isfinite(tracks[:count]).all(axis=1)
+    in_bounds = (yy >= 0) & (yy < height) & (xx >= 0) & (xx < width)
+    valid = (vis[:count] > 0.0) & finite_tracks & in_bounds
+    if not np.any(valid):
+        return output
+    valid_indices = np.flatnonzero(valid)
+    inside_target = np.zeros((count,), dtype=bool)
+    valid_targets = target_id[valid_indices]
+    hand_a_indices = valid_indices[valid_targets == HAND_A_ID]
+    if len(hand_a_indices):
+        inside_target[hand_a_indices] = hand_a_mask[yy[hand_a_indices], xx[hand_a_indices]]
+    hand_b_indices = valid_indices[valid_targets == HAND_B_ID]
+    if len(hand_b_indices):
+        inside_target[hand_b_indices] = hand_b_mask[yy[hand_b_indices], xx[hand_b_indices]]
+    object_indices = valid_indices[valid_targets == OBJECT_ID]
+    if len(object_indices):
+        inside_target[object_indices] = object_mask[yy[object_indices], xx[object_indices]]
+    output[:count] = np.where(inside_target, vis[:count], 0.0).astype(np.float32)
+    return output
 
 
 def _tracker_lift_valid_mask(
@@ -2416,6 +2697,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self._tracker_query_rgb_u8: np.ndarray | None = None
         self._tracker_query_is_object: np.ndarray | None = None
         self._tracker_query_is_controller: np.ndarray | None = None
+        self._tracker_query_target_id: np.ndarray | None = None
+        self._tracker_query_controller_instance_id: np.ndarray | None = None
         self._tracker_consistent_visible: np.ndarray | None = None
         self._warned_remote_engine_contract = False
         self._fatal_error_lock = threading.Lock()
@@ -2450,6 +2733,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "recording_frame_count": frame_count,
             "depth_source": str(self.args.depth_source),
             "track_mode": str(self.args.track_mode),
+            "controller_instance_mode": str(self.args.controller_instance_mode),
+            "edgetam_tracking_identities": list(active_object_id_labels(self.args).values()),
             "demo_visual_mode": str(self.args.demo_visual_mode),
             "tracker_backend": str(self.args.tracker_backend),
             "tracker_query_count": int(self.args.tracker_query_count),
@@ -2877,6 +3162,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 else None
             ),
             "track_mode": self.args.track_mode,
+            "controller_instance_mode": str(self.args.controller_instance_mode),
+            "edgetam_tracking_identities": list(active_object_id_labels(self.args).values()),
             "depth_source": self.args.depth_source,
             "local_ffs_depth_cache_frames": (
                 DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES if self.args.depth_source == "ffs" else None
@@ -2967,7 +3254,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             first_frame = self._wait_for_first_frame()
             if first_frame is None:
                 return
-            controller_mask, object_mask = resolve_initial_masks(first_frame, self.args)
+            initial_masks = resolve_initial_mask_bundle(first_frame, self.args)
             session = hf_stream.EdgeTamVideoInferenceSession(
                 video=None,
                 video_height=int(first_frame.color_bgr.shape[0]),
@@ -2986,8 +3273,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     processor=processor,
                     session=session,
                     frame=first_frame,
-                    initial_controller_mask=controller_mask,
-                    initial_object_mask=object_mask,
+                    initial_masks=initial_masks,
                     add_prompt=True,
                 )
                 self.mask_slot.put(first_packet)
@@ -3010,8 +3296,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                             processor=processor,
                             session=session,
                             frame=frame,
-                            initial_controller_mask=controller_mask,
-                            initial_object_mask=object_mask,
+                            initial_masks=initial_masks,
                             add_prompt=False,
                         )
                     except Exception as exc:
@@ -3060,21 +3345,29 @@ class RealtimeMaskedEdgeTamPcdDemo:
             query_points = np.ascontiguousarray(query_points[:requested], dtype=np.float32)
         if len(query_points) == 0:
             return None
-        query_is_object, query_is_controller = _classify_query_points_yx(
+        query_is_object, query_is_controller, query_target_id, query_controller_instance_id = _classify_query_targets_yx(
             query_points,
             object_mask=mask_packet.object_mask,
+            hand_a_mask=_mask_packet_hand_a_mask(mask_packet),
+            hand_b_mask=_mask_packet_hand_b_mask(mask_packet),
             controller_mask=mask_packet.controller_mask,
         )
+        if not three_identity_controller_enabled(self.args):
+            query_controller_instance_id = np.zeros_like(query_controller_instance_id, dtype=np.int64)
         adapter.initialize([], query_points)
         self._tracker_query_points_yx = np.ascontiguousarray(query_points, dtype=np.float32)
         self._tracker_query_rgb_u8 = query_rainbow_colors_from_points_yx_rgb_u8(query_points)
         self._tracker_query_is_object = np.ascontiguousarray(query_is_object, dtype=bool)
         self._tracker_query_is_controller = np.ascontiguousarray(query_is_controller, dtype=bool)
+        self._tracker_query_target_id = np.ascontiguousarray(query_target_id, dtype=np.int64)
+        self._tracker_query_controller_instance_id = np.ascontiguousarray(query_controller_instance_id, dtype=np.int64)
         self._tracker_consistent_visible = np.ones((len(query_points),), dtype=bool)
         print(
             "[tapnextpp-tracker] "
             f"initialized query_count={len(query_points)} requested={requested or 'phystwin_dense'} "
             f"union_pixels={union_pixels} object_pixels={object_pixels} controller_pixels={controller_pixels} "
+            f"hand_a_queries={int(np.count_nonzero(query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_A))} "
+            f"hand_b_queries={int(np.count_nonzero(query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_B))} "
             f"display_scope={self.args.tracker_display_scope} device={self.args.tracker_device}",
             flush=True,
         )
@@ -3118,24 +3411,38 @@ class RealtimeMaskedEdgeTamPcdDemo:
         assert self._tracker_query_is_object is not None
         assert self._tracker_query_is_controller is not None
         assert self._tracker_query_rgb_u8 is not None
+        assert self._tracker_query_target_id is not None
+        assert self._tracker_query_controller_instance_id is not None
         started_s = time.perf_counter()
         rgb = np.ascontiguousarray(mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8)
         result = adapter.update(rgb)
         tracks_latest, visibility_latest = _latest_tracker_arrays(result)
         query_is_object = self._tracker_query_is_object
         query_is_controller = self._tracker_query_is_controller
+        query_target_id = self._tracker_query_target_id
+        query_controller_instance_id = self._tracker_query_controller_instance_id
         common_count = min(
             int(len(tracks_latest)),
             int(len(visibility_latest)),
             int(len(query_is_object)),
             int(len(query_is_controller)),
+            int(len(query_target_id)),
+            int(len(query_controller_instance_id)),
         )
         tracks_latest = tracks_latest[:common_count]
         visibility_latest = visibility_latest[:common_count]
         query_is_object = query_is_object[:common_count]
         query_is_controller = query_is_controller[:common_count]
-        display_visibility = _tracker_display_visibility(
+        query_target_id = query_target_id[:common_count]
+        query_controller_instance_id = query_controller_instance_id[:common_count]
+        target_visibility = _tracker_per_target_visibility(
+            tracks_latest,
             visibility_latest,
+            mask_packet=mask_packet,
+            query_target_id=query_target_id,
+        )
+        display_visibility = _tracker_display_visibility(
+            target_visibility,
             query_is_object=query_is_object,
             query_is_controller=query_is_controller,
             display_scope=str(self.args.tracker_display_scope),
@@ -3149,6 +3456,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         selected_visibility = display_visibility[selected]
         selected_query_is_object = query_is_object[selected]
         selected_query_is_controller = query_is_controller[selected]
+        selected_query_target_id = query_target_id[selected]
+        selected_query_controller_instance_id = query_controller_instance_id[selected]
 
         lift_start_s = time.perf_counter()
         depth_for_lift, depth_scale = self._tracker_depth_for_lift(mask_packet)
@@ -3187,12 +3496,19 @@ class RealtimeMaskedEdgeTamPcdDemo:
             lifted_query_indices = selected[source_indices].astype(np.int64, copy=False)
             lifted_query_is_object = selected_query_is_object[source_indices]
             lifted_query_is_controller = selected_query_is_controller[source_indices]
+            lifted_query_target_id = selected_query_target_id[source_indices]
+            lifted_query_controller_instance_id = selected_query_controller_instance_id[source_indices]
             lifted_marker_colors = self._tracker_query_rgb_u8[lifted_query_indices]
         else:
             lifted_query_indices = np.empty((0,), dtype=np.int64)
             lifted_query_is_object = np.empty((0,), dtype=bool)
             lifted_query_is_controller = np.empty((0,), dtype=bool)
+            lifted_query_target_id = np.empty((0,), dtype=np.int64)
+            lifted_query_controller_instance_id = np.empty((0,), dtype=np.int64)
             lifted_marker_colors = np.empty((0, 3), dtype=np.uint8)
+        hand_a_query_count = int(np.count_nonzero(lifted_query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_A))
+        hand_b_query_count = int(np.count_nonzero(lifted_query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_B))
+        object_query_count = int(np.count_nonzero(lifted_query_target_id == OBJECT_ID))
         done_s = time.perf_counter()
         stats = getattr(result, "stats", {}) or {}
         packet = TrackerMarkerPacket(
@@ -3215,12 +3531,20 @@ class RealtimeMaskedEdgeTamPcdDemo:
             backend=str(getattr(result, "backend", None) or adapter.name),
             display_scope=str(self.args.tracker_display_scope),
             query_indices=np.ascontiguousarray(lifted_query_indices, dtype=np.int64),
+            query_target_id=np.ascontiguousarray(lifted_query_target_id, dtype=np.int64),
+            query_controller_instance_id=np.ascontiguousarray(lifted_query_controller_instance_id, dtype=np.int64),
+            query_all_target_id=np.ascontiguousarray(query_target_id, dtype=np.int64),
+            query_all_controller_instance_id=np.ascontiguousarray(query_controller_instance_id, dtype=np.int64),
+            hand_a_query_count=hand_a_query_count,
+            hand_b_query_count=hand_b_query_count,
+            object_query_count=object_query_count,
         )
         if self.args.debug:
             print(
                 "[tapnextpp-tracker] "
                 f"seq={packet.seq} markers={packet.marker_count}/{len(selected_tracks)} "
                 f"consistent={packet.consistent_visible_count}/{packet.query_count} "
+                f"hand_a={packet.hand_a_query_count} hand_b={packet.hand_b_query_count} object={packet.object_query_count} "
                 f"queries={packet.query_count} model_ms={packet.model_ms:.1f} "
                 f"lift_ms={packet.lift_ms:.1f} e2e_ms={packet.e2e_ms:.1f} "
                 f"fps={self.tracker_stats.fps:.1f}",
@@ -3272,7 +3596,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.tracker_stats.record(tracker_packet.process_done_perf_s)
         if self.headless_capture_writer is not None:
             self.headless_capture_writer.write_tracker(tracker_packet)
-            self._write_headless_pcd_result(pcd_result)
+            self._write_headless_pcd_result(pcd_result, tracker_packet=tracker_packet)
         self._request_render_update()
         return pair
 
@@ -3369,8 +3693,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         processor: Any,
         session: Any,
         frame: FramePacket,
-        initial_controller_mask: np.ndarray,
-        initial_object_mask: np.ndarray,
+        initial_masks: InitialMaskBundle,
         add_prompt: bool,
     ) -> MaskPacket:
         image = _bgr_to_pil_rgb(frame.color_bgr)
@@ -3386,12 +3709,23 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if add_prompt:
                 prompt_obj_ids: list[int] = []
                 prompt_masks: list[np.ndarray] = []
-                if controller_tracking_enabled(self.args):
-                    prompt_obj_ids.append(CONTROLLER_ID)
-                    prompt_masks.append(np.asarray(initial_controller_mask, dtype=bool))
-                if object_tracking_enabled(self.args):
-                    prompt_obj_ids.append(OBJECT_ID)
-                    prompt_masks.append(np.asarray(initial_object_mask, dtype=bool))
+                if three_identity_controller_enabled(self.args):
+                    if controller_tracking_enabled(self.args):
+                        prompt_obj_ids.append(HAND_A_ID)
+                        prompt_masks.append(np.asarray(initial_masks.hand_a_mask, dtype=bool))
+                    if object_tracking_enabled(self.args):
+                        prompt_obj_ids.append(OBJECT_ID)
+                        prompt_masks.append(np.asarray(initial_masks.object_mask, dtype=bool))
+                    if controller_tracking_enabled(self.args):
+                        prompt_obj_ids.append(HAND_B_ID)
+                        prompt_masks.append(np.asarray(initial_masks.hand_b_mask, dtype=bool))
+                else:
+                    if controller_tracking_enabled(self.args):
+                        prompt_obj_ids.append(CONTROLLER_ID)
+                        prompt_masks.append(np.asarray(initial_masks.controller_mask, dtype=bool))
+                    if object_tracking_enabled(self.args):
+                        prompt_obj_ids.append(OBJECT_ID)
+                        prompt_masks.append(np.asarray(initial_masks.object_mask, dtype=bool))
                 _unused, prompt_ms, prompt_pre_sync_ms, prompt_post_sync_ms = _time_runtime_ms(
                     torch_module,
                     self.args.device,
@@ -3431,9 +3765,20 @@ class RealtimeMaskedEdgeTamPcdDemo:
         object_mask = masks_by_id.get(OBJECT_ID)
         if object_mask is None:
             object_mask = np.zeros_like(reference_mask, dtype=bool)
-        controller_mask = masks_by_id.get(CONTROLLER_ID)
-        if controller_mask is None:
-            controller_mask = np.zeros_like(reference_mask, dtype=bool)
+        if three_identity_controller_enabled(self.args):
+            hand_a_mask = masks_by_id.get(HAND_A_ID)
+            if hand_a_mask is None:
+                hand_a_mask = np.zeros_like(reference_mask, dtype=bool)
+            hand_b_mask = masks_by_id.get(HAND_B_ID)
+            if hand_b_mask is None:
+                hand_b_mask = np.zeros_like(reference_mask, dtype=bool)
+            controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
+        else:
+            controller_mask = masks_by_id.get(CONTROLLER_ID)
+            if controller_mask is None:
+                controller_mask = np.zeros_like(reference_mask, dtype=bool)
+            hand_a_mask = np.ascontiguousarray(controller_mask, dtype=bool)
+            hand_b_mask = np.zeros_like(hand_a_mask, dtype=bool)
         self._prune_edgetam_live_session(session, current_frame_idx=int(output.frame_idx))
         process_done_s = time.perf_counter()
         timing = replace(
@@ -3458,8 +3803,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
             process_done_perf_s=process_done_s,
             dropped_capture_frames=self.capture_slot.dropped_count,
             timing=timing,
-            controller_mask=controller_mask,
-            object_mask=object_mask,
+            controller_mask=np.ascontiguousarray(controller_mask, dtype=bool),
+            object_mask=np.ascontiguousarray(object_mask, dtype=bool),
+            hand_a_mask=np.ascontiguousarray(hand_a_mask, dtype=bool),
+            hand_b_mask=np.ascontiguousarray(hand_b_mask, dtype=bool),
             depth_u16=frame.depth_u16,
             ir_left_u8=frame.ir_left_u8,
             ir_right_u8=frame.ir_right_u8,
@@ -3758,7 +4105,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
             filter_busy=bool(worker_stats["busy"]),
         )
 
-    def _write_headless_pcd_result(self, result: PcdBuildResult) -> None:
+    def _write_headless_pcd_result(
+        self,
+        result: PcdBuildResult,
+        tracker_packet: TrackerMarkerPacket | None = None,
+    ) -> None:
         if self.headless_capture_writer is None or result.depth_m is None:
             return
         if result.controller_pcd_mask is None or result.object_pcd_mask is None:
@@ -3773,6 +4124,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             pcd_mask_erode_pixels=int(result.pcd_mask_erode_pixels),
             object_pcd_mask_erode_pixels=int(result.object_pcd_mask_erode_pixels),
             controller_pcd_mask_erode_pixels=int(result.controller_pcd_mask_erode_pixels),
+            tracker_packet=tracker_packet,
         )
 
     def _build_pcd_packet_from_mask(
@@ -4937,6 +5289,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 tracker_line = (
                     f"tracker: {tracker_packet.backend}  fps={self.tracker_stats.fps:.1f}  "
                     f"markers={tracker_packet.marker_count}/{tracker_packet.query_count}  "
+                    f"hand_a/b/object={tracker_packet.hand_a_query_count}/{tracker_packet.hand_b_query_count}/"
+                    f"{tracker_packet.object_query_count}  "
                     f"consistent={tracker_packet.consistent_visible_count}/{tracker_packet.query_count}  "
                     f"seq={int(tracker_packet.seq)}"
                     f"{sync_text}  "
@@ -5039,6 +5393,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             tracker_seq = str(int(tracker_packet.seq)) if tracker_packet is not None else "-1"
         tracker_model_ms = float(tracker_packet.model_ms) if tracker_packet is not None else 0.0
         tracker_e2e_ms = float(tracker_packet.e2e_ms) if tracker_packet is not None else 0.0
+        tracker_hand_a = int(tracker_packet.hand_a_query_count) if tracker_packet is not None else 0
+        tracker_hand_b = int(tracker_packet.hand_b_query_count) if tracker_packet is not None else 0
+        tracker_object = int(tracker_packet.object_query_count) if tracker_packet is not None else 0
         print(
             "[masked-edgetam-debug] "
             f"seq={int(seq)} "
@@ -5052,6 +5409,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"remote_quality_fps={self.remote_quality_stats.fps:.1f} "
             f"pcd_fps={self.pcd_stats.fps:.1f} "
             f"tracker_fps={self.tracker_stats.fps:.1f} "
+            f"tracker_hand_a_queries={tracker_hand_a} "
+            f"tracker_hand_b_queries={tracker_hand_b} "
+            f"tracker_object_queries={tracker_object} "
             f"render_fps={self.render_stats.render_fps:.1f} "
             f"profile_sync_enabled={int(bool(self.args.profile_sync))} "
             f"profile_cuda_events={int(bool(self.args.profile_cuda_events))} "

@@ -45,6 +45,7 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                 query_indices=np.array([0, 1], dtype=np.int64),
                 query_is_object=np.array([False, True], dtype=bool),
                 query_is_controller=np.array([True, False], dtype=bool),
+                query_controller_instance_id=np.array([1, 0], dtype=np.int64),
                 query_count=np.array([2], dtype=np.int64),
             )
             row = {
@@ -70,6 +71,11 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             self.assertEqual(summary["rendered_counts"][0]["object_points"], 0)
             self.assertEqual(summary["rendered_counts"][0]["query_controller_points"], 1)
             self.assertEqual(summary["rendered_counts"][0]["query_object_points"], 1)
+            self.assertEqual(summary["rendered_counts"][0]["query_hand_a_points"], 1)
+            self.assertEqual(summary["rendered_counts"][0]["query_hand_b_points"], 0)
+            self.assertEqual(summary["query_count_totals"]["hand_a"], 1)
+            self.assertEqual(summary["query_count_totals"]["hand_b"], 0)
+            self.assertEqual(summary["query_count_totals"]["object"], 1)
             self.assertTrue((capture_dir / "video.render_summary.json").is_file())
 
     def test_render_does_not_fallback_to_previous_query_trajectory(self) -> None:

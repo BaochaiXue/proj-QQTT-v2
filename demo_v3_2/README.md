@@ -15,6 +15,14 @@ Fake-live replay defaults to live tracking visualization: filtered RGB PCD plus
 PhysTwin-style rainbow query points. The live PCD and query markers are rendered
 only from strict same-seq pairs.
 
+In `--mode demo` with the default `human hand` controller prompt, Demo 3.x now
+tracks three EdgeTAM identities: `hand_a`, `object`, and `hand_b`. `hand_a` and
+`hand_b` are the two frame-0 hand instances sorted by image x coordinate. The
+controller PCD is still the union `hand_a | hand_b`, but query labels,
+visibility gating, saved masks, and HUD/headless counts keep the two hand
+identities separate. Frame 0 must contain two separable hands; otherwise the
+demo fails fast instead of silently collapsing the controller to one mask.
+
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
@@ -61,8 +69,8 @@ can share depth without concurrent TensorRT context use.
 
 Headless enhanced-pt capture keeps the fake-live realtime pipeline running but
 does not open Open3D. It saves only sync enhanced-pt filtered PCD, RGB frames,
-color-aligned FFS depth, EdgeTAM controller/object masks, and TAPNext++ query
-trajectory artifacts:
+color-aligned FFS depth, EdgeTAM `hand_a`/`hand_b`/`object` masks plus legacy
+controller/object masks, and TAPNext++ query trajectory artifacts:
 
 Demo 3.2 keeps the FFS object mask cleanup at 3px erosion by default, but the
 controller PCD mask defaults to 0px erosion so small hand/controller regions are

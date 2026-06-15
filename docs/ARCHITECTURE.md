@@ -44,12 +44,15 @@ aligned-case data product.
   of the raw semantic controller points, and rejects async filtered outputs
   older than three frames for rendering. Render-point caps use deterministic
   coarse spatial bucket balancing so sparse separated controller regions are not
-  hidden by denser regions when the display layer is capped. Its EdgeTAM path is
-  a frame-by-frame live session, not an offline batch video path; runtime state
-  is bounded to a recent 64-frame window by default for fake-live and live
-  stability. Local FFS depth is serialized and cached by sequence inside the
-  runtime so PCD and tracker threads share color-aligned depth without entering
-  one TensorRT runner concurrently.
+  hidden by denser regions when the display layer is capped. In demo-mode hand
+  tracking it propagates `hand_a`, `object`, and `hand_b` as separate EdgeTAM
+  identities while preserving the legacy controller PCD mask as the union of
+  `hand_a` and `hand_b`. Its EdgeTAM path is a frame-by-frame live session, not
+  an offline batch video path; runtime state is bounded to a recent 64-frame
+  window by default for fake-live and live stability. Local FFS depth is
+  serialized and cached by sequence inside the runtime so PCD and tracker
+  threads share color-aligned depth without entering one TensorRT runner
+  concurrently.
 - `services/ffs_remote/`: single-camera remote FFS depth request/response
   protocol and server/client utilities.
 
