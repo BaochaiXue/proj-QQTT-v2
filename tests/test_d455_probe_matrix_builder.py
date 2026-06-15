@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.harness.probe_d455_stream_capability import (
+from scripts.harness.diagnostics.hardware.probe_d455_stream_capability import (
     STREAM_SET_DEFS,
     build_followup_probe_cases,
     build_initial_probe_cases,

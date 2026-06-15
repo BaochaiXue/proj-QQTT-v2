@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from scripts.harness.run_ffs_static_replay_matrix import (
+from scripts.harness.benchmarks.ffs.run_ffs_static_replay_matrix import (
     CAMERA_IDS,
     ENGINE_NAMES,
     MODEL_NAMES,
@@ -173,19 +173,19 @@ class StaticReplayMatrixSmokeTests(unittest.TestCase):
             fake_runner = _FakeRunner()
 
             with mock.patch(
-                "scripts.harness.run_ffs_static_replay_matrix.build_runner_for_experiment",
+                "scripts.harness.benchmarks.ffs.run_ffs_static_replay_matrix.build_runner_for_experiment",
                 return_value=fake_runner,
             ), mock.patch(
-                "scripts.harness.run_ffs_static_replay_matrix._torch_synchronize",
+                "scripts.harness.benchmarks.ffs.run_ffs_static_replay_matrix._torch_synchronize",
                 return_value=None,
             ), mock.patch(
-                "scripts.harness.run_ffs_static_replay_matrix._cleanup_runner",
+                "scripts.harness.benchmarks.ffs.run_ffs_static_replay_matrix._cleanup_runner",
                 return_value=None,
             ), mock.patch(
-                "scripts.harness.run_ffs_static_replay_matrix.align_depth_to_color",
+                "scripts.harness.benchmarks.ffs.run_ffs_static_replay_matrix.align_depth_to_color",
                 return_value=np.full((5, 6), 7.0, dtype=np.float32),
             ), mock.patch(
-                "scripts.harness.run_ffs_static_replay_matrix.time.perf_counter",
+                "scripts.harness.benchmarks.ffs.run_ffs_static_replay_matrix.time.perf_counter",
                 side_effect=[100.0, 103.0],
             ):
                 result = _benchmark_round_camera_job(job)

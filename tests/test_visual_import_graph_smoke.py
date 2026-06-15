@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.harness.check_visual_architecture import collect_violations
+from scripts.harness.guards.check_visual_architecture import collect_violations
 
 
 class VisualImportGraphSmokeTest(unittest.TestCase):

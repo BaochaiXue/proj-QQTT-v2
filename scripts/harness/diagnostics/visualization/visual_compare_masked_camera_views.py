@@ -97,7 +97,7 @@ def main() -> int:
     from data_process.visualization.workflows.masked_camera_view_compare import (
         run_masked_camera_view_compare_workflow,
     )
-    from scripts.harness.visual_compare_masked_pointcloud import resolve_mask_roots_for_compare
+    from scripts.harness.diagnostics.visualization.visual_compare_masked_pointcloud import resolve_mask_roots_for_compare
 
     native_case_dir, _, _ = resolve_case_dirs(
         aligned_root=Path(args.aligned_root).resolve(),

@@ -795,7 +795,7 @@ def main() -> int:
         shutil.rmtree(latest_dir)
     shutil.copytree(run_dir, latest_dir)
 
-    from scripts.harness.render_d455_stream_probe_report import render_probe_report
+    from scripts.harness.diagnostics.hardware.render_d455_stream_probe_report import render_probe_report
 
     render_probe_report(
         results_path=results_path,

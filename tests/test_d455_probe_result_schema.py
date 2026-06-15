@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.harness.probe_d455_stream_capability import build_run_document, make_case, normalize_case_result
+from scripts.harness.diagnostics.hardware.probe_d455_stream_capability import (
+    build_run_document,
+    make_case,
+    normalize_case_result,
+)
 
 
 class D455ProbeResultSchemaTest(unittest.TestCase):

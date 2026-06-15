@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from data_process.depth_backends import DEFAULT_FFS_REPO
-from scripts.harness.verify_ffs_tensorrt_wsl import build_engine_from_onnx
+from scripts.harness.benchmarks.ffs.verify_ffs_tensorrt_wsl import build_engine_from_onnx
 
 DEFAULT_MODEL_PATH = DEFAULT_FFS_REPO / "weights" / "23-36-37" / "model_best_bp2_serialize.pth"
 DEFAULT_OUT_DIR = ROOT / "data" / "ffs_proof_of_life" / "trt_single_engine_864x480_wsl_fp32"

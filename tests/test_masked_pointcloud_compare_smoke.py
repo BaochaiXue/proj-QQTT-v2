@@ -14,7 +14,7 @@ from data_process.visualization.workflows.masked_pointcloud_compare import (
     load_union_masks_for_camera_clouds,
     run_masked_pointcloud_compare_workflow,
 )
-from scripts.harness.visual_compare_masked_pointcloud import resolve_mask_roots_for_compare
+from scripts.harness.diagnostics.visualization.visual_compare_masked_pointcloud import resolve_mask_roots_for_compare
 from tests.visualization_test_utils import make_sam31_masks, make_visualization_case
 
 

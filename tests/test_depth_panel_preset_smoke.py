@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from scripts.harness.visual_compare_depth_panels import apply_preset
+from scripts.harness.diagnostics.depth.visual_compare_depth_panels import apply_preset
 from data_process.visualization.panel_compare import run_depth_panel_workflow
 from tests.visualization_test_utils import make_visualization_case
 

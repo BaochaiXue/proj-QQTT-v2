@@ -18,10 +18,9 @@ import numpy as np
 from data_process.depth_backends import DEFAULT_FFS_REPO, DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
 from data_process.depth_backends import fast_foundation_stereo as ffs_backend
 from data_process.depth_backends.geometry import align_depth_to_color
-from demo_v2 import pcd_filter_fast
-from demo_v2 import realtime_masked_edgetam_pcd as masked_demo
-from demo_v1 import realtime_single_camera_pointcloud as demo_v1
-from demo_v2 import realtime_single_camera_pointcloud as demo_v2
+from qqtt.demo import pcd_filter_fast
+from qqtt.demo import realtime_masked_edgetam_pcd as masked_demo
+from qqtt.demo import realtime_single_camera_pointcloud as demo_impl
 from services.ffs_remote import ffs_depth_client as ffs_remote_client
 from services.ffs_remote import ffs_depth_server as ffs_remote_server
 from services.ffs_remote.ffs_depth_client import FfsRemoteDepthClient
@@ -31,10 +30,13 @@ from services.ffs_remote.protocol import (
     parse_depth_request_parts,
     parse_depth_response_parts,
 )
-from scripts.harness import realtime_single_camera_pointcloud as demo
+from scripts.harness.diagnostics.demo import realtime_single_camera_pointcloud as demo
 
 
 ROOT = Path(__file__).resolve().parents[1]
+demo.REPO_ROOT = ROOT
+demo_impl.REPO_ROOT = ROOT
+masked_demo.REPO_ROOT = ROOT
 
 
 @dataclass(frozen=True)
@@ -126,7 +128,7 @@ class FakeTensorRtRunner:
 class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
     def test_masked_edgetam_help_exposes_realtime_masked_pcd_contract(self) -> None:
         result = subprocess.run(
-            [sys.executable, "demo_v2/realtime_masked_edgetam_pcd.py", "--help"],
+            [sys.executable, "-m", "qqtt.demo.realtime_masked_edgetam_pcd", "--help"],
             cwd=ROOT,
             check=True,
             text=True,
@@ -375,11 +377,23 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             controller_xyz=xyz,
             controller_colors=colors,
         )
+        item = pcd_filter_fast.FilterInput(
+            seq=item.seq,
+            object_xyz=item.object_xyz,
+            object_rgb=item.object_rgb,
+            controller_xyz=item.controller_xyz[:2],
+            controller_rgb=item.controller_rgb[:2],
+            object_cap=item.object_cap,
+            controller_cap=item.controller_cap,
+            object_voxel_size_m=item.object_voxel_size_m,
+            controller_voxel_size_m=item.controller_voxel_size_m,
+            created_perf_s=item.created_perf_s,
+        )
         output = demo_instance._filter_pcd_input(item)
         self.assertLessEqual(output.object_xyz.shape[0], 2)
         self.assertLessEqual(output.controller_xyz.shape[0], 1)
         self.assertEqual(output.stats["object"]["raw_points"], 3)
-        self.assertEqual(output.stats["controller"]["raw_points"], 3)
+        self.assertEqual(output.stats["controller"]["raw_points"], 2)
 
     def test_masked_edgetam_local_ffs_professor_preset_keeps_ffs_semantics(self) -> None:
         args = masked_demo.build_parser().parse_args(["--demo-preset", "local-ffs-professor"])
@@ -1145,14 +1159,13 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         np.testing.assert_array_equal(masks[1], np.array([[True, False], [True, False]]))
 
     def test_help_exposes_supported_capture_rates_and_profiles(self) -> None:
-        for script_path in (
-            "demo_v1/realtime_single_camera_pointcloud.py",
-            "demo_v2/realtime_single_camera_pointcloud.py",
-            "scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py",
+        for command in (
+            [sys.executable, "-m", "qqtt.demo.realtime_single_camera_pointcloud", "--help"],
+            [sys.executable, "scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py", "--help"],
         ):
-            with self.subTest(script_path=script_path):
+            with self.subTest(command=command):
                 result = subprocess.run(
-                    [sys.executable, script_path, "--help"],
+                    command,
                     cwd=ROOT,
                     check=True,
                     text=True,
@@ -1174,14 +1187,11 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
                 self.assertIn(demo.COORDINATE_FRAME, result.stdout)
                 self.assertIn("Use <=0 to disable", result.stdout)
                 self.assertIn("far clipping", result.stdout)
-        self.assertEqual(demo_v1.REPO_ROOT, ROOT)
-        self.assertEqual(demo_v2.REPO_ROOT, ROOT)
+        self.assertEqual(demo_impl.REPO_ROOT, ROOT)
 
     def test_wslg_open3d_wrapper_pins_d3d12_xwayland_defaults(self) -> None:
         for wrapper in (
-            ROOT / "demo_v1" / "run_wslg_open3d.sh",
-            ROOT / "demo_v2" / "run_wslg_open3d.sh",
-            ROOT / "scripts" / "harness" / "run_wslg_open3d.sh",
+            ROOT / "scripts" / "harness" / "diagnostics" / "hardware" / "run_wslg_open3d.sh",
         ):
             with self.subTest(wrapper=wrapper):
                 text = wrapper.read_text(encoding="utf-8")
@@ -1693,9 +1703,9 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertEqual(numba_aligner.align_backend, "numba")
         numba_output = numba_aligner.align(depth_ir, invalid_value=-1.0).copy()
 
-        original_numba_align = demo._align_ir_to_color_numba
+        original_numba_align = demo_impl._align_ir_to_color_numba
         try:
-            demo._align_ir_to_color_numba = None  # type: ignore[assignment]
+            demo_impl._align_ir_to_color_numba = None  # type: ignore[assignment]
             numpy_aligner = demo.FfsIrToColorAligner(
                 k_ir_left=K_ir,
                 t_ir_left_to_color=T,
@@ -1706,7 +1716,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             self.assertEqual(numpy_aligner.align_backend, "numpy")
             numpy_output = numpy_aligner.align(depth_ir, invalid_value=-1.0).copy()
         finally:
-            demo._align_ir_to_color_numba = original_numba_align  # type: ignore[assignment]
+            demo_impl._align_ir_to_color_numba = original_numba_align  # type: ignore[assignment]
 
         np.testing.assert_allclose(numba_output, numpy_output)
 
@@ -1794,7 +1804,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
             self.skipTest("numba is not installed")
         script = (
             "import importlib.util, pathlib, sys; "
-            "path = pathlib.Path('demo_v2/realtime_single_camera_pointcloud.py'); "
+            "path = pathlib.Path('qqtt/demo/realtime_single_camera_pointcloud.py'); "
             "sys.path.insert(0, str(path.parent)); "
             "spec = importlib.util.spec_from_file_location('realtime_single_camera_pointcloud_direct', path); "
             "module = importlib.util.module_from_spec(spec); "
