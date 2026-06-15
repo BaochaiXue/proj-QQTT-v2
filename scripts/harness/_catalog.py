@@ -5,6 +5,7 @@ from typing import Literal
 
 
 ValidationProfile = Literal["smoke", "deterministic", "hardware", "exhaustive"]
+ProfileAlias = Literal["quick", "full"]
 Lifecycle = Literal["guards", "validation", "diagnostics", "benchmarks", "experiments", "support"]
 
 VALIDATION_PROFILES: tuple[str, ...] = ("smoke", "deterministic", "hardware", "exhaustive")
@@ -21,6 +22,41 @@ class HarnessEntry:
     help: bool = False
     automatic: bool = True
     requires: tuple[str, ...] = ()
+
+    @property
+    def category(self) -> str:
+        if self.lifecycle in {"guards", "validation"}:
+            return "checks"
+        if self.lifecycle == "experiments":
+            return "experiments"
+        if self.lifecycle == "benchmarks":
+            return "hardware_external"
+        if self.lifecycle == "support":
+            if self.domain == "data":
+                return "formal_cleanup"
+            return "mask_support"
+        if self.lifecycle == "diagnostics":
+            if self.validation_profile == "hardware":
+                return "hardware_external"
+            basename = self.path.rsplit("/", 1)[-1]
+            if self.domain == "depth" and basename in {
+                "audit_ffs_left_right.py",
+                "compare_face_smoothness.py",
+                "diagnose_floating_point_sources.py",
+            }:
+                return "focused_diagnostics"
+            return "current_compare"
+        raise ValueError(f"Unsupported lifecycle: {self.lifecycle}")
+
+    @property
+    def help_profile(self) -> str | None:
+        if not self.help:
+            return None
+        if self.validation_profile == "smoke":
+            return "quick"
+        if self.validation_profile in {"deterministic", "exhaustive", "hardware"}:
+            return "full"
+        return None
 
 
 CATALOG: tuple[HarnessEntry, ...] = (
@@ -53,24 +89,11 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "smoke",
     ),
     HarnessEntry(
-        "scripts/harness/guards/check_scope.py",
-        "guards",
-        "repo",
-        "Repo scope guard for removed or forbidden legacy surfaces.",
-        "smoke",
-    ),
-    HarnessEntry(
         "scripts/harness/check_visual_architecture.py",
         "guards",
         "repo",
         "Visualization layering and file-size guard.",
         "smoke",
-    ),
-    HarnessEntry(
-        "scripts/harness/validation/run.py",
-        "validation",
-        "runner",
-        "Catalog-driven validation profile runner.",
     ),
     HarnessEntry(
         "scripts/harness/benchmark_ffs_configs.py",
@@ -556,14 +579,44 @@ CATALOG: tuple[HarnessEntry, ...] = (
 )
 
 
+_PLANNED_LIFECYCLE_ENTRIES: tuple[HarnessEntry, ...] = (
+    HarnessEntry(
+        "scripts/harness/guards/check_scope.py",
+        "guards",
+        "repo",
+        "Repo scope guard for removed or forbidden legacy surfaces.",
+        "smoke",
+    ),
+    HarnessEntry(
+        "scripts/harness/validation/run.py",
+        "validation",
+        "runner",
+        "Catalog-driven validation profile runner.",
+    ),
+)
+
+
 def entries_by_lifecycle() -> dict[str, tuple[HarnessEntry, ...]]:
     grouped: dict[str, list[HarnessEntry]] = {}
-    for entry in CATALOG:
+    for entry in (*CATALOG, *_PLANNED_LIFECYCLE_ENTRIES):
         grouped.setdefault(entry.lifecycle, []).append(entry)
     return {lifecycle: tuple(entries) for lifecycle, entries in grouped.items()}
 
 
-def entries_for_profile(profile: ValidationProfile, *, include_manual: bool = False) -> tuple[HarnessEntry, ...]:
+def _normalize_profile(profile: ValidationProfile | ProfileAlias) -> ValidationProfile:
+    if profile == "quick":
+        return "smoke"
+    if profile == "full":
+        return "deterministic"
+    return profile
+
+
+def entries_for_profile(
+    profile: ValidationProfile | ProfileAlias,
+    *,
+    include_manual: bool = False,
+) -> tuple[HarnessEntry, ...]:
+    profile = _normalize_profile(profile)
     if profile == "smoke":
         allowed = {"smoke"}
     elif profile == "deterministic":
@@ -585,7 +638,11 @@ def entries_for_profile(profile: ValidationProfile, *, include_manual: bool = Fa
     return tuple(entries)
 
 
-def help_scripts(profile: ValidationProfile, *, include_manual: bool = False) -> tuple[str, ...]:
+def help_scripts(
+    profile: ValidationProfile | ProfileAlias,
+    *,
+    include_manual: bool = False,
+) -> tuple[str, ...]:
     return tuple(
         entry.path
         for entry in entries_for_profile(profile, include_manual=include_manual)
