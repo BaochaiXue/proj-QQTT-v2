@@ -11,6 +11,10 @@ import cv2
 import numpy as np
 
 
+OBJECT_QUERY_COLOR_BGR = (255, 220, 80)
+CONTROLLER_QUERY_COLOR_BGR = (0, 0, 255)
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -110,38 +114,61 @@ def _draw_projected_points(
     return int(len(uv))
 
 
-def _draw_query_trajectory(
+def _draw_query_points(
     image_bgr: np.ndarray,
     trajectory_path: Path,
     intrinsics: dict[str, Any],
     *,
-    trails: dict[int, list[tuple[int, int]]],
-    trail_length: int,
-) -> int:
+    marker_radius: int,
+) -> tuple[int, int, int]:
     if not trajectory_path.is_file():
-        return 0
+        return 0, 0, 0
     payload = np.load(trajectory_path, allow_pickle=False)
     marker_xyz = np.asarray(payload["marker_xyz_m"], dtype=np.float32).reshape(-1, 3)
     query_indices = np.asarray(payload["query_indices"], dtype=np.int64).reshape(-1)
-    count = min(len(marker_xyz), len(query_indices))
+    if "query_is_object" in payload.files:
+        query_is_object = np.asarray(payload["query_is_object"], dtype=bool).reshape(-1)
+    else:
+        query_is_object = np.ones((len(marker_xyz),), dtype=bool)
+    if "query_is_controller" in payload.files:
+        query_is_controller = np.asarray(payload["query_is_controller"], dtype=bool).reshape(-1)
+    else:
+        query_is_controller = np.zeros((len(marker_xyz),), dtype=bool)
+    count = min(len(marker_xyz), len(query_indices), len(query_is_object), len(query_is_controller))
     if count == 0:
-        return 0
+        return 0, 0, 0
     height, width = image_bgr.shape[:2]
     uv, valid = _project_points(marker_xyz[:count], intrinsics, width=width, height=height)
-    visible_indices = query_indices[:count][valid]
     visible_uv = uv[valid]
-    for query_id, point_uv in zip(visible_indices, visible_uv, strict=False):
-        key = int(query_id)
-        trail = trails.setdefault(key, [])
-        trail.append((int(point_uv[0]), int(point_uv[1])))
-        if len(trail) > int(trail_length):
-            del trail[: len(trail) - int(trail_length)]
-    for trail in trails.values():
-        if len(trail) >= 2:
-            cv2.polylines(image_bgr, [np.asarray(trail, dtype=np.int32)], False, (0, 0, 255), 1, cv2.LINE_AA)
-    for point_uv in visible_uv:
-        cv2.circle(image_bgr, (int(point_uv[0]), int(point_uv[1])), 3, (0, 0, 255), -1, cv2.LINE_AA)
-    return int(len(visible_uv))
+    visible_is_object = query_is_object[:count][valid]
+    visible_is_controller = query_is_controller[:count][valid]
+    radius = max(1, int(marker_radius))
+
+    object_count = 0
+    controller_count = 0
+    object_uv = visible_uv[visible_is_object & ~visible_is_controller]
+    controller_uv = visible_uv[visible_is_controller]
+    for point_uv in object_uv:
+        cv2.circle(
+            image_bgr,
+            (int(point_uv[0]), int(point_uv[1])),
+            radius,
+            OBJECT_QUERY_COLOR_BGR,
+            -1,
+            cv2.LINE_AA,
+        )
+        object_count += 1
+    for point_uv in controller_uv:
+        cv2.circle(
+            image_bgr,
+            (int(point_uv[0]), int(point_uv[1])),
+            radius,
+            CONTROLLER_QUERY_COLOR_BGR,
+            -1,
+            cv2.LINE_AA,
+        )
+        controller_count += 1
+    return int(object_count + controller_count), int(object_count), int(controller_count)
 
 
 def render_capture_to_video(
@@ -151,7 +178,7 @@ def render_capture_to_video(
     fps: float,
     point_size: int = 2,
     max_render_points: int = 0,
-    trail_length: int = 30,
+    query_point_radius: int = 3,
 ) -> dict[str, Any]:
     capture_dir = Path(capture_dir).resolve()
     metadata = _read_json(capture_dir / "metadata.json")
@@ -171,7 +198,6 @@ def render_capture_to_video(
     )
     if not writer.isOpened():
         raise RuntimeError(f"failed to open video writer: {output}")
-    trails: dict[int, list[tuple[int, int]]] = {}
     rendered_counts: list[dict[str, int]] = []
     trajectory_seqs, trajectory_by_seq = _trajectory_index(capture_dir)
     try:
@@ -195,7 +221,7 @@ def render_capture_to_video(
                 point_size=int(point_size),
                 max_points=int(max_render_points),
             )
-            trajectory_count = _draw_query_trajectory(
+            query_count, query_object_count, query_controller_count = _draw_query_points(
                 image,
                 _trajectory_path_for_frame(
                     capture_dir=capture_dir,
@@ -204,8 +230,7 @@ def render_capture_to_video(
                     trajectory_by_seq=trajectory_by_seq,
                 ),
                 intrinsics,
-                trails=trails,
-                trail_length=int(trail_length),
+                marker_radius=int(query_point_radius),
             )
             writer.write(image)
             rendered_counts.append(
@@ -213,7 +238,9 @@ def render_capture_to_video(
                     "seq": int(frame["seq"]),
                     "controller_points": int(controller_count),
                     "object_points": int(object_count),
-                    "query_points": int(trajectory_count),
+                    "query_points": int(query_count),
+                    "query_object_points": int(query_object_count),
+                    "query_controller_points": int(query_controller_count),
                 }
             )
     finally:
@@ -225,6 +252,9 @@ def render_capture_to_video(
         "frame_count": int(len(frames)),
         "image_size": [int(width), int(height)],
         "saved_pcd_source": metadata.get("saved_pcd_source"),
+        "query_overlay": "current_points_only",
+        "query_object_color_bgr": list(OBJECT_QUERY_COLOR_BGR),
+        "query_controller_color_bgr": list(CONTROLLER_QUERY_COLOR_BGR),
         "rendered_counts": rendered_counts,
     }
     summary_path = output.with_name("render_summary.json")
@@ -239,7 +269,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument("--point-size", type=int, default=2)
     parser.add_argument("--max-render-points", type=int, default=0)
-    parser.add_argument("--trail-length", type=int, default=30)
+    parser.add_argument("--query-point-radius", type=int, default=3)
     return parser
 
 
@@ -251,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         fps=float(args.fps),
         point_size=int(args.point_size),
         max_render_points=int(args.max_render_points),
-        trail_length=int(args.trail_length),
+        query_point_radius=int(args.query_point_radius),
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

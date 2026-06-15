@@ -56,7 +56,9 @@ conda run -n demo_2_max --no-capture-output \
   --headless-capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke
 ```
 
-Render the saved artifacts offline:
+Render the saved artifacts offline. The helper overlays current-frame query
+points only: object query points are light blue, controller query points are red,
+and no historical trajectory lines are drawn.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \

@@ -5,7 +5,7 @@
 Allow Demo 3.2 fake-live replay to run the full realtime FFS, EdgeTAM,
 TAPNext++, and masked PCD pipeline without opening Open3D, while saving only
 enhanced-pt filtered point clouds, color-aligned FFS depth, and query-point
-trajectory artifacts for later offline video rendering.
+artifacts for later offline video rendering.
 
 ## Implementation Notes
 
@@ -18,8 +18,10 @@ trajectory artifacts for later offline video rendering.
   explicitly asks for a conflicting filter.
 - Save artifacts from actual completed PCD output frames rather than filling in
   every fake camera frame.
-- Add an offline helper to render saved filtered PCD plus TAPNext++ lifted query
-  trajectory into an MP4.
+- Add an offline helper to render saved filtered PCD plus current TAPNext++
+  lifted query points into an MP4. The offline overlay uses light-blue object
+  query points and red controller query points without historical trajectory
+  lines.
 
 ## Validation
 

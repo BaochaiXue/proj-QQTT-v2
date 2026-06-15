@@ -34,8 +34,10 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             np.save(capture_dir / "ffs_depth" / "000000.npy", np.ones((24, 32), dtype=np.float32))
             np.savez(
                 capture_dir / "query_trajectory" / "000000.npz",
-                marker_xyz_m=np.array([[0.0, 0.0, 0.5]], dtype=np.float32),
-                query_indices=np.array([0], dtype=np.int64),
+                marker_xyz_m=np.array([[0.0, 0.0, 0.5], [0.05, 0.0, 0.6]], dtype=np.float32),
+                query_indices=np.array([0, 1], dtype=np.int64),
+                query_is_object=np.array([False, True], dtype=bool),
+                query_is_controller=np.array([True, False], dtype=bool),
             )
             row = {
                 "seq": 0,
@@ -51,6 +53,9 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             self.assertTrue(output.is_file())
             self.assertEqual(summary["frame_count"], 1)
             self.assertEqual(summary["saved_pcd_source"], "enhanced_pt_filtered")
+            self.assertEqual(summary["query_overlay"], "current_points_only")
+            self.assertEqual(summary["rendered_counts"][0]["query_controller_points"], 1)
+            self.assertEqual(summary["rendered_counts"][0]["query_object_points"], 1)
             self.assertTrue((capture_dir / "render_summary.json").is_file())
 
 
