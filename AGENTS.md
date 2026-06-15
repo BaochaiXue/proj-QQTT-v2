@@ -26,7 +26,7 @@ repo-wide default.
 - `data_process/depth_backends/`: shared FFS geometry + runner used by production alignment and harness scripts
 - `data_process/visualization/`: aligned-case comparison visualization package
 - `data_process/visualization/experiments/`: experiment-only visualization workflows; formal recording/alignment code must not import this package
-- `scripts/harness/realtime_single_camera_pointcloud.py`: branch-default single-camera realtime point-cloud demo entrypoint
+- `scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py`: branch-default single-camera realtime point-cloud demo entrypoint
 - `qqtt/demo/realtime_single_camera_pointcloud.py`: shared single-camera realtime point-cloud demo implementation
 - `demo_v3/`: one-camera RealSense masked PCD demo
 - `demo_v3_1/`: one-camera RealSense masked PCD demo
@@ -44,25 +44,25 @@ repo-wide default.
 - `docs/external-deps.md`: external repo / checkpoint source of truth
 - `docs/envs.md`: validated local conda environments
 - `docs/exec-plans/`: first-class execution plans for non-trivial changes
-- `scripts/harness/check_scope.py`: deterministic repo scope guard
-- `scripts/harness/check_visual_architecture.py`: visualization layering / file-size guard
-- `scripts/harness/check_experiment_boundaries.py`: guard that keeps experiment-only modules out of formal runtime code
+- `scripts/harness/guards/check_scope.py`: deterministic repo scope guard
+- `scripts/harness/guards/check_visual_architecture.py`: visualization layering / file-size guard
+- `scripts/harness/guards/check_experiment_boundaries.py`: guard that keeps experiment-only modules out of formal runtime code
 - `scripts/harness/README.md`: grouped harness CLI/probe/check map and retention policy
 - `tests/test_record_data_align_smoke.py`: smoke test for aligned-case generation
-- `scripts/harness/visual_compare_depth_panels.py`: per-camera aligned native-vs-FFS depth panels
-- `scripts/harness/visual_compare_reprojection.py`: aligned native-vs-FFS reprojection compare
-- `scripts/harness/visual_compare_depth_video.py`: temporal fused compare
-- `scripts/harness/visual_compare_depth_triplet_ply.py`: single-frame native / FFS raw / FFS postprocess fused PLY compare
-- `scripts/harness/visual_compare_depth_triplet_video.py`: multi-frame native / FFS raw / FFS postprocess point-cloud video compare
-- `scripts/harness/visual_compare_rerun.py`: multi-frame native-vs-FFS remove-invisible point-cloud export to Rerun + fused PLYs
-- `scripts/harness/visual_compare_turntable.py`: current single-frame professor-facing compare
+- `scripts/harness/diagnostics/depth/visual_compare_depth_panels.py`: per-camera aligned native-vs-FFS depth panels
+- `scripts/harness/diagnostics/depth/visual_compare_reprojection.py`: aligned native-vs-FFS reprojection compare
+- `scripts/harness/diagnostics/depth/visual_compare_depth_video.py`: temporal fused compare
+- `scripts/harness/diagnostics/depth/visual_compare_depth_triplet_ply.py`: single-frame native / FFS raw / FFS postprocess fused PLY compare
+- `scripts/harness/diagnostics/depth/visual_compare_depth_triplet_video.py`: multi-frame native / FFS raw / FFS postprocess point-cloud video compare
+- `scripts/harness/diagnostics/visualization/visual_compare_rerun.py`: multi-frame native-vs-FFS remove-invisible point-cloud export to Rerun + fused PLYs
+- `scripts/harness/diagnostics/visualization/visual_compare_turntable.py`: current single-frame professor-facing compare
 - `scripts/harness/experiments/visualize_ffs_static_confidence_panels.py`: static-round masked FFS RGB/depth/confidence boards
 - `scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py`: static-round masked FFS RGB/PCD/confidence boards
-- `scripts/harness/visual_make_professor_triptych.py`: current three-figure professor-facing summary pack
-- `scripts/harness/visual_make_match_board.py`: current point-cloud match board
-- `scripts/harness/audit_ffs_left_right.py`: focused FFS left/right ordering audit
-- `scripts/harness/visual_compare_stereo_order_pcd.py`: point-cloud-only current-vs-swapped stereo-order registration board
-- `scripts/harness/compare_face_smoothness.py`: fixed face-patch smoothness/noise comparison
+- `scripts/harness/diagnostics/visualization/visual_make_professor_triptych.py`: current three-figure professor-facing summary pack
+- `scripts/harness/diagnostics/visualization/visual_make_match_board.py`: current point-cloud match board
+- `scripts/harness/diagnostics/depth/audit_ffs_left_right.py`: focused FFS left/right ordering audit
+- `scripts/harness/diagnostics/visualization/visual_compare_stereo_order_pcd.py`: point-cloud-only current-vs-swapped stereo-order registration board
+- `scripts/harness/diagnostics/depth/compare_face_smoothness.py`: fixed face-patch smoothness/noise comparison
 
 ## Default Local Environment
 
@@ -95,8 +95,8 @@ repo-wide default.
 4. Keep changes inside the documented camera preview / calibration / recording / alignment core or the sanctioned single-camera demo / proxy diagnostic scope.
 5. Update docs and tests in the same change when behavior changes.
 6. Run deterministic checks before finishing:
-   - `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
-   - use `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full` when the change is broad enough that the default quick profile is not sufficient
+   - `conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile smoke`
+   - use `conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile exhaustive` when the change is broad enough that the default smoke profile is not sufficient
 7. For external dependency proof-of-life work, record exact commands and outcomes under `docs/generated/`.
 8. For FFS changes, keep weights external and validate both deterministic tests and manual hardware outcomes.
 9. For comparison visualization changes, validate the calibration loader and non-interactive render path.

@@ -36,7 +36,7 @@ conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --ffs_backend tensorrt --ff
 - branch-default realtime demo opens exactly one RealSense camera:
 
 ```bash
-conda run -n demo_2_max --no-capture-output python scripts/harness/realtime_single_camera_pointcloud.py --profile 848x480 --fps 30 --debug
+conda run -n demo_2_max --no-capture-output python scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py --profile 848x480 --fps 30 --debug
 ```
 
 - single demo dry-runs report `camera_count = 1`:

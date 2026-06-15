@@ -12,8 +12,8 @@ single-camera branch.
 | Scope | `docs/SCOPE.md` | In-scope vs out-of-scope boundary for recording, alignment, demos, proxy, and visualization. |
 | Architecture | `docs/ARCHITECTURE.md` | Package and entrypoint layering, dependency direction, and formal data-product boundaries. |
 | Workflows | `docs/WORKFLOWS.md` | Operator commands and expected manual procedures. |
-| Harness catalog | `scripts/harness/_catalog.py` | Machine-checkable list of public harness entrypoints, categories, summaries, and help coverage. |
-| Harness guards | `scripts/harness/check_*.py` | Mechanical enforcement for scope, catalog coverage, visual architecture, and experiment boundaries. |
+| Harness catalog | `scripts/harness/_catalog.py` | Machine-checkable list of public harness entrypoints, lifecycle, summaries, and validation profiles. |
+| Harness guards | `scripts/harness/guards/check_*.py` | Mechanical enforcement for scope, catalog coverage, visual architecture, and experiment boundaries. |
 | Active plans | `docs/exec-plans/active/` | Current intent, decisions, validation, and follow-up state for non-trivial changes. |
 
 ## Single-Camera Branch Safety
@@ -43,29 +43,30 @@ push target for that work is `git push origin single-camera`.
 
 `_catalog.py` currently contains 62 entries.
 
-| Category | Count | Meaning |
-| --- | ---: | --- |
-| `checks` | 5 | Repo, scope, architecture, experiment-boundary, and catalog guards. |
-| `hardware_external` | 13 | RealSense, FFS, SAM, TensorRT, WSLg/Open3D, and static replay probes. |
-| `mask_support` | 4 | SAM mask generation, helper code, object-case registry, and reprojection support. |
-| `formal_cleanup` | 1 | Downstream cleanup for `data/different_types/`. |
-| `current_compare` | 12 | In-scope aligned RealSense/native-vs-FFS comparison visualizations. |
-| `experiments` | 24 | Experiment-only workflows under `scripts/harness/experiments/`. |
-| `focused_diagnostics` | 3 | Narrow audits and source diagnostics. |
+| Lifecycle | Meaning |
+| --- | --- |
+| `guards` | Deterministic policy checks that keep scope, architecture, catalog, and experiment boundaries enforceable. |
+| `validation` | Catalog-driven runners that compose deterministic validation profiles. |
+| `diagnostics` | Maintained probes and visualization tools used for current branch debugging and evidence generation. |
+| `benchmarks` | External-stack or performance-oriented proof-of-life commands that may need hardware, checkpoints, engines, or local datasets. |
+| `experiments` | Isolated research/demo workflows under `scripts/harness/experiments/`; useful as historical or exploratory evidence, not formal runtime dependencies. |
+| `support` | Helpers and cleanup tools shared by maintained harness workflows. |
 
-Help coverage:
+Validation profiles:
 
-| Profile | Entries | Use |
-| --- | ---: | --- |
-| `quick` | 3 | Fast help checks included in default `check_all.py`. |
-| `full` | 52 | Additional help checks included by `check_all.py --full`. |
-| none | 10 | Guards, helpers, or shell scripts without direct argparse help coverage. |
+| Profile | Coverage | Use |
+| --- | --- | --- |
+| `smoke` | Small maintained subset | Fast deterministic checks for ordinary docs, guard, and narrow harness edits. |
+| `deterministic` | Broader maintained subset | Non-hardware checks for changes that affect catalog shape, path routing, or public CLI coverage. |
+| `hardware` | Manual external-stack coverage | Hardware, GPU, GUI, checkpoint, engine, or local dataset checks that are cataloged but not automatic. |
+| `exhaustive` | All cataloged deterministic coverage | Full maintained validation sweep before broad harness lifecycle or entrypoint changes. |
+| none | Helpers or external-only workflows | Files without direct argparse help coverage or requiring manual/hardware-specific setup. |
 
 ## Add Or Change A Harness Entrypoint
 
 1. Put shared implementation outside `scripts/harness/` first.
 2. Add a small CLI, probe, guard, or visualization wrapper in the appropriate harness folder.
-3. Register it in `_catalog.py` with category, summary, and help profile.
+3. Register it in `_catalog.py` with lifecycle, summary, and validation profile.
 4. Add or update tests when behavior changes.
 5. Run the deterministic checks below.
 
@@ -81,10 +82,13 @@ Help coverage:
 Use the documented default environment:
 
 ```bash
-conda run -n demo_2_max --no-capture-output python scripts/harness/check_harness_catalog.py
-conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
-conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full
+conda run -n demo_2_max --no-capture-output python scripts/harness/guards/check_harness_catalog.py
+conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile smoke
+conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile deterministic
+conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile exhaustive
 ```
 
-For ordinary doc or narrow harness changes, run the default `check_all.py`.
-Use `--full` when the change broadens public CLI surface or harness coverage.
+For ordinary doc or narrow harness changes, run the `smoke` profile. Use
+`deterministic` when catalog shape, path routing, or public CLI coverage
+changes. Use `exhaustive` before broad harness lifecycle migrations or
+entrypoint reorganizations.

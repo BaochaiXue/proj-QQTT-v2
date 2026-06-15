@@ -13,7 +13,7 @@ for the single-camera branch.
 - Runtime roles:
   - `cameras_viewer_FFS.py`
   - `data_process/record_data_align.py --depth_backend ffs`
-  - `scripts/harness/realtime_single_camera_pointcloud.py --depth-source ffs`
+  - `scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py --depth-source ffs`
   - native-vs-FFS visualization harnesses
 
 ## SAM 3.1

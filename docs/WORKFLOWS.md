@@ -14,7 +14,7 @@ Single-D455 realtime point-cloud demo:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python scripts/harness/realtime_single_camera_pointcloud.py \
+  python scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py \
   --profile 848x480 \
   --fps 60 \
   --view-mode camera
@@ -24,7 +24,7 @@ FFS depth mode for the same demo:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python scripts/harness/realtime_single_camera_pointcloud.py \
+  python scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py \
   --profile 848x480 \
   --fps 30 \
   --depth-source ffs \
@@ -195,30 +195,30 @@ comparison path.
 Per-camera diagnostic panels:
 
 ```bash
-python scripts/harness/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --write_mp4 --use_float_ffs_depth_when_available
+python scripts/harness/diagnostics/depth/visual_compare_depth_panels.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --write_mp4 --use_float_ffs_depth_when_available
 ```
 
 Cross-view reprojection comparison:
 
 ```bash
-python scripts/harness/visual_compare_reprojection.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --camera_pair 0,1 --write_mp4 --use_float_ffs_depth_when_available
+python scripts/harness/diagnostics/depth/visual_compare_reprojection.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --camera_pair 0,1 --write_mp4 --use_float_ffs_depth_when_available
 ```
 
 Single-frame object-centric compare:
 
 ```bash
-python scripts/harness/visual_compare_turntable.py --case_name my_case --aligned_root ./data --frame_idx 0
+python scripts/harness/diagnostics/visualization/visual_compare_turntable.py --case_name my_case --aligned_root ./data --frame_idx 0
 ```
 
 Professor-facing summary pack:
 
 ```bash
-python scripts/harness/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0
+python scripts/harness/diagnostics/visualization/visual_make_professor_triptych.py --aligned_root ./data --realsense_case native_case --ffs_case ffs_case --frame_idx 0
 ```
 
 ## 7. Validation
 
 ```bash
-conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
-conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full
+conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile smoke
+conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile exhaustive
 ```

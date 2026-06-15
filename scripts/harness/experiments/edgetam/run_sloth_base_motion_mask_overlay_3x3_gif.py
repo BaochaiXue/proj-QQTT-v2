@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
             "-n",
             str(args.sam31_env_name),
             "python",
-            str(ROOT / "scripts/harness/generate_sam31_masks.py"),
+            str(ROOT / "scripts/harness/diagnostics/visualization/generate_sam31_masks.py"),
             "--case_root",
             str(case_dir),
             "--output_dir",

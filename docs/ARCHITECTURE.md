@@ -15,7 +15,7 @@ aligned-case data product.
 - `record_data.py`
 - `record_data_realtime_align.py`
 - `data_process/record_data_align.py`
-- `scripts/harness/realtime_single_camera_pointcloud.py`
+- `scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py`
 - `demo_v3/realtime_single_camera_realsense_masked_pcd.py`
 - `demo_v3_1/realtime_single_camera_realsense_masked_pcd.py`
 - `demo_v3_2/realtime_single_camera_ffs_masked_pcd.py`
@@ -104,7 +104,7 @@ dependency.
 
 Experiment-only workflow implementations live under
 `data_process/visualization/experiments/` and CLIs under
-`scripts/harness/experiments/`. `scripts/harness/check_experiment_boundaries.py`
+`scripts/harness/experiments/`. `scripts/harness/guards/check_experiment_boundaries.py`
 guards that formal runtime code does not import those experiment packages.
 
 ## Removed Historical Surface

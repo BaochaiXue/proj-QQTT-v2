@@ -25,14 +25,14 @@ export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
   - Open3D
   - SAM 3.1 / EdgeTAM dependencies used by the single-camera masked PCD demo
 - Expected use:
-  - `scripts/harness/realtime_single_camera_pointcloud.py`
+  - `scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py`
   - `demo_v3*`
   - deterministic checks
   - integrated local demo work where switching specialized envs is the main friction
 - Validation command:
 
 ```bash
-conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
+conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile smoke
 ```
 
 ## `FFS-SAM-RS`
@@ -41,7 +41,7 @@ conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
   work that specifically needs that environment.
 - Expected use:
   - `cameras_viewer_FFS.py`
-  - `scripts/harness/verify_ffs_demo.py`
+  - `scripts/harness/benchmarks/ffs/verify_ffs_demo.py`
   - FFS depth comparison and mask helper experiments
 - Default FFS policy:
   - external repo: `../Fast-FoundationStereo`

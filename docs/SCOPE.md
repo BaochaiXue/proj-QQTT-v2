@@ -25,7 +25,7 @@ remain a diagnostic layer around that data product.
 - aligned depth-backend comparison visualization utilities
 - explicitly isolated experiment-only aligned-case visualization under
   `data_process/visualization/experiments/` and `scripts/harness/experiments/`
-- single-camera realtime point-cloud workflows under `scripts/harness/realtime_single_camera_pointcloud.py` and `demo_v3*`
+- single-camera realtime point-cloud workflows under `scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py` and `demo_v3*`
 - SAM/EdgeTAM mask usage when it is scoped to demo initialization or visualization; masks are not part of the formal aligned-case compatibility contract
 - manual hardware validation documentation
 - deterministic tests and scope guards for the kept workflow
