@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-ROOT = Path(__file__).resolve().parents[3]
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "qqtt").is_dir() and (candidate / "scripts").is_dir():
+            return candidate
+    raise RuntimeError(f"failed to locate repo root from {start}")
+
+
+ROOT = _find_repo_root(Path(__file__).resolve())
 DEFAULT_MODEL_ID = "yonigozlan/EdgeTAM-hf"
 DEFAULT_OUTPUT_DIR = ROOT / "result/hf_edgetam_streaming_realcase"
 DEFAULT_DOC_MD = ROOT / "docs/generated/hf_edgetam_streaming_realcase_benchmark.md"
