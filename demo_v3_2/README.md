@@ -29,7 +29,7 @@ conda run -n demo_2_max --no-capture-output \
   --input-source fake-live \
   --demo-visual-mode tracking \
   --mode demo \
-  --replay-fps 30
+  --replay-fps 5
 ```
 
 For PCD-only inspection, keep the full FFS + EdgeTAM + enhanced-pt PCD +
@@ -43,7 +43,7 @@ conda run -n demo_2_max --no-capture-output \
   --input-source fake-live \
   --demo-visual-mode pcd \
   --mode demo \
-  --replay-fps 30
+  --replay-fps 5
 ```
 
 If the default TensorRT engine is not present in this checkout, pass the local
@@ -55,7 +55,7 @@ conda run -n demo_2_max --no-capture-output \
   --input-source fake-live \
   --demo-visual-mode tracking \
   --mode demo \
-  --replay-fps 30 \
+  --replay-fps 5 \
   --enable-pcd-filter \
   --ffs-trt-model-dir /home/xinjie/proj-QQTT-v2/data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864
 ```
@@ -65,9 +65,11 @@ The default fake-live case
 `color/`, `depth/`, `ir_left/`, `ir_right/`, and IR calibration metadata. Demo
 3.2 ignores native depth for the FFS path and computes color-aligned depth from
 the replayed IR stereo frames, matching the live camera contract. Fake-live runs
-in demo mode. Local FFS TensorRT depth execution is serialized inside the runtime
-and cached by frame sequence so point-cloud rendering and TAPNext++ marker lift
-can share depth without concurrent TensorRT context use.
+in demo mode and defaults to 5 FPS unless `--replay-fps` is explicitly set.
+Use `--replay-fps 0` to replay at metadata FPS. Local FFS TensorRT depth
+execution is serialized inside the runtime and cached by frame sequence so
+point-cloud rendering and TAPNext++ marker lift can share depth without
+concurrent TensorRT context use.
 
 Headless enhanced-pt capture keeps the fake-live realtime pipeline running but
 does not open Open3D. It saves only sync enhanced-pt filtered PCD, RGB frames,

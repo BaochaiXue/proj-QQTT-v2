@@ -250,6 +250,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertEqual(contract["input_source"], "fake_live_recorded_single_camera")
                 self.assertEqual(contract["input_source_mode"], "fake-live")
                 self.assertEqual(contract["recording_case"], str(runtime.DEFAULT_FAKE_LIVE_CASE))
+                self.assertEqual(contract["replay_fps"], runtime.DEFAULT_FAKE_LIVE_REPLAY_FPS)
+                self.assertEqual(contract["replay_fps_source"], "default_fake_live")
                 self.assertIsNone(contract["serial"])
                 self.assertEqual(contract["semantic_mode"], "demo")
                 self.assertEqual(contract["controller_prompt"], "human hand")
@@ -260,6 +262,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertIn("fake-live", delegate)
                 self.assertIn("--recording-case", delegate)
                 self.assertIn(str(runtime.DEFAULT_FAKE_LIVE_CASE), delegate)
+                self.assertEqual(_option_value(delegate, "--replay-fps"), str(float(runtime.DEFAULT_FAKE_LIVE_REPLAY_FPS)))
                 self.assertEqual(_option_value(delegate, "--controller-prompt"), "human hand")
                 self.assertNotIn("--serial", delegate)
 
@@ -281,11 +284,36 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
         self.assertEqual(contract["recording_case"], "data_collect/custom_case")
         self.assertEqual(contract["replay_fps"], 30.0)
+        self.assertEqual(contract["replay_fps_source"], "cli")
         self.assertEqual(contract["semantic_mode"], "demo")
         self.assertEqual(contract["controller_prompt"], "human hand")
         self.assertEqual(_option_value(delegate, "--recording-case"), "data_collect/custom_case")
         self.assertEqual(_option_value(delegate, "--replay-fps"), "30.0")
         self.assertEqual(_option_value(delegate, "--controller-prompt"), "human hand")
+
+    def test_fake_live_explicit_zero_uses_metadata_fps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            case_dir = Path(tmp_dir) / "case"
+            case_dir.mkdir()
+            (case_dir / "metadata.json").write_text(json.dumps({"fps": 30}), encoding="utf-8")
+            args = self._parse(
+                runtime.DEMO_VERSION_3_2,
+                [
+                    "--input-source",
+                    "fake-live",
+                    "--fake-live-case",
+                    str(case_dir),
+                    "--replay-fps",
+                    "0",
+                ],
+            )
+            runtime.validate_args(args)
+            contract = runtime.build_contract(args)
+            delegate = runtime.build_live_delegate_argv(args)
+
+            self.assertEqual(contract["replay_fps"], 30.0)
+            self.assertEqual(contract["replay_fps_source"], "metadata")
+            self.assertNotIn("--replay-fps", delegate)
 
     def test_demo32_tracking_visual_mode_forces_rainbow_sync_contract(self) -> None:
         args = self._parse(

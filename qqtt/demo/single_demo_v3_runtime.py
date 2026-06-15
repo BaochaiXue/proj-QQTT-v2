@@ -45,6 +45,7 @@ DEFAULT_MODE = MODE_EXP
 DEFAULT_TRACKER_BACKEND = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
 DEFAULT_TRACKER_DEVICE = "cuda:1"
 DEFAULT_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_2min_e45_g35_20260614_155543")
+DEFAULT_FAKE_LIVE_REPLAY_FPS = 5.0
 FFS_SURFACE_FILTER_RADIUS_M = 0.015
 FFS_SURFACE_FILTER_NB_POINTS = 8
 FFS_SURFACE_COMPONENT_VOXEL_SIZE_M = 0.015
@@ -249,7 +250,10 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         "--replay-fps",
         type=float,
         default=0.0,
-        help="Replay FPS for --input-source recording or fake-live. Use 0 to read metadata fps.",
+        help=(
+            "Replay FPS for --input-source recording or fake-live. Omitted fake-live replay defaults to "
+            f"{DEFAULT_FAKE_LIVE_REPLAY_FPS:g} fps; use 0 to read metadata fps."
+        ),
     )
     if depth_source == DEPTH_SOURCE_FFS:
         parser.add_argument("--ffs-repo", type=Path, default=single_pcd.DEFAULT_FFS_REPO)
@@ -472,6 +476,11 @@ def apply_preset_defaults(
         args.tracker_backend = masked_pcd.TRACKER_BACKEND_NONE
     if str(args.input_source) == INPUT_SOURCE_FAKE_LIVE and args.recording_case is None:
         args.recording_case = DEFAULT_FAKE_LIVE_CASE
+    if str(args.input_source) == INPUT_SOURCE_FAKE_LIVE and "--replay-fps" not in explicit:
+        args.replay_fps = DEFAULT_FAKE_LIVE_REPLAY_FPS
+        args.fake_live_replay_fps_defaulted = True
+    else:
+        args.fake_live_replay_fps_defaulted = False
     if version in {DEMO_VERSION_3_2, DEMO_VERSION_3_3} and bool(args.enable_pcd_filter):
         if "--filter-radius-m" not in explicit:
             args.filter_radius_m = FFS_SURFACE_FILTER_RADIUS_M
@@ -658,6 +667,8 @@ def _contract_replay_fps(args: argparse.Namespace) -> tuple[float | None, str | 
         return None, None
     requested = float(args.replay_fps)
     if requested > 0.0:
+        if bool(getattr(args, "fake_live_replay_fps_defaulted", False)):
+            return requested, "default_fake_live"
         return requested, "cli"
     metadata_fps = _read_recording_metadata_fps(args.recording_case)
     if metadata_fps is not None:

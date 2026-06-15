@@ -48,7 +48,7 @@ conda run -n demo_2_max --no-capture-output \
   python demo_v3_1/realtime_single_camera_realsense_masked_pcd.py \
   --input-source fake-live \
   --mode demo \
-  --replay-fps 30
+  --replay-fps 5
 ```
 
 The default fake-live case is
@@ -56,7 +56,8 @@ The default fake-live case is
 numerically sorted camera-0 step becomes demo `seq=0` for SAM3.1
 initialization. Demo 3 / 3.1 consume replayed RGB-D; Demo 3.2 / 3.3 consume
 replayed RGB plus IR stereo and compute FFS depth. Playback stops cleanly at
-the end of the recording. Fake-live runs in demo mode. When enhanced PCD
+the end of the recording. Fake-live runs in demo mode and defaults to 5 FPS;
+pass `--replay-fps 0` to replay at metadata FPS. When enhanced PCD
 component filtering is enabled, object filtering keeps one main component while
 controller filtering defaults to enhanced-pt and keeps two main components so
 two-hand controllers are not dropped as disconnected noise. Demo 3.x Open3D
