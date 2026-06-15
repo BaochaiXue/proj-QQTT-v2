@@ -10,6 +10,7 @@ import unittest
 import numpy as np
 
 from qqtt.demo import realtime_masked_edgetam_pcd as demo
+from qqtt.demo.query_rainbow import query_rainbow_colors_rgb_u8
 from qqtt.demo.realtime_single_camera_pointcloud import CameraIntrinsics
 from qqtt.tracking.base import TrackingResult
 
@@ -147,7 +148,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         return demo.TrackerMarkerPacket(
             seq=int(seq),
             marker_xyz_m=np.array([[0.0, 0.0, 0.5]], dtype=np.float32),
-            marker_colors_rgb_u8=np.array([[255, 0, 0]], dtype=np.uint8),
+            marker_colors_rgb_u8=query_rainbow_colors_rgb_u8(1),
+            query_rgb_u8=query_rainbow_colors_rgb_u8(1),
             query_points_yx=np.array([[1.0, 1.0]], dtype=np.float32),
             tracks_yx=np.array([[1.0, 1.0]], dtype=np.float32),
             visibility=np.ones((1,), dtype=np.float32),
@@ -289,6 +291,14 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertIs(capped_points, points)
         self.assertIs(capped_colors, colors)
 
+    def test_query_rainbow_colors_are_deterministic_identity_colors(self) -> None:
+        first = query_rainbow_colors_rgb_u8(8)
+        second = query_rainbow_colors_rgb_u8(8)
+
+        np.testing.assert_array_equal(first, second)
+        self.assertEqual(first.shape, (8, 3))
+        self.assertGreater(np.unique(first, axis=0).shape[0], 4)
+
     def test_tracker_lift_mask_uses_current_union_mask_and_erosion(self) -> None:
         packet = self._mask_packet()
 
@@ -316,6 +326,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             seq=0,
             marker_xyz_m=np.zeros((2, 3), dtype=np.float32),
             marker_colors_rgb_u8=np.zeros((2, 3), dtype=np.uint8),
+            query_rgb_u8=np.zeros((4, 3), dtype=np.uint8),
             query_points_yx=np.zeros((4, 2), dtype=np.float32),
             tracks_yx=np.zeros((2, 2), dtype=np.float32),
             visibility=np.ones((2,), dtype=np.float32),
@@ -428,7 +439,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             tracker_packet = demo.TrackerMarkerPacket(
                 seq=0,
                 marker_xyz_m=np.array([[0.0, 0.0, 0.5]], dtype=np.float32),
-                marker_colors_rgb_u8=np.array([[255, 0, 0]], dtype=np.uint8),
+                marker_colors_rgb_u8=query_rainbow_colors_rgb_u8(1),
+                query_rgb_u8=query_rainbow_colors_rgb_u8(1),
                 query_points_yx=np.array([[1.0, 1.0]], dtype=np.float32),
                 tracks_yx=np.array([[1.0, 1.0]], dtype=np.float32),
                 visibility=np.ones((1,), dtype=np.float32),
@@ -485,6 +497,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(int(mask_payload["controller_pcd_mask_erode_pixels"][0]), 0)
             trajectory = np.load(output_dir / rows[0]["query_trajectory_path"], allow_pickle=False)
             np.testing.assert_array_equal(trajectory["query_indices"], np.array([0], dtype=np.int64))
+            np.testing.assert_array_equal(trajectory["query_rgb_u8"], query_rainbow_colors_rgb_u8(1))
+            np.testing.assert_array_equal(trajectory["marker_rgb_u8"], query_rainbow_colors_rgb_u8(1))
 
     def test_tracker_worker_publishes_lifted_marker_packet_with_fake_adapter(self) -> None:
         args = self._tracker_args()
@@ -513,6 +527,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertGreater(packet.marker_count, 0)
         self.assertLessEqual(packet.marker_count, 4)
         self.assertEqual(packet.marker_colors_rgb_u8.shape, (packet.marker_count, 3))
+        self.assertEqual(packet.query_rgb_u8.shape, (packet.query_count, 3))
+        self.assertFalse(np.all(packet.marker_colors_rgb_u8 == np.array([255, 0, 0], dtype=np.uint8)))
+        np.testing.assert_array_equal(packet.marker_colors_rgb_u8, packet.query_rgb_u8[packet.query_indices])
         self.assertTrue(np.all(packet.marker_xyz_m[:, 2] > 0.0))
 
     def test_fatal_worker_error_records_once_and_requests_render_update(self) -> None:

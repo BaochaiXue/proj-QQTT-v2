@@ -82,6 +82,7 @@ from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_VALID_ITERS,
 )
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world  # noqa: E402
+from qqtt.demo.query_rainbow import query_rainbow_colors_rgb_u8  # noqa: E402
 from qqtt.tracking.backends.point_tracker_adapter import (  # noqa: E402
     TRACKER_BACKEND_NONE,
     TRACKER_BACKEND_TAPNEXTPP,
@@ -119,6 +120,10 @@ PCD_MODES = ("masked", "none")
 DEFAULT_PCD_MODE = "masked"
 RENDER_MODES = ("pointcloud", "none")
 DEFAULT_RENDER_MODE = "pointcloud"
+DEMO_VISUAL_MODE_PCD = "pcd"
+DEMO_VISUAL_MODE_TRACKING = "tracking"
+DEMO_VISUAL_MODES = (DEMO_VISUAL_MODE_PCD, DEMO_VISUAL_MODE_TRACKING)
+DEFAULT_DEMO_VISUAL_MODE = DEMO_VISUAL_MODE_TRACKING
 DEFAULT_RENDER_MAX_POINTS_PER_LAYER = 5000
 DEFAULT_RENDER_CAP_GRID_BINS = 8
 VIEW_MODES = ("orbit", "camera")
@@ -160,7 +165,8 @@ CONTROLLER_COLOR_RGB = (255, 96, 32)
 OBJECT_COLOR_RGB = (64, 180, 255)
 GEOMETRY_CONTROLLER = "masked_edgetam_controller"
 GEOMETRY_OBJECT = "masked_edgetam_object"
-GEOMETRY_TRACKER = "tapnextpp_tracker_markers"
+GEOMETRY_TRACKER_OBJECT = "tapnextpp_tracker_markers_object"
+GEOMETRY_TRACKER_CONTROLLER = "tapnextpp_tracker_markers_controller"
 COORDINATE_FRAME = "camera_color_frame"
 TRACKER_DISPLAY_SCOPE_CONTROLLER = "controller"
 TRACKER_DISPLAY_SCOPE_OBJECT = "object"
@@ -174,7 +180,6 @@ DEFAULT_TRACKER_DISPLAY_SCOPE = TRACKER_DISPLAY_SCOPE_UNION
 DEFAULT_TRACKER_BACKEND = TRACKER_BACKEND_NONE
 DEFAULT_TRACKER_QUERY_COUNT = 4096
 DEFAULT_TRACKER_SEED = 42
-DEFAULT_TRACKER_MARKER_COLOR_RGB = (255, 0, 0)
 DEFAULT_TRACKER_MARKER_POINT_SIZE = 8.0
 HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "enhanced_pt_filtered"
 DEBUG_LOG_INTERVAL_S = 1.0
@@ -626,6 +631,7 @@ class TrackerMarkerPacket:
     seq: int
     marker_xyz_m: np.ndarray
     marker_colors_rgb_u8: np.ndarray
+    query_rgb_u8: np.ndarray
     query_points_yx: np.ndarray
     tracks_yx: np.ndarray
     visibility: np.ndarray
@@ -847,6 +853,7 @@ class HeadlessCaptureWriter:
             seq=np.asarray([int(packet.seq)], dtype=np.int64),
             query_points_yx=np.ascontiguousarray(packet.query_points_yx, dtype=np.float32),
             query_indices=np.ascontiguousarray(packet.query_indices, dtype=np.int64),
+            query_rgb_u8=np.ascontiguousarray(packet.query_rgb_u8, dtype=np.uint8),
             marker_xyz_m=np.ascontiguousarray(packet.marker_xyz_m, dtype=np.float32),
             marker_rgb_u8=np.ascontiguousarray(packet.marker_colors_rgb_u8, dtype=np.uint8),
             tracks_yx=np.ascontiguousarray(packet.tracks_yx, dtype=np.float32),
@@ -1077,6 +1084,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=RENDER_MODES,
         default=DEFAULT_RENDER_MODE,
         help="Render stage mode. Use none for headless profiling.",
+    )
+    parser.add_argument(
+        "--demo-visual-mode",
+        choices=DEMO_VISUAL_MODES,
+        default=DEFAULT_DEMO_VISUAL_MODE,
+        help="Visual presentation hint forwarded from Demo 3.2 wrappers.",
     )
     parser.add_argument(
         "--view-mode",
@@ -1424,6 +1437,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--depth-source none requires --pcd-mode none")
     if args.render_mode == "pointcloud" and args.pcd_mode == "none":
         raise ValueError("--render-mode pointcloud requires --pcd-mode masked")
+    if str(args.demo_visual_mode) not in DEMO_VISUAL_MODES:
+        raise ValueError(f"--demo-visual-mode must be one of {', '.join(DEMO_VISUAL_MODES)}")
     if headless_capture_enabled(args):
         if args.input_source != INPUT_SOURCE_FAKE_LIVE:
             raise ValueError("--headless-capture-dir requires --input-source fake-live")
@@ -2333,13 +2348,6 @@ def _latest_tracker_arrays(result: Any) -> tuple[np.ndarray, np.ndarray]:
     )
 
 
-def _solid_tracker_colors(point_count: int) -> np.ndarray:
-    if int(point_count) <= 0:
-        return np.empty((0, 3), dtype=np.uint8)
-    rgb = np.asarray(DEFAULT_TRACKER_MARKER_COLOR_RGB, dtype=np.uint8).reshape(1, 3)
-    return np.repeat(rgb, int(point_count), axis=0)
-
-
 class RealtimeMaskedEdgeTamPcdDemo:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -2399,6 +2407,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.headless_capture_writer: HeadlessCaptureWriter | None = None
         self._recording_first_frame_segmented = threading.Event()
         self._tracker_query_points_yx: np.ndarray | None = None
+        self._tracker_query_rgb_u8: np.ndarray | None = None
         self._tracker_query_is_object: np.ndarray | None = None
         self._tracker_query_is_controller: np.ndarray | None = None
         self._tracker_consistent_visible: np.ndarray | None = None
@@ -2435,6 +2444,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "recording_frame_count": frame_count,
             "depth_source": str(self.args.depth_source),
             "track_mode": str(self.args.track_mode),
+            "demo_visual_mode": str(self.args.demo_visual_mode),
             "tracker_backend": str(self.args.tracker_backend),
             "tracker_query_count": int(self.args.tracker_query_count),
             "tracker_display_scope": str(self.args.tracker_display_scope),
@@ -2851,6 +2861,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "edgetam_live_session_keep_frames": int(self.args.edgetam_live_session_keep_frames),
             "offline_video_input_used": _is_replay_input_source(str(self.args.input_source)),
             "input_source": self.args.input_source,
+            "demo_visual_mode": str(self.args.demo_visual_mode),
             "recording_case": (
                 str(self.args.recording_case) if _is_replay_input_source(str(self.args.input_source)) else None
             ),
@@ -2915,6 +2926,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "tracker_overlay_max_points": int(self.args.tracker_overlay_max_points),
             "tracker_marker_point_size": float(self.args.tracker_marker_point_size),
             "tracker_strict_same_seq_render": bool(tracker_enabled(self.args) and self.args.pcd_mode == "masked"),
+            "tracker_visualization_mode": (
+                "phystwin_rainbow_identity_3d_lift" if tracker_enabled(self.args) else "none"
+            ),
+            "tracker_sync_policy": (
+                "strict_same_seq_latest_wins" if tracker_enabled(self.args) and self.args.pcd_mode == "masked" else "none"
+            ),
+            "query_display_policy": "visible_3d_lifted_all" if tracker_enabled(self.args) else "none",
+            "query_color_mode": "phystwin_rainbow_identity" if tracker_enabled(self.args) else "none",
             "tracker_lift_mask_erode_pixels": min(
                 object_pcd_mask_erode_pixels(self.args),
                 controller_pcd_mask_erode_pixels(self.args),
@@ -3042,6 +3061,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         )
         adapter.initialize([], query_points)
         self._tracker_query_points_yx = np.ascontiguousarray(query_points, dtype=np.float32)
+        self._tracker_query_rgb_u8 = query_rainbow_colors_rgb_u8(len(query_points))
         self._tracker_query_is_object = np.ascontiguousarray(query_is_object, dtype=bool)
         self._tracker_query_is_controller = np.ascontiguousarray(query_is_controller, dtype=bool)
         self._tracker_consistent_visible = np.ones((len(query_points),), dtype=bool)
@@ -3091,6 +3111,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             return None
         assert self._tracker_query_is_object is not None
         assert self._tracker_query_is_controller is not None
+        assert self._tracker_query_rgb_u8 is not None
         started_s = time.perf_counter()
         rgb = np.ascontiguousarray(mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8)
         result = adapter.update(rgb)
@@ -3160,16 +3181,19 @@ class RealtimeMaskedEdgeTamPcdDemo:
             lifted_query_indices = selected[source_indices].astype(np.int64, copy=False)
             lifted_query_is_object = selected_query_is_object[source_indices]
             lifted_query_is_controller = selected_query_is_controller[source_indices]
+            lifted_marker_colors = self._tracker_query_rgb_u8[lifted_query_indices]
         else:
             lifted_query_indices = np.empty((0,), dtype=np.int64)
             lifted_query_is_object = np.empty((0,), dtype=bool)
             lifted_query_is_controller = np.empty((0,), dtype=bool)
+            lifted_marker_colors = np.empty((0, 3), dtype=np.uint8)
         done_s = time.perf_counter()
         stats = getattr(result, "stats", {}) or {}
         packet = TrackerMarkerPacket(
             seq=mask_packet.seq,
             marker_xyz_m=np.ascontiguousarray(lifted.points_world, dtype=np.float32).reshape(-1, 3),
-            marker_colors_rgb_u8=_solid_tracker_colors(len(lifted.points_world)),
+            marker_colors_rgb_u8=np.ascontiguousarray(lifted_marker_colors, dtype=np.uint8).reshape(-1, 3),
+            query_rgb_u8=np.ascontiguousarray(self._tracker_query_rgb_u8, dtype=np.uint8).reshape(-1, 3),
             query_points_yx=query_points,
             tracks_yx=np.ascontiguousarray(lifted.tracks_yx, dtype=np.float32).reshape(-1, 2),
             visibility=np.ascontiguousarray(selected_visibility[source_indices], dtype=np.float32),
@@ -4540,9 +4564,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
         pcd_material = rendering.MaterialRecord()
         pcd_material.shader = "defaultUnlit"
         pcd_material.point_size = float(self.args.point_size)
-        tracker_material = rendering.MaterialRecord()
-        tracker_material.shader = "defaultUnlit"
-        tracker_material.point_size = float(self.args.tracker_marker_point_size)
+        tracker_object_material = rendering.MaterialRecord()
+        tracker_object_material.shader = "defaultUnlit"
+        tracker_object_material.point_size = max(1.0, float(self.args.tracker_marker_point_size) * 0.65)
+        tracker_controller_material = rendering.MaterialRecord()
+        tracker_controller_material.shader = "defaultUnlit"
+        tracker_controller_material.point_size = float(self.args.tracker_marker_point_size)
 
         def make_geometry_layer(name: str, material: object, *, min_capacity: int = 0) -> Open3DSceneTensorLayer:
             return Open3DSceneTensorLayer(
@@ -4581,14 +4608,23 @@ class RealtimeMaskedEdgeTamPcdDemo:
             for value in (self.args.pcd_max_points, self.args.render_max_points_per_layer)
             if int(value) > 0
         ]
-        strict_sync_enabled = tracker_enabled(self.args)
+        strict_sync_enabled = tracker_enabled(self.args) and self.args.pcd_mode == "masked"
         pcd_layer_capacity = min(pcd_caps) if pcd_caps else 0
         tracker_layer_capacity = int(self.args.tracker_overlay_max_points)
         if tracker_layer_capacity <= 0:
             tracker_layer_capacity = int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS
         controller_state = make_geometry_layer(GEOMETRY_CONTROLLER, pcd_material, min_capacity=pcd_layer_capacity)
         object_state = make_geometry_layer(GEOMETRY_OBJECT, pcd_material, min_capacity=pcd_layer_capacity)
-        tracker_state = make_geometry_layer(GEOMETRY_TRACKER, tracker_material, min_capacity=tracker_layer_capacity)
+        tracker_object_state = make_geometry_layer(
+            GEOMETRY_TRACKER_OBJECT,
+            tracker_object_material,
+            min_capacity=tracker_layer_capacity,
+        )
+        tracker_controller_state = make_geometry_layer(
+            GEOMETRY_TRACKER_CONTROLLER,
+            tracker_controller_material,
+            min_capacity=tracker_layer_capacity,
+        )
         camera_initialized = {"value": False}
         render_post_gate = CoalescedPostGate()
         last_render_seq = {"value": -1}
@@ -4621,6 +4657,45 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 bounds = o3d.geometry.AxisAlignedBoundingBox([-0.5, -0.35, 0.1], [0.5, 0.35, 1.5])
                 scene_widget.setup_camera(60.0, bounds, [0.0, 0.0, 0.8])
 
+        def update_tracker_layers(marker_packet: TrackerMarkerPacket) -> tuple[float, float]:
+            point_count = int(marker_packet.marker_xyz_m.shape[0])
+            label_count = min(
+                point_count,
+                int(marker_packet.marker_colors_rgb_u8.shape[0]),
+                int(marker_packet.query_is_object.shape[0]),
+                int(marker_packet.query_is_controller.shape[0]),
+            )
+            if label_count <= 0:
+                object_convert_ms, object_update_ms = update_layer(
+                    tracker_object_state,
+                    np.empty((0, 3), dtype=np.float32),
+                    np.empty((0, 3), dtype=np.uint8),
+                )
+                controller_convert_ms, controller_update_ms = update_layer(
+                    tracker_controller_state,
+                    np.empty((0, 3), dtype=np.float32),
+                    np.empty((0, 3), dtype=np.uint8),
+                )
+                return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
+            points = np.asarray(marker_packet.marker_xyz_m[:label_count], dtype=np.float32).reshape(-1, 3)
+            colors = np.asarray(marker_packet.marker_colors_rgb_u8[:label_count], dtype=np.uint8).reshape(-1, 3)
+            is_controller = np.asarray(marker_packet.query_is_controller[:label_count], dtype=bool).reshape(-1)
+            is_object = np.asarray(marker_packet.query_is_object[:label_count], dtype=bool).reshape(-1) & ~is_controller
+            unlabelled = ~(is_object | is_controller)
+            if np.any(unlabelled):
+                is_object = is_object | unlabelled
+            object_convert_ms, object_update_ms = update_layer(
+                tracker_object_state,
+                points[is_object],
+                colors[is_object],
+            )
+            controller_convert_ms, controller_update_ms = update_layer(
+                tracker_controller_state,
+                points[is_controller],
+                colors[is_controller],
+            )
+            return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
+
         def render_latest() -> bool:
             if strict_sync_enabled:
                 pair = self.paired_render_slot.get_latest_after(last_pair_seq["value"])
@@ -4645,11 +4720,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     packet.object_colors_rgb_u8,
                     max_points=int(self.args.render_max_points_per_layer),
                 )
-                tracker_convert_ms, tracker_update_ms = update_layer(
-                    tracker_state,
-                    marker_packet.marker_xyz_m,
-                    marker_packet.marker_colors_rgb_u8,
-                )
+                tracker_convert_ms, tracker_update_ms = update_tracker_layers(marker_packet)
                 if not camera_initialized["value"] and packet.point_count > 0:
                     reset_camera()
                     camera_initialized["value"] = True
@@ -4704,11 +4775,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if marker_packet is not None:
                 last_marker_seq["value"] = marker_packet.seq
                 latest_marker_packet["value"] = marker_packet
-                tracker_convert_ms, tracker_update_ms = update_layer(
-                    tracker_state,
-                    marker_packet.marker_xyz_m,
-                    marker_packet.marker_colors_rgb_u8,
-                )
+                tracker_convert_ms, tracker_update_ms = update_tracker_layers(marker_packet)
             active_packet = latest_render_packet["value"]
             active_marker = latest_marker_packet["value"]
             if active_packet is None:

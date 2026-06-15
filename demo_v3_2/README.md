@@ -11,12 +11,27 @@ Dry-run:
 python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
-Fake-live replay:
+Fake-live replay defaults to tracking visualization: filtered RGB PCD plus
+PhysTwin-style rainbow query points. The PCD and query markers are rendered only
+from strict same-seq pairs.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
   --input-source fake-live \
+  --demo-visual-mode tracking \
+  --mode demo \
+  --replay-fps 30
+```
+
+For PCD-only inspection, keep EdgeTAM masks and enhanced-pt filtered RGB PCD but
+disable TAPNext++ query markers:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --demo-visual-mode pcd \
   --mode demo \
   --replay-fps 30
 ```
@@ -28,6 +43,7 @@ engine explicitly:
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
   --input-source fake-live \
+  --demo-visual-mode tracking \
   --mode demo \
   --replay-fps 30 \
   --enable-pcd-filter \
@@ -59,19 +75,23 @@ provided.
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
   --input-source fake-live \
+  --demo-visual-mode tracking \
   --render-mode none \
   --duration-s 5 \
   --headless-capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke
 ```
 
-Render the saved artifacts offline. The helper overlays current-frame query
-points only: object query points are light blue, controller query points are red,
-and no historical trajectory lines are drawn.
+Render the saved artifacts offline. In `tracking` mode, the helper overlays
+current-frame query points only, using the saved PhysTwin-style rainbow identity
+colors; no historical trajectory lines are drawn. It only uses exact same-seq
+query trajectory files, so missing query frames are counted rather than silently
+matched to an older tracker output. In `pcd` mode, no query points are drawn.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python scripts/harness/render_demo32_headless_capture.py \
   --capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke \
   --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video.mp4 \
-  --fps 30
+  --fps 30 \
+  --demo-visual-mode tracking
 ```

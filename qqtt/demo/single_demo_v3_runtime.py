@@ -32,6 +32,10 @@ MODES = (MODE_EXP, MODE_DEMO)
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_MODE_NONE = "none"
 TRACK_MODES = (TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_NONE)
+DEMO_VISUAL_MODE_PCD = "pcd"
+DEMO_VISUAL_MODE_TRACKING = "tracking"
+DEMO_VISUAL_MODES = (DEMO_VISUAL_MODE_PCD, DEMO_VISUAL_MODE_TRACKING)
+DEFAULT_DEMO_VISUAL_MODE = DEMO_VISUAL_MODE_TRACKING
 
 DEFAULT_OBJECT_PROMPT = "stuffed animal"
 DEFAULT_EXP_CONTROLLER_PROMPT = "towel"
@@ -131,6 +135,28 @@ def _is_replay_input_source(input_source: str) -> bool:
 
 def _supports_headless_capture(version: str) -> bool:
     return normalize_demo_version(version) in {DEMO_VERSION_3_2, DEMO_VERSION_3_3}
+
+
+def _supports_filtered_visual_modes(version: str) -> bool:
+    return normalize_demo_version(version) in {DEMO_VERSION_3_2, DEMO_VERSION_3_3}
+
+
+def _filtered_visual_mode_requested(args: argparse.Namespace, version: str | None = None) -> bool:
+    resolved_version = normalize_demo_version(version or getattr(args, "single_demo_version", DEMO_VERSION_3))
+    return bool(
+        _supports_filtered_visual_modes(resolved_version)
+        and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) in DEMO_VISUAL_MODES
+        and str(getattr(args, "render_mode", "pointcloud")) == "pointcloud"
+    )
+
+
+def _demo_visual_mode_policy_requested(args: argparse.Namespace, version: str | None = None) -> bool:
+    resolved_version = normalize_demo_version(version or getattr(args, "single_demo_version", DEMO_VERSION_3))
+    return bool(
+        _supports_filtered_visual_modes(resolved_version)
+        and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) in DEMO_VISUAL_MODES
+        and (str(getattr(args, "render_mode", "pointcloud")) == "pointcloud" or _headless_capture_requested(args, resolved_version))
+    )
 
 
 def _headless_capture_requested(args: argparse.Namespace, version: str | None = None) -> bool:
@@ -233,6 +259,12 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         choices=masked_pcd.RENDER_MODES,
         default=masked_pcd.DEFAULT_RENDER_MODE,
         help="Render mode for the single-camera masked point-cloud delegate.",
+    )
+    parser.add_argument(
+        "--demo-visual-mode",
+        choices=DEMO_VISUAL_MODES,
+        default=DEFAULT_DEMO_VISUAL_MODE,
+        help="Demo 3.2/3.3 visual presentation mode: filtered PCD only, or filtered PCD plus rainbow query tracking.",
     )
     parser.add_argument(
         "--headless-capture-dir",
@@ -369,11 +401,17 @@ def apply_preset_defaults(
     if "--controller-prompt" not in explicit or args.controller_prompt is None:
         args.controller_prompt = _mode_prompts(str(args.mode))["controller_prompt"]
     headless_capture = _headless_capture_requested(args, version)
+    filtered_visual = _filtered_visual_mode_requested(args, version)
     if headless_capture:
         if "--track-mode" not in explicit:
             args.track_mode = TRACK_MODE_CONTROLLER_OBJECT
-        if "--tracker-backend" not in explicit:
+        if str(args.demo_visual_mode) == DEMO_VISUAL_MODE_PCD:
+            if "--tracker-backend" not in explicit:
+                args.tracker_backend = masked_pcd.TRACKER_BACKEND_NONE
+        elif "--tracker-backend" not in explicit:
             args.tracker_backend = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
+        if str(args.demo_visual_mode) == DEMO_VISUAL_MODE_TRACKING and "--tracker-overlay-max-points" not in explicit:
+            args.tracker_overlay_max_points = 0
         if "--enable-pcd-filter" not in explicit:
             args.enable_pcd_filter = True
         if "--pcd-filter-mode" not in explicit:
@@ -384,6 +422,27 @@ def apply_preset_defaults(
             args.controller_filter = masked_pcd.PCD_FILTER_ENHANCED_PT
         if "--headless-capture-dir" not in explicit and args.headless_capture_dir is None:
             args.headless_capture_dir = _default_headless_capture_dir(args, version)
+    if filtered_visual:
+        if "--track-mode" not in explicit:
+            args.track_mode = TRACK_MODE_CONTROLLER_OBJECT
+        if "--enable-pcd-filter" not in explicit:
+            args.enable_pcd_filter = True
+        if "--pcd-filter-mode" not in explicit:
+            args.pcd_filter_mode = "sync"
+        if "--object-filter" not in explicit:
+            args.object_filter = masked_pcd.PCD_FILTER_ENHANCED_PT
+        if "--controller-filter" not in explicit:
+            args.controller_filter = masked_pcd.PCD_FILTER_ENHANCED_PT
+        if "--pcd-color-mode" not in explicit:
+            args.pcd_color_mode = "rgb"
+        if str(args.demo_visual_mode) == DEMO_VISUAL_MODE_PCD:
+            if "--tracker-backend" not in explicit:
+                args.tracker_backend = masked_pcd.TRACKER_BACKEND_NONE
+        else:
+            if "--tracker-backend" not in explicit:
+                args.tracker_backend = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
+            if "--tracker-overlay-max-points" not in explicit:
+                args.tracker_overlay_max_points = 0
     if "--track-mode" not in explicit and str(args.render_mode) == "none" and not headless_capture:
         args.track_mode = TRACK_MODE_NONE
     if "--tracker-backend" not in explicit and (
@@ -434,7 +493,10 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--input-source {args.input_source} requires --render-mode pointcloud")
         if str(args.track_mode) == TRACK_MODE_NONE:
             raise ValueError(f"--input-source {args.input_source} requires --track-mode controller-object")
-        if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
+        if (
+            str(args.demo_visual_mode) != DEMO_VISUAL_MODE_PCD
+            and str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP
+        ):
             raise ValueError(f"--input-source {args.input_source} requires --tracker-backend tapnextpp")
     elif args.recording_case is not None:
         raise ValueError("--recording-case/--fake-live-case requires --input-source recording or fake-live")
@@ -446,6 +508,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"--profile must be one of {single_pcd.SUPPORTED_PROFILES}")
     if str(args.track_mode) not in TRACK_MODES:
         raise ValueError(f"--track-mode must be one of {TRACK_MODES}")
+    if str(args.demo_visual_mode) not in DEMO_VISUAL_MODES:
+        raise ValueError(f"--demo-visual-mode must be one of {DEMO_VISUAL_MODES}")
     if str(args.view_mode) not in masked_pcd.VIEW_MODES:
         raise ValueError(f"--view-mode must be one of {masked_pcd.VIEW_MODES}")
     if int(args.tracker_query_count) < 0:
@@ -527,6 +591,27 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("headless capture requires --object-filter enhanced-pt")
         if str(args.controller_filter) != masked_pcd.PCD_FILTER_ENHANCED_PT:
             raise ValueError("headless capture requires --controller-filter enhanced-pt")
+    if _demo_visual_mode_policy_requested(args, version):
+        if not bool(args.enable_pcd_filter):
+            raise ValueError("--demo-visual-mode requires --enable-pcd-filter for Demo 3.2/3.3")
+        if str(args.pcd_filter_mode) != "sync":
+            raise ValueError("--demo-visual-mode requires --pcd-filter-mode sync for Demo 3.2/3.3")
+        if str(args.object_filter) != masked_pcd.PCD_FILTER_ENHANCED_PT:
+            raise ValueError("--demo-visual-mode requires --object-filter enhanced-pt for Demo 3.2/3.3")
+        if str(args.controller_filter) != masked_pcd.PCD_FILTER_ENHANCED_PT:
+            raise ValueError("--demo-visual-mode requires --controller-filter enhanced-pt for Demo 3.2/3.3")
+        if str(args.pcd_color_mode) != "rgb":
+            raise ValueError("--demo-visual-mode requires --pcd-color-mode rgb for Demo 3.2/3.3")
+        if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
+            raise ValueError("--demo-visual-mode requires --track-mode controller-object for Demo 3.2/3.3")
+        if str(args.demo_visual_mode) == DEMO_VISUAL_MODE_PCD:
+            if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE:
+                raise ValueError("--demo-visual-mode pcd requires --tracker-backend none")
+        else:
+            if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
+                raise ValueError("--demo-visual-mode tracking requires --tracker-backend tapnextpp")
+            if int(args.tracker_overlay_max_points) != 0:
+                raise ValueError("--demo-visual-mode tracking requires --tracker-overlay-max-points 0")
     if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE:
         if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
             raise ValueError("single demo tracker backend currently supports only tapnextpp")
@@ -583,6 +668,11 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         contract_input_source = "live_realsense_single_camera"
     replay_fps, replay_fps_source = _contract_replay_fps(args)
     headless_capture = _headless_capture_requested(args, version)
+    tracker_on = str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE
+    tracker_visualization_mode = "phystwin_rainbow_identity_3d_lift" if tracker_on else "none"
+    tracker_sync_policy = "strict_same_seq_latest_wins" if tracker_on and str(args.track_mode) != TRACK_MODE_NONE else "none"
+    query_display_policy = "visible_3d_lifted_all" if tracker_on else "none"
+    query_color_mode = "phystwin_rainbow_identity" if tracker_on else "none"
     contract: dict[str, Any] = {
         "demo": f"single-demo{version}",
         "demo_version": version,
@@ -610,6 +700,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "controller_label": controller_label,
         "track_mode": str(args.track_mode),
         "render_mode": str(args.render_mode),
+        "demo_visual_mode": str(args.demo_visual_mode),
         "headless_capture_enabled": bool(headless_capture),
         "headless_capture_dir": None if not headless_capture or args.headless_capture_dir is None else str(args.headless_capture_dir),
         "saved_pcd_source": HEADLESS_CAPTURE_SAVED_PCD_SOURCE if headless_capture else None,
@@ -621,12 +712,13 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "tracker_device": str(args.tracker_device),
         "tracker_query_count": int(args.tracker_query_count),
         "tracker_query_source": (
-            "object_controller_union_mask" if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE else None
+            "object_controller_union_mask" if tracker_on else None
         ),
         "tracker_display_scope": str(args.tracker_display_scope),
-        "tracker_visualization_mode": (
-            "all_tracks_3d_lift" if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE else "none"
-        ),
+        "tracker_visualization_mode": tracker_visualization_mode,
+        "tracker_sync_policy": tracker_sync_policy,
+        "query_display_policy": query_display_policy,
+        "query_color_mode": query_color_mode,
         "tracker_overlay_max_points": int(args.tracker_overlay_max_points),
         "tracker_marker_point_size": float(args.tracker_marker_point_size),
         "tapnet_repo_dir": str(args.tapnet_repo_dir),
@@ -706,6 +798,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "object_prompt",
         "controller_prompt",
         "render_mode",
+        "demo_visual_mode",
         "headless_capture_enabled",
         "headless_capture_dir",
         "saved_pcd_source",
@@ -720,6 +813,10 @@ def format_contract(contract: dict[str, Any]) -> str:
         "pcd_filter_mode",
         "object_filter",
         "controller_filter",
+        "tracker_visualization_mode",
+        "tracker_sync_policy",
+        "query_display_policy",
+        "query_color_mode",
         "filter_radius_m",
         "filter_nb_points",
         "enhanced_component_voxel_size_m",
@@ -777,6 +874,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.track_mode),
         "--render-mode",
         str(args.render_mode),
+        "--demo-visual-mode",
+        str(args.demo_visual_mode),
         "--view-mode",
         str(args.view_mode),
         "--tracker-backend",

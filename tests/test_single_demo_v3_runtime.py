@@ -73,7 +73,10 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["tracker_backend_family"], "tapnext")
         self.assertEqual(contract["tracker_query_count"], 4096)
         self.assertEqual(contract["tracker_display_scope"], "union")
-        self.assertEqual(contract["tracker_visualization_mode"], "all_tracks_3d_lift")
+        self.assertEqual(contract["tracker_visualization_mode"], "phystwin_rainbow_identity_3d_lift")
+        self.assertEqual(contract["tracker_sync_policy"], "strict_same_seq_latest_wins")
+        self.assertEqual(contract["query_display_policy"], "visible_3d_lifted_all")
+        self.assertEqual(contract["query_color_mode"], "phystwin_rainbow_identity")
         self.assertEqual(contract["pcd_max_points"], 60000)
         self.assertEqual(contract["pcd_stride"], 1)
         self.assertEqual(contract["render_max_points_per_layer"], 5000)
@@ -207,7 +210,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(contract["tracker_backend"], "tapnextpp")
             self.assertEqual(contract["tracker_device"], "cuda:1")
             self.assertEqual(contract["tracker_query_source"], "object_controller_union_mask")
-            self.assertEqual(contract["tracker_visualization_mode"], "all_tracks_3d_lift")
+            self.assertEqual(contract["tracker_visualization_mode"], "phystwin_rainbow_identity_3d_lift")
 
             delegate = runtime.build_live_delegate_argv(args)
             self.assertIn("--input-source", delegate)
@@ -277,6 +280,92 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--recording-case"), "data_collect/custom_case")
         self.assertEqual(_option_value(delegate, "--replay-fps"), "30.0")
         self.assertEqual(_option_value(delegate, "--controller-prompt"), "human hand")
+
+    def test_demo32_tracking_visual_mode_forces_rainbow_sync_contract(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--demo-visual-mode",
+                "tracking",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(contract["demo_visual_mode"], "tracking")
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
+        self.assertEqual(contract["tracker_overlay_max_points"], 0)
+        self.assertEqual(contract["tracker_visualization_mode"], "phystwin_rainbow_identity_3d_lift")
+        self.assertEqual(contract["tracker_sync_policy"], "strict_same_seq_latest_wins")
+        self.assertEqual(contract["query_display_policy"], "visible_3d_lifted_all")
+        self.assertEqual(contract["query_color_mode"], "phystwin_rainbow_identity")
+        self.assertTrue(contract["pcd_filter_enabled"])
+        self.assertEqual(contract["pcd_filter_mode"], "sync")
+        self.assertEqual(contract["object_filter"], "enhanced-pt")
+        self.assertEqual(contract["controller_filter"], "enhanced-pt")
+        self.assertEqual(contract["pcd_color_mode"], "rgb")
+        self.assertEqual(_option_value(delegate, "--demo-visual-mode"), "tracking")
+        self.assertEqual(_option_value(delegate, "--tracker-overlay-max-points"), "0")
+        self.assertIn("--enable-pcd-filter", delegate)
+
+    def test_demo32_pcd_visual_mode_keeps_filtered_pcd_and_disables_tracker(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--demo-visual-mode",
+                "pcd",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(contract["demo_visual_mode"], "pcd")
+        self.assertEqual(contract["track_mode"], "controller-object")
+        self.assertEqual(contract["tracker_backend"], "none")
+        self.assertEqual(contract["tracker_visualization_mode"], "none")
+        self.assertEqual(contract["tracker_sync_policy"], "none")
+        self.assertTrue(contract["pcd_filter_enabled"])
+        self.assertEqual(contract["pcd_filter_mode"], "sync")
+        self.assertEqual(contract["object_filter"], "enhanced-pt")
+        self.assertEqual(contract["controller_filter"], "enhanced-pt")
+        self.assertEqual(_option_value(delegate, "--demo-visual-mode"), "pcd")
+        self.assertEqual(_option_value(delegate, "--tracker-backend"), "none")
+        self.assertIn("--enable-pcd-filter", delegate)
+
+    def test_demo32_visual_modes_reject_conflicting_tracker_options(self) -> None:
+        pcd_args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--demo-visual-mode",
+                "pcd",
+                "--tracker-backend",
+                "tapnextpp",
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "pcd requires --tracker-backend none"):
+            runtime.validate_args(pcd_args)
+
+        tracking_args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--demo-visual-mode",
+                "tracking",
+                "--tracker-overlay-max-points",
+                "512",
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "tracking requires --tracker-overlay-max-points 0"):
+            runtime.validate_args(tracking_args)
 
     def test_fake_live_forces_demo_mode_even_with_stale_exp_mode(self) -> None:
         args = self._parse(
@@ -511,18 +600,19 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertEqual(contract["pcd_mask_erode_pixels"], 0)
                 self.assertEqual(contract["object_filter_keep_components"], 1)
                 self.assertEqual(contract["controller_filter_keep_components"], 2)
-                self.assertEqual(contract["filter_max_age_frames"], 3)
+                expected_filter_age = 1 if version in {runtime.DEMO_VERSION_3_2, runtime.DEMO_VERSION_3_3} else 3
+                self.assertEqual(contract["filter_max_age_frames"], expected_filter_age)
                 self.assertEqual(contract["edgetam_live_session_keep_frames"], 64)
                 self.assertEqual(_option_value(delegate, "--render-max-points-per-layer"), "5000")
                 self.assertEqual(_option_value(delegate, "--view-mode"), "orbit")
                 self.assertEqual(_option_value(delegate, "--pcd-mask-erode-pixels"), "0")
                 self.assertEqual(_option_value(delegate, "--object-filter-keep-components"), "1")
                 self.assertEqual(_option_value(delegate, "--controller-filter-keep-components"), "2")
-                self.assertEqual(_option_value(delegate, "--filter-max-age-frames"), "3")
+                self.assertEqual(_option_value(delegate, "--filter-max-age-frames"), str(expected_filter_age))
                 self.assertEqual(_option_value(delegate, "--edgetam-live-session-keep-frames"), "64")
 
     def test_ffs_filter_surface_defaults_apply_only_when_filter_enabled(self) -> None:
-        disabled = self._parse(runtime.DEMO_VERSION_3_2, [])
+        disabled = self._parse(runtime.DEMO_VERSION_3_2, ["--render-mode", "none"])
         self.assertEqual(disabled.filter_radius_m, runtime.masked_pcd.DEFAULT_FILTER_RADIUS_M)
         self.assertEqual(disabled.filter_nb_points, runtime.masked_pcd.DEFAULT_FILTER_NB_POINTS)
         self.assertEqual(disabled.filter_every_n, 3)
@@ -537,7 +627,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         delegate = runtime.build_live_delegate_argv(enabled, active_serial="s0")
 
         self.assertTrue(contract["pcd_filter_enabled"])
-        self.assertEqual(contract["pcd_filter_mode"], "async")
+        self.assertEqual(contract["pcd_filter_mode"], "sync")
         self.assertEqual(contract["object_filter"], "enhanced-pt")
         self.assertEqual(contract["controller_filter"], "enhanced-pt")
         self.assertEqual(contract["filter_radius_m"], runtime.FFS_SURFACE_FILTER_RADIUS_M)
