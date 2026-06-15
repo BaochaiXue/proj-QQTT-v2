@@ -11,7 +11,7 @@ from scripts.harness.benchmark_sam31_still_object_views import (
     _limited_frame_source,
     build_average_summary,
 )
-from scripts.harness.sam31_mask_helper import ColorSource
+from scripts.harness.support.sam31_mask_helper import ColorSource
 
 
 ROOT = Path(__file__).resolve().parents[1]

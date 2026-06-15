@@ -129,7 +129,7 @@ class MaskedPointcloudCompareSmokeTest(unittest.TestCase):
                     target.write_bytes(path.read_bytes())
                 return {"output_dir": str(output_dir)}
 
-            with mock.patch("scripts.harness.sam31_mask_helper.run_case_segmentation", side_effect=_fake_run_case_segmentation):
+            with mock.patch("scripts.harness.support.sam31_mask_helper.run_case_segmentation", side_effect=_fake_run_case_segmentation):
                 result = resolve_mask_roots_for_compare(
                     aligned_root=aligned_root,
                     case_name=None,

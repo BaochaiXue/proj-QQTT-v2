@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.harness.object_case_registry import (
+from scripts.harness.support.object_case_registry import (
     OBJECT_RAW_CASES,
     STATIC_OBJECT_RAW_CASES,
     STILL_OBJECT_RAW_CASES,

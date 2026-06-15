@@ -20,7 +20,14 @@ import cv2
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[2]
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "qqtt").is_dir() and (candidate / "scripts").is_dir():
+            return candidate
+    raise RuntimeError(f"failed to locate repo root from {start}")
+
+
+ROOT = _find_repo_root(Path(__file__).resolve())
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -387,7 +394,7 @@ def ensure_mask_cache(
     if mask_cache_has_frame(mask_root=mask_root, bundle=bundle, frame_idx=frame_idx, text_prompt=text_prompt):
         return mask_root
 
-    from scripts.harness.sam31_mask_helper import run_case_segmentation
+    from scripts.harness.support.sam31_mask_helper import run_case_segmentation
 
     overwrite = mask_root.exists()
     try:

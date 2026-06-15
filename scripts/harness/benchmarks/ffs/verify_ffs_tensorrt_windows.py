@@ -14,7 +14,14 @@ import imageio
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[2]
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "qqtt").is_dir() and (candidate / "scripts").is_dir():
+            return candidate
+    raise RuntimeError(f"failed to locate repo root from {start}")
+
+
+ROOT = _find_repo_root(Path(__file__).resolve())
 DEFAULT_FFS_REPO = Path(r"C:\Users\zhang\external\Fast-FoundationStereo")
 DEFAULT_MODEL_PATH = DEFAULT_FFS_REPO / "weights" / "23-36-37" / "model_best_bp2_serialize.pth"
 DEFAULT_TRT_ROOT = Path(r"C:\Users\zhang\external\TensorRT-10.16.1.11")

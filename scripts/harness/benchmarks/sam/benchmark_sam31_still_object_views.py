@@ -13,12 +13,19 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-ROOT = Path(__file__).resolve().parents[2]
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "qqtt").is_dir() and (candidate / "scripts").is_dir():
+            return candidate
+    raise RuntimeError(f"failed to locate repo root from {start}")
+
+
+ROOT = _find_repo_root(Path(__file__).resolve())
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.harness.object_case_registry import get_raw_object_capture_spec
-from scripts.harness.sam31_mask_helper import (
+from scripts.harness.support.object_case_registry import get_raw_object_capture_spec
+from scripts.harness.support.sam31_mask_helper import (
     ColorSource,
     _collect_frame_segments,
     _load_runtime_deps,

@@ -7,7 +7,7 @@ import unittest
 
 from unittest import mock
 
-from scripts.harness.cleanup_different_types_cases import cleanup_cases
+from scripts.harness.support.cleanup_different_types_cases import cleanup_cases
 
 
 def _write_case(root: Path, case_name: str, *, include_mp4: bool = True) -> Path:
@@ -117,9 +117,9 @@ class CleanupDifferentTypesCasesSmokeTest(unittest.TestCase):
                 return generated
 
             with (
-                mock.patch("scripts.harness.cleanup_different_types_cases._find_ffmpeg", return_value="fake_ffmpeg"),
+                mock.patch("scripts.harness.support.cleanup_different_types_cases._find_ffmpeg", return_value="fake_ffmpeg"),
                 mock.patch(
-                    "scripts.harness.cleanup_different_types_cases._generate_missing_color_mp4s",
+                    "scripts.harness.support.cleanup_different_types_cases._generate_missing_color_mp4s",
                     side_effect=fake_generate_missing_color_mp4s,
                 ),
             ):

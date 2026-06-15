@@ -6,7 +6,14 @@ import sys
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parents[2]
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "qqtt").is_dir() and (candidate / "scripts").is_dir():
+            return candidate
+    raise RuntimeError(f"failed to locate repo root from {start}")
+
+
+ROOT = _find_repo_root(Path(__file__).resolve())
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -85,7 +92,7 @@ def _resolve_or_generate_mask_root(
         return existing_root.resolve(), "reused_existing"
 
     generated_root = output_dir / "_generated_masks" / role_name / "sam31_masks"
-    from scripts.harness.sam31_mask_helper import run_case_segmentation
+    from scripts.harness.support.sam31_mask_helper import run_case_segmentation
 
     result = run_case_segmentation(
         case_root=case_dir,

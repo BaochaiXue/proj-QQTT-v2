@@ -12,7 +12,7 @@ import unittest
 import cv2
 import numpy as np
 
-from scripts.harness.sam31_mask_helper import (
+from scripts.harness.support.sam31_mask_helper import (
     _build_sam31_builder_kwargs,
     _call_download_ckpt_from_hf,
     _call_sam31_builder_quietly,

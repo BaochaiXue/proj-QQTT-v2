@@ -504,7 +504,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         )
 
         with mock.patch(
-            "scripts.harness.sam31_mask_helper.run_image_segmentation",
+            "scripts.harness.support.sam31_mask_helper.run_image_segmentation",
             side_effect=_fake_run_image_segmentation,
         ) as run_image, mock.patch.object(masked_demo, "release_sam31_runtime_resources") as release:
             controller_mask, object_mask = masked_demo.resolve_initial_masks(frame, args)
@@ -554,7 +554,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         )
 
         with mock.patch(
-            "scripts.harness.sam31_mask_helper.run_image_segmentation",
+            "scripts.harness.support.sam31_mask_helper.run_image_segmentation",
             side_effect=_fake_cached_run_image_segmentation,
         ) as run_image, mock.patch.object(masked_demo, "release_sam31_runtime_resources") as release:
             controller_mask, object_mask = masked_demo.resolve_initial_masks(frame, args)
@@ -985,17 +985,17 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         helper = types.SimpleNamespace(_CUDA_AUTOCAST_CONTEXT=autocast)
         cuda = FakeCuda()
         fake_torch = types.SimpleNamespace(cuda=cuda)
-        original_helper = sys.modules.get("scripts.harness.sam31_mask_helper")
+        original_helper = sys.modules.get("scripts.harness.support.sam31_mask_helper")
         original_torch = sys.modules.get("torch")
-        sys.modules["scripts.harness.sam31_mask_helper"] = helper
+        sys.modules["scripts.harness.support.sam31_mask_helper"] = helper
         sys.modules["torch"] = fake_torch
         try:
             masked_demo.release_sam31_runtime_resources("cuda")
         finally:
             if original_helper is None:
-                sys.modules.pop("scripts.harness.sam31_mask_helper", None)
+                sys.modules.pop("scripts.harness.support.sam31_mask_helper", None)
             else:
-                sys.modules["scripts.harness.sam31_mask_helper"] = original_helper
+                sys.modules["scripts.harness.support.sam31_mask_helper"] = original_helper
             if original_torch is None:
                 sys.modules.pop("torch", None)
             else:

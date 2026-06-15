@@ -8,7 +8,14 @@ from argparse import Namespace
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[3]
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "qqtt").is_dir() and (candidate / "scripts").is_dir():
+            return candidate
+    raise RuntimeError(f"failed to locate repo root from {start}")
+
+
+ROOT = _find_repo_root(Path(__file__).resolve())
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -192,7 +199,7 @@ def _resolve_or_generate_masks(args: argparse.Namespace, *, case_dir: Path, outp
     if args.mask_source_mode == "require_existing":
         raise FileNotFoundError(f"Missing required masks for cameras {missing_camera_ids}: {mask_root}")
 
-    from scripts.harness.sam31_mask_helper import run_case_segmentation
+    from scripts.harness.support.sam31_mask_helper import run_case_segmentation
 
     target_camera_ids = camera_ids if args.mask_source_mode == "generate" else missing_camera_ids
     result = run_case_segmentation(

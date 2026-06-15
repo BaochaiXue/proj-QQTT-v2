@@ -10,7 +10,14 @@ import cv2
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[3]
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "qqtt").is_dir() and (candidate / "scripts").is_dir():
+            return candidate
+    raise RuntimeError(f"failed to locate repo root from {start}")
+
+
+ROOT = _find_repo_root(Path(__file__).resolve())
 MEAN_RGB = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD_RGB = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
