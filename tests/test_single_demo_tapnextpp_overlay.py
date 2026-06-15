@@ -112,6 +112,24 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             depth_u16=depth,
         )
 
+    def _pcd_packet(self) -> demo.MaskedPcdPacket:
+        empty_points = np.empty((0, 3), dtype=np.float32)
+        empty_colors = np.empty((0, 3), dtype=np.uint8)
+        now = time.perf_counter()
+        return demo.MaskedPcdPacket(
+            seq=0,
+            controller_xyz_m=empty_points,
+            controller_colors_rgb_u8=empty_colors,
+            object_xyz_m=empty_points,
+            object_colors_rgb_u8=empty_colors,
+            intrinsics=CameraIntrinsics(fx=100.0, fy=100.0, cx=0.0, cy=0.0),
+            receive_perf_s=now,
+            process_done_perf_s=now,
+            dropped_capture_frames=0,
+            dropped_seg_frames=0,
+            timing=demo.PipelineTiming(),
+        )
+
     def _ffs_mask_packet(self, seq: int) -> demo.MaskPacket:
         controller = np.zeros((4, 4), dtype=bool)
         obj = np.zeros((4, 4), dtype=bool)
@@ -255,6 +273,35 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertIsNotNone(eroded)
         np.testing.assert_array_equal(eroded, expected_eroded)
 
+    def test_tracker_hud_shows_consistent_visible_count(self) -> None:
+        args = self._tracker_args()
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        now = time.perf_counter()
+        tracker_packet = demo.TrackerMarkerPacket(
+            seq=0,
+            marker_xyz_m=np.zeros((2, 3), dtype=np.float32),
+            marker_colors_rgb_u8=np.zeros((2, 3), dtype=np.uint8),
+            query_points_yx=np.zeros((4, 2), dtype=np.float32),
+            tracks_yx=np.zeros((2, 2), dtype=np.float32),
+            visibility=np.ones((2,), dtype=np.float32),
+            query_is_object=np.array([True, False], dtype=bool),
+            query_is_controller=np.array([False, True], dtype=bool),
+            receive_perf_s=now,
+            process_done_perf_s=now,
+            query_count=4,
+            consistent_visible_count=3,
+            backend="tapnextpp",
+            display_scope="union",
+        )
+
+        text = runtime._format_hud(
+            packet=self._pcd_packet(),
+            timing=demo.PipelineTiming(),
+            tracker_packet=tracker_packet,
+        )
+
+        self.assertIn("consistent=3/4", text)
+
     def test_tracker_worker_publishes_lifted_marker_packet_with_fake_adapter(self) -> None:
         args = self._tracker_args()
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
@@ -278,6 +325,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(packet.backend, "tapnextpp")
         self.assertEqual(packet.query_count, 4)
         self.assertEqual(packet.display_scope, "union")
+        self.assertEqual(packet.consistent_visible_count, 4)
         self.assertGreater(packet.marker_count, 0)
         self.assertLessEqual(packet.marker_count, 4)
         self.assertEqual(packet.marker_colors_rgb_u8.shape, (packet.marker_count, 3))

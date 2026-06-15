@@ -631,6 +631,7 @@ class TrackerMarkerPacket:
     receive_perf_s: float
     process_done_perf_s: float
     query_count: int
+    consistent_visible_count: int = 0
     model_ms: float = 0.0
     lift_ms: float = 0.0
     e2e_ms: float = 0.0
@@ -1929,6 +1930,50 @@ def _tracker_display_visibility(
     return np.where(labels, vis, 0.0).astype(np.float32)
 
 
+def _tracker_lift_valid_mask(
+    *,
+    tracks_yx: np.ndarray,
+    visibility: np.ndarray,
+    depth: np.ndarray,
+    depth_scale_m_per_unit: float,
+    mask: np.ndarray | None,
+    depth_min_m: float,
+    depth_max_m: float,
+) -> np.ndarray:
+    tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+    vis = np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0
+    if vis.shape[0] != tracks.shape[0]:
+        raise ValueError("visibility length must match tracks_yx")
+
+    depth_arr = np.asarray(depth)
+    if np.issubdtype(depth_arr.dtype, np.floating):
+        depth_m = depth_arr.astype(np.float32, copy=False)
+    else:
+        depth_m = depth_arr.astype(np.float32) * np.float32(depth_scale_m_per_unit)
+    height, width = depth_m.shape[:2]
+    mask_bool = np.ones((height, width), dtype=bool) if mask is None else np.asarray(mask, dtype=bool)
+    if mask_bool.shape[:2] != (height, width):
+        raise ValueError("tracker lift mask shape must match depth shape")
+
+    yy = np.rint(tracks[:, 0]).astype(np.int64)
+    xx = np.rint(tracks[:, 1]).astype(np.int64)
+    finite_tracks = np.isfinite(tracks).all(axis=1)
+    in_bounds = (yy >= 0) & (yy < height) & (xx >= 0) & (xx < width)
+    valid = vis & finite_tracks & in_bounds
+    if not np.any(valid):
+        return np.zeros((tracks.shape[0],), dtype=bool)
+
+    valid_indices = np.flatnonzero(valid)
+    sampled_depth = depth_m[yy[valid_indices], xx[valid_indices]]
+    depth_valid = np.isfinite(sampled_depth) & (sampled_depth > 0.0) & (sampled_depth >= np.float32(depth_min_m))
+    if np.isfinite(float(depth_max_m)):
+        depth_valid &= sampled_depth <= np.float32(depth_max_m)
+    inside_mask = mask_bool[yy[valid_indices], xx[valid_indices]]
+    valid_out = np.zeros((tracks.shape[0],), dtype=bool)
+    valid_out[valid_indices] = depth_valid & inside_mask
+    return valid_out
+
+
 def _select_visible_spread_indices(tracks_yx: np.ndarray, visibility: np.ndarray, *, max_points: int) -> np.ndarray:
     tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
     visible = np.flatnonzero(np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0)
@@ -2118,6 +2163,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self._tracker_query_points_yx: np.ndarray | None = None
         self._tracker_query_is_object: np.ndarray | None = None
         self._tracker_query_is_controller: np.ndarray | None = None
+        self._tracker_consistent_visible: np.ndarray | None = None
         self._warned_remote_engine_contract = False
         self._fatal_error_lock = threading.Lock()
         self._fatal_error: FatalWorkerError | None = None
@@ -2680,6 +2726,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self._tracker_query_points_yx = np.ascontiguousarray(query_points, dtype=np.float32)
         self._tracker_query_is_object = np.ascontiguousarray(query_is_object, dtype=bool)
         self._tracker_query_is_controller = np.ascontiguousarray(query_is_controller, dtype=bool)
+        self._tracker_consistent_visible = np.ones((len(query_points),), dtype=bool)
         print(
             "[tapnextpp-tracker] "
             f"initialized query_count={len(query_points)} requested={requested or 'phystwin_dense'} "
@@ -2775,6 +2822,23 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 lift_start_s = time.perf_counter()
                 depth_for_lift, depth_scale = self._tracker_depth_for_lift(mask_packet)
                 depth_max_m = float("inf") if float(self.args.depth_max_m) <= 0.0 else float(self.args.depth_max_m)
+                lift_mask = self._tracker_lift_mask(mask_packet)
+                current_lift_valid = _tracker_lift_valid_mask(
+                    tracks_yx=tracks_latest,
+                    visibility=display_visibility,
+                    depth=depth_for_lift,
+                    depth_scale_m_per_unit=float(depth_scale),
+                    mask=lift_mask,
+                    depth_min_m=float(self.args.depth_min_m),
+                    depth_max_m=depth_max_m,
+                )
+                if self._tracker_consistent_visible is None or len(self._tracker_consistent_visible) != len(query_points):
+                    self._tracker_consistent_visible = np.ones((len(query_points),), dtype=bool)
+                current_lift_valid_full = np.zeros_like(self._tracker_consistent_visible, dtype=bool)
+                fitted_count = min(len(current_lift_valid), len(current_lift_valid_full))
+                current_lift_valid_full[:fitted_count] = current_lift_valid[:fitted_count]
+                self._tracker_consistent_visible &= current_lift_valid_full
+                consistent_visible_count = int(np.count_nonzero(self._tracker_consistent_visible))
                 lifted = lift_tracks_yx_to_world(
                     tracks_yx=selected_tracks,
                     visibility=selected_visibility,
@@ -2782,7 +2846,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     intrinsics=mask_packet.intrinsics,
                     c2w=np.eye(4, dtype=np.float32),
                     depth_scale_m_per_unit=float(depth_scale),
-                    mask=self._tracker_lift_mask(mask_packet),
+                    mask=lift_mask,
                     depth_min_m=float(self.args.depth_min_m),
                     depth_max_m=depth_max_m,
                 )
@@ -2808,6 +2872,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     receive_perf_s=mask_packet.receive_perf_s,
                     process_done_perf_s=done_s,
                     query_count=int(len(query_points)),
+                    consistent_visible_count=consistent_visible_count,
                     model_ms=float(stats.get("model_run_ms", stats.get("cuda_event_ms", 0.0)) or 0.0),
                     lift_ms=float(lift_ms),
                     e2e_ms=_elapsed_ms(started_s, done_s),
@@ -2820,6 +2885,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     print(
                         "[tapnextpp-tracker] "
                         f"seq={packet.seq} markers={packet.marker_count}/{len(selected_tracks)} "
+                        f"consistent={packet.consistent_visible_count}/{packet.query_count} "
                         f"queries={packet.query_count} model_ms={packet.model_ms:.1f} "
                         f"lift_ms={packet.lift_ms:.1f} e2e_ms={packet.e2e_ms:.1f} "
                         f"fps={self.tracker_stats.fps:.1f}",
@@ -4283,6 +4349,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 tracker_line = (
                     f"tracker: {tracker_packet.backend}  fps={self.tracker_stats.fps:.1f}  "
                     f"markers={tracker_packet.marker_count}/{tracker_packet.query_count}  "
+                    f"consistent={tracker_packet.consistent_visible_count}/{tracker_packet.query_count}  "
                     f"scope={tracker_packet.display_scope}  age={marker_age_ms:.0f} ms  "
                     f"model={tracker_packet.model_ms:.0f} ms  lift={tracker_packet.lift_ms:.1f} ms  "
                     f"e2e={tracker_packet.e2e_ms:.0f} ms"
