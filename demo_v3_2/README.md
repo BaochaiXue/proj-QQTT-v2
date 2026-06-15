@@ -32,8 +32,10 @@ conda run -n demo_2_max --no-capture-output \
   --replay-fps 30
 ```
 
-For PCD-only inspection, keep EdgeTAM masks and enhanced-pt filtered RGB PCD but
-disable TAPNext++ query markers:
+For PCD-only inspection, keep the full FFS + EdgeTAM + enhanced-pt PCD +
+TAPNext++ tracking pipeline running, but hide the query markers in the render.
+This makes the displayed FPS reflect the same full pipeline cost as tracking
+mode:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \

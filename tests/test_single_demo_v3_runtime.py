@@ -319,7 +319,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--tracker-overlay-max-points"), "0")
         self.assertIn("--enable-pcd-filter", delegate)
 
-    def test_demo32_pcd_visual_mode_keeps_filtered_pcd_and_disables_tracker(self) -> None:
+    def test_demo32_pcd_visual_mode_keeps_full_pipeline_and_hides_tracker_render_only(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_2,
             [
@@ -337,15 +337,19 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["track_mode"], "controller-object")
         self.assertEqual(contract["controller_instance_mode"], "two-hands")
         self.assertEqual(contract["edgetam_tracking_identities"], ["hand_a", "object", "hand_b"])
-        self.assertEqual(contract["tracker_backend"], "none")
-        self.assertEqual(contract["tracker_visualization_mode"], "none")
-        self.assertEqual(contract["tracker_sync_policy"], "none")
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
+        self.assertEqual(contract["tracker_overlay_max_points"], 0)
+        self.assertEqual(contract["tracker_visualization_mode"], "phystwin_rainbow_identity_3d_lift")
+        self.assertEqual(contract["tracker_sync_policy"], "strict_same_seq_latest_wins")
+        self.assertEqual(contract["query_display_policy"], "visible_3d_lifted_all")
+        self.assertEqual(contract["query_color_mode"], "phystwin_rainbow_identity")
         self.assertTrue(contract["pcd_filter_enabled"])
         self.assertEqual(contract["pcd_filter_mode"], "sync")
         self.assertEqual(contract["object_filter"], "enhanced-pt")
         self.assertEqual(contract["controller_filter"], "enhanced-pt")
         self.assertEqual(_option_value(delegate, "--demo-visual-mode"), "pcd")
-        self.assertEqual(_option_value(delegate, "--tracker-backend"), "none")
+        self.assertEqual(_option_value(delegate, "--tracker-backend"), "tapnextpp")
+        self.assertEqual(_option_value(delegate, "--tracker-overlay-max-points"), "0")
         self.assertIn("--enable-pcd-filter", delegate)
 
     def test_demo32_visual_modes_reject_conflicting_tracker_options(self) -> None:
@@ -357,10 +361,10 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 "--demo-visual-mode",
                 "pcd",
                 "--tracker-backend",
-                "tapnextpp",
+                "none",
             ],
         )
-        with self.assertRaisesRegex(ValueError, "pcd requires --tracker-backend none"):
+        with self.assertRaisesRegex(ValueError, "requires --tracker-backend tapnextpp"):
             runtime.validate_args(pcd_args)
 
         tracking_args = self._parse(
@@ -374,7 +378,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 "512",
             ],
         )
-        with self.assertRaisesRegex(ValueError, "tracking requires --tracker-overlay-max-points 0"):
+        with self.assertRaisesRegex(ValueError, "requires --tracker-overlay-max-points 0"):
             runtime.validate_args(tracking_args)
 
     def test_fake_live_forces_demo_mode_even_with_stale_exp_mode(self) -> None:

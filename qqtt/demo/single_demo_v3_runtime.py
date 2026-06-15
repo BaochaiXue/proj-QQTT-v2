@@ -431,12 +431,9 @@ def apply_preset_defaults(
     if headless_capture:
         if "--track-mode" not in explicit:
             args.track_mode = TRACK_MODE_CONTROLLER_OBJECT
-        if str(args.demo_visual_mode) == DEMO_VISUAL_MODE_PCD:
-            if "--tracker-backend" not in explicit:
-                args.tracker_backend = masked_pcd.TRACKER_BACKEND_NONE
-        elif "--tracker-backend" not in explicit:
+        if "--tracker-backend" not in explicit:
             args.tracker_backend = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
-        if str(args.demo_visual_mode) == DEMO_VISUAL_MODE_TRACKING and "--tracker-overlay-max-points" not in explicit:
+        if "--tracker-overlay-max-points" not in explicit:
             args.tracker_overlay_max_points = 0
         if "--enable-pcd-filter" not in explicit:
             args.enable_pcd_filter = True
@@ -461,14 +458,10 @@ def apply_preset_defaults(
             args.controller_filter = masked_pcd.PCD_FILTER_ENHANCED_PT
         if "--pcd-color-mode" not in explicit:
             args.pcd_color_mode = "rgb"
-        if str(args.demo_visual_mode) == DEMO_VISUAL_MODE_PCD:
-            if "--tracker-backend" not in explicit:
-                args.tracker_backend = masked_pcd.TRACKER_BACKEND_NONE
-        else:
-            if "--tracker-backend" not in explicit:
-                args.tracker_backend = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
-            if "--tracker-overlay-max-points" not in explicit:
-                args.tracker_overlay_max_points = 0
+        if "--tracker-backend" not in explicit:
+            args.tracker_backend = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
+        if "--tracker-overlay-max-points" not in explicit:
+            args.tracker_overlay_max_points = 0
     if "--track-mode" not in explicit and str(args.render_mode) == "none" and not headless_capture:
         args.track_mode = TRACK_MODE_NONE
         if "--controller-instance-mode" not in explicit:
@@ -521,10 +514,7 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--input-source {args.input_source} requires --render-mode pointcloud")
         if str(args.track_mode) == TRACK_MODE_NONE:
             raise ValueError(f"--input-source {args.input_source} requires --track-mode controller-object")
-        if (
-            str(args.demo_visual_mode) != DEMO_VISUAL_MODE_PCD
-            and str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP
-        ):
+        if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
             raise ValueError(f"--input-source {args.input_source} requires --tracker-backend tapnextpp")
     elif args.recording_case is not None:
         raise ValueError("--recording-case/--fake-live-case requires --input-source recording or fake-live")
@@ -632,14 +622,10 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--demo-visual-mode requires --pcd-color-mode rgb for Demo 3.2/3.3")
         if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
             raise ValueError("--demo-visual-mode requires --track-mode controller-object for Demo 3.2/3.3")
-        if str(args.demo_visual_mode) == DEMO_VISUAL_MODE_PCD:
-            if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE:
-                raise ValueError("--demo-visual-mode pcd requires --tracker-backend none")
-        else:
-            if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
-                raise ValueError("--demo-visual-mode tracking requires --tracker-backend tapnextpp")
-            if int(args.tracker_overlay_max_points) != 0:
-                raise ValueError("--demo-visual-mode tracking requires --tracker-overlay-max-points 0")
+        if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
+            raise ValueError("--demo-visual-mode requires --tracker-backend tapnextpp for full-pipeline FPS")
+        if int(args.tracker_overlay_max_points) != 0:
+            raise ValueError("--demo-visual-mode requires --tracker-overlay-max-points 0")
     if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE:
         if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
             raise ValueError("single demo tracker backend currently supports only tapnextpp")

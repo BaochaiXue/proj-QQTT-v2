@@ -4967,6 +4967,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if int(value) > 0
         ]
         strict_sync_enabled = tracker_enabled(self.args) and self.args.pcd_mode == "masked"
+        render_tracker_markers = str(self.args.demo_visual_mode) == DEMO_VISUAL_MODE_TRACKING
         pcd_layer_capacity = min(pcd_caps) if pcd_caps else 0
         tracker_layer_capacity = int(self.args.tracker_overlay_max_points)
         if tracker_layer_capacity <= 0:
@@ -4991,6 +4992,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         latest_render_packet: dict[str, MaskedPcdPacket | None] = {"value": None}
         latest_marker_packet: dict[str, TrackerMarkerPacket | None] = {"value": None}
         latest_pair_packet: dict[str, PairedRenderPacket | None] = {"value": None}
+        tracker_layers_hidden = {"value": False}
         fatal_exit_posted = {"value": False}
         if strict_sync_enabled:
             hud_label.text = self._format_strict_sync_waiting_hud()
@@ -5015,7 +5017,24 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 bounds = o3d.geometry.AxisAlignedBoundingBox([-0.5, -0.35, 0.1], [0.5, 0.35, 1.5])
                 scene_widget.setup_camera(60.0, bounds, [0.0, 0.0, 0.8])
 
+        def hide_tracker_layers_once() -> tuple[float, float]:
+            if tracker_layers_hidden["value"]:
+                return 0.0, 0.0
+            tracker_layers_hidden["value"] = True
+            object_convert_ms, object_update_ms = update_layer(
+                tracker_object_state,
+                np.empty((0, 3), dtype=np.float32),
+                np.empty((0, 3), dtype=np.uint8),
+            )
+            controller_convert_ms, controller_update_ms = update_layer(
+                tracker_controller_state,
+                np.empty((0, 3), dtype=np.float32),
+                np.empty((0, 3), dtype=np.uint8),
+            )
+            return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
+
         def update_tracker_layers(marker_packet: TrackerMarkerPacket) -> tuple[float, float]:
+            tracker_layers_hidden["value"] = False
             point_count = int(marker_packet.marker_xyz_m.shape[0])
             label_count = min(
                 point_count,
@@ -5078,7 +5097,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     packet.object_colors_rgb_u8,
                     max_points=int(self.args.render_max_points_per_layer),
                 )
-                tracker_convert_ms, tracker_update_ms = update_tracker_layers(marker_packet)
+                if render_tracker_markers:
+                    tracker_convert_ms, tracker_update_ms = update_tracker_layers(marker_packet)
+                else:
+                    tracker_convert_ms, tracker_update_ms = hide_tracker_layers_once()
                 if not camera_initialized["value"] and packet.point_count > 0:
                     reset_camera()
                     camera_initialized["value"] = True

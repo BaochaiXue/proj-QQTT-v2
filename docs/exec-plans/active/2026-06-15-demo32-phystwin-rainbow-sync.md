@@ -10,8 +10,9 @@ identity colors and must not combine PCD and tracker packets from different seqs
 
 - Add `--demo-visual-mode {pcd,tracking}` to the single Demo 3.x runtime.
 - For Demo 3.2/3.3 fake-live visual modes, force sync enhanced-pt filtered RGB
-  PCD. In tracking mode, keep TAPNext++ enabled and display all visible lifted
-  query points; in pcd mode, disable tracker overlay while keeping masks/PCD.
+  PCD and keep TAPNext++ enabled so FPS reflects the full pipeline. In tracking
+  mode, display all visible lifted query points; in pcd mode, hide tracker
+  markers in the render while keeping tracker telemetry.
 - Generate deterministic rainbow colors from query ids, store them on tracker
   packets, and use them in live and headless/offline render.
 - Keep live tracking render on strict `PairedRenderPacket` same-seq updates.

@@ -587,8 +587,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(runtime.render_slot.latest_seq(), -1)
         self.assertEqual(runtime.tracker_marker_slot.latest_seq(), -1)
 
-    def test_tracker_enabled_start_threads_uses_strict_pair_worker(self) -> None:
+    def test_pcd_visual_mode_with_tracker_start_threads_uses_strict_pair_worker(self) -> None:
         args = self._tracker_args()
+        args.demo_visual_mode = demo.DEMO_VISUAL_MODE_PCD
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
         started: list[str] = []
 
