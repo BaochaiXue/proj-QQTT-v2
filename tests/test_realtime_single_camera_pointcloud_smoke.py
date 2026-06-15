@@ -1148,7 +1148,7 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         for script_path in (
             "demo_v1/realtime_single_camera_pointcloud.py",
             "demo_v2/realtime_single_camera_pointcloud.py",
-            "scripts/harness/realtime_single_camera_pointcloud.py",
+            "scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py",
         ):
             with self.subTest(script_path=script_path):
                 result = subprocess.run(

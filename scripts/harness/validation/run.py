@@ -202,10 +202,10 @@ PYTEST_BATCHES: tuple[tuple[str, ...], ...] = (
 )
 
 CHECK_COMMANDS: tuple[tuple[str, ...], ...] = (
-    ("scripts/harness/check_harness_catalog.py",),
-    ("scripts/harness/check_experiment_boundaries.py",),
-    ("scripts/harness/check_visual_architecture.py",),
-    ("-m", "scripts.harness.check_scope"),
+    ("scripts/harness/guards/check_harness_catalog.py",),
+    ("scripts/harness/guards/check_experiment_boundaries.py",),
+    ("scripts/harness/guards/check_visual_architecture.py",),
+    ("-m", "scripts.harness.guards.check_scope"),
 )
 
 

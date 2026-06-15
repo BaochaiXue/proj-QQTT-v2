@@ -30,13 +30,14 @@ class ValidationRunnerSmokeTest(unittest.TestCase):
         self.assertIn(["python", "cameras_viewer.py", "--help"], commands)
         self.assertIn(["python", "record_data_realtime_align.py", "--help"], commands)
         self.assertIn(["python", "data_process/record_data_align.py", "--help"], commands)
-        self.assertIn(["python", "scripts/harness/render_demo32_headless_capture.py", "--help"], commands)
-        self.assertIn(["python", "scripts/harness/visual_compare_depth_panels.py", "--help"], commands)
-        self.assertIn(["python", "scripts/harness/visual_compare_reprojection.py", "--help"], commands)
-        self.assertIn(["python", "scripts/harness/visual_compare_turntable.py", "--help"], commands)
-        self.assertIn(["python", "scripts/harness/check_harness_catalog.py"], commands)
-        self.assertIn(["python", "scripts/harness/check_experiment_boundaries.py"], commands)
-        self.assertIn(["python", "scripts/harness/check_visual_architecture.py"], commands)
+        self.assertIn(["python", "scripts/harness/diagnostics/demo/render_demo32_headless_capture.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/diagnostics/depth/visual_compare_depth_panels.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/diagnostics/depth/visual_compare_reprojection.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/diagnostics/visualization/visual_compare_turntable.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/guards/check_harness_catalog.py"], commands)
+        self.assertIn(["python", "scripts/harness/guards/check_experiment_boundaries.py"], commands)
+        self.assertIn(["python", "scripts/harness/guards/check_visual_architecture.py"], commands)
+        self.assertIn(["python", "-m", "scripts.harness.guards.check_scope"], commands)
         unittest_commands = [cmd for cmd in commands if cmd[1:4] == ["-m", "unittest", "-v"]]
         self.assertEqual(
             unittest_commands,
@@ -78,7 +79,7 @@ class ValidationRunnerSmokeTest(unittest.TestCase):
         commands = validation_run.build_commands(python="python", profile="exhaustive")
         deterministic_commands = validation_run.build_commands(python="python", profile="deterministic")
         self.assertGreater(len(commands), len(deterministic_commands))
-        self.assertIn(["python", "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/experiments/ffs/run_ffs_confidence_filter_sweep.py", "--help"], commands)
         self.assertIn(
             ["python", "-m", "pytest", "tests/test_d455_probe_matrix_builder.py", "tests/test_d455_probe_result_schema.py"],
             commands,
@@ -87,8 +88,8 @@ class ValidationRunnerSmokeTest(unittest.TestCase):
     def test_hardware_profile_lists_manual_commands_only_when_requested(self) -> None:
         self.assertEqual(validation_run.build_commands(python="python", profile="hardware"), [])
         commands = validation_run.build_commands(python="python", profile="hardware", run_hardware=True)
-        self.assertIn(["python", "scripts/harness/realtime_single_camera_pointcloud.py", "--help"], commands)
-        self.assertIn(["python", "scripts/harness/verify_ffs_demo.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/benchmarks/ffs/verify_ffs_demo.py", "--help"], commands)
         self.assertFalse(any(cmd[1:4] == ["-m", "unittest", "-v"] for cmd in commands))
 
     def test_generated_script_paths_exist(self) -> None:

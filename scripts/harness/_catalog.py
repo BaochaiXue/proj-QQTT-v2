@@ -68,35 +68,35 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "smoke",
     ),
     HarnessEntry(
-        "scripts/harness/check_experiment_boundaries.py",
+        "scripts/harness/guards/check_experiment_boundaries.py",
         "guards",
         "repo",
         "Guard formal runtime code from experiment-only imports.",
         "smoke",
     ),
     HarnessEntry(
-        "scripts/harness/check_harness_catalog.py",
+        "scripts/harness/guards/check_harness_catalog.py",
         "guards",
         "repo",
         "Guard that every harness Python file is categorized here.",
         "smoke",
     ),
     HarnessEntry(
-        "scripts/harness/check_scope.py",
+        "scripts/harness/guards/check_scope.py",
         "guards",
         "repo",
         "Repo scope guard for removed or forbidden legacy surfaces.",
         "smoke",
     ),
     HarnessEntry(
-        "scripts/harness/check_visual_architecture.py",
+        "scripts/harness/guards/check_visual_architecture.py",
         "guards",
         "repo",
         "Visualization layering and file-size guard.",
         "smoke",
     ),
     HarnessEntry(
-        "scripts/harness/benchmark_ffs_configs.py",
+        "scripts/harness/benchmarks/ffs/benchmark_ffs_configs.py",
         "benchmarks",
         "ffs",
         "Saved-pair PyTorch FFS config screening for single-camera FFS depth work.",
@@ -106,7 +106,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
-        "scripts/harness/benchmark_sam31_still_object_views.py",
+        "scripts/harness/benchmarks/sam/benchmark_sam31_still_object_views.py",
         "benchmarks",
         "sam",
         "SAM 3.1 30-frame still-object per-camera segmentation benchmark.",
@@ -115,7 +115,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("gpu", "external_repo"),
     ),
     HarnessEntry(
-        "scripts/harness/probe_d455_ir_pair.py",
+        "scripts/harness/diagnostics/hardware/probe_d455_ir_pair.py",
         "diagnostics",
         "hardware",
         "Manual D455 IR-pair probe.",
@@ -125,7 +125,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("camera",),
     ),
     HarnessEntry(
-        "scripts/harness/probe_d455_stream_capability.py",
+        "scripts/harness/diagnostics/hardware/probe_d455_stream_capability.py",
         "diagnostics",
         "hardware",
         "Manual D455 stream/profile capability probe.",
@@ -135,7 +135,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("camera",),
     ),
     HarnessEntry(
-        "scripts/harness/realtime_single_camera_pointcloud.py",
+        "scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py",
         "diagnostics",
         "demo",
         "Compatibility path for the active demo_v2 single-D455 realtime point-cloud demo.",
@@ -145,7 +145,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("camera", "gpu", "gui"),
     ),
     HarnessEntry(
-        "scripts/harness/render_d455_stream_probe_report.py",
+        "scripts/harness/diagnostics/hardware/render_d455_stream_probe_report.py",
         "diagnostics",
         "hardware",
         "Render D455 probe JSON as a readable report.",
@@ -155,7 +155,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("camera",),
     ),
     HarnessEntry(
-        "scripts/harness/run_ffs_on_saved_pair.py",
+        "scripts/harness/benchmarks/ffs/run_ffs_on_saved_pair.py",
         "benchmarks",
         "ffs",
         "Run FFS on one saved stereo pair.",
@@ -165,7 +165,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
-        "scripts/harness/run_ffs_static_replay_matrix.py",
+        "scripts/harness/benchmarks/ffs/run_ffs_static_replay_matrix.py",
         "benchmarks",
         "ffs",
         "Offline static replay / TensorRT proxy matrix; not live PyTorch realtime.",
@@ -175,7 +175,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
-        "scripts/harness/run_wslg_open3d.sh",
+        "scripts/harness/diagnostics/hardware/run_wslg_open3d.sh",
         "diagnostics",
         "hardware",
         "WSLg Open3D GUI wrapper.",
@@ -184,7 +184,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("camera", "gpu", "gui"),
     ),
     HarnessEntry(
-        "scripts/harness/verify_ffs_demo.py",
+        "scripts/harness/benchmarks/ffs/verify_ffs_demo.py",
         "benchmarks",
         "ffs",
         "External FFS demo proof-of-life utility.",
@@ -194,7 +194,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
-        "scripts/harness/verify_ffs_single_engine_tensorrt_wsl.py",
+        "scripts/harness/benchmarks/ffs/verify_ffs_single_engine_tensorrt_wsl.py",
         "benchmarks",
         "ffs",
         "WSL single-engine TensorRT proof-of-life utility.",
@@ -204,7 +204,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
-        "scripts/harness/verify_ffs_tensorrt_windows.py",
+        "scripts/harness/benchmarks/ffs/verify_ffs_tensorrt_windows.py",
         "benchmarks",
         "ffs",
         "Windows TensorRT proof-of-life utility.",
@@ -213,7 +213,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
-        "scripts/harness/verify_ffs_tensorrt_wsl.py",
+        "scripts/harness/benchmarks/ffs/verify_ffs_tensorrt_wsl.py",
         "benchmarks",
         "ffs",
         "WSL TensorRT proof-of-life utility.",
@@ -223,7 +223,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
-        "scripts/harness/generate_sam31_masks.py",
+        "scripts/harness/diagnostics/visualization/generate_sam31_masks.py",
         "diagnostics",
         "mask",
         "Operator-side SAM 3.1 mask generation CLI.",
@@ -231,13 +231,13 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/object_case_registry.py",
+        "scripts/harness/support/object_case_registry.py",
         "support",
         "mask",
         "Shared raw object capture registry for harness scripts and tests.",
     ),
     HarnessEntry(
-        "scripts/harness/reproject_ffs_to_color.py",
+        "scripts/harness/diagnostics/depth/reproject_ffs_to_color.py",
         "diagnostics",
         "reprojection",
         "Reproject single-pair FFS depth into color-frame geometry.",
@@ -245,7 +245,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/render_demo32_headless_capture.py",
+        "scripts/harness/diagnostics/demo/render_demo32_headless_capture.py",
         "diagnostics",
         "demo",
         "Render Demo 3.2 headless enhanced-pt PCD capture artifacts to MP4.",
@@ -253,13 +253,13 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/sam31_mask_helper.py",
+        "scripts/harness/support/sam31_mask_helper.py",
         "support",
         "mask",
         "Shared SAM 3.1 helper used by operator-side harness CLIs.",
     ),
     HarnessEntry(
-        "scripts/harness/cleanup_different_types_cases.py",
+        "scripts/harness/support/cleanup_different_types_cases.py",
         "support",
         "data",
         "Dry-run or execute data/different_types cleanup.",
@@ -267,7 +267,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_compare_depth_panels.py",
+        "scripts/harness/diagnostics/depth/visual_compare_depth_panels.py",
         "diagnostics",
         "depth",
         "Per-camera RealSense-vs-FFS depth panels.",
@@ -275,7 +275,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_compare_depth_triplet_ply.py",
+        "scripts/harness/diagnostics/depth/visual_compare_depth_triplet_ply.py",
         "diagnostics",
         "depth",
         "Single-frame native/FFS raw/FFS postprocess fused PLY compare.",
@@ -283,7 +283,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_compare_depth_triplet_video.py",
+        "scripts/harness/diagnostics/depth/visual_compare_depth_triplet_video.py",
         "diagnostics",
         "depth",
         "Multi-frame native/FFS raw/FFS postprocess point-cloud video compare.",
@@ -291,7 +291,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_compare_depth_video.py",
+        "scripts/harness/diagnostics/depth/visual_compare_depth_video.py",
         "diagnostics",
         "depth",
         "Older temporal fused native-vs-FFS depth compare.",
@@ -299,7 +299,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_compare_masked_camera_views.py",
+        "scripts/harness/diagnostics/visualization/visual_compare_masked_camera_views.py",
         "diagnostics",
         "mask",
         "SAM-masked native-vs-FFS camera-view board.",
@@ -307,7 +307,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_compare_masked_pointcloud.py",
+        "scripts/harness/diagnostics/visualization/visual_compare_masked_pointcloud.py",
         "diagnostics",
         "mask",
         "SAM-masked native-vs-FFS point-cloud board.",
@@ -315,7 +315,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_compare_reprojection.py",
+        "scripts/harness/diagnostics/depth/visual_compare_reprojection.py",
         "diagnostics",
         "reprojection",
         "Aligned native-vs-FFS reprojection diagnostics.",
@@ -323,7 +323,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_compare_rerun.py",
+        "scripts/harness/diagnostics/visualization/visual_compare_rerun.py",
         "diagnostics",
         "rerun",
         "Rerun export plus fused PLYs for removed-invisible inspection.",
@@ -331,7 +331,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_compare_stereo_order_pcd.py",
+        "scripts/harness/diagnostics/visualization/visual_compare_stereo_order_pcd.py",
         "diagnostics",
         "depth",
         "Current-vs-swapped stereo-order registration board.",
@@ -339,7 +339,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_compare_turntable.py",
+        "scripts/harness/diagnostics/visualization/visual_compare_turntable.py",
         "diagnostics",
         "depth",
         "Current single-frame professor-facing compare.",
@@ -347,7 +347,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_make_match_board.py",
+        "scripts/harness/diagnostics/visualization/visual_make_match_board.py",
         "diagnostics",
         "depth",
         "Professor-facing 3-view point-cloud match board.",
@@ -355,7 +355,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/visual_make_professor_triptych.py",
+        "scripts/harness/diagnostics/visualization/visual_make_professor_triptych.py",
         "diagnostics",
         "depth",
         "Professor-facing three-figure summary pack.",
@@ -363,7 +363,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_edgetam_vs_sam21_compile_ablation.py",
+        "scripts/harness/experiments/edgetam/run_edgetam_vs_sam21_compile_ablation.py",
         "experiments",
         "edgetam",
         "Official-style EdgeTAM compile-mode vs SAM2.1 Small/Tiny speed ablation.",
@@ -371,7 +371,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_edgetam_video_masks.py",
+        "scripts/harness/experiments/edgetam/run_edgetam_video_masks.py",
         "experiments",
         "edgetam",
         "EdgeTAM video mask worker used by the dynamics 3x6 panel experiment.",
@@ -379,7 +379,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/benchmark_edgetam_trt_components.py",
+        "scripts/harness/experiments/edgetam/benchmark_edgetam_trt_components.py",
         "experiments",
         "edgetam",
         "Benchmark EdgeTAM ONNX/TensorRT component engines on recorded frames.",
@@ -387,7 +387,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/inspect_edgetam_onnx.py",
+        "scripts/harness/experiments/edgetam/inspect_edgetam_onnx.py",
         "experiments",
         "edgetam",
         "Inspect EdgeTAM ONNX component graph shapes and op coverage.",
@@ -395,7 +395,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/probe_edgetam_video_trt_compile.py",
+        "scripts/harness/experiments/edgetam/probe_edgetam_video_trt_compile.py",
         "experiments",
         "edgetam",
         "Probe official EdgeTAM video components for ONNX/TensorRT compile feasibility.",
@@ -403,7 +403,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py",
+        "scripts/harness/experiments/edgetam/run_hf_edgetam_streaming_realcase.py",
         "experiments",
         "edgetam",
         "Hugging Face EdgeTAMVideo streaming benchmark on real aligned QQTT cases.",
@@ -411,7 +411,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_sloth_set2_hf_edgetam_streaming_pcd_xor_gif.py",
+        "scripts/harness/experiments/edgetam/run_sloth_set2_hf_edgetam_streaming_pcd_xor_gif.py",
         "experiments",
         "edgetam",
         "Render Sloth Set 2 HF EdgeTAM streaming fused-PCD XOR GIF against SAM3.1.",
@@ -419,7 +419,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_sloth_set2_hf_edgetam_hand_object_pcd_gif.py",
+        "scripts/harness/experiments/edgetam/run_sloth_set2_hf_edgetam_hand_object_pcd_gif.py",
         "experiments",
         "edgetam",
         "Render Sloth Set 2 HF EdgeTAM streaming hand/object fused-PCD GIF.",
@@ -427,7 +427,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py",
+        "scripts/harness/experiments/ffs/run_ffs_confidence_filter_sweep.py",
         "experiments",
         "ffs",
         "FFS confidence filtering sweep runner.",
@@ -435,7 +435,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_sam21_checkpoint_ladder_3x5_gifs.py",
+        "scripts/harness/experiments/sam/run_sam21_checkpoint_ladder_3x5_gifs.py",
         "experiments",
         "sam",
         "SAM3.1 vs SAM2.1 checkpoint ladder 3x5 time GIF benchmark.",
@@ -443,7 +443,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_sloth_base_motion_mask_overlay_3x3_gif.py",
+        "scripts/harness/experiments/edgetam/run_sloth_base_motion_mask_overlay_3x3_gif.py",
         "experiments",
         "edgetam",
         "Regenerate sloth_base_motion masks and render Small/Tiny/compiled EdgeTAM XOR overlay GIF.",
@@ -451,7 +451,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_sloth_base_motion_fused_pcd_overlay_2x3_gif.py",
+        "scripts/harness/experiments/edgetam/run_sloth_base_motion_fused_pcd_overlay_2x3_gif.py",
         "experiments",
         "edgetam",
         "Render sloth_base_motion Small/compiled EdgeTAM fused-PCD overlay GIF against SAM3.1.",
@@ -459,13 +459,13 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/run_still_object_round1_projection_panel.py",
+        "scripts/harness/experiments/visualization/run_still_object_round1_projection_panel.py",
         "experiments",
         "still_object",
         "Still-object round1 native/FFS projected-PCD removal board.",
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visual_compare_ffs_confidence_filter_pcd.py",
+        "scripts/harness/experiments/ffs/visual_compare_ffs_confidence_filter_pcd.py",
         "experiments",
         "ffs",
         "Confidence-filtered FFS point-cloud board.",
@@ -473,7 +473,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py",
+        "scripts/harness/experiments/ffs/visual_compare_ffs_confidence_threshold_sweep_pcd.py",
         "experiments",
         "ffs",
         "Confidence threshold sweep point-cloud board.",
@@ -481,7 +481,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py",
+        "scripts/harness/experiments/ffs/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py",
         "experiments",
         "ffs",
         "Multipage object-mask erosion sweep.",
@@ -489,7 +489,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visual_compare_ffs_mask_erode_sweep_pcd.py",
+        "scripts/harness/experiments/ffs/visual_compare_ffs_mask_erode_sweep_pcd.py",
         "experiments",
         "ffs",
         "Compact object-mask erosion sweep.",
@@ -497,7 +497,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visual_compare_native_ffs_fused_pcd.py",
+        "scripts/harness/experiments/ffs/visual_compare_native_ffs_fused_pcd.py",
         "experiments",
         "ffs",
         "Native, original FFS, and fused native/FFS point-cloud board.",
@@ -505,7 +505,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visualize_sam21_edgetam_mask_overlay_3x3_gif.py",
+        "scripts/harness/experiments/sam/visualize_sam21_edgetam_mask_overlay_3x3_gif.py",
         "experiments",
         "edgetam",
         "SAM2.1 Small/Tiny and compiled EdgeTAM mask overlay GIF against SAM3.1.",
@@ -513,7 +513,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visualize_ffs_static_confidence_panels.py",
+        "scripts/harness/experiments/ffs/visualize_ffs_static_confidence_panels.py",
         "experiments",
         "ffs",
         "Static masked RGB/depth/confidence board.",
@@ -521,7 +521,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py",
+        "scripts/harness/experiments/ffs/visualize_ffs_static_confidence_pcd_panels.py",
         "experiments",
         "ffs",
         "Static masked RGB/PCD/confidence board.",
@@ -529,7 +529,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visualize_still_object_orbit_gif.py",
+        "scripts/harness/experiments/visualization/visualize_still_object_orbit_gif.py",
         "experiments",
         "still_object",
         "Headless Native Depth vs FFS masked-object orbit GIF.",
@@ -537,7 +537,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_erode_sweep_gif.py",
+        "scripts/harness/experiments/visualization/visualize_still_object_rope_6x2_orbit_erode_sweep_gif.py",
         "experiments",
         "still_object",
         "Still-object/rope orbit GIF erosion sweep.",
@@ -545,7 +545,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_gif.py",
+        "scripts/harness/experiments/visualization/visualize_still_object_rope_6x2_orbit_gif.py",
         "experiments",
         "still_object",
         "Still-object/rope orbit GIF board.",
@@ -553,7 +553,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/audit_ffs_left_right.py",
+        "scripts/harness/diagnostics/depth/audit_ffs_left_right.py",
         "diagnostics",
         "depth",
         "Focused FFS left/right ordering audit.",
@@ -561,7 +561,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/compare_face_smoothness.py",
+        "scripts/harness/diagnostics/depth/compare_face_smoothness.py",
         "diagnostics",
         "depth",
         "Fixed face-patch smoothness/noise comparison.",
@@ -569,7 +569,7 @@ CATALOG: tuple[HarnessEntry, ...] = (
         help=True,
     ),
     HarnessEntry(
-        "scripts/harness/diagnose_floating_point_sources.py",
+        "scripts/harness/diagnostics/depth/diagnose_floating_point_sources.py",
         "diagnostics",
         "depth",
         "Floating-point source diagnostics for aligned cases.",
@@ -579,20 +579,9 @@ CATALOG: tuple[HarnessEntry, ...] = (
 )
 
 
-_PLANNED_LIFECYCLE_ENTRIES: tuple[HarnessEntry, ...] = (
-    HarnessEntry(
-        "scripts/harness/guards/check_scope.py",
-        "guards",
-        "repo",
-        "Repo scope guard for removed or forbidden legacy surfaces.",
-        "smoke",
-    ),
-)
-
-
 def entries_by_lifecycle() -> dict[str, tuple[HarnessEntry, ...]]:
     grouped: dict[str, list[HarnessEntry]] = {}
-    for entry in (*CATALOG, *_PLANNED_LIFECYCLE_ENTRIES):
+    for entry in CATALOG:
         grouped.setdefault(entry.lifecycle, []).append(entry)
     return {lifecycle: tuple(entries) for lifecycle, entries in grouped.items()}
 

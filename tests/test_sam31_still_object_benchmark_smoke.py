@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class Sam31StillObjectBenchmarkSmokeTest(unittest.TestCase):
     def test_cli_help_does_not_require_sam3_runtime(self) -> None:
-        command = [sys.executable, "scripts/harness/benchmark_sam31_still_object_views.py", "--help"]
+        command = [sys.executable, "scripts/harness/benchmarks/sam/benchmark_sam31_still_object_views.py", "--help"]
         result = subprocess.run(
             command,
             cwd=ROOT,

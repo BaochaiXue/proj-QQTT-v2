@@ -22,10 +22,7 @@ from scripts.harness._catalog import CATALOG
 
 HARNESS_ROOT = ROOT / "scripts" / "harness"
 PRIVATE_PYTHON_FILES = {
-    HARNESS_ROOT / "__init__.py",
     HARNESS_ROOT / "_catalog.py",
-    HARNESS_ROOT / "experiments" / "__init__.py",
-    HARNESS_ROOT / "validation" / "__init__.py",
 }
 KNOWN_CATEGORIES = {
     "checks",
@@ -74,7 +71,7 @@ def collect_violations() -> list[str]:
 
     cataloged_python = {path for path in unique_paths if path.suffix == ".py"}
     for path in sorted(HARNESS_ROOT.rglob("*.py")):
-        if path in PRIVATE_PYTHON_FILES:
+        if path.name == "__init__.py" or path in PRIVATE_PYTHON_FILES:
             continue
         if path not in cataloged_python:
             violations.append(f"Uncataloged harness Python file: {path.relative_to(ROOT)}")

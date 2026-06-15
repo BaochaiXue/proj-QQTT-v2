@@ -43,8 +43,8 @@ class HarnessCatalogSchemaTest(unittest.TestCase):
         deterministic_scripts = _catalog.help_scripts("deterministic")
         self.assertIsInstance(smoke_scripts, tuple)
         self.assertIsInstance(deterministic_scripts, tuple)
-        self.assertIn("scripts/harness/visual_compare_depth_panels.py", smoke_scripts)
-        self.assertIn("scripts/harness/visual_compare_depth_triplet_ply.py", deterministic_scripts)
+        self.assertIn("scripts/harness/diagnostics/depth/visual_compare_depth_panels.py", smoke_scripts)
+        self.assertIn("scripts/harness/diagnostics/depth/visual_compare_depth_triplet_ply.py", deterministic_scripts)
         self.assertTrue(set(smoke_scripts).issubset(set(deterministic_scripts)))
 
     def test_entries_by_lifecycle_replaces_entries_by_category(self) -> None:

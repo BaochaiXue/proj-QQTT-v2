@@ -2405,7 +2405,7 @@ def split_controller_hand_instances(controller_masks: list[np.ndarray], *, label
 
 def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> float:
     started_s = time.perf_counter()
-    helper = sys.modules.get("scripts.harness.sam31_mask_helper")
+    helper = sys.modules.get("scripts.harness.support.sam31_mask_helper")
     clear_cache = getattr(helper, "clear_sam31_image_processor_cache", None) if helper is not None else None
     if clear_cache is not None:
         clear_cache()
@@ -2450,7 +2450,7 @@ def trim_sam31_cuda_allocator(device: str = DEFAULT_DEVICE) -> float:
 
 
 def run_sam31_first_frame_mask_bundle(color_bgr: np.ndarray, args: argparse.Namespace) -> InitialMaskBundle:
-    from scripts.harness.sam31_mask_helper import parse_text_prompts, run_image_segmentation
+    from scripts.harness.support.sam31_mask_helper import parse_text_prompts, run_image_segmentation
 
     prompt_labels = []
     if object_tracking_enabled(args):

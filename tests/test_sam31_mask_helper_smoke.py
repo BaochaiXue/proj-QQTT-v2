@@ -88,7 +88,7 @@ class Sam31MaskHelperSmokeTest(unittest.TestCase):
             self.assertTrue((session_dir / "00001.jpg").is_file())
 
     def test_cli_help_does_not_require_sam3_runtime(self) -> None:
-        command = [sys.executable, "scripts/harness/generate_sam31_masks.py", "--help"]
+        command = [sys.executable, "scripts/harness/diagnostics/visualization/generate_sam31_masks.py", "--help"]
         result = subprocess.run(
             command,
             cwd=ROOT,
