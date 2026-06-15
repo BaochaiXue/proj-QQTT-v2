@@ -32,6 +32,7 @@ class HarnessCatalogSchemaTest(unittest.TestCase):
         self.assertEqual(entry.path, "scripts/harness/guards/check_scope.py")
         self.assertEqual(entry.lifecycle, "guards")
         self.assertEqual(entry.domain, "scope")
+        self.assertEqual(entry.summary, "Repo scope guard.")
         self.assertEqual(entry.validation_profile, "smoke")
         self.assertFalse(entry.help)
         self.assertTrue(entry.automatic)
