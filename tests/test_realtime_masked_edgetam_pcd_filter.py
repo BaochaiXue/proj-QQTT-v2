@@ -19,6 +19,8 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertIn("--controller-filter-keep-components CONTROLLER_FILTER_KEEP_COMPONENTS", help_text)
         self.assertIn("--filter-max-age-frames FILTER_MAX_AGE_FRAMES", help_text)
         self.assertIn("--pcd-mask-erode-pixels PCD_MASK_ERODE_PIXELS", help_text)
+        self.assertIn("--object-pcd-mask-erode-pixels OBJECT_PCD_MASK_ERODE_PIXELS", help_text)
+        self.assertIn("--controller-pcd-mask-erode-pixels CONTROLLER_PCD_MASK_ERODE_PIXELS", help_text)
         self.assertIn("--edgetam-live-session-keep-frames EDGETAM_LIVE_SESSION_KEEP_FRAMES", help_text)
 
         args = masked_demo.build_parser().parse_args([])
@@ -28,6 +30,8 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertEqual(args.controller_filter_keep_components, 2)
         self.assertEqual(args.filter_max_age_frames, 3)
         self.assertEqual(args.pcd_mask_erode_pixels, 0)
+        self.assertIsNone(args.object_pcd_mask_erode_pixels)
+        self.assertIsNone(args.controller_pcd_mask_erode_pixels)
         self.assertEqual(args.edgetam_live_session_keep_frames, 64)
         self.assertEqual(args.view_mode, "orbit")
 

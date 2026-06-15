@@ -138,6 +138,8 @@ LOCAL_FFS_PROFESSOR_FILTER_CAP = 20000
 DEFAULT_FILTER_RADIUS_M = 0.01
 DEFAULT_FILTER_NB_POINTS = 40
 DEFAULT_PCD_MASK_ERODE_PIXELS = 0
+DEFAULT_OBJECT_PCD_MASK_ERODE_PIXELS: int | None = None
+DEFAULT_CONTROLLER_PCD_MASK_ERODE_PIXELS: int | None = None
 DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.01
 DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.0
 DEFAULT_OBJECT_FILTER = PCD_FILTER_ENHANCED_PT
@@ -735,6 +737,8 @@ class HeadlessCaptureWriter:
         object_pcd_mask: np.ndarray,
         pcd_stride: int,
         pcd_mask_erode_pixels: int,
+        object_pcd_mask_erode_pixels: int,
+        controller_pcd_mask_erode_pixels: int,
     ) -> None:
         filter_info = packet.filter_telemetry
         if not (filter_info.enabled and filter_info.mode == "sync" and filter_info.render_using_filtered):
@@ -757,6 +761,8 @@ class HeadlessCaptureWriter:
             object_pcd_mask=np.ascontiguousarray(object_pcd_mask, dtype=bool),
             pcd_stride=np.asarray([int(pcd_stride)], dtype=np.int64),
             pcd_mask_erode_pixels=np.asarray([int(pcd_mask_erode_pixels)], dtype=np.int64),
+            object_pcd_mask_erode_pixels=np.asarray([int(object_pcd_mask_erode_pixels)], dtype=np.int64),
+            controller_pcd_mask_erode_pixels=np.asarray([int(controller_pcd_mask_erode_pixels)], dtype=np.int64),
             mask_source=np.asarray(["edgetam_binary_masks"]),
         )
         np.savez(
@@ -789,6 +795,9 @@ class HeadlessCaptureWriter:
             "object_mask_pixels": int(np.count_nonzero(mask_packet.object_mask)),
             "controller_pcd_mask_pixels": int(np.count_nonzero(controller_pcd_mask)),
             "object_pcd_mask_pixels": int(np.count_nonzero(object_pcd_mask)),
+            "pcd_mask_erode_pixels": int(pcd_mask_erode_pixels),
+            "controller_pcd_mask_erode_pixels": int(controller_pcd_mask_erode_pixels),
+            "object_pcd_mask_erode_pixels": int(object_pcd_mask_erode_pixels),
             "receive_perf_s": float(packet.receive_perf_s),
             "process_done_perf_s": float(packet.process_done_perf_s),
             "timing": asdict(packet.timing),
@@ -1166,7 +1175,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--pcd-mask-erode-pixels",
         type=int,
         default=DEFAULT_PCD_MASK_ERODE_PIXELS,
-        help="Erode controller/object masks by this many pixels before RGB-D point-cloud backprojection.",
+        help=(
+            "Legacy common erosion for controller/object masks before RGB-D point-cloud backprojection. "
+            "Per-class erosion options override this value."
+        ),
+    )
+    parser.add_argument(
+        "--object-pcd-mask-erode-pixels",
+        type=int,
+        default=DEFAULT_OBJECT_PCD_MASK_ERODE_PIXELS,
+        help="Object-only mask erosion before RGB-D point-cloud backprojection. Defaults to --pcd-mask-erode-pixels.",
+    )
+    parser.add_argument(
+        "--controller-pcd-mask-erode-pixels",
+        type=int,
+        default=DEFAULT_CONTROLLER_PCD_MASK_ERODE_PIXELS,
+        help="Controller-only mask erosion before RGB-D point-cloud backprojection. Defaults to --pcd-mask-erode-pixels.",
     )
     parser.add_argument(
         "--render-max-points-per-layer",
@@ -1312,6 +1336,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pcd-stride must be >= 1")
     if int(args.pcd_mask_erode_pixels) < 0:
         raise ValueError("--pcd-mask-erode-pixels must be >= 0")
+    if args.object_pcd_mask_erode_pixels is not None and int(args.object_pcd_mask_erode_pixels) < 0:
+        raise ValueError("--object-pcd-mask-erode-pixels must be >= 0")
+    if args.controller_pcd_mask_erode_pixels is not None and int(args.controller_pcd_mask_erode_pixels) < 0:
+        raise ValueError("--controller-pcd-mask-erode-pixels must be >= 0")
     if int(args.edgetam_live_session_keep_frames) < 0:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
     if int(args.render_max_points_per_layer) < 0:
@@ -2035,6 +2063,20 @@ def tracker_enabled(args: argparse.Namespace) -> bool:
     return normalize_tracker_backend(str(getattr(args, "tracker_backend", TRACKER_BACKEND_NONE))) != TRACKER_BACKEND_NONE
 
 
+def object_pcd_mask_erode_pixels(args: argparse.Namespace) -> int:
+    value = getattr(args, "object_pcd_mask_erode_pixels", None)
+    if value is None:
+        value = getattr(args, "pcd_mask_erode_pixels", DEFAULT_PCD_MASK_ERODE_PIXELS)
+    return int(value)
+
+
+def controller_pcd_mask_erode_pixels(args: argparse.Namespace) -> int:
+    value = getattr(args, "controller_pcd_mask_erode_pixels", None)
+    if value is None:
+        value = getattr(args, "pcd_mask_erode_pixels", DEFAULT_PCD_MASK_ERODE_PIXELS)
+    return int(value)
+
+
 def _camera_intrinsics_matrix(intrinsics: CameraIntrinsics) -> np.ndarray:
     return np.array(
         [
@@ -2377,6 +2419,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "pcd_max_points": int(self.args.pcd_max_points),
             "pcd_stride": int(self.args.pcd_stride),
             "pcd_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
+            "object_pcd_mask_erode_pixels": object_pcd_mask_erode_pixels(self.args),
+            "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(self.args),
             "depth_min_m": float(self.args.depth_min_m),
             "depth_max_m": float(self.args.depth_max_m),
             "serial": str(self.runtime.serial),
@@ -2805,6 +2849,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "pcd_max_points": int(self.args.pcd_max_points),
             "pcd_stride": int(self.args.pcd_stride),
             "pcd_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
+            "object_pcd_mask_erode_pixels": object_pcd_mask_erode_pixels(self.args),
+            "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(self.args),
             "render_max_points_per_layer": int(self.args.render_max_points_per_layer),
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE,
@@ -2834,7 +2880,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "tracker_display_scope": str(self.args.tracker_display_scope),
             "tracker_overlay_max_points": int(self.args.tracker_overlay_max_points),
             "tracker_marker_point_size": float(self.args.tracker_marker_point_size),
-            "tracker_lift_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
+            "tracker_lift_mask_erode_pixels": min(
+                object_pcd_mask_erode_pixels(self.args),
+                controller_pcd_mask_erode_pixels(self.args),
+            ),
             "tapnet_repo_dir": str(self.args.tapnet_repo_dir),
             "tapnextpp_checkpoint": str(self.args.tapnextpp_checkpoint),
             "tapnextpp_image_size": str(self.args.tapnextpp_image_size),
@@ -2984,11 +3033,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
         scope = str(self.args.tracker_display_scope)
         if scope == TRACKER_DISPLAY_SCOPE_CONTROLLER:
             mask = np.asarray(mask_packet.controller_mask, dtype=bool)
+            erode_pixels = controller_pcd_mask_erode_pixels(self.args)
         elif scope == TRACKER_DISPLAY_SCOPE_OBJECT:
             mask = np.asarray(mask_packet.object_mask, dtype=bool)
+            erode_pixels = object_pcd_mask_erode_pixels(self.args)
         else:
             mask = _tracker_union_mask(mask_packet)
-        erode_pixels = int(self.args.pcd_mask_erode_pixels)
+            erode_pixels = min(object_pcd_mask_erode_pixels(self.args), controller_pcd_mask_erode_pixels(self.args))
         if erode_pixels > 0:
             return erode_binary_mask(mask, erode_pixels=erode_pixels)
         return np.ascontiguousarray(mask)
@@ -3655,9 +3706,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 ray_x_for_pcd = ray_x
                 ray_y_for_pcd = ray_y
             pcd_mask_erode_pixels = int(self.args.pcd_mask_erode_pixels)
-            if pcd_mask_erode_pixels > 0:
-                controller_mask = erode_binary_mask(controller_mask, erode_pixels=pcd_mask_erode_pixels)
-                object_mask = erode_binary_mask(object_mask, erode_pixels=pcd_mask_erode_pixels)
+            controller_erode_pixels = controller_pcd_mask_erode_pixels(self.args)
+            object_erode_pixels = object_pcd_mask_erode_pixels(self.args)
+            if controller_erode_pixels > 0:
+                controller_mask = erode_binary_mask(controller_mask, erode_pixels=controller_erode_pixels)
+            if object_erode_pixels > 0:
+                object_mask = erode_binary_mask(object_mask, erode_pixels=object_erode_pixels)
             empty_pcd_timing = {
                 "pcd_mask_intersection_ms": 0.0,
                 "pcd_select_ms": 0.0,
@@ -3825,6 +3879,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     object_pcd_mask=object_mask,
                     pcd_stride=stride,
                     pcd_mask_erode_pixels=pcd_mask_erode_pixels,
+                    object_pcd_mask_erode_pixels=object_erode_pixels,
+                    controller_pcd_mask_erode_pixels=controller_erode_pixels,
                 )
             self.pcd_stats.record(done_s)
             self._request_render_update()

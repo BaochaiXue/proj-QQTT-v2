@@ -353,6 +353,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 object_pcd_mask=~pcd_mask,
                 pcd_stride=2,
                 pcd_mask_erode_pixels=1,
+                object_pcd_mask_erode_pixels=3,
+                controller_pcd_mask_erode_pixels=0,
             )
 
             metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
@@ -369,6 +371,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(rows[0]["object_mask_pixels"], int(np.count_nonzero(mask_packet.object_mask)))
             self.assertEqual(rows[0]["controller_pcd_mask_pixels"], int(np.count_nonzero(pcd_mask)))
             self.assertEqual(rows[0]["object_pcd_mask_pixels"], 0)
+            self.assertEqual(rows[0]["pcd_mask_erode_pixels"], 1)
+            self.assertEqual(rows[0]["object_pcd_mask_erode_pixels"], 3)
+            self.assertEqual(rows[0]["controller_pcd_mask_erode_pixels"], 0)
             pcd = np.load(output_dir / rows[0]["pcd_path"], allow_pickle=False)
             self.assertEqual(str(pcd["saved_pcd_source"][0]), "enhanced_pt_filtered")
             mask_payload = np.load(output_dir / rows[0]["mask_path"], allow_pickle=False)
@@ -377,6 +382,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             np.testing.assert_array_equal(mask_payload["controller_pcd_mask"], pcd_mask)
             self.assertEqual(int(mask_payload["pcd_stride"][0]), 2)
             self.assertEqual(int(mask_payload["pcd_mask_erode_pixels"][0]), 1)
+            self.assertEqual(int(mask_payload["object_pcd_mask_erode_pixels"][0]), 3)
+            self.assertEqual(int(mask_payload["controller_pcd_mask_erode_pixels"][0]), 0)
             trajectory = np.load(output_dir / rows[0]["query_trajectory_path"], allow_pickle=False)
             np.testing.assert_array_equal(trajectory["query_indices"], np.array([0], dtype=np.int64))
 

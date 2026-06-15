@@ -365,6 +365,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["pcd_max_points"], 20000)
         self.assertEqual(contract["pcd_stride"], 2)
         self.assertEqual(contract["pcd_mask_erode_pixels"], 4)
+        self.assertEqual(contract["object_pcd_mask_erode_pixels"], 4)
+        self.assertEqual(contract["controller_pcd_mask_erode_pixels"], 4)
         self.assertEqual(contract["depth_max_m"], 1.2)
         self.assertEqual(contract["pcd_color_mode"], "class")
         self.assertEqual(contract["render_max_points_per_layer"], 4096)
@@ -526,6 +528,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(disabled.filter_every_n, 3)
         self.assertEqual(disabled.filter_max_age_frames, 3)
         self.assertEqual(disabled.pcd_mask_erode_pixels, 0)
+        self.assertIsNone(disabled.object_pcd_mask_erode_pixels)
+        self.assertIsNone(disabled.controller_pcd_mask_erode_pixels)
 
         enabled = self._parse(runtime.DEMO_VERSION_3_2, ["--enable-pcd-filter"])
         runtime.validate_args(enabled)
@@ -541,7 +545,12 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["enhanced_component_voxel_size_m"], runtime.FFS_SURFACE_COMPONENT_VOXEL_SIZE_M)
         self.assertEqual(contract["filter_every_n"], runtime.FFS_SURFACE_FILTER_EVERY_N)
         self.assertEqual(contract["filter_max_age_frames"], runtime.FFS_SURFACE_FILTER_MAX_AGE_FRAMES)
-        self.assertEqual(contract["pcd_mask_erode_pixels"], runtime.FFS_SURFACE_MASK_ERODE_PIXELS)
+        self.assertEqual(contract["pcd_mask_erode_pixels"], 0)
+        self.assertEqual(contract["object_pcd_mask_erode_pixels"], runtime.FFS_SURFACE_OBJECT_MASK_ERODE_PIXELS)
+        self.assertEqual(
+            contract["controller_pcd_mask_erode_pixels"],
+            runtime.FFS_SURFACE_CONTROLLER_MASK_ERODE_PIXELS,
+        )
         self.assertEqual(_option_value(delegate, "--filter-radius-m"), str(runtime.FFS_SURFACE_FILTER_RADIUS_M))
         self.assertEqual(_option_value(delegate, "--filter-nb-points"), str(runtime.FFS_SURFACE_FILTER_NB_POINTS))
         self.assertEqual(
@@ -555,7 +564,15 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         )
         self.assertEqual(
             _option_value(delegate, "--pcd-mask-erode-pixels"),
-            str(runtime.FFS_SURFACE_MASK_ERODE_PIXELS),
+            "0",
+        )
+        self.assertEqual(
+            _option_value(delegate, "--object-pcd-mask-erode-pixels"),
+            str(runtime.FFS_SURFACE_OBJECT_MASK_ERODE_PIXELS),
+        )
+        self.assertEqual(
+            _option_value(delegate, "--controller-pcd-mask-erode-pixels"),
+            str(runtime.FFS_SURFACE_CONTROLLER_MASK_ERODE_PIXELS),
         )
 
         overridden = self._parse(
@@ -582,6 +599,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(overridden.filter_every_n, 4)
         self.assertEqual(overridden.filter_max_age_frames, 5)
         self.assertEqual(overridden.pcd_mask_erode_pixels, 1)
+        self.assertEqual(overridden.object_pcd_mask_erode_pixels, 1)
+        self.assertEqual(overridden.controller_pcd_mask_erode_pixels, 1)
 
     def test_recording_mode_skips_live_serial_validation(self) -> None:
         with mock.patch.object(runtime.masked_pcd, "main", return_value=0) as masked_main:

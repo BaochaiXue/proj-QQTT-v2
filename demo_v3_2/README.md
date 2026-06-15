@@ -48,6 +48,13 @@ does not open Open3D. It saves only sync enhanced-pt filtered PCD, color-aligned
 FFS depth, EdgeTAM controller/object masks, and TAPNext++ query trajectory
 artifacts:
 
+Demo 3.2 keeps the FFS object mask cleanup at 3px erosion by default, but the
+controller PCD mask defaults to 0px erosion so small hand/controller regions are
+not eaten before point-cloud generation. Passing `--pcd-mask-erode-pixels`
+explicitly still applies the legacy common value to both classes unless
+`--object-pcd-mask-erode-pixels` or `--controller-pcd-mask-erode-pixels` is also
+provided.
+
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
