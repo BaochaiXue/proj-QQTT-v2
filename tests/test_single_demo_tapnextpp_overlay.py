@@ -342,19 +342,41 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 query_indices=np.array([0], dtype=np.int64),
             )
 
+            mask_packet = self._mask_packet()
+            pcd_mask = np.ones((2, 2), dtype=bool)
             writer.write_tracker(tracker_packet)
-            writer.write_pcd(self._pcd_packet(), depth_m=np.ones((4, 4), dtype=np.float32))
+            writer.write_pcd(
+                self._pcd_packet(),
+                depth_m=np.ones((4, 4), dtype=np.float32),
+                mask_packet=mask_packet,
+                controller_pcd_mask=pcd_mask,
+                object_pcd_mask=~pcd_mask,
+                pcd_stride=2,
+                pcd_mask_erode_pixels=1,
+            )
 
             metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["saved_pcd_source"], "enhanced_pt_filtered")
+            self.assertEqual(metadata["saved_mask_source"], "edgetam_binary_masks")
             rows = [json.loads(line) for line in (output_dir / "frames.jsonl").read_text(encoding="utf-8").splitlines()]
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["filter_telemetry"]["mode"], "sync")
             self.assertTrue((output_dir / rows[0]["pcd_path"]).is_file())
             self.assertTrue((output_dir / rows[0]["ffs_depth_path"]).is_file())
             self.assertTrue((output_dir / rows[0]["query_trajectory_path"]).is_file())
+            self.assertTrue((output_dir / rows[0]["mask_path"]).is_file())
+            self.assertEqual(rows[0]["controller_mask_pixels"], int(np.count_nonzero(mask_packet.controller_mask)))
+            self.assertEqual(rows[0]["object_mask_pixels"], int(np.count_nonzero(mask_packet.object_mask)))
+            self.assertEqual(rows[0]["controller_pcd_mask_pixels"], int(np.count_nonzero(pcd_mask)))
+            self.assertEqual(rows[0]["object_pcd_mask_pixels"], 0)
             pcd = np.load(output_dir / rows[0]["pcd_path"], allow_pickle=False)
             self.assertEqual(str(pcd["saved_pcd_source"][0]), "enhanced_pt_filtered")
+            mask_payload = np.load(output_dir / rows[0]["mask_path"], allow_pickle=False)
+            np.testing.assert_array_equal(mask_payload["controller_mask"], mask_packet.controller_mask)
+            np.testing.assert_array_equal(mask_payload["object_mask"], mask_packet.object_mask)
+            np.testing.assert_array_equal(mask_payload["controller_pcd_mask"], pcd_mask)
+            self.assertEqual(int(mask_payload["pcd_stride"][0]), 2)
+            self.assertEqual(int(mask_payload["pcd_mask_erode_pixels"][0]), 1)
             trajectory = np.load(output_dir / rows[0]["query_trajectory_path"], allow_pickle=False)
             np.testing.assert_array_equal(trajectory["query_indices"], np.array([0], dtype=np.int64))
 

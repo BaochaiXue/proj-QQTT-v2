@@ -45,7 +45,8 @@ can share depth without concurrent TensorRT context use.
 
 Headless enhanced-pt capture keeps the fake-live realtime pipeline running but
 does not open Open3D. It saves only sync enhanced-pt filtered PCD, color-aligned
-FFS depth, and TAPNext++ query trajectory artifacts:
+FFS depth, EdgeTAM controller/object masks, and TAPNext++ query trajectory
+artifacts:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \

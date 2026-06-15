@@ -701,6 +701,7 @@ class HeadlessCaptureWriter:
         self.pcd_dir = self.output_dir / "pcd"
         self.depth_dir = self.output_dir / "ffs_depth"
         self.trajectory_dir = self.output_dir / "query_trajectory"
+        self.mask_dir = self.output_dir / "masks"
         self.frames_path = self.output_dir / "frames.jsonl"
         self.metadata_path = self.output_dir / "metadata.json"
         self._lock = threading.Lock()
@@ -709,10 +710,12 @@ class HeadlessCaptureWriter:
         self.pcd_dir.mkdir(parents=True, exist_ok=True)
         self.depth_dir.mkdir(parents=True, exist_ok=True)
         self.trajectory_dir.mkdir(parents=True, exist_ok=True)
+        self.mask_dir.mkdir(parents=True, exist_ok=True)
         self.frames_path.write_text("", encoding="utf-8")
         payload = dict(metadata)
         payload["headless_capture_enabled"] = True
         payload["saved_pcd_source"] = HEADLESS_CAPTURE_SAVED_PCD_SOURCE
+        payload["saved_mask_source"] = "edgetam_binary_masks"
         payload["output_dir"] = str(self.output_dir)
         self.metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -722,7 +725,17 @@ class HeadlessCaptureWriter:
         except ValueError:
             return str(path)
 
-    def write_pcd(self, packet: MaskedPcdPacket, *, depth_m: np.ndarray) -> None:
+    def write_pcd(
+        self,
+        packet: MaskedPcdPacket,
+        *,
+        depth_m: np.ndarray,
+        mask_packet: MaskPacket,
+        controller_pcd_mask: np.ndarray,
+        object_pcd_mask: np.ndarray,
+        pcd_stride: int,
+        pcd_mask_erode_pixels: int,
+    ) -> None:
         filter_info = packet.filter_telemetry
         if not (filter_info.enabled and filter_info.mode == "sync" and filter_info.render_using_filtered):
             raise RuntimeError("headless capture refuses to save non-filtered PCD output")
@@ -730,9 +743,21 @@ class HeadlessCaptureWriter:
         pcd_path = self.pcd_dir / f"{seq_name}.npz"
         depth_path = self.depth_dir / f"{seq_name}.npy"
         query_path = self.trajectory_dir / f"{seq_name}.npz"
+        mask_path = self.mask_dir / f"{seq_name}.npz"
         np.save(
             depth_path,
             np.ascontiguousarray(depth_m, dtype=np.float32),
+        )
+        np.savez_compressed(
+            mask_path,
+            seq=np.asarray([int(packet.seq)], dtype=np.int64),
+            controller_mask=np.ascontiguousarray(mask_packet.controller_mask, dtype=bool),
+            object_mask=np.ascontiguousarray(mask_packet.object_mask, dtype=bool),
+            controller_pcd_mask=np.ascontiguousarray(controller_pcd_mask, dtype=bool),
+            object_pcd_mask=np.ascontiguousarray(object_pcd_mask, dtype=bool),
+            pcd_stride=np.asarray([int(pcd_stride)], dtype=np.int64),
+            pcd_mask_erode_pixels=np.asarray([int(pcd_mask_erode_pixels)], dtype=np.int64),
+            mask_source=np.asarray(["edgetam_binary_masks"]),
         )
         np.savez(
             pcd_path,
@@ -757,8 +782,13 @@ class HeadlessCaptureWriter:
             "pcd_path": self._relative(pcd_path),
             "ffs_depth_path": self._relative(depth_path),
             "query_trajectory_path": self._relative(query_path),
+            "mask_path": self._relative(mask_path),
             "controller_point_count": int(packet.controller_point_count),
             "object_point_count": int(packet.object_point_count),
+            "controller_mask_pixels": int(np.count_nonzero(mask_packet.controller_mask)),
+            "object_mask_pixels": int(np.count_nonzero(mask_packet.object_mask)),
+            "controller_pcd_mask_pixels": int(np.count_nonzero(controller_pcd_mask)),
+            "object_pcd_mask_pixels": int(np.count_nonzero(object_pcd_mask)),
             "receive_perf_s": float(packet.receive_perf_s),
             "process_done_perf_s": float(packet.process_done_perf_s),
             "timing": asdict(packet.timing),
@@ -3787,7 +3817,15 @@ class RealtimeMaskedEdgeTamPcdDemo:
             )
             self.render_slot.put(packet)
             if self.headless_capture_writer is not None:
-                self.headless_capture_writer.write_pcd(packet, depth_m=depth_m)
+                self.headless_capture_writer.write_pcd(
+                    packet,
+                    depth_m=depth_m,
+                    mask_packet=mask_packet,
+                    controller_pcd_mask=controller_mask,
+                    object_pcd_mask=object_mask,
+                    pcd_stride=stride,
+                    pcd_mask_erode_pixels=pcd_mask_erode_pixels,
+                )
             self.pcd_stats.record(done_s)
             self._request_render_update()
 
