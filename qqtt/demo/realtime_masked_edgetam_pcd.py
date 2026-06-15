@@ -648,6 +648,36 @@ class TrackerMarkerPacket:
 
 
 @dataclass(frozen=True)
+class PairedRenderPacket:
+    seq: int
+    pcd_packet: MaskedPcdPacket
+    tracker_packet: TrackerMarkerPacket
+
+    def __post_init__(self) -> None:
+        pcd_seq = int(self.pcd_packet.seq)
+        tracker_seq = int(self.tracker_packet.seq)
+        seq = int(self.seq)
+        if pcd_seq != tracker_seq or seq != pcd_seq:
+            raise ValueError(
+                "strict same-seq render packet mismatch: "
+                f"pair={seq} pcd={pcd_seq} tracker={tracker_seq}"
+            )
+
+
+@dataclass(frozen=True)
+class PcdBuildResult:
+    packet: MaskedPcdPacket
+    depth_m: np.ndarray | None
+    mask_packet: MaskPacket
+    controller_pcd_mask: np.ndarray | None = None
+    object_pcd_mask: np.ndarray | None = None
+    pcd_stride: int = 1
+    pcd_mask_erode_pixels: int = 0
+    object_pcd_mask_erode_pixels: int = 0
+    controller_pcd_mask_erode_pixels: int = 0
+
+
+@dataclass(frozen=True)
 class PcdFilterTelemetry:
     enabled: bool = False
     mode: str = PCD_FILTER_NONE
@@ -2323,6 +2353,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.remote_quality_slot: LatestSlot[RemoteFfsQualityPacket] = LatestSlot()
         self.render_slot: LatestSlot[MaskedPcdPacket] = LatestSlot()
         self.tracker_marker_slot: LatestSlot[TrackerMarkerPacket] = LatestSlot()
+        self.paired_render_slot: LatestSlot[PairedRenderPacket] = LatestSlot()
         self.stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
         self._request_render_update: Callable[[], None] = lambda: None
@@ -2601,10 +2632,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
         workers: list[tuple[str, Callable[[], None]]] = [("capture", self._capture_worker)]
         if self.args.track_mode != "none":
             workers.append(("seg", self._seg_worker))
-        if tracker_enabled(self.args):
+        if tracker_enabled(self.args) and self.args.pcd_mode == "masked":
+            workers.append(("strict-pair", self._strict_paired_worker))
+        elif tracker_enabled(self.args):
             workers.append(("tracker", self._tracker_worker))
         if self.args.pcd_mode == "masked":
-            workers.append(("pcd", self._pcd_worker))
+            if not tracker_enabled(self.args):
+                workers.append(("pcd", self._pcd_worker))
         elif self.args.depth_source in {"ffs", "ffs_remote"}:
             workers.append(("depth", self._depth_profile_worker))
         if self.args.enable_remote_ffs_quality:
@@ -2880,6 +2914,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "tracker_display_scope": str(self.args.tracker_display_scope),
             "tracker_overlay_max_points": int(self.args.tracker_overlay_max_points),
             "tracker_marker_point_size": float(self.args.tracker_marker_point_size),
+            "tracker_strict_same_seq_render": bool(tracker_enabled(self.args) and self.args.pcd_mode == "masked"),
             "tracker_lift_mask_erode_pixels": min(
                 object_pcd_mask_erode_pixels(self.args),
                 controller_pcd_mask_erode_pixels(self.args),
@@ -3044,6 +3079,125 @@ class RealtimeMaskedEdgeTamPcdDemo:
             return erode_binary_mask(mask, erode_pixels=erode_pixels)
         return np.ascontiguousarray(mask)
 
+    def _build_tracker_marker_packet(self, mask_packet: MaskPacket, adapter: Any) -> TrackerMarkerPacket | None:
+        query_points = self._ensure_tracker_queries(mask_packet, adapter)
+        if query_points is None:
+            if self.args.debug:
+                print(
+                    "[tapnextpp-tracker] waiting_for_non_empty_object_and_controller_masks "
+                    f"seq={mask_packet.seq}",
+                    flush=True,
+                )
+            return None
+        assert self._tracker_query_is_object is not None
+        assert self._tracker_query_is_controller is not None
+        started_s = time.perf_counter()
+        rgb = np.ascontiguousarray(mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8)
+        result = adapter.update(rgb)
+        tracks_latest, visibility_latest = _latest_tracker_arrays(result)
+        query_is_object = self._tracker_query_is_object
+        query_is_controller = self._tracker_query_is_controller
+        common_count = min(
+            int(len(tracks_latest)),
+            int(len(visibility_latest)),
+            int(len(query_is_object)),
+            int(len(query_is_controller)),
+        )
+        tracks_latest = tracks_latest[:common_count]
+        visibility_latest = visibility_latest[:common_count]
+        query_is_object = query_is_object[:common_count]
+        query_is_controller = query_is_controller[:common_count]
+        display_visibility = _tracker_display_visibility(
+            visibility_latest,
+            query_is_object=query_is_object,
+            query_is_controller=query_is_controller,
+            display_scope=str(self.args.tracker_display_scope),
+        )
+        selected = _select_visible_spread_indices(
+            tracks_latest,
+            display_visibility,
+            max_points=int(self.args.tracker_overlay_max_points),
+        )
+        selected_tracks = tracks_latest[selected]
+        selected_visibility = display_visibility[selected]
+        selected_query_is_object = query_is_object[selected]
+        selected_query_is_controller = query_is_controller[selected]
+
+        lift_start_s = time.perf_counter()
+        depth_for_lift, depth_scale = self._tracker_depth_for_lift(mask_packet)
+        depth_max_m = float("inf") if float(self.args.depth_max_m) <= 0.0 else float(self.args.depth_max_m)
+        lift_mask = self._tracker_lift_mask(mask_packet)
+        current_lift_valid = _tracker_lift_valid_mask(
+            tracks_yx=tracks_latest,
+            visibility=display_visibility,
+            depth=depth_for_lift,
+            depth_scale_m_per_unit=float(depth_scale),
+            mask=lift_mask,
+            depth_min_m=float(self.args.depth_min_m),
+            depth_max_m=depth_max_m,
+        )
+        if self._tracker_consistent_visible is None or len(self._tracker_consistent_visible) != len(query_points):
+            self._tracker_consistent_visible = np.ones((len(query_points),), dtype=bool)
+        current_lift_valid_full = np.zeros_like(self._tracker_consistent_visible, dtype=bool)
+        fitted_count = min(len(current_lift_valid), len(current_lift_valid_full))
+        current_lift_valid_full[:fitted_count] = current_lift_valid[:fitted_count]
+        self._tracker_consistent_visible &= current_lift_valid_full
+        consistent_visible_count = int(np.count_nonzero(self._tracker_consistent_visible))
+        lifted = lift_tracks_yx_to_world(
+            tracks_yx=selected_tracks,
+            visibility=selected_visibility,
+            depth=depth_for_lift,
+            intrinsics=mask_packet.intrinsics,
+            c2w=np.eye(4, dtype=np.float32),
+            depth_scale_m_per_unit=float(depth_scale),
+            mask=lift_mask,
+            depth_min_m=float(self.args.depth_min_m),
+            depth_max_m=depth_max_m,
+        )
+        lift_ms = _elapsed_ms(lift_start_s, time.perf_counter())
+        source_indices = lifted.source_indices
+        if len(source_indices):
+            lifted_query_indices = selected[source_indices].astype(np.int64, copy=False)
+            lifted_query_is_object = selected_query_is_object[source_indices]
+            lifted_query_is_controller = selected_query_is_controller[source_indices]
+        else:
+            lifted_query_indices = np.empty((0,), dtype=np.int64)
+            lifted_query_is_object = np.empty((0,), dtype=bool)
+            lifted_query_is_controller = np.empty((0,), dtype=bool)
+        done_s = time.perf_counter()
+        stats = getattr(result, "stats", {}) or {}
+        packet = TrackerMarkerPacket(
+            seq=mask_packet.seq,
+            marker_xyz_m=np.ascontiguousarray(lifted.points_world, dtype=np.float32).reshape(-1, 3),
+            marker_colors_rgb_u8=_solid_tracker_colors(len(lifted.points_world)),
+            query_points_yx=query_points,
+            tracks_yx=np.ascontiguousarray(lifted.tracks_yx, dtype=np.float32).reshape(-1, 2),
+            visibility=np.ascontiguousarray(selected_visibility[source_indices], dtype=np.float32),
+            query_is_object=np.ascontiguousarray(lifted_query_is_object, dtype=bool),
+            query_is_controller=np.ascontiguousarray(lifted_query_is_controller, dtype=bool),
+            receive_perf_s=mask_packet.receive_perf_s,
+            process_done_perf_s=done_s,
+            query_count=int(len(query_points)),
+            consistent_visible_count=consistent_visible_count,
+            model_ms=float(stats.get("model_run_ms", stats.get("cuda_event_ms", 0.0)) or 0.0),
+            lift_ms=float(lift_ms),
+            e2e_ms=_elapsed_ms(started_s, done_s),
+            backend=str(getattr(result, "backend", None) or adapter.name),
+            display_scope=str(self.args.tracker_display_scope),
+            query_indices=np.ascontiguousarray(lifted_query_indices, dtype=np.int64),
+        )
+        if self.args.debug:
+            print(
+                "[tapnextpp-tracker] "
+                f"seq={packet.seq} markers={packet.marker_count}/{len(selected_tracks)} "
+                f"consistent={packet.consistent_visible_count}/{packet.query_count} "
+                f"queries={packet.query_count} model_ms={packet.model_ms:.1f} "
+                f"lift_ms={packet.lift_ms:.1f} e2e_ms={packet.e2e_ms:.1f} "
+                f"fps={self.tracker_stats.fps:.1f}",
+                flush=True,
+            )
+        return packet
+
     def _tracker_worker(self) -> None:
         try:
             adapter = self._build_tracker_adapter()
@@ -3061,130 +3215,73 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     time.sleep(0.001)
                     continue
                 last_seq = mask_packet.seq
-                query_points = self._ensure_tracker_queries(mask_packet, adapter)
-                if query_points is None:
-                    if self.args.debug:
-                        print(
-                            "[tapnextpp-tracker] waiting_for_non_empty_object_and_controller_masks "
-                            f"seq={mask_packet.seq}",
-                            flush=True,
-                        )
+                packet = self._build_tracker_marker_packet(mask_packet, adapter)
+                if packet is None:
                     continue
-                assert self._tracker_query_is_object is not None
-                assert self._tracker_query_is_controller is not None
-                started_s = time.perf_counter()
-                rgb = np.ascontiguousarray(mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8)
-                result = adapter.update(rgb)
-                tracks_latest, visibility_latest = _latest_tracker_arrays(result)
-                query_is_object = self._tracker_query_is_object
-                query_is_controller = self._tracker_query_is_controller
-                common_count = min(
-                    int(len(tracks_latest)),
-                    int(len(visibility_latest)),
-                    int(len(query_is_object)),
-                    int(len(query_is_controller)),
-                )
-                tracks_latest = tracks_latest[:common_count]
-                visibility_latest = visibility_latest[:common_count]
-                query_is_object = query_is_object[:common_count]
-                query_is_controller = query_is_controller[:common_count]
-                display_visibility = _tracker_display_visibility(
-                    visibility_latest,
-                    query_is_object=query_is_object,
-                    query_is_controller=query_is_controller,
-                    display_scope=str(self.args.tracker_display_scope),
-                )
-                selected = _select_visible_spread_indices(
-                    tracks_latest,
-                    display_visibility,
-                    max_points=int(self.args.tracker_overlay_max_points),
-                )
-                selected_tracks = tracks_latest[selected]
-                selected_visibility = display_visibility[selected]
-                selected_query_is_object = query_is_object[selected]
-                selected_query_is_controller = query_is_controller[selected]
-
-                lift_start_s = time.perf_counter()
-                depth_for_lift, depth_scale = self._tracker_depth_for_lift(mask_packet)
-                depth_max_m = float("inf") if float(self.args.depth_max_m) <= 0.0 else float(self.args.depth_max_m)
-                lift_mask = self._tracker_lift_mask(mask_packet)
-                current_lift_valid = _tracker_lift_valid_mask(
-                    tracks_yx=tracks_latest,
-                    visibility=display_visibility,
-                    depth=depth_for_lift,
-                    depth_scale_m_per_unit=float(depth_scale),
-                    mask=lift_mask,
-                    depth_min_m=float(self.args.depth_min_m),
-                    depth_max_m=depth_max_m,
-                )
-                if self._tracker_consistent_visible is None or len(self._tracker_consistent_visible) != len(query_points):
-                    self._tracker_consistent_visible = np.ones((len(query_points),), dtype=bool)
-                current_lift_valid_full = np.zeros_like(self._tracker_consistent_visible, dtype=bool)
-                fitted_count = min(len(current_lift_valid), len(current_lift_valid_full))
-                current_lift_valid_full[:fitted_count] = current_lift_valid[:fitted_count]
-                self._tracker_consistent_visible &= current_lift_valid_full
-                consistent_visible_count = int(np.count_nonzero(self._tracker_consistent_visible))
-                lifted = lift_tracks_yx_to_world(
-                    tracks_yx=selected_tracks,
-                    visibility=selected_visibility,
-                    depth=depth_for_lift,
-                    intrinsics=mask_packet.intrinsics,
-                    c2w=np.eye(4, dtype=np.float32),
-                    depth_scale_m_per_unit=float(depth_scale),
-                    mask=lift_mask,
-                    depth_min_m=float(self.args.depth_min_m),
-                    depth_max_m=depth_max_m,
-                )
-                lift_ms = _elapsed_ms(lift_start_s, time.perf_counter())
-                source_indices = lifted.source_indices
-                if len(source_indices):
-                    lifted_query_indices = selected[source_indices].astype(np.int64, copy=False)
-                    lifted_query_is_object = selected_query_is_object[source_indices]
-                    lifted_query_is_controller = selected_query_is_controller[source_indices]
-                else:
-                    lifted_query_indices = np.empty((0,), dtype=np.int64)
-                    lifted_query_is_object = np.empty((0,), dtype=bool)
-                    lifted_query_is_controller = np.empty((0,), dtype=bool)
-                done_s = time.perf_counter()
-                stats = getattr(result, "stats", {}) or {}
-                packet = TrackerMarkerPacket(
-                    seq=mask_packet.seq,
-                    marker_xyz_m=np.ascontiguousarray(lifted.points_world, dtype=np.float32).reshape(-1, 3),
-                    marker_colors_rgb_u8=_solid_tracker_colors(len(lifted.points_world)),
-                    query_points_yx=query_points,
-                    tracks_yx=np.ascontiguousarray(lifted.tracks_yx, dtype=np.float32).reshape(-1, 2),
-                    visibility=np.ascontiguousarray(selected_visibility[source_indices], dtype=np.float32),
-                    query_is_object=np.ascontiguousarray(lifted_query_is_object, dtype=bool),
-                    query_is_controller=np.ascontiguousarray(lifted_query_is_controller, dtype=bool),
-                    receive_perf_s=mask_packet.receive_perf_s,
-                    process_done_perf_s=done_s,
-                    query_count=int(len(query_points)),
-                    consistent_visible_count=consistent_visible_count,
-                    model_ms=float(stats.get("model_run_ms", stats.get("cuda_event_ms", 0.0)) or 0.0),
-                    lift_ms=float(lift_ms),
-                    e2e_ms=_elapsed_ms(started_s, done_s),
-                    backend=str(getattr(result, "backend", None) or adapter.name),
-                    display_scope=str(self.args.tracker_display_scope),
-                    query_indices=np.ascontiguousarray(lifted_query_indices, dtype=np.int64),
-                )
                 self.tracker_marker_slot.put(packet)
                 if self.headless_capture_writer is not None:
                     self.headless_capture_writer.write_tracker(packet)
                 self.tracker_stats.record(packet.process_done_perf_s)
-                if self.args.debug:
-                    print(
-                        "[tapnextpp-tracker] "
-                        f"seq={packet.seq} markers={packet.marker_count}/{len(selected_tracks)} "
-                        f"consistent={packet.consistent_visible_count}/{packet.query_count} "
-                        f"queries={packet.query_count} model_ms={packet.model_ms:.1f} "
-                        f"lift_ms={packet.lift_ms:.1f} e2e_ms={packet.e2e_ms:.1f} "
-                        f"fps={self.tracker_stats.fps:.1f}",
-                        flush=True,
-                    )
                 self._request_render_update()
         except Exception as exc:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("TAPNext++ tracker worker", exc)
+
+    def _publish_strict_render_pair(
+        self,
+        pcd_result: PcdBuildResult,
+        tracker_packet: TrackerMarkerPacket,
+    ) -> PairedRenderPacket:
+        pair = PairedRenderPacket(
+            seq=int(pcd_result.packet.seq),
+            pcd_packet=pcd_result.packet,
+            tracker_packet=tracker_packet,
+        )
+        self.paired_render_slot.put(pair)
+        self.pcd_stats.record(pcd_result.packet.process_done_perf_s)
+        self.tracker_stats.record(tracker_packet.process_done_perf_s)
+        if self.headless_capture_writer is not None:
+            self.headless_capture_writer.write_tracker(tracker_packet)
+            self._write_headless_pcd_result(pcd_result)
+        self._request_render_update()
+        return pair
+
+    def _strict_paired_worker(self) -> None:
+        try:
+            adapter = self._build_tracker_adapter()
+            print(
+                "[tapnextpp-tracker] "
+                f"backend={adapter.name} device={self.args.tracker_device} "
+                f"repo={self.args.tapnet_repo_dir} checkpoint={self.args.tapnextpp_checkpoint} "
+                f"image_size={self.args.tapnextpp_image_size} overlay_max={int(self.args.tracker_overlay_max_points)} "
+                "strict_sync=1",
+                flush=True,
+            )
+            last_seq = -1
+            rng = np.random.default_rng()
+            while not self.stop_event.is_set():
+                mask_packet = self.mask_slot.get_latest_after(last_seq)
+                if mask_packet is None:
+                    time.sleep(0.001)
+                    continue
+                last_seq = mask_packet.seq
+                tracker_packet = self._build_tracker_marker_packet(mask_packet, adapter)
+                if tracker_packet is None:
+                    continue
+                try:
+                    pcd_result = self._build_pcd_packet_from_mask(
+                        mask_packet,
+                        rng=rng,
+                        require_filter_seq=True,
+                    )
+                except Exception as exc:
+                    if not self.stop_event.is_set():
+                        print(f"[WARN] strict PCD frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}", flush=True)
+                    continue
+                self._publish_strict_render_pair(pcd_result, tracker_packet)
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                self._record_fatal_worker_error("strict same-seq tracker/PCD", exc)
 
     def _wait_for_first_frame(self) -> FramePacket | None:
         while not self.stop_event.is_set():
@@ -3631,19 +3728,43 @@ class RealtimeMaskedEdgeTamPcdDemo:
             filter_busy=bool(worker_stats["busy"]),
         )
 
-    def _pcd_worker(self) -> None:
-        last_seq = -1
-        rng = np.random.default_rng()
+    def _write_headless_pcd_result(self, result: PcdBuildResult) -> None:
+        if self.headless_capture_writer is None or result.depth_m is None:
+            return
+        if result.controller_pcd_mask is None or result.object_pcd_mask is None:
+            return
+        self.headless_capture_writer.write_pcd(
+            result.packet,
+            depth_m=result.depth_m,
+            mask_packet=result.mask_packet,
+            controller_pcd_mask=result.controller_pcd_mask,
+            object_pcd_mask=result.object_pcd_mask,
+            pcd_stride=int(result.pcd_stride),
+            pcd_mask_erode_pixels=int(result.pcd_mask_erode_pixels),
+            object_pcd_mask_erode_pixels=int(result.object_pcd_mask_erode_pixels),
+            controller_pcd_mask_erode_pixels=int(result.controller_pcd_mask_erode_pixels),
+        )
+
+    def _build_pcd_packet_from_mask(
+        self,
+        mask_packet: MaskPacket,
+        *,
+        rng: np.random.Generator,
+        require_filter_seq: bool = False,
+    ) -> PcdBuildResult:
+        start_s = time.perf_counter()
         assert self.ray_x is not None and self.ray_y is not None
         ray_x = self.ray_x
         ray_y = self.ray_y
-        while not self.stop_event.is_set():
-            mask_packet = self.mask_slot.get_latest_after(last_seq)
-            if mask_packet is None:
-                time.sleep(0.001)
-                continue
-            last_seq = mask_packet.seq
-            start_s = time.perf_counter()
+        if mask_packet.depth_source in {"ffs", "ffs_remote"}:
+            if mask_packet.depth_source == "ffs_remote" and self.args.ffs_remote_return in SPARSE_RETURN_TYPES:
+                packet = self._compute_remote_sparse_pcd_packet(
+                    mask_packet=mask_packet,
+                    start_s=start_s,
+                    rng=rng,
+                    require_filter_seq=require_filter_seq,
+                )
+                return PcdBuildResult(packet=packet, depth_m=None, mask_packet=mask_packet)
             ffs_ms = 0.0
             ffs_align_ms = 0.0
             remote_rtt_ms = 0.0
@@ -3651,238 +3772,243 @@ class RealtimeMaskedEdgeTamPcdDemo:
             remote_request_kb = 0.0
             remote_response_kb = 0.0
             depth_convert_ms = 0.0
-            if mask_packet.depth_source in {"ffs", "ffs_remote"}:
-                if mask_packet.depth_source == "ffs_remote" and self.args.ffs_remote_return in SPARSE_RETURN_TYPES:
-                    try:
-                        packet = self._compute_remote_sparse_pcd_packet(
-                            mask_packet=mask_packet,
-                            start_s=start_s,
-                            rng=rng,
-                        )
-                    except Exception as exc:
-                        if not self.stop_event.is_set():
-                            print(f"[WARN] sparse remote FFS frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}", flush=True)
-                        continue
-                    self.render_slot.put(packet)
-                    self.pcd_stats.record(packet.process_done_perf_s)
-                    self._request_render_update()
-                    continue
-                try:
-                    (
-                        depth_m,
-                        ffs_ms,
-                        ffs_align_ms,
-                        remote_rtt_ms,
-                        remote_server_total_ms,
-                        remote_request_kb,
-                        remote_response_kb,
-                    ) = self._compute_external_ffs_depth_color_m(mask_packet)
-                except Exception as exc:
-                    if not self.stop_event.is_set():
-                        print(f"[WARN] FFS depth frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}", flush=True)
-                    continue
-            else:
-                if mask_packet.depth_u16 is None:
-                    continue
-                depth_convert_start_s = time.perf_counter()
-                depth_m = np.ascontiguousarray(
-                    mask_packet.depth_u16.astype(np.float32) * np.float32(mask_packet.depth_scale_m_per_unit)
-                )
-                depth_convert_ms = _elapsed_ms(depth_convert_start_s, time.perf_counter())
+            (
+                depth_m,
+                ffs_ms,
+                ffs_align_ms,
+                remote_rtt_ms,
+                remote_server_total_ms,
+                remote_request_kb,
+                remote_response_kb,
+            ) = self._compute_external_ffs_depth_color_m(mask_packet)
+        else:
+            ffs_ms = 0.0
+            ffs_align_ms = 0.0
+            remote_rtt_ms = 0.0
+            remote_server_total_ms = 0.0
+            remote_request_kb = 0.0
+            remote_response_kb = 0.0
+            if mask_packet.depth_u16 is None:
+                raise RuntimeError("PCD packet requires RGB-D depth")
+            depth_convert_start_s = time.perf_counter()
+            depth_m = np.ascontiguousarray(
+                mask_packet.depth_u16.astype(np.float32) * np.float32(mask_packet.depth_scale_m_per_unit)
+            )
+            depth_convert_ms = _elapsed_ms(depth_convert_start_s, time.perf_counter())
 
-            stride = int(self.args.pcd_stride)
-            if stride > 1:
-                color_bgr = mask_packet.color_bgr[::stride, ::stride]
-                depth_for_pcd = depth_m[::stride, ::stride]
-                controller_mask = mask_packet.controller_mask[::stride, ::stride]
-                object_mask = mask_packet.object_mask[::stride, ::stride]
-                ray_x_for_pcd = ray_x[::stride, ::stride]
-                ray_y_for_pcd = ray_y[::stride, ::stride]
-            else:
-                color_bgr = mask_packet.color_bgr
-                depth_for_pcd = depth_m
-                controller_mask = mask_packet.controller_mask
-                object_mask = mask_packet.object_mask
-                ray_x_for_pcd = ray_x
-                ray_y_for_pcd = ray_y
-            pcd_mask_erode_pixels = int(self.args.pcd_mask_erode_pixels)
-            controller_erode_pixels = controller_pcd_mask_erode_pixels(self.args)
-            object_erode_pixels = object_pcd_mask_erode_pixels(self.args)
-            if controller_erode_pixels > 0:
-                controller_mask = erode_binary_mask(controller_mask, erode_pixels=controller_erode_pixels)
-            if object_erode_pixels > 0:
-                object_mask = erode_binary_mask(object_mask, erode_pixels=object_erode_pixels)
-            empty_pcd_timing = {
-                "pcd_mask_intersection_ms": 0.0,
-                "pcd_select_ms": 0.0,
-                "pcd_point_cap_ms": 0.0,
-                "pcd_backproject_ms": 0.0,
-                "pcd_color_gather_ms": 0.0,
-                "pcd_raw_points": 0.0,
-                "pcd_cap_points": 0.0,
-            }
-            if controller_tracking_enabled(self.args):
-                controller_xyz, controller_colors, controller_pcd_timing = backproject_masked_rgbd_profiled(
-                    color_bgr=color_bgr,
-                    depth_m=depth_for_pcd,
-                    mask=controller_mask,
-                    ray_x=ray_x_for_pcd,
-                    ray_y=ray_y_for_pcd,
-                    depth_min_m=float(self.args.depth_min_m),
-                    depth_max_m=float(self.args.depth_max_m),
-                    max_points=int(self.args.pcd_max_points),
-                    color_mode=str(self.args.pcd_color_mode),
-                    class_rgb=tuple(self.args.controller_color),
-                    rng=rng,
-                )
-            else:
-                controller_xyz = np.empty((0, 3), dtype=np.float32)
-                controller_colors = np.empty((0, 3), dtype=np.uint8)
-                controller_pcd_timing = dict(empty_pcd_timing)
-            if object_tracking_enabled(self.args):
-                object_xyz, object_colors, object_pcd_timing = backproject_masked_rgbd_profiled(
-                    color_bgr=color_bgr,
-                    depth_m=depth_for_pcd,
-                    mask=object_mask,
-                    ray_x=ray_x_for_pcd,
-                    ray_y=ray_y_for_pcd,
-                    depth_min_m=float(self.args.depth_min_m),
-                    depth_max_m=float(self.args.depth_max_m),
-                    max_points=int(self.args.pcd_max_points),
-                    color_mode=str(self.args.pcd_color_mode),
-                    class_rgb=tuple(self.args.object_color),
-                    rng=rng,
-                )
-            else:
-                object_xyz = np.empty((0, 3), dtype=np.float32)
-                object_colors = np.empty((0, 3), dtype=np.uint8)
-                object_pcd_timing = dict(empty_pcd_timing)
-            controller_raw_points = int(controller_pcd_timing.get("pcd_raw_points", len(controller_xyz)))
-            controller_cap_points = int(controller_pcd_timing.get("pcd_cap_points", len(controller_xyz)))
-            object_raw_points = int(object_pcd_timing.get("pcd_raw_points", len(object_xyz)))
-            object_cap_points = int(object_pcd_timing.get("pcd_cap_points", len(object_xyz)))
-            render_controller_xyz = controller_xyz
-            render_controller_colors = controller_colors
-            render_object_xyz = object_xyz
-            render_object_colors = object_colors
-            filter_output: FilterOutput | None = None
-            using_filtered = False
+        stride = int(self.args.pcd_stride)
+        if stride > 1:
+            color_bgr = mask_packet.color_bgr[::stride, ::stride]
+            depth_for_pcd = depth_m[::stride, ::stride]
+            controller_mask = mask_packet.controller_mask[::stride, ::stride]
+            object_mask = mask_packet.object_mask[::stride, ::stride]
+            ray_x_for_pcd = ray_x[::stride, ::stride]
+            ray_y_for_pcd = ray_y[::stride, ::stride]
+        else:
+            color_bgr = mask_packet.color_bgr
+            depth_for_pcd = depth_m
+            controller_mask = mask_packet.controller_mask
+            object_mask = mask_packet.object_mask
+            ray_x_for_pcd = ray_x
+            ray_y_for_pcd = ray_y
+        pcd_mask_erode_pixels = int(self.args.pcd_mask_erode_pixels)
+        controller_erode_pixels = controller_pcd_mask_erode_pixels(self.args)
+        object_erode_pixels = object_pcd_mask_erode_pixels(self.args)
+        if controller_erode_pixels > 0:
+            controller_mask = erode_binary_mask(controller_mask, erode_pixels=controller_erode_pixels)
+        if object_erode_pixels > 0:
+            object_mask = erode_binary_mask(object_mask, erode_pixels=object_erode_pixels)
+        empty_pcd_timing = {
+            "pcd_mask_intersection_ms": 0.0,
+            "pcd_select_ms": 0.0,
+            "pcd_point_cap_ms": 0.0,
+            "pcd_backproject_ms": 0.0,
+            "pcd_color_gather_ms": 0.0,
+            "pcd_raw_points": 0.0,
+            "pcd_cap_points": 0.0,
+        }
+        if controller_tracking_enabled(self.args):
+            controller_xyz, controller_colors, controller_pcd_timing = backproject_masked_rgbd_profiled(
+                color_bgr=color_bgr,
+                depth_m=depth_for_pcd,
+                mask=controller_mask,
+                ray_x=ray_x_for_pcd,
+                ray_y=ray_y_for_pcd,
+                depth_min_m=float(self.args.depth_min_m),
+                depth_max_m=float(self.args.depth_max_m),
+                max_points=int(self.args.pcd_max_points),
+                color_mode=str(self.args.pcd_color_mode),
+                class_rgb=tuple(self.args.controller_color),
+                rng=rng,
+            )
+        else:
+            controller_xyz = np.empty((0, 3), dtype=np.float32)
+            controller_colors = np.empty((0, 3), dtype=np.uint8)
+            controller_pcd_timing = dict(empty_pcd_timing)
+        if object_tracking_enabled(self.args):
+            object_xyz, object_colors, object_pcd_timing = backproject_masked_rgbd_profiled(
+                color_bgr=color_bgr,
+                depth_m=depth_for_pcd,
+                mask=object_mask,
+                ray_x=ray_x_for_pcd,
+                ray_y=ray_y_for_pcd,
+                depth_min_m=float(self.args.depth_min_m),
+                depth_max_m=float(self.args.depth_max_m),
+                max_points=int(self.args.pcd_max_points),
+                color_mode=str(self.args.pcd_color_mode),
+                class_rgb=tuple(self.args.object_color),
+                rng=rng,
+            )
+        else:
+            object_xyz = np.empty((0, 3), dtype=np.float32)
+            object_colors = np.empty((0, 3), dtype=np.uint8)
+            object_pcd_timing = dict(empty_pcd_timing)
+        controller_raw_points = int(controller_pcd_timing.get("pcd_raw_points", len(controller_xyz)))
+        controller_cap_points = int(controller_pcd_timing.get("pcd_cap_points", len(controller_xyz)))
+        object_raw_points = int(object_pcd_timing.get("pcd_raw_points", len(object_xyz)))
+        object_cap_points = int(object_pcd_timing.get("pcd_cap_points", len(object_xyz)))
+        render_controller_xyz = controller_xyz
+        render_controller_colors = controller_colors
+        render_object_xyz = object_xyz
+        render_object_colors = object_colors
+        filter_output: FilterOutput | None = None
+        using_filtered = False
 
-            if pcd_filter_enabled(self.args):
-                if str(self.args.pcd_filter_mode) == "sync":
-                    filter_input = self._make_filter_input(
-                        seq=mask_packet.seq,
-                        object_xyz=object_xyz,
-                        object_colors=object_colors,
-                        controller_xyz=controller_xyz,
-                        controller_colors=controller_colors,
-                    )
-                    self.filter_submit_stats.record()
-                    filter_output = self._filter_pcd_input(filter_input)
-                    self.filter_output_stats.record(filter_output.output_perf_s)
-                    render_controller_xyz = filter_output.controller_xyz
-                    render_controller_colors = filter_output.controller_rgb
-                    render_object_xyz = filter_output.object_xyz
-                    render_object_colors = filter_output.object_rgb
-                    using_filtered = True
-                elif str(self.args.pcd_filter_mode) == "async":
-                    worker = self.filter_worker
-                    if worker is not None:
-                        latest = worker.latest_output()
-                        if latest is not None:
-                            filter_output = latest
-                            if int(latest.seq) != self._last_filter_output_seq_recorded:
-                                self.filter_output_stats.record(latest.output_perf_s)
-                                self._last_filter_output_seq_recorded = int(latest.seq)
-                            if self._filter_output_is_fresh(packet_seq=mask_packet.seq, output=latest):
-                                render_controller_xyz = latest.controller_xyz
-                                render_controller_colors = latest.controller_rgb
-                                render_object_xyz = latest.object_xyz
-                                render_object_colors = latest.object_rgb
-                                using_filtered = True
-                        if mask_packet.seq % int(self.args.filter_every_n) == 0:
-                            if not worker.is_busy():
-                                worker.submit_latest(
-                                    self._make_filter_input(
-                                        seq=mask_packet.seq,
-                                        object_xyz=object_xyz,
-                                        object_colors=object_colors,
-                                        controller_xyz=controller_xyz,
-                                        controller_colors=controller_colors,
-                                    )
+        if pcd_filter_enabled(self.args):
+            if str(self.args.pcd_filter_mode) == "sync":
+                filter_input = self._make_filter_input(
+                    seq=mask_packet.seq,
+                    object_xyz=object_xyz,
+                    object_colors=object_colors,
+                    controller_xyz=controller_xyz,
+                    controller_colors=controller_colors,
+                )
+                self.filter_submit_stats.record()
+                filter_output = self._filter_pcd_input(filter_input)
+                self.filter_output_stats.record(filter_output.output_perf_s)
+                render_controller_xyz = filter_output.controller_xyz
+                render_controller_colors = filter_output.controller_rgb
+                render_object_xyz = filter_output.object_xyz
+                render_object_colors = filter_output.object_rgb
+                using_filtered = True
+            elif str(self.args.pcd_filter_mode) == "async":
+                worker = self.filter_worker
+                if worker is not None:
+                    latest = worker.latest_output()
+                    if latest is not None:
+                        filter_output = latest
+                        if int(latest.seq) != self._last_filter_output_seq_recorded:
+                            self.filter_output_stats.record(latest.output_perf_s)
+                            self._last_filter_output_seq_recorded = int(latest.seq)
+                        filter_matches = int(latest.seq) == int(mask_packet.seq)
+                        if filter_matches or (
+                            not bool(require_filter_seq)
+                            and self._filter_output_is_fresh(packet_seq=mask_packet.seq, output=latest)
+                        ):
+                            render_controller_xyz = latest.controller_xyz
+                            render_controller_colors = latest.controller_rgb
+                            render_object_xyz = latest.object_xyz
+                            render_object_colors = latest.object_rgb
+                            using_filtered = True
+                    if mask_packet.seq % int(self.args.filter_every_n) == 0:
+                        if not worker.is_busy():
+                            worker.submit_latest(
+                                self._make_filter_input(
+                                    seq=mask_packet.seq,
+                                    object_xyz=object_xyz,
+                                    object_colors=object_colors,
+                                    controller_xyz=controller_xyz,
+                                    controller_colors=controller_colors,
                                 )
-                                self.filter_submit_stats.record()
-                            else:
-                                self._filter_submit_skip_count += 1
-                elif str(self.args.pcd_filter_mode) != "none":
-                    raise ValueError(f"unsupported --pcd-filter-mode {self.args.pcd_filter_mode!r}")
+                            )
+                            self.filter_submit_stats.record()
+                        else:
+                            self._filter_submit_skip_count += 1
+            elif str(self.args.pcd_filter_mode) != "none":
+                raise ValueError(f"unsupported --pcd-filter-mode {self.args.pcd_filter_mode!r}")
 
-            filter_telemetry = self._filter_telemetry_from_output(
-                packet_seq=mask_packet.seq,
-                output=filter_output,
-                using_filtered=using_filtered,
-                object_raw_points=object_raw_points,
-                object_cap_points=object_cap_points,
-                controller_raw_points=controller_raw_points,
-                controller_cap_points=controller_cap_points,
-            )
-            done_s = time.perf_counter()
-            timing = replace(
-                mask_packet.timing,
-                ffs_ms=ffs_ms,
-                ffs_align_ms=ffs_align_ms,
-                remote_rtt_ms=remote_rtt_ms,
-                remote_server_total_ms=remote_server_total_ms,
-                remote_request_kb=remote_request_kb,
-                remote_response_kb=remote_response_kb,
-                depth_convert_ms=depth_convert_ms,
-                pcd_mask_intersection_ms=float(
-                    controller_pcd_timing["pcd_mask_intersection_ms"]
-                    + object_pcd_timing["pcd_mask_intersection_ms"]
-                ),
-                pcd_select_ms=float(controller_pcd_timing["pcd_select_ms"] + object_pcd_timing["pcd_select_ms"]),
-                pcd_point_cap_ms=float(
-                    controller_pcd_timing["pcd_point_cap_ms"] + object_pcd_timing["pcd_point_cap_ms"]
-                ),
-                pcd_backproject_ms=float(
-                    controller_pcd_timing["pcd_backproject_ms"] + object_pcd_timing["pcd_backproject_ms"]
-                ),
-                pcd_color_gather_ms=float(
-                    controller_pcd_timing["pcd_color_gather_ms"] + object_pcd_timing["pcd_color_gather_ms"]
-                ),
-                pcd_filter_ms=float(filter_telemetry.filter_ms),
-                object_filter_ms=float(filter_telemetry.object_filter_ms),
-                controller_filter_ms=float(filter_telemetry.controller_filter_ms),
-                pcd_ms=_elapsed_ms(start_s, done_s),
-            )
-            packet = MaskedPcdPacket(
-                seq=mask_packet.seq,
-                controller_xyz_m=render_controller_xyz,
-                controller_colors_rgb_u8=render_controller_colors,
-                object_xyz_m=render_object_xyz,
-                object_colors_rgb_u8=render_object_colors,
-                intrinsics=mask_packet.intrinsics,
-                receive_perf_s=mask_packet.receive_perf_s,
-                process_done_perf_s=done_s,
-                dropped_capture_frames=mask_packet.dropped_capture_frames,
-                dropped_seg_frames=self.mask_slot.dropped_count,
-                timing=timing,
-                filter_telemetry=filter_telemetry,
-            )
-            self.render_slot.put(packet)
-            if self.headless_capture_writer is not None:
-                self.headless_capture_writer.write_pcd(
-                    packet,
-                    depth_m=depth_m,
-                    mask_packet=mask_packet,
-                    controller_pcd_mask=controller_mask,
-                    object_pcd_mask=object_mask,
-                    pcd_stride=stride,
-                    pcd_mask_erode_pixels=pcd_mask_erode_pixels,
-                    object_pcd_mask_erode_pixels=object_erode_pixels,
-                    controller_pcd_mask_erode_pixels=controller_erode_pixels,
-                )
-            self.pcd_stats.record(done_s)
+        filter_telemetry = self._filter_telemetry_from_output(
+            packet_seq=mask_packet.seq,
+            output=filter_output,
+            using_filtered=using_filtered,
+            object_raw_points=object_raw_points,
+            object_cap_points=object_cap_points,
+            controller_raw_points=controller_raw_points,
+            controller_cap_points=controller_cap_points,
+        )
+        done_s = time.perf_counter()
+        timing = replace(
+            mask_packet.timing,
+            ffs_ms=ffs_ms,
+            ffs_align_ms=ffs_align_ms,
+            remote_rtt_ms=remote_rtt_ms,
+            remote_server_total_ms=remote_server_total_ms,
+            remote_request_kb=remote_request_kb,
+            remote_response_kb=remote_response_kb,
+            depth_convert_ms=depth_convert_ms,
+            pcd_mask_intersection_ms=float(
+                controller_pcd_timing["pcd_mask_intersection_ms"]
+                + object_pcd_timing["pcd_mask_intersection_ms"]
+            ),
+            pcd_select_ms=float(controller_pcd_timing["pcd_select_ms"] + object_pcd_timing["pcd_select_ms"]),
+            pcd_point_cap_ms=float(
+                controller_pcd_timing["pcd_point_cap_ms"] + object_pcd_timing["pcd_point_cap_ms"]
+            ),
+            pcd_backproject_ms=float(
+                controller_pcd_timing["pcd_backproject_ms"] + object_pcd_timing["pcd_backproject_ms"]
+            ),
+            pcd_color_gather_ms=float(
+                controller_pcd_timing["pcd_color_gather_ms"] + object_pcd_timing["pcd_color_gather_ms"]
+            ),
+            pcd_filter_ms=float(filter_telemetry.filter_ms),
+            object_filter_ms=float(filter_telemetry.object_filter_ms),
+            controller_filter_ms=float(filter_telemetry.controller_filter_ms),
+            pcd_ms=_elapsed_ms(start_s, done_s),
+        )
+        packet = MaskedPcdPacket(
+            seq=mask_packet.seq,
+            controller_xyz_m=render_controller_xyz,
+            controller_colors_rgb_u8=render_controller_colors,
+            object_xyz_m=render_object_xyz,
+            object_colors_rgb_u8=render_object_colors,
+            intrinsics=mask_packet.intrinsics,
+            receive_perf_s=mask_packet.receive_perf_s,
+            process_done_perf_s=done_s,
+            dropped_capture_frames=mask_packet.dropped_capture_frames,
+            dropped_seg_frames=self.mask_slot.dropped_count,
+            timing=timing,
+            filter_telemetry=filter_telemetry,
+        )
+        return PcdBuildResult(
+            packet=packet,
+            depth_m=depth_m,
+            mask_packet=mask_packet,
+            controller_pcd_mask=controller_mask,
+            object_pcd_mask=object_mask,
+            pcd_stride=stride,
+            pcd_mask_erode_pixels=pcd_mask_erode_pixels,
+            object_pcd_mask_erode_pixels=object_erode_pixels,
+            controller_pcd_mask_erode_pixels=controller_erode_pixels,
+        )
+
+    def _pcd_worker(self) -> None:
+        last_seq = -1
+        rng = np.random.default_rng()
+        while not self.stop_event.is_set():
+            mask_packet = self.mask_slot.get_latest_after(last_seq)
+            if mask_packet is None:
+                time.sleep(0.001)
+                continue
+            last_seq = mask_packet.seq
+            try:
+                result = self._build_pcd_packet_from_mask(mask_packet, rng=rng)
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    print(f"[WARN] PCD frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}", flush=True)
+                continue
+            self.render_slot.put(result.packet)
+            self._write_headless_pcd_result(result)
+            self.pcd_stats.record(result.packet.process_done_perf_s)
             self._request_render_update()
 
     def _depth_profile_worker(self) -> None:
@@ -4170,6 +4296,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         mask_packet: MaskPacket,
         start_s: float,
         rng: np.random.Generator,
+        require_filter_seq: bool = False,
     ) -> MaskedPcdPacket:
         assert self.ray_x is not None and self.ray_y is not None
         mask_u8 = self._remote_quality_mask_u8(mask_packet)
@@ -4212,7 +4339,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 latest = self.filter_worker.latest_output()
                 if latest is not None:
                     filter_output = latest
-                    if self._filter_output_is_fresh(packet_seq=mask_packet.seq, output=latest):
+                    filter_matches = int(latest.seq) == int(mask_packet.seq)
+                    if filter_matches or (
+                        not bool(require_filter_seq)
+                        and self._filter_output_is_fresh(packet_seq=mask_packet.seq, output=latest)
+                    ):
                         render_controller_xyz = latest.controller_xyz
                         render_controller_colors = latest.controller_rgb
                         render_object_xyz = latest.object_xyz
@@ -4450,6 +4581,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             for value in (self.args.pcd_max_points, self.args.render_max_points_per_layer)
             if int(value) > 0
         ]
+        strict_sync_enabled = tracker_enabled(self.args)
         pcd_layer_capacity = min(pcd_caps) if pcd_caps else 0
         tracker_layer_capacity = int(self.args.tracker_overlay_max_points)
         if tracker_layer_capacity <= 0:
@@ -4461,9 +4593,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
         render_post_gate = CoalescedPostGate()
         last_render_seq = {"value": -1}
         last_marker_seq = {"value": -1}
+        last_pair_seq = {"value": -1}
         latest_render_packet: dict[str, MaskedPcdPacket | None] = {"value": None}
         latest_marker_packet: dict[str, TrackerMarkerPacket | None] = {"value": None}
+        latest_pair_packet: dict[str, PairedRenderPacket | None] = {"value": None}
         fatal_exit_posted = {"value": False}
+        if strict_sync_enabled:
+            hud_label.text = self._format_strict_sync_waiting_hud()
 
         def reset_camera() -> None:
             if str(self.args.view_mode) == "camera":
@@ -4486,6 +4622,63 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 scene_widget.setup_camera(60.0, bounds, [0.0, 0.0, 0.8])
 
         def render_latest() -> bool:
+            if strict_sync_enabled:
+                pair = self.paired_render_slot.get_latest_after(last_pair_seq["value"])
+                if pair is None:
+                    if latest_pair_packet["value"] is None:
+                        hud_label.text = self._format_strict_sync_waiting_hud()
+                        return True
+                    return False
+                last_pair_seq["value"] = pair.seq
+                latest_pair_packet["value"] = pair
+                packet = pair.pcd_packet
+                marker_packet = pair.tracker_packet
+                controller_convert_ms, controller_update_ms = update_layer(
+                    controller_state,
+                    packet.controller_xyz_m,
+                    packet.controller_colors_rgb_u8,
+                    max_points=int(self.args.render_max_points_per_layer),
+                )
+                object_convert_ms, object_update_ms = update_layer(
+                    object_state,
+                    packet.object_xyz_m,
+                    packet.object_colors_rgb_u8,
+                    max_points=int(self.args.render_max_points_per_layer),
+                )
+                tracker_convert_ms, tracker_update_ms = update_layer(
+                    tracker_state,
+                    marker_packet.marker_xyz_m,
+                    marker_packet.marker_colors_rgb_u8,
+                )
+                if not camera_initialized["value"] and packet.point_count > 0:
+                    reset_camera()
+                    camera_initialized["value"] = True
+                render_time_s = time.perf_counter()
+                latency_ms = _elapsed_ms(packet.receive_perf_s, render_time_s)
+                timing = replace(
+                    packet.timing,
+                    open3d_convert_ms=float(controller_convert_ms + object_convert_ms + tracker_convert_ms),
+                    open3d_update_ms=float(controller_update_ms + object_update_ms + tracker_update_ms),
+                    receive_to_render_ms=latency_ms,
+                )
+                self.render_stats.record_render(render_time_s=render_time_s, latency_ms=latency_ms)
+                hud_label.text = self._format_hud(
+                    packet=packet,
+                    timing=timing,
+                    tracker_packet=marker_packet,
+                    strict_sync=True,
+                    waiting_for_pair=True,
+                )
+                self._maybe_log_debug(
+                    packet=packet,
+                    timing=timing,
+                    now_s=render_time_s,
+                    tracker_packet=marker_packet,
+                    strict_sync=True,
+                    waiting_for_pair=True,
+                )
+                return True
+
             packet = self.render_slot.get_latest_after(last_render_seq["value"])
             marker_packet = self.tracker_marker_slot.get_latest_after(last_marker_seq["value"])
             if packet is None and marker_packet is None:
@@ -4576,8 +4769,17 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 elif (
                     not self.stop_event.is_set()
                     and (
-                        self.render_slot.latest_seq() > last_render_seq["value"]
-                        or self.tracker_marker_slot.latest_seq() > last_marker_seq["value"]
+                        (
+                            strict_sync_enabled
+                            and self.paired_render_slot.latest_seq() > last_pair_seq["value"]
+                        )
+                        or (
+                            not strict_sync_enabled
+                            and (
+                                self.render_slot.latest_seq() > last_render_seq["value"]
+                                or self.tracker_marker_slot.latest_seq() > last_marker_seq["value"]
+                            )
+                        )
                     )
                 ):
                     request_render_update()
@@ -4632,6 +4834,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         packet: MaskedPcdPacket,
         timing: PipelineTiming,
         tracker_packet: TrackerMarkerPacket | None = None,
+        strict_sync: bool = False,
+        waiting_for_pair: bool = False,
     ) -> str:
         status = "late" if timing.receive_to_render_ms > self.args.latency_target_ms else "ok"
         max_points = "uncapped" if self.args.pcd_max_points == 0 else str(self.args.pcd_max_points)
@@ -4645,16 +4849,24 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if tracker_enabled(self.args):
             if tracker_packet is None:
                 tracker_line = (
-                    f"tracker: {self.args.tracker_backend} waiting  "
+                    f"tracker: {self.args.tracker_backend} waiting  strict_sync={int(bool(strict_sync))}  "
+                    f"waiting_for_pair={int(bool(waiting_for_pair))}  "
                     f"queries={int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS}  "
                     f"scope={self.args.tracker_display_scope}  device={self.args.tracker_device}"
                 )
             else:
                 marker_age_ms = _elapsed_ms(tracker_packet.process_done_perf_s, time.perf_counter())
+                sync_text = (
+                    f"  strict_sync=1  paired_seq={int(packet.seq)}  waiting_for_pair={int(bool(waiting_for_pair))}"
+                    if bool(strict_sync)
+                    else ""
+                )
                 tracker_line = (
                     f"tracker: {tracker_packet.backend}  fps={self.tracker_stats.fps:.1f}  "
                     f"markers={tracker_packet.marker_count}/{tracker_packet.query_count}  "
                     f"consistent={tracker_packet.consistent_visible_count}/{tracker_packet.query_count}  "
+                    f"seq={int(tracker_packet.seq)}"
+                    f"{sync_text}  "
                     f"scope={tracker_packet.display_scope}  age={marker_age_ms:.0f} ms  "
                     f"model={tracker_packet.model_ms:.0f} ms  lift={tracker_packet.lift_ms:.1f} ms  "
                     f"e2e={tracker_packet.e2e_ms:.0f} ms"
@@ -4710,10 +4922,23 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"{filter_line}\n"
             f"{filter_points_line}\n"
             f"dropped capture/seg/pcd: {packet.dropped_capture_frames} / {packet.dropped_seg_frames} / "
-            f"{self.render_slot.dropped_count}\n"
+            f"{self.paired_render_slot.dropped_count if bool(strict_sync) else self.render_slot.dropped_count}\n"
             f"EdgeTAM: {self.args.model_id}  mode={self.args.track_mode}  compile={self.args.compile_mode}  "
             f"dtype={self.args.dtype}{preset_text}\n"
             f"{depth_line}{quality_line}\n"
+            f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
+            f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
+        )
+
+    def _format_strict_sync_waiting_hud(self) -> str:
+        return (
+            f"capture/seg/pcd/tracker/render FPS: {self.capture_stats.fps:.1f} / {self.seg_stats.fps:.1f} / "
+            f"{self.pcd_stats.fps:.1f} / {self.tracker_stats.fps:.1f} / {self.render_stats.render_fps:.1f}\n"
+            "strict_sync=1  waiting_for_pair=1  paired_seq=none\n"
+            f"tracker: {self.args.tracker_backend} waiting  "
+            f"queries={int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS}  "
+            f"scope={self.args.tracker_display_scope}  device={self.args.tracker_device}\n"
+            f"depth: {self.args.depth_source}  color={self.args.pcd_color_mode}\n"
             f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
             f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
         )
@@ -4728,11 +4953,26 @@ class RealtimeMaskedEdgeTamPcdDemo:
         dropped_capture_frames: int = 0,
         dropped_seg_frames: int = 0,
         filter_telemetry: PcdFilterTelemetry | None = None,
+        tracker_packet: TrackerMarkerPacket | None = None,
+        strict_sync: bool = False,
+        waiting_for_pair: bool = False,
     ) -> None:
         filter_info = filter_telemetry or PcdFilterTelemetry()
+        if bool(strict_sync):
+            paired_seq = str(int(seq)) if tracker_packet is not None else "none"
+            tracker_seq = str(int(tracker_packet.seq)) if tracker_packet is not None else "none"
+        else:
+            paired_seq = "-1"
+            tracker_seq = str(int(tracker_packet.seq)) if tracker_packet is not None else "-1"
+        tracker_model_ms = float(tracker_packet.model_ms) if tracker_packet is not None else 0.0
+        tracker_e2e_ms = float(tracker_packet.e2e_ms) if tracker_packet is not None else 0.0
         print(
             "[masked-edgetam-debug] "
             f"seq={int(seq)} "
+            f"strict_sync={int(bool(strict_sync))} "
+            f"paired_seq={paired_seq} "
+            f"tracker_seq={tracker_seq} "
+            f"waiting_for_pair={int(bool(waiting_for_pair))} "
             f"capture_fps={self.capture_stats.fps:.1f} "
             f"seg_fps={self.seg_stats.fps:.1f} "
             f"depth_fps={self.depth_stats.fps:.1f} "
@@ -4769,6 +5009,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"pcd_ms={timing.pcd_ms:.2f} "
             f"render_ms={timing.open3d_update_ms:.2f} "
             f"e2e_latency_ms={timing.receive_to_render_ms:.2f} "
+            f"tracker_model_ms={tracker_model_ms:.2f} "
+            f"tracker_e2e_ms={tracker_e2e_ms:.2f} "
             f"filter_enabled={int(filter_info.enabled)} "
             f"filter_mode={filter_info.mode} "
             f"render_using_filtered={int(filter_info.render_using_filtered)} "
@@ -4796,18 +5038,70 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"object_points={int(object_points)} "
             f"dropped_capture={int(dropped_capture_frames)} "
             f"dropped_seg={int(dropped_seg_frames)} "
-            f"dropped_pcd={self.render_slot.dropped_count}",
+            f"dropped_pcd={self.paired_render_slot.dropped_count if bool(strict_sync) else self.render_slot.dropped_count}",
             flush=True,
         )
 
     def _headless_debug_worker(self) -> None:
         last_logged_seq = -1
+        last_logged_pair_seq = -1
+        last_logged_waiting_seq = -1
         while not self.stop_event.is_set():
             now_s = time.perf_counter()
             if now_s - self._last_debug_log_s < DEBUG_LOG_INTERVAL_S:
                 time.sleep(0.05)
                 continue
             self._last_debug_log_s = now_s
+            if tracker_enabled(self.args):
+                pair = self.paired_render_slot.get_latest_after(last_logged_pair_seq)
+                if pair is not None:
+                    last_logged_pair_seq = pair.seq
+                    pcd_packet = pair.pcd_packet
+                    timing = replace(
+                        pcd_packet.timing,
+                        receive_to_render_ms=_elapsed_ms(pcd_packet.receive_perf_s, pair.tracker_packet.process_done_perf_s),
+                    )
+                    self._emit_debug_line(
+                        seq=pcd_packet.seq,
+                        timing=timing,
+                        controller_points=pcd_packet.controller_point_count,
+                        object_points=pcd_packet.object_point_count,
+                        dropped_capture_frames=pcd_packet.dropped_capture_frames,
+                        dropped_seg_frames=pcd_packet.dropped_seg_frames,
+                        filter_telemetry=pcd_packet.filter_telemetry,
+                        tracker_packet=pair.tracker_packet,
+                        strict_sync=True,
+                        waiting_for_pair=True,
+                    )
+                    continue
+                mask_packet = self.mask_slot.get_latest_after(last_logged_waiting_seq)
+                if mask_packet is not None:
+                    last_logged_waiting_seq = mask_packet.seq
+                    timing = replace(
+                        mask_packet.timing,
+                        receive_to_render_ms=_elapsed_ms(mask_packet.receive_perf_s, now_s),
+                    )
+                    self._emit_debug_line(
+                        seq=mask_packet.seq,
+                        timing=timing,
+                        dropped_capture_frames=mask_packet.dropped_capture_frames,
+                        dropped_seg_frames=self.mask_slot.dropped_count,
+                        strict_sync=True,
+                        waiting_for_pair=True,
+                    )
+                    continue
+                frame = self.capture_slot.get_latest_after(last_logged_waiting_seq)
+                if frame is not None:
+                    last_logged_waiting_seq = frame.seq
+                    timing = replace(frame.timing, receive_to_render_ms=_elapsed_ms(frame.receive_perf_s, now_s))
+                    self._emit_debug_line(
+                        seq=frame.seq,
+                        timing=timing,
+                        dropped_capture_frames=self.capture_slot.dropped_count,
+                        strict_sync=True,
+                        waiting_for_pair=True,
+                    )
+                continue
             pcd_packet = self.render_slot.get_latest_after(last_logged_seq)
             if pcd_packet is not None:
                 last_logged_seq = pcd_packet.seq
@@ -4867,7 +5161,16 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     dropped_capture_frames=self.capture_slot.dropped_count,
                 )
 
-    def _maybe_log_debug(self, *, packet: MaskedPcdPacket, timing: PipelineTiming, now_s: float) -> None:
+    def _maybe_log_debug(
+        self,
+        *,
+        packet: MaskedPcdPacket,
+        timing: PipelineTiming,
+        now_s: float,
+        tracker_packet: TrackerMarkerPacket | None = None,
+        strict_sync: bool = False,
+        waiting_for_pair: bool = False,
+    ) -> None:
         if not self.args.debug or now_s - self._last_debug_log_s < DEBUG_LOG_INTERVAL_S:
             return
         self._last_debug_log_s = now_s
@@ -4879,6 +5182,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             dropped_capture_frames=packet.dropped_capture_frames,
             dropped_seg_frames=packet.dropped_seg_frames,
             filter_telemetry=packet.filter_telemetry,
+            tracker_packet=tracker_packet,
+            strict_sync=strict_sync,
+            waiting_for_pair=waiting_for_pair,
         )
 
 

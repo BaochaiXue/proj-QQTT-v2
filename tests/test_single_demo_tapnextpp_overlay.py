@@ -93,7 +93,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         demo.validate_args(args)
         return args
 
-    def _mask_packet(self) -> demo.MaskPacket:
+    def _mask_packet(self, seq: int = 0) -> demo.MaskPacket:
         controller = np.zeros((4, 4), dtype=bool)
         obj = np.zeros((4, 4), dtype=bool)
         controller[2:, :] = True
@@ -101,7 +101,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         color = np.zeros((4, 4, 3), dtype=np.uint8)
         depth = np.full((4, 4), 1000, dtype=np.uint16)
         return demo.MaskPacket(
-            seq=0,
+            seq=int(seq),
             color_bgr=color,
             depth_source="realsense",
             intrinsics=CameraIntrinsics(fx=100.0, fy=100.0, cx=0.0, cy=0.0),
@@ -115,14 +115,14 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             depth_u16=depth,
         )
 
-    def _pcd_packet(self) -> demo.MaskedPcdPacket:
+    def _pcd_packet(self, seq: int = 0) -> demo.MaskedPcdPacket:
         controller_points = np.array([[0.0, 0.0, 0.5]], dtype=np.float32)
         object_points = np.array([[0.05, 0.0, 0.6]], dtype=np.float32)
         controller_colors = np.array([[255, 0, 0]], dtype=np.uint8)
         object_colors = np.array([[0, 255, 0]], dtype=np.uint8)
         now = time.perf_counter()
         return demo.MaskedPcdPacket(
-            seq=0,
+            seq=int(seq),
             controller_xyz_m=controller_points,
             controller_colors_rgb_u8=controller_colors,
             object_xyz_m=object_points,
@@ -140,6 +140,29 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 object_output_points=1,
                 controller_output_points=1,
             ),
+        )
+
+    def _tracker_packet(self, seq: int = 0) -> demo.TrackerMarkerPacket:
+        now = time.perf_counter()
+        return demo.TrackerMarkerPacket(
+            seq=int(seq),
+            marker_xyz_m=np.array([[0.0, 0.0, 0.5]], dtype=np.float32),
+            marker_colors_rgb_u8=np.array([[255, 0, 0]], dtype=np.uint8),
+            query_points_yx=np.array([[1.0, 1.0]], dtype=np.float32),
+            tracks_yx=np.array([[1.0, 1.0]], dtype=np.float32),
+            visibility=np.ones((1,), dtype=np.float32),
+            query_is_object=np.array([True], dtype=bool),
+            query_is_controller=np.array([False], dtype=bool),
+            receive_perf_s=now,
+            process_done_perf_s=now,
+            query_count=1,
+            consistent_visible_count=1,
+            model_ms=1.25,
+            lift_ms=0.5,
+            e2e_ms=2.0,
+            backend="tapnextpp",
+            display_scope="union",
+            query_indices=np.array([0], dtype=np.int64),
         )
 
     def _ffs_mask_packet(self, seq: int) -> demo.MaskPacket:
@@ -313,6 +336,82 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         )
 
         self.assertIn("consistent=3/4", text)
+
+    def test_strict_pair_rejects_mismatched_pcd_and_tracker_seq(self) -> None:
+        args = self._tracker_args()
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        pcd_packet = self._pcd_packet(seq=10)
+        tracker_packet = self._tracker_packet(seq=9)
+        pcd_result = demo.PcdBuildResult(
+            packet=pcd_packet,
+            depth_m=None,
+            mask_packet=self._mask_packet(seq=10),
+        )
+
+        with self.assertRaisesRegex(ValueError, "same-seq render packet mismatch"):
+            runtime._publish_strict_render_pair(pcd_result, tracker_packet)
+
+        self.assertEqual(runtime.paired_render_slot.latest_seq(), -1)
+        self.assertIsNone(runtime.paired_render_slot.get_latest_after(-1))
+
+    def test_strict_pair_publish_updates_pcd_and_tracker_together(self) -> None:
+        args = self._tracker_args()
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        render_requests: list[int] = []
+        runtime._request_render_update = lambda: render_requests.append(1)
+        pcd_result = demo.PcdBuildResult(
+            packet=self._pcd_packet(seq=11),
+            depth_m=None,
+            mask_packet=self._mask_packet(seq=11),
+        )
+        tracker_packet = self._tracker_packet(seq=11)
+
+        pair = runtime._publish_strict_render_pair(pcd_result, tracker_packet)
+
+        self.assertEqual(pair.seq, 11)
+        self.assertEqual(pair.pcd_packet.seq, 11)
+        self.assertEqual(pair.tracker_packet.seq, 11)
+        self.assertEqual(render_requests, [1])
+        self.assertIs(runtime.paired_render_slot.get_latest_after(-1), pair)
+        self.assertEqual(runtime.render_slot.latest_seq(), -1)
+        self.assertEqual(runtime.tracker_marker_slot.latest_seq(), -1)
+
+    def test_tracker_enabled_start_threads_uses_strict_pair_worker(self) -> None:
+        args = self._tracker_args()
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        started: list[str] = []
+
+        def capture_worker() -> None:
+            started.append("capture")
+
+        def seg_worker() -> None:
+            started.append("seg")
+
+        def strict_pair_worker() -> None:
+            started.append("strict-pair")
+            runtime.stop_event.set()
+
+        def tracker_worker() -> None:
+            started.append("tracker")
+
+        def pcd_worker() -> None:
+            started.append("pcd")
+
+        runtime._capture_worker = capture_worker  # type: ignore[method-assign]
+        runtime._seg_worker = seg_worker  # type: ignore[method-assign]
+        runtime._strict_paired_worker = strict_pair_worker  # type: ignore[method-assign]
+        runtime._tracker_worker = tracker_worker  # type: ignore[method-assign]
+        runtime._pcd_worker = pcd_worker  # type: ignore[method-assign]
+
+        runtime._start_threads()
+        deadline = time.time() + 1.0
+        while time.time() < deadline and "strict-pair" not in started:
+            time.sleep(0.01)
+        runtime.stop()
+
+        self.assertIn("strict-pair", started)
+        self.assertNotIn("tracker", started)
+        self.assertNotIn("pcd", started)
 
     def test_headless_capture_writer_saves_filtered_pcd_depth_and_query_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

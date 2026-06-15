@@ -77,7 +77,11 @@ recent 64-frame state window by default so fake-live replay does not accumulate
 the entire two-minute stream on the GPU. For Demo 3.2 / 3.3 local FFS, the
 runtime serializes TensorRT depth execution and caches a small number of
 color-aligned FFS depth frames by sequence so PCD rendering and TAPNext++ marker
-lifting do not enter the same TensorRT runner concurrently.
+lifting do not enter the same TensorRT runner concurrently. When the TAPNext++
+overlay is enabled, Demo 3.x renders only complete same-`seq` PCD/marker pairs;
+the viewer holds the last complete pair while waiting, so visible PCD FPS is
+expected to drop to tracker FPS instead of mixing older red markers with newer
+point clouds.
 
 Live FFS preview:
 
