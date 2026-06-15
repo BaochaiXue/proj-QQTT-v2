@@ -236,6 +236,25 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertIs(capped_points, points)
         self.assertIs(capped_colors, colors)
 
+    def test_tracker_lift_mask_uses_current_union_mask_and_erosion(self) -> None:
+        packet = self._mask_packet()
+
+        args = self._tracker_args()
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        mask = runtime._tracker_lift_mask(packet)
+        expected_union = np.logical_or(packet.controller_mask, packet.object_mask)
+        self.assertIsNotNone(mask)
+        np.testing.assert_array_equal(mask, expected_union)
+
+        erode_args = self._tracker_args()
+        erode_args.pcd_mask_erode_pixels = 1
+        erode_runtime = demo.RealtimeMaskedEdgeTamPcdDemo(erode_args)
+        eroded = erode_runtime._tracker_lift_mask(packet)
+        expected_eroded = np.zeros_like(expected_union)
+        expected_eroded[1:3, 1:3] = True
+        self.assertIsNotNone(eroded)
+        np.testing.assert_array_equal(eroded, expected_eroded)
+
     def test_tracker_worker_publishes_lifted_marker_packet_with_fake_adapter(self) -> None:
         args = self._tracker_args()
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)

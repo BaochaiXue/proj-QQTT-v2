@@ -2554,6 +2554,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "tracker_display_scope": str(self.args.tracker_display_scope),
             "tracker_overlay_max_points": int(self.args.tracker_overlay_max_points),
             "tracker_marker_point_size": float(self.args.tracker_marker_point_size),
+            "tracker_lift_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
             "tapnet_repo_dir": str(self.args.tapnet_repo_dir),
             "tapnextpp_checkpoint": str(self.args.tapnextpp_checkpoint),
             "tapnextpp_image_size": str(self.args.tapnextpp_image_size),
@@ -2701,10 +2702,15 @@ class RealtimeMaskedEdgeTamPcdDemo:
     def _tracker_lift_mask(self, mask_packet: MaskPacket) -> np.ndarray | None:
         scope = str(self.args.tracker_display_scope)
         if scope == TRACKER_DISPLAY_SCOPE_CONTROLLER:
-            return np.asarray(mask_packet.controller_mask, dtype=bool)
-        if scope == TRACKER_DISPLAY_SCOPE_OBJECT:
-            return np.asarray(mask_packet.object_mask, dtype=bool)
-        return None
+            mask = np.asarray(mask_packet.controller_mask, dtype=bool)
+        elif scope == TRACKER_DISPLAY_SCOPE_OBJECT:
+            mask = np.asarray(mask_packet.object_mask, dtype=bool)
+        else:
+            mask = _tracker_union_mask(mask_packet)
+        erode_pixels = int(self.args.pcd_mask_erode_pixels)
+        if erode_pixels > 0:
+            return erode_binary_mask(mask, erode_pixels=erode_pixels)
+        return np.ascontiguousarray(mask)
 
     def _tracker_worker(self) -> None:
         try:

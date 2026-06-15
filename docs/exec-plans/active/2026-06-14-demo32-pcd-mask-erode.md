@@ -7,6 +7,11 @@ points around the sloth and controller. The async point-cloud filter can be too
 stale to render every frame, so the renderer sometimes falls back to raw PCD
 that already contains FFS/mask-boundary depth artifacts.
 
+After the first pass, remaining red ground points were identified as TAPNext++
+tracker marker visualization: `tracker-display-scope=union` lifted markers
+without applying the current mask, so those markers could still render outside
+the eroded PCD mask.
+
 ## Plan
 
 - Add an explicit realtime masked-PCD option, `--pcd-mask-erode-pixels`, that
@@ -14,6 +19,8 @@ that already contains FFS/mask-boundary depth artifacts.
 - Keep the default at `0` for generic Demo 3/3.1 behavior.
 - When Demo 3.2/3.3 enables FFS PCD filtering, apply a small default erosion
   unless the operator explicitly overrides it.
+- Apply the same current-mask gate to tracker marker lift, including union
+  scope, so marker visualization cannot bypass the PCD mask boundary.
 - Include the value in metadata, dry-run contract, and delegate argv so it is
   visible in logs and reproducible from harness output.
 - Add tests for mask erosion behavior, validation, wrapper forwarding, and FFS
