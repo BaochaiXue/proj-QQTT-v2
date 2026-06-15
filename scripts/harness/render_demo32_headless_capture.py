@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import bisect
+import json
+from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_frames(path: Path) -> list[dict[str, Any]]:
+    frames: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            frames.append(json.loads(line))
+    return frames
+
+
+def _resolve_capture_path(capture_dir: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else capture_dir / path
+
+
+def _trajectory_index(capture_dir: Path) -> tuple[list[int], dict[int, Path]]:
+    by_seq: dict[int, Path] = {}
+    for path in sorted((capture_dir / "query_trajectory").glob("*.npz")):
+        try:
+            seq = int(path.stem)
+        except ValueError:
+            continue
+        by_seq[seq] = path
+    return sorted(by_seq), by_seq
+
+
+def _trajectory_path_for_frame(
+    *,
+    capture_dir: Path,
+    frame: dict[str, Any],
+    trajectory_seqs: list[int],
+    trajectory_by_seq: dict[int, Path],
+) -> Path:
+    exact = _resolve_capture_path(capture_dir, str(frame["query_trajectory_path"]))
+    if exact.is_file():
+        return exact
+    seq = int(frame["seq"])
+    index = bisect.bisect_right(trajectory_seqs, seq) - 1
+    if index >= 0:
+        return trajectory_by_seq[trajectory_seqs[index]]
+    return exact
+
+
+def _project_points(points_xyz: np.ndarray, intrinsics: dict[str, Any], *, width: int, height: int) -> tuple[np.ndarray, np.ndarray]:
+    points = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
+    if points.size == 0:
+        return np.empty((0, 2), dtype=np.int32), np.empty((0,), dtype=bool)
+    z = points[:, 2]
+    valid = np.isfinite(points).all(axis=1) & (z > np.float32(1e-6))
+    fx = np.float32(intrinsics["fx"])
+    fy = np.float32(intrinsics["fy"])
+    cx = np.float32(intrinsics["cx"])
+    cy = np.float32(intrinsics["cy"])
+    u = np.rint(points[:, 0] * fx / z + cx).astype(np.int32)
+    v = np.rint(points[:, 1] * fy / z + cy).astype(np.int32)
+    valid &= (u >= 0) & (u < int(width)) & (v >= 0) & (v < int(height))
+    return np.stack([u, v], axis=1), valid
+
+
+def _draw_projected_points(
+    image_bgr: np.ndarray,
+    points_xyz: np.ndarray,
+    colors_rgb: np.ndarray,
+    intrinsics: dict[str, Any],
+    *,
+    point_size: int,
+    max_points: int,
+) -> int:
+    height, width = image_bgr.shape[:2]
+    points = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
+    colors = np.asarray(colors_rgb, dtype=np.uint8).reshape(-1, 3)
+    if len(points) == 0:
+        return 0
+    if int(max_points) > 0 and len(points) > int(max_points):
+        indices = np.linspace(0, len(points) - 1, int(max_points), dtype=np.int64)
+        points = points[indices]
+        colors = colors[indices]
+    order = np.argsort(points[:, 2])[::-1]
+    points = points[order]
+    colors = colors[order]
+    uv, valid = _project_points(points, intrinsics, width=width, height=height)
+    uv = uv[valid]
+    colors_bgr = colors[valid][:, ::-1]
+    if len(uv) == 0:
+        return 0
+    radius = max(0, int(point_size) // 2)
+    if radius <= 0:
+        image_bgr[uv[:, 1], uv[:, 0]] = colors_bgr
+    else:
+        for dy in range(-radius, radius + 1):
+            yy = np.clip(uv[:, 1] + dy, 0, height - 1)
+            for dx in range(-radius, radius + 1):
+                xx = np.clip(uv[:, 0] + dx, 0, width - 1)
+                image_bgr[yy, xx] = colors_bgr
+    return int(len(uv))
+
+
+def _draw_query_trajectory(
+    image_bgr: np.ndarray,
+    trajectory_path: Path,
+    intrinsics: dict[str, Any],
+    *,
+    trails: dict[int, list[tuple[int, int]]],
+    trail_length: int,
+) -> int:
+    if not trajectory_path.is_file():
+        return 0
+    payload = np.load(trajectory_path, allow_pickle=False)
+    marker_xyz = np.asarray(payload["marker_xyz_m"], dtype=np.float32).reshape(-1, 3)
+    query_indices = np.asarray(payload["query_indices"], dtype=np.int64).reshape(-1)
+    count = min(len(marker_xyz), len(query_indices))
+    if count == 0:
+        return 0
+    height, width = image_bgr.shape[:2]
+    uv, valid = _project_points(marker_xyz[:count], intrinsics, width=width, height=height)
+    visible_indices = query_indices[:count][valid]
+    visible_uv = uv[valid]
+    for query_id, point_uv in zip(visible_indices, visible_uv, strict=False):
+        key = int(query_id)
+        trail = trails.setdefault(key, [])
+        trail.append((int(point_uv[0]), int(point_uv[1])))
+        if len(trail) > int(trail_length):
+            del trail[: len(trail) - int(trail_length)]
+    for trail in trails.values():
+        if len(trail) >= 2:
+            cv2.polylines(image_bgr, [np.asarray(trail, dtype=np.int32)], False, (0, 0, 255), 1, cv2.LINE_AA)
+    for point_uv in visible_uv:
+        cv2.circle(image_bgr, (int(point_uv[0]), int(point_uv[1])), 3, (0, 0, 255), -1, cv2.LINE_AA)
+    return int(len(visible_uv))
+
+
+def render_capture_to_video(
+    *,
+    capture_dir: Path,
+    output: Path,
+    fps: float,
+    point_size: int = 2,
+    max_render_points: int = 0,
+    trail_length: int = 30,
+) -> dict[str, Any]:
+    capture_dir = Path(capture_dir).resolve()
+    metadata = _read_json(capture_dir / "metadata.json")
+    frames = _read_frames(capture_dir / "frames.jsonl")
+    if not frames:
+        raise RuntimeError(f"no saved frames found in {capture_dir / 'frames.jsonl'}")
+    width = int(metadata["width"])
+    height = int(metadata["height"])
+    intrinsics = dict(metadata["intrinsics"])
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    writer = cv2.VideoWriter(
+        str(output),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        float(fps),
+        (width, height),
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"failed to open video writer: {output}")
+    trails: dict[int, list[tuple[int, int]]] = {}
+    rendered_counts: list[dict[str, int]] = []
+    trajectory_seqs, trajectory_by_seq = _trajectory_index(capture_dir)
+    try:
+        for frame in frames:
+            image = np.zeros((height, width, 3), dtype=np.uint8)
+            pcd_path = _resolve_capture_path(capture_dir, str(frame["pcd_path"]))
+            pcd = np.load(pcd_path, allow_pickle=False)
+            controller_count = _draw_projected_points(
+                image,
+                pcd["controller_xyz_m"],
+                pcd["controller_rgb_u8"],
+                intrinsics,
+                point_size=int(point_size),
+                max_points=int(max_render_points),
+            )
+            object_count = _draw_projected_points(
+                image,
+                pcd["object_xyz_m"],
+                pcd["object_rgb_u8"],
+                intrinsics,
+                point_size=int(point_size),
+                max_points=int(max_render_points),
+            )
+            trajectory_count = _draw_query_trajectory(
+                image,
+                _trajectory_path_for_frame(
+                    capture_dir=capture_dir,
+                    frame=frame,
+                    trajectory_seqs=trajectory_seqs,
+                    trajectory_by_seq=trajectory_by_seq,
+                ),
+                intrinsics,
+                trails=trails,
+                trail_length=int(trail_length),
+            )
+            writer.write(image)
+            rendered_counts.append(
+                {
+                    "seq": int(frame["seq"]),
+                    "controller_points": int(controller_count),
+                    "object_points": int(object_count),
+                    "query_points": int(trajectory_count),
+                }
+            )
+    finally:
+        writer.release()
+    summary = {
+        "capture_dir": str(capture_dir),
+        "output": str(output.resolve()),
+        "fps": float(fps),
+        "frame_count": int(len(frames)),
+        "image_size": [int(width), int(height)],
+        "saved_pcd_source": metadata.get("saved_pcd_source"),
+        "rendered_counts": rendered_counts,
+    }
+    summary_path = output.with_name("render_summary.json")
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Render Demo 3.2 headless enhanced-pt capture artifacts to MP4.")
+    parser.add_argument("--capture-dir", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--fps", type=float, default=30.0)
+    parser.add_argument("--point-size", type=int, default=2)
+    parser.add_argument("--max-render-points", type=int, default=0)
+    parser.add_argument("--trail-length", type=int, default=30)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    summary = render_capture_to_video(
+        capture_dir=args.capture_dir,
+        output=args.output,
+        fps=float(args.fps),
+        point_size=int(args.point_size),
+        max_render_points=int(args.max_render_points),
+        trail_length=int(args.trail_length),
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

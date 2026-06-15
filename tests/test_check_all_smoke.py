@@ -17,10 +17,11 @@ class CheckAllSmokeTest(unittest.TestCase):
 
     def test_quick_profile_uses_curated_batched_commands(self) -> None:
         commands = check_all.build_commands(python="python", profile="quick")
-        self.assertEqual(len(commands), 13)
+        self.assertEqual(len(commands), 14)
         self.assertIn(["python", "cameras_viewer.py", "--help"], commands)
         self.assertIn(["python", "record_data_realtime_align.py", "--help"], commands)
         self.assertIn(["python", "data_process/record_data_align.py", "--help"], commands)
+        self.assertIn(["python", "scripts/harness/render_demo32_headless_capture.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visual_compare_depth_panels.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visual_compare_reprojection.py", "--help"], commands)
         self.assertIn(["python", "scripts/harness/visual_compare_turntable.py", "--help"], commands)
@@ -39,6 +40,7 @@ class CheckAllSmokeTest(unittest.TestCase):
         self.assertIn("tests.test_single_demo_v3_runtime", flat_items)
         self.assertIn("tests.test_realtime_masked_edgetam_pcd_filter", flat_items)
         self.assertIn("tests.test_single_demo_tapnextpp_overlay", flat_items)
+        self.assertIn("tests.test_demo32_headless_render_helper", flat_items)
 
     def test_full_profile_keeps_pytest_and_broader_command_surface(self) -> None:
         commands = check_all.build_commands(python="python", profile="full")

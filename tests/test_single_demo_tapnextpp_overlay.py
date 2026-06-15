@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import tempfile
 import threading
 import time
 import unittest
@@ -113,21 +116,30 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         )
 
     def _pcd_packet(self) -> demo.MaskedPcdPacket:
-        empty_points = np.empty((0, 3), dtype=np.float32)
-        empty_colors = np.empty((0, 3), dtype=np.uint8)
+        controller_points = np.array([[0.0, 0.0, 0.5]], dtype=np.float32)
+        object_points = np.array([[0.05, 0.0, 0.6]], dtype=np.float32)
+        controller_colors = np.array([[255, 0, 0]], dtype=np.uint8)
+        object_colors = np.array([[0, 255, 0]], dtype=np.uint8)
         now = time.perf_counter()
         return demo.MaskedPcdPacket(
             seq=0,
-            controller_xyz_m=empty_points,
-            controller_colors_rgb_u8=empty_colors,
-            object_xyz_m=empty_points,
-            object_colors_rgb_u8=empty_colors,
+            controller_xyz_m=controller_points,
+            controller_colors_rgb_u8=controller_colors,
+            object_xyz_m=object_points,
+            object_colors_rgb_u8=object_colors,
             intrinsics=CameraIntrinsics(fx=100.0, fy=100.0, cx=0.0, cy=0.0),
             receive_perf_s=now,
             process_done_perf_s=now,
             dropped_capture_frames=0,
             dropped_seg_frames=0,
             timing=demo.PipelineTiming(),
+            filter_telemetry=demo.PcdFilterTelemetry(
+                enabled=True,
+                mode="sync",
+                render_using_filtered=True,
+                object_output_points=1,
+                controller_output_points=1,
+            ),
         )
 
     def _ffs_mask_packet(self, seq: int) -> demo.MaskPacket:
@@ -301,6 +313,50 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         )
 
         self.assertIn("consistent=3/4", text)
+
+    def test_headless_capture_writer_saves_filtered_pcd_depth_and_query_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "capture"
+            writer = demo.HeadlessCaptureWriter(
+                output_dir,
+                metadata={
+                    "width": 4,
+                    "height": 4,
+                    "intrinsics": {"fx": 100.0, "fy": 100.0, "cx": 0.0, "cy": 0.0},
+                },
+            )
+            now = time.perf_counter()
+            tracker_packet = demo.TrackerMarkerPacket(
+                seq=0,
+                marker_xyz_m=np.array([[0.0, 0.0, 0.5]], dtype=np.float32),
+                marker_colors_rgb_u8=np.array([[255, 0, 0]], dtype=np.uint8),
+                query_points_yx=np.array([[1.0, 1.0]], dtype=np.float32),
+                tracks_yx=np.array([[1.0, 1.0]], dtype=np.float32),
+                visibility=np.ones((1,), dtype=np.float32),
+                query_is_object=np.array([True], dtype=bool),
+                query_is_controller=np.array([False], dtype=bool),
+                receive_perf_s=now,
+                process_done_perf_s=now,
+                query_count=1,
+                consistent_visible_count=1,
+                query_indices=np.array([0], dtype=np.int64),
+            )
+
+            writer.write_tracker(tracker_packet)
+            writer.write_pcd(self._pcd_packet(), depth_m=np.ones((4, 4), dtype=np.float32))
+
+            metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["saved_pcd_source"], "enhanced_pt_filtered")
+            rows = [json.loads(line) for line in (output_dir / "frames.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["filter_telemetry"]["mode"], "sync")
+            self.assertTrue((output_dir / rows[0]["pcd_path"]).is_file())
+            self.assertTrue((output_dir / rows[0]["ffs_depth_path"]).is_file())
+            self.assertTrue((output_dir / rows[0]["query_trajectory_path"]).is_file())
+            pcd = np.load(output_dir / rows[0]["pcd_path"], allow_pickle=False)
+            self.assertEqual(str(pcd["saved_pcd_source"][0]), "enhanced_pt_filtered")
+            trajectory = np.load(output_dir / rows[0]["query_trajectory_path"], allow_pickle=False)
+            np.testing.assert_array_equal(trajectory["query_indices"], np.array([0], dtype=np.int64))
 
     def test_tracker_worker_publishes_lifted_marker_packet_with_fake_adapter(self) -> None:
         args = self._tracker_args()

@@ -620,6 +620,71 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires --render-mode pointcloud"):
             runtime.validate_args(args)
 
+    def test_demo32_fake_live_headless_capture_forces_enhanced_pt_sync_filter(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/headless_case",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertTrue(contract["headless_capture_enabled"])
+        self.assertEqual(contract["headless_capture_dir"], "result/headless_case")
+        self.assertEqual(contract["saved_pcd_source"], "enhanced_pt_filtered")
+        self.assertEqual(contract["track_mode"], "controller-object")
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
+        self.assertTrue(contract["pcd_filter_enabled"])
+        self.assertEqual(contract["pcd_filter_mode"], "sync")
+        self.assertEqual(contract["object_filter"], "enhanced-pt")
+        self.assertEqual(contract["controller_filter"], "enhanced-pt")
+        self.assertEqual(_option_value(delegate, "--render-mode"), "none")
+        self.assertEqual(_option_value(delegate, "--headless-capture-dir"), "result/headless_case")
+        self.assertIn("--enable-pcd-filter", delegate)
+
+    def test_demo32_fake_live_headless_capture_rejects_non_enhanced_pt_filter(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/headless_case",
+                "--object-filter",
+                "pt-filter",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires --object-filter enhanced-pt"):
+            runtime.validate_args(args)
+
+    def test_demo32_fake_live_headless_capture_rejects_async_filter(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/headless_case",
+                "--pcd-filter-mode",
+                "async",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires --pcd-filter-mode sync"):
+            runtime.validate_args(args)
+
     def test_recording_mode_requires_controller_object_tracking(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_1,

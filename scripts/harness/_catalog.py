@@ -135,6 +135,12 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "full",
     ),
     HarnessEntry(
+        "scripts/harness/render_demo32_headless_capture.py",
+        "current_compare",
+        "Render Demo 3.2 headless enhanced-pt PCD capture artifacts to MP4.",
+        "quick",
+    ),
+    HarnessEntry(
         "scripts/harness/sam31_mask_helper.py",
         "mask_support",
         "Shared SAM 3.1 helper used by operator-side harness CLIs.",

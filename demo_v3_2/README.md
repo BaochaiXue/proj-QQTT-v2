@@ -42,3 +42,26 @@ the replayed IR stereo frames, matching the live camera contract. Fake-live runs
 in demo mode. Local FFS TensorRT depth execution is serialized inside the runtime
 and cached by frame sequence so point-cloud rendering and TAPNext++ marker lift
 can share depth without concurrent TensorRT context use.
+
+Headless enhanced-pt capture keeps the fake-live realtime pipeline running but
+does not open Open3D. It saves only sync enhanced-pt filtered PCD, color-aligned
+FFS depth, and TAPNext++ query trajectory artifacts:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --render-mode none \
+  --duration-s 5 \
+  --headless-capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke
+```
+
+Render the saved artifacts offline:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python scripts/harness/render_demo32_headless_capture.py \
+  --capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke \
+  --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video.mp4 \
+  --fps 30
+```

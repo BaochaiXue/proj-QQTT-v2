@@ -81,6 +81,7 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_single_demo_v3_runtime",
     "tests.test_realtime_masked_edgetam_pcd_filter",
     "tests.test_single_demo_tapnextpp_overlay",
+    "tests.test_demo32_headless_render_helper",
     "tests.test_render_fastpath",
     "tests.test_check_all_smoke",
 )

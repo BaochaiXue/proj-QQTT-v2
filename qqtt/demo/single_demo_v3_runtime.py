@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 from pathlib import Path
 import sys
@@ -46,6 +47,7 @@ FFS_SURFACE_COMPONENT_VOXEL_SIZE_M = 0.015
 FFS_SURFACE_FILTER_EVERY_N = 1
 FFS_SURFACE_FILTER_MAX_AGE_FRAMES = 1
 FFS_SURFACE_MASK_ERODE_PIXELS = 3
+HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "enhanced_pt_filtered"
 
 DEFAULT_OUTPUT_ROOTS = {
     DEMO_VERSION_3: Path("result/single_demo_v3_realsense_masked_pcd"),
@@ -110,6 +112,25 @@ def _mode_prompts(mode: str) -> dict[str, str]:
 
 def _is_replay_input_source(input_source: str) -> bool:
     return str(input_source) in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_RECORDING}
+
+
+def _supports_headless_capture(version: str) -> bool:
+    return normalize_demo_version(version) in {DEMO_VERSION_3_2, DEMO_VERSION_3_3}
+
+
+def _headless_capture_requested(args: argparse.Namespace, version: str | None = None) -> bool:
+    resolved_version = normalize_demo_version(version or getattr(args, "single_demo_version", DEMO_VERSION_3))
+    return bool(
+        _supports_headless_capture(resolved_version)
+        and str(args.input_source) == INPUT_SOURCE_FAKE_LIVE
+        and str(args.render_mode) == "none"
+    )
+
+
+def _default_headless_capture_dir(args: argparse.Namespace, version: str) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_root = Path(getattr(args, "output_root", DEFAULT_OUTPUT_ROOTS[normalize_demo_version(version)]))
+    return output_root / f"headless_capture_{stamp}"
 
 
 def _get_connected_realsense_serials() -> list[str]:
@@ -197,6 +218,15 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         choices=masked_pcd.RENDER_MODES,
         default=masked_pcd.DEFAULT_RENDER_MODE,
         help="Render mode for the single-camera masked point-cloud delegate.",
+    )
+    parser.add_argument(
+        "--headless-capture-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory for Demo 3.2/3.3 fake-live headless enhanced-pt PCD artifacts. "
+            "Defaults to output-root/headless_capture_<timestamp> when --render-mode none is used."
+        ),
     )
     parser.add_argument(
         "--view-mode",
@@ -313,10 +343,26 @@ def apply_preset_defaults(
         args.mode = MODE_DEMO
     if "--controller-prompt" not in explicit or args.controller_prompt is None:
         args.controller_prompt = _mode_prompts(str(args.mode))["controller_prompt"]
-    if "--track-mode" not in explicit and str(args.render_mode) == "none":
+    headless_capture = _headless_capture_requested(args, version)
+    if headless_capture:
+        if "--track-mode" not in explicit:
+            args.track_mode = TRACK_MODE_CONTROLLER_OBJECT
+        if "--tracker-backend" not in explicit:
+            args.tracker_backend = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
+        if "--enable-pcd-filter" not in explicit:
+            args.enable_pcd_filter = True
+        if "--pcd-filter-mode" not in explicit:
+            args.pcd_filter_mode = "sync"
+        if "--object-filter" not in explicit:
+            args.object_filter = masked_pcd.PCD_FILTER_ENHANCED_PT
+        if "--controller-filter" not in explicit:
+            args.controller_filter = masked_pcd.PCD_FILTER_ENHANCED_PT
+        if "--headless-capture-dir" not in explicit and args.headless_capture_dir is None:
+            args.headless_capture_dir = _default_headless_capture_dir(args, version)
+    if "--track-mode" not in explicit and str(args.render_mode) == "none" and not headless_capture:
         args.track_mode = TRACK_MODE_NONE
     if "--tracker-backend" not in explicit and (
-        str(args.render_mode) == "none" or str(args.track_mode) == TRACK_MODE_NONE
+        (str(args.render_mode) == "none" and not headless_capture) or str(args.track_mode) == TRACK_MODE_NONE
     ):
         args.tracker_backend = masked_pcd.TRACKER_BACKEND_NONE
     if str(args.input_source) == INPUT_SOURCE_FAKE_LIVE and args.recording_case is None:
@@ -343,12 +389,15 @@ def validate_args(args: argparse.Namespace) -> None:
     args.tracker_backend = masked_pcd.normalize_tracker_backend(str(args.tracker_backend))
     if str(args.input_source) not in INPUT_SOURCES:
         raise ValueError(f"--input-source must be one of {INPUT_SOURCES}")
+    headless_capture = _headless_capture_requested(args, version)
+    if args.headless_capture_dir is not None and not headless_capture:
+        raise ValueError("--headless-capture-dir requires Demo 3.2/3.3 --input-source fake-live --render-mode none")
     if float(args.replay_fps) < 0.0:
         raise ValueError("--replay-fps must be >= 0")
     if _is_replay_input_source(str(args.input_source)):
         if args.recording_case is None:
             raise ValueError(f"--input-source {args.input_source} requires --recording-case or --fake-live-case")
-        if str(args.render_mode) != "pointcloud":
+        if str(args.render_mode) != "pointcloud" and not headless_capture:
             raise ValueError(f"--input-source {args.input_source} requires --render-mode pointcloud")
         if str(args.track_mode) == TRACK_MODE_NONE:
             raise ValueError(f"--input-source {args.input_source} requires --track-mode controller-object")
@@ -430,12 +479,23 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--point-size must be positive")
     if bool(args.enable_pcd_filter) and str(args.track_mode) == TRACK_MODE_NONE:
         raise ValueError("--enable-pcd-filter requires --track-mode controller-object")
+    if headless_capture:
+        if DEFAULT_DEPTH_SOURCES[version] != DEPTH_SOURCE_FFS:
+            raise ValueError("headless capture requires Demo 3.2/3.3 FFS depth")
+        if not bool(args.enable_pcd_filter):
+            raise ValueError("headless capture requires --enable-pcd-filter")
+        if str(args.pcd_filter_mode) != "sync":
+            raise ValueError("headless capture requires --pcd-filter-mode sync")
+        if str(args.object_filter) != masked_pcd.PCD_FILTER_ENHANCED_PT:
+            raise ValueError("headless capture requires --object-filter enhanced-pt")
+        if str(args.controller_filter) != masked_pcd.PCD_FILTER_ENHANCED_PT:
+            raise ValueError("headless capture requires --controller-filter enhanced-pt")
     if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE:
         if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
             raise ValueError("single demo tracker backend currently supports only tapnextpp")
         if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
             raise ValueError("--tracker-backend tapnextpp requires --track-mode controller-object")
-        if str(args.render_mode) != "pointcloud":
+        if str(args.render_mode) != "pointcloud" and not headless_capture:
             raise ValueError("--tracker-backend tapnextpp requires --render-mode pointcloud")
 
 
@@ -485,6 +545,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     else:
         contract_input_source = "live_realsense_single_camera"
     replay_fps, replay_fps_source = _contract_replay_fps(args)
+    headless_capture = _headless_capture_requested(args, version)
     contract: dict[str, Any] = {
         "demo": f"single-demo{version}",
         "demo_version": version,
@@ -512,6 +573,9 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "controller_label": controller_label,
         "track_mode": str(args.track_mode),
         "render_mode": str(args.render_mode),
+        "headless_capture_enabled": bool(headless_capture),
+        "headless_capture_dir": None if not headless_capture or args.headless_capture_dir is None else str(args.headless_capture_dir),
+        "saved_pcd_source": HEADLESS_CAPTURE_SAVED_PCD_SOURCE if headless_capture else None,
         "view_mode": str(args.view_mode),
         "tracker_backend": str(args.tracker_backend),
         "tracker_backend_family": (
@@ -603,6 +667,9 @@ def format_contract(contract: dict[str, Any]) -> str:
         "object_prompt",
         "controller_prompt",
         "render_mode",
+        "headless_capture_enabled",
+        "headless_capture_dir",
+        "saved_pcd_source",
         "view_mode",
         "pcd_max_points",
         "pcd_stride",
@@ -770,6 +837,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.append("--no-tapnextpp-fast-postprocess")
     if bool(args.enable_pcd_filter):
         argv.append("--enable-pcd-filter")
+    if args.headless_capture_dir is not None:
+        argv.extend(["--headless-capture-dir", str(args.headless_capture_dir)])
     if bool(args.debug):
         argv.append("--debug")
     if str(args.track_mode) == TRACK_MODE_NONE:

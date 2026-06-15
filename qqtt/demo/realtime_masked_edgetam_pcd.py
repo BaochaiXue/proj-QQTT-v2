@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from collections import OrderedDict, deque
 from contextlib import nullcontext
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 import gc
 import json
 import os
@@ -174,6 +174,7 @@ DEFAULT_TRACKER_QUERY_COUNT = 4096
 DEFAULT_TRACKER_SEED = 42
 DEFAULT_TRACKER_MARKER_COLOR_RGB = (255, 0, 0)
 DEFAULT_TRACKER_MARKER_POINT_SIZE = 8.0
+HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "enhanced_pt_filtered"
 DEBUG_LOG_INTERVAL_S = 1.0
 FATAL_HUD_PREFIX = "FATAL WORKER ERROR"
 WARMUP_HUD_TEXT = (
@@ -637,6 +638,7 @@ class TrackerMarkerPacket:
     e2e_ms: float = 0.0
     backend: str = TRACKER_BACKEND_TAPNEXTPP
     display_scope: str = DEFAULT_TRACKER_DISPLAY_SCOPE
+    query_indices: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=np.int64))
 
     @property
     def marker_count(self) -> int:
@@ -691,6 +693,108 @@ class RemoteFfsQualityPacket:
     timing: PipelineTiming
     return_type: str
     sparse_points: int = 0
+
+
+class HeadlessCaptureWriter:
+    def __init__(self, output_dir: str | Path, *, metadata: dict[str, Any]) -> None:
+        self.output_dir = _resolve_path(output_dir)
+        self.pcd_dir = self.output_dir / "pcd"
+        self.depth_dir = self.output_dir / "ffs_depth"
+        self.trajectory_dir = self.output_dir / "query_trajectory"
+        self.frames_path = self.output_dir / "frames.jsonl"
+        self.metadata_path = self.output_dir / "metadata.json"
+        self._lock = threading.Lock()
+        self._saved_pcd_count = 0
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.pcd_dir.mkdir(parents=True, exist_ok=True)
+        self.depth_dir.mkdir(parents=True, exist_ok=True)
+        self.trajectory_dir.mkdir(parents=True, exist_ok=True)
+        self.frames_path.write_text("", encoding="utf-8")
+        payload = dict(metadata)
+        payload["headless_capture_enabled"] = True
+        payload["saved_pcd_source"] = HEADLESS_CAPTURE_SAVED_PCD_SOURCE
+        payload["output_dir"] = str(self.output_dir)
+        self.metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    def _relative(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.output_dir))
+        except ValueError:
+            return str(path)
+
+    def write_pcd(self, packet: MaskedPcdPacket, *, depth_m: np.ndarray) -> None:
+        filter_info = packet.filter_telemetry
+        if not (filter_info.enabled and filter_info.mode == "sync" and filter_info.render_using_filtered):
+            raise RuntimeError("headless capture refuses to save non-filtered PCD output")
+        seq_name = f"{int(packet.seq):06d}"
+        pcd_path = self.pcd_dir / f"{seq_name}.npz"
+        depth_path = self.depth_dir / f"{seq_name}.npy"
+        query_path = self.trajectory_dir / f"{seq_name}.npz"
+        np.save(
+            depth_path,
+            np.ascontiguousarray(depth_m, dtype=np.float32),
+        )
+        np.savez(
+            pcd_path,
+            seq=np.asarray([int(packet.seq)], dtype=np.int64),
+            controller_xyz_m=np.ascontiguousarray(packet.controller_xyz_m, dtype=np.float32),
+            controller_rgb_u8=np.ascontiguousarray(packet.controller_colors_rgb_u8, dtype=np.uint8),
+            object_xyz_m=np.ascontiguousarray(packet.object_xyz_m, dtype=np.float32),
+            object_rgb_u8=np.ascontiguousarray(packet.object_colors_rgb_u8, dtype=np.uint8),
+            intrinsics=np.asarray(
+                [
+                    float(packet.intrinsics.fx),
+                    float(packet.intrinsics.fy),
+                    float(packet.intrinsics.cx),
+                    float(packet.intrinsics.cy),
+                ],
+                dtype=np.float32,
+            ),
+            saved_pcd_source=np.asarray([HEADLESS_CAPTURE_SAVED_PCD_SOURCE]),
+        )
+        row = {
+            "seq": int(packet.seq),
+            "pcd_path": self._relative(pcd_path),
+            "ffs_depth_path": self._relative(depth_path),
+            "query_trajectory_path": self._relative(query_path),
+            "controller_point_count": int(packet.controller_point_count),
+            "object_point_count": int(packet.object_point_count),
+            "receive_perf_s": float(packet.receive_perf_s),
+            "process_done_perf_s": float(packet.process_done_perf_s),
+            "timing": asdict(packet.timing),
+            "filter_telemetry": asdict(packet.filter_telemetry),
+        }
+        line = json.dumps(row, sort_keys=True)
+        with self._lock:
+            with self.frames_path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+            self._saved_pcd_count += 1
+
+    def write_tracker(self, packet: TrackerMarkerPacket) -> None:
+        seq_name = f"{int(packet.seq):06d}"
+        path = self.trajectory_dir / f"{seq_name}.npz"
+        np.savez(
+            path,
+            seq=np.asarray([int(packet.seq)], dtype=np.int64),
+            query_points_yx=np.ascontiguousarray(packet.query_points_yx, dtype=np.float32),
+            query_indices=np.ascontiguousarray(packet.query_indices, dtype=np.int64),
+            marker_xyz_m=np.ascontiguousarray(packet.marker_xyz_m, dtype=np.float32),
+            marker_rgb_u8=np.ascontiguousarray(packet.marker_colors_rgb_u8, dtype=np.uint8),
+            tracks_yx=np.ascontiguousarray(packet.tracks_yx, dtype=np.float32),
+            visibility=np.ascontiguousarray(packet.visibility, dtype=np.float32),
+            query_is_object=np.ascontiguousarray(packet.query_is_object, dtype=bool),
+            query_is_controller=np.ascontiguousarray(packet.query_is_controller, dtype=bool),
+            query_count=np.asarray([int(packet.query_count)], dtype=np.int64),
+            consistent_visible_count=np.asarray([int(packet.consistent_visible_count)], dtype=np.int64),
+            model_ms=np.asarray([float(packet.model_ms)], dtype=np.float32),
+            lift_ms=np.asarray([float(packet.lift_ms)], dtype=np.float32),
+            e2e_ms=np.asarray([float(packet.e2e_ms)], dtype=np.float32),
+        )
+
+    @property
+    def saved_pcd_count(self) -> int:
+        with self._lock:
+            return int(self._saved_pcd_count)
 
 
 class StageStats:
@@ -1101,6 +1205,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--point-size", type=float, default=2.0, help="Open3D point size.")
     parser.add_argument("--latency-target-ms", type=float, default=80.0, help="HUD latency target.")
     parser.add_argument("--duration-s", type=float, default=0.0, help="Optional auto-stop duration. Use 0 to run until closed.")
+    parser.add_argument(
+        "--headless-capture-dir",
+        type=Path,
+        default=None,
+        help=(
+            "When --render-mode none is used with fake-live FFS replay, save enhanced-pt filtered "
+            "PCD, color-aligned FFS depth, and TAPNext++ query trajectory artifacts here."
+        ),
+    )
     parser.add_argument("--controller-color", type=_parse_rgb_triplet, default=CONTROLLER_COLOR_RGB, help="Controller RGB color.")
     parser.add_argument("--object-color", type=_parse_rgb_triplet, default=OBJECT_COLOR_RGB, help="Object RGB color.")
     parser.add_argument(
@@ -1134,6 +1247,10 @@ def apply_demo_preset(args: argparse.Namespace) -> argparse.Namespace:
 
 def pcd_filter_enabled(args: argparse.Namespace) -> bool:
     return bool(args.enable_pcd_filter) and str(args.pcd_filter_mode) != "none"
+
+
+def headless_capture_enabled(args: argparse.Namespace) -> bool:
+    return args.headless_capture_dir is not None
 
 
 def validate_args(args: argparse.Namespace) -> None:
@@ -1219,6 +1336,23 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--depth-source none requires --pcd-mode none")
     if args.render_mode == "pointcloud" and args.pcd_mode == "none":
         raise ValueError("--render-mode pointcloud requires --pcd-mode masked")
+    if headless_capture_enabled(args):
+        if args.input_source != INPUT_SOURCE_FAKE_LIVE:
+            raise ValueError("--headless-capture-dir requires --input-source fake-live")
+        if args.depth_source != "ffs":
+            raise ValueError("--headless-capture-dir requires --depth-source ffs")
+        if args.render_mode != "none":
+            raise ValueError("--headless-capture-dir requires --render-mode none")
+        if args.pcd_mode != "masked":
+            raise ValueError("--headless-capture-dir requires --pcd-mode masked")
+        if not pcd_filter_enabled(args):
+            raise ValueError("--headless-capture-dir requires --enable-pcd-filter")
+        if args.pcd_filter_mode != "sync":
+            raise ValueError("--headless-capture-dir requires --pcd-filter-mode sync")
+        if args.object_filter != PCD_FILTER_ENHANCED_PT:
+            raise ValueError("--headless-capture-dir requires --object-filter enhanced-pt")
+        if args.controller_filter != PCD_FILTER_ENHANCED_PT:
+            raise ValueError("--headless-capture-dir requires --controller-filter enhanced-pt")
     args.tracker_backend = normalize_tracker_backend(str(args.tracker_backend))
     if int(args.tracker_query_count) < 0:
         raise ValueError("--tracker-query-count must be >= 0")
@@ -1231,7 +1365,7 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("single-camera tracker overlay currently supports only tapnextpp")
         if args.track_mode != TRACK_MODE_CONTROLLER_OBJECT:
             raise ValueError("--tracker-backend tapnextpp requires --track-mode controller-object")
-        if args.render_mode != "pointcloud":
+        if args.render_mode != "pointcloud" and not headless_capture_enabled(args):
             raise ValueError("--tracker-backend tapnextpp requires --render-mode pointcloud")
         if args.depth_source == "none":
             raise ValueError("--tracker-backend tapnextpp requires RGB-D depth for 3D marker lift")
@@ -2159,6 +2293,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.ffs_remote_client: FfsRemoteDepthClient | None = None
         self.remote_quality_client: FfsRemoteDepthClient | None = None
         self.recording_source: RecordedRgbdFrameSource | None = None
+        self.headless_capture_writer: HeadlessCaptureWriter | None = None
         self._recording_first_frame_segmented = threading.Event()
         self._tracker_query_points_yx: np.ndarray | None = None
         self._tracker_query_is_object: np.ndarray | None = None
@@ -2179,6 +2314,53 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.runtime is None:
             return "<not-started>"
         return self.runtime.serial
+
+    def _build_headless_capture_metadata(self) -> dict[str, Any]:
+        if self.runtime is None:
+            raise RuntimeError("camera runtime is not initialized")
+        replay_fps = None
+        frame_count = None
+        recording_case = None
+        if self.recording_source is not None:
+            replay_fps = float(self.recording_source.effective_fps)
+            frame_count = int(self.recording_source.frame_count)
+            recording_case = str(self.recording_source.case_path)
+        return {
+            "input_source": str(self.args.input_source),
+            "recording_case": recording_case,
+            "replay_fps": replay_fps,
+            "recording_frame_count": frame_count,
+            "depth_source": str(self.args.depth_source),
+            "track_mode": str(self.args.track_mode),
+            "tracker_backend": str(self.args.tracker_backend),
+            "tracker_query_count": int(self.args.tracker_query_count),
+            "tracker_display_scope": str(self.args.tracker_display_scope),
+            "pcd_filter_enabled": pcd_filter_enabled(self.args),
+            "pcd_filter_mode": str(self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE),
+            "object_filter": str(self.args.object_filter),
+            "controller_filter": str(self.args.controller_filter),
+            "object_filter_keep_components": int(self.args.object_filter_keep_components),
+            "controller_filter_keep_components": int(self.args.controller_filter_keep_components),
+            "filter_radius_m": float(self.args.filter_radius_m),
+            "filter_nb_points": int(self.args.filter_nb_points),
+            "enhanced_component_voxel_size_m": float(self.args.enhanced_component_voxel_size_m),
+            "pcd_max_points": int(self.args.pcd_max_points),
+            "pcd_stride": int(self.args.pcd_stride),
+            "pcd_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
+            "depth_min_m": float(self.args.depth_min_m),
+            "depth_max_m": float(self.args.depth_max_m),
+            "serial": str(self.runtime.serial),
+            "width": int(self.width),
+            "height": int(self.height),
+            "coordinate_frame": COORDINATE_FRAME,
+            "intrinsics": {
+                "fx": float(self.runtime.intrinsics.fx),
+                "fy": float(self.runtime.intrinsics.fy),
+                "cx": float(self.runtime.intrinsics.cx),
+                "cy": float(self.runtime.intrinsics.cy),
+            },
+            "k_color": np.asarray(self.runtime.k_color, dtype=np.float32).tolist(),
+        }
 
     def _fatal_error_snapshot(self) -> FatalWorkerError | None:
         with self._fatal_error_lock:
@@ -2259,6 +2441,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 stride=1,
                 intrinsics=self.runtime.intrinsics,
             )
+            if headless_capture_enabled(self.args):
+                self.headless_capture_writer = HeadlessCaptureWriter(
+                    self.args.headless_capture_dir,
+                    metadata=self._build_headless_capture_metadata(),
+                )
+                print(f"[headless-capture] dir={self.headless_capture_writer.output_dir}", flush=True)
             if self.args.render_mode == "none":
                 self._run_headless()
             else:
@@ -2286,6 +2474,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.remote_quality_client is not None:
             self.remote_quality_client.close()
             self.remote_quality_client = None
+        self.headless_capture_writer = None
         if self.filter_worker is not None:
             self.filter_worker.stop()
             self.filter_worker = None
@@ -2366,12 +2555,22 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
     def _run_headless(self) -> None:
         self._start_threads()
-        started_s = time.perf_counter()
+        started_s: float | None = None
         try:
             while not self.stop_event.is_set():
-                if self.args.duration_s > 0 and time.perf_counter() - started_s >= float(self.args.duration_s):
-                    self.stop_event.set()
-                    break
+                if self.args.duration_s > 0:
+                    now_s = time.perf_counter()
+                    if self.headless_capture_writer is not None:
+                        if self.headless_capture_writer.saved_pcd_count <= 0:
+                            time.sleep(0.05)
+                            continue
+                        if started_s is None:
+                            started_s = now_s
+                    elif started_s is None:
+                        started_s = now_s
+                    if started_s is not None and now_s - started_s >= float(self.args.duration_s):
+                        self.stop_event.set()
+                        break
                 time.sleep(0.05)
         except KeyboardInterrupt:
             self.stop_event.set()
@@ -2579,6 +2778,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "render_max_points_per_layer": int(self.args.render_max_points_per_layer),
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE,
+            "headless_capture_enabled": headless_capture_enabled(self.args),
+            "headless_capture_dir": (
+                str(self.args.headless_capture_dir) if headless_capture_enabled(self.args) else None
+            ),
+            "saved_pcd_source": HEADLESS_CAPTURE_SAVED_PCD_SOURCE if headless_capture_enabled(self.args) else None,
             "object_filter": self.args.object_filter,
             "controller_filter": self.args.controller_filter,
             "object_filter_cap": int(self.args.object_filter_cap),
@@ -2853,9 +3057,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 lift_ms = _elapsed_ms(lift_start_s, time.perf_counter())
                 source_indices = lifted.source_indices
                 if len(source_indices):
+                    lifted_query_indices = selected[source_indices].astype(np.int64, copy=False)
                     lifted_query_is_object = selected_query_is_object[source_indices]
                     lifted_query_is_controller = selected_query_is_controller[source_indices]
                 else:
+                    lifted_query_indices = np.empty((0,), dtype=np.int64)
                     lifted_query_is_object = np.empty((0,), dtype=bool)
                     lifted_query_is_controller = np.empty((0,), dtype=bool)
                 done_s = time.perf_counter()
@@ -2878,8 +3084,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     e2e_ms=_elapsed_ms(started_s, done_s),
                     backend=str(getattr(result, "backend", None) or adapter.name),
                     display_scope=str(self.args.tracker_display_scope),
+                    query_indices=np.ascontiguousarray(lifted_query_indices, dtype=np.int64),
                 )
                 self.tracker_marker_slot.put(packet)
+                if self.headless_capture_writer is not None:
+                    self.headless_capture_writer.write_tracker(packet)
                 self.tracker_stats.record(packet.process_done_perf_s)
                 if self.args.debug:
                     print(
@@ -3577,6 +3786,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 filter_telemetry=filter_telemetry,
             )
             self.render_slot.put(packet)
+            if self.headless_capture_writer is not None:
+                self.headless_capture_writer.write_pcd(packet, depth_m=depth_m)
             self.pcd_stats.record(done_s)
             self._request_render_update()
 
