@@ -40,6 +40,11 @@ DEFAULT_MODE = MODE_EXP
 DEFAULT_TRACKER_BACKEND = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
 DEFAULT_TRACKER_DEVICE = "cuda:1"
 DEFAULT_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_2min_e45_g35_20260614_155543")
+FFS_SURFACE_FILTER_RADIUS_M = 0.015
+FFS_SURFACE_FILTER_NB_POINTS = 8
+FFS_SURFACE_COMPONENT_VOXEL_SIZE_M = 0.015
+FFS_SURFACE_FILTER_EVERY_N = 1
+FFS_SURFACE_FILTER_MAX_AGE_FRAMES = 1
 
 DEFAULT_OUTPUT_ROOTS = {
     DEMO_VERSION_3: Path("result/single_demo_v3_realsense_masked_pcd"),
@@ -239,6 +244,20 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
     )
     parser.add_argument("--enable-pcd-filter", action="store_true")
     parser.add_argument(
+        "--pcd-filter-mode",
+        choices=masked_pcd.PCD_FILTER_MODES,
+        default="async",
+        help="Point-cloud filter scheduling mode forwarded to the masked PCD delegate.",
+    )
+    parser.add_argument("--object-filter", choices=masked_pcd.PCD_FILTERS, default=masked_pcd.DEFAULT_OBJECT_FILTER)
+    parser.add_argument(
+        "--controller-filter",
+        choices=masked_pcd.PCD_FILTERS,
+        default=masked_pcd.DEFAULT_CONTROLLER_FILTER,
+    )
+    parser.add_argument("--object-filter-cap", type=int, default=20_000)
+    parser.add_argument("--controller-filter-cap", type=int, default=20_000)
+    parser.add_argument(
         "--object-filter-keep-components",
         type=int,
         default=masked_pcd.DEFAULT_OBJECT_FILTER_KEEP_COMPONENTS,
@@ -250,11 +269,29 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         default=masked_pcd.DEFAULT_CONTROLLER_FILTER_KEEP_COMPONENTS,
         help="Enhanced PCD component count for controller filtering; default keeps two hand components.",
     )
+    parser.add_argument("--object-filter-voxel-m", type=float, default=0.004)
+    parser.add_argument("--controller-filter-voxel-m", type=float, default=0.003)
+    parser.add_argument("--filter-every-n", type=int, default=3)
     parser.add_argument(
         "--filter-max-age-frames",
         type=int,
         default=masked_pcd.DEFAULT_FILTER_MAX_AGE_FRAMES,
         help="Maximum async filtered-output age in frames before rendering raw current PCD instead.",
+    )
+    parser.add_argument("--filter-budget-ms", type=float, default=12.0)
+    parser.add_argument("--filter-min-cap", type=int, default=5_000)
+    parser.add_argument("--voxel-density-min-points", type=int, default=2)
+    parser.add_argument("--filter-radius-m", type=float, default=masked_pcd.DEFAULT_FILTER_RADIUS_M)
+    parser.add_argument("--filter-nb-points", type=int, default=masked_pcd.DEFAULT_FILTER_NB_POINTS)
+    parser.add_argument(
+        "--enhanced-component-voxel-size-m",
+        type=float,
+        default=masked_pcd.DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M,
+    )
+    parser.add_argument(
+        "--enhanced-keep-near-main-gap-m",
+        type=float,
+        default=masked_pcd.DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M,
     )
     parser.add_argument("--point-size", type=float, default=2.0)
     return parser
@@ -282,6 +319,17 @@ def apply_preset_defaults(
         args.tracker_backend = masked_pcd.TRACKER_BACKEND_NONE
     if str(args.input_source) == INPUT_SOURCE_FAKE_LIVE and args.recording_case is None:
         args.recording_case = DEFAULT_FAKE_LIVE_CASE
+    if version in {DEMO_VERSION_3_2, DEMO_VERSION_3_3} and bool(args.enable_pcd_filter):
+        if "--filter-radius-m" not in explicit:
+            args.filter_radius_m = FFS_SURFACE_FILTER_RADIUS_M
+        if "--filter-nb-points" not in explicit:
+            args.filter_nb_points = FFS_SURFACE_FILTER_NB_POINTS
+        if "--enhanced-component-voxel-size-m" not in explicit:
+            args.enhanced_component_voxel_size_m = FFS_SURFACE_COMPONENT_VOXEL_SIZE_M
+        if "--filter-every-n" not in explicit:
+            args.filter_every_n = FFS_SURFACE_FILTER_EVERY_N
+        if "--filter-max-age-frames" not in explicit:
+            args.filter_max_age_frames = FFS_SURFACE_FILTER_MAX_AGE_FRAMES
     return args
 
 
@@ -332,12 +380,46 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--render-max-points-per-layer must be >= 0")
     if int(args.edgetam_live_session_keep_frames) < 0:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
+    if str(args.pcd_filter_mode) not in masked_pcd.PCD_FILTER_MODES:
+        raise ValueError(f"--pcd-filter-mode must be one of {masked_pcd.PCD_FILTER_MODES}")
+    if str(args.object_filter) not in masked_pcd.PCD_FILTERS:
+        raise ValueError(f"--object-filter must be one of {masked_pcd.PCD_FILTERS}")
+    if str(args.controller_filter) not in masked_pcd.PCD_FILTERS:
+        raise ValueError(f"--controller-filter must be one of {masked_pcd.PCD_FILTERS}")
+    if int(args.object_filter_cap) < 0:
+        raise ValueError("--object-filter-cap must be >= 0")
+    if int(args.controller_filter_cap) < 0:
+        raise ValueError("--controller-filter-cap must be >= 0")
     if int(args.object_filter_keep_components) < 1:
         raise ValueError("--object-filter-keep-components must be >= 1")
     if int(args.controller_filter_keep_components) < 1:
         raise ValueError("--controller-filter-keep-components must be >= 1")
+    if float(args.object_filter_voxel_m) <= 0:
+        raise ValueError("--object-filter-voxel-m must be positive")
+    if float(args.controller_filter_voxel_m) <= 0:
+        raise ValueError("--controller-filter-voxel-m must be positive")
+    if int(args.filter_every_n) < 1:
+        raise ValueError("--filter-every-n must be >= 1")
     if int(args.filter_max_age_frames) < 0:
         raise ValueError("--filter-max-age-frames must be >= 0")
+    if float(args.filter_budget_ms) < 0:
+        raise ValueError("--filter-budget-ms must be >= 0")
+    if int(args.filter_min_cap) < 0:
+        raise ValueError("--filter-min-cap must be >= 0")
+    if int(args.object_filter_cap) > 0 and int(args.filter_min_cap) > int(args.object_filter_cap):
+        raise ValueError("--filter-min-cap must be <= --object-filter-cap when object cap is enabled")
+    if int(args.controller_filter_cap) > 0 and int(args.filter_min_cap) > int(args.controller_filter_cap):
+        raise ValueError("--filter-min-cap must be <= --controller-filter-cap when controller cap is enabled")
+    if int(args.voxel_density_min_points) < 1:
+        raise ValueError("--voxel-density-min-points must be >= 1")
+    if float(args.filter_radius_m) <= 0:
+        raise ValueError("--filter-radius-m must be positive")
+    if int(args.filter_nb_points) < 1:
+        raise ValueError("--filter-nb-points must be >= 1")
+    if float(args.enhanced_component_voxel_size_m) <= 0:
+        raise ValueError("--enhanced-component-voxel-size-m must be positive")
+    if float(args.enhanced_keep_near_main_gap_m) < 0:
+        raise ValueError("--enhanced-keep-near-main-gap-m must be >= 0")
     if float(args.point_size) <= 0:
         raise ValueError("--point-size must be positive")
     if bool(args.enable_pcd_filter) and str(args.track_mode) == TRACK_MODE_NONE:
@@ -454,9 +536,24 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "pcd_color_mode": str(args.pcd_color_mode),
         "render_max_points_per_layer": int(args.render_max_points_per_layer),
         "pcd_filter_enabled": bool(args.enable_pcd_filter),
+        "pcd_filter_mode": str(args.pcd_filter_mode if bool(args.enable_pcd_filter) else masked_pcd.PCD_FILTER_NONE),
+        "object_filter": str(args.object_filter),
+        "controller_filter": str(args.controller_filter),
+        "object_filter_cap": int(args.object_filter_cap),
+        "controller_filter_cap": int(args.controller_filter_cap),
         "object_filter_keep_components": int(args.object_filter_keep_components),
         "controller_filter_keep_components": int(args.controller_filter_keep_components),
+        "object_filter_voxel_m": float(args.object_filter_voxel_m),
+        "controller_filter_voxel_m": float(args.controller_filter_voxel_m),
+        "filter_every_n": int(args.filter_every_n),
         "filter_max_age_frames": int(args.filter_max_age_frames),
+        "filter_budget_ms": float(args.filter_budget_ms),
+        "filter_min_cap": int(args.filter_min_cap),
+        "voxel_density_min_points": int(args.voxel_density_min_points),
+        "filter_radius_m": float(args.filter_radius_m),
+        "filter_nb_points": int(args.filter_nb_points),
+        "enhanced_component_voxel_size_m": float(args.enhanced_component_voxel_size_m),
+        "enhanced_keep_near_main_gap_m": float(args.enhanced_keep_near_main_gap_m),
         "point_size": float(args.point_size),
         "profile": str(args.profile),
         "fps": int(args.fps),
@@ -504,6 +601,13 @@ def format_contract(contract: dict[str, Any]) -> str:
         "pcd_stride",
         "render_max_points_per_layer",
         "pcd_filter_enabled",
+        "pcd_filter_mode",
+        "object_filter",
+        "controller_filter",
+        "filter_radius_m",
+        "filter_nb_points",
+        "enhanced_component_voxel_size_m",
+        "filter_every_n",
         "filter_max_age_frames",
         "edgetam_live_session_keep_frames",
         "point_size",
@@ -595,12 +699,42 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.pcd_color_mode),
         "--render-max-points-per-layer",
         str(int(args.render_max_points_per_layer)),
+        "--pcd-filter-mode",
+        str(args.pcd_filter_mode),
+        "--object-filter",
+        str(args.object_filter),
+        "--controller-filter",
+        str(args.controller_filter),
+        "--object-filter-cap",
+        str(int(args.object_filter_cap)),
+        "--controller-filter-cap",
+        str(int(args.controller_filter_cap)),
         "--object-filter-keep-components",
         str(int(args.object_filter_keep_components)),
         "--controller-filter-keep-components",
         str(int(args.controller_filter_keep_components)),
+        "--object-filter-voxel-m",
+        str(float(args.object_filter_voxel_m)),
+        "--controller-filter-voxel-m",
+        str(float(args.controller_filter_voxel_m)),
+        "--filter-every-n",
+        str(int(args.filter_every_n)),
         "--filter-max-age-frames",
         str(int(args.filter_max_age_frames)),
+        "--filter-budget-ms",
+        str(float(args.filter_budget_ms)),
+        "--filter-min-cap",
+        str(int(args.filter_min_cap)),
+        "--voxel-density-min-points",
+        str(int(args.voxel_density_min_points)),
+        "--filter-radius-m",
+        str(float(args.filter_radius_m)),
+        "--filter-nb-points",
+        str(int(args.filter_nb_points)),
+        "--enhanced-component-voxel-size-m",
+        str(float(args.enhanced_component_voxel_size_m)),
+        "--enhanced-keep-near-main-gap-m",
+        str(float(args.enhanced_keep_near_main_gap_m)),
         "--object-prompt",
         str(args.object_prompt),
         "--controller-prompt",

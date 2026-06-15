@@ -314,12 +314,42 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 "--view-mode",
                 "camera",
                 "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+                "--object-filter",
+                "pt-filter",
+                "--controller-filter",
+                "enhanced-pt",
+                "--object-filter-cap",
+                "12000",
+                "--controller-filter-cap",
+                "14000",
                 "--object-filter-keep-components",
                 "1",
                 "--controller-filter-keep-components",
                 "2",
+                "--object-filter-voxel-m",
+                "0.006",
+                "--controller-filter-voxel-m",
+                "0.007",
+                "--filter-every-n",
+                "2",
                 "--filter-max-age-frames",
                 "2",
+                "--filter-budget-ms",
+                "9",
+                "--filter-min-cap",
+                "4000",
+                "--voxel-density-min-points",
+                "3",
+                "--filter-radius-m",
+                "0.012",
+                "--filter-nb-points",
+                "12",
+                "--enhanced-component-voxel-size-m",
+                "0.014",
+                "--enhanced-keep-near-main-gap-m",
+                "0.02",
                 "--edgetam-live-session-keep-frames",
                 "32",
                 "--point-size",
@@ -337,9 +367,24 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["render_max_points_per_layer"], 4096)
         self.assertEqual(contract["view_mode"], "camera")
         self.assertTrue(contract["pcd_filter_enabled"])
+        self.assertEqual(contract["pcd_filter_mode"], "sync")
+        self.assertEqual(contract["object_filter"], "pt-filter")
+        self.assertEqual(contract["controller_filter"], "enhanced-pt")
+        self.assertEqual(contract["object_filter_cap"], 12000)
+        self.assertEqual(contract["controller_filter_cap"], 14000)
         self.assertEqual(contract["object_filter_keep_components"], 1)
         self.assertEqual(contract["controller_filter_keep_components"], 2)
+        self.assertEqual(contract["object_filter_voxel_m"], 0.006)
+        self.assertEqual(contract["controller_filter_voxel_m"], 0.007)
+        self.assertEqual(contract["filter_every_n"], 2)
         self.assertEqual(contract["filter_max_age_frames"], 2)
+        self.assertEqual(contract["filter_budget_ms"], 9.0)
+        self.assertEqual(contract["filter_min_cap"], 4000)
+        self.assertEqual(contract["voxel_density_min_points"], 3)
+        self.assertEqual(contract["filter_radius_m"], 0.012)
+        self.assertEqual(contract["filter_nb_points"], 12)
+        self.assertEqual(contract["enhanced_component_voxel_size_m"], 0.014)
+        self.assertEqual(contract["enhanced_keep_near_main_gap_m"], 0.02)
         self.assertEqual(contract["edgetam_live_session_keep_frames"], 32)
         self.assertEqual(contract["point_size"], 1.5)
         self.assertEqual(_option_value(delegate, "--pcd-max-points"), "20000")
@@ -348,9 +393,24 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--pcd-color-mode"), "class")
         self.assertEqual(_option_value(delegate, "--render-max-points-per-layer"), "4096")
         self.assertEqual(_option_value(delegate, "--view-mode"), "camera")
+        self.assertEqual(_option_value(delegate, "--pcd-filter-mode"), "sync")
+        self.assertEqual(_option_value(delegate, "--object-filter"), "pt-filter")
+        self.assertEqual(_option_value(delegate, "--controller-filter"), "enhanced-pt")
+        self.assertEqual(_option_value(delegate, "--object-filter-cap"), "12000")
+        self.assertEqual(_option_value(delegate, "--controller-filter-cap"), "14000")
         self.assertEqual(_option_value(delegate, "--object-filter-keep-components"), "1")
         self.assertEqual(_option_value(delegate, "--controller-filter-keep-components"), "2")
+        self.assertEqual(_option_value(delegate, "--object-filter-voxel-m"), "0.006")
+        self.assertEqual(_option_value(delegate, "--controller-filter-voxel-m"), "0.007")
+        self.assertEqual(_option_value(delegate, "--filter-every-n"), "2")
         self.assertEqual(_option_value(delegate, "--filter-max-age-frames"), "2")
+        self.assertEqual(_option_value(delegate, "--filter-budget-ms"), "9.0")
+        self.assertEqual(_option_value(delegate, "--filter-min-cap"), "4000")
+        self.assertEqual(_option_value(delegate, "--voxel-density-min-points"), "3")
+        self.assertEqual(_option_value(delegate, "--filter-radius-m"), "0.012")
+        self.assertEqual(_option_value(delegate, "--filter-nb-points"), "12")
+        self.assertEqual(_option_value(delegate, "--enhanced-component-voxel-size-m"), "0.014")
+        self.assertEqual(_option_value(delegate, "--enhanced-keep-near-main-gap-m"), "0.02")
         self.assertEqual(_option_value(delegate, "--edgetam-live-session-keep-frames"), "32")
         self.assertEqual(_option_value(delegate, "--point-size"), "1.5")
         self.assertIn("--enable-pcd-filter", delegate)
@@ -368,6 +428,14 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "render-max-points-per-layer"):
             runtime.validate_args(bad_render_cap)
 
+        bad_object_filter_cap = self._parse(runtime.DEMO_VERSION_3_1, ["--object-filter-cap", "-1"])
+        with self.assertRaisesRegex(ValueError, "object-filter-cap"):
+            runtime.validate_args(bad_object_filter_cap)
+
+        bad_controller_filter_cap = self._parse(runtime.DEMO_VERSION_3_1, ["--controller-filter-cap", "-1"])
+        with self.assertRaisesRegex(ValueError, "controller-filter-cap"):
+            runtime.validate_args(bad_controller_filter_cap)
+
         bad_object_components = self._parse(runtime.DEMO_VERSION_3_1, ["--object-filter-keep-components", "0"])
         with self.assertRaisesRegex(ValueError, "object-filter-keep-components"):
             runtime.validate_args(bad_object_components)
@@ -379,6 +447,38 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         bad_filter_age = self._parse(runtime.DEMO_VERSION_3_1, ["--filter-max-age-frames", "-1"])
         with self.assertRaisesRegex(ValueError, "filter-max-age-frames"):
             runtime.validate_args(bad_filter_age)
+
+        bad_filter_every = self._parse(runtime.DEMO_VERSION_3_1, ["--filter-every-n", "0"])
+        with self.assertRaisesRegex(ValueError, "filter-every-n"):
+            runtime.validate_args(bad_filter_every)
+
+        bad_filter_budget = self._parse(runtime.DEMO_VERSION_3_1, ["--filter-budget-ms", "-1"])
+        with self.assertRaisesRegex(ValueError, "filter-budget-ms"):
+            runtime.validate_args(bad_filter_budget)
+
+        bad_filter_min_cap = self._parse(runtime.DEMO_VERSION_3_1, ["--filter-min-cap", "-1"])
+        with self.assertRaisesRegex(ValueError, "filter-min-cap"):
+            runtime.validate_args(bad_filter_min_cap)
+
+        bad_voxel_density = self._parse(runtime.DEMO_VERSION_3_1, ["--voxel-density-min-points", "0"])
+        with self.assertRaisesRegex(ValueError, "voxel-density-min-points"):
+            runtime.validate_args(bad_voxel_density)
+
+        bad_radius = self._parse(runtime.DEMO_VERSION_3_1, ["--filter-radius-m", "0"])
+        with self.assertRaisesRegex(ValueError, "filter-radius-m"):
+            runtime.validate_args(bad_radius)
+
+        bad_nb_points = self._parse(runtime.DEMO_VERSION_3_1, ["--filter-nb-points", "0"])
+        with self.assertRaisesRegex(ValueError, "filter-nb-points"):
+            runtime.validate_args(bad_nb_points)
+
+        bad_component_voxel = self._parse(runtime.DEMO_VERSION_3_1, ["--enhanced-component-voxel-size-m", "0"])
+        with self.assertRaisesRegex(ValueError, "enhanced-component-voxel-size-m"):
+            runtime.validate_args(bad_component_voxel)
+
+        bad_gap = self._parse(runtime.DEMO_VERSION_3_1, ["--enhanced-keep-near-main-gap-m", "-0.001"])
+        with self.assertRaisesRegex(ValueError, "enhanced-keep-near-main-gap-m"):
+            runtime.validate_args(bad_gap)
 
         bad_keep_frames = self._parse(runtime.DEMO_VERSION_3_1, ["--edgetam-live-session-keep-frames", "-1"])
         with self.assertRaisesRegex(ValueError, "edgetam-live-session-keep-frames"):
@@ -408,6 +508,61 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertEqual(_option_value(delegate, "--controller-filter-keep-components"), "2")
                 self.assertEqual(_option_value(delegate, "--filter-max-age-frames"), "3")
                 self.assertEqual(_option_value(delegate, "--edgetam-live-session-keep-frames"), "64")
+
+    def test_ffs_filter_surface_defaults_apply_only_when_filter_enabled(self) -> None:
+        disabled = self._parse(runtime.DEMO_VERSION_3_2, [])
+        self.assertEqual(disabled.filter_radius_m, runtime.masked_pcd.DEFAULT_FILTER_RADIUS_M)
+        self.assertEqual(disabled.filter_nb_points, runtime.masked_pcd.DEFAULT_FILTER_NB_POINTS)
+        self.assertEqual(disabled.filter_every_n, 3)
+        self.assertEqual(disabled.filter_max_age_frames, 3)
+
+        enabled = self._parse(runtime.DEMO_VERSION_3_2, ["--enable-pcd-filter"])
+        runtime.validate_args(enabled)
+        contract = runtime.build_contract(enabled)
+        delegate = runtime.build_live_delegate_argv(enabled, active_serial="s0")
+
+        self.assertTrue(contract["pcd_filter_enabled"])
+        self.assertEqual(contract["pcd_filter_mode"], "async")
+        self.assertEqual(contract["object_filter"], "enhanced-pt")
+        self.assertEqual(contract["controller_filter"], "enhanced-pt")
+        self.assertEqual(contract["filter_radius_m"], runtime.FFS_SURFACE_FILTER_RADIUS_M)
+        self.assertEqual(contract["filter_nb_points"], runtime.FFS_SURFACE_FILTER_NB_POINTS)
+        self.assertEqual(contract["enhanced_component_voxel_size_m"], runtime.FFS_SURFACE_COMPONENT_VOXEL_SIZE_M)
+        self.assertEqual(contract["filter_every_n"], runtime.FFS_SURFACE_FILTER_EVERY_N)
+        self.assertEqual(contract["filter_max_age_frames"], runtime.FFS_SURFACE_FILTER_MAX_AGE_FRAMES)
+        self.assertEqual(_option_value(delegate, "--filter-radius-m"), str(runtime.FFS_SURFACE_FILTER_RADIUS_M))
+        self.assertEqual(_option_value(delegate, "--filter-nb-points"), str(runtime.FFS_SURFACE_FILTER_NB_POINTS))
+        self.assertEqual(
+            _option_value(delegate, "--enhanced-component-voxel-size-m"),
+            str(runtime.FFS_SURFACE_COMPONENT_VOXEL_SIZE_M),
+        )
+        self.assertEqual(_option_value(delegate, "--filter-every-n"), str(runtime.FFS_SURFACE_FILTER_EVERY_N))
+        self.assertEqual(
+            _option_value(delegate, "--filter-max-age-frames"),
+            str(runtime.FFS_SURFACE_FILTER_MAX_AGE_FRAMES),
+        )
+
+        overridden = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--enable-pcd-filter",
+                "--filter-radius-m",
+                "0.02",
+                "--filter-nb-points",
+                "6",
+                "--enhanced-component-voxel-size-m",
+                "0.025",
+                "--filter-every-n",
+                "4",
+                "--filter-max-age-frames",
+                "5",
+            ],
+        )
+        self.assertEqual(overridden.filter_radius_m, 0.02)
+        self.assertEqual(overridden.filter_nb_points, 6)
+        self.assertEqual(overridden.enhanced_component_voxel_size_m, 0.025)
+        self.assertEqual(overridden.filter_every_n, 4)
+        self.assertEqual(overridden.filter_max_age_frames, 5)
 
     def test_recording_mode_skips_live_serial_validation(self) -> None:
         with mock.patch.object(runtime.masked_pcd, "main", return_value=0) as masked_main:
