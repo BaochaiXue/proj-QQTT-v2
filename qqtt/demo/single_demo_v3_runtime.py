@@ -695,7 +695,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     headless_capture = _headless_capture_requested(args, version)
     tracker_on = str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE
     tracker_visualization_mode = "phystwin_rainbow_identity_3d_lift" if tracker_on else "none"
-    tracker_sync_policy = "strict_same_seq_latest_wins" if tracker_on and str(args.track_mode) != TRACK_MODE_NONE else "none"
+    tracker_sync_policy = "strict_same_seq_lossless_5fps" if tracker_on and str(args.track_mode) != TRACK_MODE_NONE else "none"
     query_display_policy = "visible_3d_lifted_all" if tracker_on else "none"
     query_color_mode = "phystwin_rainbow_identity" if tracker_on else "none"
     contract: dict[str, Any] = {

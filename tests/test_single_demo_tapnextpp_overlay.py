@@ -548,6 +548,58 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
 
         self.assertIn("consistent=3/4", text)
 
+    def test_ordered_lossless_queue_rejects_gaps_and_backlog_overflow(self) -> None:
+        queue = demo.OrderedPacketQueue[demo.MaskPacket](name="unit", max_backlog_frames=2)
+        stop_event = threading.Event()
+
+        queue.put(self._mask_packet(seq=0))
+        queue.put(self._mask_packet(seq=1))
+        with self.assertRaisesRegex(demo.LosslessPipelineError, "backlog exceeded"):
+            queue.put(self._mask_packet(seq=2))
+
+        self.assertEqual(queue.get(stop_event=stop_event).seq, 0)
+        queue.put(self._mask_packet(seq=2))
+        self.assertEqual(queue.get(stop_event=stop_event).seq, 1)
+        self.assertEqual(queue.get(stop_event=stop_event).seq, 2)
+        queue.close()
+        self.assertIsNone(queue.get(stop_event=stop_event))
+
+        queue.reset()
+        queue.put(self._mask_packet(seq=0))
+        with self.assertRaisesRegex(demo.LosslessPipelineError, "expected seq 1, got 2"):
+            queue.put(self._mask_packet(seq=2))
+
+    def test_same_seq_pairer_holds_later_complete_pair_until_missing_seq_arrives(self) -> None:
+        pairer = demo.SameSeqPairer(max_backlog_frames=4)
+
+        for seq in range(10):
+            pcd_result = demo.PcdBuildResult(
+                packet=self._pcd_packet(seq=seq),
+                depth_m=None,
+                mask_packet=self._mask_packet(seq=seq),
+            )
+            self.assertEqual(pairer.add_pcd_result(pcd_result), [])
+            pairs = pairer.add_tracker_packet(self._tracker_packet(seq=seq))
+            self.assertEqual([pair.seq for pair in pairs], [seq])
+
+        pcd10 = demo.PcdBuildResult(
+            packet=self._pcd_packet(seq=10),
+            depth_m=None,
+            mask_packet=self._mask_packet(seq=10),
+        )
+        pcd11 = demo.PcdBuildResult(
+            packet=self._pcd_packet(seq=11),
+            depth_m=None,
+            mask_packet=self._mask_packet(seq=11),
+        )
+        self.assertEqual(pairer.add_pcd_result(pcd10), [])
+        self.assertEqual(pairer.add_pcd_result(pcd11), [])
+        self.assertEqual(pairer.add_tracker_packet(self._tracker_packet(seq=11)), [])
+
+        pairs = pairer.add_tracker_packet(self._tracker_packet(seq=10))
+
+        self.assertEqual([pair.seq for pair in pairs], [10, 11])
+
     def test_strict_pair_rejects_mismatched_pcd_and_tracker_seq(self) -> None:
         args = self._tracker_args()
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
@@ -587,7 +639,25 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(runtime.render_slot.latest_seq(), -1)
         self.assertEqual(runtime.tracker_marker_slot.latest_seq(), -1)
 
-    def test_pcd_visual_mode_with_tracker_start_threads_uses_strict_pair_worker(self) -> None:
+    def test_lossless_headless_pair_publish_does_not_fill_unconsumed_render_queue(self) -> None:
+        args = self._tracker_args()
+        args.render_mode = "none"
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime._reset_lossless_state()
+        pcd_result = demo.PcdBuildResult(
+            packet=self._pcd_packet(seq=0),
+            depth_m=None,
+            mask_packet=self._mask_packet(seq=0),
+        )
+
+        pair = runtime._publish_strict_render_pair(pcd_result, self._tracker_packet(seq=0))
+
+        self.assertEqual(pair.seq, 0)
+        self.assertEqual(runtime.paired_render_slot.latest_seq(), 0)
+        self.assertEqual(runtime.lossless_paired_render_queue.latest_seq(), -1)
+        self.assertEqual(runtime.lossless_paired_render_queue.pending_count(), 0)
+
+    def test_pcd_visual_mode_with_tracker_start_threads_uses_parallel_lossless_workers(self) -> None:
         args = self._tracker_args()
         args.demo_visual_mode = demo.DEMO_VISUAL_MODE_PCD
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
@@ -604,26 +674,37 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             runtime.stop_event.set()
 
         def tracker_worker() -> None:
-            started.append("tracker")
+            started.append("old-tracker")
 
         def pcd_worker() -> None:
+            started.append("old-pcd")
+
+        def lossless_pcd_worker() -> None:
             started.append("pcd")
+
+        def lossless_tracker_worker() -> None:
+            started.append("tracker")
+            runtime.stop_event.set()
 
         runtime._capture_worker = capture_worker  # type: ignore[method-assign]
         runtime._seg_worker = seg_worker  # type: ignore[method-assign]
         runtime._strict_paired_worker = strict_pair_worker  # type: ignore[method-assign]
         runtime._tracker_worker = tracker_worker  # type: ignore[method-assign]
         runtime._pcd_worker = pcd_worker  # type: ignore[method-assign]
+        runtime._lossless_pcd_worker = lossless_pcd_worker  # type: ignore[method-assign]
+        runtime._lossless_tracker_worker = lossless_tracker_worker  # type: ignore[method-assign]
 
         runtime._start_threads()
         deadline = time.time() + 1.0
-        while time.time() < deadline and "strict-pair" not in started:
+        while time.time() < deadline and "tracker" not in started:
             time.sleep(0.01)
         runtime.stop()
 
-        self.assertIn("strict-pair", started)
-        self.assertNotIn("tracker", started)
-        self.assertNotIn("pcd", started)
+        self.assertIn("pcd", started)
+        self.assertIn("tracker", started)
+        self.assertNotIn("strict-pair", started)
+        self.assertNotIn("old-tracker", started)
+        self.assertNotIn("old-pcd", started)
 
     def test_headless_capture_writer_saves_filtered_pcd_depth_and_query_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

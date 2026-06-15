@@ -217,6 +217,104 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             thread.join(timeout=1.0)
             self.assertFalse(thread.is_alive())
 
+    def test_lossless_recording_capture_offers_all_frames_without_latest_wins_drop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            case_dir = self._write_case(Path(tmp_dir), steps=(2, 3, 4))
+            args = masked_demo.build_parser().parse_args(
+                [
+                    "--input-source",
+                    "recording",
+                    "--recording-case",
+                    str(case_dir),
+                    "--replay-fps",
+                    "100",
+                    "--depth-source",
+                    "realsense",
+                    "--render-mode",
+                    "none",
+                    "--track-mode",
+                    "object-only",
+                    "--pcd-mode",
+                    "masked",
+                    "--tracker-backend",
+                    "tapnextpp",
+                ]
+            )
+            demo = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+            demo._reset_lossless_state()
+            demo.recording_source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=100)
+
+            thread = threading.Thread(target=demo._capture_recording_worker, daemon=True)
+            thread.start()
+
+            seen: list[int] = []
+            first = demo.lossless_frame_queue.get(stop_event=demo.stop_event)
+            self.assertIsNotNone(first)
+            seen.append(first.seq)
+            demo._recording_first_frame_segmented.set()
+
+            deadline = time.time() + 1.0
+            while time.time() < deadline:
+                packet = demo.lossless_frame_queue.get(stop_event=demo.stop_event)
+                if packet is None:
+                    break
+                seen.append(packet.seq)
+
+            thread.join(timeout=1.0)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(seen, [0, 1, 2])
+            self.assertEqual(demo._lossless_offered_frames, 3)
+            self.assertTrue(demo.lossless_frame_queue.is_closed_and_empty())
+
+    def test_lossless_recording_duration_uses_fixed_5fps_task_cadence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            case_dir = self._write_case(Path(tmp_dir), steps=(2, 3, 4, 5))
+            args = masked_demo.build_parser().parse_args(
+                [
+                    "--input-source",
+                    "recording",
+                    "--recording-case",
+                    str(case_dir),
+                    "--replay-fps",
+                    "100",
+                    "--duration-s",
+                    "0.21",
+                    "--depth-source",
+                    "realsense",
+                    "--render-mode",
+                    "none",
+                    "--track-mode",
+                    "object-only",
+                    "--pcd-mode",
+                    "masked",
+                    "--tracker-backend",
+                    "tapnextpp",
+                ]
+            )
+            demo = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+            demo._reset_lossless_state()
+            demo.recording_source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=100)
+
+            thread = threading.Thread(target=demo._capture_recording_worker, daemon=True)
+            thread.start()
+
+            seen: list[int] = []
+            first = demo.lossless_frame_queue.get(stop_event=demo.stop_event)
+            self.assertIsNotNone(first)
+            seen.append(first.seq)
+            demo._recording_first_frame_segmented.set()
+            deadline = time.time() + 1.0
+            while time.time() < deadline:
+                packet = demo.lossless_frame_queue.get(stop_event=demo.stop_event)
+                if packet is None:
+                    break
+                seen.append(packet.seq)
+
+            thread.join(timeout=1.0)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(seen, [0, 1])
+            self.assertEqual(demo._lossless_offered_frames, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 import threading
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Generic, TypeVar
 
 import numpy as np
 
@@ -46,6 +46,7 @@ from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     SUPPORTED_PROFILES,
     _apply_emitter,
     _elapsed_ms,
+    _packet_seq,
     _load_open3d_modules,
     _load_realsense_module,
     apply_wslg_open3d_env_defaults,
@@ -192,6 +193,8 @@ QUERY_CONTROLLER_INSTANCE_HAND_A = 1
 QUERY_CONTROLLER_INSTANCE_HAND_B = 2
 HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "enhanced_pt_filtered"
 DEBUG_LOG_INTERVAL_S = 1.0
+DEFAULT_LOSSLESS_INPUT_FPS = 5.0
+DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS = 3.0
 FATAL_HUD_PREFIX = "FATAL WORKER ERROR"
 WARMUP_HUD_TEXT = (
     "System warming up. Keep one steady pose.\n"
@@ -946,6 +949,273 @@ class StageStats:
             if elapsed <= 0:
                 return 0.0
             return float((len(self._times) - 1) / elapsed)
+
+
+PacketT = TypeVar("PacketT")
+
+
+class LosslessPipelineError(RuntimeError):
+    """Fatal contract violation in the lossless Demo 3.x pipeline."""
+
+
+@dataclass(frozen=True)
+class OrderedQueueStats:
+    name: str
+    size: int
+    max_size: int
+    last_put_seq: int
+    last_get_seq: int
+    closed: bool
+
+
+class OrderedPacketQueue(Generic[PacketT]):
+    """Bounded FIFO packet queue that rejects gaps and silent overwrites."""
+
+    def __init__(self, *, name: str, max_backlog_frames: int) -> None:
+        self.name = str(name)
+        self.max_backlog_frames = max(1, int(max_backlog_frames))
+        self._condition = threading.Condition()
+        self._items: deque[PacketT] = deque()
+        self._last_put_seq = -1
+        self._last_get_seq = -1
+        self._closed = False
+        self._max_size_seen = 0
+
+    def put(self, packet: PacketT) -> int:
+        seq = int(_packet_seq(packet))
+        with self._condition:
+            if self._closed:
+                raise LosslessPipelineError(f"{self.name} queue is closed")
+            expected = self._last_put_seq + 1
+            if seq != expected:
+                raise LosslessPipelineError(
+                    f"{self.name} queue expected seq {expected}, got {seq}"
+                )
+            if len(self._items) >= self.max_backlog_frames:
+                raise LosslessPipelineError(
+                    "lossless 5 FPS backlog exceeded "
+                    f"stage={self.name} queue_len={len(self._items) + 1} "
+                    f"max={self.max_backlog_frames} expected_seq={self._last_get_seq + 1} "
+                    f"latest_seq={seq}"
+                )
+            self._items.append(packet)
+            self._last_put_seq = seq
+            self._max_size_seen = max(self._max_size_seen, len(self._items))
+            self._condition.notify_all()
+            return len(self._items)
+
+    def get(self, *, stop_event: threading.Event, timeout_s: float = 0.05) -> PacketT | None:
+        with self._condition:
+            while not self._items:
+                if self._closed or stop_event.is_set():
+                    return None
+                self._condition.wait(timeout=float(timeout_s))
+            packet = self._items.popleft()
+            seq = int(_packet_seq(packet))
+            expected = self._last_get_seq + 1
+            if seq != expected:
+                raise LosslessPipelineError(
+                    f"{self.name} queue consumer expected seq {expected}, got {seq}"
+                )
+            self._last_get_seq = seq
+            self._condition.notify_all()
+            return packet
+
+    def get_nowait(self) -> PacketT | None:
+        with self._condition:
+            if not self._items:
+                return None
+            packet = self._items.popleft()
+            seq = int(_packet_seq(packet))
+            expected = self._last_get_seq + 1
+            if seq != expected:
+                raise LosslessPipelineError(
+                    f"{self.name} queue consumer expected seq {expected}, got {seq}"
+                )
+            self._last_get_seq = seq
+            self._condition.notify_all()
+            return packet
+
+    def close(self) -> None:
+        with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+
+    def reset(self) -> None:
+        with self._condition:
+            self._items.clear()
+            self._last_put_seq = -1
+            self._last_get_seq = -1
+            self._closed = False
+            self._max_size_seen = 0
+            self._condition.notify_all()
+
+    @property
+    def stats(self) -> OrderedQueueStats:
+        with self._condition:
+            return OrderedQueueStats(
+                name=self.name,
+                size=len(self._items),
+                max_size=int(self._max_size_seen),
+                last_put_seq=int(self._last_put_seq),
+                last_get_seq=int(self._last_get_seq),
+                closed=bool(self._closed),
+            )
+
+    def latest_seq(self) -> int:
+        with self._condition:
+            return int(self._last_put_seq)
+
+    def pending_count(self) -> int:
+        with self._condition:
+            return len(self._items)
+
+    def is_closed_and_empty(self) -> bool:
+        with self._condition:
+            return bool(self._closed and not self._items)
+
+
+@dataclass(frozen=True)
+class PairedBuildResult:
+    seq: int
+    pcd_result: PcdBuildResult
+    tracker_packet: TrackerMarkerPacket
+
+    @property
+    def render_packet(self) -> PairedRenderPacket:
+        return PairedRenderPacket(
+            seq=int(self.seq),
+            pcd_packet=self.pcd_result.packet,
+            tracker_packet=self.tracker_packet,
+        )
+
+
+@dataclass(frozen=True)
+class PairerStats:
+    expected_seq: int
+    pending_pcd: int
+    pending_tracker: int
+    emitted_seq: int
+    pcd_closed: bool
+    tracker_closed: bool
+
+
+class SameSeqPairer:
+    def __init__(self, *, max_backlog_frames: int) -> None:
+        self.max_backlog_frames = max(1, int(max_backlog_frames))
+        self._lock = threading.Lock()
+        self._pending_pcd: dict[int, PcdBuildResult] = {}
+        self._pending_tracker: dict[int, TrackerMarkerPacket] = {}
+        self._expected_seq = 0
+        self._emitted_seq = -1
+        self._pcd_closed = False
+        self._tracker_closed = False
+
+    def reset(self) -> None:
+        with self._lock:
+            self._pending_pcd.clear()
+            self._pending_tracker.clear()
+            self._expected_seq = 0
+            self._emitted_seq = -1
+            self._pcd_closed = False
+            self._tracker_closed = False
+
+    def add_pcd_result(self, result: PcdBuildResult) -> list[PairedBuildResult]:
+        seq = int(result.packet.seq)
+        with self._lock:
+            if self._pcd_closed:
+                raise LosslessPipelineError("same-seq pairer PCD side is closed")
+            if seq < self._expected_seq:
+                raise LosslessPipelineError(
+                    f"same-seq pairer received stale PCD seq {seq}, expected {self._expected_seq}"
+                )
+            if seq in self._pending_pcd:
+                raise LosslessPipelineError(f"same-seq pairer duplicate PCD seq {seq}")
+            self._pending_pcd[seq] = result
+            self._check_backlog_locked()
+            return self._flush_ready_locked()
+
+    def add_tracker_packet(self, packet: TrackerMarkerPacket) -> list[PairedBuildResult]:
+        seq = int(packet.seq)
+        with self._lock:
+            if self._tracker_closed:
+                raise LosslessPipelineError("same-seq pairer tracker side is closed")
+            if seq < self._expected_seq:
+                raise LosslessPipelineError(
+                    f"same-seq pairer received stale tracker seq {seq}, expected {self._expected_seq}"
+                )
+            if seq in self._pending_tracker:
+                raise LosslessPipelineError(f"same-seq pairer duplicate tracker seq {seq}")
+            self._pending_tracker[seq] = packet
+            self._check_backlog_locked()
+            return self._flush_ready_locked()
+
+    def close_pcd(self) -> list[PairedBuildResult]:
+        with self._lock:
+            self._pcd_closed = True
+            pairs = self._flush_ready_locked()
+            self._check_closed_locked()
+            return pairs
+
+    def close_tracker(self) -> list[PairedBuildResult]:
+        with self._lock:
+            self._tracker_closed = True
+            pairs = self._flush_ready_locked()
+            self._check_closed_locked()
+            return pairs
+
+    @property
+    def done(self) -> bool:
+        with self._lock:
+            return (
+                self._pcd_closed
+                and self._tracker_closed
+                and not self._pending_pcd
+                and not self._pending_tracker
+            )
+
+    @property
+    def stats(self) -> PairerStats:
+        with self._lock:
+            return PairerStats(
+                expected_seq=int(self._expected_seq),
+                pending_pcd=len(self._pending_pcd),
+                pending_tracker=len(self._pending_tracker),
+                emitted_seq=int(self._emitted_seq),
+                pcd_closed=bool(self._pcd_closed),
+                tracker_closed=bool(self._tracker_closed),
+            )
+
+    def _flush_ready_locked(self) -> list[PairedBuildResult]:
+        pairs: list[PairedBuildResult] = []
+        while self._expected_seq in self._pending_pcd and self._expected_seq in self._pending_tracker:
+            seq = int(self._expected_seq)
+            pcd_result = self._pending_pcd.pop(seq)
+            tracker_packet = self._pending_tracker.pop(seq)
+            pairs.append(PairedBuildResult(seq=seq, pcd_result=pcd_result, tracker_packet=tracker_packet))
+            self._emitted_seq = seq
+            self._expected_seq += 1
+        return pairs
+
+    def _check_backlog_locked(self) -> None:
+        if len(self._pending_pcd) > self.max_backlog_frames or len(self._pending_tracker) > self.max_backlog_frames:
+            raise LosslessPipelineError(
+                "lossless 5 FPS backlog exceeded "
+                f"stage=pairer expected_seq={self._expected_seq} "
+                f"pending_pcd={len(self._pending_pcd)} pending_tracker={len(self._pending_tracker)} "
+                f"max={self.max_backlog_frames}"
+            )
+
+    def _check_closed_locked(self) -> None:
+        if not (self._pcd_closed and self._tracker_closed):
+            return
+        if self._pending_pcd or self._pending_tracker:
+            raise LosslessPipelineError(
+                "same-seq pairer closed with unmatched packets "
+                f"expected_seq={self._expected_seq} "
+                f"pending_pcd={sorted(self._pending_pcd)} "
+                f"pending_tracker={sorted(self._pending_tracker)}"
+            )
 
 
 def _resolve_path(value: str | Path) -> Path:
@@ -2639,6 +2909,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.width, self.height = parse_profile(args.profile)
+        self.lossless_max_backlog_frames = max(
+            1,
+            int(round(DEFAULT_LOSSLESS_INPUT_FPS * DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS)),
+        )
         self.runtime: RealtimeCameraRuntime | None = None
         self.ray_x: np.ndarray | None = None
         self.ray_y: np.ndarray | None = None
@@ -2649,7 +2923,28 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.render_slot: LatestSlot[MaskedPcdPacket] = LatestSlot()
         self.tracker_marker_slot: LatestSlot[TrackerMarkerPacket] = LatestSlot()
         self.paired_render_slot: LatestSlot[PairedRenderPacket] = LatestSlot()
+        self.lossless_frame_queue: OrderedPacketQueue[FramePacket] = OrderedPacketQueue(
+            name="frame",
+            max_backlog_frames=self.lossless_max_backlog_frames,
+        )
+        self.lossless_pcd_mask_queue: OrderedPacketQueue[MaskPacket] = OrderedPacketQueue(
+            name="mask-pcd",
+            max_backlog_frames=self.lossless_max_backlog_frames,
+        )
+        self.lossless_tracker_mask_queue: OrderedPacketQueue[MaskPacket] = OrderedPacketQueue(
+            name="mask-tracker",
+            max_backlog_frames=self.lossless_max_backlog_frames,
+        )
+        self.lossless_paired_render_queue: OrderedPacketQueue[PairedRenderPacket] = OrderedPacketQueue(
+            name="paired-render",
+            max_backlog_frames=self.lossless_max_backlog_frames,
+        )
+        self.same_seq_pairer = SameSeqPairer(max_backlog_frames=self.lossless_max_backlog_frames)
+        self._lossless_pair_publish_lock = threading.Lock()
         self.stop_event = threading.Event()
+        self._lossless_capture_done = threading.Event()
+        self._lossless_processing_done = threading.Event()
+        self._lossless_pipeline_active = False
         self._threads: list[threading.Thread] = []
         self._request_render_update: Callable[[], None] = lambda: None
         self.capture_stats = StageStats()
@@ -2693,6 +2988,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.recording_source: RecordedRgbdFrameSource | None = None
         self.headless_capture_writer: HeadlessCaptureWriter | None = None
         self._recording_first_frame_segmented = threading.Event()
+        self._lossless_offered_frames = 0
+        self._lossless_segmented_frames = 0
+        self._lossless_pcd_results = 0
+        self._lossless_tracker_results = 0
+        self._lossless_pairs_emitted = 0
         self._tracker_query_points_yx: np.ndarray | None = None
         self._tracker_query_rgb_u8: np.ndarray | None = None
         self._tracker_query_is_object: np.ndarray | None = None
@@ -2715,6 +3015,50 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.runtime is None:
             return "<not-started>"
         return self.runtime.serial
+
+    def _lossless_enabled(self) -> bool:
+        return bool(tracker_enabled(self.args) and self.args.pcd_mode == "masked")
+
+    def _lossless_input_fps(self) -> float:
+        return DEFAULT_LOSSLESS_INPUT_FPS
+
+    def _reset_lossless_state(self) -> None:
+        self.lossless_frame_queue.reset()
+        self.lossless_pcd_mask_queue.reset()
+        self.lossless_tracker_mask_queue.reset()
+        self.lossless_paired_render_queue.reset()
+        self.same_seq_pairer.reset()
+        self._lossless_capture_done.clear()
+        self._lossless_processing_done.clear()
+        self._recording_first_frame_segmented.clear()
+        self._lossless_pipeline_active = True
+        self._lossless_offered_frames = 0
+        self._lossless_segmented_frames = 0
+        self._lossless_pcd_results = 0
+        self._lossless_tracker_results = 0
+        self._lossless_pairs_emitted = 0
+
+    def _close_lossless_queues(self) -> None:
+        self.lossless_frame_queue.close()
+        self.lossless_pcd_mask_queue.close()
+        self.lossless_tracker_mask_queue.close()
+        self.lossless_paired_render_queue.close()
+        self._lossless_pipeline_active = False
+
+    def _lossless_queue_debug_text(self) -> str:
+        frame = self.lossless_frame_queue.stats
+        pcd = self.lossless_pcd_mask_queue.stats
+        tracker = self.lossless_tracker_mask_queue.stats
+        render = self.lossless_paired_render_queue.stats
+        pairer = self.same_seq_pairer.stats
+        return (
+            f"lossless=1 input_fps={self._lossless_input_fps():.1f} max_backlog={self.lossless_max_backlog_frames} "
+            f"q_frame={frame.size} q_pcd={pcd.size} q_tracker={tracker.size} q_render={render.size} "
+            f"pairer_expected={pairer.expected_seq} pairer_pending_pcd={pairer.pending_pcd} "
+            f"pairer_pending_tracker={pairer.pending_tracker} offered={self._lossless_offered_frames} "
+            f"segmented={self._lossless_segmented_frames} pcd_results={self._lossless_pcd_results} "
+            f"tracker_results={self._lossless_tracker_results} pairs={self._lossless_pairs_emitted}"
+        )
 
     def _build_headless_capture_metadata(self) -> dict[str, Any]:
         if self.runtime is None:
@@ -2739,6 +3083,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "tracker_backend": str(self.args.tracker_backend),
             "tracker_query_count": int(self.args.tracker_query_count),
             "tracker_display_scope": str(self.args.tracker_display_scope),
+            "tracker_sync_policy": (
+                "strict_same_seq_lossless_5fps" if self._lossless_enabled() else "none"
+            ),
+            "lossless_input_fps": float(self._lossless_input_fps()) if self._lossless_enabled() else None,
+            "lossless_max_backlog_frames": int(self.lossless_max_backlog_frames) if self._lossless_enabled() else None,
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": str(self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE),
             "object_filter": str(self.args.object_filter),
@@ -2863,6 +3212,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
     def stop(self) -> None:
         self.stop_event.set()
+        self._close_lossless_queues()
         for thread in list(self._threads):
             if thread.is_alive():
                 thread.join(timeout=1.0)
@@ -2930,11 +3280,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
         return self.ir_to_color_aligner
 
     def _start_threads(self) -> None:
+        if self._lossless_enabled():
+            self._reset_lossless_state()
         workers: list[tuple[str, Callable[[], None]]] = [("capture", self._capture_worker)]
         if self.args.track_mode != "none":
             workers.append(("seg", self._seg_worker))
-        if tracker_enabled(self.args) and self.args.pcd_mode == "masked":
-            workers.append(("strict-pair", self._strict_paired_worker))
+        if self._lossless_enabled():
+            workers.append(("pcd", self._lossless_pcd_worker))
+            workers.append(("tracker", self._lossless_tracker_worker))
         elif tracker_enabled(self.args):
             workers.append(("tracker", self._tracker_worker))
         if self.args.pcd_mode == "masked":
@@ -2967,6 +3320,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
         started_s: float | None = None
         try:
             while not self.stop_event.is_set():
+                if self._lossless_enabled():
+                    if self._lossless_processing_done.is_set():
+                        self.stop_event.set()
+                        break
+                    time.sleep(0.05)
+                    continue
                 if self.args.duration_s > 0:
                     now_s = time.perf_counter()
                     if self.headless_capture_writer is not None:
@@ -2984,20 +3343,33 @@ class RealtimeMaskedEdgeTamPcdDemo:
         except KeyboardInterrupt:
             self.stop_event.set()
 
+    def _publish_capture_packet(self, packet: FramePacket, *, record_s: float | None = None) -> None:
+        self.capture_slot.put(packet)
+        if self._lossless_enabled():
+            self.lossless_frame_queue.put(packet)
+            self._lossless_offered_frames += 1
+        self.capture_stats.record(packet.receive_perf_s if record_s is None else float(record_s))
+
     def _capture_recording_worker(self) -> None:
         assert self.recording_source is not None
         source = self.recording_source
-        frame_period_s = 1.0 / float(source.effective_fps)
+        if self._lossless_enabled():
+            frame_period_s = 1.0 / self._lossless_input_fps()
+        else:
+            frame_period_s = 1.0 / float(source.effective_fps)
         try:
             first_packet = source.read_packet(seq=0)
         except Exception as exc:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("recording replay", exc)
             return
-        self.capture_slot.put(first_packet)
-        self.capture_stats.record(first_packet.receive_perf_s)
+        self._publish_capture_packet(first_packet, record_s=first_packet.receive_perf_s)
         if source.frame_count <= 1:
-            self.stop_event.set()
+            if self._lossless_enabled():
+                self._lossless_capture_done.set()
+                self.lossless_frame_queue.close()
+            else:
+                self.stop_event.set()
             self._request_render_update()
             return
         if self.args.track_mode != "none":
@@ -3009,6 +3381,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
         replay_start_s = time.perf_counter()
         for seq in range(1, source.frame_count):
             if self.stop_event.is_set():
+                break
+            if (
+                self._lossless_enabled()
+                and float(self.args.duration_s) > 0.0
+                and float(seq) * frame_period_s >= float(self.args.duration_s)
+            ):
                 break
             wait_start_s = time.perf_counter()
             target_s = replay_start_s + (float(seq) * frame_period_s)
@@ -3025,9 +3403,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 if not self.stop_event.is_set():
                     self._record_fatal_worker_error("recording replay", exc)
                 break
-            self.capture_slot.put(packet)
-            self.capture_stats.record(packet.receive_perf_s)
-        self.stop_event.set()
+            self._publish_capture_packet(packet, record_s=packet.receive_perf_s)
+        if self._lossless_enabled():
+            self._lossless_capture_done.set()
+            self.lossless_frame_queue.close()
+        else:
+            self.stop_event.set()
         self._request_render_update()
 
     def _capture_worker(self) -> None:
@@ -3036,6 +3417,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             self._capture_recording_worker()
             return
         seq = 0
+        lossless_task_period_s = 1.0 / self._lossless_input_fps()
+        next_lossless_task_s = 0.0
         pipeline = self.runtime.pipeline
         align = self.runtime.align
         while not self.stop_event.is_set():
@@ -3080,6 +3463,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 else:
                     ir_left_frame = None
                     ir_right_frame = None
+            if self._lossless_enabled() and seq > 0 and receive_perf_s < next_lossless_task_s:
+                continue
             copy_start_s = time.perf_counter()
             color_bgr = np.ascontiguousarray(np.asanyarray(color_frame.get_data()).copy())
             if self.args.depth_source in {"ffs", "ffs_remote"}:
@@ -3122,9 +3507,19 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 k_color=self.runtime.k_color,
                 ir_baseline_m=self.runtime.ir_baseline_m,
             )
-            self.capture_slot.put(packet)
-            self.capture_stats.record(copy_done_s)
+            self._publish_capture_packet(packet, record_s=copy_done_s)
+            if self._lossless_enabled():
+                if seq == 0 and self.args.track_mode != "none":
+                    while not self.stop_event.is_set():
+                        if self._recording_first_frame_segmented.wait(timeout=0.01):
+                            break
+                    if self.stop_event.is_set():
+                        break
+                next_lossless_task_s = time.perf_counter() + lossless_task_period_s
             seq += 1
+        if self._lossless_enabled():
+            self._lossless_capture_done.set()
+            self.lossless_frame_queue.close()
 
     def _init_hf_model(self) -> tuple[Any, Any, Any, Any, Any]:
         hf_stream = _load_hf_streaming_runtime()
@@ -3223,7 +3618,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 "phystwin_rainbow_identity_3d_lift" if tracker_enabled(self.args) else "none"
             ),
             "tracker_sync_policy": (
-                "strict_same_seq_latest_wins" if tracker_enabled(self.args) and self.args.pcd_mode == "masked" else "none"
+                "strict_same_seq_lossless_5fps" if tracker_enabled(self.args) and self.args.pcd_mode == "masked" else "none"
+            ),
+            "lossless_input_fps": (
+                float(self._lossless_input_fps()) if tracker_enabled(self.args) and self.args.pcd_mode == "masked" else None
+            ),
+            "lossless_max_backlog_frames": (
+                int(self.lossless_max_backlog_frames) if tracker_enabled(self.args) and self.args.pcd_mode == "masked" else None
             ),
             "query_display_policy": "visible_3d_lifted_all" if tracker_enabled(self.args) else "none",
             "query_color_mode": "phystwin_rainbow_identity" if tracker_enabled(self.args) else "none",
@@ -3276,16 +3677,21 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     initial_masks=initial_masks,
                     add_prompt=True,
                 )
-                self.mask_slot.put(first_packet)
+                self._publish_mask_packet(first_packet)
                 self.seg_stats.record(first_packet.process_done_perf_s)
-                if _is_replay_input_source(str(self.args.input_source)):
+                if self._lossless_enabled() or _is_replay_input_source(str(self.args.input_source)):
                     self._recording_first_frame_segmented.set()
                 last_seq = first_frame.seq
                 while not self.stop_event.is_set():
-                    frame = self.capture_slot.get_latest_after(last_seq)
-                    if frame is None:
-                        time.sleep(0.001)
-                        continue
+                    if self._lossless_enabled():
+                        frame = self.lossless_frame_queue.get(stop_event=self.stop_event)
+                        if frame is None:
+                            break
+                    else:
+                        frame = self.capture_slot.get_latest_after(last_seq)
+                        if frame is None:
+                            time.sleep(0.001)
+                            continue
                     last_seq = frame.seq
                     try:
                         packet = self._run_segmentation_frame(
@@ -3302,11 +3708,17 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     except Exception as exc:
                         self._record_fatal_worker_error("EdgeTAM segmentation", exc)
                         break
-                    self.mask_slot.put(packet)
+                    self._publish_mask_packet(packet)
                     self.seg_stats.record(packet.process_done_perf_s)
+                if self._lossless_enabled():
+                    self.lossless_pcd_mask_queue.close()
+                    self.lossless_tracker_mask_queue.close()
         except Exception as exc:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("segmentation worker", exc)
+            if self._lossless_enabled():
+                self.lossless_pcd_mask_queue.close()
+                self.lossless_tracker_mask_queue.close()
 
     def _build_tracker_adapter(self) -> Any:
         config = PointTrackerAdapterConfig(
@@ -3591,14 +4003,83 @@ class RealtimeMaskedEdgeTamPcdDemo:
             pcd_packet=pcd_result.packet,
             tracker_packet=tracker_packet,
         )
+        if self._lossless_enabled() and self._lossless_pipeline_active and self.args.render_mode != "none":
+            self.lossless_paired_render_queue.put(pair)
         self.paired_render_slot.put(pair)
         self.pcd_stats.record(pcd_result.packet.process_done_perf_s)
         self.tracker_stats.record(tracker_packet.process_done_perf_s)
+        self._lossless_pairs_emitted += 1
         if self.headless_capture_writer is not None:
             self.headless_capture_writer.write_tracker(tracker_packet)
             self._write_headless_pcd_result(pcd_result, tracker_packet=tracker_packet)
         self._request_render_update()
         return pair
+
+    def _publish_pairer_outputs(self, pairs: list[PairedBuildResult]) -> None:
+        for pair in pairs:
+            self._publish_strict_render_pair(pair.pcd_result, pair.tracker_packet)
+
+    def _maybe_finish_lossless_processing(self) -> None:
+        if not self._lossless_enabled():
+            return
+        if self.same_seq_pairer.done and not self._lossless_processing_done.is_set():
+            self.lossless_paired_render_queue.close()
+            self._lossless_processing_done.set()
+            self._request_render_update()
+
+    def _lossless_pcd_worker(self) -> None:
+        rng = np.random.default_rng()
+        try:
+            while not self.stop_event.is_set():
+                mask_packet = self.lossless_pcd_mask_queue.get(stop_event=self.stop_event)
+                if mask_packet is None:
+                    break
+                result = self._build_pcd_packet_from_mask(
+                    mask_packet,
+                    rng=rng,
+                    require_filter_seq=True,
+                )
+                self._lossless_pcd_results += 1
+                with self._lossless_pair_publish_lock:
+                    pairs = self.same_seq_pairer.add_pcd_result(result)
+                    self._publish_pairer_outputs(pairs)
+            with self._lossless_pair_publish_lock:
+                pairs = self.same_seq_pairer.close_pcd()
+                self._publish_pairer_outputs(pairs)
+                self._maybe_finish_lossless_processing()
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                self._record_fatal_worker_error("lossless PCD worker", exc)
+
+    def _lossless_tracker_worker(self) -> None:
+        try:
+            adapter = self._build_tracker_adapter()
+            print(
+                "[tapnextpp-tracker] "
+                f"backend={adapter.name} device={self.args.tracker_device} "
+                f"repo={self.args.tapnet_repo_dir} checkpoint={self.args.tapnextpp_checkpoint} "
+                f"image_size={self.args.tapnextpp_image_size} overlay_max={int(self.args.tracker_overlay_max_points)} "
+                "strict_sync=1 lossless=1",
+                flush=True,
+            )
+            while not self.stop_event.is_set():
+                mask_packet = self.lossless_tracker_mask_queue.get(stop_event=self.stop_event)
+                if mask_packet is None:
+                    break
+                packet = self._build_tracker_marker_packet(mask_packet, adapter)
+                if packet is None:
+                    raise LosslessPipelineError(f"tracker did not produce packet for seq {mask_packet.seq}")
+                self._lossless_tracker_results += 1
+                with self._lossless_pair_publish_lock:
+                    pairs = self.same_seq_pairer.add_tracker_packet(packet)
+                    self._publish_pairer_outputs(pairs)
+            with self._lossless_pair_publish_lock:
+                pairs = self.same_seq_pairer.close_tracker()
+                self._publish_pairer_outputs(pairs)
+                self._maybe_finish_lossless_processing()
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                self._record_fatal_worker_error("lossless TAPNext++ tracker worker", exc)
 
     def _strict_paired_worker(self) -> None:
         try:
@@ -3638,12 +4119,21 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 self._record_fatal_worker_error("strict same-seq tracker/PCD", exc)
 
     def _wait_for_first_frame(self) -> FramePacket | None:
+        if self._lossless_enabled():
+            return self.lossless_frame_queue.get(stop_event=self.stop_event)
         while not self.stop_event.is_set():
             frame = self.capture_slot.get_latest_after(-1)
             if frame is not None:
                 return frame
             time.sleep(0.005)
         return None
+
+    def _publish_mask_packet(self, packet: MaskPacket) -> None:
+        self.mask_slot.put(packet)
+        if self._lossless_enabled():
+            self.lossless_pcd_mask_queue.put(packet)
+            self.lossless_tracker_mask_queue.put(packet)
+            self._lossless_segmented_frames += 1
 
     def _autocast_context(self, torch_module: Any) -> Any:
         if not str(self.args.device).startswith("cuda") or self.args.dtype == "float32":
@@ -5075,7 +5565,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
         def render_latest() -> bool:
             if strict_sync_enabled:
-                pair = self.paired_render_slot.get_latest_after(last_pair_seq["value"])
+                if self._lossless_enabled() and self._lossless_pipeline_active:
+                    pair = self.lossless_paired_render_queue.get_nowait()
+                else:
+                    pair = self.paired_render_slot.get_latest_after(last_pair_seq["value"])
                 if pair is None:
                     if latest_pair_packet["value"] is None:
                         hud_label.text = self._format_strict_sync_waiting_hud()
@@ -5204,6 +5697,16 @@ class RealtimeMaskedEdgeTamPcdDemo:
                         pass
                     return
                 rendered = render_latest()
+                if (
+                    self._lossless_enabled()
+                    and self._lossless_processing_done.is_set()
+                    and self.lossless_paired_render_queue.is_closed_and_empty()
+                ):
+                    try:
+                        app.quit()
+                    except Exception:
+                        pass
+                    return
                 if rendered and hasattr(window, "post_redraw"):
                     try:
                         window.post_redraw()
@@ -5218,7 +5721,17 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     and (
                         (
                             strict_sync_enabled
-                            and self.paired_render_slot.latest_seq() > last_pair_seq["value"]
+                            and (
+                                (
+                                    self._lossless_enabled()
+                                    and self._lossless_pipeline_active
+                                    and self.lossless_paired_render_queue.pending_count() > 0
+                                )
+                                or (
+                                    not (self._lossless_enabled() and self._lossless_pipeline_active)
+                                    and self.paired_render_slot.latest_seq() > last_pair_seq["value"]
+                                )
+                            )
                         )
                         or (
                             not strict_sync_enabled
@@ -5261,7 +5774,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self._start_threads()
 
         timer: threading.Timer | None = None
-        if self.args.duration_s > 0:
+        if self.args.duration_s > 0 and not (self._lossless_enabled() and _is_replay_input_source(str(self.args.input_source))):
             timer = threading.Timer(
                 float(self.args.duration_s),
                 lambda: app.post_to_main_thread(window, stop_and_quit_open3d),
@@ -5322,6 +5835,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 )
         else:
             tracker_line = "tracker: off"
+        lossless_line = self._lossless_queue_debug_text() if bool(strict_sync) and self._lossless_enabled() else ""
         filter_info = packet.filter_telemetry
         if filter_info.enabled:
             filter_line = (
@@ -5368,6 +5882,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"points controller/object: {packet.controller_point_count} / {packet.object_point_count}  "
             f"pcd max/object: {max_points}  render max/layer: {render_cap}\n"
             f"{tracker_line}\n"
+            f"{lossless_line}\n"
             f"{filter_line}\n"
             f"{filter_points_line}\n"
             f"dropped capture/seg/pcd: {packet.dropped_capture_frames} / {packet.dropped_seg_frames} / "
@@ -5384,6 +5899,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"capture/seg/pcd/tracker/render FPS: {self.capture_stats.fps:.1f} / {self.seg_stats.fps:.1f} / "
             f"{self.pcd_stats.fps:.1f} / {self.tracker_stats.fps:.1f} / {self.render_stats.render_fps:.1f}\n"
             "strict_sync=1  waiting_for_pair=1  paired_seq=none\n"
+            f"{self._lossless_queue_debug_text() if self._lossless_enabled() else ''}\n"
             f"tracker: {self.args.tracker_backend} waiting  "
             f"queries={int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS}  "
             f"scope={self.args.tracker_display_scope}  device={self.args.tracker_device}\n"
@@ -5418,6 +5934,32 @@ class RealtimeMaskedEdgeTamPcdDemo:
         tracker_hand_a = int(tracker_packet.hand_a_query_count) if tracker_packet is not None else 0
         tracker_hand_b = int(tracker_packet.hand_b_query_count) if tracker_packet is not None else 0
         tracker_object = int(tracker_packet.object_query_count) if tracker_packet is not None else 0
+        lossless_enabled = bool(strict_sync) and self._lossless_enabled()
+        if lossless_enabled:
+            frame_queue = self.lossless_frame_queue.stats
+            pcd_queue = self.lossless_pcd_mask_queue.stats
+            tracker_queue = self.lossless_tracker_mask_queue.stats
+            render_queue = self.lossless_paired_render_queue.stats
+            pairer = self.same_seq_pairer.stats
+            lossless_debug = (
+                f"lossless=1 "
+                f"lossless_input_fps={self._lossless_input_fps():.1f} "
+                f"lossless_max_backlog={self.lossless_max_backlog_frames} "
+                f"lossless_frame_q={frame_queue.size} "
+                f"lossless_mask_pcd_q={pcd_queue.size} "
+                f"lossless_mask_tracker_q={tracker_queue.size} "
+                f"lossless_render_q={render_queue.size} "
+                f"lossless_pairer_expected={pairer.expected_seq} "
+                f"lossless_pairer_pending_pcd={pairer.pending_pcd} "
+                f"lossless_pairer_pending_tracker={pairer.pending_tracker} "
+                f"lossless_offered={self._lossless_offered_frames} "
+                f"lossless_segmented={self._lossless_segmented_frames} "
+                f"lossless_pcd_results={self._lossless_pcd_results} "
+                f"lossless_tracker_results={self._lossless_tracker_results} "
+                f"lossless_pairs={self._lossless_pairs_emitted} "
+            )
+        else:
+            lossless_debug = "lossless=0 "
         print(
             "[masked-edgetam-debug] "
             f"seq={int(seq)} "
@@ -5425,6 +5967,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"paired_seq={paired_seq} "
             f"tracker_seq={tracker_seq} "
             f"waiting_for_pair={int(bool(waiting_for_pair))} "
+            f"{lossless_debug}"
             f"capture_fps={self.capture_stats.fps:.1f} "
             f"seg_fps={self.seg_stats.fps:.1f} "
             f"depth_fps={self.depth_stats.fps:.1f} "

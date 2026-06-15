@@ -32,6 +32,6 @@ full realtime pipeline.
 
 - PASS: `python -m py_compile qqtt/demo/single_demo_v3_runtime.py qqtt/demo/realtime_masked_edgetam_pcd.py tests/test_single_demo_v3_runtime.py tests/test_single_demo_tapnextpp_overlay.py`
 - PASS: `python -m unittest tests.test_single_demo_v3_runtime tests.test_single_demo_tapnextpp_overlay`
-- PASS: Demo 3.2 dry-run for `--demo-visual-mode pcd` and `tracking` both report `tracker_backend=tapnextpp` and `tracker_sync_policy=strict_same_seq_latest_wins`.
+- PASS: Demo 3.2 dry-run for `--demo-visual-mode pcd` and `tracking` both report `tracker_backend=tapnextpp` and `tracker_sync_policy=strict_same_seq_lossless_5fps`.
 - PASS: Demo 3.2 dry-run with `--demo-visual-mode pcd --tracker-backend none` fails fast.
 - PASS: `python scripts/harness/check_all.py`

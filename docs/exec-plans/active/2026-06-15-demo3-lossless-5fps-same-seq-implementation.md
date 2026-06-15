@@ -165,3 +165,22 @@ Expected manual outcome:
 - Same-seq render/output invariant remains enforced.
 - Tests and quick deterministic checks pass.
 - Implementation is committed and pushed to `origin/single-camera`.
+
+## Implementation Status
+
+- Completed lossless ordered queues and same-seq pairer with fatal backlog/gap
+  handling.
+- Completed parallel PCD/tracker worker topology for tracker-enabled masked Demo
+  3.x paths.
+- Completed fixed 5 FPS lossless task cadence for live sampling and replay/fake
+  live capture.
+- Completed same-seq headless output path without filling an unconsumed render
+  queue.
+- Completed diagnostics and metadata update to
+  `strict_same_seq_lossless_5fps`.
+- PASS:
+  `conda run -n demo_2_max --no-capture-output python -m unittest tests.test_single_demo_tapnextpp_overlay tests.test_single_demo_v3_runtime tests.test_realtime_masked_edgetam_pcd_filter tests.test_recorded_rgbd_replay_source`
+  (70 tests).
+- PASS:
+  `conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py`
+  (quick profile, 195 tests).

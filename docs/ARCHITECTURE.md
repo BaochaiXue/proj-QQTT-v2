@@ -49,10 +49,13 @@ aligned-case data product.
   identities while preserving the legacy controller PCD mask as the union of
   `hand_a` and `hand_b`. Its EdgeTAM path is a frame-by-frame live session, not
   an offline batch video path; runtime state is bounded to a recent 64-frame
-  window by default for fake-live and live stability. Local FFS depth is
-  serialized and cached by sequence inside the runtime so PCD and tracker
-  threads share color-aligned depth without entering one TensorRT runner
-  concurrently.
+  window by default for fake-live and live stability. When TAPNext++ is enabled,
+  the runtime uses ordered lossless queues so the 5 FPS task stream is processed
+  without latest-wins drops; independent PCD and tracker workers publish only
+  same-sequence pairs, and bounded backlog overflow is a fatal pipeline error.
+  Local FFS depth is serialized and cached by sequence inside the runtime so PCD
+  and tracker threads share color-aligned depth without entering one TensorRT
+  runner concurrently.
 - `services/ffs_remote/`: single-camera remote FFS depth request/response
   protocol and server/client utilities.
 
