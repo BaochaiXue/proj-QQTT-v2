@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.harness import check_experiment_boundaries
+from scripts.harness.guards import check_experiment_boundaries
 
 
 class ExperimentBoundarySmokeTest(unittest.TestCase):

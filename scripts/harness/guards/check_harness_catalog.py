@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+sys.dont_write_bytecode = True
+
 
 def _find_repo_root(start: Path) -> Path:
     for candidate in (start, *start.parents):
@@ -17,22 +19,15 @@ if ROOT_STR in sys.path:
     sys.path.remove(ROOT_STR)
 sys.path.insert(0, ROOT_STR)
 
-from scripts.harness._catalog import CATALOG
+from scripts.harness._catalog import CATALOG, LIFECYCLES, VALIDATION_PROFILES
 
 
 HARNESS_ROOT = ROOT / "scripts" / "harness"
 PRIVATE_PYTHON_FILES = {
+    HARNESS_ROOT / "__init__.py",
     HARNESS_ROOT / "_catalog.py",
 }
-KNOWN_CATEGORIES = {
-    "checks",
-    "hardware_external",
-    "mask_support",
-    "formal_cleanup",
-    "current_compare",
-    "experiments",
-    "focused_diagnostics",
-}
+PACKAGE_INIT_FILES = {path for path in HARNESS_ROOT.rglob("__init__.py")}
 
 
 def _is_under(path: Path, root: Path) -> bool:
@@ -48,6 +43,9 @@ def collect_violations() -> list[str]:
     entry_paths = [ROOT / entry.path for entry in CATALOG]
     unique_paths = set(entry_paths)
 
+    for path in sorted(HARNESS_ROOT.rglob("__pycache__")):
+        violations.append(f"Committed harness cache directory: {path.relative_to(ROOT)}")
+
     if len(unique_paths) != len(entry_paths):
         seen: set[Path] = set()
         for path in entry_paths:
@@ -57,21 +55,28 @@ def collect_violations() -> list[str]:
 
     for entry in CATALOG:
         path = ROOT / entry.path
-        if entry.category not in KNOWN_CATEGORIES:
-            violations.append(f"Unknown category for {entry.path}: {entry.category}")
+        if entry.lifecycle not in LIFECYCLES:
+            violations.append(f"Unknown lifecycle for {entry.path}: {entry.lifecycle}")
+        if entry.validation_profile is not None and entry.validation_profile not in VALIDATION_PROFILES:
+            violations.append(f"Unknown validation profile for {entry.path}: {entry.validation_profile}")
         if not path.exists():
             violations.append(f"Catalog path does not exist: {entry.path}")
-        if entry.help_profile is not None and path.suffix != ".py":
+        if entry.help and path.suffix != ".py":
             violations.append(f"Non-Python path cannot have help coverage: {entry.path}")
+        expected_lifecycle_root = HARNESS_ROOT / entry.lifecycle
+        if entry.lifecycle in LIFECYCLES and not _is_under(path, expected_lifecycle_root):
+            violations.append(f"Lifecycle path mismatch for {entry.path}: expected scripts/harness/{entry.lifecycle}/")
         is_experiment_path = _is_under(path, HARNESS_ROOT / "experiments")
-        if entry.category == "experiments" and not is_experiment_path:
+        if entry.lifecycle == "experiments" and not is_experiment_path:
             violations.append(f"Experiment entry is outside experiments/: {entry.path}")
-        if is_experiment_path and entry.category != "experiments":
-            violations.append(f"Experiment path has non-experiment category: {entry.path}")
+        if is_experiment_path and entry.lifecycle != "experiments":
+            violations.append(f"Experiment path has non-experiment lifecycle: {entry.path}")
+        if entry.validation_profile == "hardware" and entry.automatic:
+            violations.append(f"Hardware validation entry must be manual: {entry.path}")
 
     cataloged_python = {path for path in unique_paths if path.suffix == ".py"}
     for path in sorted(HARNESS_ROOT.rglob("*.py")):
-        if path.name == "__init__.py" or path in PRIVATE_PYTHON_FILES:
+        if path in PRIVATE_PYTHON_FILES or path in PACKAGE_INIT_FILES:
             continue
         if path not in cataloged_python:
             violations.append(f"Uncataloged harness Python file: {path.relative_to(ROOT)}")
