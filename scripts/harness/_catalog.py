@@ -4,399 +4,590 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-HelpProfile = Literal["quick", "full"]
+ValidationProfile = Literal["smoke", "deterministic", "hardware", "exhaustive"]
+Lifecycle = Literal["guards", "validation", "diagnostics", "benchmarks", "experiments", "support"]
+
+VALIDATION_PROFILES: tuple[str, ...] = ("smoke", "deterministic", "hardware", "exhaustive")
+LIFECYCLES: tuple[str, ...] = ("guards", "validation", "diagnostics", "benchmarks", "experiments", "support")
 
 
 @dataclass(frozen=True)
 class HarnessEntry:
     path: str
-    category: str
+    lifecycle: Lifecycle
+    domain: str
     summary: str
-    help_profile: HelpProfile | None = None
+    validation_profile: ValidationProfile | None = None
+    help: bool = False
+    automatic: bool = True
+    requires: tuple[str, ...] = ()
 
 
 CATALOG: tuple[HarnessEntry, ...] = (
     HarnessEntry(
         "scripts/harness/check_all.py",
-        "checks",
+        "guards",
+        "repo",
         "Deterministic quick/full validation runner.",
+        "smoke",
     ),
     HarnessEntry(
         "scripts/harness/check_experiment_boundaries.py",
-        "checks",
+        "guards",
+        "repo",
         "Guard formal runtime code from experiment-only imports.",
+        "smoke",
     ),
     HarnessEntry(
         "scripts/harness/check_harness_catalog.py",
-        "checks",
+        "guards",
+        "repo",
         "Guard that every harness Python file is categorized here.",
+        "smoke",
     ),
     HarnessEntry(
         "scripts/harness/check_scope.py",
-        "checks",
+        "guards",
+        "repo",
         "Repo scope guard for removed or forbidden legacy surfaces.",
+        "smoke",
+    ),
+    HarnessEntry(
+        "scripts/harness/guards/check_scope.py",
+        "guards",
+        "repo",
+        "Repo scope guard for removed or forbidden legacy surfaces.",
+        "smoke",
     ),
     HarnessEntry(
         "scripts/harness/check_visual_architecture.py",
-        "checks",
+        "guards",
+        "repo",
         "Visualization layering and file-size guard.",
+        "smoke",
+    ),
+    HarnessEntry(
+        "scripts/harness/validation/run.py",
+        "validation",
+        "runner",
+        "Catalog-driven validation profile runner.",
     ),
     HarnessEntry(
         "scripts/harness/benchmark_ffs_configs.py",
-        "hardware_external",
+        "benchmarks",
+        "ffs",
         "Saved-pair PyTorch FFS config screening for single-camera FFS depth work.",
-        "full",
+        "hardware",
+        help=True,
+        automatic=False,
+        requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
         "scripts/harness/benchmark_sam31_still_object_views.py",
-        "hardware_external",
+        "benchmarks",
+        "sam",
         "SAM 3.1 30-frame still-object per-camera segmentation benchmark.",
-        "full",
+        "exhaustive",
+        help=True,
+        requires=("gpu", "external_repo"),
     ),
     HarnessEntry(
         "scripts/harness/probe_d455_ir_pair.py",
-        "hardware_external",
+        "diagnostics",
+        "hardware",
         "Manual D455 IR-pair probe.",
-        "full",
+        "hardware",
+        help=True,
+        automatic=False,
+        requires=("camera",),
     ),
     HarnessEntry(
         "scripts/harness/probe_d455_stream_capability.py",
-        "hardware_external",
+        "diagnostics",
+        "hardware",
         "Manual D455 stream/profile capability probe.",
-        "full",
+        "hardware",
+        help=True,
+        automatic=False,
+        requires=("camera",),
     ),
     HarnessEntry(
         "scripts/harness/realtime_single_camera_pointcloud.py",
-        "hardware_external",
+        "diagnostics",
+        "demo",
         "Compatibility path for the active demo_v2 single-D455 realtime point-cloud demo.",
-        "full",
+        "hardware",
+        help=True,
+        automatic=False,
+        requires=("camera", "gpu", "gui"),
     ),
     HarnessEntry(
         "scripts/harness/render_d455_stream_probe_report.py",
-        "hardware_external",
+        "diagnostics",
+        "hardware",
         "Render D455 probe JSON as a readable report.",
-        "full",
+        "hardware",
+        help=True,
+        automatic=False,
+        requires=("camera",),
     ),
     HarnessEntry(
         "scripts/harness/run_ffs_on_saved_pair.py",
-        "hardware_external",
+        "benchmarks",
+        "ffs",
         "Run FFS on one saved stereo pair.",
-        "full",
+        "hardware",
+        help=True,
+        automatic=False,
+        requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
         "scripts/harness/run_ffs_static_replay_matrix.py",
-        "hardware_external",
+        "benchmarks",
+        "ffs",
         "Offline static replay / TensorRT proxy matrix; not live PyTorch realtime.",
-        "full",
+        "hardware",
+        help=True,
+        automatic=False,
+        requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
         "scripts/harness/run_wslg_open3d.sh",
-        "hardware_external",
+        "diagnostics",
+        "hardware",
         "WSLg Open3D GUI wrapper.",
+        "hardware",
+        automatic=False,
+        requires=("camera", "gpu", "gui"),
     ),
     HarnessEntry(
         "scripts/harness/verify_ffs_demo.py",
-        "hardware_external",
+        "benchmarks",
+        "ffs",
         "External FFS demo proof-of-life utility.",
-        "full",
+        "hardware",
+        help=True,
+        automatic=False,
+        requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
         "scripts/harness/verify_ffs_single_engine_tensorrt_wsl.py",
-        "hardware_external",
+        "benchmarks",
+        "ffs",
         "WSL single-engine TensorRT proof-of-life utility.",
-        "full",
+        "hardware",
+        help=True,
+        automatic=False,
+        requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
         "scripts/harness/verify_ffs_tensorrt_windows.py",
-        "hardware_external",
+        "benchmarks",
+        "ffs",
         "Windows TensorRT proof-of-life utility.",
+        "hardware",
+        automatic=False,
+        requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
         "scripts/harness/verify_ffs_tensorrt_wsl.py",
-        "hardware_external",
+        "benchmarks",
+        "ffs",
         "WSL TensorRT proof-of-life utility.",
-        "full",
+        "hardware",
+        help=True,
+        automatic=False,
+        requires=("gpu", "tensorrt", "external_repo"),
     ),
     HarnessEntry(
         "scripts/harness/generate_sam31_masks.py",
-        "mask_support",
+        "diagnostics",
+        "mask",
         "Operator-side SAM 3.1 mask generation CLI.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/object_case_registry.py",
-        "mask_support",
+        "support",
+        "mask",
         "Shared raw object capture registry for harness scripts and tests.",
     ),
     HarnessEntry(
         "scripts/harness/reproject_ffs_to_color.py",
-        "mask_support",
+        "diagnostics",
+        "reprojection",
         "Reproject single-pair FFS depth into color-frame geometry.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/render_demo32_headless_capture.py",
-        "current_compare",
+        "diagnostics",
+        "demo",
         "Render Demo 3.2 headless enhanced-pt PCD capture artifacts to MP4.",
-        "quick",
+        "smoke",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/sam31_mask_helper.py",
-        "mask_support",
+        "support",
+        "mask",
         "Shared SAM 3.1 helper used by operator-side harness CLIs.",
     ),
     HarnessEntry(
         "scripts/harness/cleanup_different_types_cases.py",
-        "formal_cleanup",
+        "support",
+        "data",
         "Dry-run or execute data/different_types cleanup.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_compare_depth_panels.py",
-        "current_compare",
+        "diagnostics",
+        "depth",
         "Per-camera RealSense-vs-FFS depth panels.",
-        "quick",
+        "smoke",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_compare_depth_triplet_ply.py",
-        "current_compare",
+        "diagnostics",
+        "depth",
         "Single-frame native/FFS raw/FFS postprocess fused PLY compare.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_compare_depth_triplet_video.py",
-        "current_compare",
+        "diagnostics",
+        "depth",
         "Multi-frame native/FFS raw/FFS postprocess point-cloud video compare.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_compare_depth_video.py",
-        "current_compare",
+        "diagnostics",
+        "depth",
         "Older temporal fused native-vs-FFS depth compare.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_compare_masked_camera_views.py",
-        "current_compare",
+        "diagnostics",
+        "mask",
         "SAM-masked native-vs-FFS camera-view board.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_compare_masked_pointcloud.py",
-        "current_compare",
+        "diagnostics",
+        "mask",
         "SAM-masked native-vs-FFS point-cloud board.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_compare_reprojection.py",
-        "current_compare",
+        "diagnostics",
+        "reprojection",
         "Aligned native-vs-FFS reprojection diagnostics.",
-        "quick",
+        "smoke",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_compare_rerun.py",
-        "current_compare",
+        "diagnostics",
+        "rerun",
         "Rerun export plus fused PLYs for removed-invisible inspection.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_compare_stereo_order_pcd.py",
-        "current_compare",
+        "diagnostics",
+        "depth",
         "Current-vs-swapped stereo-order registration board.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_compare_turntable.py",
-        "current_compare",
+        "diagnostics",
+        "depth",
         "Current single-frame professor-facing compare.",
-        "quick",
+        "smoke",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_make_match_board.py",
-        "current_compare",
+        "diagnostics",
+        "depth",
         "Professor-facing 3-view point-cloud match board.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/visual_make_professor_triptych.py",
-        "current_compare",
+        "diagnostics",
+        "depth",
         "Professor-facing three-figure summary pack.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/run_edgetam_vs_sam21_compile_ablation.py",
         "experiments",
+        "edgetam",
         "Official-style EdgeTAM compile-mode vs SAM2.1 Small/Tiny speed ablation.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/run_edgetam_video_masks.py",
         "experiments",
+        "edgetam",
         "EdgeTAM video mask worker used by the dynamics 3x6 panel experiment.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/benchmark_edgetam_trt_components.py",
         "experiments",
+        "edgetam",
         "Benchmark EdgeTAM ONNX/TensorRT component engines on recorded frames.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/inspect_edgetam_onnx.py",
         "experiments",
+        "edgetam",
         "Inspect EdgeTAM ONNX component graph shapes and op coverage.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/probe_edgetam_video_trt_compile.py",
         "experiments",
+        "edgetam",
         "Probe official EdgeTAM video components for ONNX/TensorRT compile feasibility.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/run_hf_edgetam_streaming_realcase.py",
         "experiments",
+        "edgetam",
         "Hugging Face EdgeTAMVideo streaming benchmark on real aligned QQTT cases.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/run_sloth_set2_hf_edgetam_streaming_pcd_xor_gif.py",
         "experiments",
+        "edgetam",
         "Render Sloth Set 2 HF EdgeTAM streaming fused-PCD XOR GIF against SAM3.1.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/run_sloth_set2_hf_edgetam_hand_object_pcd_gif.py",
         "experiments",
+        "edgetam",
         "Render Sloth Set 2 HF EdgeTAM streaming hand/object fused-PCD GIF.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/run_ffs_confidence_filter_sweep.py",
         "experiments",
+        "ffs",
         "FFS confidence filtering sweep runner.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/run_sam21_checkpoint_ladder_3x5_gifs.py",
         "experiments",
+        "sam",
         "SAM3.1 vs SAM2.1 checkpoint ladder 3x5 time GIF benchmark.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/run_sloth_base_motion_mask_overlay_3x3_gif.py",
         "experiments",
+        "edgetam",
         "Regenerate sloth_base_motion masks and render Small/Tiny/compiled EdgeTAM XOR overlay GIF.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/run_sloth_base_motion_fused_pcd_overlay_2x3_gif.py",
         "experiments",
+        "edgetam",
         "Render sloth_base_motion Small/compiled EdgeTAM fused-PCD overlay GIF against SAM3.1.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/run_still_object_round1_projection_panel.py",
         "experiments",
+        "still_object",
         "Still-object round1 native/FFS projected-PCD removal board.",
     ),
     HarnessEntry(
         "scripts/harness/experiments/visual_compare_ffs_confidence_filter_pcd.py",
         "experiments",
+        "ffs",
         "Confidence-filtered FFS point-cloud board.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/visual_compare_ffs_confidence_threshold_sweep_pcd.py",
         "experiments",
+        "ffs",
         "Confidence threshold sweep point-cloud board.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/visual_compare_ffs_mask_erode_multipage_sweep_pcd.py",
         "experiments",
+        "ffs",
         "Multipage object-mask erosion sweep.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/visual_compare_ffs_mask_erode_sweep_pcd.py",
         "experiments",
+        "ffs",
         "Compact object-mask erosion sweep.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/visual_compare_native_ffs_fused_pcd.py",
         "experiments",
+        "ffs",
         "Native, original FFS, and fused native/FFS point-cloud board.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/visualize_sam21_edgetam_mask_overlay_3x3_gif.py",
         "experiments",
+        "edgetam",
         "SAM2.1 Small/Tiny and compiled EdgeTAM mask overlay GIF against SAM3.1.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/visualize_ffs_static_confidence_panels.py",
         "experiments",
+        "ffs",
         "Static masked RGB/depth/confidence board.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py",
         "experiments",
+        "ffs",
         "Static masked RGB/PCD/confidence board.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/visualize_still_object_orbit_gif.py",
         "experiments",
+        "still_object",
         "Headless Native Depth vs FFS masked-object orbit GIF.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_erode_sweep_gif.py",
         "experiments",
+        "still_object",
         "Still-object/rope orbit GIF erosion sweep.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/experiments/visualize_still_object_rope_6x2_orbit_gif.py",
         "experiments",
+        "still_object",
         "Still-object/rope orbit GIF board.",
-        "full",
+        "exhaustive",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/audit_ffs_left_right.py",
-        "focused_diagnostics",
+        "diagnostics",
+        "depth",
         "Focused FFS left/right ordering audit.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/compare_face_smoothness.py",
-        "focused_diagnostics",
+        "diagnostics",
+        "depth",
         "Fixed face-patch smoothness/noise comparison.",
-        "full",
+        "deterministic",
+        help=True,
     ),
     HarnessEntry(
         "scripts/harness/diagnose_floating_point_sources.py",
-        "focused_diagnostics",
+        "diagnostics",
+        "depth",
         "Floating-point source diagnostics for aligned cases.",
-        "full",
+        "deterministic",
+        help=True,
     ),
 )
 
 
-def entries_by_category() -> dict[str, tuple[HarnessEntry, ...]]:
+def entries_by_lifecycle() -> dict[str, tuple[HarnessEntry, ...]]:
     grouped: dict[str, list[HarnessEntry]] = {}
     for entry in CATALOG:
-        grouped.setdefault(entry.category, []).append(entry)
-    return {category: tuple(entries) for category, entries in grouped.items()}
+        grouped.setdefault(entry.lifecycle, []).append(entry)
+    return {lifecycle: tuple(entries) for lifecycle, entries in grouped.items()}
 
 
-def help_scripts(profile: HelpProfile) -> tuple[str, ...]:
-    if profile == "quick":
-        return tuple(entry.path for entry in CATALOG if entry.help_profile == "quick")
-    if profile == "full":
-        return tuple(entry.path for entry in CATALOG if entry.help_profile in {"quick", "full"})
-    raise ValueError(f"Unsupported profile: {profile}")
+def entries_for_profile(profile: ValidationProfile, *, include_manual: bool = False) -> tuple[HarnessEntry, ...]:
+    if profile == "smoke":
+        allowed = {"smoke"}
+    elif profile == "deterministic":
+        allowed = {"smoke", "deterministic"}
+    elif profile == "exhaustive":
+        allowed = {"smoke", "deterministic", "exhaustive"}
+    elif profile == "hardware":
+        allowed = {"hardware"}
+    else:
+        raise ValueError(f"Unsupported profile: {profile}")
+
+    entries = []
+    for entry in CATALOG:
+        if entry.validation_profile not in allowed:
+            continue
+        if not include_manual and not entry.automatic:
+            continue
+        entries.append(entry)
+    return tuple(entries)
+
+
+def help_scripts(profile: ValidationProfile, *, include_manual: bool = False) -> tuple[str, ...]:
+    return tuple(
+        entry.path
+        for entry in entries_for_profile(profile, include_manual=include_manual)
+        if entry.help
+    )
