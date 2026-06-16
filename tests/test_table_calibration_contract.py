@@ -529,6 +529,165 @@ class TableCalibrationContractTest(unittest.TestCase):
                 [[0.0, 0.1, -0.1], None],
             )
 
+    def test_metadata_loader_rejects_threshold_failing_metadata(self) -> None:
+        cases = [
+            (
+                "per_camera_reprojection_error",
+                lambda metadata: metadata.update(per_camera_reprojection_error=[0.21]),
+            ),
+            (
+                "per_camera_corner_count",
+                lambda metadata: metadata.update(per_camera_corner_count=[52]),
+            ),
+            (
+                "per_camera_corner_fraction",
+                lambda metadata: metadata.update(per_camera_corner_fraction=[0.59]),
+            ),
+            (
+                "per_camera_corner_count",
+                lambda metadata: (
+                    metadata["calibration_board"].update(chessboard_corner_count=88),
+                    metadata.update(per_camera_corner_count=[89]),
+                ),
+            ),
+            (
+                "min_charuco_corners",
+                lambda metadata: metadata.update(
+                    calibration_board={
+                        "name": "small-board",
+                        "chessboard_corner_count": 20,
+                    },
+                    min_corner_fraction=0.60,
+                    min_charuco_corners=11,
+                    per_camera_corner_count=[12],
+                    per_camera_corner_fraction=[0.60],
+                ),
+            ),
+        ]
+        for field, mutate in cases:
+            with self.subTest(field=field):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    metadata = _sample_metadata()
+                    mutate(metadata)
+                    _write_metadata(output, metadata)
+
+                    with self.assertRaisesRegex(TableCalibrationLoadError, field):
+                        load_table_calibration_metadata(output)
+
+    def test_builder_rejects_threshold_failing_metadata(self) -> None:
+        cases = [
+            (
+                "per_camera_reprojection_error",
+                lambda kwargs: kwargs.update(per_camera_reprojection_error=[0.21]),
+            ),
+            (
+                "per_camera_corner_count",
+                lambda kwargs: kwargs.update(per_camera_corner_count=[52]),
+            ),
+            (
+                "per_camera_corner_fraction",
+                lambda kwargs: kwargs.update(per_camera_corner_fraction=[0.59]),
+            ),
+            (
+                "per_camera_corner_count",
+                lambda kwargs: kwargs.update(
+                    calibration_board={
+                        "name": "small-board",
+                        "chessboard_corner_count": 20,
+                    },
+                    min_corner_fraction=0.50,
+                    min_charuco_corners=11,
+                    per_camera_corner_count=[21],
+                    per_camera_corner_fraction=[0.50],
+                ),
+            ),
+            (
+                "min_charuco_corners",
+                lambda kwargs: kwargs.update(
+                    calibration_board={
+                        "name": "small-board",
+                        "chessboard_corner_count": 20,
+                    },
+                    min_corner_fraction=0.60,
+                    min_charuco_corners=11,
+                    per_camera_corner_count=[12],
+                    per_camera_corner_fraction=[0.60],
+                ),
+            ),
+        ]
+        for field, mutate in cases:
+            with self.subTest(field=field):
+                kwargs = _sample_metadata_kwargs()
+                mutate(kwargs)
+
+                with self.assertRaisesRegex(ValueError, field):
+                    build_table_calibration_metadata(**kwargs)
+
+    def test_distortion_used_must_be_strict_bool(self) -> None:
+        for value in ["false", 1, 0, None]:
+            with self.subTest(value=value):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    metadata = _sample_metadata()
+                    metadata["distortion_used"] = value
+                    _write_metadata(output, metadata)
+
+                    with self.assertRaisesRegex(TableCalibrationLoadError, "distortion_used"):
+                        load_table_calibration_metadata(output)
+
+        for value in ["false", 1, 0]:
+            with self.subTest(builder_value=value):
+                kwargs = _sample_metadata_kwargs()
+                kwargs["distortion_used"] = value
+
+                with self.assertRaisesRegex(ValueError, "distortion_used"):
+                    build_table_calibration_metadata(**kwargs)
+
+    def test_metadata_loader_rejects_contradictory_serial_orders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata(serial_numbers=["cam_a", "cam_b"])
+            metadata["serial_numbers"] = ["cam_b", "cam_a"]
+            _write_metadata(output, metadata)
+
+            with self.assertRaisesRegex(TableCalibrationLoadError, "serial_numbers"):
+                load_table_calibration_metadata(output)
+
+    def test_builder_accepts_finite_numpy_scalar_numeric_inputs(self) -> None:
+        metadata = build_table_calibration_metadata(
+            serial_numbers=["cam0"],
+            WH=[np.int64(1280), np.int32(720)],
+            fps=np.int64(5),
+            transform_count=np.int64(1),
+            calibration_board={
+                "name": "calibio-12x9-30mm",
+                "chessboard_corner_count": np.int64(88),
+            },
+            max_reprojection_error_px=np.float32(0.20),
+            min_corner_fraction=np.float32(0.60),
+            min_charuco_corners=np.int64(53),
+            per_camera_reprojection_error=[np.float32(0.10)],
+            per_camera_corner_count=[np.int64(60)],
+            per_camera_corner_fraction=[np.float64(0.68)],
+            distortion_used=True,
+            distortion_coeffs_by_camera=[[np.float32(0.0)]],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            sidecar = write_table_calibration_files(
+                output,
+                [np.eye(4, dtype=np.float32)],
+                metadata,
+            )
+            loaded = json.loads(sidecar.read_text(encoding="utf-8"))
+
+        self.assertEqual(loaded["WH"], [1280, 720])
+        self.assertEqual(loaded["fps"], 5)
+        self.assertEqual(loaded["calibration_board"]["chessboard_corner_count"], 88)
+        self.assertEqual(loaded["distortion_coeffs_by_camera"], [[0.0]])
+
     def test_builder_rejects_numeric_string_inputs(self) -> None:
         cases = [
             ("WH", lambda kwargs: kwargs.update(WH=["1280", 720])),

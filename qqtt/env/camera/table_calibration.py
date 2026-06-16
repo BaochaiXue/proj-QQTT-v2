@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 import pickle
 from pathlib import Path
 from typing import Any
@@ -43,9 +44,22 @@ def _validate_per_camera_length(name: str, values: list[Any], expected_count: in
 
 
 def _is_finite_number(value: Any) -> bool:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+        value,
+        (int, float, np.integer, np.floating),
+    ):
         return False
     return bool(np.isfinite(float(value)))
+
+
+def _normalize_json_scalars(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {key: _normalize_json_scalars(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_json_scalars(item) for item in value]
+    return value
 
 
 def _numeric_string_path(value: Any, path: str) -> str | None:
@@ -152,7 +166,9 @@ def build_table_calibration_metadata(
         "per_camera_corner_fraction": list(per_camera_corner_fraction),
     }
     if distortion_used is not None:
-        metadata["distortion_used"] = bool(distortion_used)
+        if not isinstance(distortion_used, bool):
+            raise ValueError("distortion_used must be a bool.")
+        metadata["distortion_used"] = distortion_used
     if distortion_model_by_camera is not None:
         _validate_per_camera_length(
             "distortion_model_by_camera",
@@ -200,6 +216,9 @@ def build_table_calibration_metadata(
     metadata["per_camera_corner_fraction"] = [
         float(item) for item in metadata["per_camera_corner_fraction"]
     ]
+    metadata["calibration_board"] = _normalize_json_scalars(
+        metadata["calibration_board"]
+    )
     return metadata
 
 
@@ -472,10 +491,93 @@ def _validate_optional_metadata_coeffs_by_camera(
     return values
 
 
-def _reject_nonfinite_metadata_numbers(value: Any, path: str) -> None:
-    if isinstance(value, bool):
+def _validate_optional_metadata_bool(metadata: dict[str, Any], name: str) -> bool | None:
+    if name not in metadata:
+        return None
+    raw = metadata[name]
+    if not isinstance(raw, bool):
+        raise TableCalibrationLoadError(f"{name} must be a bool.")
+    return raw
+
+
+def _validate_optional_board_corner_count(
+    calibration_board: dict[str, Any],
+) -> int | None:
+    if "chessboard_corner_count" not in calibration_board:
+        return None
+    raw = calibration_board["chessboard_corner_count"]
+    if not _is_finite_number(raw):
+        raise TableCalibrationLoadError(
+            "calibration_board.chessboard_corner_count must be finite."
+        )
+    value = float(raw)
+    if not value.is_integer():
+        raise TableCalibrationLoadError(
+            "calibration_board.chessboard_corner_count must be an integer."
+        )
+    result = int(value)
+    if result <= 0:
+        raise TableCalibrationLoadError(
+            "calibration_board.chessboard_corner_count must be > 0."
+        )
+    return result
+
+
+def _validate_metadata_acceptance_fields(
+    *,
+    max_reprojection_error_px: float,
+    min_corner_fraction: float,
+    min_charuco_corners: int,
+    per_camera_reprojection_error: list[float],
+    per_camera_corner_count: list[int],
+    per_camera_corner_fraction: list[float],
+    chessboard_corner_count: int | None,
+) -> None:
+    for index, value in enumerate(per_camera_reprojection_error):
+        if value > max_reprojection_error_px:
+            raise TableCalibrationLoadError(
+                "per_camera_reprojection_error"
+                f"[{index}] must be <= max_reprojection_error_px."
+            )
+    for index, value in enumerate(per_camera_corner_count):
+        if value < min_charuco_corners:
+            raise TableCalibrationLoadError(
+                f"per_camera_corner_count[{index}] must be >= min_charuco_corners."
+            )
+        if chessboard_corner_count is not None and value > chessboard_corner_count:
+            raise TableCalibrationLoadError(
+                "per_camera_corner_count"
+                f"[{index}] must be <= calibration_board.chessboard_corner_count."
+            )
+    for index, value in enumerate(per_camera_corner_fraction):
+        if value < min_corner_fraction:
+            raise TableCalibrationLoadError(
+                f"per_camera_corner_fraction[{index}] must be >= min_corner_fraction."
+            )
+    if chessboard_corner_count is None:
         return
-    if isinstance(value, float) and not np.isfinite(value):
+    min_required_corners = max(
+        11,
+        int(math.ceil(min_corner_fraction * chessboard_corner_count)),
+    )
+    if min_charuco_corners < min_required_corners:
+        raise TableCalibrationLoadError(
+            "min_charuco_corners must be >= "
+            "max(11, ceil(min_corner_fraction * chessboard_corner_count)). "
+            f"min_charuco_corners={min_charuco_corners}, "
+            f"required={min_required_corners}"
+        )
+    if min_charuco_corners > chessboard_corner_count:
+        raise TableCalibrationLoadError(
+            "min_charuco_corners must be <= "
+            "calibration_board.chessboard_corner_count."
+        )
+
+
+def _reject_nonfinite_metadata_numbers(value: Any, path: str) -> None:
+    if isinstance(value, (bool, np.bool_)):
+        return
+    if isinstance(value, (float, np.floating)) and not np.isfinite(value):
         raise TableCalibrationLoadError(f"{path} must be finite.")
     if isinstance(value, dict):
         for key, item in value.items():
@@ -523,9 +625,10 @@ def _validate_table_metadata_object(
         "table_calibration_reference_serials",
         _require_metadata_field(metadata, "table_calibration_reference_serials"),
     )
-    if len(serials) != len(reference_serials):
+    if serials != reference_serials:
         raise TableCalibrationLoadError(
-            "table calibration serial_numbers and reference serials length mismatch"
+            "table calibration serial_numbers must exactly match "
+            "table_calibration_reference_serials"
         )
     _validate_metadata_positive_int_pair(metadata, "WH")
     _validate_metadata_int(metadata, "fps", greater_equal=1)
@@ -547,37 +650,52 @@ def _validate_table_metadata_object(
         raise TableCalibrationLoadError(
             f"{numeric_string_path} must be a JSON number, not a numeric string."
         )
-    _validate_metadata_float(
+    chessboard_corner_count = _validate_optional_board_corner_count(calibration_board)
+    max_reprojection_error_px = _validate_metadata_float(
         metadata,
         "max_reprojection_error_px",
         greater_than=0.0,
     )
-    _validate_metadata_float(
+    min_corner_fraction = _validate_metadata_float(
         metadata,
         "min_corner_fraction",
         greater_than=0.0,
         less_equal=1.0,
     )
-    _validate_metadata_int(metadata, "min_charuco_corners", greater_equal=0)
-    _validate_metadata_float_list(
+    min_charuco_corners = _validate_metadata_int(
+        metadata,
+        "min_charuco_corners",
+        greater_equal=0,
+    )
+    per_camera_reprojection_error = _validate_metadata_float_list(
         metadata,
         "per_camera_reprojection_error",
         transform_count,
         greater_equal=0.0,
     )
-    _validate_metadata_int_list(
+    per_camera_corner_count = _validate_metadata_int_list(
         metadata,
         "per_camera_corner_count",
         transform_count,
         greater_equal=0,
     )
-    _validate_metadata_float_list(
+    per_camera_corner_fraction = _validate_metadata_float_list(
         metadata,
         "per_camera_corner_fraction",
         transform_count,
         greater_equal=0.0,
         less_equal=1.0,
     )
+    _validate_metadata_acceptance_fields(
+        max_reprojection_error_px=max_reprojection_error_px,
+        min_corner_fraction=min_corner_fraction,
+        min_charuco_corners=min_charuco_corners,
+        per_camera_reprojection_error=per_camera_reprojection_error,
+        per_camera_corner_count=per_camera_corner_count,
+        per_camera_corner_fraction=per_camera_corner_fraction,
+        chessboard_corner_count=chessboard_corner_count,
+    )
+    _validate_optional_metadata_bool(metadata, "distortion_used")
     _validate_optional_metadata_string_or_none_list(
         metadata,
         "distortion_model_by_camera",
