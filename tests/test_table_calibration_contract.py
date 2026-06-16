@@ -430,6 +430,22 @@ class TableCalibrationContractTest(unittest.TestCase):
             with self.assertRaisesRegex(TableCalibrationLoadError, "numeric string"):
                 load_table_calibration_transforms(output)
 
+    def test_writer_validates_malformed_transform_count_before_coercion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata()
+            metadata["transform_count"] = "one"
+
+            with self.assertRaisesRegex(
+                (TableCalibrationLoadError, ValueError),
+                "transform_count",
+            ):
+                write_table_calibration_files(
+                    output,
+                    [np.eye(4, dtype=np.float32)],
+                    metadata,
+                )
+
     def test_loader_wraps_corrupt_pickle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "table_calibrate.pkl"
@@ -584,6 +600,41 @@ class TableCalibrationContractTest(unittest.TestCase):
         built = build_table_calibration_metadata(**kwargs)
 
         self.assertEqual(built["calibration_board"]["name"], "custom-table-board")
+
+    def test_metadata_rejects_known_board_name_with_conflicting_corner_count(self) -> None:
+        conflicting_board = {
+            "name": "calibio-12x9-30mm",
+            "chessboard_corner_count": 20,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata()
+            metadata.update(
+                calibration_board=conflicting_board,
+                min_corner_fraction=0.60,
+                min_charuco_corners=12,
+                per_camera_corner_count=[12],
+                per_camera_corner_fraction=[0.60],
+            )
+            _write_metadata(output, metadata)
+
+            with self.assertRaisesRegex(
+                TableCalibrationLoadError,
+                "chessboard_corner_count",
+            ):
+                load_table_calibration_metadata(output)
+
+        kwargs = _sample_metadata_kwargs()
+        kwargs.update(
+            calibration_board=conflicting_board,
+            min_corner_fraction=0.60,
+            min_charuco_corners=12,
+            per_camera_corner_count=[12],
+            per_camera_corner_fraction=[0.60],
+        )
+
+        with self.assertRaisesRegex(ValueError, "chessboard_corner_count"):
+            build_table_calibration_metadata(**kwargs)
 
     def test_metadata_loader_rejects_unknown_sidecar_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

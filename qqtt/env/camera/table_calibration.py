@@ -579,20 +579,24 @@ def _validate_optional_metadata_nonempty_string(
 def _validate_optional_board_corner_count(
     calibration_board: dict[str, Any],
 ) -> int | None:
-    raw = calibration_board.get("chessboard_corner_count")
-    if raw is None:
-        board_name = calibration_board.get("name")
-        if isinstance(board_name, str) and board_name:
-            from qqtt.env.camera.calibration_boards import get_calibration_board_config
+    board_name = calibration_board.get("name")
+    registered_corner_count: int | None = None
+    if isinstance(board_name, str) and board_name:
+        from qqtt.env.camera.calibration_boards import get_calibration_board_config
 
-            try:
-                board_config = get_calibration_board_config(board_name)
-            except ValueError as exc:
+        try:
+            board_config = get_calibration_board_config(board_name)
+        except ValueError as exc:
+            if "chessboard_corner_count" not in calibration_board:
                 raise TableCalibrationLoadError(
                     f"Unknown calibration_board.name: {board_name!r}"
                 ) from exc
-            return int(board_config.chessboard_corner_count)
-        return None
+        else:
+            registered_corner_count = int(board_config.chessboard_corner_count)
+
+    raw = calibration_board.get("chessboard_corner_count")
+    if raw is None:
+        return registered_corner_count
     if not _is_finite_number(raw):
         raise TableCalibrationLoadError(
             "calibration_board.chessboard_corner_count must be finite."
@@ -606,6 +610,12 @@ def _validate_optional_board_corner_count(
     if result <= 0:
         raise TableCalibrationLoadError(
             "calibration_board.chessboard_corner_count must be > 0."
+        )
+    if registered_corner_count is not None and result != registered_corner_count:
+        raise TableCalibrationLoadError(
+            "calibration_board.chessboard_corner_count must match registered "
+            f"board profile {board_name!r}: expected {registered_corner_count}, "
+            f"got {result}."
         )
     return result
 
@@ -830,12 +840,15 @@ def write_table_calibration_files(
     ]
     if not transforms:
         raise ValueError("table calibration transforms must not be empty")
-    if int(metadata.get("transform_count", -1)) != len(transforms):
+    try:
+        _validate_table_metadata_object(metadata, sidecar_path=None)
+    except TableCalibrationLoadError as exc:
+        raise ValueError(str(exc)) from exc
+    if int(metadata["transform_count"]) != len(transforms):
         raise ValueError(
             "table calibration metadata transform_count does not match transforms"
         )
     encoded_metadata = json.dumps(metadata, allow_nan=False)
-    _validate_table_metadata_object(metadata, sidecar_path=None)
 
     with output_path.open("wb") as handle:
         pickle.dump(transforms, handle)
