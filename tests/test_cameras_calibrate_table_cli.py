@@ -29,6 +29,13 @@ class CamerasCalibrateTableCliTest(unittest.TestCase):
             self.assertEqual(sidecar_path, root / "custom_metadata.json")
             self.assertEqual(diagnostic_path, root / "custom.png")
 
+    def test_resolve_output_paths_is_keyword_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            with self.assertRaises(TypeError):
+                resolve_output_paths(root / "custom.pkl", root / "custom.png")
+
     def test_validate_rejects_legacy_calibrate_pkl_output_name(self) -> None:
         args = build_parser().parse_args(["--output", "calibrate.pkl"])
 
@@ -36,16 +43,20 @@ class CamerasCalibrateTableCliTest(unittest.TestCase):
             validate_cli_args(args)
 
     def test_validate_rejects_non_positive_max_reprojection_error(self) -> None:
-        args = build_parser().parse_args(["--max-reprojection-error-px", "0"])
+        for value in ("0", "-0.1"):
+            with self.subTest(value=value):
+                args = build_parser().parse_args(["--max-reprojection-error-px", value])
 
-        with self.assertRaisesRegex(ValueError, "--max-reprojection-error-px must be > 0"):
-            validate_cli_args(args)
+                with self.assertRaisesRegex(ValueError, "--max-reprojection-error-px must be > 0"):
+                    validate_cli_args(args)
 
     def test_validate_rejects_min_corner_fraction_outside_unit_interval(self) -> None:
-        args = build_parser().parse_args(["--min-corner-fraction", "1.5"])
+        for value in ("0", "-0.1", "1.5"):
+            with self.subTest(value=value):
+                args = build_parser().parse_args(["--min-corner-fraction", value])
 
-        with self.assertRaisesRegex(ValueError, "--min-corner-fraction must be in"):
-            validate_cli_args(args)
+                with self.assertRaisesRegex(ValueError, "--min-corner-fraction must be in"):
+                    validate_cli_args(args)
 
 
 if __name__ == "__main__":
