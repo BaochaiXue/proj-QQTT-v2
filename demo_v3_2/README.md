@@ -104,7 +104,7 @@ tracker output.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python scripts/harness/render_demo32_headless_capture.py \
+  python scripts/harness/diagnostics/demo/render_demo32_headless_capture.py \
   --capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke \
   --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video_query_phystwin.mp4 \
   --fps 30 \
@@ -113,7 +113,7 @@ conda run -n demo_2_max --no-capture-output \
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python scripts/harness/render_demo32_headless_capture.py \
+  python scripts/harness/diagnostics/demo/render_demo32_headless_capture.py \
   --capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke \
   --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video_pcd_only.mp4 \
   --fps 30 \

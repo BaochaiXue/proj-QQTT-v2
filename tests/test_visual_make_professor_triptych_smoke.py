@@ -11,7 +11,7 @@ from tests.visualization_test_utils import make_visualization_case
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "harness" / "visual_make_professor_triptych.py"
+SCRIPT = ROOT / "scripts" / "harness" / "diagnostics" / "visualization" / "visual_make_professor_triptych.py"
 
 
 class VisualMakeProfessorTriptychSmokeTest(unittest.TestCase):

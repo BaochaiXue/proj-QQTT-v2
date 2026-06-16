@@ -1446,7 +1446,7 @@ def ensure_sam31_masks_for_cases(
                     "-n",
                     str(env_name),
                     "python",
-                    str(repo_root / "scripts/harness/generate_sam31_masks.py"),
+                    str(repo_root / "scripts/harness/diagnostics/visualization/generate_sam31_masks.py"),
                     "--case_root",
                     str(case_spec.case_dir),
                     "--text_prompt",
@@ -3045,7 +3045,11 @@ def run_edgetam_dynamics_round1_3x6_workflow(
     )
     depth_override_root: Path | None = None
     if ensure_ffs_depth_cache:
-        script_for_ffs = Path(ffs_script_path) if ffs_script_path is not None else root / "scripts/harness/experiments/run_sam21_checkpoint_ladder_3x5_gifs.py"
+        script_for_ffs = (
+            Path(ffs_script_path)
+            if ffs_script_path is not None
+            else root / "scripts/harness/experiments/sam/run_sam21_checkpoint_ladder_3x5_gifs.py"
+        )
         depth_roots, _records = ensure_ffs_depth_caches_for_cases(
             script_path=script_for_ffs,
             output_dir=output_dir,

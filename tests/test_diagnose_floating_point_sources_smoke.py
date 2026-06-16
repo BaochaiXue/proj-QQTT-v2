@@ -11,7 +11,7 @@ from tests.visualization_test_utils import make_sam31_masks, make_visualization_
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "harness" / "diagnose_floating_point_sources.py"
+SCRIPT = ROOT / "scripts" / "harness" / "diagnostics" / "depth" / "diagnose_floating_point_sources.py"
 
 
 class DiagnoseFloatingPointSourcesSmokeTest(unittest.TestCase):

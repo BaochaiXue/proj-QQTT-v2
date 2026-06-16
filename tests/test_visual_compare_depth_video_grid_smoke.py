@@ -11,7 +11,7 @@ from tests.visualization_test_utils import make_visualization_case
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "harness" / "visual_compare_depth_video.py"
+SCRIPT = ROOT / "scripts" / "harness" / "diagnostics" / "depth" / "visual_compare_depth_video.py"
 
 
 class VisualCompareDepthVideoGridSmokeTest(unittest.TestCase):

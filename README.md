@@ -65,7 +65,7 @@ Single-D455 realtime point-cloud demo:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python scripts/harness/realtime_single_camera_pointcloud.py \
+  python scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py \
   --profile 848x480 \
   --fps 60
 ```
@@ -154,7 +154,7 @@ with only `color/`, `depth/`, `calibrate.pkl`, and legacy `metadata.json`.
 Per-camera diagnostic panels:
 
 ```bash
-python scripts/harness/visual_compare_depth_panels.py \
+python scripts/harness/diagnostics/depth/visual_compare_depth_panels.py \
   --aligned_root ./data \
   --realsense_case native_case \
   --ffs_case ffs_case \
@@ -165,7 +165,7 @@ python scripts/harness/visual_compare_depth_panels.py \
 Cross-view reprojection comparison:
 
 ```bash
-python scripts/harness/visual_compare_reprojection.py \
+python scripts/harness/diagnostics/depth/visual_compare_reprojection.py \
   --aligned_root ./data \
   --realsense_case native_case \
   --ffs_case ffs_case \
@@ -177,13 +177,13 @@ python scripts/harness/visual_compare_reprojection.py \
 Single-frame object-centric compare:
 
 ```bash
-python scripts/harness/visual_compare_turntable.py --case_name my_case --aligned_root ./data --frame_idx 0
+python scripts/harness/diagnostics/visualization/visual_compare_turntable.py --case_name my_case --aligned_root ./data --frame_idx 0
 ```
 
 Professor-facing summary pack:
 
 ```bash
-python scripts/harness/visual_make_professor_triptych.py \
+python scripts/harness/diagnostics/visualization/visual_make_professor_triptych.py \
   --aligned_root ./data \
   --realsense_case native_case \
   --ffs_case ffs_case \
@@ -195,11 +195,11 @@ python scripts/harness/visual_make_professor_triptych.py \
 Default deterministic checks:
 
 ```bash
-conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py
+conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile smoke
 ```
 
 Broader validation:
 
 ```bash
-conda run -n demo_2_max --no-capture-output python scripts/harness/check_all.py --full
+conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile deterministic
 ```

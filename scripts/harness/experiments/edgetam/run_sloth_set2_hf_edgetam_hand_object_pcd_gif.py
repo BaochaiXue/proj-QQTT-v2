@@ -27,8 +27,10 @@ def _find_repo_root(start: Path) -> Path:
 
 
 ROOT = _find_repo_root(Path(__file__).resolve())
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ROOT_STR = str(ROOT)
+if ROOT_STR in sys.path:
+    sys.path.remove(ROOT_STR)
+sys.path.insert(0, ROOT_STR)
 
 from data_process.visualization.io_artifacts import write_image, write_json, write_ply_ascii
 from data_process.visualization.io_case import load_case_frame_camera_clouds, load_case_metadata

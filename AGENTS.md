@@ -56,8 +56,8 @@ repo-wide default.
 - `scripts/harness/diagnostics/depth/visual_compare_depth_triplet_video.py`: multi-frame native / FFS raw / FFS postprocess point-cloud video compare
 - `scripts/harness/diagnostics/visualization/visual_compare_rerun.py`: multi-frame native-vs-FFS remove-invisible point-cloud export to Rerun + fused PLYs
 - `scripts/harness/diagnostics/visualization/visual_compare_turntable.py`: current single-frame professor-facing compare
-- `scripts/harness/experiments/visualize_ffs_static_confidence_panels.py`: static-round masked FFS RGB/depth/confidence boards
-- `scripts/harness/experiments/visualize_ffs_static_confidence_pcd_panels.py`: static-round masked FFS RGB/PCD/confidence boards
+- `scripts/harness/experiments/ffs/visualize_ffs_static_confidence_panels.py`: static-round masked FFS RGB/depth/confidence boards
+- `scripts/harness/experiments/ffs/visualize_ffs_static_confidence_pcd_panels.py`: static-round masked FFS RGB/PCD/confidence boards
 - `scripts/harness/diagnostics/visualization/visual_make_professor_triptych.py`: current three-figure professor-facing summary pack
 - `scripts/harness/diagnostics/visualization/visual_make_match_board.py`: current point-cloud match board
 - `scripts/harness/diagnostics/depth/audit_ffs_left_right.py`: focused FFS left/right ordering audit

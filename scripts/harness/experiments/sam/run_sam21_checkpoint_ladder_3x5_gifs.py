@@ -275,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = run_edgetam_dynamics_round1_3x6_workflow(
             root=ROOT,
             output_dir=selected_output_dir,
-            edgetam_script_path=ROOT / "scripts/harness/experiments/run_edgetam_video_masks.py",
+            edgetam_script_path=ROOT / "scripts/harness/experiments/edgetam/run_edgetam_video_masks.py",
             frames=None if (bool(args.all_frames) or args.case_set == CASE_SET_DYNAMICS or bool(args.edgetam_round1_3x6)) else int(args.frames),
             gif_fps=int(args.gif_fps),
             tile_width=int(args.tile_width),

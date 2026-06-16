@@ -802,7 +802,7 @@ def ensure_trt_artifact(
         str(ROOT / "scripts" / "harness"),
     ]
     if config.engine == "two_stage_fp16":
-        script_path = ROOT / "scripts" / "harness" / "verify_ffs_tensorrt_wsl.py"
+        script_path = ROOT / "scripts" / "harness" / "benchmarks" / "ffs" / "verify_ffs_tensorrt_wsl.py"
         cmd = [
             sys.executable,
             str(script_path),
@@ -827,7 +827,7 @@ def ensure_trt_artifact(
             "--skip_profiles",
         ]
     elif config.engine == "single_engine_fp32":
-        script_path = ROOT / "scripts" / "harness" / "verify_ffs_single_engine_tensorrt_wsl.py"
+        script_path = ROOT / "scripts" / "harness" / "benchmarks" / "ffs" / "verify_ffs_single_engine_tensorrt_wsl.py"
         cmd = [
             sys.executable,
             str(script_path),
