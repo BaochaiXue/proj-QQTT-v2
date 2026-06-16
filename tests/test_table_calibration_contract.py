@@ -545,6 +545,59 @@ class TableCalibrationContractTest(unittest.TestCase):
             with self.assertRaisesRegex(TableCalibrationLoadError, "calibration_board"):
                 load_table_calibration_metadata(output)
 
+    def test_metadata_loader_rejects_unknown_board_name_without_corner_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata()
+            metadata["calibration_board"] = {"name": "typo-board"}
+            _write_metadata(output, metadata)
+
+            with self.assertRaisesRegex(TableCalibrationLoadError, "typo-board"):
+                load_table_calibration_metadata(output)
+
+        kwargs = _sample_metadata_kwargs()
+        kwargs["calibration_board"] = {"name": "typo-board"}
+
+        with self.assertRaisesRegex(ValueError, "typo-board"):
+            build_table_calibration_metadata(**kwargs)
+
+    def test_metadata_allows_custom_board_name_with_explicit_corner_count(self) -> None:
+        custom_board = {"name": "custom-table-board", "chessboard_corner_count": 88}
+        corner_fraction = 60 / 88
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata()
+            metadata["calibration_board"] = custom_board
+            metadata["per_camera_corner_fraction"] = [corner_fraction]
+            _write_metadata(output, metadata)
+
+            loaded = load_table_calibration_metadata(output)
+
+            self.assertEqual(loaded["calibration_board"]["name"], "custom-table-board")
+
+        kwargs = _sample_metadata_kwargs()
+        kwargs.update(
+            calibration_board=custom_board,
+            per_camera_corner_fraction=[corner_fraction],
+        )
+
+        built = build_table_calibration_metadata(**kwargs)
+
+        self.assertEqual(built["calibration_board"]["name"], "custom-table-board")
+
+    def test_metadata_loader_rejects_unknown_sidecar_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata()
+            metadata["unexpected_debug_field"] = True
+            _write_metadata(output, metadata)
+
+            with self.assertRaisesRegex(
+                TableCalibrationLoadError,
+                "unexpected_debug_field",
+            ):
+                load_table_calibration_metadata(output)
+
     def test_metadata_loader_rejects_invalid_optional_distortion_fields(self) -> None:
         cases = [
             ("distortion_model_by_camera", [1]),
@@ -752,6 +805,73 @@ class TableCalibrationContractTest(unittest.TestCase):
 
                 with self.assertRaisesRegex(ValueError, message):
                     build_table_calibration_metadata(**kwargs)
+
+    def test_diagnostic_image_path_must_be_non_empty_string(self) -> None:
+        for value in ["", 123]:
+            with self.subTest(loader_value=value):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    metadata = _sample_metadata()
+                    metadata["diagnostic_image_path"] = value
+                    _write_metadata(output, metadata)
+
+                    with self.assertRaisesRegex(
+                        TableCalibrationLoadError,
+                        "diagnostic_image_path",
+                    ):
+                        load_table_calibration_metadata(output)
+
+            with self.subTest(builder_value=value):
+                kwargs = _sample_metadata_kwargs()
+                kwargs["diagnostic_image_path"] = value
+
+                with self.assertRaisesRegex(ValueError, "diagnostic_image_path"):
+                    build_table_calibration_metadata(**kwargs)
+
+    def test_metadata_rejects_inconsistent_corner_count_and_fraction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata()
+            metadata.update(
+                calibration_board={
+                    "name": "custom-table-board",
+                    "chessboard_corner_count": 88,
+                },
+                min_corner_fraction=0.50,
+                min_charuco_corners=44,
+                per_camera_corner_count=[60],
+                per_camera_corner_fraction=[0.50],
+            )
+            _write_metadata(output, metadata)
+
+            with self.assertRaisesRegex(
+                TableCalibrationLoadError,
+                "per_camera_corner_fraction",
+            ):
+                load_table_calibration_metadata(output)
+
+        kwargs = _sample_metadata_kwargs()
+        kwargs.update(
+            calibration_board={
+                "name": "custom-table-board",
+                "chessboard_corner_count": 88,
+            },
+            min_corner_fraction=0.50,
+            min_charuco_corners=44,
+            per_camera_corner_count=[60],
+            per_camera_corner_fraction=[0.50],
+        )
+
+        with self.assertRaisesRegex(ValueError, "per_camera_corner_fraction"):
+            build_table_calibration_metadata(**kwargs)
+
+    def test_builder_uses_distinct_serial_list_objects(self) -> None:
+        metadata = build_table_calibration_metadata(**_sample_metadata_kwargs())
+
+        self.assertIsNot(
+            metadata["serial_numbers"],
+            metadata["table_calibration_reference_serials"],
+        )
 
     def test_distortion_used_must_be_strict_bool(self) -> None:
         for value in ["false", 1, 0, None]:

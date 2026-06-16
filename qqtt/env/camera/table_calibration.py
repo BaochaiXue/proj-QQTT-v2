@@ -13,6 +13,33 @@ import numpy as np
 TABLE_CALIBRATION_METADATA_SCHEMA_VERSION = "qqtt_table_calibration_v1"
 TABLE_CALIBRATE_COMPATIBILITY_CONTRACT = "qqtt_table_calibrate_c2w_v1"
 TABLE_WORLD_FRAME_KIND = "table_world_z0"
+_TABLE_CALIBRATION_CORNER_FRACTION_TOLERANCE = 5e-3
+_TABLE_CALIBRATION_METADATA_ALLOWED_KEYS = frozenset(
+    {
+        "calibration_board",
+        "compatibility_contract",
+        "created_at_utc",
+        "diagnostic_image_path",
+        "distortion_coeffs_by_camera",
+        "distortion_model_by_camera",
+        "distortion_used",
+        "fps",
+        "logical_camera_names",
+        "max_reprojection_error_px",
+        "min_charuco_corners",
+        "min_corner_fraction",
+        "per_camera_corner_count",
+        "per_camera_corner_fraction",
+        "per_camera_reprojection_error",
+        "schema_version",
+        "serial_numbers",
+        "table_calibration_reference_serials",
+        "transform_convention",
+        "transform_count",
+        "WH",
+        "world_frame_kind",
+    }
+)
 
 
 class TableCalibrationLoadError(RuntimeError):
@@ -155,8 +182,8 @@ def build_table_calibration_metadata(
     metadata: dict[str, Any] = {
         "schema_version": TABLE_CALIBRATION_METADATA_SCHEMA_VERSION,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "serial_numbers": serials,
-        "table_calibration_reference_serials": serials,
+        "serial_numbers": list(serials),
+        "table_calibration_reference_serials": list(serials),
         "logical_camera_names": [f"cam{i}" for i in range(len(serials))],
         "WH": list(WH),
         "fps": fps,
@@ -209,7 +236,9 @@ def build_table_calibration_metadata(
             )
         metadata["distortion_coeffs_by_camera"] = coeffs_by_camera
     if diagnostic_image_path is not None:
-        metadata["diagnostic_image_path"] = str(diagnostic_image_path)
+        if not isinstance(diagnostic_image_path, str) or not diagnostic_image_path:
+            raise ValueError("diagnostic_image_path must be a non-empty string.")
+        metadata["diagnostic_image_path"] = diagnostic_image_path
 
     try:
         _validate_table_metadata_object(metadata, sidecar_path=None)
@@ -535,6 +564,18 @@ def _validate_optional_metadata_bool(metadata: dict[str, Any], name: str) -> boo
     return raw
 
 
+def _validate_optional_metadata_nonempty_string(
+    metadata: dict[str, Any],
+    name: str,
+) -> str | None:
+    if name not in metadata:
+        return None
+    raw = metadata[name]
+    if not isinstance(raw, str) or not raw:
+        raise TableCalibrationLoadError(f"{name} must be a non-empty string.")
+    return raw
+
+
 def _validate_optional_board_corner_count(
     calibration_board: dict[str, Any],
 ) -> int | None:
@@ -546,8 +587,10 @@ def _validate_optional_board_corner_count(
 
             try:
                 board_config = get_calibration_board_config(board_name)
-            except ValueError:
-                return None
+            except ValueError as exc:
+                raise TableCalibrationLoadError(
+                    f"Unknown calibration_board.name: {board_name!r}"
+                ) from exc
             return int(board_config.chessboard_corner_count)
         return None
     if not _is_finite_number(raw):
@@ -619,6 +662,18 @@ def _validate_metadata_acceptance_fields(
             "min_charuco_corners must be <= "
             "calibration_board.chessboard_corner_count."
         )
+    if chessboard_corner_count is not None:
+        for index, value in enumerate(per_camera_corner_fraction):
+            expected_fraction = per_camera_corner_count[index] / chessboard_corner_count
+            if (
+                abs(value - expected_fraction)
+                > _TABLE_CALIBRATION_CORNER_FRACTION_TOLERANCE
+            ):
+                raise TableCalibrationLoadError(
+                    f"per_camera_corner_fraction[{index}] must match "
+                    "per_camera_corner_count / "
+                    "calibration_board.chessboard_corner_count."
+                )
 
 
 def _reject_nonfinite_metadata_numbers(value: Any, path: str) -> None:
@@ -641,6 +696,11 @@ def _validate_table_metadata_object(
 ) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         raise TableCalibrationLoadError("Table calibration metadata must be a JSON object.")
+    unknown_keys = sorted(set(metadata) - _TABLE_CALIBRATION_METADATA_ALLOWED_KEYS)
+    if unknown_keys:
+        raise TableCalibrationLoadError(
+            f"table calibration metadata contains unknown fields: {unknown_keys}"
+        )
     if metadata.get("schema_version") != TABLE_CALIBRATION_METADATA_SCHEMA_VERSION:
         location = "" if sidecar_path is None else f" in {sidecar_path}"
         raise TableCalibrationLoadError(
@@ -753,6 +813,7 @@ def _validate_table_metadata_object(
         "distortion_coeffs_by_camera",
         transform_count,
     )
+    _validate_optional_metadata_nonempty_string(metadata, "diagnostic_image_path")
     _reject_nonfinite_metadata_numbers(metadata, "metadata")
     return metadata
 
