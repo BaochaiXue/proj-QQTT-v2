@@ -104,7 +104,7 @@ class TableCalibrationContractTest(unittest.TestCase):
                 calibration_board={"name": "calibio-12x9-30mm"},
                 max_reprojection_error_px=0.20,
                 min_corner_fraction=0.60,
-                min_charuco_corners=52,
+                min_charuco_corners=53,
                 per_camera_reprojection_error=[0.12],
                 per_camera_corner_count=[58],
                 per_camera_corner_fraction=[0.659],
@@ -170,7 +170,7 @@ class TableCalibrationContractTest(unittest.TestCase):
                 calibration_board={"name": "calibio-12x9-30mm"},
                 max_reprojection_error_px=0.20,
                 min_corner_fraction=0.60,
-                min_charuco_corners=52,
+                min_charuco_corners=53,
                 per_camera_reprojection_error=[0.10],
                 per_camera_corner_count=[60],
                 per_camera_corner_fraction=[0.68],
@@ -191,13 +191,13 @@ class TableCalibrationContractTest(unittest.TestCase):
             max_reprojection_error_px=0.20,
             min_corner_fraction=0.60,
         )
-        self.assertEqual(accepted_min["min_charuco_corners"], 52)
+        self.assertEqual(accepted_min["min_charuco_corners"], 53)
         self.assertAlmostEqual(accepted_min["corner_fraction"], 53 / 88)
 
         with self.assertRaisesRegex(ValueError, "ChArUco corner count"):
             validate_table_calibration_acceptance(
                 board_config=board_config,
-                corner_count=51,
+                corner_count=52,
                 reprojection_error_px=0.10,
                 max_reprojection_error_px=0.20,
                 min_corner_fraction=0.60,
@@ -906,7 +906,7 @@ def _write_sample_table_calibration(path: Path) -> None:
         calibration_board={"name": "calibio-12x9-30mm"},
         max_reprojection_error_px=0.20,
         min_corner_fraction=0.60,
-        min_charuco_corners=52,
+        min_charuco_corners=53,
         per_camera_reprojection_error=[0.10],
         per_camera_corner_count=[60],
         per_camera_corner_fraction=[0.68],
@@ -1112,7 +1112,7 @@ class RecordDataAlignTableCalibrationTest(unittest.TestCase):
                 calibration_board={"name": "calibio-12x9-30mm"},
                 max_reprojection_error_px=0.20,
                 min_corner_fraction=0.60,
-                min_charuco_corners=52,
+                min_charuco_corners=53,
                 per_camera_reprojection_error=[0.10, 0.11],
                 per_camera_corner_count=[60, 61],
                 per_camera_corner_fraction=[0.68, 0.69],
@@ -1267,7 +1267,7 @@ Append these tests to the relevant test class in `tests/test_single_demo_v3_runt
                 calibration_board={"name": "calibio-12x9-30mm"},
                 max_reprojection_error_px=0.20,
                 min_corner_fraction=0.60,
-                min_charuco_corners=52,
+                min_charuco_corners=53,
                 per_camera_reprojection_error=[0.10],
                 per_camera_corner_count=[60],
                 per_camera_corner_fraction=[0.68],
