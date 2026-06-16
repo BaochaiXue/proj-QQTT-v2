@@ -140,24 +140,43 @@ def _update_case_metadata(case_metadata_path: Path, updates: dict[str, object]) 
     case_metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
 
+def validate_table_calibration_for_case(
+    *,
+    table_calibrate_path: Path,
+    serial_numbers: list[str],
+) -> dict[str, object]:
+    table_path = Path(table_calibrate_path).expanduser().resolve()
+    load_table_calibration_transforms(table_path, serial_numbers=list(serial_numbers))
+    table_metadata = load_table_calibration_metadata(table_path)
+    return {
+        "path": table_path,
+        "metadata": table_metadata,
+        "metadata_sidecar_path": table_calibration_metadata_path_for(table_path),
+    }
+
+
 def copy_table_calibration_into_case(
     *,
     table_calibrate_path: Path,
     output_path: Path,
     serial_numbers: list[str],
+    validated_table_calibration: dict[str, object] | None = None,
 ) -> None:
-    table_path = Path(table_calibrate_path).expanduser().resolve()
-    load_table_calibration_transforms(table_path, serial_numbers=list(serial_numbers))
-    table_metadata = load_table_calibration_metadata(table_path)
+    table_calibration = validated_table_calibration
+    if table_calibration is None:
+        table_calibration = validate_table_calibration_for_case(
+            table_calibrate_path=table_calibrate_path,
+            serial_numbers=serial_numbers,
+        )
+    table_path = Path(table_calibration["path"])
+    table_metadata = table_calibration["metadata"]
+    metadata_sidecar_path = Path(table_calibration["metadata_sidecar_path"])
 
     output_path = Path(output_path)
     copied_table_name = "table_calibrate.pkl"
     copied_metadata_name = "table_calibrate_metadata.json"
     copy2(table_path, output_path / copied_table_name)
-    copy2(
-        table_calibration_metadata_path_for(table_path),
-        output_path / copied_metadata_name,
-    )
+    copy2(metadata_sidecar_path, output_path / copied_metadata_name)
     _update_case_metadata(
         output_path / "metadata.json",
         {
@@ -250,6 +269,12 @@ def main() -> int:
         stage_label="after camera discovery",
         camera_system=camera_system,
     )
+    validated_table_calibration = None
+    if args.table_calibrate is not None:
+        validated_table_calibration = validate_table_calibration_for_case(
+            table_calibrate_path=Path(args.table_calibrate),
+            serial_numbers=list(effective_serials),
+        )
     if final_preflight.operator_status == "experimental_warning":
         print(
             "[record] warning: preflight policy allows this unsupported profile experimentally; "
@@ -276,6 +301,7 @@ def main() -> int:
             table_calibrate_path=Path(args.table_calibrate),
             output_path=output_path,
             serial_numbers=list(effective_serials),
+            validated_table_calibration=validated_table_calibration,
         )
     return 0
 

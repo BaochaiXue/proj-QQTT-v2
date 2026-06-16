@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
+import record_data
 from qqtt.env.camera.calibration_boards import (
     charuco_board_config_to_metadata,
     get_calibration_board_config,
@@ -101,6 +105,62 @@ class RecordDataTableCalibrationTest(unittest.TestCase):
 
             self.assertFalse((case_dir / "table_calibrate.pkl").exists())
             self.assertFalse((case_dir / "table_calibrate_metadata.json").exists())
+
+    def test_main_validates_table_calibration_before_recording(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            table_path = _write_sample_table_calibration(root, ["cam-a"])
+
+            class FakeCameraSystem:
+                instances = []
+
+                def __init__(self, **_kwargs) -> None:
+                    self.serial_numbers = ["cam-b"]
+                    self.record_called = False
+                    self.realsense = SimpleNamespace(stop=lambda: None)
+                    self.__class__.instances.append(self)
+
+                def record(self, *, output_path: str, max_frames) -> None:
+                    self.record_called = True
+
+            allowed_preflight = SimpleNamespace(
+                allowed_to_record=True,
+                operator_status="supported",
+                reason="",
+                probe_results_md="",
+            )
+            argv = [
+                "record_data.py",
+                "--output_dir",
+                str(root / "recordings"),
+                "--case_name",
+                "case",
+                "--calibrate_path",
+                str(root / "missing_calibrate.pkl"),
+                "--serials",
+                "cam-b",
+                "--table-calibrate",
+                str(table_path),
+            ]
+            with (
+                patch.object(sys, "argv", argv),
+                patch("qqtt.env.CameraSystem", FakeCameraSystem),
+                patch.object(
+                    record_data,
+                    "evaluate_capture_preflight",
+                    return_value=allowed_preflight,
+                ),
+                patch.object(
+                    record_data,
+                    "format_capture_preflight_summary",
+                    return_value="preflight ok",
+                ),
+            ):
+                with self.assertRaisesRegex(Exception, "does not cover serials"):
+                    record_data.main()
+
+            self.assertEqual(len(FakeCameraSystem.instances), 1)
+            self.assertFalse(FakeCameraSystem.instances[0].record_called)
 
 
 if __name__ == "__main__":
