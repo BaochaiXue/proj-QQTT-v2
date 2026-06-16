@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import datetime
 from pathlib import Path
 from shutil import copy2
@@ -20,6 +21,12 @@ from qqtt.env.camera.calibration_metadata import (
 from qqtt.env.camera.preflight import (
     evaluate_capture_preflight,
     format_capture_preflight_summary,
+)
+from qqtt.env.camera.table_calibration import (
+    TABLE_WORLD_FRAME_KIND,
+    load_table_calibration_metadata,
+    load_table_calibration_transforms,
+    table_calibration_metadata_path_for,
 )
 
 _PROJECT_ROOT = next(
@@ -54,6 +61,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=str(_resolve_path("./calibrate.pkl")),
         help="Calibration file to copy into the recorded case if it exists.",
+    )
+    parser.add_argument(
+        "--table-calibrate",
+        type=str,
+        default=None,
+        help="Optional table Z=0 calibration file to copy into the recorded case.",
     )
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
@@ -118,6 +131,43 @@ def _raise_if_preflight_blocked(
     raise RuntimeError(
         f"Recording preflight blocked this capture profile {stage_label}. "
         f"{decision.reason} See {decision.probe_results_md}."
+    )
+
+
+def _update_case_metadata(case_metadata_path: Path, updates: dict[str, object]) -> None:
+    metadata = json.loads(case_metadata_path.read_text(encoding="utf-8"))
+    metadata.update(updates)
+    case_metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+
+def copy_table_calibration_into_case(
+    *,
+    table_calibrate_path: Path,
+    output_path: Path,
+    serial_numbers: list[str],
+) -> None:
+    table_path = Path(table_calibrate_path).expanduser().resolve()
+    load_table_calibration_transforms(table_path, serial_numbers=list(serial_numbers))
+    table_metadata = load_table_calibration_metadata(table_path)
+
+    output_path = Path(output_path)
+    copied_table_name = "table_calibrate.pkl"
+    copied_metadata_name = "table_calibrate_metadata.json"
+    copy2(table_path, output_path / copied_table_name)
+    copy2(
+        table_calibration_metadata_path_for(table_path),
+        output_path / copied_metadata_name,
+    )
+    _update_case_metadata(
+        output_path / "metadata.json",
+        {
+            "table_calibration_path": copied_table_name,
+            "table_calibration_metadata_path": copied_metadata_name,
+            "table_world_frame_kind": TABLE_WORLD_FRAME_KIND,
+            "table_calibration_reference_serials": list(
+                table_metadata["table_calibration_reference_serials"]
+            ),
+        },
     )
 
 
@@ -220,6 +270,12 @@ def main() -> int:
     else:
         print(
             f"[record] warning: calibrate file not found, skipping copy: {calibrate_path}"
+        )
+    if args.table_calibrate is not None:
+        copy_table_calibration_into_case(
+            table_calibrate_path=Path(args.table_calibrate),
+            output_path=output_path,
+            serial_numbers=list(effective_serials),
         )
     return 0
 
