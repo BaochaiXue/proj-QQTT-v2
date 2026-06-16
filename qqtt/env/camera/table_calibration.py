@@ -197,6 +197,13 @@ def _require_metadata_field(metadata: dict[str, Any], name: str) -> Any:
     return metadata[name]
 
 
+def _validate_metadata_nonempty_string(metadata: dict[str, Any], name: str) -> str:
+    raw = _require_metadata_field(metadata, name)
+    if not isinstance(raw, str) or not raw:
+        raise TableCalibrationLoadError(f"{name} must be a non-empty string.")
+    return raw
+
+
 def _validate_metadata_float(
     metadata: dict[str, Any],
     name: str,
@@ -234,6 +241,27 @@ def _validate_metadata_int(
     if greater_equal is not None and result < greater_equal:
         raise TableCalibrationLoadError(f"{name} must be >= {greater_equal}.")
     return result
+
+
+def _validate_metadata_positive_int_pair(
+    metadata: dict[str, Any],
+    name: str,
+) -> list[int]:
+    raw = _require_metadata_field(metadata, name)
+    if not isinstance(raw, list) or len(raw) != 2:
+        raise TableCalibrationLoadError(f"{name} must be a length-2 list.")
+    values = []
+    for index, item in enumerate(raw):
+        if not _is_finite_number(item):
+            raise TableCalibrationLoadError(f"{name}[{index}] must be finite.")
+        value = float(item)
+        if not value.is_integer():
+            raise TableCalibrationLoadError(f"{name}[{index}] must be an integer.")
+        result = int(value)
+        if result <= 0:
+            raise TableCalibrationLoadError(f"{name}[{index}] must be > 0.")
+        values.append(result)
+    return values
 
 
 def _validate_metadata_string_list(
@@ -353,30 +381,33 @@ def _validate_table_metadata_object(
         raise TableCalibrationLoadError(
             f"Unsupported table world frame kind: {metadata.get('world_frame_kind')!r}"
         )
-    if metadata.get("transform_convention") != "camera_to_world_c2w":
+    transform_convention = _require_metadata_field(metadata, "transform_convention")
+    if transform_convention != "camera_to_world_c2w":
         raise TableCalibrationLoadError(
             "Unsupported table calibration transform_convention: "
-            f"{metadata.get('transform_convention')!r}"
+            f"{transform_convention!r}"
         )
 
+    _validate_metadata_nonempty_string(metadata, "created_at_utc")
     serials = _validate_serials(
         "table calibration serial_numbers",
-        metadata.get("serial_numbers"),
+        _require_metadata_field(metadata, "serial_numbers"),
     )
     reference_serials = _validate_serials(
-        "table calibration reference serials",
-        metadata.get("table_calibration_reference_serials", serials),
+        "table_calibration_reference_serials",
+        _require_metadata_field(metadata, "table_calibration_reference_serials"),
     )
     if len(serials) != len(reference_serials):
         raise TableCalibrationLoadError(
             "table calibration serial_numbers and reference serials length mismatch"
         )
-    try:
-        transform_count = int(metadata.get("transform_count", len(reference_serials)))
-    except (TypeError, ValueError) as exc:
-        raise TableCalibrationLoadError(
-            "table calibration transform_count must be an int"
-        ) from exc
+    _validate_metadata_positive_int_pair(metadata, "WH")
+    _validate_metadata_int(metadata, "fps", greater_equal=1)
+    transform_count = _validate_metadata_int(
+        metadata,
+        "transform_count",
+        greater_equal=1,
+    )
     if transform_count != len(reference_serials):
         raise TableCalibrationLoadError(
             "table calibration transform_count does not match reference serials"
@@ -545,8 +576,9 @@ def validate_table_calibration_acceptance(
     board_corners = int(board_config.chessboard_corner_count)
     if board_corners <= 0:
         raise ValueError("ChArUco board must expose at least one chessboard corner.")
-    min_charuco_corners = int(
-        np.ceil(float(min_corner_fraction) * float(board_corners))
+    min_charuco_corners = max(
+        11,
+        int(np.ceil(float(min_corner_fraction) * float(board_corners))),
     )
     corner_fraction = corner_count_value / float(board_corners)
     if corner_count_value < min_charuco_corners:

@@ -184,6 +184,27 @@ class TableCalibrationContractTest(unittest.TestCase):
                 min_corner_fraction=0.60,
             )
 
+    def test_acceptance_enforces_minimum_eleven_charuco_corners(self) -> None:
+        board_config = get_calibration_board_config("calibio-12x9-30mm")
+        with self.assertRaisesRegex(ValueError, "minimum 11"):
+            validate_table_calibration_acceptance(
+                board_config=board_config,
+                corner_count=10,
+                reprojection_error_px=0.10,
+                max_reprojection_error_px=0.20,
+                min_corner_fraction=0.01,
+            )
+
+        accepted = validate_table_calibration_acceptance(
+            board_config=board_config,
+            corner_count=11,
+            reprojection_error_px=0.10,
+            max_reprojection_error_px=0.20,
+            min_corner_fraction=0.01,
+        )
+        self.assertEqual(accepted["min_charuco_corners"], 11)
+        self.assertAlmostEqual(accepted["corner_fraction"], 11 / 88)
+
     def test_acceptance_rejects_invalid_numeric_inputs(self) -> None:
         board_config = get_calibration_board_config("calibio-12x9-30mm")
         cases = [
@@ -325,6 +346,14 @@ class TableCalibrationContractTest(unittest.TestCase):
 
     def test_metadata_loader_rejects_missing_required_fields(self) -> None:
         required_fields = [
+            "created_at_utc",
+            "serial_numbers",
+            "table_calibration_reference_serials",
+            "logical_camera_names",
+            "WH",
+            "fps",
+            "transform_count",
+            "transform_convention",
             "calibration_board",
             "max_reprojection_error_px",
             "min_corner_fraction",
@@ -339,6 +368,30 @@ class TableCalibrationContractTest(unittest.TestCase):
                     output = Path(tmpdir) / "table_calibrate.pkl"
                     metadata = _sample_metadata()
                     del metadata[field]
+                    _write_metadata(output, metadata)
+
+                    with self.assertRaisesRegex(TableCalibrationLoadError, field):
+                        load_table_calibration_metadata(output)
+
+    def test_metadata_loader_rejects_invalid_core_required_fields(self) -> None:
+        cases = [
+            ("created_at_utc", ""),
+            ("WH", [1280]),
+            ("WH", [1280, 0]),
+            ("WH", [1280, float("nan")]),
+            ("fps", 0),
+            ("fps", 5.5),
+            ("fps", float("nan")),
+            ("transform_count", 0),
+            ("transform_count", 1.5),
+            ("transform_count", float("inf")),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    metadata = _sample_metadata()
+                    metadata[field] = value
                     _write_metadata(output, metadata)
 
                     with self.assertRaisesRegex(TableCalibrationLoadError, field):
