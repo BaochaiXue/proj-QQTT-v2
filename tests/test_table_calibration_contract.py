@@ -372,6 +372,37 @@ class TableCalibrationContractTest(unittest.TestCase):
                     with self.assertRaisesRegex(TableCalibrationLoadError, message):
                         load_table_calibration_transforms(output)
 
+    def test_writer_and_loader_reject_scaled_or_sheared_transforms(self) -> None:
+        cases = [
+            ("scaled", lambda matrix: matrix.__setitem__((0, 0), 2.0)),
+            ("sheared", lambda matrix: matrix.__setitem__((0, 1), 0.1)),
+        ]
+        for label, mutate in cases:
+            with self.subTest(path="writer", label=label):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    transform = np.eye(4, dtype=np.float32)
+                    mutate(transform)
+
+                    with self.assertRaisesRegex(TableCalibrationLoadError, "rotation"):
+                        write_table_calibration_files(
+                            output,
+                            [transform],
+                            _sample_metadata(),
+                        )
+
+            with self.subTest(path="loader", label=label):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    _write_metadata(output, _sample_metadata())
+                    transform = np.eye(4, dtype=np.float32)
+                    mutate(transform)
+                    with output.open("wb") as handle:
+                        pickle.dump([transform], handle)
+
+                    with self.assertRaisesRegex(TableCalibrationLoadError, "rotation"):
+                        load_table_calibration_transforms(output)
+
     def test_loader_wraps_corrupt_pickle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "table_calibrate.pkl"
@@ -563,6 +594,16 @@ class TableCalibrationContractTest(unittest.TestCase):
                     per_camera_corner_fraction=[0.60],
                 ),
             ),
+            (
+                "required=53",
+                lambda metadata: metadata.update(
+                    calibration_board={"name": "calibio-12x9-30mm"},
+                    min_corner_fraction=0.60,
+                    min_charuco_corners=11,
+                    per_camera_corner_count=[11],
+                    per_camera_corner_fraction=[0.60],
+                ),
+            ),
         ]
         for field, mutate in cases:
             with self.subTest(field=field):
@@ -615,6 +656,16 @@ class TableCalibrationContractTest(unittest.TestCase):
                     per_camera_corner_fraction=[0.60],
                 ),
             ),
+            (
+                "required=53",
+                lambda kwargs: kwargs.update(
+                    calibration_board={"name": "calibio-12x9-30mm"},
+                    min_corner_fraction=0.60,
+                    min_charuco_corners=11,
+                    per_camera_corner_count=[11],
+                    per_camera_corner_fraction=[0.60],
+                ),
+            ),
         ]
         for field, mutate in cases:
             with self.subTest(field=field):
@@ -623,6 +674,31 @@ class TableCalibrationContractTest(unittest.TestCase):
 
                 with self.assertRaisesRegex(ValueError, field):
                     build_table_calibration_metadata(**kwargs)
+
+    def test_builder_rejects_string_serial_numbers(self) -> None:
+        kwargs = _sample_metadata_kwargs()
+        kwargs.update(
+            serial_numbers="cam0",
+            transform_count=4,
+            per_camera_reprojection_error=[0.10, 0.10, 0.10, 0.10],
+            per_camera_corner_count=[60, 60, 60, 60],
+            per_camera_corner_fraction=[0.68, 0.68, 0.68, 0.68],
+            distortion_model_by_camera=[
+                "inverse_brown_conrady",
+                "inverse_brown_conrady",
+                "inverse_brown_conrady",
+                "inverse_brown_conrady",
+            ],
+            distortion_coeffs_by_camera=[
+                [0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0],
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "serial_numbers"):
+            build_table_calibration_metadata(**kwargs)
 
     def test_distortion_used_must_be_strict_bool(self) -> None:
         for value in ["false", 1, 0, None]:

@@ -116,7 +116,10 @@ def build_table_calibration_metadata(
     distortion_coeffs_by_camera: list[list[float] | None] | None = None,
     diagnostic_image_path: str | None = None,
 ) -> dict[str, Any]:
-    serials = _validate_serials("serial_numbers", list(serial_numbers))
+    try:
+        serials = _validate_serials("serial_numbers", serial_numbers)
+    except TableCalibrationLoadError as exc:
+        raise ValueError(str(exc)) from exc
     if not isinstance(calibration_board, dict):
         raise ValueError("calibration_board must be a dict.")
     expected_count = _validate_build_int(
@@ -242,9 +245,24 @@ def _validate_transform_matrix(matrix: Any, *, index: int) -> np.ndarray:
         raise TableCalibrationLoadError(
             f"Table calibration transform at index {index} has invalid homogeneous bottom row."
         )
-    if abs(float(np.linalg.det(item[:3, :3]))) <= 1e-6:
+    rotation = item[:3, :3]
+    determinant = float(np.linalg.det(rotation))
+    if abs(determinant) <= 1e-6:
         raise TableCalibrationLoadError(
             f"Table calibration transform at index {index} is singular or degenerate."
+        )
+    if not np.allclose(
+        rotation.T @ rotation,
+        np.eye(3, dtype=np.float32),
+        atol=1e-3,
+        rtol=1e-3,
+    ):
+        raise TableCalibrationLoadError(
+            f"Table calibration transform at index {index} rotation block is not orthonormal."
+        )
+    if not np.isclose(determinant, 1.0, atol=1e-3, rtol=1e-3):
+        raise TableCalibrationLoadError(
+            f"Table calibration transform at index {index} rotation determinant is not close to +1."
         )
     return item
 
@@ -503,9 +521,18 @@ def _validate_optional_metadata_bool(metadata: dict[str, Any], name: str) -> boo
 def _validate_optional_board_corner_count(
     calibration_board: dict[str, Any],
 ) -> int | None:
-    if "chessboard_corner_count" not in calibration_board:
+    raw = calibration_board.get("chessboard_corner_count")
+    if raw is None:
+        board_name = calibration_board.get("name")
+        if isinstance(board_name, str) and board_name:
+            from qqtt.env.camera.calibration_boards import get_calibration_board_config
+
+            try:
+                board_config = get_calibration_board_config(board_name)
+            except ValueError:
+                return None
+            return int(board_config.chessboard_corner_count)
         return None
-    raw = calibration_board["chessboard_corner_count"]
     if not _is_finite_number(raw):
         raise TableCalibrationLoadError(
             "calibration_board.chessboard_corner_count must be finite."
@@ -554,12 +581,12 @@ def _validate_metadata_acceptance_fields(
             raise TableCalibrationLoadError(
                 f"per_camera_corner_fraction[{index}] must be >= min_corner_fraction."
             )
-    if chessboard_corner_count is None:
-        return
-    min_required_corners = max(
-        11,
-        int(math.ceil(min_corner_fraction * chessboard_corner_count)),
-    )
+    min_required_corners = 11
+    if chessboard_corner_count is not None:
+        min_required_corners = max(
+            min_required_corners,
+            int(math.ceil(min_corner_fraction * chessboard_corner_count)),
+        )
     if min_charuco_corners < min_required_corners:
         raise TableCalibrationLoadError(
             "min_charuco_corners must be >= "
@@ -567,7 +594,10 @@ def _validate_metadata_acceptance_fields(
             f"min_charuco_corners={min_charuco_corners}, "
             f"required={min_required_corners}"
         )
-    if min_charuco_corners > chessboard_corner_count:
+    if (
+        chessboard_corner_count is not None
+        and min_charuco_corners > chessboard_corner_count
+    ):
         raise TableCalibrationLoadError(
             "min_charuco_corners must be <= "
             "calibration_board.chessboard_corner_count."
