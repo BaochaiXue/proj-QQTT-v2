@@ -48,7 +48,7 @@ class TableCalibrationContractTest(unittest.TestCase):
                 calibration_board={"name": "calibio-12x9-30mm"},
                 max_reprojection_error_px=0.20,
                 min_corner_fraction=0.60,
-                min_charuco_corners=52,
+                min_charuco_corners=53,
                 per_camera_reprojection_error=[0.12],
                 per_camera_corner_count=[58],
                 per_camera_corner_fraction=[0.659],
@@ -91,8 +91,7 @@ class TableCalibrationContractTest(unittest.TestCase):
 
     def test_loader_rejects_wrong_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            output = root / "table_calibrate.pkl"
+            output = Path(tmpdir) / "table_calibrate.pkl"
             with output.open("wb") as handle:
                 pickle.dump([np.eye(4, dtype=np.float32)], handle)
             table_calibration_metadata_path_for(output).write_text(
@@ -114,7 +113,7 @@ class TableCalibrationContractTest(unittest.TestCase):
                 calibration_board={"name": "calibio-12x9-30mm"},
                 max_reprojection_error_px=0.20,
                 min_corner_fraction=0.60,
-                min_charuco_corners=52,
+                min_charuco_corners=53,
                 per_camera_reprojection_error=[0.10],
                 per_camera_corner_count=[60],
                 per_camera_corner_fraction=[0.68],
@@ -135,13 +134,13 @@ class TableCalibrationContractTest(unittest.TestCase):
             max_reprojection_error_px=0.20,
             min_corner_fraction=0.60,
         )
-        self.assertEqual(accepted_min["min_charuco_corners"], 52)
+        self.assertEqual(accepted_min["min_charuco_corners"], 53)
         self.assertAlmostEqual(accepted_min["corner_fraction"], 53 / 88)
 
         with self.assertRaisesRegex(ValueError, "ChArUco corner count"):
             validate_table_calibration_acceptance(
                 board_config=board_config,
-                corner_count=51,
+                corner_count=52,
                 reprojection_error_px=0.10,
                 max_reprojection_error_px=0.20,
                 min_corner_fraction=0.60,
