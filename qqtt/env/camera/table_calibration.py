@@ -36,6 +36,8 @@ def _validate_serials(name: str, serials: Any) -> list[str]:
 
 
 def _validate_per_camera_length(name: str, values: list[Any], expected_count: int) -> None:
+    if not isinstance(values, list):
+        raise ValueError(f"{name} must be a list.")
     if len(values) != expected_count:
         raise ValueError(
             f"{name} length must match transform_count. "
@@ -63,6 +65,8 @@ def _normalize_json_scalars(value: Any) -> Any:
 
 
 def _numeric_string_path(value: Any, path: str) -> str | None:
+    if isinstance(value, np.ndarray):
+        return _numeric_string_path(value.tolist(), path)
     if isinstance(value, str):
         text = value.strip()
         if not text:
@@ -77,7 +81,7 @@ def _numeric_string_path(value: Any, path: str) -> str | None:
             found = _numeric_string_path(item, f"{path}.{key}")
             if found is not None:
                 return found
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         for index, item in enumerate(value):
             found = _numeric_string_path(item, f"{path}[{index}]")
             if found is not None:
@@ -185,18 +189,25 @@ def build_table_calibration_metadata(
             distortion_coeffs_by_camera,
             expected_count,
         )
-        metadata["distortion_coeffs_by_camera"] = [
-            None
-            if item is None
-            else [
-                _validate_build_float(
-                    f"distortion_coeffs_by_camera[{idx}][{value_idx}]",
-                    value,
+        coeffs_by_camera = []
+        for idx, item in enumerate(distortion_coeffs_by_camera):
+            if item is None:
+                coeffs_by_camera.append(None)
+                continue
+            if not isinstance(item, list):
+                raise ValueError(
+                    f"distortion_coeffs_by_camera[{idx}] must be a coefficient list or null."
                 )
-                for value_idx, value in enumerate(item)
-            ]
-            for idx, item in enumerate(distortion_coeffs_by_camera)
-        ]
+            coeffs_by_camera.append(
+                [
+                    _validate_build_float(
+                        f"distortion_coeffs_by_camera[{idx}][{value_idx}]",
+                        value,
+                    )
+                    for value_idx, value in enumerate(item)
+                ]
+            )
+        metadata["distortion_coeffs_by_camera"] = coeffs_by_camera
     if diagnostic_image_path is not None:
         metadata["diagnostic_image_path"] = str(diagnostic_image_path)
 
@@ -226,6 +237,12 @@ def build_table_calibration_metadata(
 
 
 def _validate_transform_matrix(matrix: Any, *, index: int) -> np.ndarray:
+    numeric_string_path = _numeric_string_path(matrix, f"transform[{index}]")
+    if numeric_string_path is not None:
+        raise TableCalibrationLoadError(
+            "Table calibration transform at index "
+            f"{index} contains numeric string at {numeric_string_path}."
+        )
     try:
         item = np.asarray(matrix, dtype=np.float32)
     except (TypeError, ValueError) as exc:

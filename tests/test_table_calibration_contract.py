@@ -403,6 +403,33 @@ class TableCalibrationContractTest(unittest.TestCase):
                     with self.assertRaisesRegex(TableCalibrationLoadError, "rotation"):
                         load_table_calibration_transforms(output)
 
+    def test_writer_and_loader_reject_numeric_string_transforms(self) -> None:
+        string_transform = [
+            ["1", "0", "0", "0"],
+            ["0", "1", "0", "0"],
+            ["0", "0", "1", "0"],
+            ["0", "0", "0", "1"],
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+
+            with self.assertRaisesRegex(TableCalibrationLoadError, "numeric string"):
+                write_table_calibration_files(
+                    output,
+                    [string_transform],
+                    _sample_metadata(),
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            _write_metadata(output, _sample_metadata())
+            with output.open("wb") as handle:
+                pickle.dump([string_transform], handle)
+
+            with self.assertRaisesRegex(TableCalibrationLoadError, "numeric string"):
+                load_table_calibration_transforms(output)
+
     def test_loader_wraps_corrupt_pickle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "table_calibrate.pkl"
@@ -699,6 +726,32 @@ class TableCalibrationContractTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "serial_numbers"):
             build_table_calibration_metadata(**kwargs)
+
+    def test_builder_rejects_non_list_optional_per_camera_fields(self) -> None:
+        cases = [
+            (
+                "distortion_model_by_camera",
+                "x",
+                "distortion_model_by_camera must be a list",
+            ),
+            (
+                "distortion_coeffs_by_camera",
+                "0",
+                "distortion_coeffs_by_camera must be a list",
+            ),
+            (
+                "distortion_coeffs_by_camera",
+                [0],
+                r"distortion_coeffs_by_camera\[0\]",
+            ),
+        ]
+        for field, value, message in cases:
+            with self.subTest(field=field, value=value):
+                kwargs = _sample_metadata_kwargs()
+                kwargs[field] = value
+
+                with self.assertRaisesRegex(ValueError, message):
+                    build_table_calibration_metadata(**kwargs)
 
     def test_distortion_used_must_be_strict_bool(self) -> None:
         for value in ["false", 1, 0, None]:
