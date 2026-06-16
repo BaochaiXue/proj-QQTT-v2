@@ -577,6 +577,26 @@ class TableCalibrationContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "typo-board"):
             build_table_calibration_metadata(**kwargs)
 
+    def test_metadata_rejects_board_without_identity_or_corner_count(self) -> None:
+        board = {"description": "camera-side table board"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata()
+            metadata["calibration_board"] = board
+            _write_metadata(output, metadata)
+
+            with self.assertRaisesRegex(
+                TableCalibrationLoadError,
+                "calibration_board",
+            ):
+                load_table_calibration_metadata(output)
+
+        kwargs = _sample_metadata_kwargs()
+        kwargs["calibration_board"] = board
+
+        with self.assertRaisesRegex(ValueError, "calibration_board"):
+            build_table_calibration_metadata(**kwargs)
+
     def test_metadata_allows_custom_board_name_with_explicit_corner_count(self) -> None:
         custom_board = {"name": "custom-table-board", "chessboard_corner_count": 88}
         corner_fraction = 60 / 88
@@ -985,6 +1005,40 @@ class TableCalibrationContractTest(unittest.TestCase):
 
         self.assertEqual(loaded["WH"], [1280, 720])
         self.assertEqual(loaded["fps"], 5)
+        self.assertEqual(loaded["calibration_board"]["chessboard_corner_count"], 88)
+        self.assertEqual(loaded["distortion_coeffs_by_camera"], [[0.0]])
+
+    def test_writer_normalizes_direct_numpy_scalar_metadata(self) -> None:
+        metadata = _sample_metadata()
+        metadata.update(
+            WH=[np.int64(1280), np.int32(720)],
+            fps=np.int64(5),
+            transform_count=np.int64(1),
+            calibration_board={
+                "name": "calibio-12x9-30mm",
+                "chessboard_corner_count": np.int64(88),
+            },
+            max_reprojection_error_px=np.float32(0.20),
+            min_corner_fraction=np.float32(0.60),
+            min_charuco_corners=np.int64(53),
+            per_camera_reprojection_error=[np.float32(0.10)],
+            per_camera_corner_count=[np.int64(60)],
+            per_camera_corner_fraction=[np.float32(60 / 88)],
+            distortion_coeffs_by_camera=[[np.float32(0.0)]],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            sidecar = write_table_calibration_files(
+                output,
+                [np.eye(4, dtype=np.float32)],
+                metadata,
+            )
+            loaded = json.loads(sidecar.read_text(encoding="utf-8"))
+
+        self.assertEqual(loaded["WH"], [1280, 720])
+        self.assertEqual(loaded["fps"], 5)
+        self.assertEqual(loaded["transform_count"], 1)
         self.assertEqual(loaded["calibration_board"]["chessboard_corner_count"], 88)
         self.assertEqual(loaded["distortion_coeffs_by_camera"], [[0.0]])
 

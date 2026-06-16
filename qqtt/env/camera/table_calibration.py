@@ -596,7 +596,12 @@ def _validate_optional_board_corner_count(
 
     raw = calibration_board.get("chessboard_corner_count")
     if raw is None:
-        return registered_corner_count
+        if registered_corner_count is not None:
+            return registered_corner_count
+        raise TableCalibrationLoadError(
+            "calibration_board must include a known non-empty name or explicit "
+            "chessboard_corner_count."
+        )
     if not _is_finite_number(raw):
         raise TableCalibrationLoadError(
             "calibration_board.chessboard_corner_count must be finite."
@@ -844,11 +849,15 @@ def write_table_calibration_files(
         _validate_table_metadata_object(metadata, sidecar_path=None)
     except TableCalibrationLoadError as exc:
         raise ValueError(str(exc)) from exc
-    if int(metadata["transform_count"]) != len(transforms):
+    normalized_metadata = _normalize_json_scalars(metadata)
+    if int(normalized_metadata["transform_count"]) != len(transforms):
         raise ValueError(
             "table calibration metadata transform_count does not match transforms"
         )
-    encoded_metadata = json.dumps(metadata, allow_nan=False)
+    try:
+        encoded_metadata = json.dumps(normalized_metadata, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("table calibration metadata must be JSON serializable.") from exc
 
     with output_path.open("wb") as handle:
         pickle.dump(transforms, handle)
