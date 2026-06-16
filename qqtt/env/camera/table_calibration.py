@@ -409,6 +409,69 @@ def _validate_metadata_int_list(
     return values
 
 
+def _validate_optional_metadata_string_or_none_list(
+    metadata: dict[str, Any],
+    name: str,
+    expected_count: int,
+) -> list[str | None] | None:
+    if name not in metadata:
+        return None
+    raw = metadata[name]
+    if not isinstance(raw, list):
+        raise TableCalibrationLoadError(f"{name} must be a list.")
+    if len(raw) != expected_count:
+        raise TableCalibrationLoadError(
+            f"{name} length must match transform_count. "
+            f"{name}={len(raw)}, transform_count={expected_count}"
+        )
+    values = []
+    for index, item in enumerate(raw):
+        if item is None:
+            values.append(None)
+            continue
+        if not isinstance(item, str) or not item:
+            raise TableCalibrationLoadError(
+                f"{name}[{index}] must be a non-empty string or null."
+            )
+        values.append(item)
+    return values
+
+
+def _validate_optional_metadata_coeffs_by_camera(
+    metadata: dict[str, Any],
+    name: str,
+    expected_count: int,
+) -> list[list[float] | None] | None:
+    if name not in metadata:
+        return None
+    raw = metadata[name]
+    if not isinstance(raw, list):
+        raise TableCalibrationLoadError(f"{name} must be a list.")
+    if len(raw) != expected_count:
+        raise TableCalibrationLoadError(
+            f"{name} length must match transform_count. "
+            f"{name}={len(raw)}, transform_count={expected_count}"
+        )
+    values = []
+    for camera_index, item in enumerate(raw):
+        if item is None:
+            values.append(None)
+            continue
+        if not isinstance(item, list):
+            raise TableCalibrationLoadError(
+                f"{name}[{camera_index}] must be a coefficient list or null."
+            )
+        coeffs = []
+        for coeff_index, coeff in enumerate(item):
+            if not _is_finite_number(coeff):
+                raise TableCalibrationLoadError(
+                    f"{name}[{camera_index}][{coeff_index}] must be finite."
+                )
+            coeffs.append(float(coeff))
+        values.append(coeffs)
+    return values
+
+
 def _reject_nonfinite_metadata_numbers(value: Any, path: str) -> None:
     if isinstance(value, bool):
         return
@@ -514,6 +577,16 @@ def _validate_table_metadata_object(
         transform_count,
         greater_equal=0.0,
         less_equal=1.0,
+    )
+    _validate_optional_metadata_string_or_none_list(
+        metadata,
+        "distortion_model_by_camera",
+        transform_count,
+    )
+    _validate_optional_metadata_coeffs_by_camera(
+        metadata,
+        "distortion_coeffs_by_camera",
+        transform_count,
     )
     _reject_nonfinite_metadata_numbers(metadata, "metadata")
     return metadata

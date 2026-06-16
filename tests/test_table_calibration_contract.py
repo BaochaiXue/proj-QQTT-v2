@@ -487,6 +487,48 @@ class TableCalibrationContractTest(unittest.TestCase):
             with self.assertRaisesRegex(TableCalibrationLoadError, "calibration_board"):
                 load_table_calibration_metadata(output)
 
+    def test_metadata_loader_rejects_invalid_optional_distortion_fields(self) -> None:
+        cases = [
+            ("distortion_model_by_camera", [1]),
+            ("distortion_model_by_camera", [""]),
+            ("distortion_model_by_camera", ["inverse_brown_conrady", "extra"]),
+            ("distortion_coeffs_by_camera", [["0.0"]]),
+            ("distortion_coeffs_by_camera", [[True]]),
+            ("distortion_coeffs_by_camera", [[float("inf")]]),
+            ("distortion_coeffs_by_camera", [[0.0], [0.0]]),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    metadata = _sample_metadata()
+                    metadata[field] = value
+                    _write_metadata(output, metadata)
+
+                    with self.assertRaisesRegex(TableCalibrationLoadError, field):
+                        load_table_calibration_metadata(output)
+
+    def test_metadata_loader_accepts_valid_optional_distortion_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata(serial_numbers=["cam_a", "cam_b"])
+            metadata["distortion_model_by_camera"] = [
+                "inverse_brown_conrady",
+                None,
+            ]
+            metadata["distortion_coeffs_by_camera"] = [
+                [0.0, 0.1, -0.1],
+                None,
+            ]
+            _write_metadata(output, metadata)
+
+            loaded_metadata = load_table_calibration_metadata(output)
+
+            self.assertEqual(
+                loaded_metadata["distortion_coeffs_by_camera"],
+                [[0.0, 0.1, -0.1], None],
+            )
+
     def test_builder_rejects_numeric_string_inputs(self) -> None:
         cases = [
             ("WH", lambda kwargs: kwargs.update(WH=["1280", 720])),
