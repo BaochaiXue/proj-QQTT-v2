@@ -42,6 +42,15 @@ def _validate_per_camera_length(name: str, values: list[Any], expected_count: in
         )
 
 
+def _is_finite_number(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return bool(np.isfinite(float(value)))
+    except (TypeError, ValueError):
+        return False
+
+
 def build_table_calibration_metadata(
     *,
     serial_numbers: list[str],
@@ -180,6 +189,148 @@ def _coerce_transform_list(raw: Any) -> list[np.ndarray]:
     )
 
 
+def _require_metadata_field(metadata: dict[str, Any], name: str) -> Any:
+    if name not in metadata:
+        raise TableCalibrationLoadError(
+            f"table calibration metadata missing required field: {name}"
+        )
+    return metadata[name]
+
+
+def _validate_metadata_float(
+    metadata: dict[str, Any],
+    name: str,
+    *,
+    greater_than: float | None = None,
+    greater_equal: float | None = None,
+    less_equal: float | None = None,
+) -> float:
+    raw = _require_metadata_field(metadata, name)
+    if not _is_finite_number(raw):
+        raise TableCalibrationLoadError(f"{name} must be finite.")
+    value = float(raw)
+    if greater_than is not None and value <= greater_than:
+        raise TableCalibrationLoadError(f"{name} must be > {greater_than}.")
+    if greater_equal is not None and value < greater_equal:
+        raise TableCalibrationLoadError(f"{name} must be >= {greater_equal}.")
+    if less_equal is not None and value > less_equal:
+        raise TableCalibrationLoadError(f"{name} must be <= {less_equal}.")
+    return value
+
+
+def _validate_metadata_int(
+    metadata: dict[str, Any],
+    name: str,
+    *,
+    greater_equal: int | None = None,
+) -> int:
+    raw = _require_metadata_field(metadata, name)
+    if not _is_finite_number(raw):
+        raise TableCalibrationLoadError(f"{name} must be finite.")
+    value = float(raw)
+    if not value.is_integer():
+        raise TableCalibrationLoadError(f"{name} must be an integer.")
+    result = int(value)
+    if greater_equal is not None and result < greater_equal:
+        raise TableCalibrationLoadError(f"{name} must be >= {greater_equal}.")
+    return result
+
+
+def _validate_metadata_string_list(
+    metadata: dict[str, Any],
+    name: str,
+    expected_count: int,
+) -> list[str]:
+    raw = _require_metadata_field(metadata, name)
+    if not isinstance(raw, list):
+        raise TableCalibrationLoadError(f"{name} must be a list.")
+    if len(raw) != expected_count:
+        raise TableCalibrationLoadError(
+            f"{name} length must match transform_count. "
+            f"{name}={len(raw)}, transform_count={expected_count}"
+        )
+    if not all(isinstance(item, str) and item for item in raw):
+        raise TableCalibrationLoadError(f"{name} must contain non-empty strings.")
+    return list(raw)
+
+
+def _validate_metadata_float_list(
+    metadata: dict[str, Any],
+    name: str,
+    expected_count: int,
+    *,
+    greater_equal: float | None = None,
+    less_equal: float | None = None,
+) -> list[float]:
+    raw = _require_metadata_field(metadata, name)
+    if not isinstance(raw, list):
+        raise TableCalibrationLoadError(f"{name} must be a list.")
+    if len(raw) != expected_count:
+        raise TableCalibrationLoadError(
+            f"{name} length must match transform_count. "
+            f"{name}={len(raw)}, transform_count={expected_count}"
+        )
+    values = []
+    for index, item in enumerate(raw):
+        if not _is_finite_number(item):
+            raise TableCalibrationLoadError(f"{name}[{index}] must be finite.")
+        value = float(item)
+        if greater_equal is not None and value < greater_equal:
+            raise TableCalibrationLoadError(
+                f"{name}[{index}] must be >= {greater_equal}."
+            )
+        if less_equal is not None and value > less_equal:
+            raise TableCalibrationLoadError(
+                f"{name}[{index}] must be <= {less_equal}."
+            )
+        values.append(value)
+    return values
+
+
+def _validate_metadata_int_list(
+    metadata: dict[str, Any],
+    name: str,
+    expected_count: int,
+    *,
+    greater_equal: int | None = None,
+) -> list[int]:
+    raw = _require_metadata_field(metadata, name)
+    if not isinstance(raw, list):
+        raise TableCalibrationLoadError(f"{name} must be a list.")
+    if len(raw) != expected_count:
+        raise TableCalibrationLoadError(
+            f"{name} length must match transform_count. "
+            f"{name}={len(raw)}, transform_count={expected_count}"
+        )
+    values = []
+    for index, item in enumerate(raw):
+        if not _is_finite_number(item):
+            raise TableCalibrationLoadError(f"{name}[{index}] must be finite.")
+        value = float(item)
+        if not value.is_integer():
+            raise TableCalibrationLoadError(f"{name}[{index}] must be an integer.")
+        result = int(value)
+        if greater_equal is not None and result < greater_equal:
+            raise TableCalibrationLoadError(
+                f"{name}[{index}] must be >= {greater_equal}."
+            )
+        values.append(result)
+    return values
+
+
+def _reject_nonfinite_metadata_numbers(value: Any, path: str) -> None:
+    if isinstance(value, bool):
+        return
+    if isinstance(value, float) and not np.isfinite(value):
+        raise TableCalibrationLoadError(f"{path} must be finite.")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _reject_nonfinite_metadata_numbers(item, f"{path}.{key}")
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_nonfinite_metadata_numbers(item, f"{path}[{index}]")
+
+
 def _validate_table_metadata_object(
     metadata: Any,
     *,
@@ -201,6 +352,11 @@ def _validate_table_metadata_object(
     if metadata.get("world_frame_kind") != TABLE_WORLD_FRAME_KIND:
         raise TableCalibrationLoadError(
             f"Unsupported table world frame kind: {metadata.get('world_frame_kind')!r}"
+        )
+    if metadata.get("transform_convention") != "camera_to_world_c2w":
+        raise TableCalibrationLoadError(
+            "Unsupported table calibration transform_convention: "
+            f"{metadata.get('transform_convention')!r}"
         )
 
     serials = _validate_serials(
@@ -225,6 +381,42 @@ def _validate_table_metadata_object(
         raise TableCalibrationLoadError(
             "table calibration transform_count does not match reference serials"
         )
+    _validate_metadata_string_list(metadata, "logical_camera_names", transform_count)
+    calibration_board = _require_metadata_field(metadata, "calibration_board")
+    if not isinstance(calibration_board, dict) or not calibration_board:
+        raise TableCalibrationLoadError("calibration_board must be a non-empty object.")
+    _validate_metadata_float(
+        metadata,
+        "max_reprojection_error_px",
+        greater_than=0.0,
+    )
+    _validate_metadata_float(
+        metadata,
+        "min_corner_fraction",
+        greater_than=0.0,
+        less_equal=1.0,
+    )
+    _validate_metadata_int(metadata, "min_charuco_corners", greater_equal=0)
+    _validate_metadata_float_list(
+        metadata,
+        "per_camera_reprojection_error",
+        transform_count,
+        greater_equal=0.0,
+    )
+    _validate_metadata_int_list(
+        metadata,
+        "per_camera_corner_count",
+        transform_count,
+        greater_equal=0,
+    )
+    _validate_metadata_float_list(
+        metadata,
+        "per_camera_corner_fraction",
+        transform_count,
+        greater_equal=0.0,
+        less_equal=1.0,
+    )
+    _reject_nonfinite_metadata_numbers(metadata, "metadata")
     return metadata
 
 
@@ -244,12 +436,13 @@ def write_table_calibration_files(
         raise ValueError(
             "table calibration metadata transform_count does not match transforms"
         )
+    encoded_metadata = json.dumps(metadata, allow_nan=False)
     _validate_table_metadata_object(metadata, sidecar_path=None)
 
     with output_path.open("wb") as handle:
         pickle.dump(transforms, handle)
     sidecar_path = table_calibration_metadata_path_for(output_path)
-    sidecar_path.write_text(json.dumps(metadata), encoding="utf-8")
+    sidecar_path.write_text(encoded_metadata, encoding="utf-8")
     return sidecar_path
 
 
@@ -286,8 +479,22 @@ def load_table_calibration_transforms(
             table_calibration_reference_serials,
         )
 
-    with path.open("rb") as handle:
-        transforms = _coerce_transform_list(pickle.load(handle))
+    try:
+        with path.open("rb") as handle:
+            raw = pickle.load(handle)
+    except (
+        pickle.PickleError,
+        EOFError,
+        AttributeError,
+        ImportError,
+        IndexError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise TableCalibrationLoadError(
+            f"Invalid table calibration pickle: {path}"
+        ) from exc
+    transforms = _coerce_transform_list(raw)
     if len(transforms) != int(metadata["transform_count"]):
         raise TableCalibrationLoadError(
             "table calibration transform count does not match metadata transform_count"
@@ -318,16 +525,33 @@ def validate_table_calibration_acceptance(
     min_corner_fraction: float,
 ) -> dict[str, float | int]:
     # For calibio-12x9-30mm, chessboard_corner_count is 88, so 0.60 yields 53.
+    if not _is_finite_number(corner_count) or float(corner_count) < 0.0:
+        raise ValueError("corner_count must be finite and >= 0.")
+    corner_count_value = float(corner_count)
+    if not _is_finite_number(reprojection_error_px) or float(reprojection_error_px) < 0.0:
+        raise ValueError("reprojection_error_px must be finite and >= 0.")
+    if (
+        not _is_finite_number(max_reprojection_error_px)
+        or float(max_reprojection_error_px) <= 0.0
+    ):
+        raise ValueError("max_reprojection_error_px must be finite and > 0.")
+    if (
+        not _is_finite_number(min_corner_fraction)
+        or float(min_corner_fraction) <= 0.0
+        or float(min_corner_fraction) > 1.0
+    ):
+        raise ValueError("min_corner_fraction must be finite and in (0, 1].")
+
     board_corners = int(board_config.chessboard_corner_count)
     if board_corners <= 0:
         raise ValueError("ChArUco board must expose at least one chessboard corner.")
     min_charuco_corners = int(
         np.ceil(float(min_corner_fraction) * float(board_corners))
     )
-    corner_fraction = float(corner_count) / float(board_corners)
-    if int(corner_count) < min_charuco_corners:
+    corner_fraction = corner_count_value / float(board_corners)
+    if corner_count_value < min_charuco_corners:
         raise ValueError(
-            f"ChArUco corner count {int(corner_count)} is below strict table calibration "
+            f"ChArUco corner count {corner_count_value:g} is below strict table calibration "
             f"minimum {min_charuco_corners}."
         )
     if float(reprojection_error_px) > float(max_reprojection_error_px):

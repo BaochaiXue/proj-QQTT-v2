@@ -23,6 +23,35 @@ from qqtt.env.camera.table_calibration import (
 )
 
 
+def _sample_metadata(
+    *,
+    serial_numbers: list[str] | None = None,
+    transform_count: int | None = None,
+) -> dict:
+    serials = ["cam0"] if serial_numbers is None else serial_numbers
+    count = len(serials) if transform_count is None else transform_count
+    return build_table_calibration_metadata(
+        serial_numbers=serials,
+        WH=[1280, 720],
+        fps=5,
+        transform_count=count,
+        calibration_board={"name": "calibio-12x9-30mm"},
+        max_reprojection_error_px=0.20,
+        min_corner_fraction=0.60,
+        min_charuco_corners=53,
+        per_camera_reprojection_error=[0.10 for _ in range(count)],
+        per_camera_corner_count=[60 for _ in range(count)],
+        per_camera_corner_fraction=[0.68 for _ in range(count)],
+    )
+
+
+def _write_metadata(path: Path, metadata: dict) -> None:
+    table_calibration_metadata_path_for(path).write_text(
+        json.dumps(metadata),
+        encoding="utf-8",
+    )
+
+
 class TableCalibrationContractTest(unittest.TestCase):
     def test_metadata_path_uses_output_stem(self) -> None:
         self.assertEqual(
@@ -154,6 +183,213 @@ class TableCalibrationContractTest(unittest.TestCase):
                 max_reprojection_error_px=0.20,
                 min_corner_fraction=0.60,
             )
+
+    def test_acceptance_rejects_invalid_numeric_inputs(self) -> None:
+        board_config = get_calibration_board_config("calibio-12x9-30mm")
+        cases = [
+            {
+                "kwargs": {"reprojection_error_px": float("nan")},
+                "message": "reprojection_error_px must be finite and >= 0",
+            },
+            {
+                "kwargs": {"reprojection_error_px": -0.01},
+                "message": "reprojection_error_px must be finite and >= 0",
+            },
+            {
+                "kwargs": {"max_reprojection_error_px": float("inf")},
+                "message": "max_reprojection_error_px must be finite and > 0",
+            },
+            {
+                "kwargs": {"max_reprojection_error_px": 0.0},
+                "message": "max_reprojection_error_px must be finite and > 0",
+            },
+            {
+                "kwargs": {"min_corner_fraction": float("nan")},
+                "message": "min_corner_fraction must be finite and in \\(0, 1\\]",
+            },
+            {
+                "kwargs": {"min_corner_fraction": 0.0},
+                "message": "min_corner_fraction must be finite and in \\(0, 1\\]",
+            },
+            {
+                "kwargs": {"min_corner_fraction": 1.01},
+                "message": "min_corner_fraction must be finite and in \\(0, 1\\]",
+            },
+            {
+                "kwargs": {"corner_count": -1},
+                "message": "corner_count must be finite and >= 0",
+            },
+            {
+                "kwargs": {"corner_count": float("nan")},
+                "message": "corner_count must be finite and >= 0",
+            },
+            {
+                "kwargs": {"corner_count": float("inf")},
+                "message": "corner_count must be finite and >= 0",
+            },
+        ]
+        defaults = {
+            "board_config": board_config,
+            "corner_count": 60,
+            "reprojection_error_px": 0.10,
+            "max_reprojection_error_px": 0.20,
+            "min_corner_fraction": 0.60,
+        }
+        for case in cases:
+            with self.subTest(case=case["kwargs"]):
+                kwargs = dict(defaults)
+                kwargs.update(case["kwargs"])
+                with self.assertRaisesRegex(ValueError, case["message"]):
+                    validate_table_calibration_acceptance(**kwargs)
+
+    def test_loader_reorders_multi_transform_by_requested_serials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            first = np.eye(4, dtype=np.float32)
+            first[:3, 3] = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+            second = np.eye(4, dtype=np.float32)
+            second[:3, 3] = np.array([2.0, 0.0, 0.0], dtype=np.float32)
+            metadata = _sample_metadata(serial_numbers=["cam_a", "cam_b"])
+            write_table_calibration_files(output, [first, second], metadata)
+
+            loaded = load_table_calibration_transforms(
+                output,
+                serial_numbers=["cam_b", "cam_a"],
+            )
+
+            np.testing.assert_allclose(loaded[0], second, atol=1e-6)
+            np.testing.assert_allclose(loaded[1], first, atol=1e-6)
+
+    def test_loader_rejects_duplicate_and_missing_requested_serials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata(serial_numbers=["cam_a", "cam_b"])
+            write_table_calibration_files(
+                output,
+                [np.eye(4, dtype=np.float32), np.eye(4, dtype=np.float32)],
+                metadata,
+            )
+
+            with self.assertRaisesRegex(TableCalibrationLoadError, "duplicate serials"):
+                load_table_calibration_transforms(output, serial_numbers=["cam_a", "cam_a"])
+            with self.assertRaisesRegex(TableCalibrationLoadError, "does not cover serials"):
+                load_table_calibration_transforms(output, serial_numbers=["cam_c"])
+
+    def test_loader_rejects_transform_count_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            _write_metadata(output, _sample_metadata(serial_numbers=["cam_a", "cam_b"]))
+            with output.open("wb") as handle:
+                pickle.dump([np.eye(4, dtype=np.float32)], handle)
+
+            with self.assertRaisesRegex(TableCalibrationLoadError, "transform count"):
+                load_table_calibration_transforms(output)
+
+    def test_loader_rejects_nonfinite_bad_bottom_row_and_singular_transforms(self) -> None:
+        cases = [
+            ("non-finite", lambda matrix: matrix.__setitem__((0, 0), np.nan)),
+            ("invalid homogeneous bottom row", lambda matrix: matrix.__setitem__((3, 3), 2.0)),
+            ("singular or degenerate", lambda matrix: matrix.__setitem__((2, 2), 0.0)),
+        ]
+        for message, mutate in cases:
+            with self.subTest(message=message):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    _write_metadata(output, _sample_metadata())
+                    transform = np.eye(4, dtype=np.float32)
+                    mutate(transform)
+                    with output.open("wb") as handle:
+                        pickle.dump([transform], handle)
+
+                    with self.assertRaisesRegex(TableCalibrationLoadError, message):
+                        load_table_calibration_transforms(output)
+
+    def test_loader_wraps_corrupt_pickle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            _write_metadata(output, _sample_metadata())
+            output.write_bytes(b"not a pickle")
+
+            with self.assertRaisesRegex(TableCalibrationLoadError, "Invalid table calibration pickle"):
+                load_table_calibration_transforms(output)
+
+    def test_metadata_loader_rejects_bad_transform_convention(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata()
+            metadata["transform_convention"] = "world_to_camera_w2c"
+            _write_metadata(output, metadata)
+
+            with self.assertRaisesRegex(TableCalibrationLoadError, "transform_convention"):
+                load_table_calibration_metadata(output)
+
+    def test_metadata_loader_rejects_missing_required_fields(self) -> None:
+        required_fields = [
+            "calibration_board",
+            "max_reprojection_error_px",
+            "min_corner_fraction",
+            "min_charuco_corners",
+            "per_camera_reprojection_error",
+            "per_camera_corner_count",
+            "per_camera_corner_fraction",
+        ]
+        for field in required_fields:
+            with self.subTest(field=field):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    metadata = _sample_metadata()
+                    del metadata[field]
+                    _write_metadata(output, metadata)
+
+                    with self.assertRaisesRegex(TableCalibrationLoadError, field):
+                        load_table_calibration_metadata(output)
+
+    def test_metadata_loader_rejects_nonfinite_numeric_fields(self) -> None:
+        cases = [
+            ("max_reprojection_error_px", float("nan")),
+            ("min_corner_fraction", float("inf")),
+            ("min_charuco_corners", float("nan")),
+            ("per_camera_reprojection_error", [float("nan")]),
+            ("per_camera_corner_count", [float("inf")]),
+            ("per_camera_corner_fraction", [float("nan")]),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    metadata = _sample_metadata()
+                    metadata[field] = value
+                    _write_metadata(output, metadata)
+
+                    with self.assertRaisesRegex(TableCalibrationLoadError, field):
+                        load_table_calibration_metadata(output)
+
+    def test_metadata_loader_rejects_per_camera_and_logical_name_length_mismatch(self) -> None:
+        cases = [
+            ("per_camera_reprojection_error", [0.10]),
+            ("per_camera_corner_count", [60]),
+            ("per_camera_corner_fraction", [0.68]),
+            ("logical_camera_names", ["cam0"]),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output = Path(tmpdir) / "table_calibrate.pkl"
+                    metadata = _sample_metadata(serial_numbers=["cam_a", "cam_b"])
+                    metadata[field] = value
+                    _write_metadata(output, metadata)
+
+                    with self.assertRaisesRegex(TableCalibrationLoadError, field):
+                        load_table_calibration_metadata(output)
+
+    def test_writer_rejects_nan_json_sidecar_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata()
+            metadata["diagnostic_image_path"] = float("nan")
+
+            with self.assertRaises(ValueError):
+                write_table_calibration_files(output, [np.eye(4, dtype=np.float32)], metadata)
 
 
 if __name__ == "__main__":
