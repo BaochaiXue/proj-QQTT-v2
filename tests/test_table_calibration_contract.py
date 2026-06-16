@@ -248,6 +248,14 @@ class TableCalibrationContractTest(unittest.TestCase):
                 "kwargs": {"corner_count": float("inf")},
                 "message": "corner_count must be finite and >= 0",
             },
+            {
+                "kwargs": {"corner_count": 88.5},
+                "message": "corner_count must be an integer",
+            },
+            {
+                "kwargs": {"corner_count": 100},
+                "message": "corner_count must be <= chessboard_corner_count",
+            },
         ]
         defaults = {
             "board_config": board_config,
@@ -280,6 +288,26 @@ class TableCalibrationContractTest(unittest.TestCase):
 
             np.testing.assert_allclose(loaded[0], second, atol=1e-6)
             np.testing.assert_allclose(loaded[1], first, atol=1e-6)
+
+    def test_loader_rejects_reference_serial_override_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            first = np.eye(4, dtype=np.float32)
+            first[:3, 3] = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+            second = np.eye(4, dtype=np.float32)
+            second[:3, 3] = np.array([2.0, 0.0, 0.0], dtype=np.float32)
+            metadata = _sample_metadata(serial_numbers=["a", "b"])
+            write_table_calibration_files(output, [first, second], metadata)
+
+            with self.assertRaisesRegex(
+                TableCalibrationLoadError,
+                "table_calibration_reference_serials",
+            ):
+                load_table_calibration_transforms(
+                    output,
+                    serial_numbers=["b"],
+                    table_calibration_reference_serials=["b", "a"],
+                )
 
     def test_loader_rejects_duplicate_and_missing_requested_serials(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -379,12 +407,15 @@ class TableCalibrationContractTest(unittest.TestCase):
             ("WH", [1280]),
             ("WH", [1280, 0]),
             ("WH", [1280, float("nan")]),
+            ("WH", ["1280", 720]),
             ("fps", 0),
             ("fps", 5.5),
             ("fps", float("nan")),
+            ("fps", "5"),
             ("transform_count", 0),
             ("transform_count", 1.5),
             ("transform_count", float("inf")),
+            ("transform_count", "1"),
         ]
         for field, value in cases:
             with self.subTest(field=field, value=value):
@@ -400,11 +431,17 @@ class TableCalibrationContractTest(unittest.TestCase):
     def test_metadata_loader_rejects_nonfinite_numeric_fields(self) -> None:
         cases = [
             ("max_reprojection_error_px", float("nan")),
+            ("max_reprojection_error_px", "0.2"),
             ("min_corner_fraction", float("inf")),
+            ("min_corner_fraction", "0.6"),
             ("min_charuco_corners", float("nan")),
+            ("min_charuco_corners", "53"),
             ("per_camera_reprojection_error", [float("nan")]),
+            ("per_camera_reprojection_error", ["0.10"]),
             ("per_camera_corner_count", [float("inf")]),
+            ("per_camera_corner_count", ["60"]),
             ("per_camera_corner_fraction", [float("nan")]),
+            ("per_camera_corner_fraction", ["0.68"]),
         ]
         for field, value in cases:
             with self.subTest(field=field):
@@ -416,6 +453,17 @@ class TableCalibrationContractTest(unittest.TestCase):
 
                     with self.assertRaisesRegex(TableCalibrationLoadError, field):
                         load_table_calibration_metadata(output)
+
+    def test_metadata_loader_wraps_invalid_utf8_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            table_calibration_metadata_path_for(output).write_bytes(b"\xff\xfe")
+
+            with self.assertRaisesRegex(
+                TableCalibrationLoadError,
+                "Invalid table calibration metadata JSON",
+            ):
+                load_table_calibration_metadata(output)
 
     def test_metadata_loader_rejects_per_camera_and_logical_name_length_mismatch(self) -> None:
         cases = [

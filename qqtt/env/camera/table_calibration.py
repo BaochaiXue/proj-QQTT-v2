@@ -43,12 +43,9 @@ def _validate_per_camera_length(name: str, values: list[Any], expected_count: in
 
 
 def _is_finite_number(value: Any) -> bool:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
-    try:
-        return bool(np.isfinite(float(value)))
-    except (TypeError, ValueError):
-        return False
+    return bool(np.isfinite(float(value)))
 
 
 def build_table_calibration_metadata(
@@ -485,7 +482,7 @@ def load_table_calibration_metadata(table_calibrate_path: str | Path) -> dict[st
         )
     try:
         metadata = json.loads(sidecar_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise TableCalibrationLoadError(
             f"Invalid table calibration metadata JSON: {sidecar_path}"
         ) from exc
@@ -502,13 +499,17 @@ def load_table_calibration_transforms(
     if not path.is_file():
         raise TableCalibrationLoadError(f"Missing table calibration file: {path}")
     metadata = load_table_calibration_metadata(path)
-    if table_calibration_reference_serials is None:
-        reference_serials = list(metadata["table_calibration_reference_serials"])
-    else:
-        reference_serials = _validate_serials(
+    reference_serials = list(metadata["table_calibration_reference_serials"])
+    if table_calibration_reference_serials is not None:
+        expected_reference_serials = _validate_serials(
             "table_calibration_reference_serials",
             table_calibration_reference_serials,
         )
+        if expected_reference_serials != reference_serials:
+            raise TableCalibrationLoadError(
+                "table_calibration_reference_serials does not match metadata "
+                "table_calibration_reference_serials."
+            )
 
     try:
         with path.open("rb") as handle:
@@ -576,6 +577,10 @@ def validate_table_calibration_acceptance(
     board_corners = int(board_config.chessboard_corner_count)
     if board_corners <= 0:
         raise ValueError("ChArUco board must expose at least one chessboard corner.")
+    if not corner_count_value.is_integer():
+        raise ValueError("corner_count must be an integer.")
+    if corner_count_value > float(board_corners):
+        raise ValueError("corner_count must be <= chessboard_corner_count.")
     min_charuco_corners = max(
         11,
         int(np.ceil(float(min_corner_fraction) * float(board_corners))),
