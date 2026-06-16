@@ -306,6 +306,7 @@ def render_capture_to_video(
     max_render_points: int = 0,
     query_point_radius: int = 3,
     demo_visual_mode: str = "tracking",
+    tracking_background_mask: str = TRACKING_BACKGROUND_MASK_TARGET_UNION,
 ) -> dict[str, Any]:
     capture_dir = Path(capture_dir).resolve()
     metadata = _read_json(capture_dir / "metadata.json")
@@ -317,6 +318,8 @@ def render_capture_to_video(
     intrinsics = dict(metadata["intrinsics"])
     if str(demo_visual_mode) not in DEMO_VISUAL_MODES:
         raise ValueError(f"demo_visual_mode must be one of {DEMO_VISUAL_MODES}")
+    if str(tracking_background_mask) not in TRACKING_BACKGROUND_MASK_MODES:
+        raise ValueError(f"tracking_background_mask must be one of {TRACKING_BACKGROUND_MASK_MODES}")
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     writer = cv2.VideoWriter(
@@ -336,9 +339,18 @@ def render_capture_to_video(
             controller_count = object_count = 0
             query_count = query_object_count = query_controller_count = 0
             query_hand_a_count = query_hand_b_count = 0
+            tracking_background_mask_pixels = 0
             query_path = None
             if str(demo_visual_mode) == "tracking":
                 image = _read_rgb_frame_bgr(capture_dir=capture_dir, frame=frame, width=width, height=height)
+                if str(tracking_background_mask) == TRACKING_BACKGROUND_MASK_TARGET_UNION:
+                    target_union_mask = _read_target_union_mask(
+                        capture_dir=capture_dir,
+                        frame=frame,
+                        width=width,
+                        height=height,
+                    )
+                    tracking_background_mask_pixels = _apply_tracking_background_mask(image, target_union_mask)
                 query_path = _trajectory_path_for_frame(
                     capture_dir=capture_dir,
                     frame=frame,
@@ -388,11 +400,19 @@ def render_capture_to_video(
                     "query_controller_points": int(query_controller_count),
                     "query_hand_a_points": int(query_hand_a_count),
                     "query_hand_b_points": int(query_hand_b_count),
+                    "tracking_background_mask_pixels": int(tracking_background_mask_pixels),
                     "query_trajectory_exact": int(query_path is not None and query_path.is_file()),
                 }
             )
     finally:
         writer.release()
+    tracking_background_mask_source = "none"
+    if str(demo_visual_mode) == "tracking":
+        tracking_background_mask_source = (
+            "object_mask|controller_mask"
+            if str(tracking_background_mask) == TRACKING_BACKGROUND_MASK_TARGET_UNION
+            else "full_rgb"
+        )
     summary = {
         "capture_dir": str(capture_dir),
         "output": str(output.resolve()),
@@ -401,6 +421,11 @@ def render_capture_to_video(
         "image_size": [int(width), int(height)],
         "saved_pcd_source": metadata.get("saved_pcd_source"),
         "demo_visual_mode": str(demo_visual_mode),
+        "tracking_background_mask": str(tracking_background_mask),
+        "tracking_background_mask_source": tracking_background_mask_source,
+        "tracking_background_mask_pixel_total": int(
+            sum(item["tracking_background_mask_pixels"] for item in rendered_counts)
+        ),
         "query_overlay": "phystwin_rgb_current_points_only" if str(demo_visual_mode) == "tracking" else "none",
         "query_color_mode": "phystwin_rainbow_identity" if str(demo_visual_mode) == "tracking" else "none",
         "query_match_policy": "exact_same_seq_only",
@@ -428,6 +453,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-render-points", type=int, default=0)
     parser.add_argument("--query-point-radius", type=int, default=3)
     parser.add_argument("--demo-visual-mode", choices=DEMO_VISUAL_MODES, default="tracking")
+    parser.add_argument(
+        "--tracking-background-mask",
+        choices=TRACKING_BACKGROUND_MASK_MODES,
+        default=TRACKING_BACKGROUND_MASK_TARGET_UNION,
+        help="Tracking render RGB background policy: target-union masks table/background, rgb preserves full RGB.",
+    )
     return parser
 
 
@@ -441,6 +472,7 @@ def main(argv: list[str] | None = None) -> int:
         max_render_points=int(args.max_render_points),
         query_point_radius=int(args.query_point_radius),
         demo_visual_mode=str(args.demo_visual_mode),
+        tracking_background_mask=str(args.tracking_background_mask),
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

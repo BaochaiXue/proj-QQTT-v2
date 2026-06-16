@@ -88,12 +88,23 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                 query_controller_instance_id=np.array([1, 0], dtype=np.int64),
                 query_count=np.array([2], dtype=np.int64),
             )
+            (capture_dir / "masks").mkdir()
+            controller_mask = np.zeros((24, 32), dtype=bool)
+            object_mask = np.zeros((24, 32), dtype=bool)
+            controller_mask[11:14, 15:18] = True
+            object_mask[11:14, 17:20] = True
+            np.savez(
+                capture_dir / "masks" / "000000.npz",
+                controller_mask=controller_mask,
+                object_mask=object_mask,
+            )
             row = {
                 "seq": 0,
                 "pcd_path": "pcd/000000.npz",
                 "ffs_depth_path": "ffs_depth/000000.npy",
                 "rgb_path": "rgb/000000.png",
                 "query_trajectory_path": "query_trajectory/000000.npz",
+                "mask_path": "masks/000000.npz",
             }
             (capture_dir / "frames.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
 
@@ -117,6 +128,16 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             self.assertEqual(summary["query_count_totals"]["hand_b"], 0)
             self.assertEqual(summary["query_count_totals"]["object"], 1)
             self.assertTrue((capture_dir / "video.render_summary.json").is_file())
+            self.assertEqual(summary["tracking_background_mask"], TRACKING_BACKGROUND_MASK_TARGET_UNION)
+            self.assertEqual(summary["tracking_background_mask_source"], "object_mask|controller_mask")
+            self.assertEqual(
+                summary["rendered_counts"][0]["tracking_background_mask_pixels"],
+                int(np.count_nonzero(np.logical_or(controller_mask, object_mask))),
+            )
+            self.assertEqual(
+                summary["tracking_background_mask_pixel_total"],
+                int(np.count_nonzero(np.logical_or(controller_mask, object_mask))),
+            )
 
     def test_render_does_not_fallback_to_previous_query_trajectory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -125,6 +146,7 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             (capture_dir / "ffs_depth").mkdir()
             (capture_dir / "rgb").mkdir()
             (capture_dir / "query_trajectory").mkdir()
+            (capture_dir / "masks").mkdir()
             metadata = {
                 "width": 32,
                 "height": 24,
@@ -144,6 +166,15 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                 Image.fromarray(np.full((24, 32, 3), 32 + seq, dtype=np.uint8)).save(
                     capture_dir / "rgb" / f"{seq:06d}.png"
                 )
+                controller_mask = np.zeros((24, 32), dtype=bool)
+                object_mask = np.zeros((24, 32), dtype=bool)
+                controller_mask[10:13, 14:18] = True
+                object_mask[10:13, 18:21] = True
+                np.savez(
+                    capture_dir / "masks" / f"{seq:06d}.npz",
+                    controller_mask=controller_mask,
+                    object_mask=object_mask,
+                )
             np.savez(
                 capture_dir / "query_trajectory" / "000000.npz",
                 marker_xyz_m=np.array([[0.0, 0.0, 0.5]], dtype=np.float32),
@@ -162,6 +193,7 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                     "ffs_depth_path": "ffs_depth/000000.npy",
                     "rgb_path": "rgb/000000.png",
                     "query_trajectory_path": "query_trajectory/000000.npz",
+                    "mask_path": "masks/000000.npz",
                 },
                 {
                     "seq": 1,
@@ -169,6 +201,7 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                     "ffs_depth_path": "ffs_depth/000001.npy",
                     "rgb_path": "rgb/000001.png",
                     "query_trajectory_path": "query_trajectory/000001.npz",
+                    "mask_path": "masks/000001.npz",
                 },
             ]
             (capture_dir / "frames.jsonl").write_text(
@@ -182,6 +215,60 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             self.assertEqual(summary["rendered_counts"][0]["query_trajectory_exact"], 1)
             self.assertEqual(summary["rendered_counts"][1]["query_trajectory_exact"], 0)
             self.assertEqual(summary["rendered_counts"][1]["query_points"], 0)
+
+    def test_tracking_rgb_background_mask_does_not_require_mask_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "pcd").mkdir(parents=True)
+            (capture_dir / "ffs_depth").mkdir()
+            (capture_dir / "rgb").mkdir()
+            (capture_dir / "query_trajectory").mkdir()
+            metadata = {
+                "width": 16,
+                "height": 12,
+                "saved_pcd_source": "enhanced_pt_filtered",
+                "intrinsics": {"fx": 10.0, "fy": 10.0, "cx": 8.0, "cy": 6.0},
+            }
+            (capture_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            np.savez(
+                capture_dir / "pcd" / "000000.npz",
+                controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+                controller_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+                object_xyz_m=np.empty((0, 3), dtype=np.float32),
+                object_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            )
+            np.save(capture_dir / "ffs_depth" / "000000.npy", np.ones((12, 16), dtype=np.float32))
+            Image.fromarray(np.full((12, 16, 3), 90, dtype=np.uint8)).save(capture_dir / "rgb" / "000000.png")
+            np.savez(
+                capture_dir / "query_trajectory" / "000000.npz",
+                tracks_yx=np.array([[6.0, 8.0]], dtype=np.float32),
+                visibility=np.ones((1,), dtype=np.float32),
+                query_indices=np.array([0], dtype=np.int64),
+                query_is_object=np.array([True], dtype=bool),
+                query_is_controller=np.array([False], dtype=bool),
+                query_count=np.array([1], dtype=np.int64),
+            )
+            row = {
+                "seq": 0,
+                "pcd_path": "pcd/000000.npz",
+                "ffs_depth_path": "ffs_depth/000000.npy",
+                "rgb_path": "rgb/000000.png",
+                "query_trajectory_path": "query_trajectory/000000.npz",
+            }
+            (capture_dir / "frames.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            summary = render_capture_to_video(
+                capture_dir=capture_dir,
+                output=capture_dir / "video.mp4",
+                fps=30.0,
+                tracking_background_mask=TRACKING_BACKGROUND_MASK_RGB,
+            )
+
+            self.assertEqual(summary["tracking_background_mask"], TRACKING_BACKGROUND_MASK_RGB)
+            self.assertEqual(summary["tracking_background_mask_source"], "full_rgb")
+            self.assertEqual(summary["tracking_background_mask_pixel_total"], 0)
+            self.assertEqual(summary["rendered_counts"][0]["tracking_background_mask_pixels"], 0)
+            self.assertEqual(summary["rendered_counts"][0]["query_points"], 1)
 
     def test_pcd_visual_mode_suppresses_query_overlay(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
