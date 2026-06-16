@@ -91,6 +91,15 @@ def _normalize_json_scalars(value: Any) -> Any:
     return value
 
 
+def _dist_coeffs_to_metadata(coeffs) -> list[float] | None:
+    if coeffs is None:
+        return None
+    coeffs_array = np.asarray(coeffs, dtype=np.float64).reshape(-1)
+    if coeffs_array.size == 0:
+        return None
+    return [float(value) for value in coeffs_array]
+
+
 def _numeric_string_path(value: Any, path: str) -> str | None:
     if isinstance(value, np.ndarray):
         return _numeric_string_path(value.tolist(), path)
@@ -992,3 +1001,128 @@ def validate_table_calibration_acceptance(
         "min_charuco_corners": min_charuco_corners,
         "corner_fraction": corner_fraction,
     }
+
+
+def estimate_table_c2w_from_charuco_image(
+    *,
+    image_bgr: np.ndarray,
+    board_config,
+    camera_matrix: np.ndarray,
+    dist_coeffs=None,
+    max_reprojection_error_px: float,
+    min_corner_fraction: float,
+) -> tuple[np.ndarray, float, int, float, int, np.ndarray]:
+    import cv2
+
+    from qqtt.env.camera.calibration_boards import (
+        create_charuco_board,
+        get_charuco_chessboard_corners,
+    )
+
+    image = np.asarray(image_bgr)
+    if image.ndim not in (2, 3):
+        raise ValueError(f"image_bgr must be a grayscale or BGR image, got {image.shape}.")
+
+    intrinsic = np.asarray(camera_matrix, dtype=np.float64)
+    if intrinsic.shape != (3, 3) or not np.all(np.isfinite(intrinsic)):
+        raise ValueError("camera_matrix must be a finite 3x3 matrix.")
+
+    dist_coeffs_array = None
+    if dist_coeffs is not None:
+        dist_coeffs_array = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1, 1)
+        if dist_coeffs_array.size == 0:
+            dist_coeffs_array = None
+
+    if image.ndim == 2:
+        diagnostic_bgr = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    else:
+        diagnostic_bgr = image.copy()
+
+    dictionary, board = create_charuco_board(board_config)
+    corners, ids, _rejected = cv2.aruco.detectMarkers(
+        image=image,
+        dictionary=dictionary,
+        parameters=None,
+    )
+    if ids is None or len(corners) == 0:
+        raise ValueError("No ArUco markers detected for table calibration.")
+
+    cv2.aruco.drawDetectedMarkers(diagnostic_bgr, corners, ids)
+    _retval, charuco_corners, charuco_ids = cv2.aruco.interpolateCornersCharuco(
+        markerCorners=corners,
+        markerIds=ids,
+        image=image,
+        board=board,
+        cameraMatrix=intrinsic,
+        distCoeffs=dist_coeffs_array,
+    )
+    if charuco_corners is None or charuco_ids is None or len(charuco_corners) == 0:
+        raise ValueError("No ChArUco corners detected for table calibration.")
+
+    pose_ok, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(
+        charuco_corners,
+        charuco_ids,
+        board,
+        intrinsic,
+        dist_coeffs_array,
+        rvec=None,
+        tvec=None,
+    )
+    if (not pose_ok) or rvec is None or tvec is None:
+        raise ValueError("Failed to estimate ChArUco pose for table calibration.")
+
+    charuco_id_values = np.asarray(charuco_ids, dtype=np.int64).reshape(-1)
+    chessboard_corners = np.asarray(
+        get_charuco_chessboard_corners(board),
+        dtype=np.float64,
+    )
+    object_points = chessboard_corners[charuco_id_values, :]
+    reprojected_points, _ = cv2.projectPoints(
+        object_points,
+        rvec,
+        tvec,
+        intrinsic,
+        dist_coeffs_array,
+    )
+    reprojected_points = reprojected_points.reshape(-1, 2)
+    observed_corners = np.asarray(charuco_corners, dtype=np.float64).reshape(-1, 2)
+    reprojection_error_px = float(
+        np.sqrt(np.sum((reprojected_points - observed_corners) ** 2, axis=1)).mean()
+    )
+    corner_count = int(observed_corners.shape[0])
+    acceptance = validate_table_calibration_acceptance(
+        board_config=board_config,
+        corner_count=corner_count,
+        reprojection_error_px=reprojection_error_px,
+        max_reprojection_error_px=max_reprojection_error_px,
+        min_corner_fraction=min_corner_fraction,
+    )
+
+    R_board_to_camera = cv2.Rodrigues(rvec)[0]
+    w2c = np.eye(4, dtype=np.float64)
+    w2c[:3, :3] = R_board_to_camera
+    w2c[:3, 3] = np.asarray(tvec, dtype=np.float64).reshape(3)
+    c2w = np.linalg.inv(w2c).astype(np.float32)
+
+    cv2.aruco.drawDetectedCornersCharuco(
+        image=diagnostic_bgr,
+        charucoCorners=observed_corners.reshape(-1, 1, 2).astype(np.float32),
+        charucoIds=charuco_id_values.reshape(-1, 1).astype(np.int32),
+    )
+    cv2.drawFrameAxes(
+        diagnostic_bgr,
+        intrinsic,
+        dist_coeffs_array,
+        rvec,
+        tvec,
+        0.1,
+    )
+
+    return (
+        c2w,
+        reprojection_error_px,
+        corner_count,
+        float(acceptance["corner_fraction"]),
+        int(acceptance["min_charuco_corners"]),
+        diagnostic_bgr,
+    )
