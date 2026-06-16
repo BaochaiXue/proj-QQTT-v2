@@ -18,6 +18,50 @@ from scripts.harness.diagnostics.demo.render_demo32_headless_capture import (
 
 
 class Demo32HeadlessRenderHelperTest(unittest.TestCase):
+    def _write_minimal_tracking_capture(
+        self,
+        capture_dir: Path,
+        *,
+        row_extra: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        (capture_dir / "pcd").mkdir(parents=True)
+        (capture_dir / "ffs_depth").mkdir()
+        (capture_dir / "rgb").mkdir()
+        (capture_dir / "query_trajectory").mkdir()
+        metadata = {
+            "width": 8,
+            "height": 6,
+            "saved_pcd_source": "enhanced_pt_filtered",
+            "intrinsics": {"fx": 8.0, "fy": 8.0, "cx": 4.0, "cy": 3.0},
+        }
+        (capture_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+        np.savez(
+            capture_dir / "pcd" / "000000.npz",
+            controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+            controller_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            object_xyz_m=np.empty((0, 3), dtype=np.float32),
+            object_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+        )
+        np.save(capture_dir / "ffs_depth" / "000000.npy", np.ones((6, 8), dtype=np.float32))
+        Image.fromarray(np.full((6, 8, 3), 50, dtype=np.uint8)).save(capture_dir / "rgb" / "000000.png")
+        np.savez(
+            capture_dir / "query_trajectory" / "000000.npz",
+            tracks_yx=np.empty((0, 2), dtype=np.float32),
+            visibility=np.empty((0,), dtype=np.float32),
+            query_indices=np.empty((0,), dtype=np.int64),
+        )
+        row = {
+            "seq": 0,
+            "pcd_path": "pcd/000000.npz",
+            "ffs_depth_path": "ffs_depth/000000.npy",
+            "rgb_path": "rgb/000000.png",
+            "query_trajectory_path": "query_trajectory/000000.npz",
+        }
+        if row_extra:
+            row.update(row_extra)
+        (capture_dir / "frames.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+        return row
+
     def test_apply_tracking_background_mask_blacks_pixels_outside_union(self) -> None:
         image = np.full((4, 5, 3), 80, dtype=np.uint8)
         image[1, 2] = np.array([10, 20, 30], dtype=np.uint8)
@@ -51,6 +95,46 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
 
             expected = np.logical_or(controller_mask, object_mask)
             np.testing.assert_array_equal(union, expected)
+
+    def test_tracking_target_union_requires_mask_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            self._write_minimal_tracking_capture(capture_dir)
+
+            with self.assertRaisesRegex(RuntimeError, "requires mask_path"):
+                render_capture_to_video(capture_dir=capture_dir, output=capture_dir / "video.mp4", fps=30.0)
+
+    def test_tracking_target_union_requires_existing_mask_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            self._write_minimal_tracking_capture(capture_dir, row_extra={"mask_path": "masks/000000.npz"})
+
+            with self.assertRaisesRegex(RuntimeError, "mask file missing"):
+                render_capture_to_video(capture_dir=capture_dir, output=capture_dir / "video.mp4", fps=30.0)
+
+    def test_tracking_target_union_requires_object_and_controller_masks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "masks").mkdir(parents=True)
+            self._write_minimal_tracking_capture(capture_dir, row_extra={"mask_path": "masks/000000.npz"})
+            np.savez(capture_dir / "masks" / "000000.npz", object_mask=np.zeros((6, 8), dtype=bool))
+
+            with self.assertRaisesRegex(RuntimeError, "controller_mask"):
+                render_capture_to_video(capture_dir=capture_dir, output=capture_dir / "video.mp4", fps=30.0)
+
+    def test_tracking_target_union_rejects_wrong_mask_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "masks").mkdir(parents=True)
+            self._write_minimal_tracking_capture(capture_dir, row_extra={"mask_path": "masks/000000.npz"})
+            np.savez(
+                capture_dir / "masks" / "000000.npz",
+                object_mask=np.zeros((5, 8), dtype=bool),
+                controller_mask=np.zeros((5, 8), dtype=bool),
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "does not match render shape"):
+                render_capture_to_video(capture_dir=capture_dir, output=capture_dir / "video.mp4", fps=30.0)
 
     def test_render_synthetic_capture_to_video_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
