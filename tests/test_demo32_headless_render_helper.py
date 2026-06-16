@@ -8,10 +8,50 @@ import unittest
 import numpy as np
 from PIL import Image
 
-from scripts.harness.diagnostics.demo.render_demo32_headless_capture import render_capture_to_video
+from scripts.harness.diagnostics.demo.render_demo32_headless_capture import (
+    TRACKING_BACKGROUND_MASK_RGB,
+    TRACKING_BACKGROUND_MASK_TARGET_UNION,
+    _apply_tracking_background_mask,
+    _read_target_union_mask,
+    render_capture_to_video,
+)
 
 
 class Demo32HeadlessRenderHelperTest(unittest.TestCase):
+    def test_apply_tracking_background_mask_blacks_pixels_outside_union(self) -> None:
+        image = np.full((4, 5, 3), 80, dtype=np.uint8)
+        image[1, 2] = np.array([10, 20, 30], dtype=np.uint8)
+        mask = np.zeros((4, 5), dtype=bool)
+        mask[1, 2] = True
+        mask[3, 4] = True
+
+        kept = _apply_tracking_background_mask(image, mask)
+
+        self.assertEqual(kept, 2)
+        np.testing.assert_array_equal(image[1, 2], np.array([10, 20, 30], dtype=np.uint8))
+        np.testing.assert_array_equal(image[3, 4], np.array([80, 80, 80], dtype=np.uint8))
+        np.testing.assert_array_equal(image[0, 0], np.array([0, 0, 0], dtype=np.uint8))
+
+    def test_read_target_union_mask_uses_object_or_controller_mask(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "masks").mkdir(parents=True)
+            controller_mask = np.zeros((4, 5), dtype=bool)
+            object_mask = np.zeros((4, 5), dtype=bool)
+            controller_mask[1, 2] = True
+            object_mask[3, 4] = True
+            np.savez(
+                capture_dir / "masks" / "000000.npz",
+                controller_mask=controller_mask,
+                object_mask=object_mask,
+            )
+            frame = {"seq": 0, "mask_path": "masks/000000.npz"}
+
+            union = _read_target_union_mask(capture_dir=capture_dir, frame=frame, width=5, height=4)
+
+            expected = np.logical_or(controller_mask, object_mask)
+            np.testing.assert_array_equal(union, expected)
+
     def test_render_synthetic_capture_to_video_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             capture_dir = Path(tmp) / "capture"

@@ -27,6 +27,12 @@ from qqtt.demo.query_rainbow import query_rainbow_colors_for_indices
 
 
 DEMO_VISUAL_MODES = ("pcd", "tracking")
+TRACKING_BACKGROUND_MASK_TARGET_UNION = "target-union"
+TRACKING_BACKGROUND_MASK_RGB = "rgb"
+TRACKING_BACKGROUND_MASK_MODES = (
+    TRACKING_BACKGROUND_MASK_TARGET_UNION,
+    TRACKING_BACKGROUND_MASK_RGB,
+)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -80,6 +86,58 @@ def _read_rgb_frame_bgr(*, capture_dir: Path, frame: dict[str, Any], width: int,
     if image.shape[:2] != (int(height), int(width)):
         image = cv2.resize(image, (int(width), int(height)), interpolation=cv2.INTER_LINEAR)
     return np.ascontiguousarray(image, dtype=np.uint8)
+
+
+def _read_target_union_mask(
+    *,
+    capture_dir: Path,
+    frame: dict[str, Any],
+    width: int,
+    height: int,
+) -> np.ndarray:
+    if "mask_path" not in frame:
+        raise RuntimeError(
+            "tracking background target-union requires mask_path in frames.jsonl; "
+            "rerun headless capture"
+        )
+    mask_path = _resolve_capture_path(capture_dir, str(frame["mask_path"]))
+    if not mask_path.is_file():
+        raise RuntimeError(f"tracking background target-union mask file missing: {mask_path}")
+    with np.load(mask_path, allow_pickle=False) as payload:
+        missing = [name for name in ("object_mask", "controller_mask") if name not in payload.files]
+        if missing:
+            raise RuntimeError(
+                "tracking background target-union mask payload missing "
+                + ", ".join(missing)
+                + f": {mask_path}"
+            )
+        object_mask = np.asarray(payload["object_mask"], dtype=bool)
+        controller_mask = np.asarray(payload["controller_mask"], dtype=bool)
+    expected_shape = (int(height), int(width))
+    if object_mask.shape != expected_shape:
+        raise RuntimeError(
+            f"object_mask shape {tuple(object_mask.shape)} does not match render shape "
+            f"{expected_shape}: {mask_path}"
+        )
+    if controller_mask.shape != expected_shape:
+        raise RuntimeError(
+            f"controller_mask shape {tuple(controller_mask.shape)} does not match render shape "
+            f"{expected_shape}: {mask_path}"
+        )
+    return np.ascontiguousarray(np.logical_or(object_mask, controller_mask), dtype=bool)
+
+
+def _apply_tracking_background_mask(image_bgr: np.ndarray, target_union_mask: np.ndarray) -> int:
+    mask = np.asarray(target_union_mask, dtype=bool)
+    if mask.ndim != 2:
+        raise RuntimeError(f"tracking background mask must be 2D, got shape {tuple(mask.shape)}")
+    if image_bgr.shape[:2] != mask.shape:
+        raise RuntimeError(
+            f"tracking background mask shape {tuple(mask.shape)} does not match image shape "
+            f"{tuple(image_bgr.shape[:2])}"
+        )
+    image_bgr[~mask] = 0
+    return int(np.count_nonzero(mask))
 
 
 def _project_points(points_xyz: np.ndarray, intrinsics: dict[str, Any], *, width: int, height: int) -> tuple[np.ndarray, np.ndarray]:
