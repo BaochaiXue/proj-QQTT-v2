@@ -52,6 +52,25 @@ def _write_metadata(path: Path, metadata: dict) -> None:
     )
 
 
+def _sample_metadata_kwargs() -> dict:
+    return {
+        "serial_numbers": ["cam0"],
+        "WH": [1280, 720],
+        "fps": 5,
+        "transform_count": 1,
+        "calibration_board": {"name": "calibio-12x9-30mm"},
+        "max_reprojection_error_px": 0.20,
+        "min_corner_fraction": 0.60,
+        "min_charuco_corners": 53,
+        "per_camera_reprojection_error": [0.10],
+        "per_camera_corner_count": [60],
+        "per_camera_corner_fraction": [0.68],
+        "distortion_used": True,
+        "distortion_model_by_camera": ["inverse_brown_conrady"],
+        "distortion_coeffs_by_camera": [[0.0, 0.0, 0.0, 0.0, 0.0]],
+    }
+
+
 class TableCalibrationContractTest(unittest.TestCase):
     def test_metadata_path_uses_output_stem(self) -> None:
         self.assertEqual(
@@ -453,6 +472,71 @@ class TableCalibrationContractTest(unittest.TestCase):
 
                     with self.assertRaisesRegex(TableCalibrationLoadError, field):
                         load_table_calibration_metadata(output)
+
+    def test_metadata_loader_rejects_numeric_strings_inside_calibration_board(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "table_calibrate.pkl"
+            metadata = _sample_metadata()
+            metadata["calibration_board"] = {
+                "name": "calibio-12x9-30mm",
+                "dictionary_name": "DICT_5X5_250",
+                "nested": {"chessboard_corner_count": "88"},
+            }
+            _write_metadata(output, metadata)
+
+            with self.assertRaisesRegex(TableCalibrationLoadError, "calibration_board"):
+                load_table_calibration_metadata(output)
+
+    def test_builder_rejects_numeric_string_inputs(self) -> None:
+        cases = [
+            ("WH", lambda kwargs: kwargs.update(WH=["1280", 720])),
+            ("fps", lambda kwargs: kwargs.update(fps="5")),
+            ("transform_count", lambda kwargs: kwargs.update(transform_count="1")),
+            (
+                "calibration_board",
+                lambda kwargs: kwargs.update(
+                    calibration_board={
+                        "name": "calibio-12x9-30mm",
+                        "chessboard_corner_count": "88",
+                    }
+                ),
+            ),
+            (
+                "max_reprojection_error_px",
+                lambda kwargs: kwargs.update(max_reprojection_error_px="0.2"),
+            ),
+            (
+                "min_corner_fraction",
+                lambda kwargs: kwargs.update(min_corner_fraction="0.6"),
+            ),
+            (
+                "min_charuco_corners",
+                lambda kwargs: kwargs.update(min_charuco_corners="53"),
+            ),
+            (
+                "per_camera_reprojection_error",
+                lambda kwargs: kwargs.update(per_camera_reprojection_error=["0.10"]),
+            ),
+            (
+                "per_camera_corner_count",
+                lambda kwargs: kwargs.update(per_camera_corner_count=["60"]),
+            ),
+            (
+                "per_camera_corner_fraction",
+                lambda kwargs: kwargs.update(per_camera_corner_fraction=["0.68"]),
+            ),
+            (
+                "distortion_coeffs_by_camera",
+                lambda kwargs: kwargs.update(distortion_coeffs_by_camera=[["0.0"]]),
+            ),
+        ]
+        for field, mutate in cases:
+            with self.subTest(field=field):
+                kwargs = _sample_metadata_kwargs()
+                mutate(kwargs)
+
+                with self.assertRaisesRegex(ValueError, field):
+                    build_table_calibration_metadata(**kwargs)
 
     def test_metadata_loader_wraps_invalid_utf8_sidecar(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -48,6 +48,42 @@ def _is_finite_number(value: Any) -> bool:
     return bool(np.isfinite(float(value)))
 
 
+def _numeric_string_path(value: Any, path: str) -> str | None:
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            float(text)
+        except ValueError:
+            return None
+        return path
+    if isinstance(value, dict):
+        for key, item in value.items():
+            found = _numeric_string_path(item, f"{path}.{key}")
+            if found is not None:
+                return found
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            found = _numeric_string_path(item, f"{path}[{index}]")
+            if found is not None:
+                return found
+    return None
+
+
+def _validate_build_int(name: str, value: Any, *, greater_equal: int | None = None) -> int:
+    try:
+        return _validate_metadata_int({name: value}, name, greater_equal=greater_equal)
+    except TableCalibrationLoadError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _validate_build_float(name: str, value: Any) -> float:
+    if not _is_finite_number(value):
+        raise ValueError(f"{name} must be a finite JSON number.")
+    return float(value)
+
+
 def build_table_calibration_metadata(
     *,
     serial_numbers: list[str],
@@ -67,7 +103,13 @@ def build_table_calibration_metadata(
     diagnostic_image_path: str | None = None,
 ) -> dict[str, Any]:
     serials = _validate_serials("serial_numbers", list(serial_numbers))
-    expected_count = int(transform_count)
+    if not isinstance(calibration_board, dict):
+        raise ValueError("calibration_board must be a dict.")
+    expected_count = _validate_build_int(
+        "transform_count",
+        transform_count,
+        greater_equal=1,
+    )
     if expected_count != len(serials):
         raise ValueError(
             "transform_count must match serial_numbers length. "
@@ -96,22 +138,18 @@ def build_table_calibration_metadata(
         "table_calibration_reference_serials": serials,
         "logical_camera_names": [f"cam{i}" for i in range(len(serials))],
         "WH": list(WH),
-        "fps": int(fps),
+        "fps": fps,
         "transform_count": expected_count,
         "transform_convention": "camera_to_world_c2w",
         "world_frame_kind": TABLE_WORLD_FRAME_KIND,
         "compatibility_contract": TABLE_CALIBRATE_COMPATIBILITY_CONTRACT,
         "calibration_board": dict(calibration_board),
-        "max_reprojection_error_px": float(max_reprojection_error_px),
-        "min_corner_fraction": float(min_corner_fraction),
-        "min_charuco_corners": int(min_charuco_corners),
-        "per_camera_reprojection_error": [
-            float(item) for item in per_camera_reprojection_error
-        ],
-        "per_camera_corner_count": [int(item) for item in per_camera_corner_count],
-        "per_camera_corner_fraction": [
-            float(item) for item in per_camera_corner_fraction
-        ],
+        "max_reprojection_error_px": max_reprojection_error_px,
+        "min_corner_fraction": min_corner_fraction,
+        "min_charuco_corners": min_charuco_corners,
+        "per_camera_reprojection_error": list(per_camera_reprojection_error),
+        "per_camera_corner_count": list(per_camera_corner_count),
+        "per_camera_corner_fraction": list(per_camera_corner_fraction),
     }
     if distortion_used is not None:
         metadata["distortion_used"] = bool(distortion_used)
@@ -129,11 +167,39 @@ def build_table_calibration_metadata(
             expected_count,
         )
         metadata["distortion_coeffs_by_camera"] = [
-            None if item is None else [float(value) for value in item]
-            for item in distortion_coeffs_by_camera
+            None
+            if item is None
+            else [
+                _validate_build_float(
+                    f"distortion_coeffs_by_camera[{idx}][{value_idx}]",
+                    value,
+                )
+                for value_idx, value in enumerate(item)
+            ]
+            for idx, item in enumerate(distortion_coeffs_by_camera)
         ]
     if diagnostic_image_path is not None:
         metadata["diagnostic_image_path"] = str(diagnostic_image_path)
+
+    try:
+        _validate_table_metadata_object(metadata, sidecar_path=None)
+    except TableCalibrationLoadError as exc:
+        raise ValueError(str(exc)) from exc
+
+    metadata["WH"] = [int(value) for value in metadata["WH"]]
+    metadata["fps"] = int(metadata["fps"])
+    metadata["max_reprojection_error_px"] = float(metadata["max_reprojection_error_px"])
+    metadata["min_corner_fraction"] = float(metadata["min_corner_fraction"])
+    metadata["min_charuco_corners"] = int(metadata["min_charuco_corners"])
+    metadata["per_camera_reprojection_error"] = [
+        float(item) for item in metadata["per_camera_reprojection_error"]
+    ]
+    metadata["per_camera_corner_count"] = [
+        int(item) for item in metadata["per_camera_corner_count"]
+    ]
+    metadata["per_camera_corner_fraction"] = [
+        float(item) for item in metadata["per_camera_corner_fraction"]
+    ]
     return metadata
 
 
@@ -413,6 +479,11 @@ def _validate_table_metadata_object(
     calibration_board = _require_metadata_field(metadata, "calibration_board")
     if not isinstance(calibration_board, dict) or not calibration_board:
         raise TableCalibrationLoadError("calibration_board must be a non-empty object.")
+    numeric_string_path = _numeric_string_path(calibration_board, "calibration_board")
+    if numeric_string_path is not None:
+        raise TableCalibrationLoadError(
+            f"{numeric_string_path} must be a JSON number, not a numeric string."
+        )
     _validate_metadata_float(
         metadata,
         "max_reprojection_error_px",
