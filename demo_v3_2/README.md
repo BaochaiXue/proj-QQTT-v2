@@ -95,12 +95,14 @@ conda run -n demo_2_max --no-capture-output \
 
 Render the saved artifacts offline. In `pcd` mode, the helper draws only the
 enhanced-pt filtered RGB point cloud. In `tracking` mode, the helper follows the
-FuturePhysTwin 2D tracker view: RGB frame background plus current-frame query
-points only, with stable `gist_rainbow` colors assigned from each query point's
-initial y coordinate. No PCD and no historical trajectory lines are drawn in the
-offline tracking video. It only uses exact same-seq query trajectory files, so
-missing query frames are counted rather than silently matched to an older
-tracker output.
+FuturePhysTwin 2D tracker view: same-frame RGB target regions plus current-frame
+query points only, with stable `gist_rainbow` colors assigned from each query
+point's initial y coordinate. By default the tracking renderer applies
+`object_mask | controller_mask` to the RGB frame and blacks out table/background
+pixels before drawing query points. No PCD and no historical trajectory lines
+are drawn in the offline tracking video. It only uses exact same-seq query
+trajectory files, so missing query frames are counted rather than silently
+matched to an older tracker output.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
@@ -109,6 +111,18 @@ conda run -n demo_2_max --no-capture-output \
   --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video_query_phystwin.mp4 \
   --fps 30 \
   --demo-visual-mode tracking
+```
+
+For comparison with the old full-RGB tracking background, pass:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python scripts/harness/diagnostics/demo/render_demo32_headless_capture.py \
+  --capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke \
+  --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video_query_full_rgb_compare.mp4 \
+  --fps 30 \
+  --demo-visual-mode tracking \
+  --tracking-background-mask rgb
 ```
 
 ```bash
