@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import tempfile
 from pathlib import Path
 import unittest
@@ -21,12 +20,10 @@ class CamerasCalibrateTableCliTest(unittest.TestCase):
     def test_resolve_output_paths_uses_output_stem_for_metadata_sidecar(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            args = argparse.Namespace(
+            output_path, sidecar_path, diagnostic_path = resolve_output_paths(
                 output=root / "custom.pkl",
                 diagnostic_image=root / "custom.png",
             )
-
-            output_path, sidecar_path, diagnostic_path = resolve_output_paths(args)
 
             self.assertEqual(output_path, root / "custom.pkl")
             self.assertEqual(sidecar_path, root / "custom_metadata.json")
