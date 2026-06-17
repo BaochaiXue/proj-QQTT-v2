@@ -150,7 +150,10 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
             self.assertEqual(contract["table_world_frame_kind"], "table_world_z0")
             self.assertEqual(contract["table_calibration_path"], str(table_path))
-            self.assertNotIn("--table-calibrate", runtime.build_live_delegate_argv(args))
+            self.assertEqual(contract["pcd_coordinate_frame"], "table_world_z0")
+            self.assertEqual(contract["table_z_m"], 0.0)
+            delegate = runtime.build_live_delegate_argv(args)
+            self.assertEqual(_option_value(delegate, "--table-calibrate"), str(table_path))
 
     def test_demo32_rejects_missing_table_calibration_path(self) -> None:
         args = self._parse(
@@ -429,11 +432,13 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["query_color_mode"], "phystwin_rainbow_identity")
         self.assertTrue(contract["pcd_filter_enabled"])
         self.assertEqual(contract["pcd_filter_mode"], "sync")
-        self.assertEqual(contract["object_filter"], "enhanced-pt")
-        self.assertEqual(contract["controller_filter"], "enhanced-pt")
+        self.assertEqual(contract["object_filter"], "pt-filter")
+        self.assertEqual(contract["controller_filter"], "pt-filter")
         self.assertEqual(_option_value(delegate, "--demo-visual-mode"), "pcd")
         self.assertEqual(_option_value(delegate, "--tracker-backend"), "tapnextpp")
         self.assertEqual(_option_value(delegate, "--tracker-overlay-max-points"), "0")
+        self.assertEqual(_option_value(delegate, "--object-filter"), "pt-filter")
+        self.assertEqual(_option_value(delegate, "--controller-filter"), "pt-filter")
         self.assertIn("--enable-pcd-filter", delegate)
 
     def test_demo32_visual_modes_reject_conflicting_tracker_options(self) -> None:
@@ -450,6 +455,20 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "requires --tracker-backend tapnextpp"):
             runtime.validate_args(pcd_args)
+
+        enhanced_pcd_args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--demo-visual-mode",
+                "pcd",
+                "--object-filter",
+                "enhanced-pt",
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "pcd requires --object-filter pt-filter"):
+            runtime.validate_args(enhanced_pcd_args)
 
         tracking_args = self._parse(
             runtime.DEMO_VERSION_3_2,
@@ -827,7 +846,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires --render-mode pointcloud"):
             runtime.validate_args(args)
 
-    def test_demo32_fake_live_headless_capture_forces_enhanced_pt_sync_filter(self) -> None:
+    def test_demo32_fake_live_headless_capture_defaults_to_enhanced_pt_sync_filter(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_2,
             [
@@ -858,7 +877,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--headless-capture-dir"), "result/headless_case")
         self.assertIn("--enable-pcd-filter", delegate)
 
-    def test_demo32_fake_live_headless_capture_rejects_non_enhanced_pt_filter(self) -> None:
+    def test_demo32_fake_live_headless_capture_accepts_pt_filter(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_2,
             [
@@ -870,11 +889,19 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 "result/headless_case",
                 "--object-filter",
                 "pt-filter",
+                "--controller-filter",
+                "pt-filter",
             ],
         )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
 
-        with self.assertRaisesRegex(ValueError, "requires --object-filter enhanced-pt"):
-            runtime.validate_args(args)
+        self.assertEqual(contract["saved_pcd_source"], "pt_filter_filtered")
+        self.assertEqual(contract["object_filter"], "pt-filter")
+        self.assertEqual(contract["controller_filter"], "pt-filter")
+        self.assertEqual(_option_value(delegate, "--object-filter"), "pt-filter")
+        self.assertEqual(_option_value(delegate, "--controller-filter"), "pt-filter")
 
     def test_demo32_fake_live_headless_capture_rejects_async_filter(self) -> None:
         args = self._parse(

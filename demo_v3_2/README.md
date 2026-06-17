@@ -32,10 +32,12 @@ conda run -n demo_2_max --no-capture-output \
   --replay-fps 5
 ```
 
-For PCD-only inspection, keep the full FFS + EdgeTAM + enhanced-pt PCD +
-TAPNext++ tracking pipeline running, but hide the query markers in the render.
-This makes the displayed FPS reflect the same full pipeline cost as tracking
-mode:
+For PCD-only inspection, keep the full FFS + EdgeTAM + TAPNext++ tracking
+pipeline running, but hide the query markers in the render. This makes the
+displayed FPS reflect the same full pipeline cost as tracking mode. The PCD
+inspection view defaults both object and controller rendering filters to
+`pt-filter`; tracking mode keeps the stricter `enhanced-pt` defaults for its
+overlay path.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
@@ -71,8 +73,9 @@ execution is serialized inside the runtime and cached by frame sequence so
 point-cloud rendering and TAPNext++ marker lift can share depth without
 concurrent TensorRT context use.
 
-Headless enhanced-pt capture keeps the fake-live realtime pipeline running but
-does not open Open3D. It saves only sync enhanced-pt filtered PCD, RGB frames,
+Headless capture keeps the fake-live realtime pipeline running but does not
+open Open3D. It saves the sync filtered PCD selected by the visual mode
+(`pt-filter` for `pcd`, `enhanced-pt` for `tracking`), RGB frames,
 color-aligned FFS depth, EdgeTAM `hand_a`/`hand_b`/`object` masks plus legacy
 controller/object masks, and TAPNext++ query trajectory artifacts:
 
@@ -94,7 +97,7 @@ conda run -n demo_2_max --no-capture-output \
 ```
 
 Render the saved artifacts offline. In `pcd` mode, the helper draws only the
-enhanced-pt filtered RGB point cloud. In `tracking` mode, the helper follows the
+saved filtered RGB point cloud. In `tracking` mode, the helper follows the
 FuturePhysTwin 2D tracker view: same-frame RGB target regions plus current-frame
 query points only, with stable `gist_rainbow` colors assigned from each query
 point's initial y coordinate. By default the tracking renderer applies

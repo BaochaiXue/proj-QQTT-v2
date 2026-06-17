@@ -179,6 +179,12 @@ def _demo_visual_mode_policy_requested(args: argparse.Namespace, version: str | 
     )
 
 
+def _visual_mode_required_filter(args: argparse.Namespace) -> str:
+    if str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) == DEMO_VISUAL_MODE_PCD:
+        return masked_pcd.PCD_FILTER_PT_FILTER
+    return masked_pcd.PCD_FILTER_ENHANCED_PT
+
+
 def _headless_capture_requested(args: argparse.Namespace, version: str | None = None) -> bool:
     resolved_version = normalize_demo_version(version or getattr(args, "single_demo_version", DEMO_VERSION_3))
     return bool(
@@ -192,6 +198,10 @@ def _default_headless_capture_dir(args: argparse.Namespace, version: str) -> Pat
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_root = Path(getattr(args, "output_root", DEFAULT_OUTPUT_ROOTS[normalize_demo_version(version)]))
     return output_root / f"headless_capture_{stamp}"
+
+
+def _headless_capture_saved_pcd_source(args: argparse.Namespace) -> str:
+    return masked_pcd.headless_capture_saved_pcd_source(args)
 
 
 def _get_connected_realsense_serials() -> list[str]:
@@ -306,7 +316,7 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         type=Path,
         default=None,
         help=(
-            "Directory for Demo 3.2/3.3 fake-live headless enhanced-pt PCD artifacts. "
+            "Directory for Demo 3.2/3.3 fake-live headless filtered PCD artifacts. "
             "Defaults to output-root/headless_capture_<timestamp> when --render-mode none is used."
         ),
     )
@@ -442,7 +452,7 @@ def apply_preset_defaults(
         else:
             args.controller_instance_mode = masked_pcd.CONTROLLER_INSTANCE_MODE_SINGLE
     headless_capture = _headless_capture_requested(args, version)
-    filtered_visual = _filtered_visual_mode_requested(args, version)
+    filtered_visual = _demo_visual_mode_policy_requested(args, version)
     if headless_capture:
         if "--track-mode" not in explicit:
             args.track_mode = TRACK_MODE_CONTROLLER_OBJECT
@@ -461,6 +471,7 @@ def apply_preset_defaults(
         if "--headless-capture-dir" not in explicit and args.headless_capture_dir is None:
             args.headless_capture_dir = _default_headless_capture_dir(args, version)
     if filtered_visual:
+        visual_filter = _visual_mode_required_filter(args)
         if "--track-mode" not in explicit:
             args.track_mode = TRACK_MODE_CONTROLLER_OBJECT
         if "--enable-pcd-filter" not in explicit:
@@ -468,9 +479,9 @@ def apply_preset_defaults(
         if "--pcd-filter-mode" not in explicit:
             args.pcd_filter_mode = "sync"
         if "--object-filter" not in explicit:
-            args.object_filter = masked_pcd.PCD_FILTER_ENHANCED_PT
+            args.object_filter = visual_filter
         if "--controller-filter" not in explicit:
-            args.controller_filter = masked_pcd.PCD_FILTER_ENHANCED_PT
+            args.controller_filter = visual_filter
         if "--pcd-color-mode" not in explicit:
             args.pcd_color_mode = "rgb"
         if "--tracker-backend" not in explicit:
@@ -638,19 +649,37 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("headless capture requires --enable-pcd-filter")
         if str(args.pcd_filter_mode) != "sync":
             raise ValueError("headless capture requires --pcd-filter-mode sync")
-        if str(args.object_filter) != masked_pcd.PCD_FILTER_ENHANCED_PT:
-            raise ValueError("headless capture requires --object-filter enhanced-pt")
-        if str(args.controller_filter) != masked_pcd.PCD_FILTER_ENHANCED_PT:
-            raise ValueError("headless capture requires --controller-filter enhanced-pt")
+        if str(args.object_filter) not in masked_pcd.HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS:
+            allowed = ", ".join(masked_pcd.HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
+            raise ValueError(f"headless capture requires --object-filter one of {allowed}")
+        if str(args.controller_filter) not in masked_pcd.HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS:
+            allowed = ", ".join(masked_pcd.HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
+            raise ValueError(f"headless capture requires --controller-filter one of {allowed}")
     if _demo_visual_mode_policy_requested(args, version):
         if not bool(args.enable_pcd_filter):
             raise ValueError("--demo-visual-mode requires --enable-pcd-filter for Demo 3.2/3.3")
         if str(args.pcd_filter_mode) != "sync":
             raise ValueError("--demo-visual-mode requires --pcd-filter-mode sync for Demo 3.2/3.3")
-        if str(args.object_filter) != masked_pcd.PCD_FILTER_ENHANCED_PT:
-            raise ValueError("--demo-visual-mode requires --object-filter enhanced-pt for Demo 3.2/3.3")
-        if str(args.controller_filter) != masked_pcd.PCD_FILTER_ENHANCED_PT:
-            raise ValueError("--demo-visual-mode requires --controller-filter enhanced-pt for Demo 3.2/3.3")
+        visual_filter = _visual_mode_required_filter(args)
+        if str(args.demo_visual_mode) == DEMO_VISUAL_MODE_PCD:
+            if str(args.object_filter) != visual_filter:
+                raise ValueError("--demo-visual-mode pcd requires --object-filter pt-filter for Demo 3.2/3.3")
+            if str(args.controller_filter) != visual_filter:
+                raise ValueError("--demo-visual-mode pcd requires --controller-filter pt-filter for Demo 3.2/3.3")
+        elif headless_capture:
+            if str(args.object_filter) not in masked_pcd.HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS:
+                allowed = ", ".join(masked_pcd.HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
+                raise ValueError(f"--demo-visual-mode requires --object-filter one of {allowed} for headless Demo 3.2/3.3")
+            if str(args.controller_filter) not in masked_pcd.HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS:
+                allowed = ", ".join(masked_pcd.HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
+                raise ValueError(
+                    f"--demo-visual-mode requires --controller-filter one of {allowed} for headless Demo 3.2/3.3"
+                )
+        else:
+            if str(args.object_filter) != visual_filter:
+                raise ValueError("--demo-visual-mode tracking requires --object-filter enhanced-pt for Demo 3.2/3.3")
+            if str(args.controller_filter) != visual_filter:
+                raise ValueError("--demo-visual-mode tracking requires --controller-filter enhanced-pt for Demo 3.2/3.3")
         if str(args.pcd_color_mode) != "rgb":
             raise ValueError("--demo-visual-mode requires --pcd-color-mode rgb for Demo 3.2/3.3")
         if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
@@ -738,6 +767,9 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "camera_count": 1,
         "serial": None if _is_replay_input_source(input_source) or args.serial is None else str(args.serial),
         "coordinate_frame": single_pcd.COORDINATE_FRAME,
+        "pcd_coordinate_frame": TABLE_WORLD_FRAME_KIND if args.table_calibrate is not None else single_pcd.COORDINATE_FRAME,
+        "camera_coordinate_frame": single_pcd.COORDINATE_FRAME,
+        "table_z_m": 0.0 if args.table_calibrate is not None else None,
         "depth_source": depth_source,
         "depth_pipeline": depth_pipeline,
         "uses_ffs": uses_ffs,
@@ -756,7 +788,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "demo_visual_mode": str(args.demo_visual_mode),
         "headless_capture_enabled": bool(headless_capture),
         "headless_capture_dir": None if not headless_capture or args.headless_capture_dir is None else str(args.headless_capture_dir),
-        "saved_pcd_source": HEADLESS_CAPTURE_SAVED_PCD_SOURCE if headless_capture else None,
+        "saved_pcd_source": _headless_capture_saved_pcd_source(args) if headless_capture else None,
         "view_mode": str(args.view_mode),
         "tracker_backend": str(args.tracker_backend),
         "tracker_backend_family": (
@@ -840,6 +872,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "replay_fps",
         "camera_count",
         "serial",
+        "pcd_coordinate_frame",
         "depth_source",
         "depth_pipeline",
         "uses_ffs",
@@ -1042,6 +1075,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.append("--enable-pcd-filter")
     if args.headless_capture_dir is not None:
         argv.extend(["--headless-capture-dir", str(args.headless_capture_dir)])
+    if args.table_calibrate is not None:
+        argv.extend(["--table-calibrate", str(args.table_calibrate)])
     if bool(args.debug):
         argv.append("--debug")
     if str(args.track_mode) == TRACK_MODE_NONE:

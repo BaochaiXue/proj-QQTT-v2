@@ -33,11 +33,14 @@ aligned-case data product.
   single-camera point-cloud demo implementation.
 - `qqtt/demo/single_demo_v3_runtime.py`: shared launcher for the
   `demo_v3*` entrypoints.
-- `qqtt/demo/realtime_masked_edgetam_pcd.py`: shared masked PCD runtime. Its
-  object and controller filters default to enhanced-pt; object filtering keeps
-  one component and controller filtering keeps two components, matching
-  single-object plus two-hand demo scenes. It starts Open3D in a third-person
-  orbit view by default, falls back to capped current-frame PCD when filtering
+- `qqtt/demo/realtime_masked_edgetam_pcd.py`: shared masked PCD runtime. Demo
+  3.2/3.3 tracking visualizations default object/controller filters to
+  enhanced-pt, while PCD-only inspection defaults both layers to pt-filter and
+  still runs the full tracker pipeline for honest FPS. Object enhanced-pt
+  filtering keeps one component and controller enhanced-pt filtering keeps two
+  components, matching single-object plus two-hand demo scenes. It starts
+  Open3D in a third-person orbit view by default, falls back to capped
+  current-frame PCD when filtering
   would empty a nonempty layer, falls back for controller output that retains
   less than half of its capped points, falls back to raw current-frame
   controller PCD when voxel capping makes the controller output less than half

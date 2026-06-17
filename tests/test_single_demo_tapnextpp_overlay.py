@@ -75,6 +75,40 @@ class _FakeFfsAligner:
 
 
 class SingleDemoTapNextOverlayTest(unittest.TestCase):
+    def test_transform_points_c2w_matches_phystwin_homogeneous_lift(self) -> None:
+        c2w = np.eye(4, dtype=np.float32)
+        c2w[:3, 3] = np.array([0.25, -0.5, 1.0], dtype=np.float32)
+        points = np.array([[0.0, 0.0, 0.5], [0.1, 0.2, 0.3]], dtype=np.float32)
+
+        transformed = demo._transform_points_c2w(points, c2w)
+
+        expected = points + np.array([0.25, -0.5, 1.0], dtype=np.float32)
+        np.testing.assert_allclose(transformed, expected, atol=1e-6)
+
+    def test_pcd_packet_build_applies_table_c2w_before_render_packet(self) -> None:
+        args = self._tracker_args()
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime.ray_x = np.zeros((4, 4), dtype=np.float32)
+        runtime.ray_y = np.zeros((4, 4), dtype=np.float32)
+        runtime.table_c2w = np.eye(4, dtype=np.float32)
+        runtime.table_c2w[:3, 3] = np.array([0.25, -0.5, 1.0], dtype=np.float32)
+
+        result = runtime._build_pcd_packet_from_mask(self._mask_packet(), rng=np.random.default_rng(0))
+
+        self.assertEqual(result.packet.coordinate_frame, "table_world_z0")
+        self.assertGreater(result.packet.controller_point_count, 0)
+        self.assertGreater(result.packet.object_point_count, 0)
+        np.testing.assert_allclose(
+            result.packet.controller_xyz_m,
+            np.tile(np.array([[0.25, -0.5, 2.0]], dtype=np.float32), (result.packet.controller_point_count, 1)),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            result.packet.object_xyz_m,
+            np.tile(np.array([[0.25, -0.5, 2.0]], dtype=np.float32), (result.packet.object_point_count, 1)),
+            atol=1e-6,
+        )
+
     def _tracker_args(self):
         args = demo.build_parser().parse_args(
             [
@@ -116,7 +150,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             depth_u16=depth,
         )
 
-    def _pcd_packet(self, seq: int = 0) -> demo.MaskedPcdPacket:
+    def _pcd_packet(self, seq: int = 0, *, coordinate_frame: str = demo.COORDINATE_FRAME) -> demo.MaskedPcdPacket:
         controller_points = np.array([[0.0, 0.0, 0.5]], dtype=np.float32)
         object_points = np.array([[0.05, 0.0, 0.6]], dtype=np.float32)
         controller_colors = np.array([[255, 0, 0]], dtype=np.uint8)
@@ -141,6 +175,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 object_output_points=1,
                 controller_output_points=1,
             ),
+            coordinate_frame=coordinate_frame,
         )
 
     def _tracker_packet(self, seq: int = 0) -> demo.TrackerMarkerPacket:
@@ -795,6 +830,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                     "width": 4,
                     "height": 4,
                     "intrinsics": {"fx": 100.0, "fy": 100.0, "cx": 0.0, "cy": 0.0},
+                    "saved_pcd_source": "pt_filter_filtered",
+                    "pcd_coordinate_frame": "table_world_z0",
                 },
             )
             now = time.perf_counter()
@@ -820,13 +857,14 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 query_all_target_id=np.array([demo.OBJECT_ID], dtype=np.int64),
                 query_all_controller_instance_id=np.array([demo.QUERY_CONTROLLER_INSTANCE_NONE], dtype=np.int64),
                 object_query_count=1,
+                coordinate_frame="table_world_z0",
             )
 
             mask_packet = self._mask_packet()
             pcd_mask = np.ones((2, 2), dtype=bool)
             writer.write_tracker(tracker_packet)
             writer.write_pcd(
-                self._pcd_packet(),
+                self._pcd_packet(coordinate_frame="table_world_z0"),
                 depth_m=np.ones((4, 4), dtype=np.float32),
                 mask_packet=mask_packet,
                 controller_pcd_mask=pcd_mask,
@@ -839,7 +877,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             )
 
             metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
-            self.assertEqual(metadata["saved_pcd_source"], "enhanced_pt_filtered")
+            self.assertEqual(metadata["saved_pcd_source"], "pt_filter_filtered")
+            self.assertEqual(metadata["pcd_coordinate_frame"], "table_world_z0")
             self.assertEqual(metadata["saved_mask_source"], "edgetam_binary_masks")
             self.assertEqual(metadata["saved_rgb_source"], "segmentation_color_bgr")
             rows = [json.loads(line) for line in (output_dir / "frames.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -863,7 +902,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(rows[0]["object_pcd_mask_erode_pixels"], 3)
             self.assertEqual(rows[0]["controller_pcd_mask_erode_pixels"], 0)
             pcd = np.load(output_dir / rows[0]["pcd_path"], allow_pickle=False)
-            self.assertEqual(str(pcd["saved_pcd_source"][0]), "enhanced_pt_filtered")
+            self.assertEqual(str(pcd["saved_pcd_source"][0]), "pt_filter_filtered")
+            self.assertEqual(str(pcd["coordinate_frame"][0]), "table_world_z0")
             mask_payload = np.load(output_dir / rows[0]["mask_path"], allow_pickle=False)
             np.testing.assert_array_equal(mask_payload["controller_mask"], mask_packet.controller_mask)
             np.testing.assert_array_equal(mask_payload["object_mask"], mask_packet.object_mask)
@@ -875,6 +915,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(int(mask_payload["object_pcd_mask_erode_pixels"][0]), 3)
             self.assertEqual(int(mask_payload["controller_pcd_mask_erode_pixels"][0]), 0)
             trajectory = np.load(output_dir / rows[0]["query_trajectory_path"], allow_pickle=False)
+            self.assertEqual(str(trajectory["coordinate_frame"][0]), "table_world_z0")
             np.testing.assert_array_equal(trajectory["query_indices"], np.array([0], dtype=np.int64))
             np.testing.assert_array_equal(trajectory["query_rgb_u8"], query_rgb_u8)
             np.testing.assert_array_equal(trajectory["marker_rgb_u8"], query_rgb_u8)

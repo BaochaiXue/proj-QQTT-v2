@@ -57,10 +57,13 @@ numerically sorted camera-0 step becomes demo `seq=0` for SAM3.1
 initialization. Demo 3 / 3.1 consume replayed RGB-D; Demo 3.2 / 3.3 consume
 replayed RGB plus IR stereo and compute FFS depth. Playback stops cleanly at
 the end of the recording. Fake-live runs in demo mode and defaults to 5 FPS;
-pass `--replay-fps 0` to replay at metadata FPS. When enhanced PCD
-component filtering is enabled, object filtering keeps one main component while
-controller filtering defaults to enhanced-pt and keeps two main components so
-two-hand controllers are not dropped as disconnected noise. Demo 3.x Open3D
+pass `--replay-fps 0` to replay at metadata FPS. Demo 3.2/3.3 tracking views
+default object/controller filters to enhanced-pt, while PCD-only inspection
+defaults both layers to pt-filter but still runs TAPNext++ so the displayed FPS
+reflects the full pipeline. When enhanced PCD component filtering is enabled,
+object filtering keeps one main component while controller filtering keeps two
+main components so two-hand controllers are not dropped as disconnected noise.
+Demo 3.x Open3D
 tracks demo-mode `human hand` controllers as three EdgeTAM identities
 (`hand_a`, `object`, `hand_b`) while keeping the controller PCD/depth mask as
 `hand_a | hand_b`; frame-0 needs two separable hands for that mode. Demo 3.x

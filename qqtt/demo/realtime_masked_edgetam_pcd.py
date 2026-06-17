@@ -82,6 +82,11 @@ from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_TRT_ENGINE_SIZE,
     DEFAULT_FFS_VALID_ITERS,
 )
+from qqtt.env.camera.table_calibration import (  # noqa: E402
+    TABLE_WORLD_FRAME_KIND,
+    TableCalibrationLoadError,
+    load_table_calibration_transforms,
+)
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world  # noqa: E402
 from qqtt.demo.query_rainbow import query_rainbow_colors_from_points_yx_rgb_u8  # noqa: E402
 from qqtt.tracking.backends.point_tracker_adapter import (  # noqa: E402
@@ -173,6 +178,7 @@ GEOMETRY_OBJECT = "masked_edgetam_object"
 GEOMETRY_TRACKER_OBJECT = "tapnextpp_tracker_markers_object"
 GEOMETRY_TRACKER_CONTROLLER = "tapnextpp_tracker_markers_controller"
 COORDINATE_FRAME = "camera_color_frame"
+TABLE_Z_M = 0.0
 TRACKER_DISPLAY_SCOPE_CONTROLLER = "controller"
 TRACKER_DISPLAY_SCOPE_OBJECT = "object"
 TRACKER_DISPLAY_SCOPE_UNION = "union"
@@ -193,6 +199,7 @@ QUERY_CONTROLLER_INSTANCE_NONE = 0
 QUERY_CONTROLLER_INSTANCE_HAND_A = 1
 QUERY_CONTROLLER_INSTANCE_HAND_B = 2
 HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "enhanced_pt_filtered"
+HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS = (PCD_FILTER_ENHANCED_PT, PCD_FILTER_PT_FILTER)
 DEBUG_LOG_INTERVAL_S = 1.0
 DEFAULT_LOSSLESS_INPUT_FPS = 5.0
 DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS = 3.0
@@ -407,11 +414,18 @@ class RecordedRgbdFrameSource:
         self,
         *,
         seq: int,
+        frame_index: int | None = None,
         wait_ms: float = 0.0,
         receive_perf_s: float | None = None,
         frame_copy_ms: float | None = None,
     ) -> FramePacket:
-        ref = self.frames[int(seq)]
+        packet_seq = int(seq)
+        source_index = packet_seq if frame_index is None else int(frame_index)
+        if source_index < 0 or source_index >= len(self.frames):
+            raise IndexError(
+                f"recording replay frame_index {source_index} out of range for {len(self.frames)} frames"
+            )
+        ref = self.frames[source_index]
         copy_start_s = time.perf_counter()
         color_bgr = self._load_color_bgr(ref.color_path)
         depth_u16 = self._load_depth_u16(ref.depth_path) if ref.depth_path is not None else None
@@ -438,7 +452,7 @@ class RecordedRgbdFrameSource:
         receive_s = copy_done_s if receive_perf_s is None else float(receive_perf_s)
         copy_ms = _elapsed_ms(copy_start_s, copy_done_s) if frame_copy_ms is None else float(frame_copy_ms)
         return FramePacket(
-            seq=int(seq),
+            seq=packet_seq,
             color_bgr=color_bgr,
             depth_source=self.depth_source,
             intrinsics=self.intrinsics,
@@ -635,6 +649,7 @@ class MaskedPcdPacket:
     dropped_seg_frames: int
     timing: PipelineTiming
     filter_telemetry: PcdFilterTelemetry = field(default_factory=lambda: PcdFilterTelemetry())
+    coordinate_frame: str = COORDINATE_FRAME
 
     @property
     def controller_point_count(self) -> int:
@@ -677,6 +692,7 @@ class TrackerMarkerPacket:
     hand_a_query_count: int = 0
     hand_b_query_count: int = 0
     object_query_count: int = 0
+    coordinate_frame: str = COORDINATE_FRAME
 
     @property
     def marker_count(self) -> int:
@@ -766,6 +782,12 @@ class RemoteFfsQualityPacket:
 class HeadlessCaptureWriter:
     def __init__(self, output_dir: str | Path, *, metadata: dict[str, Any]) -> None:
         self.output_dir = _resolve_path(output_dir)
+        self.saved_pcd_source = str(metadata.get("saved_pcd_source") or HEADLESS_CAPTURE_SAVED_PCD_SOURCE)
+        self.pcd_coordinate_frame = str(
+            metadata.get("pcd_coordinate_frame")
+            or metadata.get("coordinate_frame")
+            or COORDINATE_FRAME
+        )
         self.pcd_dir = self.output_dir / "pcd"
         self.depth_dir = self.output_dir / "ffs_depth"
         self.rgb_dir = self.output_dir / "rgb"
@@ -784,7 +806,7 @@ class HeadlessCaptureWriter:
         self.frames_path.write_text("", encoding="utf-8")
         payload = dict(metadata)
         payload["headless_capture_enabled"] = True
-        payload["saved_pcd_source"] = HEADLESS_CAPTURE_SAVED_PCD_SOURCE
+        payload["saved_pcd_source"] = self.saved_pcd_source
         payload["saved_mask_source"] = "edgetam_binary_masks"
         payload["saved_rgb_source"] = "segmentation_color_bgr"
         payload["output_dir"] = str(self.output_dir)
@@ -855,7 +877,8 @@ class HeadlessCaptureWriter:
                 ],
                 dtype=np.float32,
             ),
-            saved_pcd_source=np.asarray([HEADLESS_CAPTURE_SAVED_PCD_SOURCE]),
+            saved_pcd_source=np.asarray([self.saved_pcd_source]),
+            coordinate_frame=np.asarray([str(packet.coordinate_frame or self.pcd_coordinate_frame)]),
         )
         row = {
             "seq": int(packet.seq),
@@ -919,6 +942,7 @@ class HeadlessCaptureWriter:
             model_ms=np.asarray([float(packet.model_ms)], dtype=np.float32),
             lift_ms=np.asarray([float(packet.lift_ms)], dtype=np.float32),
             e2e_ms=np.asarray([float(packet.e2e_ms)], dtype=np.float32),
+            coordinate_frame=np.asarray([str(packet.coordinate_frame or self.pcd_coordinate_frame)]),
         )
 
     @property
@@ -1279,6 +1303,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         help="Replay FPS for --input-source recording or fake-live. Use 0 to read metadata fps.",
+    )
+    parser.add_argument(
+        "--table-calibrate",
+        type=Path,
+        default=None,
+        help=(
+            "Optional single-camera table Z=0 calibration pickle. When provided, Demo 3.x PCD "
+            "and 3D tracker markers are transformed from camera_color_frame into table_world_z0."
+        ),
     )
     parser.add_argument(
         "--depth-source",
@@ -1677,6 +1710,14 @@ def headless_capture_enabled(args: argparse.Namespace) -> bool:
     return args.headless_capture_dir is not None
 
 
+def headless_capture_saved_pcd_source(args: argparse.Namespace) -> str:
+    object_filter = str(getattr(args, "object_filter", PCD_FILTER_ENHANCED_PT)).replace("-", "_")
+    controller_filter = str(getattr(args, "controller_filter", PCD_FILTER_ENHANCED_PT)).replace("-", "_")
+    if object_filter == controller_filter:
+        return f"{object_filter}_filtered"
+    return f"object_{object_filter}_controller_{controller_filter}_filtered"
+
+
 def validate_args(args: argparse.Namespace) -> None:
     parse_profile(args.profile)
     if args.input_source not in INPUT_SOURCES:
@@ -1687,6 +1728,19 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"--view-mode must be one of {', '.join(VIEW_MODES)}")
     if float(args.replay_fps) < 0.0:
         raise ValueError("--replay-fps must be >= 0")
+    if args.table_calibrate is not None:
+        table_path = Path(args.table_calibrate).expanduser()
+        if not table_path.is_absolute():
+            table_path = REPO_ROOT / table_path
+        table_path = table_path.resolve(strict=False)
+        try:
+            load_table_calibration_transforms(table_path)
+        except TableCalibrationLoadError as exc:
+            message = str(exc)
+            if "Missing table calibration file" in message:
+                raise ValueError(message) from exc
+            raise ValueError(f"Invalid table calibration file: {message}") from exc
+        args.table_calibrate = table_path
     if args.input_source == INPUT_SOURCE_FAKE_LIVE and args.recording_case is None:
         args.recording_case = DEFAULT_FAKE_LIVE_CASE
     if _is_replay_input_source(str(args.input_source)):
@@ -1783,10 +1837,12 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--headless-capture-dir requires --enable-pcd-filter")
         if args.pcd_filter_mode != "sync":
             raise ValueError("--headless-capture-dir requires --pcd-filter-mode sync")
-        if args.object_filter != PCD_FILTER_ENHANCED_PT:
-            raise ValueError("--headless-capture-dir requires --object-filter enhanced-pt")
-        if args.controller_filter != PCD_FILTER_ENHANCED_PT:
-            raise ValueError("--headless-capture-dir requires --controller-filter enhanced-pt")
+        if args.object_filter not in HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS:
+            allowed = ", ".join(HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
+            raise ValueError(f"--headless-capture-dir requires --object-filter one of {allowed}")
+        if args.controller_filter not in HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS:
+            allowed = ", ".join(HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
+            raise ValueError(f"--headless-capture-dir requires --controller-filter one of {allowed}")
     args.tracker_backend = normalize_tracker_backend(str(args.tracker_backend))
     if int(args.tracker_query_count) < 0:
         raise ValueError("--tracker-query-count must be >= 0")
@@ -2604,6 +2660,21 @@ def _camera_intrinsics_matrix(intrinsics: CameraIntrinsics) -> np.ndarray:
     )
 
 
+def _transform_points_c2w(points_xyz_m: np.ndarray, c2w: np.ndarray | None) -> np.ndarray:
+    points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
+    if c2w is None or points.size == 0:
+        return np.ascontiguousarray(points, dtype=np.float32)
+    matrix = np.asarray(c2w, dtype=np.float32)
+    if matrix.shape != (4, 4):
+        raise ValueError(f"camera-to-world transform must be 4x4, got {matrix.shape}")
+    homogeneous = np.concatenate(
+        [points, np.ones((points.shape[0], 1), dtype=np.float32)],
+        axis=1,
+    )
+    world = (matrix @ homogeneous.T).T[:, :3]
+    return np.ascontiguousarray(world, dtype=np.float32)
+
+
 def _tracker_union_mask(mask_packet: MaskPacket) -> np.ndarray:
     controller = np.asarray(mask_packet.controller_mask, dtype=bool)
     obj = np.asarray(mask_packet.object_mask, dtype=bool)
@@ -2997,6 +3068,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.remote_quality_client: FfsRemoteDepthClient | None = None
         self.recording_source: RecordedRgbdFrameSource | None = None
         self.headless_capture_writer: HeadlessCaptureWriter | None = None
+        self.table_c2w: np.ndarray | None = None
+        self.table_calibration_path: Path | None = None
         self._recording_first_frame_segmented = threading.Event()
         self._lossless_offered_frames = 0
         self._lossless_segmented_frames = 0
@@ -3025,6 +3098,40 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.runtime is None:
             return "<not-started>"
         return self.runtime.serial
+
+    def _table_world_enabled(self) -> bool:
+        return self.table_c2w is not None
+
+    def _pcd_coordinate_frame(self) -> str:
+        return TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else COORDINATE_FRAME
+
+    def _frame_hud_line(self) -> str:
+        if self._table_world_enabled():
+            return f"frame: {TABLE_WORLD_FRAME_KIND}  meters  table_z={TABLE_Z_M:.3f}"
+        return f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
+
+    def _camera_view_extrinsic(self) -> np.ndarray:
+        if self.table_c2w is None:
+            return np.eye(4, dtype=np.float64)
+        return np.linalg.inv(np.asarray(self.table_c2w, dtype=np.float64))
+
+    def _initialize_table_calibration(self) -> None:
+        if self.args.table_calibrate is None:
+            return
+        if self.runtime is None:
+            raise RuntimeError("camera runtime is not initialized")
+        path = Path(self.args.table_calibrate)
+        try:
+            transforms = load_table_calibration_transforms(path, serial_numbers=[str(self.runtime.serial)])
+        except TableCalibrationLoadError as exc:
+            raise RuntimeError(f"Invalid table calibration for active camera {self.runtime.serial}: {exc}") from exc
+        self.table_c2w = np.ascontiguousarray(transforms[0], dtype=np.float32)
+        self.table_calibration_path = path
+        print(
+            "[table-calibrate] "
+            f"path={path} serial={self.runtime.serial} pcd_coordinate_frame={TABLE_WORLD_FRAME_KIND}",
+            flush=True,
+        )
 
     def _lossless_enabled(self) -> bool:
         return bool(tracker_enabled(self.args) and self.args.pcd_mode == "masked")
@@ -3107,6 +3214,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "lossless_max_backlog_frames": int(self.lossless_max_backlog_frames) if self._lossless_enabled() else None,
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": str(self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE),
+            "saved_pcd_source": (
+                headless_capture_saved_pcd_source(self.args) if headless_capture_enabled(self.args) else None
+            ),
             "object_filter": str(self.args.object_filter),
             "controller_filter": str(self.args.controller_filter),
             "object_filter_keep_components": int(self.args.object_filter_keep_components),
@@ -3128,7 +3238,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "serial": str(self.runtime.serial),
             "width": int(self.width),
             "height": int(self.height),
-            "coordinate_frame": COORDINATE_FRAME,
+            "coordinate_frame": self._pcd_coordinate_frame(),
+            "pcd_coordinate_frame": self._pcd_coordinate_frame(),
+            "camera_coordinate_frame": COORDINATE_FRAME,
+            "table_calibration_path": None if self.table_calibration_path is None else str(self.table_calibration_path),
+            "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else None,
+            "table_z_m": TABLE_Z_M if self._table_world_enabled() else None,
             "intrinsics": {
                 "fx": float(self.runtime.intrinsics.fx),
                 "fy": float(self.runtime.intrinsics.fy),
@@ -3211,6 +3326,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         else:
             self.runtime = _start_realsense_pipeline(self.args)
         try:
+            self._initialize_table_calibration()
             self.ray_x, self.ray_y = build_projection_grid(
                 width=self.width,
                 height=self.height,
@@ -3375,6 +3491,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
     def _capture_recording_worker(self) -> None:
         assert self.recording_source is not None
         source = self.recording_source
+        fake_live_clock = str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE
         if self._lossless_enabled():
             frame_period_s = 1.0 / self._lossless_input_fps()
         else:
@@ -3385,6 +3502,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("recording replay", exc)
             return
+        camera_start_s = float(first_packet.receive_perf_s)
         self._publish_capture_packet(first_packet, record_s=first_packet.receive_perf_s)
         if source.frame_count <= 1:
             if self._lossless_enabled():
@@ -3400,25 +3518,36 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     break
             if self.stop_event.is_set():
                 return
-        replay_start_s = time.perf_counter()
-        for seq in range(1, source.frame_count):
+        gate_done_s = time.perf_counter()
+        replay_start_s = gate_done_s
+        first_source_index = 1
+        if fake_live_clock:
+            elapsed_frames = int(max(0.0, gate_done_s - camera_start_s) / frame_period_s)
+            first_source_index = max(1, elapsed_frames)
+        runtime_seq = 1
+        for source_index in range(first_source_index, source.frame_count):
             if self.stop_event.is_set():
                 break
+            duration_frame_index = source_index if fake_live_clock else runtime_seq
             if (
                 self._lossless_enabled()
                 and float(self.args.duration_s) > 0.0
-                and float(seq) * frame_period_s >= float(self.args.duration_s)
+                and float(duration_frame_index) * frame_period_s >= float(self.args.duration_s)
             ):
                 break
             wait_start_s = time.perf_counter()
-            target_s = replay_start_s + (float(seq) * frame_period_s)
+            if fake_live_clock:
+                target_s = camera_start_s + (float(source_index) * frame_period_s)
+            else:
+                target_s = replay_start_s + (float(runtime_seq) * frame_period_s)
             wait_s = target_s - wait_start_s
             if wait_s > 0.0 and self.stop_event.wait(wait_s):
                 break
             wait_done_s = time.perf_counter()
             try:
                 packet = source.read_packet(
-                    seq=seq,
+                    seq=runtime_seq,
+                    frame_index=source_index,
                     wait_ms=_elapsed_ms(wait_start_s, wait_done_s),
                 )
             except Exception as exc:
@@ -3426,6 +3555,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     self._record_fatal_worker_error("recording replay", exc)
                 break
             self._publish_capture_packet(packet, record_s=packet.receive_perf_s)
+            runtime_seq += 1
         if self._lossless_enabled():
             self._lossless_capture_done.set()
             self.lossless_frame_queue.close()
@@ -3601,6 +3731,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 self.args.remote_ffs_quality_compress if self.args.enable_remote_ffs_quality else None
             ),
             "pcd_mode": self.args.pcd_mode,
+            "pcd_coordinate_frame": self._pcd_coordinate_frame(),
+            "camera_coordinate_frame": COORDINATE_FRAME,
+            "table_calibration_path": None if self.table_calibration_path is None else str(self.table_calibration_path),
+            "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else None,
+            "table_z_m": TABLE_Z_M if self._table_world_enabled() else None,
             "pcd_max_points": int(self.args.pcd_max_points),
             "pcd_stride": int(self.args.pcd_stride),
             "pcd_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
@@ -3613,7 +3748,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "headless_capture_dir": (
                 str(self.args.headless_capture_dir) if headless_capture_enabled(self.args) else None
             ),
-            "saved_pcd_source": HEADLESS_CAPTURE_SAVED_PCD_SOURCE if headless_capture_enabled(self.args) else None,
+            "saved_pcd_source": (
+                headless_capture_saved_pcd_source(self.args) if headless_capture_enabled(self.args) else None
+            ),
             "object_filter": self.args.object_filter,
             "controller_filter": self.args.controller_filter,
             "object_filter_cap": int(self.args.object_filter_cap),
@@ -3922,7 +4059,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             visibility=selected_visibility,
             depth=depth_for_lift,
             intrinsics=mask_packet.intrinsics,
-            c2w=np.eye(4, dtype=np.float32),
+            c2w=self.table_c2w if self.table_c2w is not None else np.eye(4, dtype=np.float32),
             depth_scale_m_per_unit=float(depth_scale),
             mask=lift_mask,
             depth_min_m=float(self.args.depth_min_m),
@@ -3976,6 +4113,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             hand_a_query_count=hand_a_query_count,
             hand_b_query_count=hand_b_query_count,
             object_query_count=object_query_count,
+            coordinate_frame=self._pcd_coordinate_frame(),
         )
         if self.args.debug:
             print(
@@ -4903,6 +5041,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             controller_raw_points=controller_raw_points,
             controller_cap_points=controller_cap_points,
         )
+        render_controller_xyz = _transform_points_c2w(render_controller_xyz, self.table_c2w)
+        render_object_xyz = _transform_points_c2w(render_object_xyz, self.table_c2w)
         done_s = time.perf_counter()
         timing = replace(
             mask_packet.timing,
@@ -4945,6 +5085,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             dropped_seg_frames=self.mask_slot.dropped_count,
             timing=timing,
             filter_telemetry=filter_telemetry,
+            coordinate_frame=self._pcd_coordinate_frame(),
         )
         return PcdBuildResult(
             packet=packet,
@@ -5339,6 +5480,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             controller_raw_points=int(len(controller_xyz)),
             controller_cap_points=int(len(controller_xyz)),
         )
+        render_controller_xyz = _transform_points_c2w(render_controller_xyz, self.table_c2w)
+        render_object_xyz = _transform_points_c2w(render_object_xyz, self.table_c2w)
         done_s = time.perf_counter()
         timing = replace(
             mask_packet.timing,
@@ -5371,6 +5514,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             dropped_seg_frames=self.mask_slot.dropped_count,
             timing=timing,
             filter_telemetry=filter_telemetry,
+            coordinate_frame=self._pcd_coordinate_frame(),
         )
 
     def _remote_quality_mask_u8(self, packet: MaskPacket) -> np.ndarray:
@@ -5592,7 +5736,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     ],
                     dtype=np.float64,
                 )
-                extrinsic = np.eye(4, dtype=np.float64)
+                extrinsic = self._camera_view_extrinsic()
                 bounds = o3d.geometry.AxisAlignedBoundingBox([-10.0, -10.0, 0.01], [10.0, 10.0, 20.0])
                 scene_widget.setup_camera(intrinsic_matrix, extrinsic, self.width, self.height, bounds)
                 return
@@ -5986,7 +6130,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"dtype={self.args.dtype}{preset_text}\n"
             f"{depth_line}{quality_line}\n"
             f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
-            f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
+            + self._frame_hud_line()
         )
 
     def _format_strict_sync_waiting_hud(self) -> str:
@@ -6000,7 +6144,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"scope={self.args.tracker_display_scope}  device={self.args.tracker_device}\n"
             f"depth: {self.args.depth_source}  color={self.args.pcd_color_mode}\n"
             f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
-            f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
+            + self._frame_hud_line()
         )
 
     def _emit_debug_line(
