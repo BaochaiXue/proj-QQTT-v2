@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from shutil import copy2
+from tempfile import TemporaryDirectory
 
 from qqtt.env.camera.defaults import (
     DEFAULT_EXPOSURE,
@@ -162,12 +163,25 @@ def validate_table_calibration_for_case(
     serial_numbers: list[str],
 ) -> dict[str, object]:
     table_path = Path(table_calibrate_path).expanduser().resolve()
-    load_table_calibration_transforms(table_path, serial_numbers=list(serial_numbers))
-    table_metadata = load_table_calibration_metadata(table_path)
+    metadata_sidecar_path = table_calibration_metadata_path_for(table_path)
+    table_bytes = table_path.read_bytes()
+    metadata_sidecar_bytes = metadata_sidecar_path.read_bytes()
+    with TemporaryDirectory() as tmp_dir:
+        snapshot_path = Path(tmp_dir) / table_path.name
+        snapshot_metadata_path = table_calibration_metadata_path_for(snapshot_path)
+        snapshot_path.write_bytes(table_bytes)
+        snapshot_metadata_path.write_bytes(metadata_sidecar_bytes)
+        load_table_calibration_transforms(
+            snapshot_path,
+            serial_numbers=list(serial_numbers),
+        )
+        table_metadata = load_table_calibration_metadata(snapshot_path)
     return {
         "path": table_path,
         "metadata": table_metadata,
-        "metadata_sidecar_path": table_calibration_metadata_path_for(table_path),
+        "metadata_sidecar_path": metadata_sidecar_path,
+        "table_bytes": table_bytes,
+        "metadata_sidecar_bytes": metadata_sidecar_bytes,
     }
 
 
@@ -191,8 +205,14 @@ def copy_table_calibration_into_case(
     output_path = Path(output_path)
     copied_table_name = "table_calibrate.pkl"
     copied_metadata_name = "table_calibrate_metadata.json"
-    copy2(table_path, output_path / copied_table_name)
-    copy2(metadata_sidecar_path, output_path / copied_metadata_name)
+    table_bytes = table_calibration.get("table_bytes")
+    metadata_sidecar_bytes = table_calibration.get("metadata_sidecar_bytes")
+    if isinstance(table_bytes, bytes) and isinstance(metadata_sidecar_bytes, bytes):
+        (output_path / copied_table_name).write_bytes(table_bytes)
+        (output_path / copied_metadata_name).write_bytes(metadata_sidecar_bytes)
+    else:
+        copy2(table_path, output_path / copied_table_name)
+        copy2(metadata_sidecar_path, output_path / copied_metadata_name)
     _update_case_metadata(
         output_path / "metadata.json",
         {

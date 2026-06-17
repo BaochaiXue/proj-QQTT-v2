@@ -21,7 +21,10 @@ from qqtt.env.camera.table_calibration import (
     table_calibration_metadata_path_for,
     write_table_calibration_files,
 )
-from record_data import copy_table_calibration_into_case
+from record_data import (
+    copy_table_calibration_into_case,
+    validate_table_calibration_for_case,
+)
 
 
 def _write_case_metadata(case_dir: Path, serial_numbers: list[str]) -> None:
@@ -105,6 +108,49 @@ class RecordDataTableCalibrationTest(unittest.TestCase):
 
             self.assertFalse((case_dir / "table_calibrate.pkl").exists())
             self.assertFalse((case_dir / "table_calibrate_metadata.json").exists())
+
+    def test_copy_uses_validated_snapshot_when_source_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            case_dir = root / "case"
+            _write_case_metadata(case_dir, ["cam-a"])
+            table_path = _write_sample_table_calibration(root, ["cam-a"])
+            validated = validate_table_calibration_for_case(
+                table_calibrate_path=table_path,
+                serial_numbers=["cam-a"],
+            )
+            original_table_bytes = table_path.read_bytes()
+            original_sidecar_bytes = table_calibration_metadata_path_for(
+                table_path
+            ).read_bytes()
+
+            _write_sample_table_calibration(root, ["cam-a", "cam-c"])
+
+            copy_table_calibration_into_case(
+                table_calibrate_path=table_path,
+                output_path=case_dir,
+                serial_numbers=["cam-a"],
+                validated_table_calibration=validated,
+            )
+
+            copied_sidecar = case_dir / "table_calibrate_metadata.json"
+            self.assertEqual(
+                (case_dir / "table_calibrate.pkl").read_bytes(),
+                original_table_bytes,
+            )
+            self.assertEqual(copied_sidecar.read_bytes(), original_sidecar_bytes)
+            copied_metadata = json.loads(copied_sidecar.read_text(encoding="utf-8"))
+            case_metadata = json.loads(
+                (case_dir / "metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                copied_metadata["table_calibration_reference_serials"],
+                ["cam-a"],
+            )
+            self.assertEqual(
+                case_metadata["table_calibration_reference_serials"],
+                ["cam-a"],
+            )
 
     def test_main_validates_table_calibration_before_recording(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
