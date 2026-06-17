@@ -61,6 +61,16 @@ python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
   convention, color distortion coefficients, and corner counts.
 - rerun calibration after any physical camera-position change.
 
+## Table Z0 Calibration Checklist
+
+- exactly one D455 is connected, or `--serial` selects the intended camera
+- the ChArUco board is flat on the tabletop that should define `Z=0`
+- `conda run -n demo_2_max --no-capture-output python cameras_calibrate_table.py` exits 0
+- `table_calibrate.pkl` exists
+- `table_calibrate_metadata.json` exists and reports `world_frame_kind = table_world_z0`
+- `table_calibrate_diagnostic.png` shows the board corners and pose axes on the board
+- if the strict corner count or reprojection check fails, adjust lighting/board visibility and rerun
+
 ## Recording Checklist
 
 - `python record_data.py --case_name smoke_case --capture_mode rgbd` creates `data_collect/smoke_case/`.

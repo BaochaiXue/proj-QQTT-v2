@@ -122,6 +122,23 @@ python cameras_calibrate.py --exposure 70 --gain 60
 
 Rerun calibration after any physical camera-position change.
 
+## 2a. Table Z0 Calibration
+
+Place the current lab ChArUco board flat on the table surface, with the printed
+board plane touching the tabletop. Then run:
+
+```bash
+conda run -n demo_2_max --no-capture-output python cameras_calibrate_table.py
+```
+
+This writes `table_calibrate.pkl`, `table_calibrate_metadata.json`, and
+`table_calibrate_diagnostic.png` in the repo root when the strict one-shot
+check passes. The table calibration is separate from `calibrate.pkl`; it is used
+only by commands that explicitly pass `--table-calibrate table_calibrate.pkl`.
+
+Rerun table calibration after moving the camera, moving the table, changing the
+camera mount, or changing the tabletop surface used as `Z=0`.
+
 ## 3. Record
 
 Default RealSense RGB-D path:
