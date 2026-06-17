@@ -14,7 +14,12 @@ python demo_v3_3/realtime_single_camera_ffs_masked_pcd.py --dry-run
 Demo 3.3 uses repo-root `table_calibrate.pkl` by default. If that file or its
 `table_calibrate_metadata.json` sidecar is missing or invalid, the wrapper fails
 before live or fake-live execution. Pass `--table-calibrate <path>` only when
-using an alternate single-camera table-world calibration.
+using an alternate single-camera table-world calibration. With table calibration
+enabled, runtime PCD and lifted TAPNext++ marker output are in `table_world_z0`;
+the tabletop is reported as `table_z_m = 0.0`. The current table-world
+calibration treats points above the tabletop as negative Z
+(`table_z_above_direction = negative`), so table-Z filtering uses signed
+clearance from the table instead of assuming positive Z is up.
 
 Fake-live replay:
 
@@ -31,3 +36,18 @@ Fake-live defaults to
 recorded frame is used as runtime `seq=0`; later frames stream at 5 FPS by
 default, or at metadata FPS when `--replay-fps 0` is passed. Fake-live runs in
 demo mode.
+
+World-Z diagnostics are observe-only by default. The runtime reports
+object/controller Z quantiles plus hand_a/hand_b stats when those masks are
+available, with candidate counts for table bands at 5, 10, 20, and 30 mm.
+Runtime deletion is opt-in:
+
+```bash
+--enable-table-z-filter --table-z-filter-threshold-m 0.02 --table-z-filter-classes both
+```
+
+Headless captures include `camera_to_world_c2w` in metadata and per-frame
+`world_z_stats.jsonl`. Use
+`scripts/harness/diagnostics/demo/render_demo32_headless_capture.py
+--table-z-overlay-sweep` on the capture directory to render before/after/removed
+RGB overlays for the default threshold sweep.

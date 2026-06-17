@@ -14,7 +14,12 @@ python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 Demo 3.2 uses repo-root `table_calibrate.pkl` by default. If that file or its
 `table_calibrate_metadata.json` sidecar is missing or invalid, the wrapper fails
 before live or fake-live execution. Pass `--table-calibrate <path>` only when
-using an alternate single-camera table-world calibration.
+using an alternate single-camera table-world calibration. With table calibration
+enabled, runtime PCD and lifted TAPNext++ marker output are in `table_world_z0`;
+the tabletop is reported as `table_z_m = 0.0`. The current table-world
+calibration treats points above the tabletop as negative Z
+(`table_z_above_direction = negative`), so table-Z filtering uses signed
+clearance from the table instead of assuming positive Z is up.
 
 Fake-live replay defaults to live tracking visualization: filtered RGB PCD plus
 PhysTwin-style rainbow query points. The live PCD and query markers are rendered
@@ -81,11 +86,29 @@ execution is serialized inside the runtime and cached by frame sequence so
 point-cloud rendering and TAPNext++ marker lift can share depth without
 concurrent TensorRT context use.
 
+World-Z diagnostics are observe-only by default. After the current PT or
+enhanced-PT PCD output is transformed into table world, the runtime records
+object/controller Z quantiles plus hand_a/hand_b stats when those masks are
+available, with table-band candidate counts at 5, 10, 20, and 30 mm. Runtime
+deletion is opt-in:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --demo-visual-mode tracking \
+  --mode demo \
+  --enable-table-z-filter \
+  --table-z-filter-threshold-m 0.02 \
+  --table-z-filter-classes both
+```
+
 Headless capture keeps the fake-live realtime pipeline running but does not
 open Open3D. It saves the sync filtered PCD selected by the visual mode
 (`pt-filter` for `pcd`, `enhanced-pt` for `tracking`), RGB frames,
 color-aligned FFS depth, EdgeTAM `hand_a`/`hand_b`/`object` masks plus legacy
-controller/object masks, and TAPNext++ query trajectory artifacts:
+controller/object masks, TAPNext++ query trajectory artifacts, capture metadata
+with `camera_to_world_c2w`, and per-frame `world_z_stats.jsonl` diagnostics:
 
 Demo 3.2 defaults both object and controller PCD mask erosion to 0px so small
 target regions are not eaten before point-cloud generation. Passing
@@ -142,4 +165,21 @@ conda run -n demo_2_max --no-capture-output \
   --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video_pcd_only.mp4 \
   --fps 30 \
   --demo-visual-mode pcd
+```
+
+For a table-Z filter experiment without rerunning the demo, render RGB
+before/after/removed overlays from one headless capture. Removed projected PCD
+points are red; the helper also writes
+`table_z_filter_overlay_summary.json` with removed counts and ratios per frame
+and threshold. The helper reads `table_z_above_direction` from capture metadata
+and defaults to `negative` for older captures; pass `--table-z-above-direction`
+only when inspecting a capture made with a different table-world convention:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python scripts/harness/diagnostics/demo/render_demo32_headless_capture.py \
+  --capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke \
+  --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video_unused.mp4 \
+  --table-z-overlay-sweep \
+  --table-z-overlay-output-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/table_z_overlay
 ```

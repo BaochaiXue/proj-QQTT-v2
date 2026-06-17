@@ -61,7 +61,16 @@ aligned-case data product.
   same-sequence pairs, and bounded backlog overflow is a fatal pipeline error.
   Local FFS depth is serialized and cached by sequence inside the runtime so PCD
   and tracker threads share color-aligned depth without entering one TensorRT
-  runner concurrently.
+  runner concurrently. Demo 3.1/3.2/3.3 table-calibrated output uses
+  `table_world_z0`; after PT/enhanced-PT output is transformed to table world,
+  the runtime records per-class world-Z quantiles and table-band candidate
+  counts, including hand_a/hand_b when those masks are available. The tabletop
+  is `table_z_m = 0.0`; the current single-camera table calibration marks the
+  workspace above the table as negative Z (`table_z_above_direction =
+  negative`). The table-Z removal path is opt-in with
+  `--enable-table-z-filter`, and headless captures store `camera_to_world_c2w`,
+  `table_z_above_direction`, plus `world_z_stats.jsonl` for offline RGB overlay
+  sweeps.
 - `services/ffs_remote/`: single-camera remote FFS depth request/response
   protocol and server/client utilities.
 
@@ -100,10 +109,12 @@ inferred connected-device order.
 `table_calibrate.pkl` is a separate single-camera table-world artifact. It uses
 the same list-of-4x4 `camera_to_world_c2w` physical shape as `calibrate.pkl`,
 but its metadata declares `world_frame_kind = table_world_z0` and compatibility
-contract `qqtt_table_calibrate_c2w_v1`. Demo 3.2 and Demo 3.3 default to the
-repo-root `table_calibrate.pkl` and fail fast if it is missing or invalid;
-operators may override it with `--table-calibrate`. Recording, alignment, and
-other commands still receive table calibration explicitly via
+contract `qqtt_table_calibrate_c2w_v1`. Demo 3.1, Demo 3.2, and Demo 3.3
+default to the repo-root `table_calibrate.pkl` and fail fast if it is missing or
+invalid; operators may override it with `--table-calibrate`. Demo table-world
+filtering uses signed clearance from the table plane because the calibrated
+"above table" direction can be either positive or negative Z. Recording,
+alignment, and other commands still receive table calibration explicitly via
 `--table-calibrate`.
 
 Swapping USB ports is safe because capture uses device serial numbers rather

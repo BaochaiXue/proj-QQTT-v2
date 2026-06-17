@@ -174,8 +174,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             delegate = runtime.build_live_delegate_argv(args)
             self.assertEqual(_option_value(delegate, "--table-calibrate"), str(table_path))
 
-    def test_demo32_and_demo33_default_to_repo_table_calibration(self) -> None:
-        for version in (runtime.DEMO_VERSION_3_2, runtime.DEMO_VERSION_3_3):
+    def test_demo31_demo32_and_demo33_default_to_repo_table_calibration(self) -> None:
+        for version in (runtime.DEMO_VERSION_3_1, runtime.DEMO_VERSION_3_2, runtime.DEMO_VERSION_3_3):
             with self.subTest(version=version):
                 args = self._parse(version, ["--dry-run"])
 
@@ -189,13 +189,41 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertEqual(contract["table_z_m"], 0.0)
                 self.assertEqual(_option_value(delegate, "--table-calibrate"), str(self.default_table_path))
 
-    def test_demo32_rejects_missing_default_table_calibration_path(self) -> None:
+    def test_demo31_demo32_and_demo33_reject_missing_default_table_calibration_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             with mock.patch.object(runtime, "REPO_ROOT", Path(tmp_dir)):
-                args = self._parse(runtime.DEMO_VERSION_3_2, ["--dry-run"])
+                args = self._parse(runtime.DEMO_VERSION_3_1, ["--dry-run"])
 
                 with self.assertRaisesRegex(ValueError, "Missing table calibration file"):
                     runtime.validate_args(args)
+
+    def test_table_z_filter_flags_are_opt_in_and_forwarded(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--dry-run",
+                "--input-source",
+                "fake-live",
+                "--enable-table-z-filter",
+                "--table-z-filter-threshold-m",
+                "0.02",
+                "--table-z-filter-classes",
+                "object",
+            ],
+        )
+
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertTrue(contract["table_z_filter_enabled"])
+        self.assertEqual(contract["table_z_filter_threshold_m"], 0.02)
+        self.assertEqual(contract["table_z_above_direction"], "negative")
+        self.assertEqual(contract["table_z_filter_classes"], "object")
+        self.assertIn("--enable-table-z-filter", delegate)
+        self.assertEqual(_option_value(delegate, "--table-z-filter-threshold-m"), "0.02")
+        self.assertEqual(_option_value(delegate, "--table-z-above-direction"), "negative")
+        self.assertEqual(_option_value(delegate, "--table-z-filter-classes"), "object")
 
     def test_demo32_rejects_missing_table_calibration_path(self) -> None:
         args = self._parse(

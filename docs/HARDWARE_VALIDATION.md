@@ -69,6 +69,8 @@ python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 - `table_calibrate.pkl` exists
 - `table_calibrate_metadata.json` exists and reports `world_frame_kind = table_world_z0`
 - `table_calibrate_diagnostic.png` shows the board corners and pose axes on the board
+- Demo 3.1/3.2/3.3 dry-runs report `pcd_coordinate_frame = table_world_z0`
+  and `table_z_above_direction = negative` for the current repo calibration
 - if the strict corner count or reprojection check fails, adjust lighting/board visibility and rerun
 
 ## Recording Checklist

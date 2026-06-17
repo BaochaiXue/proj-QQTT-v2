@@ -163,7 +163,7 @@ def _supports_filtered_visual_modes(version: str) -> bool:
 
 
 def _requires_table_world_default(version: str) -> bool:
-    return normalize_demo_version(version) in {DEMO_VERSION_3_2, DEMO_VERSION_3_3}
+    return normalize_demo_version(version) in {DEMO_VERSION_3_1, DEMO_VERSION_3_2, DEMO_VERSION_3_3}
 
 
 def _filtered_visual_mode_requested(args: argparse.Namespace, version: str | None = None) -> bool:
@@ -305,6 +305,29 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         type=Path,
         default=None,
         help="Optional table Z=0 calibration file to validate and expose in demo contract.",
+    )
+    parser.add_argument(
+        "--enable-table-z-filter",
+        action="store_true",
+        help="Opt-in table-world Z filter forwarded to the masked PCD delegate.",
+    )
+    parser.add_argument(
+        "--table-z-filter-threshold-m",
+        type=float,
+        default=masked_pcd.DEFAULT_TABLE_Z_FILTER_THRESHOLD_M,
+        help="World-Z clearance threshold above table_z for --enable-table-z-filter.",
+    )
+    parser.add_argument(
+        "--table-z-above-direction",
+        choices=masked_pcd.TABLE_Z_ABOVE_DIRECTIONS,
+        default=masked_pcd.DEFAULT_TABLE_Z_ABOVE_DIRECTION,
+        help="Which table-world Z direction points away from the tabletop into the workspace.",
+    )
+    parser.add_argument(
+        "--table-z-filter-classes",
+        choices=masked_pcd.TABLE_Z_FILTER_CLASSES,
+        default=masked_pcd.TABLE_Z_FILTER_CLASS_BOTH,
+        help="Semantic classes affected by --enable-table-z-filter.",
     )
     if depth_source == DEPTH_SOURCE_FFS:
         parser.add_argument("--ffs-repo", type=Path, default=single_pcd.DEFAULT_FFS_REPO)
@@ -641,6 +664,12 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--depth-min-m must be >= 0")
     if float(args.depth_max_m) > 0 and float(args.depth_max_m) <= float(args.depth_min_m):
         raise ValueError("--depth-max-m must be <=0 or greater than --depth-min-m")
+    if float(args.table_z_filter_threshold_m) < 0:
+        raise ValueError("--table-z-filter-threshold-m must be >= 0")
+    if str(args.table_z_above_direction) not in masked_pcd.TABLE_Z_ABOVE_DIRECTIONS:
+        raise ValueError(f"--table-z-above-direction must be one of {masked_pcd.TABLE_Z_ABOVE_DIRECTIONS}")
+    if str(args.table_z_filter_classes) not in masked_pcd.TABLE_Z_FILTER_CLASSES:
+        raise ValueError(f"--table-z-filter-classes must be one of {masked_pcd.TABLE_Z_FILTER_CLASSES}")
     if int(args.pcd_max_points) < 0:
         raise ValueError("--pcd-max-points must be >= 0")
     if int(args.pcd_stride) < 1:
@@ -838,6 +867,11 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "pcd_coordinate_frame": TABLE_WORLD_FRAME_KIND if args.table_calibrate is not None else single_pcd.COORDINATE_FRAME,
         "camera_coordinate_frame": single_pcd.COORDINATE_FRAME,
         "table_z_m": 0.0 if args.table_calibrate is not None else None,
+        "world_z_diagnostic_thresholds_m": [float(value) for value in masked_pcd.DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M],
+        "table_z_filter_enabled": bool(args.enable_table_z_filter),
+        "table_z_filter_threshold_m": float(args.table_z_filter_threshold_m),
+        "table_z_above_direction": str(args.table_z_above_direction),
+        "table_z_filter_classes": str(args.table_z_filter_classes),
         "depth_source": depth_source,
         "depth_pipeline": depth_pipeline,
         "uses_ffs": uses_ffs,
@@ -1117,6 +1151,12 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(float(args.enhanced_component_voxel_size_m)),
         "--enhanced-keep-near-main-gap-m",
         str(float(args.enhanced_keep_near_main_gap_m)),
+        "--table-z-filter-threshold-m",
+        str(float(args.table_z_filter_threshold_m)),
+        "--table-z-above-direction",
+        str(args.table_z_above_direction),
+        "--table-z-filter-classes",
+        str(args.table_z_filter_classes),
         "--object-prompt",
         str(args.object_prompt),
         "--controller-prompt",
@@ -1144,6 +1184,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.append("--no-tapnextpp-fast-postprocess")
     if bool(args.enable_pcd_filter):
         argv.append("--enable-pcd-filter")
+    if bool(args.enable_table_z_filter):
+        argv.append("--enable-table-z-filter")
     pcd_filter_preset = _effective_pcd_filter_preset(args)
     if pcd_filter_preset is not None:
         argv.extend(["--pcd-filter-preset", str(pcd_filter_preset)])

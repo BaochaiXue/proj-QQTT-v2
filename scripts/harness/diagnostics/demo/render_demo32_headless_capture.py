@@ -27,6 +27,16 @@ from qqtt.demo.query_rainbow import query_rainbow_colors_for_indices
 
 
 DEMO_VISUAL_MODES = ("pcd", "tracking")
+TABLE_WORLD_FRAME_KIND = "table_world_z0"
+CAMERA_COLOR_FRAME = "camera_color_frame"
+DEFAULT_TABLE_Z_OVERLAY_THRESHOLDS_M = (0.005, 0.010, 0.020, 0.030)
+TABLE_Z_ABOVE_DIRECTION_POSITIVE = "positive"
+TABLE_Z_ABOVE_DIRECTION_NEGATIVE = "negative"
+TABLE_Z_ABOVE_DIRECTIONS = (
+    TABLE_Z_ABOVE_DIRECTION_POSITIVE,
+    TABLE_Z_ABOVE_DIRECTION_NEGATIVE,
+)
+DEFAULT_TABLE_Z_ABOVE_DIRECTION = TABLE_Z_ABOVE_DIRECTION_NEGATIVE
 TRACKING_BACKGROUND_MASK_TARGET_UNION = "target-union"
 TRACKING_BACKGROUND_MASK_RGB = "rgb"
 TRACKING_BACKGROUND_MASK_MODES = (
@@ -37,6 +47,21 @@ TRACKING_BACKGROUND_MASK_MODES = (
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _table_z_clearance_m(
+    points_xyz: np.ndarray,
+    *,
+    table_z_m: float,
+    above_direction: str,
+) -> np.ndarray:
+    points = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
+    direction = str(above_direction)
+    if direction == TABLE_Z_ABOVE_DIRECTION_POSITIVE:
+        return np.ascontiguousarray(points[:, 2] - np.float32(table_z_m), dtype=np.float32)
+    if direction == TABLE_Z_ABOVE_DIRECTION_NEGATIVE:
+        return np.ascontiguousarray(np.float32(table_z_m) - points[:, 2], dtype=np.float32)
+    raise RuntimeError(f"table_z_above_direction must be one of {TABLE_Z_ABOVE_DIRECTIONS}")
 
 
 def _read_frames(path: Path) -> list[dict[str, Any]]:
@@ -140,10 +165,35 @@ def _apply_tracking_background_mask(image_bgr: np.ndarray, target_union_mask: np
     return int(np.count_nonzero(mask))
 
 
-def _project_points(points_xyz: np.ndarray, intrinsics: dict[str, Any], *, width: int, height: int) -> tuple[np.ndarray, np.ndarray]:
+def _transform_world_points_to_camera(points_xyz: np.ndarray, camera_to_world_c2w: Any) -> np.ndarray:
+    points = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
+    c2w = np.asarray(camera_to_world_c2w, dtype=np.float32)
+    if c2w.shape != (4, 4):
+        raise RuntimeError(f"camera_to_world_c2w must be 4x4, got {c2w.shape}")
+    if len(points) == 0:
+        return np.ascontiguousarray(points, dtype=np.float32)
+    w2c = np.linalg.inv(c2w.astype(np.float64)).astype(np.float32)
+    homogeneous = np.concatenate([points, np.ones((len(points), 1), dtype=np.float32)], axis=1)
+    camera_points = (w2c @ homogeneous.T).T[:, :3]
+    return np.ascontiguousarray(camera_points, dtype=np.float32)
+
+
+def _project_points(
+    points_xyz: np.ndarray,
+    intrinsics: dict[str, Any],
+    *,
+    width: int,
+    height: int,
+    coordinate_frame: str = CAMERA_COLOR_FRAME,
+    camera_to_world_c2w: Any | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     points = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
     if points.size == 0:
         return np.empty((0, 2), dtype=np.int32), np.empty((0,), dtype=bool)
+    if str(coordinate_frame) == TABLE_WORLD_FRAME_KIND:
+        if camera_to_world_c2w is None:
+            raise RuntimeError("table_world_z0 projection requires camera_to_world_c2w in capture metadata")
+        points = _transform_world_points_to_camera(points, camera_to_world_c2w)
     z = points[:, 2]
     valid = np.isfinite(points).all(axis=1) & (z > np.float32(1e-6))
     fx = np.float32(intrinsics["fx"])
@@ -164,6 +214,8 @@ def _draw_projected_points(
     *,
     point_size: int,
     max_points: int,
+    coordinate_frame: str = CAMERA_COLOR_FRAME,
+    camera_to_world_c2w: Any | None = None,
 ) -> int:
     height, width = image_bgr.shape[:2]
     points = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
@@ -177,7 +229,14 @@ def _draw_projected_points(
     order = np.argsort(points[:, 2])[::-1]
     points = points[order]
     colors = colors[order]
-    uv, valid = _project_points(points, intrinsics, width=width, height=height)
+    uv, valid = _project_points(
+        points,
+        intrinsics,
+        width=width,
+        height=height,
+        coordinate_frame=str(coordinate_frame),
+        camera_to_world_c2w=camera_to_world_c2w,
+    )
     uv = uv[valid]
     colors_bgr = colors[valid][:, ::-1]
     if len(uv) == 0:
@@ -297,6 +356,171 @@ def _draw_query_points(
     return int(object_count + controller_count), int(object_count), int(controller_count), hand_a_count, hand_b_count
 
 
+def _stack_pcd_points(pcd: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    object_xyz = np.asarray(pcd["object_xyz_m"], dtype=np.float32).reshape(-1, 3)
+    object_rgb = np.asarray(pcd["object_rgb_u8"], dtype=np.uint8).reshape(-1, 3)
+    controller_xyz = np.asarray(pcd["controller_xyz_m"], dtype=np.float32).reshape(-1, 3)
+    controller_rgb = np.asarray(pcd["controller_rgb_u8"], dtype=np.uint8).reshape(-1, 3)
+    object_labels = np.full((len(object_xyz),), "object", dtype=object)
+    controller_labels = np.full((len(controller_xyz),), "controller", dtype=object)
+    if len(object_xyz) == 0 and len(controller_xyz) == 0:
+        return (
+            np.empty((0, 3), dtype=np.float32),
+            np.empty((0, 3), dtype=np.uint8),
+            np.empty((0,), dtype=object),
+        )
+    return (
+        np.concatenate([object_xyz, controller_xyz], axis=0),
+        np.concatenate([object_rgb, controller_rgb], axis=0),
+        np.concatenate([object_labels, controller_labels], axis=0),
+    )
+
+
+def render_table_z_filter_overlay_sweep(
+    *,
+    capture_dir: Path,
+    output_dir: Path,
+    fps: float,
+    thresholds_m: tuple[float, ...] = DEFAULT_TABLE_Z_OVERLAY_THRESHOLDS_M,
+    point_size: int = 2,
+    max_render_points: int = 0,
+    table_z_above_direction: str | None = None,
+) -> dict[str, Any]:
+    capture_dir = Path(capture_dir).resolve()
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metadata = _read_json(capture_dir / "metadata.json")
+    frames = _read_frames(capture_dir / "frames.jsonl")
+    if not frames:
+        raise RuntimeError(f"no saved frames found in {capture_dir / 'frames.jsonl'}")
+    width = int(metadata["width"])
+    height = int(metadata["height"])
+    intrinsics = dict(metadata["intrinsics"])
+    pcd_coordinate_frame = str(
+        metadata.get("pcd_coordinate_frame")
+        or metadata.get("coordinate_frame")
+        or CAMERA_COLOR_FRAME
+    )
+    if pcd_coordinate_frame != TABLE_WORLD_FRAME_KIND:
+        raise RuntimeError("table-Z overlay sweep requires table_world_z0 PCD capture")
+    camera_to_world_c2w = metadata.get("camera_to_world_c2w")
+    if camera_to_world_c2w is None:
+        raise RuntimeError("table-Z overlay sweep requires camera_to_world_c2w in capture metadata")
+    table_z_m = float(metadata.get("table_z_m", 0.0) or 0.0)
+    direction = str(
+        table_z_above_direction
+        or metadata.get("table_z_above_direction")
+        or DEFAULT_TABLE_Z_ABOVE_DIRECTION
+    )
+    if direction not in TABLE_Z_ABOVE_DIRECTIONS:
+        raise RuntimeError(f"table_z_above_direction must be one of {TABLE_Z_ABOVE_DIRECTIONS}")
+
+    threshold_summaries: list[dict[str, Any]] = []
+    for threshold_m in tuple(float(value) for value in thresholds_m):
+        suffix = f"{threshold_m:.3f}".replace(".", "p")
+        output = output_dir / f"table_z_filter_threshold_{suffix}m.mp4"
+        writer = cv2.VideoWriter(
+            str(output),
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            float(fps),
+            (width * 3, height),
+        )
+        if not writer.isOpened():
+            raise RuntimeError(f"failed to open video writer: {output}")
+        frame_rows: list[dict[str, int]] = []
+        try:
+            for frame in frames:
+                rgb = _read_rgb_frame_bgr(capture_dir=capture_dir, frame=frame, width=width, height=height)
+                before = rgb.copy()
+                after = rgb.copy()
+                removed_panel = rgb.copy()
+                pcd_path = _resolve_capture_path(capture_dir, str(frame["pcd_path"]))
+                with np.load(pcd_path, allow_pickle=False) as pcd:
+                    points, colors, labels = _stack_pcd_points(pcd)
+                finite = np.isfinite(points).all(axis=1) if len(points) else np.zeros((0,), dtype=bool)
+                clearance = _table_z_clearance_m(
+                    points,
+                    table_z_m=table_z_m,
+                    above_direction=direction,
+                )
+                removed_mask = finite & (clearance <= np.float32(threshold_m))
+                kept_mask = ~removed_mask
+                removed_colors = np.tile(np.array([[255, 0, 0]], dtype=np.uint8), (int(np.count_nonzero(removed_mask)), 1))
+                _draw_projected_points(
+                    before,
+                    points,
+                    colors,
+                    intrinsics,
+                    point_size=int(point_size),
+                    max_points=int(max_render_points),
+                    coordinate_frame=pcd_coordinate_frame,
+                    camera_to_world_c2w=camera_to_world_c2w,
+                )
+                _draw_projected_points(
+                    after,
+                    points[kept_mask],
+                    colors[kept_mask],
+                    intrinsics,
+                    point_size=int(point_size),
+                    max_points=int(max_render_points),
+                    coordinate_frame=pcd_coordinate_frame,
+                    camera_to_world_c2w=camera_to_world_c2w,
+                )
+                _draw_projected_points(
+                    removed_panel,
+                    points[removed_mask],
+                    removed_colors,
+                    intrinsics,
+                    point_size=max(2, int(point_size)),
+                    max_points=int(max_render_points),
+                    coordinate_frame=pcd_coordinate_frame,
+                    camera_to_world_c2w=camera_to_world_c2w,
+                )
+                writer.write(np.concatenate([before, after, removed_panel], axis=1))
+                object_removed = int(np.count_nonzero(removed_mask & (labels == "object")))
+                controller_removed = int(np.count_nonzero(removed_mask & (labels == "controller")))
+                frame_rows.append(
+                    {
+                        "seq": int(frame["seq"]),
+                        "input_points": int(len(points)),
+                        "kept_points": int(np.count_nonzero(kept_mask)),
+                        "removed_points": int(np.count_nonzero(removed_mask)),
+                        "object_removed_points": object_removed,
+                        "controller_removed_points": controller_removed,
+                    }
+                )
+        finally:
+            writer.release()
+        threshold_summaries.append(
+            {
+                "threshold_m": float(threshold_m),
+                "output": str(output.resolve()),
+                "frame_count": int(len(frame_rows)),
+                "input_total": int(sum(row["input_points"] for row in frame_rows)),
+                "kept_total": int(sum(row["kept_points"] for row in frame_rows)),
+                "removed_total": int(sum(row["removed_points"] for row in frame_rows)),
+                "frames": frame_rows,
+            }
+        )
+
+    summary = {
+        "capture_dir": str(capture_dir),
+        "output_dir": str(output_dir.resolve()),
+        "fps": float(fps),
+        "frame_count": int(len(frames)),
+        "image_size": [int(width), int(height)],
+        "pcd_coordinate_frame": pcd_coordinate_frame,
+        "table_z_m": table_z_m,
+        "table_z_above_direction": direction,
+        "thresholds_m": [float(value) for value in thresholds_m],
+        "thresholds": threshold_summaries,
+        "overlay_columns": ["before", "after", "removed_red"],
+    }
+    summary_path = output_dir / "table_z_filter_overlay_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
 def render_capture_to_video(
     *,
     capture_dir: Path,
@@ -316,6 +540,12 @@ def render_capture_to_video(
     width = int(metadata["width"])
     height = int(metadata["height"])
     intrinsics = dict(metadata["intrinsics"])
+    pcd_coordinate_frame = str(
+        metadata.get("pcd_coordinate_frame")
+        or metadata.get("coordinate_frame")
+        or CAMERA_COLOR_FRAME
+    )
+    camera_to_world_c2w = metadata.get("camera_to_world_c2w")
     if str(demo_visual_mode) not in DEMO_VISUAL_MODES:
         raise ValueError(f"demo_visual_mode must be one of {DEMO_VISUAL_MODES}")
     if str(tracking_background_mask) not in TRACKING_BACKGROUND_MASK_MODES:
@@ -380,6 +610,8 @@ def render_capture_to_video(
                     intrinsics,
                     point_size=int(point_size),
                     max_points=int(max_render_points),
+                    coordinate_frame=pcd_coordinate_frame,
+                    camera_to_world_c2w=camera_to_world_c2w,
                 )
                 object_count = _draw_projected_points(
                     image,
@@ -388,6 +620,8 @@ def render_capture_to_video(
                     intrinsics,
                     point_size=int(point_size),
                     max_points=int(max_render_points),
+                    coordinate_frame=pcd_coordinate_frame,
+                    camera_to_world_c2w=camera_to_world_c2w,
                 )
             writer.write(image)
             rendered_counts.append(
@@ -420,6 +654,7 @@ def render_capture_to_video(
         "frame_count": int(len(frames)),
         "image_size": [int(width), int(height)],
         "saved_pcd_source": metadata.get("saved_pcd_source"),
+        "pcd_coordinate_frame": pcd_coordinate_frame,
         "demo_visual_mode": str(demo_visual_mode),
         "tracking_background_mask": str(tracking_background_mask),
         "tracking_background_mask_source": tracking_background_mask_source,
@@ -454,6 +689,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--query-point-radius", type=int, default=3)
     parser.add_argument("--demo-visual-mode", choices=DEMO_VISUAL_MODES, default="tracking")
     parser.add_argument(
+        "--table-z-overlay-sweep",
+        action="store_true",
+        help="Render table-Z before/after/removed RGB overlay sweep instead of the normal demo video.",
+    )
+    parser.add_argument(
+        "--table-z-overlay-output-dir",
+        type=Path,
+        default=None,
+        help="Output directory for --table-z-overlay-sweep. Defaults to <output stem>_table_z_overlay.",
+    )
+    parser.add_argument(
+        "--table-z-threshold-m",
+        type=float,
+        action="append",
+        default=None,
+        help="Repeatable table-Z overlay threshold in meters. Defaults to 0.005,0.010,0.020,0.030.",
+    )
+    parser.add_argument(
+        "--table-z-above-direction",
+        choices=TABLE_Z_ABOVE_DIRECTIONS,
+        default=None,
+        help="Override table-world direction away from the tabletop. Defaults to capture metadata, then negative.",
+    )
+    parser.add_argument(
         "--tracking-background-mask",
         choices=TRACKING_BACKGROUND_MASK_MODES,
         default=TRACKING_BACKGROUND_MASK_TARGET_UNION,
@@ -464,6 +723,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if bool(args.table_z_overlay_sweep):
+        output_dir = args.table_z_overlay_output_dir
+        if output_dir is None:
+            output_dir = args.output.with_suffix("")
+            output_dir = output_dir.with_name(f"{output_dir.name}_table_z_overlay")
+        summary = render_table_z_filter_overlay_sweep(
+            capture_dir=args.capture_dir,
+            output_dir=output_dir,
+            fps=float(args.fps),
+            point_size=int(args.point_size),
+            max_render_points=int(args.max_render_points),
+            table_z_above_direction=args.table_z_above_direction,
+            thresholds_m=tuple(float(value) for value in (args.table_z_threshold_m or DEFAULT_TABLE_Z_OVERLAY_THRESHOLDS_M)),
+        )
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return 0
     summary = render_capture_to_video(
         capture_dir=args.capture_dir,
         output=args.output,

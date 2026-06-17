@@ -66,7 +66,15 @@ tracking query points are sampled from that preset's residual PCD pixels. When
 enhanced PCD component filtering is enabled,
 object filtering keeps one main component while controller filtering keeps two
 main components so two-hand controllers are not dropped as disconnected noise.
-Demo 3.x Open3D
+Demo 3.1, Demo 3.2, and Demo 3.3 use repo-root `table_calibrate.pkl` by default,
+so runtime PCD and lifted TAPNext++ markers are in `table_world_z0` with the
+tabletop at `table_z_m = 0.0`. The runtime reports world-Z quantiles and
+table-band candidate counts at 5, 10, 20, and 30 mm for object/controller PCD,
+plus hand_a/hand_b stats when those masks are available, after the current
+PT/enhanced-PT filter. The current table calibration uses negative Z as the
+direction above the tabletop (`table_z_above_direction = negative`), and the
+filter uses signed clearance from the table plane; deletion is off unless
+`--enable-table-z-filter` is passed. Demo 3.x Open3D
 tracks demo-mode `human hand` controllers as three EdgeTAM identities
 (`hand_a`, `object`, `hand_b`) while keeping the controller PCD/depth mask as
 `hand_a | hand_b`; frame-0 needs two separable hands for that mode. Demo 3.x
@@ -94,6 +102,19 @@ parallel, the viewer holds the last complete pair while waiting, and fake-live
 replay drains every offered sequence before shutdown. If any stage accumulates
 more than the bounded backlog, the demo treats that as a fatal pipeline error
 instead of silently dropping to latest-wins behavior.
+
+For a table-Z before/after overlay sweep from a Demo 3.2/3.3 headless capture,
+run. The helper reads `table_z_above_direction` from capture metadata and
+defaults to `negative` for older captures:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python scripts/harness/diagnostics/demo/render_demo32_headless_capture.py \
+  --capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke \
+  --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video_unused.mp4 \
+  --table-z-overlay-sweep \
+  --table-z-overlay-output-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/table_z_overlay
+```
 
 Live FFS preview:
 
@@ -139,9 +160,9 @@ conda run -n demo_2_max --no-capture-output python cameras_calibrate_table.py
 
 This writes `table_calibrate.pkl`, `table_calibrate_metadata.json`, and
 `table_calibrate_diagnostic.png` in the repo root when the strict one-shot
-check passes. The table calibration is separate from `calibrate.pkl`. Demo 3.2
-and Demo 3.3 use repo-root `table_calibrate.pkl` by default and fail fast when
-it is missing or invalid; pass `--table-calibrate <path>` only to use an
+check passes. The table calibration is separate from `calibrate.pkl`. Demo 3.1,
+Demo 3.2, and Demo 3.3 use repo-root `table_calibrate.pkl` by default and fail
+fast when it is missing or invalid; pass `--table-calibrate <path>` only to use an
 alternate table calibration. Recording and alignment commands still require an
 explicit `--table-calibrate` when table-world output is requested.
 

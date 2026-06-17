@@ -185,6 +185,23 @@ GEOMETRY_TRACKER_OBJECT = "tapnextpp_tracker_markers_object"
 GEOMETRY_TRACKER_CONTROLLER = "tapnextpp_tracker_markers_controller"
 COORDINATE_FRAME = "camera_color_frame"
 TABLE_Z_M = 0.0
+DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M = (0.005, 0.010, 0.020, 0.030)
+DEFAULT_TABLE_Z_FILTER_THRESHOLD_M = 0.020
+TABLE_Z_ABOVE_DIRECTION_POSITIVE = "positive"
+TABLE_Z_ABOVE_DIRECTION_NEGATIVE = "negative"
+TABLE_Z_ABOVE_DIRECTIONS = (
+    TABLE_Z_ABOVE_DIRECTION_POSITIVE,
+    TABLE_Z_ABOVE_DIRECTION_NEGATIVE,
+)
+DEFAULT_TABLE_Z_ABOVE_DIRECTION = TABLE_Z_ABOVE_DIRECTION_NEGATIVE
+TABLE_Z_FILTER_CLASS_OBJECT = "object"
+TABLE_Z_FILTER_CLASS_CONTROLLER = "controller"
+TABLE_Z_FILTER_CLASS_BOTH = "both"
+TABLE_Z_FILTER_CLASSES = (
+    TABLE_Z_FILTER_CLASS_OBJECT,
+    TABLE_Z_FILTER_CLASS_CONTROLLER,
+    TABLE_Z_FILTER_CLASS_BOTH,
+)
 TRACKER_DISPLAY_SCOPE_CONTROLLER = "controller"
 TRACKER_DISPLAY_SCOPE_OBJECT = "object"
 TRACKER_DISPLAY_SCOPE_UNION = "union"
@@ -733,6 +750,7 @@ class PcdBuildResult:
     pcd_mask_erode_pixels: int = 0
     object_pcd_mask_erode_pixels: int = 0
     controller_pcd_mask_erode_pixels: int = 0
+    world_z_diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -800,6 +818,7 @@ class HeadlessCaptureWriter:
         self.trajectory_dir = self.output_dir / "query_trajectory"
         self.mask_dir = self.output_dir / "masks"
         self.frames_path = self.output_dir / "frames.jsonl"
+        self.world_z_stats_path = self.output_dir / "world_z_stats.jsonl"
         self.metadata_path = self.output_dir / "metadata.json"
         self._lock = threading.Lock()
         self._saved_pcd_count = 0
@@ -810,6 +829,7 @@ class HeadlessCaptureWriter:
         self.trajectory_dir.mkdir(parents=True, exist_ok=True)
         self.mask_dir.mkdir(parents=True, exist_ok=True)
         self.frames_path.write_text("", encoding="utf-8")
+        self.world_z_stats_path.write_text("", encoding="utf-8")
         payload = dict(metadata)
         payload["headless_capture_enabled"] = True
         payload["saved_pcd_source"] = self.saved_pcd_source
@@ -837,6 +857,7 @@ class HeadlessCaptureWriter:
         object_pcd_mask_erode_pixels: int,
         controller_pcd_mask_erode_pixels: int,
         tracker_packet: TrackerMarkerPacket | None = None,
+        world_z_diagnostics: dict[str, Any] | None = None,
     ) -> None:
         filter_info = packet.filter_telemetry
         if not (filter_info.enabled and filter_info.mode == "sync" and filter_info.render_using_filtered):
@@ -893,6 +914,7 @@ class HeadlessCaptureWriter:
             "rgb_path": self._relative(rgb_path),
             "query_trajectory_path": self._relative(query_path),
             "mask_path": self._relative(mask_path),
+            "world_z_stats_path": self._relative(self.world_z_stats_path),
             "controller_point_count": int(packet.controller_point_count),
             "object_point_count": int(packet.object_point_count),
             "controller_mask_pixels": int(np.count_nonzero(mask_packet.controller_mask)),
@@ -916,6 +938,11 @@ class HeadlessCaptureWriter:
         with self._lock:
             with self.frames_path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
+            if world_z_diagnostics is not None:
+                z_payload = dict(world_z_diagnostics)
+                z_payload.setdefault("seq", int(packet.seq))
+                with self.world_z_stats_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(z_payload, sort_keys=True) + "\n")
             self._saved_pcd_count += 1
 
     def write_tracker(self, packet: TrackerMarkerPacket) -> None:
@@ -1674,6 +1701,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--filter-nb-points", type=int, default=DEFAULT_FILTER_NB_POINTS)
     parser.add_argument("--enhanced-component-voxel-size-m", type=float, default=DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M)
     parser.add_argument("--enhanced-keep-near-main-gap-m", type=float, default=DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M)
+    parser.add_argument(
+        "--enable-table-z-filter",
+        action="store_true",
+        help="Opt-in table-world Z filter. Removes target PCD points whose signed table clearance is <= threshold after PT filtering.",
+    )
+    parser.add_argument(
+        "--table-z-filter-threshold-m",
+        type=float,
+        default=DEFAULT_TABLE_Z_FILTER_THRESHOLD_M,
+        help="World-Z clearance threshold above table_z for --enable-table-z-filter.",
+    )
+    parser.add_argument(
+        "--table-z-above-direction",
+        choices=TABLE_Z_ABOVE_DIRECTIONS,
+        default=DEFAULT_TABLE_Z_ABOVE_DIRECTION,
+        help="Which table-world Z direction points away from the tabletop into the workspace.",
+    )
+    parser.add_argument(
+        "--table-z-filter-classes",
+        choices=TABLE_Z_FILTER_CLASSES,
+        default=TABLE_Z_FILTER_CLASS_BOTH,
+        help="Semantic classes affected by --enable-table-z-filter.",
+    )
     parser.add_argument("--point-size", type=float, default=2.0, help="Open3D point size.")
     parser.add_argument("--latency-target-ms", type=float, default=80.0, help="HUD latency target.")
     parser.add_argument("--duration-s", type=float, default=0.0, help="Optional auto-stop duration. Use 0 to run until closed.")
@@ -1812,6 +1862,12 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--render-max-points-per-layer must be >= 0")
     if args.point_size <= 0:
         raise ValueError("--point-size must be positive")
+    if float(args.table_z_filter_threshold_m) < 0:
+        raise ValueError("--table-z-filter-threshold-m must be >= 0")
+    if str(args.table_z_above_direction) not in TABLE_Z_ABOVE_DIRECTIONS:
+        raise ValueError(f"--table-z-above-direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
+    if str(args.table_z_filter_classes) not in TABLE_Z_FILTER_CLASSES:
+        raise ValueError(f"--table-z-filter-classes must be one of {', '.join(TABLE_Z_FILTER_CLASSES)}")
     if args.pcd_filter_mode not in PCD_FILTER_MODES:
         raise ValueError(f"--pcd-filter-mode must be one of {', '.join(PCD_FILTER_MODES)}")
     preset_filter = pcd_filter_preset_to_filter(getattr(args, "pcd_filter_preset", None))
@@ -2731,6 +2787,184 @@ def _transform_points_c2w(points_xyz_m: np.ndarray, c2w: np.ndarray | None) -> n
     return np.ascontiguousarray(world, dtype=np.float32)
 
 
+def _z_quantiles(points_xyz_m: np.ndarray) -> dict[str, float | None]:
+    points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
+    if points.size == 0:
+        return {
+            "min": None,
+            "p01": None,
+            "p05": None,
+            "p10": None,
+            "p50": None,
+            "p90": None,
+            "p95": None,
+            "p99": None,
+            "max": None,
+        }
+    z = points[:, 2]
+    finite = z[np.isfinite(z)]
+    if finite.size == 0:
+        return {
+            "min": None,
+            "p01": None,
+            "p05": None,
+            "p10": None,
+            "p50": None,
+            "p90": None,
+            "p95": None,
+            "p99": None,
+            "max": None,
+        }
+    quantiles = np.quantile(
+        finite.astype(np.float64),
+        [0.0, 0.01, 0.05, 0.10, 0.50, 0.90, 0.95, 0.99, 1.0],
+    )
+    keys = ("min", "p01", "p05", "p10", "p50", "p90", "p95", "p99", "max")
+    return {key: float(value) for key, value in zip(keys, quantiles)}
+
+
+def table_z_clearance_m(
+    points_xyz_m: np.ndarray,
+    *,
+    table_z_m: float = TABLE_Z_M,
+    above_direction: str = DEFAULT_TABLE_Z_ABOVE_DIRECTION,
+) -> np.ndarray:
+    points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
+    direction = str(above_direction)
+    if direction == TABLE_Z_ABOVE_DIRECTION_POSITIVE:
+        return np.ascontiguousarray(points[:, 2] - np.float32(table_z_m), dtype=np.float32)
+    if direction == TABLE_Z_ABOVE_DIRECTION_NEGATIVE:
+        return np.ascontiguousarray(np.float32(table_z_m) - points[:, 2], dtype=np.float32)
+    raise ValueError(f"table_z_above_direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
+
+
+def _world_z_class_stats(
+    points_xyz_m: np.ndarray,
+    *,
+    table_z_m: float,
+    above_direction: str,
+    thresholds_m: tuple[float, ...],
+) -> dict[str, Any]:
+    points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
+    finite = np.isfinite(points).all(axis=1) if len(points) else np.zeros((0,), dtype=bool)
+    clearance = table_z_clearance_m(points, table_z_m=table_z_m, above_direction=above_direction)
+    threshold_rows: list[dict[str, float | int]] = []
+    for threshold_m in thresholds_m:
+        candidate = finite & (clearance <= np.float32(float(threshold_m)))
+        count = int(np.count_nonzero(candidate))
+        threshold_rows.append(
+            {
+                "threshold_m": float(threshold_m),
+                "candidate_count": count,
+                "candidate_ratio": float(count / max(1, len(points))),
+            }
+        )
+    return {
+        "count": int(len(points)),
+        "finite_count": int(np.count_nonzero(finite)),
+        "z_m": _z_quantiles(points),
+        "table_thresholds": threshold_rows,
+    }
+
+
+def build_world_z_diagnostics(
+    *,
+    object_xyz_m: np.ndarray,
+    controller_xyz_m: np.ndarray,
+    hand_a_xyz_m: np.ndarray | None = None,
+    hand_b_xyz_m: np.ndarray | None = None,
+    table_z_m: float = TABLE_Z_M,
+    above_direction: str = DEFAULT_TABLE_Z_ABOVE_DIRECTION,
+    thresholds_m: tuple[float, ...] = DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M,
+) -> dict[str, Any]:
+    thresholds = tuple(float(value) for value in thresholds_m)
+    direction = str(above_direction)
+    if direction not in TABLE_Z_ABOVE_DIRECTIONS:
+        raise ValueError(f"table_z_above_direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
+    classes: dict[str, Any] = {
+        "object": _world_z_class_stats(
+            object_xyz_m,
+            table_z_m=float(table_z_m),
+            above_direction=direction,
+            thresholds_m=thresholds,
+        ),
+        "controller": _world_z_class_stats(
+            controller_xyz_m,
+            table_z_m=float(table_z_m),
+            above_direction=direction,
+            thresholds_m=thresholds,
+        ),
+    }
+    if hand_a_xyz_m is not None:
+        classes["hand_a"] = _world_z_class_stats(
+            hand_a_xyz_m,
+            table_z_m=float(table_z_m),
+            above_direction=direction,
+            thresholds_m=thresholds,
+        )
+    if hand_b_xyz_m is not None:
+        classes["hand_b"] = _world_z_class_stats(
+            hand_b_xyz_m,
+            table_z_m=float(table_z_m),
+            above_direction=direction,
+            thresholds_m=thresholds,
+        )
+    return {
+        "table_z_m": float(table_z_m),
+        "table_z_above_direction": direction,
+        "thresholds_m": [float(value) for value in thresholds],
+        "classes": classes,
+    }
+
+
+def apply_table_z_filter(
+    points_xyz_m: np.ndarray,
+    colors_rgb_u8: np.ndarray,
+    *,
+    enabled: bool,
+    threshold_m: float,
+    table_z_m: float = TABLE_Z_M,
+    above_direction: str = DEFAULT_TABLE_Z_ABOVE_DIRECTION,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
+    colors = np.asarray(colors_rgb_u8, dtype=np.uint8).reshape(-1, 3)
+    if len(points) != len(colors):
+        raise ValueError("points and colors must have the same first dimension")
+    direction = str(above_direction)
+    if direction not in TABLE_Z_ABOVE_DIRECTIONS:
+        raise ValueError(f"table_z_above_direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
+    if not bool(enabled) or len(points) == 0:
+        return np.ascontiguousarray(points, dtype=np.float32), np.ascontiguousarray(colors, dtype=np.uint8), {
+            "enabled": bool(enabled),
+            "threshold_m": float(threshold_m),
+            "table_z_m": float(table_z_m),
+            "table_z_above_direction": direction,
+            "input_points": int(len(points)),
+            "removed_points": 0,
+            "output_points": int(len(points)),
+            "removed_ratio": 0.0,
+        }
+    finite = np.isfinite(points).all(axis=1)
+    clearance = table_z_clearance_m(points, table_z_m=table_z_m, above_direction=direction)
+    remove = finite & (clearance <= np.float32(float(threshold_m)))
+    keep = ~remove
+    removed = int(np.count_nonzero(remove))
+    return (
+        np.ascontiguousarray(points[keep], dtype=np.float32),
+        np.ascontiguousarray(colors[keep], dtype=np.uint8),
+        {
+            "enabled": True,
+            "threshold_m": float(threshold_m),
+            "table_z_m": float(table_z_m),
+            "table_z_above_direction": direction,
+            "input_points": int(len(points)),
+            "removed_points": removed,
+            "output_points": int(np.count_nonzero(keep)),
+            "removed_ratio": float(removed / max(1, len(points))),
+        },
+    )
+
+
 def _tracker_union_mask(mask_packet: MaskPacket) -> np.ndarray:
     controller = np.asarray(mask_packet.controller_mask, dtype=bool)
     obj = np.asarray(mask_packet.object_mask, dtype=bool)
@@ -2814,6 +3048,22 @@ def _mask_from_yx(shape: tuple[int, int], yx: np.ndarray) -> np.ndarray:
     if np.any(valid):
         mask[rows[valid], cols[valid]] = True
     return np.ascontiguousarray(mask)
+
+
+def _select_points_by_yx_mask(points_xyz_m: np.ndarray, yx: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
+    coords = np.asarray(yx, dtype=np.int64).reshape(-1, 2)
+    if len(points) == 0 or len(coords) == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    count = min(len(points), len(coords))
+    target = np.asarray(mask, dtype=bool)
+    rows = coords[:count, 0]
+    cols = coords[:count, 1]
+    valid = (rows >= 0) & (rows < target.shape[0]) & (cols >= 0) & (cols < target.shape[1])
+    keep = np.zeros((count,), dtype=bool)
+    if np.any(valid):
+        keep[valid] = target[rows[valid], cols[valid]]
+    return np.ascontiguousarray(points[:count][keep], dtype=np.float32)
 
 
 def _tracker_display_visibility(
@@ -3315,6 +3565,18 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "table_calibration_path": None if self.table_calibration_path is None else str(self.table_calibration_path),
             "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else None,
             "table_z_m": TABLE_Z_M if self._table_world_enabled() else None,
+            "table_z_above_direction": str(self.args.table_z_above_direction),
+            "camera_to_world_c2w": (
+                None
+                if self.table_c2w is None
+                else np.asarray(self.table_c2w, dtype=np.float32).reshape(4, 4).tolist()
+            ),
+            "world_z_diagnostic_thresholds_m": [
+                float(value) for value in DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M
+            ],
+            "table_z_filter_enabled": bool(self.args.enable_table_z_filter),
+            "table_z_filter_threshold_m": float(self.args.table_z_filter_threshold_m),
+            "table_z_filter_classes": str(self.args.table_z_filter_classes),
             "intrinsics": {
                 "fx": float(self.runtime.intrinsics.fx),
                 "fy": float(self.runtime.intrinsics.fy),
@@ -3807,6 +4069,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "table_calibration_path": None if self.table_calibration_path is None else str(self.table_calibration_path),
             "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else None,
             "table_z_m": TABLE_Z_M if self._table_world_enabled() else None,
+            "table_z_above_direction": str(self.args.table_z_above_direction),
+            "camera_to_world_c2w": (
+                None
+                if self.table_c2w is None
+                else np.asarray(self.table_c2w, dtype=np.float32).reshape(4, 4).tolist()
+            ),
             "pcd_max_points": int(self.args.pcd_max_points),
             "pcd_stride": int(self.args.pcd_stride),
             "pcd_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
@@ -3816,6 +4084,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE,
             "pcd_filter_preset": getattr(self.args, "pcd_filter_preset", None),
+            "world_z_diagnostic_thresholds_m": [
+                float(value) for value in DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M
+            ],
+            "table_z_filter_enabled": bool(self.args.enable_table_z_filter),
+            "table_z_filter_threshold_m": float(self.args.table_z_filter_threshold_m),
+            "table_z_filter_classes": str(self.args.table_z_filter_classes),
             "headless_capture_enabled": headless_capture_enabled(self.args),
             "headless_capture_dir": (
                 str(self.args.headless_capture_dir) if headless_capture_enabled(self.args) else None
@@ -5071,6 +5345,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             object_pcd_mask_erode_pixels=int(result.object_pcd_mask_erode_pixels),
             controller_pcd_mask_erode_pixels=int(result.controller_pcd_mask_erode_pixels),
             tracker_packet=tracker_packet,
+            world_z_diagnostics=result.world_z_diagnostics,
         )
 
     def _build_pcd_packet_from_mask(
@@ -5205,6 +5480,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         object_cap_points = int(object_pcd_timing.get("pcd_cap_points", len(object_xyz)))
         render_controller_xyz = controller_xyz
         render_controller_colors = controller_colors
+        render_controller_yx = controller_yx
         render_object_xyz = object_xyz
         render_object_colors = object_colors
         filter_output: FilterOutput | None = None
@@ -5226,6 +5502,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 self.filter_output_stats.record(filter_output.output_perf_s)
                 render_controller_xyz = filter_output.controller_xyz
                 render_controller_colors = filter_output.controller_rgb
+                render_controller_yx = filter_output.controller_yx
                 render_object_xyz = filter_output.object_xyz
                 render_object_colors = filter_output.object_rgb
                 using_filtered = True
@@ -5245,6 +5522,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                         ):
                             render_controller_xyz = latest.controller_xyz
                             render_controller_colors = latest.controller_rgb
+                            render_controller_yx = latest.controller_yx
                             render_object_xyz = latest.object_xyz
                             render_object_colors = latest.object_rgb
                             using_filtered = True
@@ -5278,6 +5556,60 @@ class RealtimeMaskedEdgeTamPcdDemo:
         )
         render_controller_xyz = _transform_points_c2w(render_controller_xyz, self.table_c2w)
         render_object_xyz = _transform_points_c2w(render_object_xyz, self.table_c2w)
+        hand_a_xyz = None
+        hand_b_xyz = None
+        if mask_packet.hand_a_mask is not None:
+            hand_a_xyz = _select_points_by_yx_mask(
+                render_controller_xyz,
+                render_controller_yx,
+                mask_packet.hand_a_mask,
+            )
+        if mask_packet.hand_b_mask is not None:
+            hand_b_xyz = _select_points_by_yx_mask(
+                render_controller_xyz,
+                render_controller_yx,
+                mask_packet.hand_b_mask,
+            )
+        world_z_diagnostics = build_world_z_diagnostics(
+            object_xyz_m=render_object_xyz,
+            controller_xyz_m=render_controller_xyz,
+            hand_a_xyz_m=hand_a_xyz,
+            hand_b_xyz_m=hand_b_xyz,
+            table_z_m=TABLE_Z_M,
+            above_direction=str(self.args.table_z_above_direction),
+            thresholds_m=DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M,
+        )
+        table_z_filter_stats: dict[str, Any] = {
+            "enabled": bool(self.args.enable_table_z_filter),
+            "threshold_m": float(self.args.table_z_filter_threshold_m),
+            "table_z_above_direction": str(self.args.table_z_above_direction),
+            "classes": str(self.args.table_z_filter_classes),
+            "object": None,
+            "controller": None,
+        }
+        if bool(self.args.enable_table_z_filter):
+            classes = str(self.args.table_z_filter_classes)
+            if classes in {TABLE_Z_FILTER_CLASS_OBJECT, TABLE_Z_FILTER_CLASS_BOTH}:
+                render_object_xyz, render_object_colors, object_table_z_stats = apply_table_z_filter(
+                    render_object_xyz,
+                    render_object_colors,
+                    enabled=True,
+                    threshold_m=float(self.args.table_z_filter_threshold_m),
+                    table_z_m=TABLE_Z_M,
+                    above_direction=str(self.args.table_z_above_direction),
+                )
+                table_z_filter_stats["object"] = object_table_z_stats
+            if classes in {TABLE_Z_FILTER_CLASS_CONTROLLER, TABLE_Z_FILTER_CLASS_BOTH}:
+                render_controller_xyz, render_controller_colors, controller_table_z_stats = apply_table_z_filter(
+                    render_controller_xyz,
+                    render_controller_colors,
+                    enabled=True,
+                    threshold_m=float(self.args.table_z_filter_threshold_m),
+                    table_z_m=TABLE_Z_M,
+                    above_direction=str(self.args.table_z_above_direction),
+                )
+                table_z_filter_stats["controller"] = controller_table_z_stats
+        world_z_diagnostics["runtime_table_z_filter"] = table_z_filter_stats
         done_s = time.perf_counter()
         timing = replace(
             mask_packet.timing,
@@ -5332,6 +5664,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             pcd_mask_erode_pixels=pcd_mask_erode_pixels,
             object_pcd_mask_erode_pixels=object_erode_pixels,
             controller_pcd_mask_erode_pixels=controller_erode_pixels,
+            world_z_diagnostics=world_z_diagnostics,
         )
 
     def _pcd_worker(self) -> None:

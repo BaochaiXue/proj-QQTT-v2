@@ -109,6 +109,121 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             atol=1e-6,
         )
 
+    def test_world_z_diagnostics_reports_quantiles_and_threshold_candidates(self) -> None:
+        diagnostics = demo.build_world_z_diagnostics(
+            object_xyz_m=np.array(
+                [
+                    [0.0, 0.0, -0.20],
+                    [0.0, 0.0, -0.01],
+                    [0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.012],
+                    [0.0, 0.0, 0.05],
+                ],
+                dtype=np.float32,
+            ),
+            controller_xyz_m=np.array([[0.0, 0.0, -0.03]], dtype=np.float32),
+            table_z_m=0.0,
+            thresholds_m=(0.005, 0.02),
+        )
+
+        self.assertEqual(diagnostics["table_z_m"], 0.0)
+        self.assertEqual(diagnostics["table_z_above_direction"], demo.TABLE_Z_ABOVE_DIRECTION_NEGATIVE)
+        self.assertEqual(diagnostics["thresholds_m"], [0.005, 0.02])
+        object_stats = diagnostics["classes"]["object"]
+        self.assertEqual(object_stats["count"], 5)
+        self.assertAlmostEqual(object_stats["z_m"]["p50"], 0.0, places=6)
+        self.assertEqual(object_stats["table_thresholds"][0]["candidate_count"], 3)
+        self.assertEqual(object_stats["table_thresholds"][1]["candidate_count"], 4)
+        self.assertAlmostEqual(object_stats["table_thresholds"][1]["candidate_ratio"], 0.8, places=6)
+        self.assertEqual(diagnostics["classes"]["controller"]["table_thresholds"][1]["candidate_count"], 0)
+
+    def test_table_z_filter_uses_negative_above_table_direction_by_default(self) -> None:
+        points = np.array(
+            [
+                [0.0, 0.0, -0.20],
+                [0.0, 0.0, -0.01],
+                [0.0, 0.0, 0.01],
+            ],
+            dtype=np.float32,
+        )
+        colors = np.arange(9, dtype=np.uint8).reshape(3, 3)
+
+        filtered_points, filtered_colors, stats = demo.apply_table_z_filter(
+            points,
+            colors,
+            enabled=True,
+            threshold_m=0.02,
+            table_z_m=0.0,
+        )
+
+        self.assertEqual(stats["table_z_above_direction"], demo.TABLE_Z_ABOVE_DIRECTION_NEGATIVE)
+        self.assertEqual(stats["removed_points"], 2)
+        np.testing.assert_allclose(filtered_points, np.array([[0.0, 0.0, -0.20]], dtype=np.float32))
+        np.testing.assert_array_equal(filtered_colors, colors[:1])
+
+    def test_table_z_filter_is_opt_in_after_world_transform(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--tracker-backend",
+                "tapnextpp",
+                "--tracker-query-count",
+                "4",
+                "--enable-table-z-filter",
+                "--table-z-filter-threshold-m",
+                "0.02",
+                "--table-z-filter-classes",
+                "both",
+            ]
+        )
+        demo.apply_demo_preset(args)
+        demo.validate_args(args)
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime.ray_x = np.zeros((4, 4), dtype=np.float32)
+        runtime.ray_y = np.zeros((4, 4), dtype=np.float32)
+        runtime.table_c2w = np.eye(4, dtype=np.float32)
+        runtime.table_c2w[2, 3] = -1.0
+
+        result = runtime._build_pcd_packet_from_mask(self._mask_packet(), rng=np.random.default_rng(0))
+
+        self.assertEqual(result.packet.coordinate_frame, "table_world_z0")
+        self.assertEqual(result.packet.object_point_count, 0)
+        self.assertEqual(result.packet.controller_point_count, 0)
+        self.assertEqual(result.world_z_diagnostics["classes"]["object"]["table_thresholds"][0]["candidate_count"], 8)
+        self.assertEqual(result.world_z_diagnostics["classes"]["controller"]["table_thresholds"][0]["candidate_count"], 8)
+
+    def test_world_z_diagnostics_includes_hand_instances_when_available(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--tracker-backend",
+                "tapnextpp",
+                "--tracker-query-count",
+                "4",
+            ]
+        )
+        demo.apply_demo_preset(args)
+        demo.validate_args(args)
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime.ray_x = np.zeros((4, 4), dtype=np.float32)
+        runtime.ray_y = np.zeros((4, 4), dtype=np.float32)
+        runtime.table_c2w = np.eye(4, dtype=np.float32)
+        hand_a = np.zeros((4, 4), dtype=bool)
+        hand_b = np.zeros((4, 4), dtype=bool)
+        hand_a[2, :] = True
+        hand_b[3, :] = True
+
+        result = runtime._build_pcd_packet_from_mask(
+            self._mask_packet(hand_a_mask=hand_a, hand_b_mask=hand_b),
+            rng=np.random.default_rng(0),
+        )
+
+        self.assertEqual(result.world_z_diagnostics["classes"]["hand_a"]["count"], 4)
+        self.assertEqual(result.world_z_diagnostics["classes"]["hand_b"]["count"], 4)
+        self.assertAlmostEqual(result.world_z_diagnostics["classes"]["hand_a"]["z_m"]["p50"], 1.0, places=6)
+
     def _tracker_args(self):
         args = demo.build_parser().parse_args(
             [
@@ -128,7 +243,13 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         demo.validate_args(args)
         return args
 
-    def _mask_packet(self, seq: int = 0) -> demo.MaskPacket:
+    def _mask_packet(
+        self,
+        seq: int = 0,
+        *,
+        hand_a_mask: np.ndarray | None = None,
+        hand_b_mask: np.ndarray | None = None,
+    ) -> demo.MaskPacket:
         controller = np.zeros((4, 4), dtype=bool)
         obj = np.zeros((4, 4), dtype=bool)
         controller[2:, :] = True
@@ -147,6 +268,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             timing=demo.PipelineTiming(),
             controller_mask=controller,
             object_mask=obj,
+            hand_a_mask=hand_a_mask,
+            hand_b_mask=hand_b_mask,
             depth_u16=depth,
         )
 
@@ -832,6 +955,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                     "intrinsics": {"fx": 100.0, "fy": 100.0, "cx": 0.0, "cy": 0.0},
                     "saved_pcd_source": "pt_filter_filtered",
                     "pcd_coordinate_frame": "table_world_z0",
+                    "camera_to_world_c2w": np.eye(4, dtype=np.float32).tolist(),
                 },
             )
             now = time.perf_counter()
@@ -874,15 +998,29 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 object_pcd_mask_erode_pixels=3,
                 controller_pcd_mask_erode_pixels=0,
                 tracker_packet=tracker_packet,
+                world_z_diagnostics={
+                    "seq": 0,
+                    "table_z_m": 0.0,
+                    "thresholds_m": [0.005, 0.02],
+                    "classes": {"object": {"count": 1}, "controller": {"count": 1}},
+                },
             )
 
             metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["saved_pcd_source"], "pt_filter_filtered")
             self.assertEqual(metadata["pcd_coordinate_frame"], "table_world_z0")
+            self.assertEqual(metadata["camera_to_world_c2w"][3], [0.0, 0.0, 0.0, 1.0])
             self.assertEqual(metadata["saved_mask_source"], "edgetam_binary_masks")
             self.assertEqual(metadata["saved_rgb_source"], "segmentation_color_bgr")
             rows = [json.loads(line) for line in (output_dir / "frames.jsonl").read_text(encoding="utf-8").splitlines()]
             self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["world_z_stats_path"], "world_z_stats.jsonl")
+            z_rows = [
+                json.loads(line)
+                for line in (output_dir / "world_z_stats.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(z_rows[0]["seq"], 0)
+            self.assertEqual(z_rows[0]["classes"]["object"]["count"], 1)
             self.assertEqual(rows[0]["filter_telemetry"]["mode"], "sync")
             self.assertTrue((output_dir / rows[0]["pcd_path"]).is_file())
             self.assertTrue((output_dir / rows[0]["ffs_depth_path"]).is_file())

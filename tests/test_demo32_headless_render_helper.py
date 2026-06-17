@@ -12,8 +12,10 @@ from scripts.harness.diagnostics.demo.render_demo32_headless_capture import (
     TRACKING_BACKGROUND_MASK_RGB,
     TRACKING_BACKGROUND_MASK_TARGET_UNION,
     _apply_tracking_background_mask,
+    _project_points,
     _read_target_union_mask,
     render_capture_to_video,
+    render_table_z_filter_overlay_sweep,
 )
 
 
@@ -353,6 +355,74 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             self.assertEqual(summary["tracking_background_mask_pixel_total"], 0)
             self.assertEqual(summary["rendered_counts"][0]["tracking_background_mask_pixels"], 0)
             self.assertEqual(summary["rendered_counts"][0]["query_points"], 1)
+
+    def test_project_points_applies_world_to_camera_for_table_world_pcd(self) -> None:
+        c2w = np.eye(4, dtype=np.float32)
+        c2w[:3, 3] = np.array([0.25, -0.5, 1.0], dtype=np.float32)
+        camera_points = np.array([[0.0, 0.0, 0.5]], dtype=np.float32)
+        world_points = camera_points + c2w[:3, 3]
+
+        uv, valid = _project_points(
+            world_points,
+            {"fx": 20.0, "fy": 20.0, "cx": 16.0, "cy": 12.0},
+            width=32,
+            height=24,
+            coordinate_frame="table_world_z0",
+            camera_to_world_c2w=c2w,
+        )
+
+        self.assertTrue(bool(valid[0]))
+        np.testing.assert_array_equal(uv[0], np.array([16, 12], dtype=np.int32))
+
+    def test_table_z_filter_overlay_sweep_renders_removed_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "pcd").mkdir(parents=True)
+            (capture_dir / "rgb").mkdir()
+            (capture_dir / "ffs_depth").mkdir()
+            metadata = {
+                "width": 32,
+                "height": 24,
+                "saved_pcd_source": "enhanced_pt_filtered",
+                "pcd_coordinate_frame": "table_world_z0",
+                "table_z_m": 0.0,
+                "table_z_above_direction": "negative",
+                "camera_to_world_c2w": np.eye(4, dtype=np.float32).tolist(),
+                "intrinsics": {"fx": 20.0, "fy": 20.0, "cx": 16.0, "cy": 12.0},
+            }
+            (capture_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            np.savez(
+                capture_dir / "pcd" / "000000.npz",
+                controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+                controller_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+                object_xyz_m=np.array([[0.0, 0.0, -0.01], [0.01, 0.0, -0.1]], dtype=np.float32),
+                object_rgb_u8=np.array([[0, 255, 0], [0, 128, 255]], dtype=np.uint8),
+                coordinate_frame=np.asarray(["table_world_z0"]),
+            )
+            np.save(capture_dir / "ffs_depth" / "000000.npy", np.ones((24, 32), dtype=np.float32))
+            Image.fromarray(np.full((24, 32, 3), 64, dtype=np.uint8)).save(capture_dir / "rgb" / "000000.png")
+            row = {
+                "seq": 0,
+                "pcd_path": "pcd/000000.npz",
+                "ffs_depth_path": "ffs_depth/000000.npy",
+                "rgb_path": "rgb/000000.png",
+            }
+            (capture_dir / "frames.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            summary = render_table_z_filter_overlay_sweep(
+                capture_dir=capture_dir,
+                output_dir=capture_dir / "z_overlay",
+                fps=30.0,
+                thresholds_m=(0.02,),
+            )
+
+            self.assertEqual(summary["pcd_coordinate_frame"], "table_world_z0")
+            self.assertEqual(summary["thresholds_m"], [0.02])
+            threshold_summary = summary["thresholds"][0]
+            self.assertTrue(Path(threshold_summary["output"]).is_file())
+            self.assertEqual(threshold_summary["removed_total"], 1)
+            self.assertEqual(threshold_summary["kept_total"], 1)
+            self.assertEqual(threshold_summary["frames"][0]["object_removed_points"], 1)
 
     def test_pcd_visual_mode_suppresses_query_overlay(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

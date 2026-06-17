@@ -73,16 +73,20 @@ conda run -n demo_2_max --no-capture-output \
 Versioned single-camera demo entrypoints:
 
 ```bash
-python single_demo_v3/realtime_single_camera_realsense_masked_pcd.py --dry-run
-python single_demo_v3_1/realtime_single_camera_realsense_masked_pcd.py --dry-run
-python single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
-python single_demo_v3_3/realtime_single_camera_ffs_masked_pcd.py --dry-run
+python demo_v3/realtime_single_camera_realsense_masked_pcd.py --dry-run
+python demo_v3_1/realtime_single_camera_realsense_masked_pcd.py --dry-run
+python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
+python demo_v3_3/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
-Demo 3.2 and Demo 3.3 require repo-root `table_calibrate.pkl` by default so
-their PCD and TAPNext++ marker outputs are in `table_world_z0`. Run table
+Demo 3.1, Demo 3.2, and Demo 3.3 require repo-root `table_calibrate.pkl` by
+default so their PCD and TAPNext++ marker outputs are in `table_world_z0`. Run table
 calibration after moving the camera, table, or mount, or pass
 `--table-calibrate <path>` to use an alternate table-world calibration.
+The tabletop is `table_z_m = 0.0`; the current calibration convention treats
+the workspace above the table as negative Z (`table_z_above_direction =
+negative`). Headless captures include per-frame `world_z_stats.jsonl`; table-Z
+deletion is opt-in with `--enable-table-z-filter`.
 
 ## Calibration
 
