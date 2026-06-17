@@ -9,6 +9,11 @@ from typing import Any, Callable, Sequence
 
 from qqtt.demo import realtime_masked_edgetam_pcd as masked_pcd
 from qqtt.demo import realtime_single_camera_pointcloud as single_pcd
+from qqtt.env.camera.table_calibration import (
+    TABLE_WORLD_FRAME_KIND,
+    TableCalibrationLoadError,
+    load_table_calibration_transforms,
+)
 
 
 DEMO_VERSION_3 = "3"
@@ -254,6 +259,12 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
             "Replay FPS for --input-source recording or fake-live. Omitted fake-live replay defaults to "
             f"{DEFAULT_FAKE_LIVE_REPLAY_FPS:g} fps; use 0 to read metadata fps."
         ),
+    )
+    parser.add_argument(
+        "--table-calibrate",
+        type=Path,
+        default=None,
+        help="Optional table Z=0 calibration file to validate and expose in demo contract.",
     )
     if depth_source == DEPTH_SOURCE_FFS:
         parser.add_argument("--ffs-repo", type=Path, default=single_pcd.DEFAULT_FFS_REPO)
@@ -527,6 +538,19 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--input-source {args.input_source} requires --tracker-backend tapnextpp")
     elif args.recording_case is not None:
         raise ValueError("--recording-case/--fake-live-case requires --input-source recording or fake-live")
+    if args.table_calibrate is not None:
+        table_path = Path(args.table_calibrate).expanduser()
+        if not table_path.is_absolute():
+            table_path = REPO_ROOT / table_path
+        table_path = table_path.resolve(strict=False)
+        try:
+            load_table_calibration_transforms(table_path)
+        except TableCalibrationLoadError as exc:
+            message = str(exc)
+            if "Missing table calibration file" in message:
+                raise ValueError(message) from exc
+            raise ValueError(f"Invalid table calibration file: {message}") from exc
+        args.table_calibrate = table_path
     if float(args.duration_s) < 0.0:
         raise ValueError("--duration-s must be >= 0")
     if int(args.fps) not in single_pcd.SUPPORTED_CAPTURE_FPS:
@@ -707,6 +731,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "input_source": contract_input_source,
         "input_source_mode": input_source,
         "recording_case": None if args.recording_case is None else str(args.recording_case),
+        "table_calibration_path": None if args.table_calibrate is None else str(args.table_calibrate),
+        "table_world_frame_kind": None if args.table_calibrate is None else TABLE_WORLD_FRAME_KIND,
         "replay_fps": replay_fps,
         "replay_fps_source": replay_fps_source,
         "camera_count": 1,
@@ -809,6 +835,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "demo_display_name",
         "input_source",
         "recording_case",
+        "table_calibration_path",
+        "table_world_frame_kind",
         "replay_fps",
         "camera_count",
         "serial",

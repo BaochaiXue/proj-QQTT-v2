@@ -8,7 +8,13 @@ import tempfile
 import unittest
 from unittest import mock
 
+import numpy as np
+
 from qqtt.demo import single_demo_v3_runtime as runtime
+from qqtt.env.camera.table_calibration import (
+    build_table_calibration_metadata,
+    write_table_calibration_files,
+)
 
 
 def _explicit(argv: list[str]) -> set[str]:
@@ -110,6 +116,56 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertIn("towel", delegate)
         self.assertIn("--tracker-backend", delegate)
         self.assertIn("tapnextpp", delegate)
+
+    def test_demo32_contract_includes_table_calibration_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            table_path = Path(tmp_dir) / "table_calibrate.pkl"
+            metadata = build_table_calibration_metadata(
+                serial_numbers=["s0"],
+                WH=[640, 480],
+                fps=30,
+                transform_count=1,
+                calibration_board={"name": "calibio-12x9-30mm"},
+                max_reprojection_error_px=0.5,
+                min_corner_fraction=60 / 88,
+                min_charuco_corners=60,
+                per_camera_reprojection_error=[0.1],
+                per_camera_corner_count=[60],
+                per_camera_corner_fraction=[60 / 88],
+            )
+            write_table_calibration_files(table_path, [np.eye(4, dtype=np.float32)], metadata)
+            args = self._parse(
+                runtime.DEMO_VERSION_3_2,
+                [
+                    "--dry-run",
+                    "--input-source",
+                    "fake-live",
+                    "--table-calibrate",
+                    str(table_path),
+                ],
+            )
+
+            runtime.validate_args(args)
+            contract = runtime.build_contract(args)
+
+            self.assertEqual(contract["table_world_frame_kind"], "table_world_z0")
+            self.assertEqual(contract["table_calibration_path"], str(table_path))
+            self.assertNotIn("--table-calibrate", runtime.build_live_delegate_argv(args))
+
+    def test_demo32_rejects_missing_table_calibration_path(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--dry-run",
+                "--input-source",
+                "fake-live",
+                "--table-calibrate",
+                "missing_table_calibrate.pkl",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "Missing table calibration file"):
+            runtime.validate_args(args)
 
     def test_old_multi_camera_options_are_not_public_cli(self) -> None:
         parser = runtime.build_arg_parser(demo_version=runtime.DEMO_VERSION_3)
