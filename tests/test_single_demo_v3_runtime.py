@@ -483,6 +483,103 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--controller-filter"), "pt-filter")
         self.assertIn("--enable-pcd-filter", delegate)
 
+    def test_demo32_visual_modes_record_effective_pcd_filter_preset(self) -> None:
+        cases = (
+            ("pcd", "pt", "pt-filter"),
+            ("tracking", "enhanced-pt", "enhanced-pt"),
+        )
+        for visual_mode, expected_preset, expected_filter in cases:
+            with self.subTest(visual_mode=visual_mode):
+                args = self._parse(
+                    runtime.DEMO_VERSION_3_2,
+                    [
+                        "--input-source",
+                        "fake-live",
+                        "--demo-visual-mode",
+                        visual_mode,
+                    ],
+                )
+                runtime.validate_args(args)
+                contract = runtime.build_contract(args)
+                delegate = runtime.build_live_delegate_argv(args)
+
+                self.assertEqual(contract["pcd_filter_preset"], expected_preset)
+                self.assertEqual(contract["tracker_query_source"], "pcd_filter_residual")
+                self.assertEqual(contract["object_filter"], expected_filter)
+                self.assertEqual(contract["controller_filter"], expected_filter)
+                self.assertEqual(_option_value(delegate, "--pcd-filter-preset"), expected_preset)
+
+    def test_demo32_pcd_filter_preset_controls_both_classes_in_tracking_mode(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--demo-visual-mode",
+                "tracking",
+                "--pcd-filter-preset",
+                "pt",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(contract["pcd_filter_preset"], "pt")
+        self.assertEqual(contract["tracker_query_source"], "pcd_filter_residual")
+        self.assertEqual(contract["object_filter"], "pt-filter")
+        self.assertEqual(contract["controller_filter"], "pt-filter")
+        self.assertEqual(_option_value(delegate, "--object-filter"), "pt-filter")
+        self.assertEqual(_option_value(delegate, "--controller-filter"), "pt-filter")
+        self.assertEqual(_option_value(delegate, "--pcd-filter-preset"), "pt")
+
+    def test_demo32_original_preset_uses_unfiltered_residual_for_both_classes(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--demo-visual-mode",
+                "pcd",
+                "--pcd-filter-preset",
+                "original",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(contract["pcd_filter_preset"], "original")
+        self.assertEqual(contract["tracker_query_source"], "pcd_filter_residual")
+        self.assertTrue(contract["pcd_filter_enabled"])
+        self.assertEqual(contract["pcd_filter_mode"], "sync")
+        self.assertEqual(contract["object_filter"], "none")
+        self.assertEqual(contract["controller_filter"], "none")
+        self.assertEqual(contract["object_filter_cap"], 0)
+        self.assertEqual(contract["controller_filter_cap"], 0)
+        self.assertEqual(_option_value(delegate, "--object-filter"), "none")
+        self.assertEqual(_option_value(delegate, "--controller-filter"), "none")
+        self.assertEqual(_option_value(delegate, "--object-filter-cap"), "0")
+        self.assertEqual(_option_value(delegate, "--controller-filter-cap"), "0")
+
+    def test_demo32_pcd_filter_preset_rejects_conflicting_class_filters(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--demo-visual-mode",
+                "tracking",
+                "--pcd-filter-preset",
+                "pt",
+                "--object-filter",
+                "enhanced-pt",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "pcd-filter-preset conflicts with --object-filter"):
+            runtime.validate_args(args)
+
     def test_demo32_visual_modes_reject_conflicting_tracker_options(self) -> None:
         pcd_args = self._parse(
             runtime.DEMO_VERSION_3_2,

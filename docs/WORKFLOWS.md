@@ -60,7 +60,10 @@ the end of the recording. Fake-live runs in demo mode and defaults to 5 FPS;
 pass `--replay-fps 0` to replay at metadata FPS. Demo 3.2/3.3 tracking views
 default object/controller filters to enhanced-pt, while PCD-only inspection
 defaults both layers to pt-filter but still runs TAPNext++ so the displayed FPS
-reflects the full pipeline. When enhanced PCD component filtering is enabled,
+reflects the full pipeline. Pass `--pcd-filter-preset {original,pt,enhanced-pt}`
+to control object/controller PCD and TAPNext++ query initialization together;
+tracking query points are sampled from that preset's residual PCD pixels. When
+enhanced PCD component filtering is enabled,
 object filtering keeps one main component while controller filtering keeps two
 main components so two-hand controllers are not dropped as disconnected noise.
 Demo 3.x Open3D

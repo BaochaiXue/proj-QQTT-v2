@@ -19,6 +19,10 @@ def _empty_like_colors(colors: np.ndarray | None) -> np.ndarray | None:
     return np.empty((0, 3), dtype=np.asarray(colors).dtype)
 
 
+def _empty_indices() -> np.ndarray:
+    return np.empty((0,), dtype=np.int64)
+
+
 def _voxel_keys(xyz: np.ndarray, *, voxel_size_m: float) -> np.ndarray:
     if voxel_size_m <= 0:
         raise ValueError("voxel_size_m must be positive")
@@ -43,6 +47,41 @@ def _voxel_keys(xyz: np.ndarray, *, voxel_size_m: float) -> np.ndarray:
     return np.ravel_multi_index(q.T, tuple(int(dim) for dim in dims)).astype(np.int64, copy=False)
 
 
+def voxel_cap_indices(
+    xyz: np.ndarray,
+    *,
+    max_points: int = 20_000,
+    voxel_size_m: float = 0.004,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
+    """
+    Return indices for spatially capped point clouds before expensive filtering.
+
+    Keeps at most one representative per voxel first. If that still exceeds
+    max_points, randomly subsamples voxel representatives.
+    """
+
+    points = np.asarray(xyz)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("xyz must be an Nx3 array")
+    if max_points < 0:
+        raise ValueError("max_points must be >= 0")
+    if points.shape[0] == 0:
+        return _empty_indices()
+    if max_points == 0 or points.shape[0] <= int(max_points):
+        return np.arange(points.shape[0], dtype=np.int64)
+
+    keys = _voxel_keys(points, voxel_size_m=float(voxel_size_m))
+    _unused_unique, first_idx = np.unique(keys, return_index=True)
+    if first_idx.shape[0] > int(max_points):
+        generator = rng if rng is not None else np.random.default_rng(0)
+        keep_idx = generator.choice(first_idx, size=int(max_points), replace=False)
+    else:
+        keep_idx = first_idx
+    keep_idx = np.sort(keep_idx)
+    return keep_idx.astype(np.int64, copy=False)
+
+
 def voxel_cap_points(
     xyz: np.ndarray,
     colors: np.ndarray | None = None,
@@ -59,25 +98,16 @@ def voxel_cap_points(
     """
 
     points = np.asarray(xyz)
-    if points.ndim != 2 or points.shape[1] != 3:
-        raise ValueError("xyz must be an Nx3 array")
     if colors is not None and int(np.asarray(colors).shape[0]) != int(points.shape[0]):
         raise ValueError("colors must have the same first dimension as xyz")
-    if max_points < 0:
-        raise ValueError("max_points must be >= 0")
+    keep_idx = voxel_cap_indices(
+        points,
+        max_points=int(max_points),
+        voxel_size_m=float(voxel_size_m),
+        rng=rng,
+    )
     if points.shape[0] == 0:
         return _empty_like_points(points), _empty_like_colors(colors)
-    if max_points == 0 or points.shape[0] <= int(max_points):
-        return points, colors
-
-    keys = _voxel_keys(points, voxel_size_m=float(voxel_size_m))
-    _unused_unique, first_idx = np.unique(keys, return_index=True)
-    if first_idx.shape[0] > int(max_points):
-        generator = rng if rng is not None else np.random.default_rng(0)
-        keep_idx = generator.choice(first_idx, size=int(max_points), replace=False)
-    else:
-        keep_idx = first_idx
-    keep_idx = np.sort(keep_idx)
     return points[keep_idx], None if colors is None else np.asarray(colors)[keep_idx]
 
 
@@ -128,6 +158,25 @@ def voxel_density_filter(
     return points[keep], None if colors is None else np.asarray(colors)[keep]
 
 
+def voxel_density_indices(
+    xyz: np.ndarray,
+    *,
+    voxel_size_m: float = 0.004,
+    min_points_per_voxel: int = 2,
+) -> np.ndarray:
+    points = np.asarray(xyz)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("xyz must be an Nx3 array")
+    if min_points_per_voxel <= 1:
+        return np.arange(points.shape[0], dtype=np.int64)
+    if points.shape[0] == 0:
+        return _empty_indices()
+    keys = _voxel_keys(points, voxel_size_m=float(voxel_size_m))
+    _unused_unique, inverse, counts = np.unique(keys, return_inverse=True, return_counts=True)
+    keep = counts[inverse] >= int(min_points_per_voxel)
+    return np.flatnonzero(keep).astype(np.int64, copy=False)
+
+
 @dataclass(frozen=True)
 class FilterInput:
     seq: int
@@ -140,6 +189,8 @@ class FilterInput:
     controller_cap: int = 20_000
     object_voxel_size_m: float = 0.004
     controller_voxel_size_m: float = 0.003
+    object_yx: np.ndarray = field(default_factory=lambda: np.empty((0, 2), dtype=np.int64))
+    controller_yx: np.ndarray = field(default_factory=lambda: np.empty((0, 2), dtype=np.int64))
 
 
 @dataclass(frozen=True)
@@ -153,6 +204,8 @@ class FilterOutput:
     created_perf_s: float
     output_perf_s: float = field(default_factory=time.perf_counter)
     stats: dict[str, Any] = field(default_factory=dict)
+    object_yx: np.ndarray = field(default_factory=lambda: np.empty((0, 2), dtype=np.int64))
+    controller_yx: np.ndarray = field(default_factory=lambda: np.empty((0, 2), dtype=np.int64))
 
 
 class AsyncPcdFilterWorker:

@@ -190,6 +190,31 @@ def _visual_mode_required_filter(args: argparse.Namespace) -> str:
     return masked_pcd.PCD_FILTER_ENHANCED_PT
 
 
+def _visual_mode_required_preset(args: argparse.Namespace) -> str:
+    if str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) == DEMO_VISUAL_MODE_PCD:
+        return masked_pcd.PCD_FILTER_PRESET_PT
+    return masked_pcd.PCD_FILTER_PRESET_ENHANCED_PT
+
+
+def _effective_pcd_filter_preset(args: argparse.Namespace) -> str | None:
+    preset = getattr(args, "pcd_filter_preset", None)
+    if preset is not None:
+        return str(preset)
+    if not bool(getattr(args, "enable_pcd_filter", False)):
+        return None
+    object_filter = str(getattr(args, "object_filter", ""))
+    controller_filter = str(getattr(args, "controller_filter", ""))
+    if object_filter != controller_filter:
+        return None
+    if object_filter == masked_pcd.PCD_FILTER_NONE:
+        return masked_pcd.PCD_FILTER_PRESET_ORIGINAL
+    if object_filter == masked_pcd.PCD_FILTER_PT_FILTER:
+        return masked_pcd.PCD_FILTER_PRESET_PT
+    if object_filter == masked_pcd.PCD_FILTER_ENHANCED_PT:
+        return masked_pcd.PCD_FILTER_PRESET_ENHANCED_PT
+    return None
+
+
 def _headless_capture_requested(args: argparse.Namespace, version: str | None = None) -> bool:
     resolved_version = normalize_demo_version(version or getattr(args, "single_demo_version", DEMO_VERSION_3))
     return bool(
@@ -388,6 +413,15 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         default="async",
         help="Point-cloud filter scheduling mode forwarded to the masked PCD delegate.",
     )
+    parser.add_argument(
+        "--pcd-filter-preset",
+        choices=masked_pcd.PCD_FILTER_PRESETS,
+        default=None,
+        help=(
+            "High-level PCD filter preset for Demo 3.x. When set, it controls both object/controller "
+            "PCD filtering and TAPNext++ initial query sampling."
+        ),
+    )
     parser.add_argument("--object-filter", choices=masked_pcd.PCD_FILTERS, default=masked_pcd.DEFAULT_OBJECT_FILTER)
     parser.add_argument(
         "--controller-filter",
@@ -442,6 +476,7 @@ def apply_preset_defaults(
     explicit_options: set[str] | None = None,
 ) -> argparse.Namespace:
     explicit = set(explicit_options or set())
+    args._explicit_options = explicit
     version = normalize_demo_version(getattr(args, "single_demo_version", DEMO_VERSION_3))
     if "--output-root" not in explicit:
         args.output_root = DEFAULT_OUTPUT_ROOTS[version]
@@ -475,24 +510,20 @@ def apply_preset_defaults(
             args.enable_pcd_filter = True
         if "--pcd-filter-mode" not in explicit:
             args.pcd_filter_mode = "sync"
-        if "--object-filter" not in explicit:
-            args.object_filter = masked_pcd.PCD_FILTER_ENHANCED_PT
-        if "--controller-filter" not in explicit:
-            args.controller_filter = masked_pcd.PCD_FILTER_ENHANCED_PT
+        if "--pcd-filter-preset" not in explicit:
+            args.pcd_filter_preset = masked_pcd.PCD_FILTER_PRESET_ENHANCED_PT
         if "--headless-capture-dir" not in explicit and args.headless_capture_dir is None:
             args.headless_capture_dir = _default_headless_capture_dir(args, version)
     if filtered_visual:
-        visual_filter = _visual_mode_required_filter(args)
+        visual_preset = _visual_mode_required_preset(args)
         if "--track-mode" not in explicit:
             args.track_mode = TRACK_MODE_CONTROLLER_OBJECT
         if "--enable-pcd-filter" not in explicit:
             args.enable_pcd_filter = True
         if "--pcd-filter-mode" not in explicit:
             args.pcd_filter_mode = "sync"
-        if "--object-filter" not in explicit:
-            args.object_filter = visual_filter
-        if "--controller-filter" not in explicit:
-            args.controller_filter = visual_filter
+        if "--pcd-filter-preset" not in explicit:
+            args.pcd_filter_preset = visual_preset
         if "--pcd-color-mode" not in explicit:
             args.pcd_color_mode = "rgb"
         if "--tracker-backend" not in explicit:
@@ -514,6 +545,20 @@ def apply_preset_defaults(
         args.fake_live_replay_fps_defaulted = True
     else:
         args.fake_live_replay_fps_defaulted = False
+    preset_filter = masked_pcd.pcd_filter_preset_to_filter(getattr(args, "pcd_filter_preset", None))
+    if preset_filter is not None:
+        args.enable_pcd_filter = True
+        if "--pcd-filter-mode" not in explicit:
+            args.pcd_filter_mode = "sync"
+        if "--object-filter" not in explicit:
+            args.object_filter = preset_filter
+        if "--controller-filter" not in explicit:
+            args.controller_filter = preset_filter
+        if str(args.pcd_filter_preset) == masked_pcd.PCD_FILTER_PRESET_ORIGINAL:
+            if "--object-filter-cap" not in explicit:
+                args.object_filter_cap = 0
+            if "--controller-filter-cap" not in explicit:
+                args.controller_filter_cap = 0
     if version in {DEMO_VERSION_3_2, DEMO_VERSION_3_3} and bool(args.enable_pcd_filter):
         if "--filter-radius-m" not in explicit:
             args.filter_radius_m = FFS_SURFACE_FILTER_RADIUS_M
@@ -540,6 +585,7 @@ def apply_preset_defaults(
 
 def validate_args(args: argparse.Namespace) -> None:
     version = normalize_demo_version(getattr(args, "single_demo_version", DEMO_VERSION_3))
+    explicit = set(getattr(args, "_explicit_options", set()))
     args.depth_source = DEFAULT_DEPTH_SOURCES[version]
     args.tracker_backend = masked_pcd.normalize_tracker_backend(str(args.tracker_backend))
     if str(args.input_source) not in INPUT_SOURCES:
@@ -605,6 +651,17 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
     if str(args.pcd_filter_mode) not in masked_pcd.PCD_FILTER_MODES:
         raise ValueError(f"--pcd-filter-mode must be one of {masked_pcd.PCD_FILTER_MODES}")
+    preset_filter = masked_pcd.pcd_filter_preset_to_filter(getattr(args, "pcd_filter_preset", None))
+    if preset_filter is not None and "--pcd-filter-preset" in explicit:
+        if "--object-filter" in explicit and str(args.object_filter) != preset_filter:
+            raise ValueError("--pcd-filter-preset conflicts with --object-filter")
+        if "--controller-filter" in explicit and str(args.controller_filter) != preset_filter:
+            raise ValueError("--pcd-filter-preset conflicts with --controller-filter")
+        if str(args.pcd_filter_preset) == masked_pcd.PCD_FILTER_PRESET_ORIGINAL:
+            if "--object-filter-cap" in explicit and int(args.object_filter_cap) != 0:
+                raise ValueError("--pcd-filter-preset original requires --object-filter-cap 0")
+            if "--controller-filter-cap" in explicit and int(args.controller_filter_cap) != 0:
+                raise ValueError("--pcd-filter-preset original requires --controller-filter-cap 0")
     if str(args.object_filter) not in masked_pcd.PCD_FILTERS:
         raise ValueError(f"--object-filter must be one of {masked_pcd.PCD_FILTERS}")
     if str(args.controller_filter) not in masked_pcd.PCD_FILTERS:
@@ -671,12 +728,12 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--demo-visual-mode requires --enable-pcd-filter for Demo 3.2/3.3")
         if str(args.pcd_filter_mode) != "sync":
             raise ValueError("--demo-visual-mode requires --pcd-filter-mode sync for Demo 3.2/3.3")
-        visual_filter = _visual_mode_required_filter(args)
+        visual_filter = preset_filter or _visual_mode_required_filter(args)
         if str(args.demo_visual_mode) == DEMO_VISUAL_MODE_PCD:
             if str(args.object_filter) != visual_filter:
-                raise ValueError("--demo-visual-mode pcd requires --object-filter pt-filter for Demo 3.2/3.3")
+                raise ValueError(f"--demo-visual-mode pcd requires --object-filter {visual_filter} for Demo 3.2/3.3")
             if str(args.controller_filter) != visual_filter:
-                raise ValueError("--demo-visual-mode pcd requires --controller-filter pt-filter for Demo 3.2/3.3")
+                raise ValueError(f"--demo-visual-mode pcd requires --controller-filter {visual_filter} for Demo 3.2/3.3")
         elif headless_capture:
             if str(args.object_filter) not in masked_pcd.HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS:
                 allowed = ", ".join(masked_pcd.HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
@@ -688,9 +745,9 @@ def validate_args(args: argparse.Namespace) -> None:
                 )
         else:
             if str(args.object_filter) != visual_filter:
-                raise ValueError("--demo-visual-mode tracking requires --object-filter enhanced-pt for Demo 3.2/3.3")
+                raise ValueError(f"--demo-visual-mode tracking requires --object-filter {visual_filter} for Demo 3.2/3.3")
             if str(args.controller_filter) != visual_filter:
-                raise ValueError("--demo-visual-mode tracking requires --controller-filter enhanced-pt for Demo 3.2/3.3")
+                raise ValueError(f"--demo-visual-mode tracking requires --controller-filter {visual_filter} for Demo 3.2/3.3")
         if str(args.pcd_color_mode) != "rgb":
             raise ValueError("--demo-visual-mode requires --pcd-color-mode rgb for Demo 3.2/3.3")
         if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
@@ -808,7 +865,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "tracker_device": str(args.tracker_device),
         "tracker_query_count": int(args.tracker_query_count),
         "tracker_query_source": (
-            "object_controller_union_mask" if tracker_on else None
+            masked_pcd.tracker_query_source(args) if tracker_on else None
         ),
         "tracker_display_scope": str(args.tracker_display_scope),
         "tracker_visualization_mode": tracker_visualization_mode,
@@ -835,6 +892,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "render_max_points_per_layer": int(args.render_max_points_per_layer),
         "pcd_filter_enabled": bool(args.enable_pcd_filter),
         "pcd_filter_mode": str(args.pcd_filter_mode if bool(args.enable_pcd_filter) else masked_pcd.PCD_FILTER_NONE),
+        "pcd_filter_preset": _effective_pcd_filter_preset(args),
         "object_filter": str(args.object_filter),
         "controller_filter": str(args.controller_filter),
         "object_filter_cap": int(args.object_filter_cap),
@@ -893,6 +951,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracker_backend",
         "tracker_device",
         "tracker_query_count",
+        "tracker_query_source",
         "tracker_display_scope",
         "object_prompt",
         "controller_prompt",
@@ -912,6 +971,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "render_max_points_per_layer",
         "pcd_filter_enabled",
         "pcd_filter_mode",
+        "pcd_filter_preset",
         "object_filter",
         "controller_filter",
         "tracker_visualization_mode",
@@ -1084,6 +1144,9 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.append("--no-tapnextpp-fast-postprocess")
     if bool(args.enable_pcd_filter):
         argv.append("--enable-pcd-filter")
+    pcd_filter_preset = _effective_pcd_filter_preset(args)
+    if pcd_filter_preset is not None:
+        argv.extend(["--pcd-filter-preset", str(pcd_filter_preset)])
     if args.headless_capture_dir is not None:
         argv.extend(["--headless-capture-dir", str(args.headless_capture_dir)])
     if args.table_calibrate is not None:

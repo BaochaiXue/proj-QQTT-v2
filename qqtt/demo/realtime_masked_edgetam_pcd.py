@@ -66,8 +66,8 @@ from qqtt.demo.pcd_filter_fast import (  # noqa: E402
     FilterBudgetController,
     FilterInput,
     FilterOutput,
-    voxel_cap_points,
-    voxel_density_filter,
+    voxel_cap_indices,
+    voxel_density_indices,
 )
 from services.ffs_remote import FfsRemoteDepthClient  # noqa: E402
 from services.ffs_remote.protocol import (  # noqa: E402
@@ -140,6 +140,12 @@ PCD_FILTER_PT_FILTER = "pt-filter"
 PCD_FILTER_ENHANCED_PT = "enhanced-pt"
 PCD_FILTER_VOXEL_DENSITY = "voxel-density"
 PCD_FILTERS = (PCD_FILTER_NONE, PCD_FILTER_PT_FILTER, PCD_FILTER_ENHANCED_PT, PCD_FILTER_VOXEL_DENSITY)
+PCD_FILTER_PRESET_ORIGINAL = "original"
+PCD_FILTER_PRESET_PT = "pt"
+PCD_FILTER_PRESET_ENHANCED_PT = PCD_FILTER_ENHANCED_PT
+PCD_FILTER_PRESETS = (PCD_FILTER_PRESET_ORIGINAL, PCD_FILTER_PRESET_PT, PCD_FILTER_PRESET_ENHANCED_PT)
+TRACKER_QUERY_SOURCE_UNION_MASK = "object_controller_union_mask"
+TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL = "pcd_filter_residual"
 DEMO_PRESETS = ("none", "local-ffs-professor")
 DEFAULT_DEMO_PRESET = "none"
 LOCAL_FFS_PROFESSOR_MAX_POINTS = 20000
@@ -199,7 +205,7 @@ QUERY_CONTROLLER_INSTANCE_NONE = 0
 QUERY_CONTROLLER_INSTANCE_HAND_A = 1
 QUERY_CONTROLLER_INSTANCE_HAND_B = 2
 HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "enhanced_pt_filtered"
-HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS = (PCD_FILTER_ENHANCED_PT, PCD_FILTER_PT_FILTER)
+HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS = (PCD_FILTER_ENHANCED_PT, PCD_FILTER_PT_FILTER, PCD_FILTER_NONE)
 DEBUG_LOG_INTERVAL_S = 1.0
 DEFAULT_LOSSLESS_INPUT_FPS = 5.0
 DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS = 3.0
@@ -1612,6 +1618,15 @@ def build_parser() -> argparse.ArgumentParser:
         default="async",
         help="Point-cloud filter scheduling mode. Requires --enable-pcd-filter unless set to none.",
     )
+    parser.add_argument(
+        "--pcd-filter-preset",
+        choices=PCD_FILTER_PRESETS,
+        default=None,
+        help=(
+            "High-level PCD surface preset. When set, the same preset controls object/controller PCD "
+            "and TAPNext++ initial query sampling from filtered residual pixels."
+        ),
+    )
     parser.add_argument("--object-filter", choices=PCD_FILTERS, default=DEFAULT_OBJECT_FILTER)
     parser.add_argument("--controller-filter", choices=PCD_FILTERS, default=DEFAULT_CONTROLLER_FILTER)
     parser.add_argument("--object-filter-cap", type=int, default=20_000)
@@ -1706,6 +1721,29 @@ def pcd_filter_enabled(args: argparse.Namespace) -> bool:
     return bool(args.enable_pcd_filter) and str(args.pcd_filter_mode) != "none"
 
 
+def pcd_filter_preset_to_filter(preset: str | None) -> str | None:
+    if preset is None:
+        return None
+    normalized = str(preset).strip().lower()
+    if not normalized:
+        return None
+    if normalized == PCD_FILTER_PRESET_ORIGINAL:
+        return PCD_FILTER_NONE
+    if normalized == PCD_FILTER_PRESET_PT:
+        return PCD_FILTER_PT_FILTER
+    if normalized == PCD_FILTER_PRESET_ENHANCED_PT:
+        return PCD_FILTER_ENHANCED_PT
+    raise ValueError(f"--pcd-filter-preset must be one of {', '.join(PCD_FILTER_PRESETS)}")
+
+
+def tracker_query_source(args: argparse.Namespace) -> str:
+    return (
+        TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL
+        if pcd_filter_preset_to_filter(getattr(args, "pcd_filter_preset", None)) is not None
+        else TRACKER_QUERY_SOURCE_UNION_MASK
+    )
+
+
 def headless_capture_enabled(args: argparse.Namespace) -> bool:
     return args.headless_capture_dir is not None
 
@@ -1776,6 +1814,15 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--point-size must be positive")
     if args.pcd_filter_mode not in PCD_FILTER_MODES:
         raise ValueError(f"--pcd-filter-mode must be one of {', '.join(PCD_FILTER_MODES)}")
+    preset_filter = pcd_filter_preset_to_filter(getattr(args, "pcd_filter_preset", None))
+    if preset_filter is not None:
+        args.enable_pcd_filter = True
+        args.pcd_filter_mode = "sync"
+        args.object_filter = preset_filter
+        args.controller_filter = preset_filter
+        if str(getattr(args, "pcd_filter_preset", "")) == PCD_FILTER_PRESET_ORIGINAL:
+            args.object_filter_cap = 0
+            args.controller_filter_cap = 0
     for flag in (
         "object_filter_cap",
         "controller_filter_cap",
@@ -2117,7 +2164,8 @@ def backproject_masked_rgbd_profiled(
     color_mode: str,
     class_rgb: tuple[int, int, int],
     rng: np.random.Generator | None = None,
-) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
+    return_yx: bool = False,
+) -> tuple[np.ndarray, np.ndarray, dict[str, float]] | tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
     if color_bgr.ndim != 3 or color_bgr.shape[2] != 3:
         raise ValueError("color_bgr must be an HxWx3 array")
     if depth_m.shape != color_bgr.shape[:2] or depth_m.shape != mask.shape:
@@ -2145,7 +2193,12 @@ def backproject_masked_rgbd_profiled(
         timing["pcd_color_gather_ms"] = 0.0
         timing["pcd_raw_points"] = 0.0
         timing["pcd_cap_points"] = 0.0
-        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8), timing
+        empty_points = np.empty((0, 3), dtype=np.float32)
+        empty_colors = np.empty((0, 3), dtype=np.uint8)
+        empty_yx = np.empty((0, 2), dtype=np.int64)
+        if return_yx:
+            return empty_points, empty_colors, empty_yx, timing
+        return empty_points, empty_colors, timing
     rows, cols = np.nonzero(selected)
     timing["pcd_raw_points"] = float(rows.shape[0])
     timing["pcd_select_ms"] = _elapsed_ms(started_s, time.perf_counter())
@@ -2174,6 +2227,9 @@ def backproject_masked_rgbd_profiled(
     else:
         colors = make_solid_colors(points.shape[0], class_rgb)
     timing["pcd_color_gather_ms"] = _elapsed_ms(started_s, time.perf_counter())
+    if return_yx:
+        yx = np.ascontiguousarray(np.stack([rows, cols], axis=1), dtype=np.int64)
+        return points, colors, yx, timing
     return points, colors, timing
 
 
@@ -2747,6 +2803,19 @@ def _classify_query_targets_yx(
     return in_object.astype(bool), in_controller.astype(bool), target_id, controller_instance_id
 
 
+def _mask_from_yx(shape: tuple[int, int], yx: np.ndarray) -> np.ndarray:
+    mask = np.zeros(tuple(shape), dtype=bool)
+    coords = np.asarray(yx, dtype=np.int64).reshape(-1, 2)
+    if len(coords) == 0:
+        return mask
+    rows = coords[:, 0]
+    cols = coords[:, 1]
+    valid = (rows >= 0) & (rows < shape[0]) & (cols >= 0) & (cols < shape[1])
+    if np.any(valid):
+        mask[rows[valid], cols[valid]] = True
+    return np.ascontiguousarray(mask)
+
+
 def _tracker_display_visibility(
     visibility: np.ndarray,
     *,
@@ -3206,6 +3275,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "demo_visual_mode": str(self.args.demo_visual_mode),
             "tracker_backend": str(self.args.tracker_backend),
             "tracker_query_count": int(self.args.tracker_query_count),
+            "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
             "tracker_display_scope": str(self.args.tracker_display_scope),
             "tracker_sync_policy": (
                 "strict_same_seq_lossless_5fps" if self._lossless_enabled() else "none"
@@ -3214,6 +3284,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "lossless_max_backlog_frames": int(self.lossless_max_backlog_frames) if self._lossless_enabled() else None,
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": str(self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE),
+            "pcd_filter_preset": getattr(self.args, "pcd_filter_preset", None),
             "saved_pcd_source": (
                 headless_capture_saved_pcd_source(self.args) if headless_capture_enabled(self.args) else None
             ),
@@ -3744,6 +3815,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "render_max_points_per_layer": int(self.args.render_max_points_per_layer),
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE,
+            "pcd_filter_preset": getattr(self.args, "pcd_filter_preset", None),
             "headless_capture_enabled": headless_capture_enabled(self.args),
             "headless_capture_dir": (
                 str(self.args.headless_capture_dir) if headless_capture_enabled(self.args) else None
@@ -3903,11 +3975,30 @@ class RealtimeMaskedEdgeTamPcdDemo:
     def _ensure_tracker_queries(self, mask_packet: MaskPacket, adapter: Any) -> np.ndarray | None:
         if self._tracker_query_points_yx is not None:
             return self._tracker_query_points_yx
-        union_mask = _tracker_union_mask(mask_packet)
-        object_pixels = int(np.count_nonzero(mask_packet.object_mask))
-        controller_pixels = int(np.count_nonzero(mask_packet.controller_mask))
+        query_source = tracker_query_source(self.args)
+        if query_source == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL:
+            object_query_mask, controller_query_mask = self._tracker_pcd_filter_residual_masks(mask_packet)
+            union_mask = np.logical_or(object_query_mask, controller_query_mask)
+        else:
+            object_query_mask = np.asarray(mask_packet.object_mask, dtype=bool)
+            controller_query_mask = np.asarray(mask_packet.controller_mask, dtype=bool)
+            union_mask = _tracker_union_mask(mask_packet)
+        object_pixels = int(np.count_nonzero(object_query_mask))
+        controller_pixels = int(np.count_nonzero(controller_query_mask))
         union_pixels = int(np.count_nonzero(union_mask))
-        if object_pixels <= 0 or controller_pixels <= 0 or union_pixels <= 0:
+        requested = int(self.args.tracker_query_count)
+        if query_source == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL:
+            if union_pixels <= 0:
+                raise RuntimeError(
+                    "pcd_filter_residual query source produced no residual query candidates "
+                    f"seq={mask_packet.seq} object={object_pixels} controller={controller_pixels}"
+                )
+            if requested > 0 and union_pixels < requested:
+                raise RuntimeError(
+                    "not enough residual query candidates for TAPNext++ initialization: "
+                    f"requested={requested} residual={union_pixels} object={object_pixels} controller={controller_pixels}"
+                )
+        elif object_pixels <= 0 or controller_pixels <= 0 or union_pixels <= 0:
             return None
         query_points = sample_phystwin_dense(
             union_mask,
@@ -3915,17 +4006,20 @@ class RealtimeMaskedEdgeTamPcdDemo:
             camera_idx=0,
             torch_device="cpu",
         )
-        requested = int(self.args.tracker_query_count)
         if requested > 0 and len(query_points) > requested:
             query_points = np.ascontiguousarray(query_points[:requested], dtype=np.float32)
         if len(query_points) == 0:
+            if query_source == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL:
+                raise RuntimeError("pcd_filter_residual query source produced no sampled query points")
             return None
+        hand_a_query_mask = _mask_packet_hand_a_mask(mask_packet) & controller_query_mask
+        hand_b_query_mask = _mask_packet_hand_b_mask(mask_packet) & controller_query_mask
         query_is_object, query_is_controller, query_target_id, query_controller_instance_id = _classify_query_targets_yx(
             query_points,
-            object_mask=mask_packet.object_mask,
-            hand_a_mask=_mask_packet_hand_a_mask(mask_packet),
-            hand_b_mask=_mask_packet_hand_b_mask(mask_packet),
-            controller_mask=mask_packet.controller_mask,
+            object_mask=object_query_mask,
+            hand_a_mask=hand_a_query_mask,
+            hand_b_mask=hand_b_query_mask,
+            controller_mask=controller_query_mask,
         )
         if not three_identity_controller_enabled(self.args):
             query_controller_instance_id = np.zeros_like(query_controller_instance_id, dtype=np.int64)
@@ -3943,7 +4037,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"union_pixels={union_pixels} object_pixels={object_pixels} controller_pixels={controller_pixels} "
             f"hand_a_queries={int(np.count_nonzero(query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_A))} "
             f"hand_b_queries={int(np.count_nonzero(query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_B))} "
-            f"display_scope={self.args.tracker_display_scope} device={self.args.tracker_device}",
+            f"query_source={query_source} display_scope={self.args.tracker_display_scope} device={self.args.tracker_device}",
             flush=True,
         )
         return self._tracker_query_points_yx
@@ -3972,6 +4066,95 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if erode_pixels > 0:
             return erode_binary_mask(mask, erode_pixels=erode_pixels)
         return np.ascontiguousarray(mask)
+
+    def _tracker_pcd_filter_residual_masks(self, mask_packet: MaskPacket) -> tuple[np.ndarray, np.ndarray]:
+        if not pcd_filter_enabled(self.args):
+            raise RuntimeError("pcd_filter_residual query source requires enabled sync PCD filtering")
+        if str(self.args.pcd_filter_mode) != "sync":
+            raise RuntimeError("pcd_filter_residual query source requires --pcd-filter-mode sync")
+        if self.ray_x is None or self.ray_y is None:
+            raise RuntimeError("pcd_filter_residual query source requires initialized projection grids")
+
+        if mask_packet.depth_source in {"ffs", "ffs_remote"}:
+            depth_m, _ffs_ms, _ffs_align_ms, _remote_rtt_ms, _server_total_ms, _request_kb, _response_kb = (
+                self._compute_external_ffs_depth_color_m(mask_packet)
+            )
+        else:
+            if mask_packet.depth_u16 is None:
+                raise RuntimeError("pcd_filter_residual query source requires RGB-D depth")
+            depth_m = np.ascontiguousarray(
+                mask_packet.depth_u16.astype(np.float32) * np.float32(mask_packet.depth_scale_m_per_unit)
+            )
+
+        stride = int(self.args.pcd_stride)
+        if stride > 1:
+            color_bgr = mask_packet.color_bgr[::stride, ::stride]
+            depth_for_pcd = depth_m[::stride, ::stride]
+            controller_mask = mask_packet.controller_mask[::stride, ::stride]
+            object_mask = mask_packet.object_mask[::stride, ::stride]
+            ray_x_for_pcd = self.ray_x[::stride, ::stride]
+            ray_y_for_pcd = self.ray_y[::stride, ::stride]
+        else:
+            color_bgr = mask_packet.color_bgr
+            depth_for_pcd = depth_m
+            controller_mask = mask_packet.controller_mask
+            object_mask = mask_packet.object_mask
+            ray_x_for_pcd = self.ray_x
+            ray_y_for_pcd = self.ray_y
+
+        controller_erode_pixels = controller_pcd_mask_erode_pixels(self.args)
+        object_erode_pixels = object_pcd_mask_erode_pixels(self.args)
+        if controller_erode_pixels > 0:
+            controller_mask = erode_binary_mask(controller_mask, erode_pixels=controller_erode_pixels)
+        if object_erode_pixels > 0:
+            object_mask = erode_binary_mask(object_mask, erode_pixels=object_erode_pixels)
+
+        controller_xyz, controller_colors, controller_yx, _controller_timing = backproject_masked_rgbd_profiled(
+            color_bgr=color_bgr,
+            depth_m=depth_for_pcd,
+            mask=controller_mask,
+            ray_x=ray_x_for_pcd,
+            ray_y=ray_y_for_pcd,
+            depth_min_m=float(self.args.depth_min_m),
+            depth_max_m=float(self.args.depth_max_m),
+            max_points=int(self.args.pcd_max_points),
+            color_mode=str(self.args.pcd_color_mode),
+            class_rgb=tuple(self.args.controller_color),
+            rng=np.random.default_rng(int(mask_packet.seq) * 2 + 31),
+            return_yx=True,
+        )
+        object_xyz, object_colors, object_yx, _object_timing = backproject_masked_rgbd_profiled(
+            color_bgr=color_bgr,
+            depth_m=depth_for_pcd,
+            mask=object_mask,
+            ray_x=ray_x_for_pcd,
+            ray_y=ray_y_for_pcd,
+            depth_min_m=float(self.args.depth_min_m),
+            depth_max_m=float(self.args.depth_max_m),
+            max_points=int(self.args.pcd_max_points),
+            color_mode=str(self.args.pcd_color_mode),
+            class_rgb=tuple(self.args.object_color),
+            rng=np.random.default_rng(int(mask_packet.seq) * 2 + 29),
+            return_yx=True,
+        )
+        if stride > 1:
+            controller_yx = np.ascontiguousarray(controller_yx * int(stride), dtype=np.int64)
+            object_yx = np.ascontiguousarray(object_yx * int(stride), dtype=np.int64)
+
+        filter_input = self._make_filter_input(
+            seq=int(mask_packet.seq),
+            object_xyz=object_xyz,
+            object_colors=object_colors,
+            object_yx=object_yx,
+            controller_xyz=controller_xyz,
+            controller_colors=controller_colors,
+            controller_yx=controller_yx,
+        )
+        filter_output = self._filter_pcd_input(filter_input)
+        shape = tuple(mask_packet.object_mask.shape[:2])
+        object_residual = _mask_from_yx(shape, filter_output.object_yx)
+        controller_residual = _mask_from_yx(shape, filter_output.controller_yx)
+        return object_residual, controller_residual
 
     def _build_tracker_marker_packet(self, mask_packet: MaskPacket, adapter: Any) -> TrackerMarkerPacket | None:
         query_points = self._ensure_tracker_queries(mask_packet, adapter)
@@ -4515,8 +4698,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
         seq: int,
         object_xyz: np.ndarray,
         object_colors: np.ndarray,
+        object_yx: np.ndarray | None = None,
         controller_xyz: np.ndarray,
         controller_colors: np.ndarray,
+        controller_yx: np.ndarray | None = None,
     ) -> FilterInput:
         object_cap = 0 if int(self.args.object_filter_cap) == 0 else int(self.object_filter_budget.cap)
         controller_cap = 0 if int(self.args.controller_filter_cap) == 0 else int(self.controller_filter_budget.cap)
@@ -4530,6 +4715,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
             controller_cap=controller_cap,
             object_voxel_size_m=float(self.args.object_filter_voxel_m),
             controller_voxel_size_m=float(self.args.controller_filter_voxel_m),
+            object_yx=np.asarray(
+                object_yx if object_yx is not None else np.empty((0, 2), dtype=np.int64),
+                dtype=np.int64,
+            ).reshape(-1, 2),
+            controller_yx=np.asarray(
+                controller_yx if controller_yx is not None else np.empty((0, 2), dtype=np.int64),
+                dtype=np.int64,
+            ).reshape(-1, 2),
         )
 
     def _apply_single_pcd_filter(
@@ -4537,6 +4730,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         *,
         points: np.ndarray,
         colors: np.ndarray,
+        yx: np.ndarray | None = None,
         mode: str,
         cap: int,
         voxel_size_m: float,
@@ -4544,18 +4738,32 @@ class RealtimeMaskedEdgeTamPcdDemo:
         min_retain_ratio: float,
         min_raw_retain_ratio: float,
         rng: np.random.Generator,
-    ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
         raw_points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
         raw_colors = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
+        raw_yx = (
+            np.asarray(yx, dtype=np.int64).reshape(-1, 2)
+            if yx is not None
+            else np.empty((0, 2), dtype=np.int64)
+        )
+        if len(raw_yx) not in {0, len(raw_points)}:
+            raise ValueError("yx must have the same first dimension as points when provided")
+
+        def select_yx(source_yx: np.ndarray, indices: np.ndarray) -> np.ndarray:
+            if len(source_yx) == 0:
+                return np.empty((0, 2), dtype=np.int64)
+            return np.ascontiguousarray(source_yx[np.asarray(indices, dtype=np.int64)], dtype=np.int64).reshape(-1, 2)
+
         cap_start_s = time.perf_counter()
-        capped_points, capped_colors_or_none = voxel_cap_points(
+        cap_indices = voxel_cap_indices(
             raw_points,
-            raw_colors,
             max_points=int(cap),
             voxel_size_m=float(voxel_size_m),
             rng=rng,
         )
-        capped_colors = np.asarray(capped_colors_or_none, dtype=np.uint8).reshape(-1, 3)
+        capped_points = np.ascontiguousarray(raw_points[cap_indices], dtype=np.float32).reshape(-1, 3)
+        capped_colors = np.ascontiguousarray(raw_colors[cap_indices], dtype=np.uint8).reshape(-1, 3)
+        capped_yx = select_yx(raw_yx, cap_indices)
         cap_ms = _elapsed_ms(cap_start_s, time.perf_counter())
         raw_point_count = int(len(raw_points))
         capped_point_count = int(len(capped_points))
@@ -4573,7 +4781,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         ):
             filtered_points = np.ascontiguousarray(raw_points, dtype=np.float32).reshape(-1, 3)
             filtered_colors = np.ascontiguousarray(raw_colors, dtype=np.uint8).reshape(-1, 3)
-            return filtered_points, filtered_colors, {
+            filtered_yx = np.ascontiguousarray(raw_yx, dtype=np.int64).reshape(-1, 2)
+            return filtered_points, filtered_colors, filtered_yx, {
                 "mode": str(mode),
                 "raw_points": raw_point_count,
                 "cap_points": capped_point_count,
@@ -4597,33 +4806,36 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if mode == PCD_FILTER_NONE:
             filtered_points = np.asarray(capped_points, dtype=np.float32).reshape(-1, 3)
             filtered_colors = capped_colors
+            filtered_yx = capped_yx
         elif mode == PCD_FILTER_VOXEL_DENSITY:
-            density_points, density_colors_or_none = voxel_density_filter(
+            density_indices = voxel_density_indices(
                 capped_points,
-                capped_colors,
                 voxel_size_m=float(voxel_size_m),
                 min_points_per_voxel=int(self.args.voxel_density_min_points),
             )
-            filtered_points = np.asarray(density_points, dtype=np.float32).reshape(-1, 3)
-            filtered_colors = np.asarray(density_colors_or_none, dtype=np.uint8).reshape(-1, 3)
+            filtered_points = np.asarray(capped_points[density_indices], dtype=np.float32).reshape(-1, 3)
+            filtered_colors = np.asarray(capped_colors[density_indices], dtype=np.uint8).reshape(-1, 3)
+            filtered_yx = select_yx(capped_yx, density_indices)
         elif mode == PCD_FILTER_PT_FILTER:
             from qqtt.demo.pcd_postprocess import (
-                apply_phystwin_like_radius_postprocess,
+                apply_phystwin_like_radius_postprocess_with_trace,
             )
 
-            filtered_points, filtered_colors, _unused_stats = apply_phystwin_like_radius_postprocess(
+            filtered_points, filtered_colors, _unused_stats, trace = apply_phystwin_like_radius_postprocess_with_trace(
                 points=capped_points,
                 colors=capped_colors,
                 enabled=True,
                 radius_m=float(self.args.filter_radius_m),
                 nb_points=int(self.args.filter_nb_points),
             )
+            kept_indices = np.flatnonzero(np.asarray(trace["kept_mask"], dtype=bool).reshape(-1))
+            filtered_yx = select_yx(capped_yx, kept_indices)
         elif mode == PCD_FILTER_ENHANCED_PT:
             from qqtt.demo.pcd_postprocess import (
-                apply_enhanced_phystwin_like_postprocess,
+                apply_enhanced_phystwin_like_postprocess_with_trace,
             )
 
-            filtered_points, filtered_colors, _unused_stats = apply_enhanced_phystwin_like_postprocess(
+            filtered_points, filtered_colors, _unused_stats, trace = apply_enhanced_phystwin_like_postprocess_with_trace(
                 points=capped_points,
                 colors=capped_colors,
                 enabled=True,
@@ -4633,12 +4845,15 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 keep_near_main_gap_m=float(self.args.enhanced_keep_near_main_gap_m),
                 keep_top_n_components=int(keep_components),
             )
+            kept_indices = np.flatnonzero(np.asarray(trace["kept_mask"], dtype=bool).reshape(-1))
+            filtered_yx = select_yx(capped_yx, kept_indices)
         else:
             raise ValueError(f"unsupported PCD filter mode: {mode}")
 
         filter_ms = _elapsed_ms(filter_start_s, time.perf_counter())
         filtered_points = np.ascontiguousarray(filtered_points, dtype=np.float32).reshape(-1, 3)
         filtered_colors = np.ascontiguousarray(filtered_colors, dtype=np.uint8).reshape(-1, 3)
+        filtered_yx = np.ascontiguousarray(filtered_yx, dtype=np.int64).reshape(-1, 2)
         filter_output_points = int(len(filtered_points))
         retain_ratio = float(filter_output_points / max(1, capped_point_count))
         raw_retain_ratio = float(filter_output_points / max(1, raw_point_count))
@@ -4646,11 +4861,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if float(min_raw_retain_ratio) > 0.0:
                 filtered_points = np.ascontiguousarray(raw_points, dtype=np.float32).reshape(-1, 3)
                 filtered_colors = np.ascontiguousarray(raw_colors, dtype=np.uint8).reshape(-1, 3)
+                filtered_yx = np.ascontiguousarray(raw_yx, dtype=np.int64).reshape(-1, 2)
                 fallback_reason = "empty_filter_output_raw"
                 fallback_source = "raw"
             else:
                 filtered_points = np.ascontiguousarray(capped_points, dtype=np.float32).reshape(-1, 3)
                 filtered_colors = np.ascontiguousarray(capped_colors, dtype=np.uint8).reshape(-1, 3)
+                filtered_yx = np.ascontiguousarray(capped_yx, dtype=np.int64).reshape(-1, 2)
                 fallback_reason = "empty_filter_output"
                 fallback_source = "capped"
             fallback_to_capped = True
@@ -4661,6 +4878,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         ):
             filtered_points = np.ascontiguousarray(raw_points, dtype=np.float32).reshape(-1, 3)
             filtered_colors = np.ascontiguousarray(raw_colors, dtype=np.uint8).reshape(-1, 3)
+            filtered_yx = np.ascontiguousarray(raw_yx, dtype=np.int64).reshape(-1, 2)
             fallback_to_capped = True
             fallback_reason = "low_filter_raw_retain_ratio"
             fallback_source = "raw"
@@ -4671,10 +4889,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
         ):
             filtered_points = np.ascontiguousarray(capped_points, dtype=np.float32).reshape(-1, 3)
             filtered_colors = np.ascontiguousarray(capped_colors, dtype=np.uint8).reshape(-1, 3)
+            filtered_yx = np.ascontiguousarray(capped_yx, dtype=np.int64).reshape(-1, 2)
             fallback_to_capped = True
             fallback_reason = "low_filter_retain_ratio"
             fallback_source = "capped"
-        return filtered_points, filtered_colors, {
+        return filtered_points, filtered_colors, filtered_yx, {
             "mode": str(mode),
             "raw_points": raw_point_count,
             "cap_points": capped_point_count,
@@ -4696,9 +4915,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
     def _filter_pcd_input(self, item: FilterInput) -> FilterOutput:
         started_s = time.perf_counter()
-        object_points, object_colors, object_stats = self._apply_single_pcd_filter(
+        object_points, object_colors, object_yx, object_stats = self._apply_single_pcd_filter(
             points=item.object_xyz,
             colors=item.object_rgb,
+            yx=item.object_yx,
             mode=str(self.args.object_filter),
             cap=int(item.object_cap),
             voxel_size_m=float(item.object_voxel_size_m),
@@ -4707,9 +4927,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
             min_raw_retain_ratio=float(DEFAULT_OBJECT_FILTER_MIN_RAW_RETAIN_RATIO),
             rng=np.random.default_rng(int(item.seq) * 2 + 17),
         )
-        controller_points, controller_colors, controller_stats = self._apply_single_pcd_filter(
+        controller_points, controller_colors, controller_yx, controller_stats = self._apply_single_pcd_filter(
             points=item.controller_xyz,
             colors=item.controller_rgb,
+            yx=item.controller_yx,
             mode=str(self.args.controller_filter),
             cap=int(item.controller_cap),
             voxel_size_m=float(item.controller_voxel_size_m),
@@ -4732,6 +4953,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             filter_ms=float(filter_ms),
             created_perf_s=float(item.created_perf_s),
             output_perf_s=done_s,
+            object_yx=object_yx,
+            controller_yx=controller_yx,
             stats={
                 "object": object_stats,
                 "controller": controller_stats,
@@ -4933,7 +5156,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "pcd_cap_points": 0.0,
         }
         if controller_tracking_enabled(self.args):
-            controller_xyz, controller_colors, controller_pcd_timing = backproject_masked_rgbd_profiled(
+            controller_xyz, controller_colors, controller_yx, controller_pcd_timing = backproject_masked_rgbd_profiled(
                 color_bgr=color_bgr,
                 depth_m=depth_for_pcd,
                 mask=controller_mask,
@@ -4945,13 +5168,17 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 color_mode=str(self.args.pcd_color_mode),
                 class_rgb=tuple(self.args.controller_color),
                 rng=rng,
+                return_yx=True,
             )
+            if stride > 1:
+                controller_yx = np.ascontiguousarray(controller_yx * int(stride), dtype=np.int64)
         else:
             controller_xyz = np.empty((0, 3), dtype=np.float32)
             controller_colors = np.empty((0, 3), dtype=np.uint8)
+            controller_yx = np.empty((0, 2), dtype=np.int64)
             controller_pcd_timing = dict(empty_pcd_timing)
         if object_tracking_enabled(self.args):
-            object_xyz, object_colors, object_pcd_timing = backproject_masked_rgbd_profiled(
+            object_xyz, object_colors, object_yx, object_pcd_timing = backproject_masked_rgbd_profiled(
                 color_bgr=color_bgr,
                 depth_m=depth_for_pcd,
                 mask=object_mask,
@@ -4963,10 +5190,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 color_mode=str(self.args.pcd_color_mode),
                 class_rgb=tuple(self.args.object_color),
                 rng=rng,
+                return_yx=True,
             )
+            if stride > 1:
+                object_yx = np.ascontiguousarray(object_yx * int(stride), dtype=np.int64)
         else:
             object_xyz = np.empty((0, 3), dtype=np.float32)
             object_colors = np.empty((0, 3), dtype=np.uint8)
+            object_yx = np.empty((0, 2), dtype=np.int64)
             object_pcd_timing = dict(empty_pcd_timing)
         controller_raw_points = int(controller_pcd_timing.get("pcd_raw_points", len(controller_xyz)))
         controller_cap_points = int(controller_pcd_timing.get("pcd_cap_points", len(controller_xyz)))
@@ -4985,8 +5216,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     seq=mask_packet.seq,
                     object_xyz=object_xyz,
                     object_colors=object_colors,
+                    object_yx=object_yx,
                     controller_xyz=controller_xyz,
                     controller_colors=controller_colors,
+                    controller_yx=controller_yx,
                 )
                 self.filter_submit_stats.record()
                 filter_output = self._filter_pcd_input(filter_input)
@@ -5022,8 +5255,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
                                     seq=mask_packet.seq,
                                     object_xyz=object_xyz,
                                     object_colors=object_colors,
+                                    object_yx=object_yx,
                                     controller_xyz=controller_xyz,
                                     controller_colors=controller_colors,
+                                    controller_yx=controller_yx,
                                 )
                             )
                             self.filter_submit_stats.record()

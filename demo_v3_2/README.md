@@ -42,7 +42,10 @@ pipeline running, but hide the query markers in the render. This makes the
 displayed FPS reflect the same full pipeline cost as tracking mode. The PCD
 inspection view defaults both object and controller rendering filters to
 `pt-filter`; tracking mode keeps the stricter `enhanced-pt` defaults for its
-overlay path.
+overlay path. Use `--pcd-filter-preset {original,pt,enhanced-pt}` to override
+the visual-mode default for both object and controller. The same preset drives
+rendered/saved PCD and TAPNext++ initialization: query points are sampled from
+the preset's residual PCD pixels, not the raw object/controller union mask.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \

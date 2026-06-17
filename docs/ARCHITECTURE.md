@@ -36,7 +36,10 @@ aligned-case data product.
 - `qqtt/demo/realtime_masked_edgetam_pcd.py`: shared masked PCD runtime. Demo
   3.2/3.3 tracking visualizations default object/controller filters to
   enhanced-pt, while PCD-only inspection defaults both layers to pt-filter and
-  still runs the full tracker pipeline for honest FPS. Object enhanced-pt
+  still runs the full tracker pipeline for honest FPS. The high-level
+  `--pcd-filter-preset {original,pt,enhanced-pt}` option overrides those
+  defaults for both object/controller layers and also selects the residual PCD
+  pixels used for TAPNext++ query initialization. Object enhanced-pt
   filtering keeps one component and controller enhanced-pt filtering keeps two
   components, matching single-object plus two-hand demo scenes. It starts
   Open3D in a third-person orbit view by default, falls back to capped

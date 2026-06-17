@@ -240,7 +240,7 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         )
         colors = np.full((points.shape[0], 3), 63, dtype=np.uint8)
 
-        output_points, _output_colors, stats = demo_instance._apply_single_pcd_filter(
+        output_points, _output_colors, _output_yx, stats = demo_instance._apply_single_pcd_filter(
             points=points,
             colors=colors,
             mode=masked_demo.PCD_FILTER_NONE,
@@ -267,7 +267,7 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         )
         colors = np.full((points.shape[0], 3), 127, dtype=np.uint8)
 
-        output_points, _output_colors, stats = demo_instance._apply_single_pcd_filter(
+        output_points, _output_colors, _output_yx, stats = demo_instance._apply_single_pcd_filter(
             points=points,
             colors=colors,
             mode=masked_demo.PCD_FILTER_ENHANCED_PT,
@@ -286,6 +286,70 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertEqual(stats["fallback_reason"], "skip_filter_low_cap_raw_retain_ratio")
         self.assertEqual(stats["fallback_source"], "raw")
         self.assertEqual(stats["filter_ms"], 0.0)
+
+    def test_pt_filter_preserves_surviving_source_yx(self) -> None:
+        args = masked_demo.build_parser().parse_args(["--filter-radius-m", "0.03", "--filter-nb-points", "2"])
+        demo_instance = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        points = np.array(
+            [
+                [0.00, 0.00, 0.50],
+                [0.01, 0.00, 0.50],
+                [0.50, 0.00, 0.50],
+            ],
+            dtype=np.float32,
+        )
+        colors = np.arange(9, dtype=np.uint8).reshape(3, 3)
+        yx = np.array([[10, 20], [11, 21], [12, 22]], dtype=np.int64)
+
+        output_points, output_colors, output_yx, stats = demo_instance._apply_single_pcd_filter(
+            points=points,
+            colors=colors,
+            yx=yx,
+            mode=masked_demo.PCD_FILTER_PT_FILTER,
+            cap=0,
+            voxel_size_m=0.01,
+            keep_components=1,
+            min_retain_ratio=0.0,
+            min_raw_retain_ratio=0.0,
+            rng=np.random.default_rng(1),
+        )
+
+        np.testing.assert_allclose(output_points, points[:2])
+        np.testing.assert_array_equal(output_colors, colors[:2])
+        np.testing.assert_array_equal(output_yx, yx[:2])
+        self.assertEqual(stats["filter_output_points"], 2)
+
+    def test_enhanced_filter_fallback_restores_matching_raw_yx(self) -> None:
+        args = masked_demo.build_parser().parse_args(["--filter-radius-m", "0.03", "--filter-nb-points", "5"])
+        demo_instance = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        points = np.array(
+            [
+                [float(idx) * 0.10, 0.0, 0.50]
+                for idx in range(6)
+            ],
+            dtype=np.float32,
+        )
+        colors = np.arange(18, dtype=np.uint8).reshape(6, 3)
+        yx = np.array([[idx, idx + 30] for idx in range(6)], dtype=np.int64)
+
+        output_points, output_colors, output_yx, stats = demo_instance._apply_single_pcd_filter(
+            points=points,
+            colors=colors,
+            yx=yx,
+            mode=masked_demo.PCD_FILTER_ENHANCED_PT,
+            cap=0,
+            voxel_size_m=0.01,
+            keep_components=1,
+            min_retain_ratio=0.0,
+            min_raw_retain_ratio=0.1,
+            rng=np.random.default_rng(1),
+        )
+
+        np.testing.assert_array_equal(output_points, points)
+        np.testing.assert_array_equal(output_colors, colors)
+        np.testing.assert_array_equal(output_yx, yx)
+        self.assertTrue(stats["fallback_to_capped"])
+        self.assertEqual(stats["fallback_source"], "raw")
 
     def test_edgetam_live_session_prunes_old_streaming_state(self) -> None:
         args = masked_demo.build_parser().parse_args(["--edgetam-live-session-keep-frames", "4"])

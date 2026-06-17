@@ -958,6 +958,80 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         np.testing.assert_array_equal(packet.marker_colors_rgb_u8, packet.query_rgb_u8[packet.query_indices])
         self.assertTrue(np.all(packet.marker_xyz_m[:, 2] > 0.0))
 
+    def test_tracker_queries_use_pcd_filter_residual_pixels_with_stride(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--tracker-backend",
+                "tapnextpp",
+                "--tracker-query-count",
+                "4",
+                "--pcd-stride",
+                "2",
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+                "--pcd-filter-preset",
+                "original",
+                "--object-filter",
+                "none",
+                "--controller-filter",
+                "none",
+                "--object-filter-cap",
+                "0",
+                "--controller-filter-cap",
+                "0",
+            ]
+        )
+        demo.validate_args(args)
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime.ray_x = np.zeros((4, 4), dtype=np.float32)
+        runtime.ray_y = np.zeros((4, 4), dtype=np.float32)
+        adapter = _FakeTapNextAdapter()
+
+        query_points = runtime._ensure_tracker_queries(self._mask_packet(), adapter)
+
+        self.assertIsNotNone(query_points)
+        assert query_points is not None
+        expected = {(0.0, 0.0), (0.0, 2.0), (2.0, 0.0), (2.0, 2.0)}
+        self.assertEqual({tuple(point) for point in query_points.tolist()}, expected)
+        np.testing.assert_array_equal(adapter.query_points_yx, query_points)
+
+    def test_tracker_query_initialization_fails_when_residual_candidates_are_too_few(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--tracker-backend",
+                "tapnextpp",
+                "--tracker-query-count",
+                "5",
+                "--pcd-stride",
+                "2",
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+                "--pcd-filter-preset",
+                "original",
+                "--object-filter",
+                "none",
+                "--controller-filter",
+                "none",
+                "--object-filter-cap",
+                "0",
+                "--controller-filter-cap",
+                "0",
+            ]
+        )
+        demo.validate_args(args)
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime.ray_x = np.zeros((4, 4), dtype=np.float32)
+        runtime.ray_y = np.zeros((4, 4), dtype=np.float32)
+
+        with self.assertRaisesRegex(RuntimeError, "not enough residual query candidates"):
+            runtime._ensure_tracker_queries(self._mask_packet(), _FakeTapNextAdapter())
+
     def test_fatal_worker_error_records_once_and_requests_render_update(self) -> None:
         args = demo.build_parser().parse_args(["--render-mode", "none", "--track-mode", "none", "--pcd-mode", "none"])
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)

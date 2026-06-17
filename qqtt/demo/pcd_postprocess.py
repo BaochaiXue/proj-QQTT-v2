@@ -104,9 +104,28 @@ def apply_phystwin_like_radius_postprocess(
     radius_m: float,
     nb_points: int,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    filtered_points, filtered_colors, stats, _trace = apply_phystwin_like_radius_postprocess_with_trace(
+        points=points,
+        colors=colors,
+        enabled=enabled,
+        radius_m=radius_m,
+        nb_points=nb_points,
+    )
+    return filtered_points, filtered_colors, stats
+
+
+def apply_phystwin_like_radius_postprocess_with_trace(
+    *,
+    points: np.ndarray,
+    colors: np.ndarray,
+    enabled: bool,
+    radius_m: float,
+    nb_points: int,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any], dict[str, np.ndarray]]:
     point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     color_array = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
     point_count = int(len(point_array))
+    kept_mask = np.ones((point_count,), dtype=bool)
     stats = {
         "enabled": bool(enabled),
         "mode": "phystwin_like_radius_neighbor_filter",
@@ -118,7 +137,12 @@ def apply_phystwin_like_radius_postprocess(
         "outlier_ratio": 0.0,
     }
     if not enabled or point_count == 0:
-        return point_array, color_array, stats
+        trace = {
+            "kept_mask": kept_mask.copy(),
+            "radius_removed_mask": np.zeros((point_count,), dtype=bool),
+            "removed_mask": np.zeros((point_count,), dtype=bool),
+        }
+        return point_array, color_array, stats, trace
 
     result = _detect_radius_outlier_indices(
         point_array,
@@ -126,6 +150,8 @@ def apply_phystwin_like_radius_postprocess(
         nb_points=int(nb_points),
     )
     inlier_indices = np.sort(np.asarray(result["inlier_indices"], dtype=np.int32).reshape(-1))
+    kept_mask[:] = False
+    kept_mask[inlier_indices] = True
     outlier_count = int(point_count - len(inlier_indices))
     stats.update(
         {
@@ -134,7 +160,12 @@ def apply_phystwin_like_radius_postprocess(
             "outlier_ratio": float(outlier_count / max(1, point_count)),
         }
     )
-    return point_array[inlier_indices], color_array[inlier_indices], stats
+    trace = {
+        "kept_mask": kept_mask.copy(),
+        "radius_removed_mask": ~kept_mask,
+        "removed_mask": ~kept_mask,
+    }
+    return point_array[inlier_indices], color_array[inlier_indices], stats, trace
 
 
 def _bbox_gap_m(left_min: np.ndarray, left_max: np.ndarray, right_min: np.ndarray, right_max: np.ndarray) -> float:
@@ -496,6 +527,7 @@ __all__ = [
     "apply_enhanced_phystwin_like_postprocess",
     "apply_enhanced_phystwin_like_postprocess_with_trace",
     "apply_phystwin_like_radius_postprocess",
+    "apply_phystwin_like_radius_postprocess_with_trace",
     "COMPONENT_SELECTION_LARGEST_N",
     "COMPONENT_SELECTION_LARGEST_N_PLUS_GAP",
     "COMPONENT_SELECTION_MAIN_PLUS_GAP",
