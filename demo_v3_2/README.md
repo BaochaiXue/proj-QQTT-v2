@@ -84,12 +84,11 @@ open Open3D. It saves the sync filtered PCD selected by the visual mode
 color-aligned FFS depth, EdgeTAM `hand_a`/`hand_b`/`object` masks plus legacy
 controller/object masks, and TAPNext++ query trajectory artifacts:
 
-Demo 3.2 keeps the FFS object mask cleanup at 3px erosion by default, but the
-controller PCD mask defaults to 0px erosion so small hand/controller regions are
-not eaten before point-cloud generation. Passing `--pcd-mask-erode-pixels`
-explicitly still applies the legacy common value to both classes unless
-`--object-pcd-mask-erode-pixels` or `--controller-pcd-mask-erode-pixels` is also
-provided.
+Demo 3.2 defaults both object and controller PCD mask erosion to 0px so small
+target regions are not eaten before point-cloud generation. Passing
+`--pcd-mask-erode-pixels` explicitly still applies the legacy common value to
+both classes unless `--object-pcd-mask-erode-pixels` or
+`--controller-pcd-mask-erode-pixels` is also provided.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \

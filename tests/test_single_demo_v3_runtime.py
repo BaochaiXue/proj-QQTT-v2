@@ -795,7 +795,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["filter_every_n"], runtime.FFS_SURFACE_FILTER_EVERY_N)
         self.assertEqual(contract["filter_max_age_frames"], runtime.FFS_SURFACE_FILTER_MAX_AGE_FRAMES)
         self.assertEqual(contract["pcd_mask_erode_pixels"], 0)
-        self.assertEqual(contract["object_pcd_mask_erode_pixels"], runtime.FFS_SURFACE_OBJECT_MASK_ERODE_PIXELS)
+        self.assertEqual(contract["object_pcd_mask_erode_pixels"], 0)
         self.assertEqual(
             contract["controller_pcd_mask_erode_pixels"],
             runtime.FFS_SURFACE_CONTROLLER_MASK_ERODE_PIXELS,
@@ -817,7 +817,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         )
         self.assertEqual(
             _option_value(delegate, "--object-pcd-mask-erode-pixels"),
-            str(runtime.FFS_SURFACE_OBJECT_MASK_ERODE_PIXELS),
+            "0",
         )
         self.assertEqual(
             _option_value(delegate, "--controller-pcd-mask-erode-pixels"),
