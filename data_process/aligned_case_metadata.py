@@ -42,6 +42,9 @@ ALIGNED_METADATA_EXT_KEYS = (
     "ffs_confidence_filter",
     "ffs_radius_outlier_filter_enabled",
     "ffs_radius_outlier_filter",
+    "table_calibration_path",
+    "table_calibration_metadata_path",
+    "table_world_frame_kind",
 )
 
 _KNOWN_ALIGNED_METADATA_KEYS = set(LEGACY_ALIGNED_METADATA_KEYS) | set(ALIGNED_METADATA_EXT_KEYS)

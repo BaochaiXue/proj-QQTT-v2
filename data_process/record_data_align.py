@@ -7,6 +7,7 @@ import pickle
 import shutil
 import subprocess
 import sys
+import tempfile
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from pathlib import Path
 from typing import Any
@@ -23,24 +24,17 @@ if sys.path[:1] != [_PROJECT_ROOT_STR]:
         *[item for item in sys.path if item != _PROJECT_ROOT_STR],
     ]
 
-from data_process.aligned_case_metadata import (
-    ALIGNED_METADATA_EXT_FILENAME,
-    write_split_aligned_metadata,
-)
+from data_process.aligned_case_metadata import write_split_aligned_metadata
 from data_process.visualization.calibration_io import load_calibration_transforms
 from qqtt.env.camera.table_calibration import (
     TABLE_WORLD_FRAME_KIND,
     load_table_calibration_metadata,
     load_table_calibration_transforms,
+    table_calibration_metadata_path_for,
     write_table_calibration_files,
 )
 
 RAW_IMAGE_STREAMS = ("color", "ir_left", "ir_right")
-_TABLE_ALIGNED_METADATA_KEYS = (
-    "table_calibration_path",
-    "table_calibration_metadata_path",
-    "table_world_frame_kind",
-)
 
 
 def _resolve_path(path: str) -> Path:
@@ -195,28 +189,108 @@ def _subset_table_per_camera_metadata(
     return [values[index_by_serial[serial]] for serial in aligned_serials]
 
 
+def _resolve_case_relative_path(case_dir: Path, value: Any, description: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{description} must be a non-empty path string.")
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return case_dir / path
+
+
+def _resolve_source_table_calibration_paths(case_dir: Path, metadata: dict[str, Any]) -> tuple[Path, Path] | None:
+    declares_table_calibration = (
+        "table_calibration_path" in metadata
+        or "table_calibration_metadata_path" in metadata
+    )
+    if declares_table_calibration:
+        table_path = _resolve_case_relative_path(
+            case_dir,
+            metadata.get("table_calibration_path"),
+            "table_calibration_path",
+        )
+        if not table_path.is_file():
+            raise FileNotFoundError(f"Missing declared table calibration file: {table_path}")
+
+        metadata_path = _resolve_case_relative_path(
+            case_dir,
+            metadata.get("table_calibration_metadata_path"),
+            "table_calibration_metadata_path",
+        )
+        if not metadata_path.is_file():
+            raise FileNotFoundError(
+                f"Missing declared table calibration metadata file: {metadata_path}"
+            )
+        return table_path, metadata_path
+
+    table_path = case_dir / "table_calibrate.pkl"
+    if not table_path.is_file():
+        return None
+    metadata_path = table_calibration_metadata_path_for(table_path)
+    if not metadata_path.is_file():
+        raise FileNotFoundError(f"Missing table calibration metadata file: {metadata_path}")
+    return table_path, metadata_path
+
+
+def _load_table_calibration_for_alignment(
+    *,
+    table_path: Path,
+    metadata_path: Path,
+    aligned_serials: list[str],
+    metadata: dict[str, Any],
+) -> tuple[dict[str, Any], list[Any]]:
+    expected_metadata_path = table_calibration_metadata_path_for(table_path)
+    if metadata_path == expected_metadata_path:
+        source_metadata = load_table_calibration_metadata(table_path)
+        transforms = load_table_calibration_transforms(
+            table_path,
+            serial_numbers=aligned_serials,
+            table_calibration_reference_serials=metadata.get(
+                "table_calibration_reference_serials",
+                source_metadata.get(
+                    "table_calibration_reference_serials",
+                    source_metadata["serial_numbers"],
+                ),
+            ),
+        )
+        return source_metadata, transforms
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_table_path = Path(tmpdir) / table_path.name
+        temp_metadata_path = table_calibration_metadata_path_for(temp_table_path)
+        shutil.copy2(table_path, temp_table_path)
+        shutil.copy2(metadata_path, temp_metadata_path)
+        source_metadata = load_table_calibration_metadata(temp_table_path)
+        transforms = load_table_calibration_transforms(
+            temp_table_path,
+            serial_numbers=aligned_serials,
+            table_calibration_reference_serials=metadata.get(
+                "table_calibration_reference_serials",
+                source_metadata.get(
+                    "table_calibration_reference_serials",
+                    source_metadata["serial_numbers"],
+                ),
+            ),
+        )
+    return source_metadata, transforms
+
+
 def write_aligned_table_calibration_file(
     *,
     case_dir: Path,
     output_case_dir: Path,
     metadata: dict[str, Any],
 ) -> bool:
-    table_path = case_dir / "table_calibrate.pkl"
-    if not table_path.is_file():
+    source_paths = _resolve_source_table_calibration_paths(case_dir, metadata)
+    if source_paths is None:
         return False
 
     aligned_serials = list(metadata["serial_numbers"])
-    source_metadata = load_table_calibration_metadata(table_path)
-    transforms = load_table_calibration_transforms(
-        table_path,
-        serial_numbers=aligned_serials,
-        table_calibration_reference_serials=metadata.get(
-            "table_calibration_reference_serials",
-            source_metadata.get(
-                "table_calibration_reference_serials",
-                source_metadata["serial_numbers"],
-            ),
-        ),
+    source_metadata, transforms = _load_table_calibration_for_alignment(
+        table_path=source_paths[0],
+        metadata_path=source_paths[1],
+        aligned_serials=aligned_serials,
+        metadata=metadata,
     )
 
     aligned_table_metadata = dict(source_metadata)
@@ -782,17 +856,7 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     if ffs_confidence_mode != "none":
         aligned_metadata["ffs_confidence_filter"]["stats_summary"] = summarize_numeric_stats(confidence_filter_stats_samples)
 
-    metadata_for_split = {
-        key: value
-        for key, value in aligned_metadata.items()
-        if key not in _TABLE_ALIGNED_METADATA_KEYS
-    }
-    write_split_aligned_metadata(output_case_dir, metadata_for_split)
-    metadata_ext_path = output_case_dir / ALIGNED_METADATA_EXT_FILENAME
-    metadata_ext = json.loads(metadata_ext_path.read_text(encoding="utf-8"))
-    for key in _TABLE_ALIGNED_METADATA_KEYS:
-        metadata_ext[key] = aligned_metadata[key]
-    metadata_ext_path.write_text(json.dumps(metadata_ext), encoding="utf-8")
+    write_split_aligned_metadata(output_case_dir, aligned_metadata)
 
     write_color_mp4_sidecars = should_write_color_mp4_sidecars(
         output_case_dir=output_case_dir,
