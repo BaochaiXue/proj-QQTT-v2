@@ -117,8 +117,12 @@ class RecordDataTableCalibrationTest(unittest.TestCase):
                 def __init__(self, **_kwargs) -> None:
                     self.serial_numbers = ["cam-b"]
                     self.record_called = False
+                    self.stop_called = False
                     self.realsense = SimpleNamespace(stop=lambda: None)
                     self.__class__.instances.append(self)
+
+                def stop(self) -> None:
+                    self.stop_called = True
 
                 def record(self, *, output_path: str, max_frames) -> None:
                     self.record_called = True
@@ -161,6 +165,7 @@ class RecordDataTableCalibrationTest(unittest.TestCase):
 
             self.assertEqual(len(FakeCameraSystem.instances), 1)
             self.assertFalse(FakeCameraSystem.instances[0].record_called)
+            self.assertTrue(FakeCameraSystem.instances[0].stop_called)
 
 
 if __name__ == "__main__":

@@ -121,13 +121,29 @@ def _print_preflight_summary(*, decision, stage_label: str) -> None:
     print(format_capture_preflight_summary(decision, stage_label=stage_label))
 
 
+def _stop_camera_system(camera_system) -> None:
+    stop = getattr(camera_system, "stop", None)
+    if callable(stop):
+        try:
+            stop()
+            return
+        except Exception:
+            pass
+    realsense = getattr(camera_system, "realsense", None)
+    if realsense is not None:
+        try:
+            realsense.stop()
+        except Exception:
+            pass
+
+
 def _raise_if_preflight_blocked(
     *, decision, stage_label: str, camera_system=None
 ) -> None:
     if decision.allowed_to_record:
         return
     if camera_system is not None:
-        camera_system.realsense.stop()
+        _stop_camera_system(camera_system)
     raise RuntimeError(
         f"Recording preflight blocked this capture profile {stage_label}. "
         f"{decision.reason} See {decision.probe_results_md}."
@@ -271,10 +287,14 @@ def main() -> int:
     )
     validated_table_calibration = None
     if args.table_calibrate is not None:
-        validated_table_calibration = validate_table_calibration_for_case(
-            table_calibrate_path=Path(args.table_calibrate),
-            serial_numbers=list(effective_serials),
-        )
+        try:
+            validated_table_calibration = validate_table_calibration_for_case(
+                table_calibrate_path=Path(args.table_calibrate),
+                serial_numbers=list(effective_serials),
+            )
+        except Exception:
+            _stop_camera_system(camera_system)
+            raise
     if final_preflight.operator_status == "experimental_warning":
         print(
             "[record] warning: preflight policy allows this unsupported profile experimentally; "
