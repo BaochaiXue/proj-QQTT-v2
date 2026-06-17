@@ -16,13 +16,31 @@ _PROJECT_ROOT = next(
     (p for p in [Path(__file__).resolve().parent, *Path(__file__).resolve().parents] if (p / ".git").exists()),
     Path(__file__).resolve().parent,
 )
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+_PROJECT_ROOT_STR = str(_PROJECT_ROOT)
+if sys.path[:1] != [_PROJECT_ROOT_STR]:
+    sys.path = [
+        _PROJECT_ROOT_STR,
+        *[item for item in sys.path if item != _PROJECT_ROOT_STR],
+    ]
 
-from data_process.aligned_case_metadata import write_split_aligned_metadata
+from data_process.aligned_case_metadata import (
+    ALIGNED_METADATA_EXT_FILENAME,
+    write_split_aligned_metadata,
+)
 from data_process.visualization.calibration_io import load_calibration_transforms
+from qqtt.env.camera.table_calibration import (
+    TABLE_WORLD_FRAME_KIND,
+    load_table_calibration_metadata,
+    load_table_calibration_transforms,
+    write_table_calibration_files,
+)
 
 RAW_IMAGE_STREAMS = ("color", "ir_left", "ir_right")
+_TABLE_ALIGNED_METADATA_KEYS = (
+    "table_calibration_path",
+    "table_calibration_metadata_path",
+    "table_world_frame_kind",
+)
 
 
 def _resolve_path(path: str) -> Path:
@@ -162,6 +180,77 @@ def write_aligned_calibration_file(*, case_dir: Path, output_case_dir: Path, met
     )
     with output_path.open("wb") as handle:
         pickle.dump(transforms, handle)
+
+
+def _subset_table_per_camera_metadata(
+    source_metadata: dict[str, Any],
+    key: str,
+    aligned_serials: list[str],
+) -> list[Any] | None:
+    values = source_metadata.get(key)
+    if not isinstance(values, list):
+        return None
+    source_serials = list(source_metadata["serial_numbers"])
+    index_by_serial = {serial: idx for idx, serial in enumerate(source_serials)}
+    return [values[index_by_serial[serial]] for serial in aligned_serials]
+
+
+def write_aligned_table_calibration_file(
+    *,
+    case_dir: Path,
+    output_case_dir: Path,
+    metadata: dict[str, Any],
+) -> bool:
+    table_path = case_dir / "table_calibrate.pkl"
+    if not table_path.is_file():
+        return False
+
+    aligned_serials = list(metadata["serial_numbers"])
+    source_metadata = load_table_calibration_metadata(table_path)
+    transforms = load_table_calibration_transforms(
+        table_path,
+        serial_numbers=aligned_serials,
+        table_calibration_reference_serials=metadata.get(
+            "table_calibration_reference_serials",
+            source_metadata.get(
+                "table_calibration_reference_serials",
+                source_metadata["serial_numbers"],
+            ),
+        ),
+    )
+
+    aligned_table_metadata = dict(source_metadata)
+    logical_camera_names = metadata.get("logical_camera_names")
+    if (
+        not isinstance(logical_camera_names, list)
+        or len(logical_camera_names) != len(aligned_serials)
+    ):
+        logical_camera_names = [f"cam{i}" for i in range(len(aligned_serials))]
+    aligned_table_metadata.update(
+        {
+            "serial_numbers": aligned_serials,
+            "table_calibration_reference_serials": aligned_serials,
+            "logical_camera_names": list(logical_camera_names),
+            "transform_count": len(transforms),
+        }
+    )
+    for key in (
+        "per_camera_reprojection_error",
+        "per_camera_corner_count",
+        "per_camera_corner_fraction",
+        "distortion_model_by_camera",
+        "distortion_coeffs_by_camera",
+    ):
+        subset = _subset_table_per_camera_metadata(source_metadata, key, aligned_serials)
+        if subset is not None:
+            aligned_table_metadata[key] = subset
+
+    write_table_calibration_files(
+        output_case_dir / "table_calibrate.pkl",
+        transforms,
+        aligned_table_metadata,
+    )
+    return True
 
 
 def load_metadata(case_dir: Path) -> dict[str, Any]:
@@ -456,8 +545,14 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
         output_case_dir=output_case_dir,
         metadata=metadata,
     )
+    has_table_calibration = write_aligned_table_calibration_file(
+        case_dir=case_dir,
+        output_case_dir=output_case_dir,
+        metadata=metadata,
+    )
 
     color_intrinsics = get_color_intrinsics(metadata, num_cameras)
+
     aligned_metadata = {
         "schema_version": "qqtt_aligned_case_v2",
         "source_case_name": args.case_name,
@@ -505,6 +600,9 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
         "T_ir_left_to_color": get_metadata_list(metadata, "T_ir_left_to_color", num_cameras),
         "ir_baseline_m": get_metadata_list(metadata, "ir_baseline_m", num_cameras),
         "source_streams_present": metadata.get("streams_present", available_streams),
+        "table_calibration_path": "table_calibrate.pkl" if has_table_calibration else None,
+        "table_calibration_metadata_path": "table_calibrate_metadata.json" if has_table_calibration else None,
+        "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if has_table_calibration else None,
     }
 
     runner = None
@@ -684,7 +782,17 @@ def align_case(args: Any, runner_factory=None) -> dict[str, Any]:
     if ffs_confidence_mode != "none":
         aligned_metadata["ffs_confidence_filter"]["stats_summary"] = summarize_numeric_stats(confidence_filter_stats_samples)
 
-    write_split_aligned_metadata(output_case_dir, aligned_metadata)
+    metadata_for_split = {
+        key: value
+        for key, value in aligned_metadata.items()
+        if key not in _TABLE_ALIGNED_METADATA_KEYS
+    }
+    write_split_aligned_metadata(output_case_dir, metadata_for_split)
+    metadata_ext_path = output_case_dir / ALIGNED_METADATA_EXT_FILENAME
+    metadata_ext = json.loads(metadata_ext_path.read_text(encoding="utf-8"))
+    for key in _TABLE_ALIGNED_METADATA_KEYS:
+        metadata_ext[key] = aligned_metadata[key]
+    metadata_ext_path.write_text(json.dumps(metadata_ext), encoding="utf-8")
 
     write_color_mp4_sidecars = should_write_color_mp4_sidecars(
         output_case_dir=output_case_dir,
