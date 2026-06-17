@@ -86,7 +86,11 @@ calibration after moving the camera, table, or mount, or pass
 The tabletop is `table_z_m = 0.0`; the current calibration convention treats
 the workspace above the table as negative Z (`table_z_above_direction =
 negative`). Headless captures include per-frame `world_z_stats.jsonl`; table-Z
-deletion is opt-in with `--enable-table-z-filter`.
+filter diagnostics are always reported for table-calibrated PCD. Demo 3.1/3.2/3.3
+`--demo-visual-mode pcd|tracking` enable table-Z deletion by default at
+`--table-z-filter-threshold-m 0.0`; use `--disable-table-z-filter` for an
+unfiltered ablation or pass a larger threshold explicitly for wider table-band
+removal.
 
 ## Calibration
 

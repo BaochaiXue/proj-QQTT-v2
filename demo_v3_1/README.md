@@ -38,17 +38,18 @@ streams the remaining frames at 5 FPS by default and exits at EOF. Pass
 `--replay-fps 0` to use the recording metadata FPS instead. Fake-live runs in
 demo mode.
 
-World-Z diagnostics are observe-only by default. The runtime reports
-object/controller Z quantiles plus hand_a/hand_b stats when those masks are
-available, with candidate counts for table bands at 5, 10, 20, and 30 mm.
-Runtime deletion is opt-in:
+World-Z diagnostics are always reported for table-calibrated PCD. The runtime
+reports object/controller Z quantiles plus hand_a/hand_b stats when those masks
+are available, with candidate counts for table bands at 5, 10, 20, and 30 mm.
+Demo 3.1 `--demo-visual-mode pcd|tracking` enables runtime table-Z deletion by
+default at 0 mm signed clearance; use `--disable-table-z-filter` for unfiltered
+ablations, or pass a larger threshold explicitly:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_1/realtime_single_camera_realsense_masked_pcd.py \
   --input-source fake-live \
   --mode demo \
-  --enable-table-z-filter \
-  --table-z-filter-threshold-m 0.02 \
+  --table-z-filter-threshold-m 0.01 \
   --table-z-filter-classes both
 ```

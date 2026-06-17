@@ -186,7 +186,7 @@ GEOMETRY_TRACKER_CONTROLLER = "tapnextpp_tracker_markers_controller"
 COORDINATE_FRAME = "camera_color_frame"
 TABLE_Z_M = 0.0
 DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M = (0.005, 0.010, 0.020, 0.030)
-DEFAULT_TABLE_Z_FILTER_THRESHOLD_M = 0.020
+DEFAULT_TABLE_Z_FILTER_THRESHOLD_M = 0.0
 TABLE_Z_ABOVE_DIRECTION_POSITIVE = "positive"
 TABLE_Z_ABOVE_DIRECTION_NEGATIVE = "negative"
 TABLE_Z_ABOVE_DIRECTIONS = (
@@ -1704,7 +1704,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--enable-table-z-filter",
         action="store_true",
-        help="Opt-in table-world Z filter. Removes target PCD points whose signed table clearance is <= threshold after PT filtering.",
+        help="Enable table-world Z filter. Removes target PCD points whose signed table clearance is <= threshold after PT filtering.",
+    )
+    parser.add_argument(
+        "--disable-table-z-filter",
+        action="store_true",
+        help="Disable the table-world Z filter when a demo visual preset would enable it by default.",
     )
     parser.add_argument(
         "--table-z-filter-threshold-m",
@@ -1764,6 +1769,17 @@ def apply_demo_preset(args: argparse.Namespace) -> argparse.Namespace:
             args.object_filter_cap = LOCAL_FFS_PROFESSOR_FILTER_CAP
         if int(args.controller_filter_cap) == 20_000:
             args.controller_filter_cap = LOCAL_FFS_PROFESSOR_FILTER_CAP
+    if (
+        not bool(getattr(args, "disable_table_z_filter", False))
+        and not bool(getattr(args, "enable_table_z_filter", False))
+        and getattr(args, "table_calibrate", None) is not None
+        and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) in DEMO_VISUAL_MODES
+        and (
+            str(getattr(args, "render_mode", DEFAULT_RENDER_MODE)) == "pointcloud"
+            or headless_capture_enabled(args)
+        )
+    ):
+        args.enable_table_z_filter = True
     return args
 
 
@@ -1864,6 +1880,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--point-size must be positive")
     if float(args.table_z_filter_threshold_m) < 0:
         raise ValueError("--table-z-filter-threshold-m must be >= 0")
+    if bool(getattr(args, "enable_table_z_filter", False)) and bool(getattr(args, "disable_table_z_filter", False)):
+        raise ValueError("--enable-table-z-filter conflicts with --disable-table-z-filter")
     if str(args.table_z_above_direction) not in TABLE_Z_ABOVE_DIRECTIONS:
         raise ValueError(f"--table-z-above-direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
     if str(args.table_z_filter_classes) not in TABLE_Z_FILTER_CLASSES:

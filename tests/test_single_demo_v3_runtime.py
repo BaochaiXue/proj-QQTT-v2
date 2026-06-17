@@ -197,7 +197,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Missing table calibration file"):
                     runtime.validate_args(args)
 
-    def test_table_z_filter_flags_are_opt_in_and_forwarded(self) -> None:
+    def test_table_z_filter_flags_allow_explicit_override_and_forwarding(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_2,
             [
@@ -224,6 +224,75 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--table-z-filter-threshold-m"), "0.02")
         self.assertEqual(_option_value(delegate, "--table-z-above-direction"), "negative")
         self.assertEqual(_option_value(delegate, "--table-z-filter-classes"), "object")
+
+    def test_demo32_visual_modes_default_to_zero_mm_table_z_filter(self) -> None:
+        for visual_mode, expected_filter in (
+            ("tracking", "enhanced-pt"),
+            ("pcd", "pt-filter"),
+        ):
+            with self.subTest(visual_mode=visual_mode):
+                args = self._parse(
+                    runtime.DEMO_VERSION_3_2,
+                    [
+                        "--input-source",
+                        "fake-live",
+                        "--demo-visual-mode",
+                        visual_mode,
+                    ],
+                )
+                runtime.validate_args(args)
+                contract = runtime.build_contract(args)
+                delegate = runtime.build_live_delegate_argv(args)
+
+                self.assertTrue(contract["table_z_filter_enabled"])
+                self.assertEqual(contract["table_z_filter_threshold_m"], 0.0)
+                self.assertEqual(contract["table_z_filter_classes"], "both")
+                self.assertEqual(contract["table_z_above_direction"], "negative")
+                self.assertEqual(contract["object_filter"], expected_filter)
+                self.assertEqual(contract["controller_filter"], expected_filter)
+                self.assertIn("--enable-table-z-filter", delegate)
+                self.assertEqual(_option_value(delegate, "--table-z-filter-threshold-m"), "0.0")
+
+    def test_demo31_visual_modes_default_to_zero_mm_table_z_filter_without_forcing_pcd_filter(self) -> None:
+        for visual_mode in ("tracking", "pcd"):
+            with self.subTest(visual_mode=visual_mode):
+                args = self._parse(
+                    runtime.DEMO_VERSION_3_1,
+                    [
+                        "--input-source",
+                        "fake-live",
+                        "--demo-visual-mode",
+                        visual_mode,
+                    ],
+                )
+                runtime.validate_args(args)
+                contract = runtime.build_contract(args)
+                delegate = runtime.build_live_delegate_argv(args)
+
+                self.assertTrue(contract["table_z_filter_enabled"])
+                self.assertEqual(contract["table_z_filter_threshold_m"], 0.0)
+                self.assertFalse(contract["pcd_filter_enabled"])
+                self.assertIn("--enable-table-z-filter", delegate)
+                self.assertNotIn("--enable-pcd-filter", delegate)
+
+    def test_demo32_visual_mode_table_z_filter_can_be_disabled(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--demo-visual-mode",
+                "tracking",
+                "--disable-table-z-filter",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertFalse(contract["table_z_filter_enabled"])
+        self.assertNotIn("--enable-table-z-filter", delegate)
+        self.assertEqual(_option_value(delegate, "--table-z-filter-threshold-m"), "0.0")
 
     def test_demo32_rejects_missing_table_calibration_path(self) -> None:
         args = self._parse(
@@ -472,9 +541,12 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["object_filter"], "enhanced-pt")
         self.assertEqual(contract["controller_filter"], "enhanced-pt")
         self.assertEqual(contract["pcd_color_mode"], "rgb")
+        self.assertTrue(contract["table_z_filter_enabled"])
+        self.assertEqual(contract["table_z_filter_threshold_m"], 0.0)
         self.assertEqual(_option_value(delegate, "--demo-visual-mode"), "tracking")
         self.assertEqual(_option_value(delegate, "--tracker-overlay-max-points"), "0")
         self.assertIn("--enable-pcd-filter", delegate)
+        self.assertIn("--enable-table-z-filter", delegate)
 
     def test_demo32_pcd_visual_mode_keeps_full_pipeline_and_hides_tracker_render_only(self) -> None:
         args = self._parse(
@@ -510,6 +582,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--object-filter"), "pt-filter")
         self.assertEqual(_option_value(delegate, "--controller-filter"), "pt-filter")
         self.assertIn("--enable-pcd-filter", delegate)
+        self.assertIn("--enable-table-z-filter", delegate)
 
     def test_demo32_visual_modes_record_effective_pcd_filter_preset(self) -> None:
         cases = (

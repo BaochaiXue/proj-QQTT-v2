@@ -428,6 +428,39 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires --depth-source ffs"):
             masked_demo.validate_args(invalid_args)
 
+    def test_masked_edgetam_visual_mode_defaults_table_z_filter_to_zero_when_calibrated(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--table-calibrate",
+                "table_calibrate.pkl",
+                "--render-mode",
+                "pointcloud",
+                "--demo-visual-mode",
+                "tracking",
+            ]
+        )
+        masked_demo.apply_demo_preset(args)
+
+        self.assertTrue(args.enable_table_z_filter)
+        self.assertEqual(args.table_z_filter_threshold_m, 0.0)
+
+    def test_masked_edgetam_visual_mode_table_z_filter_can_be_disabled(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--table-calibrate",
+                "table_calibrate.pkl",
+                "--render-mode",
+                "pointcloud",
+                "--demo-visual-mode",
+                "pcd",
+                "--disable-table-z-filter",
+            ]
+        )
+        masked_demo.apply_demo_preset(args)
+
+        self.assertFalse(args.enable_table_z_filter)
+        self.assertEqual(args.table_z_filter_threshold_m, 0.0)
+
     def test_masked_edgetam_saved_masks_validate_shape(self) -> None:
         from PIL import Image
 

@@ -67,8 +67,9 @@ aligned-case data product.
   counts, including hand_a/hand_b when those masks are available. The tabletop
   is `table_z_m = 0.0`; the current single-camera table calibration marks the
   workspace above the table as negative Z (`table_z_above_direction =
-  negative`). The table-Z removal path is opt-in with
-  `--enable-table-z-filter`, and headless captures store `camera_to_world_c2w`,
+  negative`). Demo 3.1/3.2/3.3 PCD and tracking visual modes enable table-Z removal
+  by default at 0 mm signed clearance; `--disable-table-z-filter` keeps an
+  unfiltered ablation path. Headless captures store `camera_to_world_c2w`,
   `table_z_above_direction`, plus `world_z_stats.jsonl` for offline RGB overlay
   sweeps.
 - `services/ffs_remote/`: single-camera remote FFS depth request/response

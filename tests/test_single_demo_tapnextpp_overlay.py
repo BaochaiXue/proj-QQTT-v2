@@ -161,7 +161,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         np.testing.assert_allclose(filtered_points, np.array([[0.0, 0.0, -0.20]], dtype=np.float32))
         np.testing.assert_array_equal(filtered_colors, colors[:1])
 
-    def test_table_z_filter_is_opt_in_after_world_transform(self) -> None:
+    def test_table_z_filter_applies_after_world_transform_when_enabled(self) -> None:
         args = demo.build_parser().parse_args(
             [
                 "--depth-source",

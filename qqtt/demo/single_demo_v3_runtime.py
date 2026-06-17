@@ -184,6 +184,15 @@ def _demo_visual_mode_policy_requested(args: argparse.Namespace, version: str | 
     )
 
 
+def _table_z_filter_visual_default_requested(args: argparse.Namespace, version: str | None = None) -> bool:
+    resolved_version = normalize_demo_version(version or getattr(args, "single_demo_version", DEMO_VERSION_3))
+    return bool(
+        _requires_table_world_default(resolved_version)
+        and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) in DEMO_VISUAL_MODES
+        and (str(getattr(args, "render_mode", "pointcloud")) == "pointcloud" or _headless_capture_requested(args, resolved_version))
+    )
+
+
 def _visual_mode_required_filter(args: argparse.Namespace) -> str:
     if str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) == DEMO_VISUAL_MODE_PCD:
         return masked_pcd.PCD_FILTER_PT_FILTER
@@ -309,7 +318,12 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
     parser.add_argument(
         "--enable-table-z-filter",
         action="store_true",
-        help="Opt-in table-world Z filter forwarded to the masked PCD delegate.",
+        help="Enable table-world Z filter forwarded to the masked PCD delegate.",
+    )
+    parser.add_argument(
+        "--disable-table-z-filter",
+        action="store_true",
+        help="Disable the table-world Z filter when a demo visual mode enables it by default.",
     )
     parser.add_argument(
         "--table-z-filter-threshold-m",
@@ -553,6 +567,12 @@ def apply_preset_defaults(
             args.tracker_backend = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
         if "--tracker-overlay-max-points" not in explicit:
             args.tracker_overlay_max_points = 0
+    if (
+        _table_z_filter_visual_default_requested(args, version)
+        and "--enable-table-z-filter" not in explicit
+        and "--disable-table-z-filter" not in explicit
+    ):
+        args.enable_table_z_filter = True
     if "--track-mode" not in explicit and str(args.render_mode) == "none" and not headless_capture:
         args.track_mode = TRACK_MODE_NONE
         if "--controller-instance-mode" not in explicit:
@@ -666,6 +686,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--depth-max-m must be <=0 or greater than --depth-min-m")
     if float(args.table_z_filter_threshold_m) < 0:
         raise ValueError("--table-z-filter-threshold-m must be >= 0")
+    if bool(args.enable_table_z_filter) and bool(getattr(args, "disable_table_z_filter", False)):
+        raise ValueError("--enable-table-z-filter conflicts with --disable-table-z-filter")
     if str(args.table_z_above_direction) not in masked_pcd.TABLE_Z_ABOVE_DIRECTIONS:
         raise ValueError(f"--table-z-above-direction must be one of {masked_pcd.TABLE_Z_ABOVE_DIRECTIONS}")
     if str(args.table_z_filter_classes) not in masked_pcd.TABLE_Z_FILTER_CLASSES:
