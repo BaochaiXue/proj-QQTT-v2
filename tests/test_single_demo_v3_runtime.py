@@ -606,6 +606,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
                 self.assertEqual(contract["pcd_filter_preset"], expected_preset)
                 self.assertEqual(contract["tracker_query_source"], "pcd_filter_residual")
+                self.assertEqual(contract["tracker_marker_gate"], "pcd_filter_residual_table_z")
                 self.assertEqual(contract["object_filter"], expected_filter)
                 self.assertEqual(contract["controller_filter"], expected_filter)
                 self.assertEqual(_option_value(delegate, "--pcd-filter-preset"), expected_preset)

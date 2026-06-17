@@ -39,6 +39,27 @@ class _FakeTapNextAdapter:
         )
 
 
+class _StaticTrackingAdapter:
+    name = "tapnextpp"
+
+    def __init__(self, tracks_yx: np.ndarray, visibility: np.ndarray | None = None) -> None:
+        self.tracks_yx = np.ascontiguousarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+        if visibility is None:
+            visibility = np.ones((len(self.tracks_yx),), dtype=np.float32)
+        self.visibility = np.ascontiguousarray(visibility, dtype=np.float32).reshape(-1)
+
+    def update(self, frame: np.ndarray) -> TrackingResult:
+        _ = frame
+        return TrackingResult(
+            tracks_yx=self.tracks_yx[None, :, :],
+            visibility=self.visibility[None, :],
+            backend=self.name,
+            camera_idx=0,
+            query_points_yx=self.tracks_yx,
+            stats={"model_run_ms": 1.25},
+        )
+
+
 class _FakeFfsRunner:
     def __init__(self) -> None:
         self.call_count = 0
@@ -243,19 +264,56 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         demo.validate_args(args)
         return args
 
+    def _tracker_residual_table_z_args(self, *, query_count: int = 4):
+        args = demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--tracker-backend",
+                "tapnextpp",
+                "--tracker-query-count",
+                str(int(query_count)),
+                "--tracker-overlay-max-points",
+                "0",
+                "--tracker-display-scope",
+                "union",
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+                "--pcd-filter-preset",
+                "original",
+                "--object-filter",
+                "none",
+                "--controller-filter",
+                "none",
+                "--object-filter-cap",
+                "0",
+                "--controller-filter-cap",
+                "0",
+                "--enable-table-z-filter",
+                "--table-z-filter-threshold-m",
+                "0.02",
+                "--table-z-filter-classes",
+                "both",
+            ]
+        )
+        demo.validate_args(args)
+        return args
+
     def _mask_packet(
         self,
         seq: int = 0,
         *,
         hand_a_mask: np.ndarray | None = None,
         hand_b_mask: np.ndarray | None = None,
+        depth_u16: np.ndarray | None = None,
     ) -> demo.MaskPacket:
         controller = np.zeros((4, 4), dtype=bool)
         obj = np.zeros((4, 4), dtype=bool)
         controller[2:, :] = True
         obj[:2, :] = True
         color = np.zeros((4, 4, 3), dtype=np.uint8)
-        depth = np.full((4, 4), 1000, dtype=np.uint16)
+        depth = np.full((4, 4), 1000, dtype=np.uint16) if depth_u16 is None else depth_u16
         return demo.MaskPacket(
             seq=int(seq),
             color_bgr=color,
@@ -270,7 +328,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             object_mask=obj,
             hand_a_mask=hand_a_mask,
             hand_b_mask=hand_b_mask,
-            depth_u16=depth,
+            depth_u16=np.ascontiguousarray(depth, dtype=np.uint16),
         )
 
     def _pcd_packet(self, seq: int = 0, *, coordinate_frame: str = demo.COORDINATE_FRAME) -> demo.MaskedPcdPacket:
@@ -1135,6 +1193,107 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         expected = {(0.0, 0.0), (0.0, 2.0), (2.0, 0.0), (2.0, 2.0)}
         self.assertEqual({tuple(point) for point in query_points.tolist()}, expected)
         np.testing.assert_array_equal(adapter.query_points_yx, query_points)
+
+    def test_tracker_residual_masks_apply_table_z_filter(self) -> None:
+        args = self._tracker_residual_table_z_args(query_count=2)
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime.ray_x = np.zeros((4, 4), dtype=np.float32)
+        runtime.ray_y = np.zeros((4, 4), dtype=np.float32)
+        runtime.table_c2w = np.eye(4, dtype=np.float32)
+        runtime.table_c2w[2, 3] = -1.1
+        depth = np.full((4, 4), 1100, dtype=np.uint16)
+        depth[0, 0] = 1000
+        depth[2, 0] = 1000
+
+        object_residual, controller_residual = runtime._tracker_pcd_filter_residual_masks(
+            self._mask_packet(depth_u16=depth)
+        )
+
+        expected_object = np.zeros((4, 4), dtype=bool)
+        expected_object[0, 0] = True
+        expected_controller = np.zeros((4, 4), dtype=bool)
+        expected_controller[2, 0] = True
+        np.testing.assert_array_equal(object_residual, expected_object)
+        np.testing.assert_array_equal(controller_residual, expected_controller)
+
+    def test_tracker_query_initialization_fails_when_table_z_leaves_too_few_candidates(self) -> None:
+        args = self._tracker_residual_table_z_args(query_count=3)
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime.ray_x = np.zeros((4, 4), dtype=np.float32)
+        runtime.ray_y = np.zeros((4, 4), dtype=np.float32)
+        runtime.table_c2w = np.eye(4, dtype=np.float32)
+        runtime.table_c2w[2, 3] = -1.1
+        depth = np.full((4, 4), 1100, dtype=np.uint16)
+        depth[0, 0] = 1000
+        depth[2, 0] = 1000
+
+        with self.assertRaisesRegex(RuntimeError, "not enough residual query candidates"):
+            runtime._ensure_tracker_queries(self._mask_packet(depth_u16=depth), _FakeTapNextAdapter())
+
+    def test_tracker_marker_display_hides_tracks_outside_current_residual_class_masks(self) -> None:
+        args = self._tracker_residual_table_z_args(query_count=2)
+        args.enable_table_z_filter = False
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime._tracker_query_points_yx = np.array([[0.0, 0.0], [2.0, 0.0]], dtype=np.float32)
+        runtime._tracker_query_rgb_u8 = query_rainbow_colors_rgb_u8(2)
+        runtime._tracker_query_is_object = np.array([True, False], dtype=bool)
+        runtime._tracker_query_is_controller = np.array([False, True], dtype=bool)
+        runtime._tracker_query_target_id = np.array([demo.OBJECT_ID, demo.CONTROLLER_ID], dtype=np.int64)
+        runtime._tracker_query_controller_instance_id = np.array(
+            [demo.QUERY_CONTROLLER_INSTANCE_NONE, demo.QUERY_CONTROLLER_INSTANCE_HAND_A],
+            dtype=np.int64,
+        )
+        object_residual = np.zeros((4, 4), dtype=bool)
+        object_residual[0, 0] = True
+        controller_residual = np.zeros((4, 4), dtype=bool)
+        controller_residual[2, 0] = True
+        runtime._tracker_pcd_filter_residual_masks = lambda packet: (object_residual, controller_residual)  # type: ignore[method-assign]
+
+        packet = runtime._build_tracker_marker_packet(
+            self._mask_packet(),
+            _StaticTrackingAdapter(np.array([[0.0, 1.0], [2.0, 0.0]], dtype=np.float32)),
+        )
+
+        self.assertIsNotNone(packet)
+        assert packet is not None
+        self.assertEqual(packet.marker_count, 1)
+        np.testing.assert_array_equal(packet.query_indices, np.array([1], dtype=np.int64))
+        self.assertEqual(packet.hand_a_query_count, 1)
+        self.assertEqual(packet.object_query_count, 0)
+
+    def test_tracker_marker_display_hides_tracks_removed_by_table_z(self) -> None:
+        args = self._tracker_residual_table_z_args(query_count=2)
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime.ray_x = np.zeros((4, 4), dtype=np.float32)
+        runtime.ray_y = np.zeros((4, 4), dtype=np.float32)
+        runtime.table_c2w = np.eye(4, dtype=np.float32)
+        runtime.table_c2w[2, 3] = -1.1
+        runtime._tracker_query_points_yx = np.array([[0.0, 0.0], [2.0, 0.0]], dtype=np.float32)
+        runtime._tracker_query_rgb_u8 = query_rainbow_colors_rgb_u8(2)
+        runtime._tracker_query_is_object = np.array([True, False], dtype=bool)
+        runtime._tracker_query_is_controller = np.array([False, True], dtype=bool)
+        runtime._tracker_query_target_id = np.array([demo.OBJECT_ID, demo.CONTROLLER_ID], dtype=np.int64)
+        runtime._tracker_query_controller_instance_id = np.array(
+            [demo.QUERY_CONTROLLER_INSTANCE_NONE, demo.QUERY_CONTROLLER_INSTANCE_HAND_A],
+            dtype=np.int64,
+        )
+        depth = np.full((4, 4), 1100, dtype=np.uint16)
+        depth[0, 0] = 1000
+        depth[2, 0] = 1000
+
+        packet = runtime._build_tracker_marker_packet(
+            self._mask_packet(depth_u16=depth),
+            _StaticTrackingAdapter(np.array([[0.0, 1.0], [2.0, 0.0]], dtype=np.float32)),
+        )
+
+        self.assertIsNotNone(packet)
+        assert packet is not None
+        self.assertEqual(packet.marker_count, 1)
+        np.testing.assert_array_equal(packet.query_indices, np.array([1], dtype=np.int64))
+        np.testing.assert_array_equal(packet.marker_colors_rgb_u8, packet.query_rgb_u8[packet.query_indices])
+        self.assertEqual(packet.hand_a_query_count, 1)
+        self.assertEqual(packet.object_query_count, 0)
+        self.assertEqual(packet.query_count, 2)
 
     def test_tracker_query_initialization_fails_when_residual_candidates_are_too_few(self) -> None:
         args = demo.build_parser().parse_args(

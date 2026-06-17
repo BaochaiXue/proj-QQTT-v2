@@ -146,6 +146,8 @@ PCD_FILTER_PRESET_ENHANCED_PT = PCD_FILTER_ENHANCED_PT
 PCD_FILTER_PRESETS = (PCD_FILTER_PRESET_ORIGINAL, PCD_FILTER_PRESET_PT, PCD_FILTER_PRESET_ENHANCED_PT)
 TRACKER_QUERY_SOURCE_UNION_MASK = "object_controller_union_mask"
 TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL = "pcd_filter_residual"
+TRACKER_MARKER_GATE_TARGET_MASK_DEPTH = "target_mask_depth"
+TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z = "pcd_filter_residual_table_z"
 DEMO_PRESETS = ("none", "local-ffs-professor")
 DEFAULT_DEMO_PRESET = "none"
 LOCAL_FFS_PROFESSOR_MAX_POINTS = 20000
@@ -1810,6 +1812,14 @@ def tracker_query_source(args: argparse.Namespace) -> str:
     )
 
 
+def tracker_marker_gate(args: argparse.Namespace) -> str:
+    return (
+        TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z
+        if tracker_query_source(args) == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL
+        else TRACKER_MARKER_GATE_TARGET_MASK_DEPTH
+    )
+
+
 def headless_capture_enabled(args: argparse.Namespace) -> bool:
     return args.headless_capture_dir is not None
 
@@ -2983,6 +2993,62 @@ def apply_table_z_filter(
     )
 
 
+def apply_table_z_filter_with_yx(
+    points_xyz_m: np.ndarray,
+    colors_rgb_u8: np.ndarray,
+    yx: np.ndarray,
+    *,
+    enabled: bool,
+    threshold_m: float,
+    table_z_m: float = TABLE_Z_M,
+    above_direction: str = DEFAULT_TABLE_Z_ABOVE_DIRECTION,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+    points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
+    colors = np.asarray(colors_rgb_u8, dtype=np.uint8).reshape(-1, 3)
+    yx_arr = np.asarray(yx, dtype=np.int64).reshape(-1, 2)
+    if len(points) != len(colors) or len(points) != len(yx_arr):
+        raise ValueError("points, colors, and yx must have the same first dimension")
+    direction = str(above_direction)
+    if direction not in TABLE_Z_ABOVE_DIRECTIONS:
+        raise ValueError(f"table_z_above_direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
+    if not bool(enabled) or len(points) == 0:
+        return (
+            np.ascontiguousarray(points, dtype=np.float32),
+            np.ascontiguousarray(colors, dtype=np.uint8),
+            np.ascontiguousarray(yx_arr, dtype=np.int64),
+            {
+                "enabled": bool(enabled),
+                "threshold_m": float(threshold_m),
+                "table_z_m": float(table_z_m),
+                "table_z_above_direction": direction,
+                "input_points": int(len(points)),
+                "removed_points": 0,
+                "output_points": int(len(points)),
+                "removed_ratio": 0.0,
+            },
+        )
+    finite = np.isfinite(points).all(axis=1)
+    clearance = table_z_clearance_m(points, table_z_m=table_z_m, above_direction=direction)
+    remove = finite & (clearance <= np.float32(float(threshold_m)))
+    keep = ~remove
+    removed = int(np.count_nonzero(remove))
+    return (
+        np.ascontiguousarray(points[keep], dtype=np.float32),
+        np.ascontiguousarray(colors[keep], dtype=np.uint8),
+        np.ascontiguousarray(yx_arr[keep], dtype=np.int64),
+        {
+            "enabled": True,
+            "threshold_m": float(threshold_m),
+            "table_z_m": float(table_z_m),
+            "table_z_above_direction": direction,
+            "input_points": int(len(points)),
+            "removed_points": removed,
+            "output_points": int(np.count_nonzero(keep)),
+            "removed_ratio": float(removed / max(1, len(points))),
+        },
+    )
+
+
 def _tracker_union_mask(mask_packet: MaskPacket) -> np.ndarray:
     controller = np.asarray(mask_packet.controller_mask, dtype=bool)
     obj = np.asarray(mask_packet.object_mask, dtype=bool)
@@ -3189,6 +3255,48 @@ def _tracker_lift_valid_mask(
     valid_out = np.zeros((tracks.shape[0],), dtype=bool)
     valid_out[valid_indices] = depth_valid & inside_mask
     return valid_out
+
+
+def _query_current_residual_visibility(
+    tracks_yx: np.ndarray,
+    *,
+    query_is_object: np.ndarray,
+    query_is_controller: np.ndarray,
+    object_residual_mask: np.ndarray,
+    controller_residual_mask: np.ndarray,
+) -> np.ndarray:
+    tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+    is_object = np.asarray(query_is_object, dtype=bool).reshape(-1)
+    is_controller = np.asarray(query_is_controller, dtype=bool).reshape(-1)
+    count = min(len(tracks), len(is_object), len(is_controller))
+    visible = np.zeros((len(tracks),), dtype=bool)
+    if count <= 0:
+        return visible
+
+    object_mask = np.asarray(object_residual_mask, dtype=bool)
+    controller_mask = np.asarray(controller_residual_mask, dtype=bool)
+    if object_mask.shape != controller_mask.shape:
+        raise ValueError("object/controller residual masks must share a shape")
+    height, width = object_mask.shape[:2]
+    yy = np.rint(tracks[:count, 0]).astype(np.int64)
+    xx = np.rint(tracks[:count, 1]).astype(np.int64)
+    finite = np.isfinite(tracks[:count]).all(axis=1)
+    in_bounds = finite & (yy >= 0) & (yy < height) & (xx >= 0) & (xx < width)
+    if not np.any(in_bounds):
+        return visible
+
+    valid_indices = np.flatnonzero(in_bounds)
+    object_indices = valid_indices[is_object[:count][valid_indices]]
+    if len(object_indices):
+        visible[object_indices] = object_mask[yy[object_indices], xx[object_indices]]
+    controller_indices = valid_indices[is_controller[:count][valid_indices]]
+    if len(controller_indices):
+        visible[controller_indices] |= controller_mask[yy[controller_indices], xx[controller_indices]]
+    unlabelled_indices = valid_indices[~(is_object[:count][valid_indices] | is_controller[:count][valid_indices])]
+    if len(unlabelled_indices):
+        union_mask = np.logical_or(object_mask, controller_mask)
+        visible[unlabelled_indices] = union_mask[yy[unlabelled_indices], xx[unlabelled_indices]]
+    return visible
 
 
 def _select_visible_spread_indices(tracks_yx: np.ndarray, visibility: np.ndarray, *, max_points: int) -> np.ndarray:
@@ -3544,6 +3652,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "tracker_backend": str(self.args.tracker_backend),
             "tracker_query_count": int(self.args.tracker_query_count),
             "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
+            "tracker_marker_gate": tracker_marker_gate(self.args) if tracker_enabled(self.args) else None,
             "tracker_display_scope": str(self.args.tracker_display_scope),
             "tracker_sync_policy": (
                 "strict_same_seq_lossless_5fps" if self._lossless_enabled() else "none"
@@ -4137,6 +4246,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "tracker_backend": str(self.args.tracker_backend),
             "tracker_device": str(self.args.tracker_device),
             "tracker_query_count": int(self.args.tracker_query_count),
+            "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
+            "tracker_marker_gate": tracker_marker_gate(self.args) if tracker_enabled(self.args) else None,
             "tracker_display_scope": str(self.args.tracker_display_scope),
             "tracker_overlay_max_points": int(self.args.tracker_overlay_max_points),
             "tracker_marker_point_size": float(self.args.tracker_marker_point_size),
@@ -4443,9 +4554,40 @@ class RealtimeMaskedEdgeTamPcdDemo:
             controller_yx=controller_yx,
         )
         filter_output = self._filter_pcd_input(filter_input)
+        object_xyz_world = _transform_points_c2w(filter_output.object_xyz, self.table_c2w)
+        controller_xyz_world = _transform_points_c2w(filter_output.controller_xyz, self.table_c2w)
+        object_yx = filter_output.object_yx
+        controller_yx = filter_output.controller_yx
+        if bool(self.args.enable_table_z_filter):
+            classes = str(self.args.table_z_filter_classes)
+            if classes in {TABLE_Z_FILTER_CLASS_OBJECT, TABLE_Z_FILTER_CLASS_BOTH}:
+                _object_xyz, _object_colors, object_yx, _object_table_z_stats = apply_table_z_filter_with_yx(
+                    object_xyz_world,
+                    filter_output.object_rgb,
+                    object_yx,
+                    enabled=True,
+                    threshold_m=float(self.args.table_z_filter_threshold_m),
+                    table_z_m=TABLE_Z_M,
+                    above_direction=str(self.args.table_z_above_direction),
+                )
+            if classes in {TABLE_Z_FILTER_CLASS_CONTROLLER, TABLE_Z_FILTER_CLASS_BOTH}:
+                (
+                    _controller_xyz,
+                    _controller_colors,
+                    controller_yx,
+                    _controller_table_z_stats,
+                ) = apply_table_z_filter_with_yx(
+                    controller_xyz_world,
+                    filter_output.controller_rgb,
+                    controller_yx,
+                    enabled=True,
+                    threshold_m=float(self.args.table_z_filter_threshold_m),
+                    table_z_m=TABLE_Z_M,
+                    above_direction=str(self.args.table_z_above_direction),
+                )
         shape = tuple(mask_packet.object_mask.shape[:2])
-        object_residual = _mask_from_yx(shape, filter_output.object_yx)
-        controller_residual = _mask_from_yx(shape, filter_output.controller_yx)
+        object_residual = _mask_from_yx(shape, object_yx)
+        controller_residual = _mask_from_yx(shape, controller_yx)
         return object_residual, controller_residual
 
     def _build_tracker_marker_packet(self, mask_packet: MaskPacket, adapter: Any) -> TrackerMarkerPacket | None:
@@ -4497,6 +4639,18 @@ class RealtimeMaskedEdgeTamPcdDemo:
             query_is_controller=query_is_controller,
             display_scope=str(self.args.tracker_display_scope),
         )
+        lift_mask = self._tracker_lift_mask(mask_packet)
+        if tracker_query_source(self.args) == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL:
+            object_residual_mask, controller_residual_mask = self._tracker_pcd_filter_residual_masks(mask_packet)
+            residual_visibility = _query_current_residual_visibility(
+                tracks_latest,
+                query_is_object=query_is_object,
+                query_is_controller=query_is_controller,
+                object_residual_mask=object_residual_mask,
+                controller_residual_mask=controller_residual_mask,
+            )
+            display_visibility = np.where(residual_visibility, display_visibility, 0.0).astype(np.float32, copy=False)
+            lift_mask = np.logical_or(object_residual_mask, controller_residual_mask)
         selected = _select_visible_spread_indices(
             tracks_latest,
             display_visibility,
@@ -4512,7 +4666,6 @@ class RealtimeMaskedEdgeTamPcdDemo:
         lift_start_s = time.perf_counter()
         depth_for_lift, depth_scale = self._tracker_depth_for_lift(mask_packet)
         depth_max_m = float("inf") if float(self.args.depth_max_m) <= 0.0 else float(self.args.depth_max_m)
-        lift_mask = self._tracker_lift_mask(mask_packet)
         current_lift_valid = _tracker_lift_valid_mask(
             tracks_yx=tracks_latest,
             visibility=display_visibility,

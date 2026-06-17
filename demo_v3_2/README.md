@@ -51,6 +51,10 @@ overlay path. Use `--pcd-filter-preset {original,pt,enhanced-pt}` to override
 the visual-mode default for both object and controller. The same preset drives
 rendered/saved PCD and TAPNext++ initialization: query points are sampled from
 the preset's residual PCD pixels, not the raw object/controller union mask.
+Displayed tracking query markers are also strict current-frame residual markers:
+if a tracked query drifts outside its class residual mask, or the residual point
+is removed by the active table-Z filter, that marker is hidden instead of being
+lifted from raw target-mask depth.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \

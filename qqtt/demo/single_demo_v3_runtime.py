@@ -923,6 +923,9 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "tracker_query_source": (
             masked_pcd.tracker_query_source(args) if tracker_on else None
         ),
+        "tracker_marker_gate": (
+            masked_pcd.tracker_marker_gate(args) if tracker_on else None
+        ),
         "tracker_display_scope": str(args.tracker_display_scope),
         "tracker_visualization_mode": tracker_visualization_mode,
         "tracker_sync_policy": tracker_sync_policy,
@@ -1008,6 +1011,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracker_device",
         "tracker_query_count",
         "tracker_query_source",
+        "tracker_marker_gate",
         "tracker_display_scope",
         "object_prompt",
         "controller_prompt",
