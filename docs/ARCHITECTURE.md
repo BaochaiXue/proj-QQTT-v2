@@ -94,11 +94,13 @@ world-frame convention, RealSense color distortion coefficients, and
 reprojection diagnostics. Recording entry points prefer that sidecar over
 inferred connected-device order.
 
-`table_calibrate.pkl` is a separate optional single-camera table-world artifact.
-It uses the same list-of-4x4 `camera_to_world_c2w` physical shape as
-`calibrate.pkl`, but its metadata declares `world_frame_kind = table_world_z0`
-and compatibility contract `qqtt_table_calibrate_c2w_v1`. It is never used by
-default; recording, alignment, and demo commands must receive it explicitly via
+`table_calibrate.pkl` is a separate single-camera table-world artifact. It uses
+the same list-of-4x4 `camera_to_world_c2w` physical shape as `calibrate.pkl`,
+but its metadata declares `world_frame_kind = table_world_z0` and compatibility
+contract `qqtt_table_calibrate_c2w_v1`. Demo 3.2 and Demo 3.3 default to the
+repo-root `table_calibrate.pkl` and fail fast if it is missing or invalid;
+operators may override it with `--table-calibrate`. Recording, alignment, and
+other commands still receive table calibration explicitly via
 `--table-calibrate`.
 
 Swapping USB ports is safe because capture uses device serial numbers rather

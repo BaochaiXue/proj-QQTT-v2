@@ -136,8 +136,11 @@ conda run -n demo_2_max --no-capture-output python cameras_calibrate_table.py
 
 This writes `table_calibrate.pkl`, `table_calibrate_metadata.json`, and
 `table_calibrate_diagnostic.png` in the repo root when the strict one-shot
-check passes. The table calibration is separate from `calibrate.pkl`; it is used
-only by commands that explicitly pass `--table-calibrate table_calibrate.pkl`.
+check passes. The table calibration is separate from `calibrate.pkl`. Demo 3.2
+and Demo 3.3 use repo-root `table_calibrate.pkl` by default and fail fast when
+it is missing or invalid; pass `--table-calibrate <path>` only to use an
+alternate table calibration. Recording and alignment commands still require an
+explicit `--table-calibrate` when table-world output is requested.
 
 Rerun table calibration after moving the camera, moving the table, changing the
 camera mount, or changing the tabletop surface used as `Z=0`.

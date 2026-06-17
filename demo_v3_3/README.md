@@ -11,6 +11,11 @@ Dry-run:
 python demo_v3_3/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
+Demo 3.3 uses repo-root `table_calibrate.pkl` by default. If that file or its
+`table_calibrate_metadata.json` sidecar is missing or invalid, the wrapper fails
+before live or fake-live execution. Pass `--table-calibrate <path>` only when
+using an alternate single-camera table-world calibration.
+
 Fake-live replay:
 
 ```bash

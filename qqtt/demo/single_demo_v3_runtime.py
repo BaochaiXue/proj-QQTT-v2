@@ -49,6 +49,7 @@ DEFAULT_DEMO_CONTROLLER_LABEL = "hand"
 DEFAULT_MODE = MODE_EXP
 DEFAULT_TRACKER_BACKEND = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
 DEFAULT_TRACKER_DEVICE = "cuda:1"
+DEFAULT_TABLE_CALIBRATE_PATH = Path("table_calibrate.pkl")
 DEFAULT_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_2min_e45_g35_20260614_155543")
 DEFAULT_FAKE_LIVE_REPLAY_FPS = 5.0
 FFS_SURFACE_FILTER_RADIUS_M = 0.015
@@ -158,6 +159,10 @@ def _supports_headless_capture(version: str) -> bool:
 
 
 def _supports_filtered_visual_modes(version: str) -> bool:
+    return normalize_demo_version(version) in {DEMO_VERSION_3_2, DEMO_VERSION_3_3}
+
+
+def _requires_table_world_default(version: str) -> bool:
     return normalize_demo_version(version) in {DEMO_VERSION_3_2, DEMO_VERSION_3_3}
 
 
@@ -441,6 +446,12 @@ def apply_preset_defaults(
     if "--output-root" not in explicit:
         args.output_root = DEFAULT_OUTPUT_ROOTS[version]
     args.depth_source = DEFAULT_DEPTH_SOURCES[version]
+    if (
+        _requires_table_world_default(version)
+        and "--table-calibrate" not in explicit
+        and args.table_calibrate is None
+    ):
+        args.table_calibrate = DEFAULT_TABLE_CALIBRATE_PATH
     if str(args.input_source) == INPUT_SOURCE_FAKE_LIVE:
         args.mode = MODE_DEMO
     if "--controller-prompt" not in explicit or args.controller_prompt is None:

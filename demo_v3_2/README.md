@@ -11,6 +11,11 @@ Dry-run:
 python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
+Demo 3.2 uses repo-root `table_calibrate.pkl` by default. If that file or its
+`table_calibrate_metadata.json` sidecar is missing or invalid, the wrapper fails
+before live or fake-live execution. Pass `--table-calibrate <path>` only when
+using an alternate single-camera table-world calibration.
+
 Fake-live replay defaults to live tracking visualization: filtered RGB PCD plus
 PhysTwin-style rainbow query points. The live PCD and query markers are rendered
 only from strict same-seq pairs.

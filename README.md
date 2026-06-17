@@ -79,6 +79,11 @@ python single_demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 python single_demo_v3_3/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
+Demo 3.2 and Demo 3.3 require repo-root `table_calibrate.pkl` by default so
+their PCD and TAPNext++ marker outputs are in `table_world_z0`. Run table
+calibration after moving the camera, table, or mount, or pass
+`--table-calibrate <path>` to use an alternate table-world calibration.
+
 ## Calibration
 
 Calibrate the single-camera setup:

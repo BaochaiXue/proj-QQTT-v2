@@ -25,6 +25,28 @@ def _option_value(argv: list[str], option: str) -> str:
     return argv[argv.index(option) + 1]
 
 
+def _write_valid_table_calibration(path: Path, *, serial_numbers: list[str] | None = None) -> None:
+    serials = list(serial_numbers or ["s0"])
+    metadata = build_table_calibration_metadata(
+        serial_numbers=serials,
+        WH=[640, 480],
+        fps=30,
+        transform_count=len(serials),
+        calibration_board={"name": "calibio-12x9-30mm"},
+        max_reprojection_error_px=0.5,
+        min_corner_fraction=60 / 88,
+        min_charuco_corners=60,
+        per_camera_reprojection_error=[0.1 for _ in serials],
+        per_camera_corner_count=[60 for _ in serials],
+        per_camera_corner_fraction=[60 / 88 for _ in serials],
+    )
+    write_table_calibration_files(
+        path,
+        [np.eye(4, dtype=np.float32) for _ in serials],
+        metadata,
+    )
+
+
 LEGACY_MULTI_CAMERA_FIELDS = {
     "requires_three_realsense",
     "num_realsense_cameras",
@@ -50,6 +72,16 @@ LEGACY_MULTI_CAMERA_FIELDS = {
 
 
 class SingleDemoV3RuntimeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._repo_root_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._repo_root_dir.cleanup)
+        self.repo_root = Path(self._repo_root_dir.name)
+        self.default_table_path = self.repo_root / "table_calibrate.pkl"
+        _write_valid_table_calibration(self.default_table_path)
+        repo_root_patch = mock.patch.object(runtime, "REPO_ROOT", self.repo_root)
+        repo_root_patch.start()
+        self.addCleanup(repo_root_patch.stop)
+
     def _parse(self, version: str, argv: list[str]):
         parser = runtime.build_arg_parser(demo_version=version)
         args = parser.parse_args(argv)
@@ -120,20 +152,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
     def test_demo32_contract_includes_table_calibration_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             table_path = Path(tmp_dir) / "table_calibrate.pkl"
-            metadata = build_table_calibration_metadata(
-                serial_numbers=["s0"],
-                WH=[640, 480],
-                fps=30,
-                transform_count=1,
-                calibration_board={"name": "calibio-12x9-30mm"},
-                max_reprojection_error_px=0.5,
-                min_corner_fraction=60 / 88,
-                min_charuco_corners=60,
-                per_camera_reprojection_error=[0.1],
-                per_camera_corner_count=[60],
-                per_camera_corner_fraction=[60 / 88],
-            )
-            write_table_calibration_files(table_path, [np.eye(4, dtype=np.float32)], metadata)
+            _write_valid_table_calibration(table_path)
             args = self._parse(
                 runtime.DEMO_VERSION_3_2,
                 [
@@ -154,6 +173,29 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(contract["table_z_m"], 0.0)
             delegate = runtime.build_live_delegate_argv(args)
             self.assertEqual(_option_value(delegate, "--table-calibrate"), str(table_path))
+
+    def test_demo32_and_demo33_default_to_repo_table_calibration(self) -> None:
+        for version in (runtime.DEMO_VERSION_3_2, runtime.DEMO_VERSION_3_3):
+            with self.subTest(version=version):
+                args = self._parse(version, ["--dry-run"])
+
+                runtime.validate_args(args)
+                contract = runtime.build_contract(args)
+                delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
+
+                self.assertEqual(contract["table_world_frame_kind"], "table_world_z0")
+                self.assertEqual(contract["table_calibration_path"], str(self.default_table_path))
+                self.assertEqual(contract["pcd_coordinate_frame"], "table_world_z0")
+                self.assertEqual(contract["table_z_m"], 0.0)
+                self.assertEqual(_option_value(delegate, "--table-calibrate"), str(self.default_table_path))
+
+    def test_demo32_rejects_missing_default_table_calibration_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with mock.patch.object(runtime, "REPO_ROOT", Path(tmp_dir)):
+                args = self._parse(runtime.DEMO_VERSION_3_2, ["--dry-run"])
+
+                with self.assertRaisesRegex(ValueError, "Missing table calibration file"):
+                    runtime.validate_args(args)
 
     def test_demo32_rejects_missing_table_calibration_path(self) -> None:
         args = self._parse(
