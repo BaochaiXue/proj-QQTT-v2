@@ -24,9 +24,20 @@ if ROOT_STR in sys.path:
 sys.path.insert(0, ROOT_STR)
 
 from qqtt.demo.query_rainbow import query_rainbow_colors_for_indices
+from qqtt.demo.demo32_side_by_side_panel import (
+    SideBySidePanelHud,
+    SideBySidePanelInputs,
+    compute_rgb_ahead_frames,
+    render_projected_pcd_panel,
+    render_side_by_side_panel,
+    render_tracking_overlay_panel,
+)
 
 
 DEMO_VISUAL_MODES = ("pcd", "tracking")
+PANEL_MODE_SINGLE = "single"
+PANEL_MODE_SIDE_BY_SIDE = "side-by-side"
+PANEL_MODES = (PANEL_MODE_SINGLE, PANEL_MODE_SIDE_BY_SIDE)
 TABLE_WORLD_FRAME_KIND = "table_world_z0"
 CAMERA_COLOR_FRAME = "camera_color_frame"
 DEFAULT_TABLE_Z_OVERLAY_THRESHOLDS_M = (0.005, 0.010, 0.020, 0.030)
@@ -72,6 +83,16 @@ def _read_frames(path: Path) -> list[dict[str, Any]]:
     return frames
 
 
+def _read_input_frames(*, capture_dir: Path, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    timeline = metadata.get("input_rgb_timeline")
+    if not timeline:
+        return []
+    path = _resolve_capture_path(capture_dir, str(timeline))
+    if not path.is_file():
+        return []
+    return _read_frames(path)
+
+
 def _resolve_capture_path(capture_dir: Path, value: str) -> Path:
     path = Path(value)
     return path if path.is_absolute() else capture_dir / path
@@ -111,6 +132,73 @@ def _read_rgb_frame_bgr(*, capture_dir: Path, frame: dict[str, Any], width: int,
     if image.shape[:2] != (int(height), int(width)):
         image = cv2.resize(image, (int(width), int(height)), interpolation=cv2.INTER_LINEAR)
     return np.ascontiguousarray(image, dtype=np.uint8)
+
+
+def _read_input_rgb_frame_bgr(
+    *,
+    capture_dir: Path,
+    input_frame: dict[str, Any] | None,
+    width: int,
+    height: int,
+) -> np.ndarray | None:
+    if input_frame is None or "seq" not in input_frame:
+        return None
+    if "rgb_path" in input_frame:
+        rgb_path = _resolve_capture_path(capture_dir, str(input_frame["rgb_path"]))
+    else:
+        rgb_path = capture_dir / "input_rgb" / f"{int(input_frame['seq']):06d}.png"
+    image = cv2.imread(str(rgb_path), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    if image.shape[:2] != (int(height), int(width)):
+        image = cv2.resize(image, (int(width), int(height)), interpolation=cv2.INTER_LINEAR)
+    return np.ascontiguousarray(image, dtype=np.uint8)
+
+
+def _as_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(result):
+        return None
+    return result
+
+
+def _latest_input_frame_for_paired_row(
+    *,
+    input_frames: list[dict[str, Any]],
+    paired_row: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not input_frames:
+        return None
+    paired_time = _as_float_or_none(paired_row.get("process_done_perf_s"))
+    if paired_time is None:
+        paired_time = _as_float_or_none(paired_row.get("receive_perf_s"))
+    timed_rows = [
+        (index, _as_float_or_none(row.get("receive_perf_s")), row)
+        for index, row in enumerate(input_frames)
+    ]
+    if paired_time is not None:
+        eligible = [
+            (index, receive_time, row)
+            for index, receive_time, row in timed_rows
+            if receive_time is not None and receive_time <= paired_time
+        ]
+        if eligible:
+            return max(eligible, key=lambda item: (float(item[1]), int(item[0])))[2]
+        timed = [(index, receive_time, row) for index, receive_time, row in timed_rows if receive_time is not None]
+        if timed:
+            return min(timed, key=lambda item: (abs(float(item[1]) - paired_time), int(item[0])))[2]
+
+    paired_seq = int(paired_row.get("seq", 0))
+    sequenced = [(index, int(row["seq"]), row) for index, row in enumerate(input_frames) if "seq" in row]
+    eligible_seq = [(index, seq, row) for index, seq, row in sequenced if seq <= paired_seq]
+    if eligible_seq:
+        return max(eligible_seq, key=lambda item: (int(item[1]), int(item[0])))[2]
+    return sequenced[0][2] if sequenced else input_frames[-1]
 
 
 def _read_target_union_mask(
@@ -356,6 +444,73 @@ def _draw_query_points(
     return int(object_count + controller_count), int(object_count), int(controller_count), hand_a_count, hand_b_count
 
 
+def _read_query_panel_payload(trajectory_path: Path | None) -> dict[str, np.ndarray] | None:
+    if trajectory_path is None or not trajectory_path.is_file():
+        return None
+    with np.load(trajectory_path, allow_pickle=False) as payload:
+        tracks_yx = np.asarray(payload["tracks_yx"], dtype=np.float32).reshape(-1, 2)
+        query_indices = np.asarray(payload["query_indices"], dtype=np.int64).reshape(-1)
+        if "query_is_object" in payload.files:
+            query_is_object = np.asarray(payload["query_is_object"], dtype=bool).reshape(-1)
+        else:
+            query_is_object = np.ones((len(tracks_yx),), dtype=bool)
+        if "query_is_controller" in payload.files:
+            query_is_controller = np.asarray(payload["query_is_controller"], dtype=bool).reshape(-1)
+        else:
+            query_is_controller = np.zeros((len(tracks_yx),), dtype=bool)
+        if "marker_rgb_u8" in payload.files:
+            marker_rgb_u8 = np.asarray(payload["marker_rgb_u8"], dtype=np.uint8).reshape(-1, 3)
+        elif "query_rgb_u8" in payload.files:
+            query_rgb_u8 = np.asarray(payload["query_rgb_u8"], dtype=np.uint8).reshape(-1, 3)
+            marker_rgb_u8 = np.zeros((len(query_indices), 3), dtype=np.uint8)
+            valid_indices = (query_indices >= 0) & (query_indices < len(query_rgb_u8))
+            marker_rgb_u8[valid_indices] = query_rgb_u8[query_indices[valid_indices]]
+        else:
+            query_count = int(payload["query_count"][0]) if "query_count" in payload.files else None
+            marker_rgb_u8 = query_rainbow_colors_for_indices(query_indices, query_count=query_count)
+        if "visibility" in payload.files:
+            visibility = np.asarray(payload["visibility"], dtype=np.float32).reshape(-1)
+        else:
+            visibility = np.ones((len(tracks_yx),), dtype=np.float32)
+        if "query_controller_instance_id" in payload.files:
+            query_controller_instance_id = np.asarray(
+                payload["query_controller_instance_id"],
+                dtype=np.int64,
+            ).reshape(-1)
+        else:
+            query_controller_instance_id = np.zeros((len(tracks_yx),), dtype=np.int64)
+    count = min(
+        len(tracks_yx),
+        len(visibility),
+        len(marker_rgb_u8),
+        len(query_is_object),
+        len(query_is_controller),
+        len(query_controller_instance_id),
+    )
+    return {
+        "tracks_yx": np.ascontiguousarray(tracks_yx[:count], dtype=np.float32),
+        "visibility": np.ascontiguousarray(visibility[:count], dtype=np.float32),
+        "marker_rgb_u8": np.ascontiguousarray(marker_rgb_u8[:count], dtype=np.uint8),
+        "query_is_object": np.ascontiguousarray(query_is_object[:count], dtype=bool),
+        "query_is_controller": np.ascontiguousarray(query_is_controller[:count], dtype=bool),
+        "query_controller_instance_id": np.ascontiguousarray(
+            query_controller_instance_id[:count],
+            dtype=np.int64,
+        ),
+    }
+
+
+def _empty_query_panel_payload() -> dict[str, np.ndarray]:
+    return {
+        "tracks_yx": np.empty((0, 2), dtype=np.float32),
+        "visibility": np.empty((0,), dtype=np.float32),
+        "marker_rgb_u8": np.empty((0, 3), dtype=np.uint8),
+        "query_is_object": np.empty((0,), dtype=bool),
+        "query_is_controller": np.empty((0,), dtype=bool),
+        "query_controller_instance_id": np.empty((0,), dtype=np.int64),
+    }
+
+
 def _stack_pcd_points(pcd: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     object_xyz = np.asarray(pcd["object_xyz_m"], dtype=np.float32).reshape(-1, 3)
     object_rgb = np.asarray(pcd["object_rgb_u8"], dtype=np.uint8).reshape(-1, 3)
@@ -531,6 +686,7 @@ def render_capture_to_video(
     query_point_radius: int = 3,
     demo_visual_mode: str = "tracking",
     tracking_background_mask: str = TRACKING_BACKGROUND_MASK_TARGET_UNION,
+    panel_mode: str = PANEL_MODE_SINGLE,
 ) -> dict[str, Any]:
     capture_dir = Path(capture_dir).resolve()
     metadata = _read_json(capture_dir / "metadata.json")
@@ -550,19 +706,30 @@ def render_capture_to_video(
         raise ValueError(f"demo_visual_mode must be one of {DEMO_VISUAL_MODES}")
     if str(tracking_background_mask) not in TRACKING_BACKGROUND_MASK_MODES:
         raise ValueError(f"tracking_background_mask must be one of {TRACKING_BACKGROUND_MASK_MODES}")
+    if str(panel_mode) not in PANEL_MODES:
+        raise ValueError(f"panel_mode must be one of {PANEL_MODES}")
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    output_width = width * 3 if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE else width
     writer = cv2.VideoWriter(
         str(output),
         cv2.VideoWriter_fourcc(*"mp4v"),
         float(fps),
-        (width, height),
+        (output_width, height),
     )
     if not writer.isOpened():
         raise RuntimeError(f"failed to open video writer: {output}")
     rendered_counts: list[dict[str, int]] = []
     trajectory_by_seq = _trajectory_index(capture_dir)
+    input_frames = _read_input_frames(capture_dir=capture_dir, metadata=metadata)
+    left_rgb_policy = "latest_input_rgb" if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE else "paired_rgb"
+    sync_policy = (
+        "latest_receive_perf_s_lte_paired_process_done_perf_s"
+        if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE
+        else "paired_seq"
+    )
     missing_query_frames = 0
+    missing_rgb_frames = 0
     try:
         for frame in frames:
             image = np.zeros((height, width, 3), dtype=np.uint8)
@@ -571,7 +738,103 @@ def render_capture_to_video(
             query_hand_a_count = query_hand_b_count = 0
             tracking_background_mask_pixels = 0
             query_path = None
-            if str(demo_visual_mode) == "tracking":
+            if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE:
+                paired_rgb = _read_rgb_frame_bgr(capture_dir=capture_dir, frame=frame, width=width, height=height)
+                input_row = _latest_input_frame_for_paired_row(input_frames=input_frames, paired_row=frame)
+                input_rgb = _read_input_rgb_frame_bgr(
+                    capture_dir=capture_dir,
+                    input_frame=input_row,
+                    width=width,
+                    height=height,
+                )
+                if input_rgb is None:
+                    input_rgb = paired_rgb.copy()
+                    missing_rgb_frames += 1
+                    rgb_seq = int(frame["seq"])
+                    input_time_s = _as_float_or_none(frame.get("receive_perf_s"))
+                else:
+                    rgb_seq = int(input_row["seq"]) if input_row is not None else int(frame["seq"])
+                    input_time_s = _as_float_or_none(input_row.get("receive_perf_s")) if input_row is not None else None
+
+                pcd_path = _resolve_capture_path(capture_dir, str(frame["pcd_path"]))
+                with np.load(pcd_path, allow_pickle=False) as pcd:
+                    pcd_panel, pcd_counts = render_projected_pcd_panel(
+                        width=width,
+                        height=height,
+                        intrinsics=intrinsics,
+                        controller_xyz_m=pcd["controller_xyz_m"],
+                        controller_rgb_u8=pcd["controller_rgb_u8"],
+                        object_xyz_m=pcd["object_xyz_m"],
+                        object_rgb_u8=pcd["object_rgb_u8"],
+                        point_size=int(point_size),
+                        max_render_points=int(max_render_points),
+                        coordinate_frame=pcd_coordinate_frame,
+                        camera_to_world_c2w=camera_to_world_c2w,
+                    )
+                controller_count = int(pcd_counts["controller_points"])
+                object_count = int(pcd_counts["object_points"])
+
+                tracking_image = paired_rgb.copy()
+                if str(tracking_background_mask) == TRACKING_BACKGROUND_MASK_TARGET_UNION:
+                    target_union_mask = _read_target_union_mask(
+                        capture_dir=capture_dir,
+                        frame=frame,
+                        width=width,
+                        height=height,
+                    )
+                    tracking_background_mask_pixels = _apply_tracking_background_mask(tracking_image, target_union_mask)
+                query_path = _trajectory_path_for_frame(
+                    capture_dir=capture_dir,
+                    frame=frame,
+                    trajectory_by_seq=trajectory_by_seq,
+                )
+                query_payload = _read_query_panel_payload(query_path)
+                if query_payload is None:
+                    missing_query_frames += 1
+                    query_payload = _empty_query_panel_payload()
+                tracking_panel, query_counts = render_tracking_overlay_panel(
+                    image_bgr=tracking_image,
+                    marker_radius=int(query_point_radius),
+                    **query_payload,
+                )
+                query_count = int(query_counts["query_points"])
+                query_object_count = int(query_counts["query_object_points"])
+                query_controller_count = int(query_counts["query_controller_points"])
+                query_hand_a_count = int(query_counts["query_hand_a_points"])
+                query_hand_b_count = int(query_counts["query_hand_b_points"])
+
+                receive_time = _as_float_or_none(frame.get("receive_perf_s"))
+                process_done_time = _as_float_or_none(frame.get("process_done_perf_s"))
+                if receive_time is not None and process_done_time is not None:
+                    display_latency_ms = max(0.0, (process_done_time - receive_time) * 1000.0)
+                else:
+                    display_latency_ms = _as_float_or_none(frame.get("pipeline_latency_ms")) or 0.0
+                pipeline_latency_ms = _as_float_or_none(frame.get("pipeline_latency_ms"))
+                if pipeline_latency_ms is None:
+                    pipeline_latency_ms = display_latency_ms
+                hud = SideBySidePanelHud(
+                    rgb_seq=int(rgb_seq),
+                    paired_seq=int(frame["seq"]),
+                    input_time_s=input_time_s,
+                    pipeline_latency_ms=float(pipeline_latency_ms),
+                    display_latency_ms=float(display_latency_ms),
+                    startup_hold_s=float(metadata.get("startup_hold_s", 0.0) or 0.0),
+                    filter_preset=str(frame.get("filter_preset") or metadata.get("pcd_filter_preset") or "unknown"),
+                    marker_count=int(frame.get("marker_count", query_count) or 0),
+                    tracking_background=str(tracking_background_mask),
+                    object_point_count=int(object_count),
+                    controller_point_count=int(controller_count),
+                )
+                image = render_side_by_side_panel(
+                    SideBySidePanelInputs(
+                        rgb_image_bgr=input_rgb,
+                        pcd_panel_bgr=pcd_panel,
+                        tracking_panel_bgr=tracking_panel,
+                        hud=hud,
+                    ),
+                    cell_size=(width, height),
+                )
+            elif str(demo_visual_mode) == "tracking":
                 image = _read_rgb_frame_bgr(capture_dir=capture_dir, frame=frame, width=width, height=height)
                 if str(tracking_background_mask) == TRACKING_BACKGROUND_MASK_TARGET_UNION:
                     target_union_mask = _read_target_union_mask(
@@ -624,20 +887,29 @@ def render_capture_to_video(
                     camera_to_world_c2w=camera_to_world_c2w,
                 )
             writer.write(image)
-            rendered_counts.append(
-                {
-                    "seq": int(frame["seq"]),
-                    "controller_points": int(controller_count),
-                    "object_points": int(object_count),
-                    "query_points": int(query_count),
-                    "query_object_points": int(query_object_count),
-                    "query_controller_points": int(query_controller_count),
-                    "query_hand_a_points": int(query_hand_a_count),
-                    "query_hand_b_points": int(query_hand_b_count),
-                    "tracking_background_mask_pixels": int(tracking_background_mask_pixels),
-                    "query_trajectory_exact": int(query_path is not None and query_path.is_file()),
-                }
-            )
+            rendered_row = {
+                "seq": int(frame["seq"]),
+                "controller_points": int(controller_count),
+                "object_points": int(object_count),
+                "query_points": int(query_count),
+                "query_object_points": int(query_object_count),
+                "query_controller_points": int(query_controller_count),
+                "query_hand_a_points": int(query_hand_a_count),
+                "query_hand_b_points": int(query_hand_b_count),
+                "tracking_background_mask_pixels": int(tracking_background_mask_pixels),
+                "query_trajectory_exact": int(query_path is not None and query_path.is_file()),
+            }
+            if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE:
+                rendered_row.update(
+                    {
+                        "rgb_seq": int(rgb_seq),
+                        "paired_seq": int(frame["seq"]),
+                        "rgb_ahead_frames": int(
+                            compute_rgb_ahead_frames(rgb_seq=int(rgb_seq), paired_seq=int(frame["seq"]))
+                        ),
+                    }
+                )
+            rendered_counts.append(rendered_row)
     finally:
         writer.release()
     tracking_background_mask_source = "none"
@@ -656,6 +928,11 @@ def render_capture_to_video(
         "saved_pcd_source": metadata.get("saved_pcd_source"),
         "pcd_coordinate_frame": pcd_coordinate_frame,
         "demo_visual_mode": str(demo_visual_mode),
+        "panel_mode": str(panel_mode),
+        "left_rgb_policy": left_rgb_policy,
+        "input_rgb_frame_count": int(len(input_frames)),
+        "missing_rgb_frames": int(missing_rgb_frames),
+        "sync_policy": sync_policy,
         "tracking_background_mask": str(tracking_background_mask),
         "tracking_background_mask_source": tracking_background_mask_source,
         "tracking_background_mask_pixel_total": int(
@@ -676,6 +953,9 @@ def render_capture_to_video(
     }
     summary_path = output.with_suffix(".render_summary.json")
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE:
+        panel_summary_path = output.with_suffix(".panel_summary.json")
+        panel_summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return summary
 
 
@@ -688,6 +968,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-render-points", type=int, default=0)
     parser.add_argument("--query-point-radius", type=int, default=3)
     parser.add_argument("--demo-visual-mode", choices=DEMO_VISUAL_MODES, default="tracking")
+    parser.add_argument("--panel-mode", choices=PANEL_MODES, default=PANEL_MODE_SINGLE)
     parser.add_argument(
         "--table-z-overlay-sweep",
         action="store_true",
@@ -748,6 +1029,7 @@ def main(argv: list[str] | None = None) -> int:
         query_point_radius=int(args.query_point_radius),
         demo_visual_mode=str(args.demo_visual_mode),
         tracking_background_mask=str(args.tracking_background_mask),
+        panel_mode=str(args.panel_mode),
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

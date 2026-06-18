@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 
 from scripts.harness.diagnostics.demo.render_demo32_headless_capture import (
+    PANEL_MODE_SIDE_BY_SIDE,
     TRACKING_BACKGROUND_MASK_RGB,
     TRACKING_BACKGROUND_MASK_TARGET_UNION,
     _apply_tracking_background_mask,
@@ -224,6 +225,98 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                 summary["tracking_background_mask_pixel_total"],
                 int(np.count_nonzero(np.logical_or(controller_mask, object_mask))),
             )
+
+    def test_render_side_by_side_panel_prefers_input_rgb_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "pcd").mkdir(parents=True)
+            (capture_dir / "ffs_depth").mkdir()
+            (capture_dir / "rgb").mkdir()
+            (capture_dir / "input_rgb").mkdir()
+            (capture_dir / "query_trajectory").mkdir()
+            (capture_dir / "masks").mkdir()
+            metadata = {
+                "width": 32,
+                "height": 24,
+                "saved_pcd_source": "enhanced_pt_filtered",
+                "pcd_filter_preset": "enhanced-pt",
+                "replay_fps": 5,
+                "startup_hold_s": 2,
+                "input_rgb_timeline": "input_frames.jsonl",
+                "intrinsics": {"fx": 20.0, "fy": 20.0, "cx": 16.0, "cy": 12.0},
+            }
+            (capture_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            Image.fromarray(np.full((24, 32, 3), 80, dtype=np.uint8)).save(capture_dir / "input_rgb" / "000000.png")
+            Image.fromarray(np.full((24, 32, 3), 160, dtype=np.uint8)).save(capture_dir / "input_rgb" / "000002.png")
+            Image.fromarray(np.full((24, 32, 3), 64, dtype=np.uint8)).save(capture_dir / "rgb" / "000000.png")
+            np.savez(
+                capture_dir / "pcd" / "000000.npz",
+                controller_xyz_m=np.array([[0.0, 0.0, 0.5]], dtype=np.float32),
+                controller_rgb_u8=np.array([[255, 0, 0]], dtype=np.uint8),
+                object_xyz_m=np.array([[0.05, 0.0, 0.6]], dtype=np.float32),
+                object_rgb_u8=np.array([[0, 255, 0]], dtype=np.uint8),
+            )
+            np.save(capture_dir / "ffs_depth" / "000000.npy", np.ones((24, 32), dtype=np.float32))
+            np.savez(
+                capture_dir / "query_trajectory" / "000000.npz",
+                marker_xyz_m=np.array([[0.0, 0.0, 0.5]], dtype=np.float32),
+                marker_rgb_u8=np.array([[255, 32, 32]], dtype=np.uint8),
+                tracks_yx=np.array([[12.0, 16.0]], dtype=np.float32),
+                visibility=np.ones((1,), dtype=np.float32),
+                query_indices=np.array([0], dtype=np.int64),
+                query_is_object=np.array([False], dtype=bool),
+                query_is_controller=np.array([True], dtype=bool),
+                query_controller_instance_id=np.array([1], dtype=np.int64),
+                query_count=np.array([1], dtype=np.int64),
+            )
+            controller_mask = np.zeros((24, 32), dtype=bool)
+            object_mask = np.zeros((24, 32), dtype=bool)
+            controller_mask[11:14, 15:18] = True
+            object_mask[11:14, 17:20] = True
+            np.savez(
+                capture_dir / "masks" / "000000.npz",
+                controller_mask=controller_mask,
+                object_mask=object_mask,
+            )
+            input_rows = [
+                {"seq": 0, "receive_perf_s": 10.0},
+                {"seq": 2, "receive_perf_s": 10.4},
+            ]
+            (capture_dir / "input_frames.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in input_rows) + "\n",
+                encoding="utf-8",
+            )
+            row = {
+                "seq": 0,
+                "pcd_path": "pcd/000000.npz",
+                "ffs_depth_path": "ffs_depth/000000.npy",
+                "rgb_path": "rgb/000000.png",
+                "query_trajectory_path": "query_trajectory/000000.npz",
+                "mask_path": "masks/000000.npz",
+                "receive_perf_s": 10.0,
+                "process_done_perf_s": 10.4,
+                "pipeline_latency_ms": 400,
+                "filter_preset": "enhanced-pt",
+                "marker_count": 1,
+            }
+            (capture_dir / "frames.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            output = capture_dir / "video.mp4"
+            summary = render_capture_to_video(
+                capture_dir=capture_dir,
+                output=output,
+                fps=30.0,
+                panel_mode=PANEL_MODE_SIDE_BY_SIDE,
+            )
+
+            self.assertTrue(output.is_file())
+            self.assertTrue(output.with_suffix(".panel_summary.json").is_file())
+            self.assertEqual(summary["panel_mode"], PANEL_MODE_SIDE_BY_SIDE)
+            self.assertEqual(summary["left_rgb_policy"], "latest_input_rgb")
+            self.assertEqual(summary["rendered_counts"][0]["rgb_seq"], 2)
+            self.assertEqual(summary["rendered_counts"][0]["paired_seq"], 0)
+            self.assertEqual(summary["rendered_counts"][0]["rgb_ahead_frames"], 2)
+            self.assertEqual(summary["rendered_counts"][0]["query_points"], 1)
 
     def test_render_does_not_fallback_to_previous_query_trajectory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
