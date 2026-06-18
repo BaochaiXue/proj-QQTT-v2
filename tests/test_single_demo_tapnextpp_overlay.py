@@ -331,6 +331,19 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             depth_u16=np.ascontiguousarray(depth, dtype=np.uint16),
         )
 
+    def _frame_packet(self, seq: int = 0) -> demo.FramePacket:
+        color = np.zeros((4, 4, 3), dtype=np.uint8)
+        return demo.FramePacket(
+            seq=int(seq),
+            color_bgr=color,
+            depth_source="realsense",
+            intrinsics=CameraIntrinsics(fx=100.0, fy=100.0, cx=0.0, cy=0.0),
+            depth_scale_m_per_unit=0.001,
+            receive_perf_s=time.perf_counter(),
+            timing=demo.PipelineTiming(),
+            depth_u16=np.full((4, 4), 1000, dtype=np.uint16),
+        )
+
     def _pcd_packet(self, seq: int = 0, *, coordinate_frame: str = demo.COORDINATE_FRAME) -> demo.MaskedPcdPacket:
         controller_points = np.array([[0.0, 0.0, 0.5]], dtype=np.float32)
         object_points = np.array([[0.05, 0.0, 0.6]], dtype=np.float32)
@@ -1016,6 +1029,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                     "camera_to_world_c2w": np.eye(4, dtype=np.float32).tolist(),
                 },
             )
+            input_packet = self._frame_packet(seq=0)
+            writer.write_input_frame(input_packet)
             now = time.perf_counter()
             query_points_yx = np.array([[1.0, 1.0]], dtype=np.float32)
             query_rgb_u8 = query_rainbow_colors_from_points_yx_rgb_u8(query_points_yx)
@@ -1070,7 +1085,18 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(metadata["camera_to_world_c2w"][3], [0.0, 0.0, 0.0, 1.0])
             self.assertEqual(metadata["saved_mask_source"], "edgetam_binary_masks")
             self.assertEqual(metadata["saved_rgb_source"], "segmentation_color_bgr")
+            self.assertTrue(metadata["panel_supported"])
+            self.assertEqual(metadata["panel_sync_policy"], "left_latest_rgb_right_strict_same_seq")
+            self.assertEqual(metadata["input_rgb_timeline"], "input_frames.jsonl")
             rows = [json.loads(line) for line in (output_dir / "frames.jsonl").read_text(encoding="utf-8").splitlines()]
+            input_rows = [
+                json.loads(line)
+                for line in (output_dir / "input_frames.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(input_rows), 1)
+            self.assertEqual(input_rows[0]["seq"], 0)
+            self.assertEqual(input_rows[0]["input_rgb_path"], "input_rgb/000000.png")
+            self.assertTrue((output_dir / input_rows[0]["input_rgb_path"]).is_file())
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["world_z_stats_path"], "world_z_stats.jsonl")
             z_rows = [
@@ -1094,6 +1120,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(rows[0]["hand_a_query_count"], 0)
             self.assertEqual(rows[0]["hand_b_query_count"], 0)
             self.assertEqual(rows[0]["object_query_count"], 1)
+            self.assertEqual(rows[0]["marker_count"], 1)
+            self.assertEqual(rows[0]["filter_preset"], "pt_filter_filtered")
+            self.assertGreaterEqual(rows[0]["pipeline_latency_ms"], 0.0)
             self.assertEqual(rows[0]["pcd_mask_erode_pixels"], 1)
             self.assertEqual(rows[0]["object_pcd_mask_erode_pixels"], 3)
             self.assertEqual(rows[0]["controller_pcd_mask_erode_pixels"], 0)
@@ -1402,6 +1431,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(runner.call_count, 2)
         self.assertEqual(runner.max_active, 1)
         self.assertEqual(len(outputs), 2)
+
+
+RealtimeMaskedEdgeTamPcdTest = SingleDemoTapNextOverlayTest
 
 
 if __name__ == "__main__":

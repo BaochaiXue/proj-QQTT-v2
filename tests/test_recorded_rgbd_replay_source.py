@@ -105,10 +105,16 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             np.testing.assert_array_equal(packet.k_color, np.array(source.k_color, dtype=np.float32))
             self.assertEqual(packet.color_bgr[0, 0].tolist(), [4, 3, 2])
             self.assertEqual(packet.depth_u16[0, 0].item(), 2)
+            self.assertEqual(packet.source_frame_index, 0)
+            self.assertEqual(packet.source_step, 2)
+            self.assertAlmostEqual(packet.source_timestamp_s, 2.0)
             self.assertIsNone(packet.ir_left_u8)
 
             remapped_packet = source.read_packet(seq=7, frame_index=1)
             self.assertEqual(remapped_packet.seq, 7)
+            self.assertEqual(remapped_packet.source_frame_index, 1)
+            self.assertEqual(remapped_packet.source_step, 10)
+            self.assertAlmostEqual(remapped_packet.source_timestamp_s, 10.0)
             self.assertEqual(remapped_packet.color_bgr[0, 0].tolist(), [12, 11, 10])
 
     def test_missing_metadata_fails(self) -> None:

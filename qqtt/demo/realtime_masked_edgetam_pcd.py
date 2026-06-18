@@ -321,6 +321,9 @@ class FramePacket:
     t_ir_left_to_color: np.ndarray | None = None
     k_color: np.ndarray | None = None
     ir_baseline_m: float = 0.0
+    source_timestamp_s: float | None = None
+    source_frame_index: int | None = None
+    source_step: int | None = None
 
 
 @dataclass(frozen=True)
@@ -491,6 +494,9 @@ class RecordedRgbdFrameSource:
             t_ir_left_to_color=self.t_ir_left_to_color if ir_left_u8 is not None else None,
             k_color=self.k_color,
             ir_baseline_m=float(self.ir_baseline_m) if ir_left_u8 is not None else 0.0,
+            source_timestamp_s=float(ref.timestamp_s),
+            source_frame_index=int(source_index),
+            source_step=int(ref.step),
         )
 
     def _camera_matrix(self, metadata: dict[str, Any], key: str, *, fallback_key: str | None = None) -> np.ndarray:
@@ -658,6 +664,9 @@ class MaskPacket:
     t_ir_left_to_color: np.ndarray | None = None
     k_color: np.ndarray | None = None
     ir_baseline_m: float = 0.0
+    source_timestamp_s: float | None = None
+    source_frame_index: int | None = None
+    source_step: int | None = None
 
 
 @dataclass(frozen=True)
@@ -675,6 +684,9 @@ class MaskedPcdPacket:
     timing: PipelineTiming
     filter_telemetry: PcdFilterTelemetry = field(default_factory=lambda: PcdFilterTelemetry())
     coordinate_frame: str = COORDINATE_FRAME
+    source_timestamp_s: float | None = None
+    source_frame_index: int | None = None
+    source_step: int | None = None
 
     @property
     def controller_point_count(self) -> int:
@@ -819,7 +831,9 @@ class HeadlessCaptureWriter:
         self.rgb_dir = self.output_dir / "rgb"
         self.trajectory_dir = self.output_dir / "query_trajectory"
         self.mask_dir = self.output_dir / "masks"
+        self.input_rgb_dir = self.output_dir / "input_rgb"
         self.frames_path = self.output_dir / "frames.jsonl"
+        self.input_frames_path = self.output_dir / "input_frames.jsonl"
         self.world_z_stats_path = self.output_dir / "world_z_stats.jsonl"
         self.metadata_path = self.output_dir / "metadata.json"
         self._lock = threading.Lock()
@@ -830,14 +844,22 @@ class HeadlessCaptureWriter:
         self.rgb_dir.mkdir(parents=True, exist_ok=True)
         self.trajectory_dir.mkdir(parents=True, exist_ok=True)
         self.mask_dir.mkdir(parents=True, exist_ok=True)
+        self.input_rgb_dir.mkdir(parents=True, exist_ok=True)
         self.frames_path.write_text("", encoding="utf-8")
+        self.input_frames_path.write_text("", encoding="utf-8")
         self.world_z_stats_path.write_text("", encoding="utf-8")
         payload = dict(metadata)
         payload["headless_capture_enabled"] = True
         payload["saved_pcd_source"] = self.saved_pcd_source
         payload["saved_mask_source"] = "edgetam_binary_masks"
         payload["saved_rgb_source"] = "segmentation_color_bgr"
+        payload["panel_supported"] = True
+        payload["panel_sync_policy"] = "left_latest_rgb_right_strict_same_seq"
+        payload["tracking_background_default"] = "target-union"
+        payload["input_rgb_timeline"] = "input_frames.jsonl"
+        payload["startup_hold_s"] = float(payload.get("startup_hold_s") or 0.0)
         payload["output_dir"] = str(self.output_dir)
+        self._metadata_payload = payload
         self.metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def _relative(self, path: Path) -> str:
@@ -845,6 +867,33 @@ class HeadlessCaptureWriter:
             return str(path.relative_to(self.output_dir))
         except ValueError:
             return str(path)
+
+    def update_metadata(self, values: dict[str, Any]) -> None:
+        payload = dict(self._metadata_payload)
+        payload.update(values)
+        with self._lock:
+            self._metadata_payload = payload
+            self.metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    def write_input_frame(self, packet: FramePacket) -> None:
+        seq_name = f"{int(packet.seq):06d}"
+        rgb_path = self.input_rgb_dir / f"{seq_name}.png"
+        _bgr_to_pil_rgb(packet.color_bgr).save(rgb_path)
+        row = {
+            "seq": int(packet.seq),
+            "input_rgb_path": self._relative(rgb_path),
+            "source_timestamp_s": (
+                None if packet.source_timestamp_s is None else float(packet.source_timestamp_s)
+            ),
+            "source_frame_index": (
+                None if packet.source_frame_index is None else int(packet.source_frame_index)
+            ),
+            "source_step": None if packet.source_step is None else int(packet.source_step),
+            "receive_perf_s": float(packet.receive_perf_s),
+        }
+        with self._lock:
+            with self.input_frames_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row, sort_keys=True) + "\n")
 
     def write_pcd(
         self,
@@ -860,6 +909,7 @@ class HeadlessCaptureWriter:
         controller_pcd_mask_erode_pixels: int,
         tracker_packet: TrackerMarkerPacket | None = None,
         world_z_diagnostics: dict[str, Any] | None = None,
+        startup_hold_s: float = 0.0,
     ) -> None:
         filter_info = packet.filter_telemetry
         if not (filter_info.enabled and filter_info.mode == "sync" and filter_info.render_using_filtered):
@@ -917,6 +967,23 @@ class HeadlessCaptureWriter:
             "query_trajectory_path": self._relative(query_path),
             "mask_path": self._relative(mask_path),
             "world_z_stats_path": self._relative(self.world_z_stats_path),
+            "source_timestamp_s": (
+                None if packet.source_timestamp_s is None else float(packet.source_timestamp_s)
+            ),
+            "source_frame_index": (
+                None if packet.source_frame_index is None else int(packet.source_frame_index)
+            ),
+            "source_step": None if packet.source_step is None else int(packet.source_step),
+            "startup_hold_s": float(startup_hold_s),
+            "pipeline_latency_ms": float(
+                max(packet.process_done_perf_s, tracker_packet.process_done_perf_s)
+                - float(packet.receive_perf_s)
+            )
+            * 1000.0
+            if tracker_packet is not None
+            else float(packet.process_done_perf_s - packet.receive_perf_s) * 1000.0,
+            "filter_preset": self.saved_pcd_source,
+            "marker_count": int(tracker_packet.marker_count) if tracker_packet is not None else 0,
             "controller_point_count": int(packet.controller_point_count),
             "object_point_count": int(packet.object_point_count),
             "controller_mask_pixels": int(np.count_nonzero(mask_packet.controller_mask)),
@@ -3943,6 +4010,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
     def _publish_capture_packet(self, packet: FramePacket, *, record_s: float | None = None) -> None:
         self.capture_slot.put(packet)
+        if self.headless_capture_writer is not None and _is_replay_input_source(str(self.args.input_source)):
+            self.headless_capture_writer.write_input_frame(packet)
         if self._lossless_enabled():
             self.lossless_frame_queue.put(packet)
             self._lossless_offered_frames += 1
@@ -5135,6 +5204,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             t_ir_left_to_color=frame.t_ir_left_to_color,
             k_color=frame.k_color,
             ir_baseline_m=frame.ir_baseline_m,
+            source_timestamp_s=frame.source_timestamp_s,
+            source_frame_index=frame.source_frame_index,
+            source_step=frame.source_step,
         )
 
     def _make_filter_input(
@@ -5517,6 +5589,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             controller_pcd_mask_erode_pixels=int(result.controller_pcd_mask_erode_pixels),
             tracker_packet=tracker_packet,
             world_z_diagnostics=result.world_z_diagnostics,
+            startup_hold_s=float(getattr(self, "_startup_hold_s", 0.0)),
         )
 
     def _build_pcd_packet_from_mask(
@@ -5824,6 +5897,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             timing=timing,
             filter_telemetry=filter_telemetry,
             coordinate_frame=self._pcd_coordinate_frame(),
+            source_timestamp_s=mask_packet.source_timestamp_s,
+            source_frame_index=mask_packet.source_frame_index,
+            source_step=mask_packet.source_step,
         )
         return PcdBuildResult(
             packet=packet,
@@ -6254,6 +6330,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             timing=timing,
             filter_telemetry=filter_telemetry,
             coordinate_frame=self._pcd_coordinate_frame(),
+            source_timestamp_s=mask_packet.source_timestamp_s,
+            source_frame_index=mask_packet.source_frame_index,
+            source_step=mask_packet.source_step,
         )
 
     def _remote_quality_mask_u8(self, packet: MaskPacket) -> np.ndarray:
