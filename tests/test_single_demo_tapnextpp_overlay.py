@@ -1433,7 +1433,10 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(len(outputs), 2)
 
 
-RealtimeMaskedEdgeTamPcdTest = SingleDemoTapNextOverlayTest
+def __getattr__(name: str) -> object:
+    if name == "RealtimeMaskedEdgeTamPcdTest":
+        return SingleDemoTapNextOverlayTest
+    raise AttributeError(name)
 
 
 if __name__ == "__main__":
