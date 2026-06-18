@@ -3531,6 +3531,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self._lossless_pairer_lock = threading.Lock()
         self._lossless_publish_condition = threading.Condition()
         self._lossless_next_publish_seq = 0
+        self._startup_hold_s = 0.0
         self.stop_event = threading.Event()
         self._lossless_capture_done = threading.Event()
         self._lossless_processing_done = threading.Event()
@@ -4048,6 +4049,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if self.stop_event.is_set():
                 return
         gate_done_s = time.perf_counter()
+        self._startup_hold_s = max(0.0, float(gate_done_s - camera_start_s))
+        if self.headless_capture_writer is not None:
+            self.headless_capture_writer.update_metadata({"startup_hold_s": float(self._startup_hold_s)})
         replay_start_s = gate_done_s
         first_source_index = 1
         if fake_live_clock:

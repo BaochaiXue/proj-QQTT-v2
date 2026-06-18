@@ -212,6 +212,14 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             )
             demo = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
             demo.recording_source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=100)
+            demo.headless_capture_writer = masked_demo.HeadlessCaptureWriter(
+                Path(tmp_dir) / "headless",
+                metadata={
+                    "width": 3,
+                    "height": 2,
+                    "intrinsics": {"fx": 2.0, "fy": 4.0, "cx": 1.0, "cy": 0.5},
+                },
+            )
 
             thread = threading.Thread(target=demo._capture_recording_worker, daemon=True)
             thread.start()
@@ -226,6 +234,19 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             demo.stop_event.set()
             thread.join(timeout=1.0)
             self.assertFalse(thread.is_alive())
+            self.assertGreater(demo._startup_hold_s, 0.0)
+            metadata = json.loads(
+                (Path(tmp_dir) / "headless" / "metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertGreater(metadata["startup_hold_s"], 0.0)
+            input_rows = [
+                json.loads(line)
+                for line in (Path(tmp_dir) / "headless" / "input_frames.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertGreaterEqual(len(input_rows), 1)
+            self.assertEqual(input_rows[0]["seq"], 0)
 
     def test_lossless_recording_capture_offers_all_frames_without_latest_wins_drop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
