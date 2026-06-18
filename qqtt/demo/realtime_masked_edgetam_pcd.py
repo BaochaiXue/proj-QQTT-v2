@@ -869,9 +869,9 @@ class HeadlessCaptureWriter:
             return str(path)
 
     def update_metadata(self, values: dict[str, Any]) -> None:
-        payload = dict(self._metadata_payload)
-        payload.update(values)
         with self._lock:
+            payload = dict(self._metadata_payload)
+            payload.update(values)
             self._metadata_payload = payload
             self.metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

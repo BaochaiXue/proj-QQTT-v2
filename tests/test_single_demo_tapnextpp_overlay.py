@@ -331,7 +331,14 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             depth_u16=np.ascontiguousarray(depth, dtype=np.uint16),
         )
 
-    def _frame_packet(self, seq: int = 0) -> demo.FramePacket:
+    def _frame_packet(
+        self,
+        seq: int = 0,
+        *,
+        source_timestamp_s: float | None = None,
+        source_frame_index: int | None = None,
+        source_step: int | None = None,
+    ) -> demo.FramePacket:
         color = np.zeros((4, 4, 3), dtype=np.uint8)
         return demo.FramePacket(
             seq=int(seq),
@@ -342,9 +349,20 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             receive_perf_s=time.perf_counter(),
             timing=demo.PipelineTiming(),
             depth_u16=np.full((4, 4), 1000, dtype=np.uint16),
+            source_timestamp_s=source_timestamp_s,
+            source_frame_index=source_frame_index,
+            source_step=source_step,
         )
 
-    def _pcd_packet(self, seq: int = 0, *, coordinate_frame: str = demo.COORDINATE_FRAME) -> demo.MaskedPcdPacket:
+    def _pcd_packet(
+        self,
+        seq: int = 0,
+        *,
+        coordinate_frame: str = demo.COORDINATE_FRAME,
+        source_timestamp_s: float | None = None,
+        source_frame_index: int | None = None,
+        source_step: int | None = None,
+    ) -> demo.MaskedPcdPacket:
         controller_points = np.array([[0.0, 0.0, 0.5]], dtype=np.float32)
         object_points = np.array([[0.05, 0.0, 0.6]], dtype=np.float32)
         controller_colors = np.array([[255, 0, 0]], dtype=np.uint8)
@@ -370,6 +388,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 controller_output_points=1,
             ),
             coordinate_frame=coordinate_frame,
+            source_timestamp_s=source_timestamp_s,
+            source_frame_index=source_frame_index,
+            source_step=source_step,
         )
 
     def _tracker_packet(self, seq: int = 0) -> demo.TrackerMarkerPacket:
@@ -1029,7 +1050,12 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                     "camera_to_world_c2w": np.eye(4, dtype=np.float32).tolist(),
                 },
             )
-            input_packet = self._frame_packet(seq=0)
+            input_packet = self._frame_packet(
+                seq=0,
+                source_timestamp_s=12.5,
+                source_frame_index=7,
+                source_step=42,
+            )
             writer.write_input_frame(input_packet)
             now = time.perf_counter()
             query_points_yx = np.array([[1.0, 1.0]], dtype=np.float32)
@@ -1061,7 +1087,12 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             pcd_mask = np.ones((2, 2), dtype=bool)
             writer.write_tracker(tracker_packet)
             writer.write_pcd(
-                self._pcd_packet(coordinate_frame="table_world_z0"),
+                self._pcd_packet(
+                    coordinate_frame="table_world_z0",
+                    source_timestamp_s=12.5,
+                    source_frame_index=7,
+                    source_step=42,
+                ),
                 depth_m=np.ones((4, 4), dtype=np.float32),
                 mask_packet=mask_packet,
                 controller_pcd_mask=pcd_mask,
@@ -1096,9 +1127,15 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(len(input_rows), 1)
             self.assertEqual(input_rows[0]["seq"], 0)
             self.assertEqual(input_rows[0]["input_rgb_path"], "input_rgb/000000.png")
+            self.assertEqual(input_rows[0]["source_timestamp_s"], 12.5)
+            self.assertEqual(input_rows[0]["source_frame_index"], 7)
+            self.assertEqual(input_rows[0]["source_step"], 42)
             self.assertTrue((output_dir / input_rows[0]["input_rgb_path"]).is_file())
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["world_z_stats_path"], "world_z_stats.jsonl")
+            self.assertEqual(rows[0]["source_timestamp_s"], 12.5)
+            self.assertEqual(rows[0]["source_frame_index"], 7)
+            self.assertEqual(rows[0]["source_step"], 42)
             z_rows = [
                 json.loads(line)
                 for line in (output_dir / "world_z_stats.jsonl").read_text(encoding="utf-8").splitlines()
