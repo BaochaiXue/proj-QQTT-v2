@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import warnings
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -8,6 +10,7 @@ from qqtt.demo.demo32_side_by_side_panel import (
     CAMERA_COLOR_FRAME,
     SideBySidePanelHud,
     SideBySidePanelInputs,
+    TABLE_WORLD_FRAME_KIND,
     compute_rgb_ahead_frames,
     render_projected_pcd_panel,
     render_side_by_side_panel,
@@ -94,6 +97,140 @@ class Demo32SideBySidePanelTest(unittest.TestCase):
         self.assertEqual(count["object_points"], 1)
         self.assertGreater(int(panel.sum()), 0)
 
+    def test_render_projected_pcd_panel_accepts_intrinsics_object(self) -> None:
+        panel, count = render_projected_pcd_panel(
+            width=8,
+            height=6,
+            intrinsics=SimpleNamespace(fx=4.0, fy=4.0, cx=4.0, cy=3.0),
+            controller_xyz_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+            controller_rgb_u8=np.array([[255, 0, 0]], dtype=np.uint8),
+            object_xyz_m=np.empty((0, 3), dtype=np.float32),
+            object_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            point_size=1,
+            max_render_points=0,
+            coordinate_frame=CAMERA_COLOR_FRAME,
+            camera_to_world_c2w=None,
+        )
+
+        self.assertEqual(panel.shape, (6, 8, 3))
+        self.assertEqual(count["controller_points"], 1)
+        self.assertGreater(int(panel.sum()), 0)
+
+    def test_render_projected_pcd_panel_accepts_intrinsics_matrix(self) -> None:
+        intrinsics = np.array(
+            [
+                [4.0, 0.0, 4.0],
+                [0.0, 4.0, 3.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+
+        panel, count = render_projected_pcd_panel(
+            width=8,
+            height=6,
+            intrinsics=intrinsics,
+            controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+            controller_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            object_xyz_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+            object_rgb_u8=np.array([[0, 255, 0]], dtype=np.uint8),
+            point_size=1,
+            max_render_points=0,
+            coordinate_frame=CAMERA_COLOR_FRAME,
+            camera_to_world_c2w=None,
+        )
+
+        self.assertEqual(panel.shape, (6, 8, 3))
+        self.assertEqual(count["object_points"], 1)
+        self.assertGreater(int(panel.sum()), 0)
+
+    def test_render_projected_pcd_panel_projects_table_world_points(self) -> None:
+        camera_to_world = np.eye(4, dtype=np.float32)
+        camera_to_world[0, 3] = 1.0
+        world_point = np.array([[1.0, 0.0, 1.0]], dtype=np.float32)
+
+        panel, count = render_projected_pcd_panel(
+            width=8,
+            height=6,
+            intrinsics={"fx": 4.0, "fy": 4.0, "cx": 4.0, "cy": 3.0},
+            controller_xyz_m=world_point,
+            controller_rgb_u8=np.array([[255, 0, 0]], dtype=np.uint8),
+            object_xyz_m=np.empty((0, 3), dtype=np.float32),
+            object_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            point_size=1,
+            max_render_points=0,
+            coordinate_frame=TABLE_WORLD_FRAME_KIND,
+            camera_to_world_c2w=camera_to_world,
+        )
+
+        self.assertEqual(count["controller_points"], 1)
+        self.assertGreater(int(panel.sum()), 0)
+
+    def test_render_projected_pcd_panel_requires_table_world_transform(self) -> None:
+        with self.assertRaisesRegex(ValueError, "camera_to_world_c2w"):
+            render_projected_pcd_panel(
+                width=8,
+                height=6,
+                intrinsics={"fx": 4.0, "fy": 4.0, "cx": 4.0, "cy": 3.0},
+                controller_xyz_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+                controller_rgb_u8=np.array([[255, 0, 0]], dtype=np.uint8),
+                object_xyz_m=np.empty((0, 3), dtype=np.float32),
+                object_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+                point_size=1,
+                max_render_points=0,
+                coordinate_frame=TABLE_WORLD_FRAME_KIND,
+                camera_to_world_c2w=None,
+            )
+
+    def test_render_projected_pcd_panel_filters_invalid_points_without_warnings(self) -> None:
+        points = np.array(
+            [
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, -1.0],
+                [0.0, 0.0, 0.0],
+                [np.nan, 0.0, 1.0],
+                [10.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        colors = np.full((5, 3), (255, 0, 0), dtype=np.uint8)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            panel, count = render_projected_pcd_panel(
+                width=8,
+                height=6,
+                intrinsics={"fx": 4.0, "fy": 4.0, "cx": 4.0, "cy": 3.0},
+                controller_xyz_m=points,
+                controller_rgb_u8=colors,
+                object_xyz_m=np.empty((0, 3), dtype=np.float32),
+                object_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+                point_size=1,
+                max_render_points=0,
+                coordinate_frame=CAMERA_COLOR_FRAME,
+                camera_to_world_c2w=None,
+            )
+
+        self.assertEqual(caught, [])
+        self.assertEqual(count["controller_points"], 1)
+        self.assertGreater(int(panel.sum()), 0)
+
+    def test_render_projected_pcd_panel_rejects_mismatched_point_colors(self) -> None:
+        with self.assertRaisesRegex(ValueError, "controller_xyz_m.*controller_rgb_u8"):
+            render_projected_pcd_panel(
+                width=8,
+                height=6,
+                intrinsics={"fx": 4.0, "fy": 4.0, "cx": 4.0, "cy": 3.0},
+                controller_xyz_m=np.zeros((2, 3), dtype=np.float32),
+                controller_rgb_u8=np.zeros((1, 3), dtype=np.uint8),
+                object_xyz_m=np.empty((0, 3), dtype=np.float32),
+                object_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+                point_size=1,
+                max_render_points=0,
+                coordinate_frame=CAMERA_COLOR_FRAME,
+                camera_to_world_c2w=None,
+            )
+
     def test_render_tracking_overlay_panel_draws_visible_query_points(self) -> None:
         image = np.zeros((6, 8, 3), dtype=np.uint8)
         tracks_yx = np.array([[2.0, 3.0], [4.0, 5.0]], dtype=np.float32)
@@ -116,6 +253,19 @@ class Demo32SideBySidePanelTest(unittest.TestCase):
         self.assertEqual(counts["query_object_points"], 1)
         self.assertEqual(counts["query_controller_points"], 0)
         self.assertGreater(int(panel.sum()), 0)
+
+    def test_render_tracking_overlay_panel_rejects_mismatched_arrays(self) -> None:
+        with self.assertRaisesRegex(ValueError, "tracks_yx.*visibility"):
+            render_tracking_overlay_panel(
+                image_bgr=np.zeros((6, 8, 3), dtype=np.uint8),
+                tracks_yx=np.zeros((2, 2), dtype=np.float32),
+                visibility=np.ones((1,), dtype=np.float32),
+                marker_rgb_u8=np.zeros((2, 3), dtype=np.uint8),
+                query_is_object=np.ones((2,), dtype=bool),
+                query_is_controller=np.zeros((2,), dtype=bool),
+                query_controller_instance_id=np.zeros((2,), dtype=np.int64),
+                marker_radius=1,
+            )
 
 
 if __name__ == "__main__":

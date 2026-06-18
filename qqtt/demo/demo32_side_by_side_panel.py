@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -104,6 +105,7 @@ def _hud_lines(hud: SideBySidePanelHud) -> list[str]:
         f"rgb={int(hud.rgb_seq)} paired={int(hud.paired_seq)} ahead={hud.rgb_ahead_frames}f",
         f"input={input_time} pipe={float(hud.pipeline_latency_ms):.1f}ms disp={float(hud.display_latency_ms):.1f}ms",
         f"hold={float(hud.startup_hold_s):.2f}s filter={hud.filter_preset} markers={int(hud.marker_count)}",
+        f"bg={hud.tracking_background} obj={int(hud.object_point_count)} ctrl={int(hud.controller_point_count)}",
     ]
 
 
@@ -124,6 +126,30 @@ def render_side_by_side_panel(
     hud_y = max(0, panel.shape[0] - 48)
     _draw_text_lines(panel, _hud_lines(inputs.hud), origin=(2, hud_y))
     return np.ascontiguousarray(panel, dtype=np.uint8)
+
+
+def _intrinsics_values(intrinsics: Any) -> tuple[float, float, float, float]:
+    if isinstance(intrinsics, Mapping):
+        return (
+            float(intrinsics["fx"]),
+            float(intrinsics["fy"]),
+            float(intrinsics["cx"]),
+            float(intrinsics["cy"]),
+        )
+
+    if all(hasattr(intrinsics, name) for name in ("fx", "fy", "cx", "cy")):
+        return (
+            float(intrinsics.fx),
+            float(intrinsics.fy),
+            float(intrinsics.cx),
+            float(intrinsics.cy),
+        )
+
+    matrix = np.asarray(intrinsics)
+    if matrix.shape == (3, 3):
+        return float(matrix[0, 0]), float(matrix[1, 1]), float(matrix[0, 2]), float(matrix[1, 2])
+
+    raise ValueError("intrinsics must be a mapping, object, or 3x3 matrix with fx/fy/cx/cy")
 
 
 def _camera_points_for_frame(
@@ -150,7 +176,7 @@ def _camera_points_for_frame(
 
 def _project_points(
     points_xyz: np.ndarray,
-    intrinsics: dict[str, Any],
+    intrinsics: Any,
     *,
     width: int,
     height: int,
@@ -166,38 +192,69 @@ def _project_points(
         return np.empty((0, 2), dtype=np.int32), np.empty((0,), dtype=bool)
 
     z = points[:, 2]
-    valid = np.isfinite(points).all(axis=1) & (z > np.float32(1e-6))
-    fx = float(intrinsics["fx"])
-    fy = float(intrinsics["fy"])
-    cx = float(intrinsics["cx"])
-    cy = float(intrinsics["cy"])
-    u = np.rint(points[:, 0] * fx / z + cx).astype(np.int32)
-    v = np.rint(points[:, 1] * fy / z + cy).astype(np.int32)
-    valid &= (u >= 0) & (u < int(width)) & (v >= 0) & (v < int(height))
-    return np.stack([u, v], axis=1), valid
+    finite_depth = np.isfinite(points).all(axis=1) & (z > np.float32(1e-6))
+    pixels = np.zeros((len(points), 2), dtype=np.int32)
+    valid = np.zeros((len(points),), dtype=bool)
+    if not np.any(finite_depth):
+        return pixels, valid
+
+    fx, fy, cx, cy = _intrinsics_values(intrinsics)
+    valid_indices = np.flatnonzero(finite_depth)
+    valid_points = points[valid_indices]
+    valid_z = valid_points[:, 2]
+    u = np.rint(valid_points[:, 0] * fx / valid_z + cx).astype(np.int32)
+    v = np.rint(valid_points[:, 1] * fy / valid_z + cy).astype(np.int32)
+    in_bounds = (u >= 0) & (u < int(width)) & (v >= 0) & (v < int(height))
+    pixels[valid_indices, 0] = u
+    pixels[valid_indices, 1] = v
+    valid[valid_indices] = in_bounds
+    return pixels, valid
+
+
+def _reshape_points(name: str, points_xyz: np.ndarray) -> np.ndarray:
+    points = np.asarray(points_xyz, dtype=np.float32)
+    if points.size == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError(f"{name} must be an Nx3 array, got {points.shape}")
+    return np.ascontiguousarray(points)
+
+
+def _reshape_rgb(name: str, rgb_u8: np.ndarray) -> np.ndarray:
+    colors = np.asarray(rgb_u8, dtype=np.uint8)
+    if colors.size == 0:
+        return np.empty((0, 3), dtype=np.uint8)
+    if colors.ndim != 2 or colors.shape[1] != 3:
+        raise ValueError(f"{name} must be an Nx3 array, got {colors.shape}")
+    return np.ascontiguousarray(colors)
+
+
+def _require_same_length(first_name: str, first: np.ndarray, second_name: str, second: np.ndarray) -> None:
+    if len(first) != len(second):
+        raise ValueError(f"{first_name} length {len(first)} must match {second_name} length {len(second)}")
 
 
 def _draw_projected_points(
     image_bgr: np.ndarray,
     points_xyz: np.ndarray,
     colors_rgb: np.ndarray,
-    intrinsics: dict[str, Any],
+    intrinsics: Any,
     *,
+    points_name: str,
+    colors_name: str,
     point_size: int,
     max_points: int,
     coordinate_frame: str,
     camera_to_world_c2w: Any | None,
 ) -> int:
-    points = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
-    colors = np.asarray(colors_rgb, dtype=np.uint8).reshape(-1, 3)
-    count = min(len(points), len(colors))
-    points = points[:count]
-    colors = colors[:count]
-    if count == 0:
+    points = _reshape_points(points_name, points_xyz)
+    colors = _reshape_rgb(colors_name, colors_rgb)
+    _require_same_length(points_name, points, colors_name, colors)
+    if len(points) == 0:
         return 0
 
-    if int(max_points) > 0 and count > int(max_points):
-        indices = np.linspace(0, count - 1, int(max_points), dtype=np.int64)
+    if int(max_points) > 0 and len(points) > int(max_points):
+        indices = np.linspace(0, len(points) - 1, int(max_points), dtype=np.int64)
         points = points[indices]
         colors = colors[indices]
 
@@ -223,7 +280,7 @@ def render_projected_pcd_panel(
     *,
     width: int,
     height: int,
-    intrinsics: dict[str, Any],
+    intrinsics: Any,
     controller_xyz_m: np.ndarray,
     controller_rgb_u8: np.ndarray,
     object_xyz_m: np.ndarray,
@@ -242,6 +299,8 @@ def render_projected_pcd_panel(
         controller_xyz_m,
         controller_rgb_u8,
         intrinsics,
+        points_name="controller_xyz_m",
+        colors_name="controller_rgb_u8",
         point_size=point_size,
         max_points=max_render_points,
         coordinate_frame=coordinate_frame,
@@ -252,6 +311,8 @@ def render_projected_pcd_panel(
         object_xyz_m,
         object_rgb_u8,
         intrinsics,
+        points_name="object_xyz_m",
+        colors_name="object_rgb_u8",
         point_size=point_size,
         max_points=max_render_points,
         coordinate_frame=coordinate_frame,
@@ -272,14 +333,26 @@ def render_tracking_overlay_panel(
     marker_radius: int,
 ) -> tuple[np.ndarray, dict[str, int]]:
     image = _as_bgr_u8(image_bgr).copy()
-    tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+    tracks = np.asarray(tracks_yx, dtype=np.float32)
+    if tracks.size == 0:
+        tracks = np.empty((0, 2), dtype=np.float32)
+    if tracks.ndim != 2 or tracks.shape[1] != 2:
+        raise ValueError(f"tracks_yx must be an Nx2 array, got {tracks.shape}")
     visible = np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0
-    colors = np.asarray(marker_rgb_u8, dtype=np.uint8).reshape(-1, 3)
+    colors = _reshape_rgb("marker_rgb_u8", marker_rgb_u8)
     is_object = np.asarray(query_is_object, dtype=bool).reshape(-1)
     is_controller = np.asarray(query_is_controller, dtype=bool).reshape(-1)
     controller_instance = np.asarray(query_controller_instance_id, dtype=np.int64).reshape(-1)
 
-    count = min(len(tracks), len(visible), len(colors), len(is_object), len(is_controller), len(controller_instance))
+    for name, arr in (
+        ("visibility", visible),
+        ("marker_rgb_u8", colors),
+        ("query_is_object", is_object),
+        ("query_is_controller", is_controller),
+        ("query_controller_instance_id", controller_instance),
+    ):
+        _require_same_length("tracks_yx", tracks, name, arr)
+
     counts = {
         "query_points": 0,
         "query_object_points": 0,
@@ -289,7 +362,7 @@ def render_tracking_overlay_panel(
     }
     radius = max(1, int(marker_radius))
 
-    for index in range(count):
+    for index in range(len(tracks)):
         if not bool(visible[index]):
             continue
         y, x = float(tracks[index, 0]), float(tracks[index, 1])
