@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import tempfile
@@ -268,10 +269,11 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         args.input_source = demo.INPUT_SOURCE_FAKE_LIVE
         args.render_mode = "panel"
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
-        rgb_frame = self._frame_packet(seq=5)
+        rgb_frame = self._frame_packet(seq=5, source_timestamp_s=105.5)
+        pcd_packet = self._pcd_packet(seq=3, source_timestamp_s=103.0)
         pair = demo.PairedRenderPacket(
             seq=3,
-            pcd_packet=self._pcd_packet(seq=3),
+            pcd_packet=pcd_packet,
             tracker_packet=self._tracker_packet(seq=3),
             mask_packet=self._mask_packet(seq=3),
         )
@@ -286,6 +288,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(hud.paired_seq, 3)
         self.assertEqual(hud.rgb_ahead_frames, 2)
         self.assertEqual(hud.marker_count, pair.tracker_packet.marker_count)
+        self.assertEqual(hud.input_time_s, 105.5)
 
     def test_paired_render_packet_rejects_mask_seq_mismatch(self) -> None:
         with self.assertRaisesRegex(ValueError, r"mask=4"):
@@ -1137,13 +1140,19 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             mask_packet = self._mask_packet()
             pcd_mask = np.ones((2, 2), dtype=bool)
             writer.write_tracker(tracker_packet)
-            writer.write_pcd(
+            pcd_packet = replace(
                 self._pcd_packet(
                     coordinate_frame="table_world_z0",
                     source_timestamp_s=12.5,
                     source_frame_index=7,
                     source_step=42,
                 ),
+                receive_perf_s=10.0,
+                process_done_perf_s=10.2,
+            )
+            tracker_packet = replace(tracker_packet, receive_perf_s=10.0, process_done_perf_s=10.4)
+            writer.write_pcd(
+                pcd_packet,
                 depth_m=np.ones((4, 4), dtype=np.float32),
                 mask_packet=mask_packet,
                 controller_pcd_mask=pcd_mask,
@@ -1210,7 +1219,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(rows[0]["object_query_count"], 1)
             self.assertEqual(rows[0]["marker_count"], 1)
             self.assertEqual(rows[0]["filter_preset"], "pt_filter_filtered")
-            self.assertGreaterEqual(rows[0]["pipeline_latency_ms"], 0.0)
+            self.assertAlmostEqual(rows[0]["process_done_perf_s"], 10.2)
+            self.assertAlmostEqual(rows[0]["pair_process_done_perf_s"], 10.4)
+            self.assertAlmostEqual(rows[0]["pipeline_latency_ms"], 400.0)
             self.assertEqual(rows[0]["pcd_mask_erode_pixels"], 1)
             self.assertEqual(rows[0]["object_pcd_mask_erode_pixels"], 3)
             self.assertEqual(rows[0]["controller_pcd_mask_erode_pixels"], 0)

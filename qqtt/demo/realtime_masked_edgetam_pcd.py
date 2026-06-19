@@ -973,6 +973,11 @@ class HeadlessCaptureWriter:
             saved_pcd_source=np.asarray([self.saved_pcd_source]),
             coordinate_frame=np.asarray([str(packet.coordinate_frame or self.pcd_coordinate_frame)]),
         )
+        pair_process_done_s = (
+            max(float(packet.process_done_perf_s), float(tracker_packet.process_done_perf_s))
+            if tracker_packet is not None
+            else float(packet.process_done_perf_s)
+        )
         row = {
             "seq": int(packet.seq),
             "pcd_path": self._relative(pcd_path),
@@ -989,13 +994,7 @@ class HeadlessCaptureWriter:
             ),
             "source_step": None if packet.source_step is None else int(packet.source_step),
             "startup_hold_s": float(startup_hold_s),
-            "pipeline_latency_ms": float(
-                max(packet.process_done_perf_s, tracker_packet.process_done_perf_s)
-                - float(packet.receive_perf_s)
-            )
-            * 1000.0
-            if tracker_packet is not None
-            else float(packet.process_done_perf_s - packet.receive_perf_s) * 1000.0,
+            "pipeline_latency_ms": float(pair_process_done_s - float(packet.receive_perf_s)) * 1000.0,
             "filter_preset": self.saved_pcd_source,
             "marker_count": int(tracker_packet.marker_count) if tracker_packet is not None else 0,
             "controller_point_count": int(packet.controller_point_count),
@@ -1014,6 +1013,7 @@ class HeadlessCaptureWriter:
             "object_query_count": int(tracker_packet.object_query_count) if tracker_packet is not None else 0,
             "receive_perf_s": float(packet.receive_perf_s),
             "process_done_perf_s": float(packet.process_done_perf_s),
+            "pair_process_done_perf_s": float(pair_process_done_s),
             "timing": asdict(packet.timing),
             "filter_telemetry": asdict(packet.filter_telemetry),
         }
@@ -6500,10 +6500,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
         pipeline_done_s = max(float(pcd_packet.process_done_perf_s), float(tracker_packet.process_done_perf_s))
         receive_s = float(pcd_packet.receive_perf_s)
         filter_preset = getattr(self.args, "pcd_filter_preset", None) or headless_capture_saved_pcd_source(self.args)
+        input_time_s = rgb_frame.source_timestamp_s
+        if input_time_s is None:
+            input_time_s = float(rgb_frame.receive_perf_s)
         return SideBySidePanelHud(
             rgb_seq=int(rgb_frame.seq),
             paired_seq=int(pair.seq),
-            input_time_s=pcd_packet.source_timestamp_s,
+            input_time_s=input_time_s,
             pipeline_latency_ms=_elapsed_ms(receive_s, pipeline_done_s),
             display_latency_ms=_elapsed_ms(receive_s, float(display_time_s)),
             startup_hold_s=float(getattr(self, "_startup_hold_s", 0.0)),

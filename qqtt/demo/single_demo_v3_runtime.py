@@ -162,6 +162,10 @@ def _supports_filtered_visual_modes(version: str) -> bool:
     return normalize_demo_version(version) in {DEMO_VERSION_3_2, DEMO_VERSION_3_3}
 
 
+def _render_mode_requests_visual_policy(args: argparse.Namespace) -> bool:
+    return str(getattr(args, "render_mode", "pointcloud")) in {"pointcloud", "panel"}
+
+
 def _requires_table_world_default(version: str) -> bool:
     return normalize_demo_version(version) in {DEMO_VERSION_3_1, DEMO_VERSION_3_2, DEMO_VERSION_3_3}
 
@@ -171,7 +175,7 @@ def _filtered_visual_mode_requested(args: argparse.Namespace, version: str | Non
     return bool(
         _supports_filtered_visual_modes(resolved_version)
         and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) in DEMO_VISUAL_MODES
-        and str(getattr(args, "render_mode", "pointcloud")) == "pointcloud"
+        and _render_mode_requests_visual_policy(args)
     )
 
 
@@ -180,7 +184,7 @@ def _demo_visual_mode_policy_requested(args: argparse.Namespace, version: str | 
     return bool(
         _supports_filtered_visual_modes(resolved_version)
         and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) in DEMO_VISUAL_MODES
-        and (str(getattr(args, "render_mode", "pointcloud")) == "pointcloud" or _headless_capture_requested(args, resolved_version))
+        and (_render_mode_requests_visual_policy(args) or _headless_capture_requested(args, resolved_version))
     )
 
 
@@ -189,7 +193,7 @@ def _table_z_filter_visual_default_requested(args: argparse.Namespace, version: 
     return bool(
         _requires_table_world_default(resolved_version)
         and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) in DEMO_VISUAL_MODES
-        and (str(getattr(args, "render_mode", "pointcloud")) == "pointcloud" or _headless_capture_requested(args, resolved_version))
+        and (_render_mode_requests_visual_policy(args) or _headless_capture_requested(args, resolved_version))
     )
 
 

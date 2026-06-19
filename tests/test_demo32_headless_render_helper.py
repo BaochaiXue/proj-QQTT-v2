@@ -325,7 +325,7 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             self.assertTrue(output.with_suffix(".panel_summary.json").is_file())
             self.assertEqual(summary["panel_mode"], PANEL_MODE_SIDE_BY_SIDE)
             self.assertEqual(summary["left_rgb_policy"], "latest_input_rgb")
-            self.assertEqual(summary["sync_policy"], "latest_receive_perf_s_lte_paired_process_done_perf_s")
+            self.assertEqual(summary["sync_policy"], "latest_receive_perf_s_lte_pair_process_done_perf_s")
             self.assertEqual(summary["missing_rgb_frames"], 0)
             self.assertEqual(summary["rendered_counts"][0]["rgb_seq"], 2)
             self.assertEqual(summary["rendered_counts"][0]["paired_seq"], 0)
@@ -443,13 +443,64 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
 
             self.assertEqual(summary["input_rgb_frame_count"], 1)
             self.assertEqual(summary["left_rgb_policy"], "latest_input_rgb")
-            self.assertEqual(summary["sync_policy"], "latest_receive_perf_s_lte_paired_process_done_perf_s")
+            self.assertEqual(summary["sync_policy"], "latest_receive_perf_s_lte_pair_process_done_perf_s")
             self.assertEqual(summary["missing_rgb_frames"], 1)
             self.assertEqual(summary["rendered_counts"][0]["rgb_seq"], 0)
             self.assertEqual(summary["rendered_counts"][0]["paired_seq"], 0)
             self.assertEqual(summary["rendered_counts"][0]["rgb_ahead_frames"], 0)
             self.assertAlmostEqual(summary["rendered_counts"][0]["input_time_s"], 45.25)
             self.assertEqual(summary["rendered_counts"][0]["input_rgb_source_path"], "rgb/000000.png")
+
+    def test_render_side_by_side_panel_uses_strict_pair_completion_for_input_rgb_and_latency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "masks").mkdir(parents=True)
+            (capture_dir / "input_rgb").mkdir()
+            self._write_minimal_tracking_capture(
+                capture_dir,
+                metadata_extra={"input_rgb_timeline": "input_frames.jsonl"},
+                row_extra={
+                    "mask_path": "masks/000000.npz",
+                    "receive_perf_s": 10.0,
+                    "process_done_perf_s": 10.2,
+                    "pair_process_done_perf_s": 10.4,
+                    "pipeline_latency_ms": 400.0,
+                },
+            )
+            np.savez(
+                capture_dir / "masks" / "000000.npz",
+                controller_mask=np.zeros((6, 8), dtype=bool),
+                object_mask=np.zeros((6, 8), dtype=bool),
+            )
+            for seq, value in [(0, 80), (1, 160), (2, 220)]:
+                Image.fromarray(np.full((6, 8, 3), value, dtype=np.uint8)).save(
+                    capture_dir / "input_rgb" / f"{seq:06d}.png"
+                )
+            input_rows = [
+                {"seq": 0, "receive_perf_s": 10.1, "source_timestamp_s": 100.0},
+                {"seq": 1, "receive_perf_s": 10.3, "source_timestamp_s": 101.0},
+                {"seq": 2, "receive_perf_s": 10.5, "source_timestamp_s": 102.0},
+            ]
+            (capture_dir / "input_frames.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in input_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            summary = render_capture_to_video(
+                capture_dir=capture_dir,
+                output=capture_dir / "video.mp4",
+                fps=30.0,
+                panel_mode=PANEL_MODE_SIDE_BY_SIDE,
+            )
+
+            rendered = summary["rendered_counts"][0]
+            self.assertEqual(summary["sync_policy"], "latest_receive_perf_s_lte_pair_process_done_perf_s")
+            self.assertEqual(rendered["rgb_seq"], 1)
+            self.assertEqual(rendered["paired_seq"], 0)
+            self.assertEqual(rendered["rgb_ahead_frames"], 1)
+            self.assertAlmostEqual(rendered["input_time_s"], 101.0)
+            self.assertAlmostEqual(rendered["pipeline_latency_ms"], 400.0)
+            self.assertAlmostEqual(rendered["display_latency_ms"], 400.0)
 
     def test_side_by_side_pcd_visual_mode_reports_tracking_panel_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

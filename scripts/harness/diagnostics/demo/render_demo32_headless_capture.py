@@ -181,6 +181,16 @@ def _as_float_or_none(value: Any) -> float | None:
     return result
 
 
+def _pair_process_done_time(row: dict[str, Any]) -> float | None:
+    value = _as_float_or_none(row.get("pair_process_done_perf_s"))
+    if value is not None:
+        return value
+    value = _as_float_or_none(row.get("pipeline_done_perf_s"))
+    if value is not None:
+        return value
+    return _as_float_or_none(row.get("process_done_perf_s"))
+
+
 def _latest_input_frame_for_paired_row(
     *,
     input_frames: list[dict[str, Any]],
@@ -188,7 +198,7 @@ def _latest_input_frame_for_paired_row(
 ) -> dict[str, Any] | None:
     if not input_frames:
         return None
-    paired_time = _as_float_or_none(paired_row.get("process_done_perf_s"))
+    paired_time = _pair_process_done_time(paired_row)
     if paired_time is None:
         paired_time = _as_float_or_none(paired_row.get("receive_perf_s"))
     timed_rows = [
@@ -746,7 +756,7 @@ def render_capture_to_video(
         has_input_timeline = bool(input_frames)
         left_rgb_policy = "latest_input_rgb" if has_input_timeline else "same_seq_fallback"
         sync_policy = (
-            "latest_receive_perf_s_lte_paired_process_done_perf_s"
+            "latest_receive_perf_s_lte_pair_process_done_perf_s"
             if has_input_timeline
             else "paired_seq_fallback"
         )
@@ -838,9 +848,9 @@ def render_capture_to_video(
                 query_hand_b_count = int(query_counts["query_hand_b_points"])
 
                 receive_time = _as_float_or_none(frame.get("receive_perf_s"))
-                process_done_time = _as_float_or_none(frame.get("process_done_perf_s"))
-                if receive_time is not None and process_done_time is not None:
-                    display_latency_ms = max(0.0, (process_done_time - receive_time) * 1000.0)
+                pair_process_done_time = _pair_process_done_time(frame)
+                if receive_time is not None and pair_process_done_time is not None:
+                    display_latency_ms = max(0.0, (pair_process_done_time - receive_time) * 1000.0)
                 else:
                     display_latency_ms = _as_float_or_none(frame.get("pipeline_latency_ms")) or 0.0
                 pipeline_latency_ms = _as_float_or_none(frame.get("pipeline_latency_ms"))
@@ -940,6 +950,8 @@ def render_capture_to_video(
                         "paired_seq": int(frame["seq"]),
                         "input_time_s": input_time_s,
                         "input_rgb_source_path": input_rgb_source_path,
+                        "pipeline_latency_ms": float(pipeline_latency_ms),
+                        "display_latency_ms": float(display_latency_ms),
                         "rgb_ahead_frames": int(
                             compute_rgb_ahead_frames(rgb_seq=int(rgb_seq), paired_seq=int(frame["seq"]))
                         ),

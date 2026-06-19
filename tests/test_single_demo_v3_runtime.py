@@ -398,6 +398,11 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(contract["panel_video_output"], "result/panel.mp4")
             self.assertEqual(contract["tracking_background_mask"], "rgb")
             self.assertEqual(contract["panel_sync_policy"], "left_latest_rgb_right_strict_same_seq")
+            self.assertTrue(contract["pcd_filter_enabled"])
+            self.assertEqual(contract["pcd_filter_mode"], "sync")
+            self.assertEqual(contract["pcd_filter_preset"], "enhanced-pt")
+            self.assertEqual(contract["object_filter"], "enhanced-pt")
+            self.assertEqual(contract["controller_filter"], "enhanced-pt")
 
             args = self._parse(
                 runtime.DEMO_VERSION_3_2,
