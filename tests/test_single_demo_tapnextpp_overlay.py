@@ -245,6 +245,48 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(result.world_z_diagnostics["classes"]["hand_b"]["count"], 4)
         self.assertAlmostEqual(result.world_z_diagnostics["classes"]["hand_a"]["z_m"]["p50"], 1.0, places=6)
 
+    def test_panel_render_mode_requires_fake_live_lossless_tracking(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--render-mode",
+                "panel",
+                "--input-source",
+                "live",
+                "--track-mode",
+                "controller-object",
+                "--pcd-mode",
+                "masked",
+                "--tracker-backend",
+                "tapnextpp",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "--render-mode panel requires --input-source fake-live"):
+            demo.validate_args(args)
+
+    def test_panel_hud_from_runtime_pair_uses_latest_rgb_and_paired_seq(self) -> None:
+        args = self._tracker_args()
+        args.input_source = demo.INPUT_SOURCE_FAKE_LIVE
+        args.render_mode = "panel"
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        rgb_frame = self._frame_packet(seq=5)
+        pair = demo.PairedRenderPacket(
+            seq=3,
+            pcd_packet=self._pcd_packet(seq=3),
+            tracker_packet=self._tracker_packet(seq=3),
+            mask_packet=self._mask_packet(seq=3),
+        )
+
+        hud = runtime._build_panel_hud(
+            rgb_frame=rgb_frame,
+            pair=pair,
+            display_time_s=pair.pcd_packet.process_done_perf_s + 0.1,
+        )
+
+        self.assertEqual(hud.rgb_seq, 5)
+        self.assertEqual(hud.paired_seq, 3)
+        self.assertEqual(hud.rgb_ahead_frames, 2)
+        self.assertEqual(hud.marker_count, pair.tracker_packet.marker_count)
+
     def _tracker_args(self):
         args = demo.build_parser().parse_args(
             [

@@ -89,6 +89,13 @@ from qqtt.env.camera.table_calibration import (  # noqa: E402
 )
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world  # noqa: E402
 from qqtt.demo.query_rainbow import query_rainbow_colors_from_points_yx_rgb_u8  # noqa: E402
+from qqtt.demo.demo32_side_by_side_panel import (  # noqa: E402
+    SideBySidePanelHud,
+    SideBySidePanelInputs,
+    render_projected_pcd_panel,
+    render_side_by_side_panel,
+    render_tracking_overlay_panel,
+)
 from qqtt.tracking.backends.point_tracker_adapter import (  # noqa: E402
     TRACKER_BACKEND_NONE,
     TRACKER_BACKEND_TAPNEXTPP,
@@ -124,8 +131,13 @@ INPUT_SOURCES = (INPUT_SOURCE_LIVE, INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_RECORDI
 DEFAULT_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_2min_e45_g35_20260614_155543")
 PCD_MODES = ("masked", "none")
 DEFAULT_PCD_MODE = "masked"
-RENDER_MODES = ("pointcloud", "none")
-DEFAULT_RENDER_MODE = "pointcloud"
+RENDER_MODE_POINTCLOUD = "pointcloud"
+RENDER_MODE_NONE = "none"
+RENDER_MODE_PANEL = "panel"
+RENDER_MODES = (RENDER_MODE_POINTCLOUD, RENDER_MODE_NONE, RENDER_MODE_PANEL)
+DEFAULT_RENDER_MODE = RENDER_MODE_POINTCLOUD
+PANEL_LAYOUT_SIDE_BY_SIDE = "side-by-side"
+PANEL_LAYOUTS = (PANEL_LAYOUT_SIDE_BY_SIDE,)
 DEMO_VISUAL_MODE_PCD = "pcd"
 DEMO_VISUAL_MODE_TRACKING = "tracking"
 DEMO_VISUAL_MODES = (DEMO_VISUAL_MODE_PCD, DEMO_VISUAL_MODE_TRACKING)
@@ -741,6 +753,7 @@ class PairedRenderPacket:
     seq: int
     pcd_packet: MaskedPcdPacket
     tracker_packet: TrackerMarkerPacket
+    mask_packet: MaskPacket | None = None
 
     def __post_init__(self) -> None:
         pcd_seq = int(self.pcd_packet.seq)
@@ -1214,6 +1227,7 @@ class PairedBuildResult:
             seq=int(self.seq),
             pcd_packet=self.pcd_result.packet,
             tracker_packet=self.tracker_packet,
+            mask_packet=self.pcd_result.mask_packet,
         )
 
 
@@ -1540,6 +1554,24 @@ def build_parser() -> argparse.ArgumentParser:
         choices=RENDER_MODES,
         default=DEFAULT_RENDER_MODE,
         help="Render stage mode. Use none for headless profiling.",
+    )
+    parser.add_argument(
+        "--panel-layout",
+        choices=PANEL_LAYOUTS,
+        default=PANEL_LAYOUT_SIDE_BY_SIDE,
+        help="Runtime panel layout. side-by-side shows latest RGB, filtered PCD, and tracking overlay.",
+    )
+    parser.add_argument(
+        "--panel-video-output",
+        type=Path,
+        default=None,
+        help="Optional MP4 path for saving the runtime panel frames.",
+    )
+    parser.add_argument(
+        "--tracking-background-mask",
+        choices=("target-union", "rgb"),
+        default="target-union",
+        help="Runtime/offline tracking panel background policy.",
     )
     parser.add_argument(
         "--demo-visual-mode",
@@ -2018,8 +2050,19 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--track-mode none requires --pcd-mode none")
     if args.depth_source == "none" and args.pcd_mode == "masked":
         raise ValueError("--depth-source none requires --pcd-mode none")
-    if args.render_mode == "pointcloud" and args.pcd_mode == "none":
-        raise ValueError("--render-mode pointcloud requires --pcd-mode masked")
+    if args.render_mode in {RENDER_MODE_POINTCLOUD, RENDER_MODE_PANEL} and args.pcd_mode == "none":
+        raise ValueError(f"--render-mode {args.render_mode} requires --pcd-mode masked")
+    if args.render_mode == RENDER_MODE_PANEL:
+        if args.input_source != INPUT_SOURCE_FAKE_LIVE:
+            raise ValueError("--render-mode panel requires --input-source fake-live")
+        if args.depth_source != "ffs":
+            raise ValueError("--render-mode panel requires --depth-source ffs")
+        if args.track_mode != TRACK_MODE_CONTROLLER_OBJECT:
+            raise ValueError("--render-mode panel requires --track-mode controller-object")
+        if args.pcd_mode != "masked":
+            raise ValueError("--render-mode panel requires --pcd-mode masked")
+        if normalize_tracker_backend(str(args.tracker_backend)) != TRACKER_BACKEND_TAPNEXTPP:
+            raise ValueError("--render-mode panel requires --tracker-backend tapnextpp")
     if str(args.demo_visual_mode) not in DEMO_VISUAL_MODES:
         raise ValueError(f"--demo-visual-mode must be one of {', '.join(DEMO_VISUAL_MODES)}")
     if headless_capture_enabled(args):
@@ -2053,8 +2096,8 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("single-camera tracker overlay currently supports only tapnextpp")
         if args.track_mode != TRACK_MODE_CONTROLLER_OBJECT:
             raise ValueError("--tracker-backend tapnextpp requires --track-mode controller-object")
-        if args.render_mode != "pointcloud" and not headless_capture_enabled(args):
-            raise ValueError("--tracker-backend tapnextpp requires --render-mode pointcloud")
+        if args.render_mode not in {RENDER_MODE_POINTCLOUD, RENDER_MODE_PANEL} and not headless_capture_enabled(args):
+            raise ValueError("--tracker-backend tapnextpp requires --render-mode pointcloud or panel")
         if args.depth_source == "none":
             raise ValueError("--tracker-backend tapnextpp requires RGB-D depth for 3D marker lift")
     if args.depth_source == "ffs":
@@ -3867,8 +3910,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     metadata=self._build_headless_capture_metadata(),
                 )
                 print(f"[headless-capture] dir={self.headless_capture_writer.output_dir}", flush=True)
-            if self.args.render_mode == "none":
+            render_mode = str(self.args.render_mode)
+            if render_mode == RENDER_MODE_NONE:
                 self._run_headless()
+            elif render_mode == RENDER_MODE_PANEL:
+                self._run_panel_viewer()
             else:
                 self._run_open3d_viewer()
         finally:
@@ -4867,6 +4913,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             seq=int(pcd_result.packet.seq),
             pcd_packet=pcd_result.packet,
             tracker_packet=tracker_packet,
+            mask_packet=pcd_result.mask_packet,
         )
         if self._lossless_enabled() and self._lossless_pipeline_active and self.args.render_mode != "none":
             self.lossless_paired_render_queue.put(pair)
@@ -6439,6 +6486,168 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     f"response_kb={packet.timing.remote_response_kb:.1f}",
                     flush=True,
                 )
+
+    def _build_panel_hud(
+        self,
+        *,
+        rgb_frame: FramePacket,
+        pair: PairedRenderPacket,
+        display_time_s: float,
+    ) -> SideBySidePanelHud:
+        pcd_packet = pair.pcd_packet
+        tracker_packet = pair.tracker_packet
+        pipeline_done_s = max(float(pcd_packet.process_done_perf_s), float(tracker_packet.process_done_perf_s))
+        receive_s = float(pcd_packet.receive_perf_s)
+        filter_preset = getattr(self.args, "pcd_filter_preset", None) or headless_capture_saved_pcd_source(self.args)
+        return SideBySidePanelHud(
+            rgb_seq=int(rgb_frame.seq),
+            paired_seq=int(pair.seq),
+            input_time_s=pcd_packet.source_timestamp_s,
+            pipeline_latency_ms=_elapsed_ms(receive_s, pipeline_done_s),
+            display_latency_ms=_elapsed_ms(receive_s, float(display_time_s)),
+            startup_hold_s=float(getattr(self, "_startup_hold_s", 0.0)),
+            filter_preset=str(filter_preset),
+            marker_count=int(tracker_packet.marker_count),
+            tracking_background=str(getattr(self.args, "tracking_background_mask", "target-union")),
+            object_point_count=int(pcd_packet.object_point_count),
+            controller_point_count=int(pcd_packet.controller_point_count),
+        )
+
+    def _render_runtime_panel_frame(self, *, rgb_frame: FramePacket, pair: PairedRenderPacket) -> np.ndarray:
+        if pair.mask_packet is None:
+            raise RuntimeError("runtime panel requires paired mask_packet")
+
+        pcd_packet = pair.pcd_packet
+        tracker_packet = pair.tracker_packet
+        mask_packet = pair.mask_packet
+        height, width = rgb_frame.color_bgr.shape[:2]
+        pcd_panel, pcd_counts = render_projected_pcd_panel(
+            width=width,
+            height=height,
+            intrinsics=pcd_packet.intrinsics,
+            controller_xyz_m=pcd_packet.controller_xyz_m,
+            controller_rgb_u8=pcd_packet.controller_colors_rgb_u8,
+            object_xyz_m=pcd_packet.object_xyz_m,
+            object_rgb_u8=pcd_packet.object_colors_rgb_u8,
+            point_size=max(1, int(round(float(self.args.point_size)))),
+            max_render_points=int(self.args.render_max_points_per_layer),
+            coordinate_frame=str(pcd_packet.coordinate_frame),
+            camera_to_world_c2w=self.table_c2w,
+        )
+
+        tracking_bgr = np.ascontiguousarray(mask_packet.color_bgr, dtype=np.uint8).copy()
+        tracking_background = str(getattr(self.args, "tracking_background_mask", "target-union"))
+        if tracking_background == "target-union":
+            target_union = np.logical_or(mask_packet.object_mask, mask_packet.controller_mask)
+            tracking_bgr[~target_union] = 0
+
+        track_count = int(np.asarray(tracker_packet.tracks_yx, dtype=np.float32).reshape(-1, 2).shape[0])
+        controller_instance_id = np.asarray(tracker_packet.query_controller_instance_id, dtype=np.int64).reshape(-1)
+        if controller_instance_id.shape[0] != track_count:
+            controller_instance_id = np.zeros((track_count,), dtype=np.int64)
+        tracking_panel, tracking_counts = render_tracking_overlay_panel(
+            image_bgr=tracking_bgr,
+            tracks_yx=tracker_packet.tracks_yx,
+            visibility=tracker_packet.visibility,
+            marker_rgb_u8=tracker_packet.marker_colors_rgb_u8,
+            query_is_object=tracker_packet.query_is_object,
+            query_is_controller=tracker_packet.query_is_controller,
+            query_controller_instance_id=controller_instance_id,
+            marker_radius=max(1, int(round(float(self.args.tracker_marker_point_size)))),
+        )
+
+        display_time_s = time.perf_counter()
+        hud = self._build_panel_hud(rgb_frame=rgb_frame, pair=pair, display_time_s=display_time_s)
+        hud = replace(
+            hud,
+            marker_count=int(tracking_counts.get("query_points", hud.marker_count)),
+            object_point_count=int(pcd_counts.get("object_points", hud.object_point_count)),
+            controller_point_count=int(pcd_counts.get("controller_points", hud.controller_point_count)),
+        )
+        return render_side_by_side_panel(
+            SideBySidePanelInputs(
+                rgb_image_bgr=rgb_frame.color_bgr,
+                pcd_panel_bgr=pcd_panel,
+                tracking_panel_bgr=tracking_panel,
+                hud=hud,
+            )
+        )
+
+    def _run_panel_viewer(self) -> None:
+        import cv2
+
+        self._start_threads()
+        window_name = "Demo 3.2 Realtime Panel"
+        last_pair_seq = -1
+        last_rgb_seq = -1
+        latest_rgb: FramePacket | None = None
+        writer: object | None = None
+        try:
+            while not self.stop_event.is_set():
+                fatal = self._fatal_error_snapshot()
+                if fatal is not None:
+                    print(f"[FATAL] closing panel viewer after {fatal.log_message()}", flush=True)
+                    break
+
+                rgb_frame = self.capture_slot.get_latest_after(last_rgb_seq)
+                if rgb_frame is not None:
+                    last_rgb_seq = int(rgb_frame.seq)
+                    latest_rgb = rgb_frame
+
+                if self._lossless_enabled() and self._lossless_pipeline_active:
+                    pair = self.lossless_paired_render_queue.get_nowait()
+                else:
+                    pair = self.paired_render_slot.get_latest_after(last_pair_seq)
+                if pair is None:
+                    if (
+                        self._lossless_enabled()
+                        and self._lossless_processing_done.is_set()
+                        and self.lossless_paired_render_queue.is_closed_and_empty()
+                    ):
+                        break
+                    key = cv2.waitKey(1) & 0xFF
+                    if key in (27, ord("q")):
+                        self.stop_event.set()
+                        break
+                    time.sleep(0.005)
+                    continue
+
+                last_pair_seq = int(pair.seq)
+                if latest_rgb is None:
+                    latest_rgb = self.capture_slot.get_latest_after(-1)
+                if latest_rgb is None:
+                    time.sleep(0.005)
+                    continue
+
+                panel = self._render_runtime_panel_frame(rgb_frame=latest_rgb, pair=pair)
+                if writer is None and self.args.panel_video_output is not None:
+                    output_path = Path(self.args.panel_video_output).expanduser()
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                    writer = cv2.VideoWriter(
+                        str(output_path),
+                        fourcc,
+                        max(1.0, float(self._lossless_input_fps())),
+                        (panel.shape[1], panel.shape[0]),
+                    )
+                    if not writer.isOpened():
+                        raise RuntimeError(f"failed to open panel video writer: {output_path}")
+                if writer is not None:
+                    writer.write(panel)
+                cv2.imshow(window_name, panel)
+                key = cv2.waitKey(1) & 0xFF
+                if key in (27, ord("q")):
+                    self.stop_event.set()
+                    break
+        except KeyboardInterrupt:
+            self.stop_event.set()
+        finally:
+            if writer is not None:
+                writer.release()
+            try:
+                cv2.destroyWindow(window_name)
+            except Exception:
+                pass
 
     def _run_open3d_viewer(self) -> None:
         o3d, gui, rendering = _load_open3d_modules()
