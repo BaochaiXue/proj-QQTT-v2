@@ -287,6 +287,15 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(hud.rgb_ahead_frames, 2)
         self.assertEqual(hud.marker_count, pair.tracker_packet.marker_count)
 
+    def test_paired_render_packet_rejects_mask_seq_mismatch(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"mask=4"):
+            demo.PairedRenderPacket(
+                seq=3,
+                pcd_packet=self._pcd_packet(seq=3),
+                tracker_packet=self._tracker_packet(seq=3),
+                mask_packet=self._mask_packet(seq=4),
+            )
+
     def _tracker_args(self):
         args = demo.build_parser().parse_args(
             [

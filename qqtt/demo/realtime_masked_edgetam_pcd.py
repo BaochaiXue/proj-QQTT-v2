@@ -758,11 +758,12 @@ class PairedRenderPacket:
     def __post_init__(self) -> None:
         pcd_seq = int(self.pcd_packet.seq)
         tracker_seq = int(self.tracker_packet.seq)
+        mask_seq = None if self.mask_packet is None else int(self.mask_packet.seq)
         seq = int(self.seq)
-        if pcd_seq != tracker_seq or seq != pcd_seq:
+        if pcd_seq != tracker_seq or seq != pcd_seq or (mask_seq is not None and mask_seq != seq):
             raise ValueError(
                 "strict same-seq render packet mismatch: "
-                f"pair={seq} pcd={pcd_seq} tracker={tracker_seq}"
+                f"pair={seq} pcd={pcd_seq} tracker={tracker_seq} mask={mask_seq}"
             )
 
 
@@ -6621,7 +6622,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
                 panel = self._render_runtime_panel_frame(rgb_frame=latest_rgb, pair=pair)
                 if writer is None and self.args.panel_video_output is not None:
-                    output_path = Path(self.args.panel_video_output).expanduser()
+                    output_path = _resolve_path(self.args.panel_video_output)
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                     writer = cv2.VideoWriter(
