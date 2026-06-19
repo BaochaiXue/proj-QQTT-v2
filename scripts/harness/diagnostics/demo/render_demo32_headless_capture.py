@@ -203,9 +203,15 @@ def _latest_input_frame_for_paired_row(
         ]
         if eligible:
             return max(eligible, key=lambda item: (float(item[1]), int(item[0])))[2]
-        timed = [(index, receive_time, row) for index, receive_time, row in timed_rows if receive_time is not None]
-        if timed:
-            return min(timed, key=lambda item: (abs(float(item[1]) - paired_time), int(item[0])))[2]
+        paired_seq = int(paired_row.get("seq", 0))
+        same_seq_untimed = [
+            (index, row)
+            for index, receive_time, row in timed_rows
+            if receive_time is None and int(row.get("seq", -1)) == paired_seq
+        ]
+        if same_seq_untimed:
+            return max(same_seq_untimed, key=lambda item: int(item[0]))[1]
+        return None
 
     paired_seq = int(paired_row.get("seq", 0))
     sequenced = [(index, int(row["seq"]), row) for index, row in enumerate(input_frames) if "seq" in row]
@@ -772,7 +778,9 @@ def render_capture_to_video(
                     input_rgb = paired_rgb.copy()
                     missing_rgb_frames += 1
                     rgb_seq = int(frame["seq"])
-                    input_time_s = _as_float_or_none(frame.get("receive_perf_s"))
+                    input_time_s = _as_float_or_none(frame.get("source_timestamp_s"))
+                    if input_time_s is None:
+                        input_time_s = _as_float_or_none(frame.get("receive_perf_s"))
                     input_rgb_source_path = str(frame.get("rgb_path") or f"rgb/{int(frame['seq']):06d}.png")
                 else:
                     rgb_seq = int(input_row["seq"]) if input_row is not None else int(frame["seq"])

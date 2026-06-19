@@ -25,7 +25,8 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
         self,
         capture_dir: Path,
         *,
-        row_extra: dict[str, str] | None = None,
+        metadata_extra: dict[str, object] | None = None,
+        row_extra: dict[str, object] | None = None,
     ) -> dict[str, object]:
         (capture_dir / "pcd").mkdir(parents=True)
         (capture_dir / "ffs_depth").mkdir()
@@ -37,6 +38,8 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             "saved_pcd_source": "enhanced_pt_filtered",
             "intrinsics": {"fx": 8.0, "fy": 8.0, "cx": 4.0, "cy": 3.0},
         }
+        if metadata_extra:
+            metadata.update(metadata_extra)
         (capture_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
         np.savez(
             capture_dir / "pcd" / "000000.npz",
@@ -376,6 +379,8 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                 "rgb_path": "rgb/000000.png",
                 "query_trajectory_path": "query_trajectory/000000.npz",
                 "mask_path": "masks/000000.npz",
+                "source_timestamp_s": 45.25,
+                "receive_perf_s": 99.5,
             }
             (capture_dir / "frames.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
 
@@ -392,6 +397,59 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             self.assertEqual(summary["missing_rgb_frames"], 1)
             self.assertEqual(summary["rendered_counts"][0]["rgb_seq"], 0)
             self.assertEqual(summary["rendered_counts"][0]["paired_seq"], 0)
+            self.assertAlmostEqual(summary["rendered_counts"][0]["input_time_s"], 45.25)
+
+    def test_render_side_by_side_panel_does_not_select_future_input_rgb(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "masks").mkdir(parents=True)
+            (capture_dir / "input_rgb").mkdir()
+            self._write_minimal_tracking_capture(
+                capture_dir,
+                metadata_extra={"input_rgb_timeline": "input_frames.jsonl"},
+                row_extra={
+                    "mask_path": "masks/000000.npz",
+                    "source_timestamp_s": 45.25,
+                    "receive_perf_s": 9.5,
+                    "process_done_perf_s": 10.0,
+                },
+            )
+            np.savez(
+                capture_dir / "masks" / "000000.npz",
+                controller_mask=np.zeros((6, 8), dtype=bool),
+                object_mask=np.zeros((6, 8), dtype=bool),
+            )
+            Image.fromarray(np.full((6, 8, 3), 220, dtype=np.uint8)).save(
+                capture_dir / "input_rgb" / "000007.png"
+            )
+            input_rows = [
+                {
+                    "seq": 7,
+                    "receive_perf_s": 10.25,
+                    "source_timestamp_s": 777.0,
+                },
+            ]
+            (capture_dir / "input_frames.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in input_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            summary = render_capture_to_video(
+                capture_dir=capture_dir,
+                output=capture_dir / "video.mp4",
+                fps=30.0,
+                panel_mode=PANEL_MODE_SIDE_BY_SIDE,
+            )
+
+            self.assertEqual(summary["input_rgb_frame_count"], 1)
+            self.assertEqual(summary["left_rgb_policy"], "latest_input_rgb")
+            self.assertEqual(summary["sync_policy"], "latest_receive_perf_s_lte_paired_process_done_perf_s")
+            self.assertEqual(summary["missing_rgb_frames"], 1)
+            self.assertEqual(summary["rendered_counts"][0]["rgb_seq"], 0)
+            self.assertEqual(summary["rendered_counts"][0]["paired_seq"], 0)
+            self.assertEqual(summary["rendered_counts"][0]["rgb_ahead_frames"], 0)
+            self.assertAlmostEqual(summary["rendered_counts"][0]["input_time_s"], 45.25)
+            self.assertEqual(summary["rendered_counts"][0]["input_rgb_source_path"], "rgb/000000.png")
 
     def test_side_by_side_pcd_visual_mode_reports_tracking_panel_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
