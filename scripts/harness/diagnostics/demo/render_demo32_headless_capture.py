@@ -141,18 +141,32 @@ def _read_input_rgb_frame_bgr(
     width: int,
     height: int,
 ) -> np.ndarray | None:
-    if input_frame is None or "seq" not in input_frame:
+    resolved = _input_rgb_path_for_frame(capture_dir=capture_dir, input_frame=input_frame)
+    if resolved is None:
         return None
-    if "rgb_path" in input_frame:
-        rgb_path = _resolve_capture_path(capture_dir, str(input_frame["rgb_path"]))
-    else:
-        rgb_path = capture_dir / "input_rgb" / f"{int(input_frame['seq']):06d}.png"
+    rgb_path, _ = resolved
     image = cv2.imread(str(rgb_path), cv2.IMREAD_COLOR)
     if image is None:
         return None
     if image.shape[:2] != (int(height), int(width)):
         image = cv2.resize(image, (int(width), int(height)), interpolation=cv2.INTER_LINEAR)
     return np.ascontiguousarray(image, dtype=np.uint8)
+
+
+def _input_rgb_path_for_frame(
+    *,
+    capture_dir: Path,
+    input_frame: dict[str, Any] | None,
+) -> tuple[Path, str] | None:
+    if input_frame is None or "seq" not in input_frame:
+        return None
+    if "input_rgb_path" in input_frame:
+        source = str(input_frame["input_rgb_path"])
+    elif "rgb_path" in input_frame:
+        source = str(input_frame["rgb_path"])
+    else:
+        source = f"input_rgb/{int(input_frame['seq']):06d}.png"
+    return _resolve_capture_path(capture_dir, source), source
 
 
 def _as_float_or_none(value: Any) -> float | None:
@@ -719,15 +733,20 @@ def render_capture_to_video(
     )
     if not writer.isOpened():
         raise RuntimeError(f"failed to open video writer: {output}")
-    rendered_counts: list[dict[str, int]] = []
+    rendered_counts: list[dict[str, Any]] = []
     trajectory_by_seq = _trajectory_index(capture_dir)
     input_frames = _read_input_frames(capture_dir=capture_dir, metadata=metadata)
-    left_rgb_policy = "latest_input_rgb" if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE else "paired_rgb"
-    sync_policy = (
-        "latest_receive_perf_s_lte_paired_process_done_perf_s"
-        if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE
-        else "paired_seq"
-    )
+    if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE:
+        has_input_timeline = bool(input_frames)
+        left_rgb_policy = "latest_input_rgb" if has_input_timeline else "same_seq_fallback"
+        sync_policy = (
+            "latest_receive_perf_s_lte_paired_process_done_perf_s"
+            if has_input_timeline
+            else "paired_seq_fallback"
+        )
+    else:
+        left_rgb_policy = "paired_rgb"
+        sync_policy = "paired_seq"
     missing_query_frames = 0
     missing_rgb_frames = 0
     try:
@@ -741,6 +760,8 @@ def render_capture_to_video(
             if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE:
                 paired_rgb = _read_rgb_frame_bgr(capture_dir=capture_dir, frame=frame, width=width, height=height)
                 input_row = _latest_input_frame_for_paired_row(input_frames=input_frames, paired_row=frame)
+                resolved_input_rgb_path = _input_rgb_path_for_frame(capture_dir=capture_dir, input_frame=input_row)
+                input_rgb_source_path = resolved_input_rgb_path[1] if resolved_input_rgb_path is not None else None
                 input_rgb = _read_input_rgb_frame_bgr(
                     capture_dir=capture_dir,
                     input_frame=input_row,
@@ -752,9 +773,14 @@ def render_capture_to_video(
                     missing_rgb_frames += 1
                     rgb_seq = int(frame["seq"])
                     input_time_s = _as_float_or_none(frame.get("receive_perf_s"))
+                    input_rgb_source_path = str(frame.get("rgb_path") or f"rgb/{int(frame['seq']):06d}.png")
                 else:
                     rgb_seq = int(input_row["seq"]) if input_row is not None else int(frame["seq"])
-                    input_time_s = _as_float_or_none(input_row.get("receive_perf_s")) if input_row is not None else None
+                    input_time_s = None
+                    if input_row is not None:
+                        input_time_s = _as_float_or_none(input_row.get("source_timestamp_s"))
+                        if input_time_s is None:
+                            input_time_s = _as_float_or_none(input_row.get("receive_perf_s"))
 
                 pcd_path = _resolve_capture_path(capture_dir, str(frame["pcd_path"]))
                 with np.load(pcd_path, allow_pickle=False) as pcd:
@@ -904,6 +930,8 @@ def render_capture_to_video(
                     {
                         "rgb_seq": int(rgb_seq),
                         "paired_seq": int(frame["seq"]),
+                        "input_time_s": input_time_s,
+                        "input_rgb_source_path": input_rgb_source_path,
                         "rgb_ahead_frames": int(
                             compute_rgb_ahead_frames(rgb_seq=int(rgb_seq), paired_seq=int(frame["seq"]))
                         ),
@@ -912,8 +940,9 @@ def render_capture_to_video(
             rendered_counts.append(rendered_row)
     finally:
         writer.release()
+    renders_tracking_panel = str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE or str(demo_visual_mode) == "tracking"
     tracking_background_mask_source = "none"
-    if str(demo_visual_mode) == "tracking":
+    if renders_tracking_panel:
         tracking_background_mask_source = (
             "object_mask|controller_mask"
             if str(tracking_background_mask) == TRACKING_BACKGROUND_MASK_TARGET_UNION
@@ -938,8 +967,8 @@ def render_capture_to_video(
         "tracking_background_mask_pixel_total": int(
             sum(item["tracking_background_mask_pixels"] for item in rendered_counts)
         ),
-        "query_overlay": "phystwin_rgb_current_points_only" if str(demo_visual_mode) == "tracking" else "none",
-        "query_color_mode": "phystwin_rainbow_identity" if str(demo_visual_mode) == "tracking" else "none",
+        "query_overlay": "phystwin_rgb_current_points_only" if renders_tracking_panel else "none",
+        "query_color_mode": "phystwin_rainbow_identity" if renders_tracking_panel else "none",
         "query_match_policy": "exact_same_seq_only",
         "missing_query_frames": int(missing_query_frames),
         "query_count_totals": {
