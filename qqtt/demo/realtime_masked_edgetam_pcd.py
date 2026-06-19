@@ -160,6 +160,7 @@ TRACKER_QUERY_SOURCE_UNION_MASK = "object_controller_union_mask"
 TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL = "pcd_filter_residual"
 TRACKER_MARKER_GATE_TARGET_MASK_DEPTH = "target_mask_depth"
 TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z = "pcd_filter_residual_table_z"
+FAKE_LIVE_FRAME_SELECTION_POLICY = "drop_source_frames_preserve_recording_time"
 DEMO_PRESETS = ("none", "local-ffs-professor")
 DEFAULT_DEMO_PRESET = "none"
 LOCAL_FFS_PROFESSOR_MAX_POINTS = 20000
@@ -411,7 +412,8 @@ class RecordedRgbdFrameSource:
         self.depth_scale_m_per_unit = self._camera_float(metadata, "depth_scale_m_per_unit")
         self.serial = self._camera_string(metadata, "serial_numbers", default=f"recording-cam{self.camera_index}")
         self.width, self.height = self._resolve_dimensions(metadata)
-        self.effective_fps = self._resolve_replay_fps(float(replay_fps), metadata)
+        self.recording_fps = self._resolve_recording_fps(metadata)
+        self.effective_fps = self._resolve_replay_fps(float(replay_fps))
         self.k_ir_left: np.ndarray | None = None
         self.t_ir_left_to_color: np.ndarray | None = None
         self.ir_baseline_m = 0.0
@@ -428,6 +430,7 @@ class RecordedRgbdFrameSource:
         if self.requires_ir and not self.has_ir_stereo:
             raise ValueError("FFS fake-live replay requires IR stereo calibration in metadata")
         self.frames = self._build_frame_refs(camera_recording)
+        self._recording_elapsed_s = self._build_recording_elapsed_s(self.frames)
 
     @property
     def frame_count(self) -> int:
@@ -571,11 +574,29 @@ class RecordedRgbdFrameSource:
             raise ValueError("recording metadata WH must be positive")
         return width, height
 
-    def _resolve_replay_fps(self, replay_fps: float, metadata: dict[str, Any]) -> float:
-        fps = float(metadata.get("fps", 0.0)) if replay_fps <= 0.0 else float(replay_fps)
-        if fps <= 0.0:
-            return 30.0
-        return fps
+    def _resolve_recording_fps(self, metadata: dict[str, Any]) -> float:
+        try:
+            fps = float(metadata.get("fps", 0.0))
+        except (TypeError, ValueError):
+            fps = 0.0
+        return fps if fps > 0.0 else 30.0
+
+    def _resolve_replay_fps(self, replay_fps: float) -> float:
+        return float(replay_fps) if float(replay_fps) > 0.0 else float(self.recording_fps)
+
+    def _build_recording_elapsed_s(self, frames: list[RecordedRgbdFrameRef]) -> np.ndarray:
+        timestamps = np.asarray([float(frame.timestamp_s) for frame in frames], dtype=np.float64)
+        if len(timestamps) and np.isfinite(timestamps).all() and np.all(np.diff(timestamps) >= 0.0):
+            return np.ascontiguousarray(timestamps - timestamps[0], dtype=np.float64)
+        frame_indices = np.arange(len(frames), dtype=np.float64)
+        return np.ascontiguousarray(frame_indices / float(self.recording_fps), dtype=np.float64)
+
+    def source_index_for_recording_elapsed_s(self, elapsed_s: float) -> int:
+        if len(self.frames) <= 1:
+            return 0
+        elapsed = max(0.0, float(elapsed_s))
+        index = int(np.searchsorted(self._recording_elapsed_s, elapsed + 1e-9, side="right") - 1)
+        return max(0, min(index, len(self.frames) - 1))
 
     def _build_frame_refs(self, camera_recording: dict[str, Any]) -> list[RecordedRgbdFrameRef]:
         refs: list[RecordedRgbdFrameRef] = []
@@ -1494,8 +1515,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=INPUT_SOURCES,
         default=INPUT_SOURCE_LIVE,
         help=(
-            "Frame source. fake-live replays a raw single-camera data_collect case at camera cadence; "
-            "recording is kept as a compatibility alias."
+            "Frame source. fake-live replays a raw single-camera data_collect case at camera cadence, "
+            "dropping source frames to preserve recording time when replay FPS is lower; recording is kept "
+            "as a compatibility alias."
         ),
     )
     parser.add_argument(
@@ -1515,7 +1537,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--replay-fps",
         type=float,
         default=0.0,
-        help="Replay FPS for --input-source recording or fake-live. Use 0 to read metadata fps.",
+        help=(
+            "Replay FPS for --input-source recording or fake-live. For fake-live this is the emitted "
+            "sample cadence; lower values drop source frames rather than slow motion. Use 0 to read metadata fps."
+        ),
     )
     parser.add_argument(
         "--table-calibrate",
@@ -3905,16 +3930,23 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.runtime is None:
             raise RuntimeError("camera runtime is not initialized")
         replay_fps = None
+        recording_fps = None
         frame_count = None
         recording_case = None
         if self.recording_source is not None:
             replay_fps = float(self.recording_source.effective_fps)
+            recording_fps = float(self.recording_source.recording_fps)
             frame_count = int(self.recording_source.frame_count)
             recording_case = str(self.recording_source.case_path)
+        frame_selection_policy = (
+            FAKE_LIVE_FRAME_SELECTION_POLICY if str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE else None
+        )
         return {
             "input_source": str(self.args.input_source),
             "recording_case": recording_case,
             "replay_fps": replay_fps,
+            "recording_fps": recording_fps,
+            "fake_live_frame_selection_policy": frame_selection_policy,
             "recording_frame_count": frame_count,
             "depth_source": str(self.args.depth_source),
             "track_mode": str(self.args.track_mode),
@@ -4050,9 +4082,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             print(
                 f"[{replay_label}] "
                 f"case={self.recording_source.case_path} frames={self.recording_source.frame_count} "
-                f"fps={self.recording_source.effective_fps:g} first_step={self.recording_source.steps[0]} "
+                f"replay_fps={self.recording_source.effective_fps:g} "
+                f"recording_fps={self.recording_source.recording_fps:g} "
+                f"first_step={self.recording_source.steps[0]} "
                 f"serial={self.recording_source.serial} depth_source={self.recording_source.depth_source} "
-                f"ir_stereo={str(self.recording_source.has_ir_stereo).lower()}",
+                f"ir_stereo={str(self.recording_source.has_ir_stereo).lower()} "
+                f"frame_selection={FAKE_LIVE_FRAME_SELECTION_POLICY if self.args.input_source == INPUT_SOURCE_FAKE_LIVE else 'sequential'}",
                 flush=True,
             )
         else:
@@ -4263,42 +4298,73 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.headless_capture_writer is not None:
             self.headless_capture_writer.update_metadata({"startup_hold_s": float(self._startup_hold_s)})
         replay_start_s = gate_done_s
-        first_source_index = 1
-        if fake_live_clock:
-            elapsed_frames = int(max(0.0, gate_done_s - camera_start_s) / frame_period_s)
-            first_source_index = max(1, elapsed_frames)
         runtime_seq = 1
-        for source_index in range(first_source_index, source.frame_count):
-            if self.stop_event.is_set():
-                break
-            duration_frame_index = source_index if fake_live_clock else runtime_seq
-            if (
-                self._lossless_enabled()
-                and float(self.args.duration_s) > 0.0
-                and float(duration_frame_index) * frame_period_s >= float(self.args.duration_s)
-            ):
-                break
-            wait_start_s = time.perf_counter()
-            if fake_live_clock:
-                target_s = camera_start_s + (float(source_index) * frame_period_s)
-            else:
+        if fake_live_clock:
+            output_tick = max(1, int(max(0.0, gate_done_s - camera_start_s) / frame_period_s))
+            last_source_index = 0
+            while not self.stop_event.is_set():
+                source_elapsed_s = float(output_tick) * frame_period_s
+                if (
+                    self._lossless_enabled()
+                    and float(self.args.duration_s) > 0.0
+                    and source_elapsed_s >= float(self.args.duration_s)
+                ):
+                    break
+                source_index = source.source_index_for_recording_elapsed_s(source_elapsed_s)
+                output_tick += 1
+                if source_index <= last_source_index:
+                    if last_source_index >= source.frame_count - 1:
+                        break
+                    continue
+                wait_start_s = time.perf_counter()
+                target_s = camera_start_s + source_elapsed_s
+                wait_s = target_s - wait_start_s
+                if wait_s > 0.0 and self.stop_event.wait(wait_s):
+                    break
+                wait_done_s = time.perf_counter()
+                try:
+                    packet = source.read_packet(
+                        seq=runtime_seq,
+                        frame_index=source_index,
+                        wait_ms=_elapsed_ms(wait_start_s, wait_done_s),
+                    )
+                except Exception as exc:
+                    if not self.stop_event.is_set():
+                        self._record_fatal_worker_error("recording replay", exc)
+                    break
+                self._publish_capture_packet(packet, record_s=packet.receive_perf_s)
+                runtime_seq += 1
+                last_source_index = source_index
+                if last_source_index >= source.frame_count - 1:
+                    break
+        else:
+            for source_index in range(1, source.frame_count):
+                if self.stop_event.is_set():
+                    break
+                if (
+                    self._lossless_enabled()
+                    and float(self.args.duration_s) > 0.0
+                    and float(runtime_seq) * frame_period_s >= float(self.args.duration_s)
+                ):
+                    break
+                wait_start_s = time.perf_counter()
                 target_s = replay_start_s + (float(runtime_seq) * frame_period_s)
-            wait_s = target_s - wait_start_s
-            if wait_s > 0.0 and self.stop_event.wait(wait_s):
-                break
-            wait_done_s = time.perf_counter()
-            try:
-                packet = source.read_packet(
-                    seq=runtime_seq,
-                    frame_index=source_index,
-                    wait_ms=_elapsed_ms(wait_start_s, wait_done_s),
-                )
-            except Exception as exc:
-                if not self.stop_event.is_set():
-                    self._record_fatal_worker_error("recording replay", exc)
-                break
-            self._publish_capture_packet(packet, record_s=packet.receive_perf_s)
-            runtime_seq += 1
+                wait_s = target_s - wait_start_s
+                if wait_s > 0.0 and self.stop_event.wait(wait_s):
+                    break
+                wait_done_s = time.perf_counter()
+                try:
+                    packet = source.read_packet(
+                        seq=runtime_seq,
+                        frame_index=source_index,
+                        wait_ms=_elapsed_ms(wait_start_s, wait_done_s),
+                    )
+                except Exception as exc:
+                    if not self.stop_event.is_set():
+                        self._record_fatal_worker_error("recording replay", exc)
+                    break
+                self._publish_capture_packet(packet, record_s=packet.receive_perf_s)
+                runtime_seq += 1
         if self._lossless_enabled():
             self._lossless_capture_done.set()
             self.lossless_frame_queue.close()
@@ -4450,6 +4516,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 self.recording_source.effective_fps
                 if _is_replay_input_source(str(self.args.input_source)) and self.recording_source is not None
                 else None
+            ),
+            "recording_fps": (
+                self.recording_source.recording_fps
+                if _is_replay_input_source(str(self.args.input_source)) and self.recording_source is not None
+                else None
+            ),
+            "fake_live_frame_selection_policy": (
+                FAKE_LIVE_FRAME_SELECTION_POLICY if str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE else None
             ),
             "track_mode": self.args.track_mode,
             "controller_instance_mode": str(self.args.controller_instance_mode),

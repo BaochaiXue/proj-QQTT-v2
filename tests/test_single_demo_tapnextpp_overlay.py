@@ -1219,10 +1219,15 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
     def test_fake_live_lossless_capture_waits_for_first_pair_before_replay_clock(self) -> None:
         class FakeRecordingSource:
             frame_count = 100
+            recording_fps = 30.0
             effective_fps = 5.0
 
             def __init__(self) -> None:
                 self.first_receive_s = time.perf_counter() - 2.0
+
+            def source_index_for_recording_elapsed_s(self, elapsed_s: float) -> int:
+                source_index = int(float(elapsed_s) * self.recording_fps)
+                return max(0, min(source_index, self.frame_count - 1))
 
             def read_packet(
                 self,

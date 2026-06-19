@@ -21,6 +21,7 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
         steps: tuple[int, ...] = (10, 2),
         fps: float = 30,
         include_ir: bool = False,
+        timestamps: dict[int, float] | None = None,
     ) -> Path:
         case_dir = root / "case"
         (case_dir / "color" / "0").mkdir(parents=True)
@@ -46,7 +47,12 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
                 ]
             ],
             "depth_scale_m_per_unit": [0.001],
-            "recording": {"0": {str(step): float(step) for step in steps}},
+            "recording": {
+                "0": {
+                    str(step): float(timestamps[step] if timestamps is not None else step)
+                    for step in steps
+                }
+            },
         }
         if include_ir:
             metadata.update(
@@ -137,6 +143,51 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=0.0)
 
             self.assertEqual(source.effective_fps, 30.0)
+            self.assertEqual(source.recording_fps, 30.0)
+
+    def test_fake_live_source_lookup_drops_30fps_frames_for_5fps_ticks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            steps = tuple(range(18))
+            timestamps = {step: float(step) / 30.0 for step in steps}
+            case_dir = self._write_case(Path(tmp_dir), steps=steps, fps=30, timestamps=timestamps)
+
+            source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=5.0)
+
+            self.assertEqual(source.recording_fps, 30.0)
+            self.assertEqual(source.effective_fps, 5.0)
+            selected = [
+                source.source_index_for_recording_elapsed_s(float(tick) / source.effective_fps)
+                for tick in range(3)
+            ]
+            self.assertEqual(selected, [0, 6, 12])
+
+    def test_source_lookup_uses_nonuniform_recording_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            steps = (0, 1, 2, 3)
+            timestamps = {0: 100.0, 1: 100.05, 2: 100.20, 3: 100.21}
+            case_dir = self._write_case(Path(tmp_dir), steps=steps, fps=30, timestamps=timestamps)
+
+            source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=5.0)
+
+            self.assertEqual(source.source_index_for_recording_elapsed_s(0.00), 0)
+            self.assertEqual(source.source_index_for_recording_elapsed_s(0.19), 1)
+            self.assertEqual(source.source_index_for_recording_elapsed_s(0.20), 2)
+            self.assertEqual(source.source_index_for_recording_elapsed_s(0.22), 3)
+
+    def test_replay_fps_zero_uses_metadata_fps_without_downsampling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            steps = tuple(range(4))
+            timestamps = {step: float(step) / 30.0 for step in steps}
+            case_dir = self._write_case(Path(tmp_dir), steps=steps, fps=30, timestamps=timestamps)
+
+            source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=0.0)
+
+            self.assertEqual(source.effective_fps, 30.0)
+            selected = [
+                source.source_index_for_recording_elapsed_s(float(tick) / source.effective_fps)
+                for tick in range(4)
+            ]
+            self.assertEqual(selected, [0, 1, 2, 3])
 
     def test_ffs_fake_live_packet_uses_ir_stereo_without_native_depth(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -278,10 +329,10 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             thread = threading.Thread(target=demo._capture_recording_worker, daemon=True)
             thread.start()
 
-            seen: list[int] = []
+            seen: list[tuple[int, int]] = []
             first = demo.lossless_frame_queue.get(stop_event=demo.stop_event)
             self.assertIsNotNone(first)
-            seen.append(first.seq)
+            seen.append((int(first.seq), int(first.source_frame_index)))
             demo._recording_first_frame_segmented.set()
             demo._lossless_first_pair_published.set()
 
@@ -290,17 +341,70 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
                 packet = demo.lossless_frame_queue.get(stop_event=demo.stop_event)
                 if packet is None:
                     break
-                seen.append(packet.seq)
+                seen.append((int(packet.seq), int(packet.source_frame_index)))
 
             thread.join(timeout=1.0)
             self.assertFalse(thread.is_alive())
-            self.assertEqual(seen, [0, 1, 2])
+            self.assertEqual(seen, [(0, 0), (1, 1), (2, 2)])
             self.assertEqual(demo._lossless_offered_frames, 3)
             self.assertTrue(demo.lossless_frame_queue.is_closed_and_empty())
 
+    def test_lossless_fake_live_drops_source_frames_but_keeps_runtime_seq_contiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            steps = tuple(range(30))
+            timestamps = {step: float(step) / 30.0 for step in steps}
+            case_dir = self._write_case(Path(tmp_dir), steps=steps, fps=30, timestamps=timestamps)
+            args = masked_demo.build_parser().parse_args(
+                [
+                    "--input-source",
+                    "fake-live",
+                    "--recording-case",
+                    str(case_dir),
+                    "--replay-fps",
+                    "5",
+                    "--duration-s",
+                    "0.45",
+                    "--depth-source",
+                    "realsense",
+                    "--render-mode",
+                    "none",
+                    "--track-mode",
+                    "object-only",
+                    "--pcd-mode",
+                    "masked",
+                    "--tracker-backend",
+                    "tapnextpp",
+                ]
+            )
+            demo = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+            demo._reset_lossless_state()
+            demo.recording_source = masked_demo.RecordedRgbdFrameSource(case_dir, replay_fps=5.0)
+
+            thread = threading.Thread(target=demo._capture_recording_worker, daemon=True)
+            thread.start()
+
+            seen: list[tuple[int, int]] = []
+            first = demo.lossless_frame_queue.get(stop_event=demo.stop_event)
+            self.assertIsNotNone(first)
+            seen.append((int(first.seq), int(first.source_frame_index)))
+            demo._recording_first_frame_segmented.set()
+            demo._lossless_first_pair_published.set()
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                packet = demo.lossless_frame_queue.get(stop_event=demo.stop_event)
+                if packet is None:
+                    break
+                seen.append((int(packet.seq), int(packet.source_frame_index)))
+
+            thread.join(timeout=1.0)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(seen, [(0, 0), (1, 6), (2, 12)])
+
     def test_lossless_fake_live_warmup_advances_source_frame_clock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            case_dir = self._write_case(Path(tmp_dir), steps=tuple(range(10, 22)))
+            steps = tuple(range(10, 22))
+            timestamps = {step: float(index) / 30.0 for index, step in enumerate(steps)}
+            case_dir = self._write_case(Path(tmp_dir), steps=steps, timestamps=timestamps)
             args = masked_demo.build_parser().parse_args(
                 [
                     "--input-source",

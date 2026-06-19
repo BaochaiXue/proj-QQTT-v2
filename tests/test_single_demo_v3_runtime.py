@@ -102,6 +102,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["input_source_mode"], "live")
         self.assertIsNone(contract["recording_case"])
         self.assertIsNone(contract["replay_fps"])
+        self.assertIsNone(contract["recording_fps"])
         self.assertEqual(contract["live_delegate_module"], "qqtt.demo.realtime_masked_edgetam_pcd")
         self.assertEqual(contract["depth_source"], "realsense")
         self.assertEqual(contract["depth_pipeline"], "realsense_native")
@@ -504,6 +505,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(contract["recording_case"], str(case_dir))
             self.assertEqual(contract["replay_fps"], 30.0)
             self.assertEqual(contract["replay_fps_source"], "metadata")
+            self.assertEqual(contract["recording_fps"], 30.0)
+            self.assertEqual(contract["recording_fps_source"], "metadata")
             self.assertIsNone(contract["serial"])
             self.assertEqual(contract["controller_prompt"], "human hand")
             self.assertEqual(contract["controller_instance_mode"], "two-hands")
@@ -553,6 +556,12 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertEqual(contract["recording_case"], str(runtime.DEFAULT_FAKE_LIVE_CASE))
                 self.assertEqual(contract["replay_fps"], runtime.DEFAULT_FAKE_LIVE_REPLAY_FPS)
                 self.assertEqual(contract["replay_fps_source"], "default_fake_live")
+                self.assertEqual(contract["recording_fps"], runtime.DEFAULT_RECORDING_FPS)
+                self.assertEqual(contract["recording_fps_source"], "default_30fps")
+                self.assertEqual(
+                    contract["fake_live_frame_selection_policy"],
+                    "drop_source_frames_preserve_recording_time",
+                )
                 self.assertIsNone(contract["serial"])
                 self.assertEqual(contract["semantic_mode"], "demo")
                 self.assertEqual(contract["controller_prompt"], "human hand")
@@ -566,6 +575,12 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertEqual(_option_value(delegate, "--replay-fps"), str(float(runtime.DEFAULT_FAKE_LIVE_REPLAY_FPS)))
                 self.assertEqual(_option_value(delegate, "--controller-prompt"), "human hand")
                 self.assertNotIn("--serial", delegate)
+
+    def test_fake_live_help_documents_frame_dropping_not_slow_motion(self) -> None:
+        help_text = runtime.build_arg_parser(demo_version=runtime.DEMO_VERSION_3_2).format_help()
+
+        self.assertIn("drops source frames", help_text)
+        self.assertIn("preserve recording time", help_text)
 
     def test_fake_live_case_alias_is_forwarded_to_delegate(self) -> None:
         args = self._parse(
@@ -586,6 +601,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["recording_case"], "data_collect/custom_case")
         self.assertEqual(contract["replay_fps"], 30.0)
         self.assertEqual(contract["replay_fps_source"], "cli")
+        self.assertEqual(contract["recording_fps"], runtime.DEFAULT_RECORDING_FPS)
+        self.assertEqual(contract["recording_fps_source"], "default_30fps")
         self.assertEqual(contract["semantic_mode"], "demo")
         self.assertEqual(contract["controller_prompt"], "human hand")
         self.assertEqual(_option_value(delegate, "--recording-case"), "data_collect/custom_case")
@@ -614,6 +631,34 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
             self.assertEqual(contract["replay_fps"], 30.0)
             self.assertEqual(contract["replay_fps_source"], "metadata")
+            self.assertEqual(contract["recording_fps"], 30.0)
+            self.assertEqual(contract["recording_fps_source"], "metadata")
+            self.assertNotIn("--replay-fps", delegate)
+
+    def test_fake_live_explicit_zero_falls_back_to_30fps_when_metadata_fps_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            case_dir = Path(tmp_dir) / "case"
+            case_dir.mkdir()
+            (case_dir / "metadata.json").write_text(json.dumps({"fps": 0}), encoding="utf-8")
+            args = self._parse(
+                runtime.DEMO_VERSION_3_2,
+                [
+                    "--input-source",
+                    "fake-live",
+                    "--fake-live-case",
+                    str(case_dir),
+                    "--replay-fps",
+                    "0",
+                ],
+            )
+            runtime.validate_args(args)
+            contract = runtime.build_contract(args)
+            delegate = runtime.build_live_delegate_argv(args)
+
+            self.assertEqual(contract["replay_fps"], runtime.DEFAULT_RECORDING_FPS)
+            self.assertEqual(contract["replay_fps_source"], "default_30fps")
+            self.assertEqual(contract["recording_fps"], runtime.DEFAULT_RECORDING_FPS)
+            self.assertEqual(contract["recording_fps_source"], "default_30fps")
             self.assertNotIn("--replay-fps", delegate)
 
     def test_demo32_tracking_visual_mode_forces_rainbow_sync_contract(self) -> None:

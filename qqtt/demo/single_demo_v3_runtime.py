@@ -52,6 +52,7 @@ DEFAULT_TRACKER_DEVICE = "cuda:1"
 DEFAULT_TABLE_CALIBRATE_PATH = Path("table_calibrate.pkl")
 DEFAULT_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_2min_e45_g35_20260614_155543")
 DEFAULT_FAKE_LIVE_REPLAY_FPS = 5.0
+DEFAULT_RECORDING_FPS = 30.0
 FFS_SURFACE_FILTER_RADIUS_M = 0.015
 FFS_SURFACE_FILTER_NB_POINTS = 8
 FFS_SURFACE_COMPONENT_VOXEL_SIZE_M = 0.015
@@ -292,7 +293,8 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         default=INPUT_SOURCE_LIVE,
         help=(
             "Frame source. fake-live replays a raw single-camera data_collect case at camera cadence "
-            "and uses demo mode; recording is kept as a compatibility alias for explicit replay cases."
+            "and uses demo mode; fake-live drops source frames to preserve recording time when replay FPS "
+            "is lower. recording is kept as a compatibility alias for explicit replay cases."
         ),
     )
     parser.add_argument(
@@ -314,7 +316,8 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         default=0.0,
         help=(
             "Replay FPS for --input-source recording or fake-live. Omitted fake-live replay defaults to "
-            f"{DEFAULT_FAKE_LIVE_REPLAY_FPS:g} fps; use 0 to read metadata fps."
+            f"{DEFAULT_FAKE_LIVE_REPLAY_FPS:g} fps; fake-live drops source frames to preserve recording time "
+            "instead of slow motion. use 0 to read metadata fps."
         ),
     )
     parser.add_argument(
@@ -874,6 +877,15 @@ def _read_recording_metadata_fps(case_path: Path | None) -> float | None:
     return fps if fps > 0.0 else None
 
 
+def _contract_recording_fps(args: argparse.Namespace) -> tuple[float | None, str | None]:
+    if not _is_replay_input_source(str(args.input_source)):
+        return None, None
+    metadata_fps = _read_recording_metadata_fps(args.recording_case)
+    if metadata_fps is not None:
+        return metadata_fps, "metadata"
+    return DEFAULT_RECORDING_FPS, "default_30fps"
+
+
 def _contract_replay_fps(args: argparse.Namespace) -> tuple[float | None, str | None]:
     if not _is_replay_input_source(str(args.input_source)):
         return None, None
@@ -882,10 +894,10 @@ def _contract_replay_fps(args: argparse.Namespace) -> tuple[float | None, str | 
         if bool(getattr(args, "fake_live_replay_fps_defaulted", False)):
             return requested, "default_fake_live"
         return requested, "cli"
-    metadata_fps = _read_recording_metadata_fps(args.recording_case)
-    if metadata_fps is not None:
-        return metadata_fps, "metadata"
-    return None, "metadata_unresolved"
+    recording_fps, recording_fps_source = _contract_recording_fps(args)
+    if recording_fps is not None:
+        return recording_fps, recording_fps_source
+    return None, None
 
 
 def build_contract(args: argparse.Namespace) -> dict[str, Any]:
@@ -904,6 +916,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     else:
         contract_input_source = "live_realsense_single_camera"
     replay_fps, replay_fps_source = _contract_replay_fps(args)
+    recording_fps, recording_fps_source = _contract_recording_fps(args)
     headless_capture = _headless_capture_requested(args, version)
     tracker_on = str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_NONE
     tracker_visualization_mode = "phystwin_rainbow_identity_3d_lift" if tracker_on else "none"
@@ -923,6 +936,11 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "table_world_frame_kind": None if args.table_calibrate is None else TABLE_WORLD_FRAME_KIND,
         "replay_fps": replay_fps,
         "replay_fps_source": replay_fps_source,
+        "recording_fps": recording_fps,
+        "recording_fps_source": recording_fps_source,
+        "fake_live_frame_selection_policy": (
+            masked_pcd.FAKE_LIVE_FRAME_SELECTION_POLICY if input_source == INPUT_SOURCE_FAKE_LIVE else None
+        ),
         "camera_count": 1,
         "serial": None if _is_replay_input_source(input_source) or args.serial is None else str(args.serial),
         "coordinate_frame": single_pcd.COORDINATE_FRAME,
@@ -1046,6 +1064,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "table_calibration_path",
         "table_world_frame_kind",
         "replay_fps",
+        "recording_fps",
+        "fake_live_frame_selection_policy",
         "camera_count",
         "serial",
         "pcd_coordinate_frame",
