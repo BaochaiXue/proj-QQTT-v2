@@ -177,6 +177,12 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                 query_is_controller=np.array([True, False], dtype=bool),
                 query_controller_instance_id=np.array([1, 0], dtype=np.int64),
                 query_count=np.array([2], dtype=np.int64),
+                marker_pixels_yx=np.array([[12, 16], [12, 18]], dtype=np.int64),
+                marker_residual_valid=np.array([True, True], dtype=bool),
+                marker_residual_violation=np.array([False, False], dtype=bool),
+                marker_residual_checked_count=np.array([2], dtype=np.int64),
+                marker_residual_violation_count=np.array([0], dtype=np.int64),
+                marker_residual_gate=np.array(["pcd_filter_residual_table_z"]),
             )
             (capture_dir / "masks").mkdir()
             controller_mask = np.zeros((24, 32), dtype=bool)
@@ -195,6 +201,9 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                 "rgb_path": "rgb/000000.png",
                 "query_trajectory_path": "query_trajectory/000000.npz",
                 "mask_path": "masks/000000.npz",
+                "marker_residual_checked_count": 2,
+                "marker_residual_violation_count": 0,
+                "marker_residual_gate": "pcd_filter_residual_table_z",
             }
             (capture_dir / "frames.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
 
@@ -217,6 +226,13 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             self.assertEqual(summary["query_count_totals"]["hand_a"], 1)
             self.assertEqual(summary["query_count_totals"]["hand_b"], 0)
             self.assertEqual(summary["query_count_totals"]["object"], 1)
+            self.assertEqual(summary["tracking_marker_residual_checked_total"], 2)
+            self.assertEqual(summary["tracking_marker_residual_violation_total"], 0)
+            self.assertEqual(summary["tracking_marker_residual_violation_frames"], 0)
+            self.assertEqual(summary["tracking_marker_residual_audit_missing_frames"], 0)
+            self.assertTrue(summary["tracking_marker_residual_target_met"])
+            self.assertEqual(summary["rendered_counts"][0]["marker_residual_checked_count"], 2)
+            self.assertEqual(summary["rendered_counts"][0]["marker_residual_violation_count"], 0)
             self.assertTrue((capture_dir / "video.render_summary.json").is_file())
             self.assertEqual(summary["tracking_background_mask"], TRACKING_BACKGROUND_MASK_TARGET_UNION)
             self.assertEqual(summary["tracking_background_mask_source"], "object_mask|controller_mask")
@@ -228,6 +244,128 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
                 summary["tracking_background_mask_pixel_total"],
                 int(np.count_nonzero(np.logical_or(controller_mask, object_mask))),
             )
+
+    def test_tracking_marker_residual_summary_reports_violations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "pcd").mkdir(parents=True)
+            (capture_dir / "ffs_depth").mkdir()
+            (capture_dir / "rgb").mkdir()
+            (capture_dir / "query_trajectory").mkdir()
+            (capture_dir / "masks").mkdir()
+            metadata = {
+                "width": 8,
+                "height": 6,
+                "saved_pcd_source": "enhanced_pt_filtered",
+                "intrinsics": {"fx": 8.0, "fy": 8.0, "cx": 4.0, "cy": 3.0},
+            }
+            (capture_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            np.savez(
+                capture_dir / "pcd" / "000000.npz",
+                controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+                controller_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+                object_xyz_m=np.empty((0, 3), dtype=np.float32),
+                object_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            )
+            np.save(capture_dir / "ffs_depth" / "000000.npy", np.ones((6, 8), dtype=np.float32))
+            Image.fromarray(np.full((6, 8, 3), 50, dtype=np.uint8)).save(capture_dir / "rgb" / "000000.png")
+            np.savez(
+                capture_dir / "query_trajectory" / "000000.npz",
+                tracks_yx=np.array([[2.0, 3.0]], dtype=np.float32),
+                visibility=np.ones((1,), dtype=np.float32),
+                marker_rgb_u8=np.array([[255, 0, 0]], dtype=np.uint8),
+                query_indices=np.array([0], dtype=np.int64),
+                query_is_object=np.array([True], dtype=bool),
+                query_is_controller=np.array([False], dtype=bool),
+                marker_residual_checked_count=np.array([1], dtype=np.int64),
+                marker_residual_violation_count=np.array([1], dtype=np.int64),
+                marker_residual_gate=np.array(["pcd_filter_residual_table_z"]),
+            )
+            mask = np.ones((6, 8), dtype=bool)
+            np.savez(capture_dir / "masks" / "000000.npz", object_mask=mask, controller_mask=np.zeros_like(mask))
+            row = {
+                "seq": 0,
+                "pcd_path": "pcd/000000.npz",
+                "ffs_depth_path": "ffs_depth/000000.npy",
+                "rgb_path": "rgb/000000.png",
+                "query_trajectory_path": "query_trajectory/000000.npz",
+                "mask_path": "masks/000000.npz",
+                "marker_residual_checked_count": 1,
+                "marker_residual_violation_count": 1,
+                "marker_residual_gate": "pcd_filter_residual_table_z",
+            }
+            (capture_dir / "frames.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            summary = render_capture_to_video(capture_dir=capture_dir, output=capture_dir / "video.mp4", fps=30.0)
+
+            self.assertEqual(summary["tracking_marker_residual_checked_total"], 1)
+            self.assertEqual(summary["tracking_marker_residual_violation_total"], 1)
+            self.assertEqual(summary["tracking_marker_residual_violation_frames"], 1)
+            self.assertEqual(summary["tracking_marker_residual_audit_missing_frames"], 0)
+            self.assertFalse(summary["tracking_marker_residual_target_met"])
+
+    def test_tracking_marker_residual_summary_treats_missing_audit_as_unproven(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "masks").mkdir(parents=True)
+            self._write_minimal_tracking_capture(
+                capture_dir,
+                row_extra={"mask_path": "masks/000000.npz"},
+            )
+            mask = np.ones((6, 8), dtype=bool)
+            np.savez(capture_dir / "masks" / "000000.npz", object_mask=mask, controller_mask=np.zeros_like(mask))
+
+            summary = render_capture_to_video(capture_dir=capture_dir, output=capture_dir / "video.mp4", fps=30.0)
+
+            self.assertEqual(summary["tracking_marker_residual_checked_total"], 0)
+            self.assertEqual(summary["tracking_marker_residual_violation_total"], 0)
+            self.assertEqual(summary["tracking_marker_residual_violation_frames"], 0)
+            self.assertEqual(summary["tracking_marker_residual_audit_missing_frames"], 1)
+            self.assertFalse(summary["tracking_marker_residual_target_met"])
+
+    def test_tracking_marker_residual_summary_treats_wrong_gate_as_unproven(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "masks").mkdir(parents=True)
+            self._write_minimal_tracking_capture(
+                capture_dir,
+                row_extra={
+                    "mask_path": "masks/000000.npz",
+                    "marker_count": 1,
+                    "marker_residual_checked_count": 1,
+                    "marker_residual_violation_count": 0,
+                    "marker_residual_gate": "target_mask_depth",
+                },
+            )
+            mask = np.ones((6, 8), dtype=bool)
+            np.savez(capture_dir / "masks" / "000000.npz", object_mask=mask, controller_mask=np.zeros_like(mask))
+
+            summary = render_capture_to_video(capture_dir=capture_dir, output=capture_dir / "video.mp4", fps=30.0)
+
+            self.assertEqual(summary["tracking_marker_residual_audit_missing_frames"], 1)
+            self.assertFalse(summary["tracking_marker_residual_target_met"])
+
+    def test_tracking_marker_residual_summary_treats_partial_audit_as_unproven(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            (capture_dir / "masks").mkdir(parents=True)
+            self._write_minimal_tracking_capture(
+                capture_dir,
+                row_extra={
+                    "mask_path": "masks/000000.npz",
+                    "marker_count": 1,
+                    "marker_residual_checked_count": 0,
+                    "marker_residual_violation_count": 0,
+                    "marker_residual_gate": "pcd_filter_residual_table_z",
+                },
+            )
+            mask = np.ones((6, 8), dtype=bool)
+            np.savez(capture_dir / "masks" / "000000.npz", object_mask=mask, controller_mask=np.zeros_like(mask))
+
+            summary = render_capture_to_video(capture_dir=capture_dir, output=capture_dir / "video.mp4", fps=30.0)
+
+            self.assertEqual(summary["tracking_marker_residual_audit_missing_frames"], 1)
+            self.assertFalse(summary["tracking_marker_residual_target_met"])
 
     def test_render_side_by_side_panel_prefers_input_rgb_timeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

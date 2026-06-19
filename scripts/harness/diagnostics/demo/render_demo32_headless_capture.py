@@ -54,6 +54,7 @@ TRACKING_BACKGROUND_MASK_MODES = (
     TRACKING_BACKGROUND_MASK_TARGET_UNION,
     TRACKING_BACKGROUND_MASK_RGB,
 )
+TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z = "pcd_filter_residual_table_z"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -179,6 +180,61 @@ def _as_float_or_none(value: Any) -> float | None:
     if not np.isfinite(result):
         return None
     return result
+
+
+def _as_int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return None
+    return result
+
+
+def _npz_scalar_int(payload: Any, key: str) -> int | None:
+    if key not in payload.files:
+        return None
+    values = np.asarray(payload[key]).reshape(-1)
+    if len(values) == 0:
+        return None
+    return _as_int_or_none(values[0])
+
+
+def _npz_scalar_str(payload: Any, key: str) -> str | None:
+    if key not in payload.files:
+        return None
+    values = np.asarray(payload[key]).reshape(-1)
+    if len(values) == 0:
+        return None
+    return str(values[0])
+
+
+def _marker_residual_audit_counts(
+    *,
+    frame: dict[str, Any],
+    trajectory_path: Path | None,
+) -> tuple[int, int] | None:
+    checked = _as_int_or_none(frame.get("marker_residual_checked_count"))
+    violations = _as_int_or_none(frame.get("marker_residual_violation_count"))
+    if checked is not None and violations is not None:
+        gate = frame.get("marker_residual_gate")
+        if gate is not None:
+            if str(gate) != TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z:
+                return None
+            return max(0, int(checked)), max(0, int(violations))
+
+    if trajectory_path is None or not trajectory_path.is_file():
+        return None
+    with np.load(trajectory_path, allow_pickle=False) as payload:
+        checked = _npz_scalar_int(payload, "marker_residual_checked_count")
+        violations = _npz_scalar_int(payload, "marker_residual_violation_count")
+        gate = _npz_scalar_str(payload, "marker_residual_gate")
+    if checked is None or violations is None:
+        return None
+    if gate != TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z:
+        return None
+    return max(0, int(checked)), max(0, int(violations))
 
 
 def _pair_process_done_time(row: dict[str, Any]) -> float | None:
@@ -765,6 +821,10 @@ def render_capture_to_video(
         sync_policy = "paired_seq"
     missing_query_frames = 0
     missing_rgb_frames = 0
+    tracking_marker_residual_checked_total = 0
+    tracking_marker_residual_violation_total = 0
+    tracking_marker_residual_violation_frames = 0
+    tracking_marker_residual_audit_missing_frames = 0
     try:
         for frame in frames:
             image = np.zeros((height, width, 3), dtype=np.uint8)
@@ -772,6 +832,9 @@ def render_capture_to_video(
             query_count = query_object_count = query_controller_count = 0
             query_hand_a_count = query_hand_b_count = 0
             tracking_background_mask_pixels = 0
+            marker_residual_checked_count = 0
+            marker_residual_violation_count = 0
+            marker_residual_audit_present = 0
             query_path = None
             if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE:
                 paired_rgb = _read_rgb_frame_bgr(capture_dir=capture_dir, frame=frame, width=width, height=height)
@@ -930,6 +993,24 @@ def render_capture_to_video(
                     coordinate_frame=pcd_coordinate_frame,
                     camera_to_world_c2w=camera_to_world_c2w,
                 )
+            frame_renders_tracking_panel = str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE or str(demo_visual_mode) == "tracking"
+            if frame_renders_tracking_panel:
+                audit_counts = _marker_residual_audit_counts(frame=frame, trajectory_path=query_path)
+                if audit_counts is None:
+                    tracking_marker_residual_audit_missing_frames += 1
+                else:
+                    marker_residual_audit_present = 1
+                    marker_residual_checked_count = int(audit_counts[0])
+                    marker_residual_violation_count = int(audit_counts[1])
+                    tracking_marker_residual_checked_total += marker_residual_checked_count
+                    tracking_marker_residual_violation_total += marker_residual_violation_count
+                    if marker_residual_violation_count > 0:
+                        tracking_marker_residual_violation_frames += 1
+                    expected_marker_count = _as_int_or_none(frame.get("marker_count"))
+                    if expected_marker_count is None:
+                        expected_marker_count = int(query_count)
+                    if marker_residual_checked_count < max(0, int(expected_marker_count)):
+                        tracking_marker_residual_audit_missing_frames += 1
             writer.write(image)
             rendered_row = {
                 "seq": int(frame["seq"]),
@@ -942,6 +1023,9 @@ def render_capture_to_video(
                 "query_hand_b_points": int(query_hand_b_count),
                 "tracking_background_mask_pixels": int(tracking_background_mask_pixels),
                 "query_trajectory_exact": int(query_path is not None and query_path.is_file()),
+                "marker_residual_audit_present": int(marker_residual_audit_present),
+                "marker_residual_checked_count": int(marker_residual_checked_count),
+                "marker_residual_violation_count": int(marker_residual_violation_count),
             }
             if str(panel_mode) == PANEL_MODE_SIDE_BY_SIDE:
                 rendered_row.update(
@@ -968,6 +1052,11 @@ def render_capture_to_video(
             if str(tracking_background_mask) == TRACKING_BACKGROUND_MASK_TARGET_UNION
             else "full_rgb"
         )
+    tracking_marker_residual_target_met = bool(
+        renders_tracking_panel
+        and tracking_marker_residual_audit_missing_frames == 0
+        and tracking_marker_residual_violation_total == 0
+    )
     summary = {
         "capture_dir": str(capture_dir),
         "output": str(output.resolve()),
@@ -987,6 +1076,11 @@ def render_capture_to_video(
         "tracking_background_mask_pixel_total": int(
             sum(item["tracking_background_mask_pixels"] for item in rendered_counts)
         ),
+        "tracking_marker_residual_checked_total": int(tracking_marker_residual_checked_total),
+        "tracking_marker_residual_violation_total": int(tracking_marker_residual_violation_total),
+        "tracking_marker_residual_violation_frames": int(tracking_marker_residual_violation_frames),
+        "tracking_marker_residual_audit_missing_frames": int(tracking_marker_residual_audit_missing_frames),
+        "tracking_marker_residual_target_met": bool(tracking_marker_residual_target_met),
         "query_overlay": "phystwin_rgb_current_points_only" if renders_tracking_panel else "none",
         "query_color_mode": "phystwin_rainbow_identity" if renders_tracking_panel else "none",
         "query_match_policy": "exact_same_seq_only",

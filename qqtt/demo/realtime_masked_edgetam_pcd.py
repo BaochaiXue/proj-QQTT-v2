@@ -714,6 +714,16 @@ class MaskedPcdPacket:
 
 
 @dataclass(frozen=True)
+class MarkerResidualAudit:
+    pixels_yx: np.ndarray
+    valid: np.ndarray
+    violation: np.ndarray
+    checked_count: int
+    violation_count: int
+    gate: str = TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z
+
+
+@dataclass(frozen=True)
 class TrackerMarkerPacket:
     seq: int
     marker_xyz_m: np.ndarray
@@ -741,6 +751,12 @@ class TrackerMarkerPacket:
     hand_a_query_count: int = 0
     hand_b_query_count: int = 0
     object_query_count: int = 0
+    marker_pixels_yx: np.ndarray = field(default_factory=lambda: np.empty((0, 2), dtype=np.int64))
+    marker_residual_valid: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=bool))
+    marker_residual_violation: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=bool))
+    marker_residual_checked_count: int = 0
+    marker_residual_violation_count: int = 0
+    marker_residual_gate: str = TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z
     coordinate_frame: str = COORDINATE_FRAME
 
     @property
@@ -997,6 +1013,15 @@ class HeadlessCaptureWriter:
             "pipeline_latency_ms": float(pair_process_done_s - float(packet.receive_perf_s)) * 1000.0,
             "filter_preset": self.saved_pcd_source,
             "marker_count": int(tracker_packet.marker_count) if tracker_packet is not None else 0,
+            "marker_residual_checked_count": (
+                int(tracker_packet.marker_residual_checked_count) if tracker_packet is not None else 0
+            ),
+            "marker_residual_violation_count": (
+                int(tracker_packet.marker_residual_violation_count) if tracker_packet is not None else 0
+            ),
+            "marker_residual_gate": (
+                str(tracker_packet.marker_residual_gate) if tracker_packet is not None else "none"
+            ),
             "controller_point_count": int(packet.controller_point_count),
             "object_point_count": int(packet.object_point_count),
             "controller_mask_pixels": int(np.count_nonzero(mask_packet.controller_mask)),
@@ -1050,6 +1075,12 @@ class HeadlessCaptureWriter:
                 packet.query_all_controller_instance_id,
                 dtype=np.int64,
             ),
+            marker_pixels_yx=np.ascontiguousarray(packet.marker_pixels_yx, dtype=np.int64).reshape(-1, 2),
+            marker_residual_valid=np.ascontiguousarray(packet.marker_residual_valid, dtype=bool),
+            marker_residual_violation=np.ascontiguousarray(packet.marker_residual_violation, dtype=bool),
+            marker_residual_checked_count=np.asarray([int(packet.marker_residual_checked_count)], dtype=np.int64),
+            marker_residual_violation_count=np.asarray([int(packet.marker_residual_violation_count)], dtype=np.int64),
+            marker_residual_gate=np.asarray([str(packet.marker_residual_gate)]),
             query_count=np.asarray([int(packet.query_count)], dtype=np.int64),
             consistent_visible_count=np.asarray([int(packet.consistent_visible_count)], dtype=np.int64),
             hand_a_query_count=np.asarray([int(packet.hand_a_query_count)], dtype=np.int64),
@@ -3476,6 +3507,55 @@ def _query_current_residual_visibility(
     return visible
 
 
+def _audit_marker_residual_subset(
+    marker_tracks_yx: np.ndarray,
+    *,
+    object_residual_mask: np.ndarray,
+    controller_residual_mask: np.ndarray,
+    gate: str = TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z,
+) -> MarkerResidualAudit:
+    tracks = np.asarray(marker_tracks_yx, dtype=np.float32).reshape(-1, 2)
+    object_mask = np.asarray(object_residual_mask, dtype=bool)
+    controller_mask = np.asarray(controller_residual_mask, dtype=bool)
+    if object_mask.shape != controller_mask.shape:
+        raise ValueError("object/controller residual masks must share a shape")
+
+    count = int(tracks.shape[0])
+    pixels_yx = np.full((count, 2), -1, dtype=np.int64)
+    valid = np.zeros((count,), dtype=bool)
+    if count <= 0:
+        return MarkerResidualAudit(
+            pixels_yx=pixels_yx,
+            valid=valid,
+            violation=np.zeros((0,), dtype=bool),
+            checked_count=0,
+            violation_count=0,
+            gate=str(gate),
+        )
+
+    finite = np.isfinite(tracks).all(axis=1)
+    if np.any(finite):
+        pixels_yx[finite] = np.rint(tracks[finite]).astype(np.int64)
+
+    height, width = object_mask.shape[:2]
+    yy = pixels_yx[:, 0]
+    xx = pixels_yx[:, 1]
+    in_bounds = finite & (yy >= 0) & (yy < int(height)) & (xx >= 0) & (xx < int(width))
+    if np.any(in_bounds):
+        union_mask = np.logical_or(object_mask, controller_mask)
+        valid[in_bounds] = union_mask[yy[in_bounds], xx[in_bounds]]
+
+    violation = ~valid
+    return MarkerResidualAudit(
+        pixels_yx=np.ascontiguousarray(pixels_yx, dtype=np.int64),
+        valid=np.ascontiguousarray(valid, dtype=bool),
+        violation=np.ascontiguousarray(violation, dtype=bool),
+        checked_count=count,
+        violation_count=int(np.count_nonzero(violation)),
+        gate=str(gate),
+    )
+
+
 def _select_visible_spread_indices(tracks_yx: np.ndarray, visibility: np.ndarray, *, max_points: int) -> np.ndarray:
     tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
     visible = np.flatnonzero(np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0)
@@ -4843,6 +4923,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             display_scope=str(self.args.tracker_display_scope),
         )
         lift_mask = self._tracker_lift_mask(mask_packet)
+        object_residual_mask: np.ndarray | None = None
+        controller_residual_mask: np.ndarray | None = None
         if tracker_query_source(self.args) == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL:
             object_residual_mask, controller_residual_mask = self._tracker_pcd_filter_residual_masks(mask_packet)
             residual_visibility = _query_current_residual_visibility(
@@ -4912,6 +4994,21 @@ class RealtimeMaskedEdgeTamPcdDemo:
             lifted_query_target_id = np.empty((0,), dtype=np.int64)
             lifted_query_controller_instance_id = np.empty((0,), dtype=np.int64)
             lifted_marker_colors = np.empty((0, 3), dtype=np.uint8)
+        if object_residual_mask is not None and controller_residual_mask is not None:
+            marker_residual_audit = _audit_marker_residual_subset(
+                lifted.tracks_yx,
+                object_residual_mask=object_residual_mask,
+                controller_residual_mask=controller_residual_mask,
+            )
+        else:
+            marker_residual_audit = MarkerResidualAudit(
+                pixels_yx=np.empty((0, 2), dtype=np.int64),
+                valid=np.empty((0,), dtype=bool),
+                violation=np.empty((0,), dtype=bool),
+                checked_count=0,
+                violation_count=0,
+                gate=tracker_marker_gate(self.args),
+            )
         hand_a_query_count = int(np.count_nonzero(lifted_query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_A))
         hand_b_query_count = int(np.count_nonzero(lifted_query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_B))
         object_query_count = int(np.count_nonzero(lifted_query_target_id == OBJECT_ID))
@@ -4944,12 +5041,19 @@ class RealtimeMaskedEdgeTamPcdDemo:
             hand_a_query_count=hand_a_query_count,
             hand_b_query_count=hand_b_query_count,
             object_query_count=object_query_count,
+            marker_pixels_yx=np.ascontiguousarray(marker_residual_audit.pixels_yx, dtype=np.int64).reshape(-1, 2),
+            marker_residual_valid=np.ascontiguousarray(marker_residual_audit.valid, dtype=bool),
+            marker_residual_violation=np.ascontiguousarray(marker_residual_audit.violation, dtype=bool),
+            marker_residual_checked_count=int(marker_residual_audit.checked_count),
+            marker_residual_violation_count=int(marker_residual_audit.violation_count),
+            marker_residual_gate=str(marker_residual_audit.gate),
             coordinate_frame=self._pcd_coordinate_frame(),
         )
         if self.args.debug:
             print(
                 "[tapnextpp-tracker] "
                 f"seq={packet.seq} markers={packet.marker_count}/{len(selected_tracks)} "
+                f"residual_violations={packet.marker_residual_violation_count}/{packet.marker_residual_checked_count} "
                 f"consistent={packet.consistent_visible_count}/{packet.query_count} "
                 f"hand_a={packet.hand_a_query_count} hand_b={packet.hand_b_query_count} object={packet.object_query_count} "
                 f"queries={packet.query_count} model_ms={packet.model_ms:.1f} "

@@ -290,6 +290,48 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(hud.marker_count, pair.tracker_packet.marker_count)
         self.assertEqual(hud.input_time_s, 105.5)
 
+    def test_marker_residual_audit_accepts_markers_inside_union_residual(self) -> None:
+        object_residual = np.zeros((4, 4), dtype=bool)
+        controller_residual = np.zeros((4, 4), dtype=bool)
+        object_residual[1, 1] = True
+        controller_residual[2, 3] = True
+
+        audit = demo._audit_marker_residual_subset(
+            np.array([[1.2, 0.8], [2.0, 3.0]], dtype=np.float32),
+            object_residual_mask=object_residual,
+            controller_residual_mask=controller_residual,
+        )
+
+        self.assertEqual(audit.checked_count, 2)
+        self.assertEqual(audit.violation_count, 0)
+        np.testing.assert_array_equal(audit.valid, np.array([True, True], dtype=bool))
+        np.testing.assert_array_equal(audit.violation, np.array([False, False], dtype=bool))
+        np.testing.assert_array_equal(audit.pixels_yx, np.array([[1, 1], [2, 3]], dtype=np.int64))
+
+    def test_marker_residual_audit_counts_outside_nonfinite_and_out_of_bounds_markers(self) -> None:
+        object_residual = np.zeros((4, 4), dtype=bool)
+        controller_residual = np.zeros((4, 4), dtype=bool)
+        object_residual[1, 1] = True
+
+        audit = demo._audit_marker_residual_subset(
+            np.array(
+                [
+                    [1.0, 1.0],
+                    [1.0, 2.0],
+                    [np.nan, 1.0],
+                    [4.0, 0.0],
+                ],
+                dtype=np.float32,
+            ),
+            object_residual_mask=object_residual,
+            controller_residual_mask=controller_residual,
+        )
+
+        self.assertEqual(audit.checked_count, 4)
+        self.assertEqual(audit.violation_count, 3)
+        np.testing.assert_array_equal(audit.valid, np.array([True, False, False, False], dtype=bool))
+        np.testing.assert_array_equal(audit.violation, np.array([False, True, True, True], dtype=bool))
+
     def test_paired_render_packet_rejects_mask_seq_mismatch(self) -> None:
         with self.assertRaisesRegex(ValueError, r"mask=4"):
             demo.PairedRenderPacket(
@@ -1336,6 +1378,12 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 query_all_target_id=np.array([demo.OBJECT_ID], dtype=np.int64),
                 query_all_controller_instance_id=np.array([demo.QUERY_CONTROLLER_INSTANCE_NONE], dtype=np.int64),
                 object_query_count=1,
+                marker_pixels_yx=np.array([[1, 1]], dtype=np.int64),
+                marker_residual_valid=np.array([True], dtype=bool),
+                marker_residual_violation=np.array([False], dtype=bool),
+                marker_residual_checked_count=1,
+                marker_residual_violation_count=0,
+                marker_residual_gate=demo.TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z,
                 coordinate_frame="table_world_z0",
             )
 
@@ -1420,6 +1468,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(rows[0]["hand_b_query_count"], 0)
             self.assertEqual(rows[0]["object_query_count"], 1)
             self.assertEqual(rows[0]["marker_count"], 1)
+            self.assertEqual(rows[0]["marker_residual_checked_count"], 1)
+            self.assertEqual(rows[0]["marker_residual_violation_count"], 0)
+            self.assertEqual(rows[0]["marker_residual_gate"], demo.TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z)
             self.assertEqual(rows[0]["filter_preset"], "pt_filter_filtered")
             self.assertAlmostEqual(rows[0]["process_done_perf_s"], 10.2)
             self.assertAlmostEqual(rows[0]["pair_process_done_perf_s"], 10.4)
@@ -1445,6 +1496,15 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             np.testing.assert_array_equal(trajectory["query_indices"], np.array([0], dtype=np.int64))
             np.testing.assert_array_equal(trajectory["query_rgb_u8"], query_rgb_u8)
             np.testing.assert_array_equal(trajectory["marker_rgb_u8"], query_rgb_u8)
+            np.testing.assert_array_equal(trajectory["marker_pixels_yx"], np.array([[1, 1]], dtype=np.int64))
+            np.testing.assert_array_equal(trajectory["marker_residual_valid"], np.array([True], dtype=bool))
+            np.testing.assert_array_equal(trajectory["marker_residual_violation"], np.array([False], dtype=bool))
+            self.assertEqual(int(trajectory["marker_residual_checked_count"][0]), 1)
+            self.assertEqual(int(trajectory["marker_residual_violation_count"][0]), 0)
+            self.assertEqual(
+                str(trajectory["marker_residual_gate"][0]),
+                demo.TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z,
+            )
             np.testing.assert_array_equal(trajectory["query_target_id"], np.array([demo.OBJECT_ID], dtype=np.int64))
             np.testing.assert_array_equal(
                 trajectory["query_controller_instance_id"],
@@ -1588,6 +1648,12 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         assert packet is not None
         self.assertEqual(packet.marker_count, 1)
         np.testing.assert_array_equal(packet.query_indices, np.array([1], dtype=np.int64))
+        self.assertEqual(packet.marker_residual_checked_count, 1)
+        self.assertEqual(packet.marker_residual_violation_count, 0)
+        self.assertEqual(packet.marker_residual_gate, demo.TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z)
+        np.testing.assert_array_equal(packet.marker_residual_valid, np.array([True], dtype=bool))
+        np.testing.assert_array_equal(packet.marker_residual_violation, np.array([False], dtype=bool))
+        np.testing.assert_array_equal(packet.marker_pixels_yx, np.array([[2, 0]], dtype=np.int64))
         self.assertEqual(packet.hand_a_query_count, 1)
         self.assertEqual(packet.object_query_count, 0)
 
@@ -1621,6 +1687,10 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(packet.marker_count, 1)
         np.testing.assert_array_equal(packet.query_indices, np.array([1], dtype=np.int64))
         np.testing.assert_array_equal(packet.marker_colors_rgb_u8, packet.query_rgb_u8[packet.query_indices])
+        self.assertEqual(packet.marker_residual_checked_count, 1)
+        self.assertEqual(packet.marker_residual_violation_count, 0)
+        np.testing.assert_array_equal(packet.marker_residual_valid, np.array([True], dtype=bool))
+        np.testing.assert_array_equal(packet.marker_residual_violation, np.array([False], dtype=bool))
         self.assertEqual(packet.hand_a_query_count, 1)
         self.assertEqual(packet.object_query_count, 0)
         self.assertEqual(packet.query_count, 2)
