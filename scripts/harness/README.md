@@ -62,6 +62,12 @@ Validation profiles:
 | `exhaustive` | All cataloged deterministic coverage | Full maintained validation sweep before broad harness lifecycle or entrypoint changes. |
 | none | Helpers or external-only workflows | Files without direct argparse help coverage or requiring manual/hardware-specific setup. |
 
+## Demo Diagnostics
+
+- `diagnostics/demo/render_demo32_headless_capture.py --panel-mode side-by-side`
+  renders the Demo 3.2 fake-live 1x3 side-by-side panel from a saved headless
+  capture.
+
 ## Add Or Change A Harness Entrypoint
 
 1. Put shared implementation outside `scripts/harness/` first.

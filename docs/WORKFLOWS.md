@@ -118,6 +118,36 @@ conda run -n demo_2_max --no-capture-output \
   --table-z-overlay-output-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/table_z_overlay
 ```
 
+Demo 3.2 can also render a 1x3 fake-live review panel with latest RGB on the
+left, while the projected PCD and tracking columns stay on the same strict
+same-`seq` processed pair.
+
+Offline from a headless capture:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python scripts/harness/diagnostics/demo/render_demo32_headless_capture.py \
+  --capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke \
+  --output result/single_demo_v3_2_ffs_masked_pcd/headless_smoke/video_side_by_side.mp4 \
+  --fps 30 \
+  --panel-mode side-by-side \
+  --tracking-background-mask target-union
+```
+
+Realtime fake-live panel:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --mode demo \
+  --demo-visual-mode tracking \
+  --render-mode panel \
+  --panel-layout side-by-side \
+  --tracking-background-mask target-union \
+  --panel-video-output result/single_demo_v3_2_ffs_masked_pcd/realtime_panel.mp4
+```
+
 Live FFS preview:
 
 ```bash

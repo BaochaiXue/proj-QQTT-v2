@@ -33,6 +33,11 @@ aligned-case data product.
   single-camera point-cloud demo implementation.
 - `qqtt/demo/single_demo_v3_runtime.py`: shared launcher for the
   `demo_v3*` entrypoints.
+- `qqtt/demo/demo32_side_by_side_panel.py`: pure Demo 3.2 side-by-side panel
+  renderer shared by offline headless rendering and runtime fake-live panel
+  display. It composes latest RGB, projected filtered PCD, tracking overlay,
+  and timing HUD frames; it does not own camera capture, FFS, EdgeTAM, or
+  runtime queues.
 - `qqtt/demo/realtime_masked_edgetam_pcd.py`: shared masked PCD runtime. Demo
   3.2/3.3 tracking visualizations default object/controller filters to
   enhanced-pt, while PCD-only inspection defaults both layers to pt-filter and
