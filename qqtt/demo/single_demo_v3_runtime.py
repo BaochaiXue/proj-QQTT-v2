@@ -233,6 +233,10 @@ def _headless_capture_requested(args: argparse.Namespace, version: str | None = 
     )
 
 
+def _interactive_tracking_render_requested(args: argparse.Namespace) -> bool:
+    return str(getattr(args, "render_mode", "")) in {"pointcloud", "panel"}
+
+
 def _default_headless_capture_dir(args: argparse.Namespace, version: str) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_root = Path(getattr(args, "output_root", DEFAULT_OUTPUT_ROOTS[normalize_demo_version(version)]))
@@ -371,6 +375,24 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         choices=masked_pcd.RENDER_MODES,
         default=masked_pcd.DEFAULT_RENDER_MODE,
         help="Render mode for the single-camera masked point-cloud delegate.",
+    )
+    parser.add_argument(
+        "--panel-layout",
+        choices=masked_pcd.PANEL_LAYOUTS,
+        default=masked_pcd.PANEL_LAYOUT_SIDE_BY_SIDE,
+        help="Runtime panel layout forwarded to the masked PCD delegate.",
+    )
+    parser.add_argument(
+        "--panel-video-output",
+        type=Path,
+        default=None,
+        help="Optional MP4 output path for --render-mode panel.",
+    )
+    parser.add_argument(
+        "--tracking-background-mask",
+        choices=("target-union", "rgb"),
+        default="target-union",
+        help="Tracking overlay background for side-by-side panel and offline render parity.",
     )
     parser.add_argument(
         "--demo-visual-mode",
@@ -641,8 +663,8 @@ def validate_args(args: argparse.Namespace) -> None:
     if _is_replay_input_source(str(args.input_source)):
         if args.recording_case is None:
             raise ValueError(f"--input-source {args.input_source} requires --recording-case or --fake-live-case")
-        if str(args.render_mode) != "pointcloud" and not headless_capture:
-            raise ValueError(f"--input-source {args.input_source} requires --render-mode pointcloud")
+        if not _interactive_tracking_render_requested(args) and not headless_capture:
+            raise ValueError(f"--input-source {args.input_source} requires --render-mode pointcloud or panel")
         if str(args.track_mode) == TRACK_MODE_NONE:
             raise ValueError(f"--input-source {args.input_source} requires --track-mode controller-object")
         if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
@@ -812,8 +834,8 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("single demo tracker backend currently supports only tapnextpp")
         if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
             raise ValueError("--tracker-backend tapnextpp requires --track-mode controller-object")
-        if str(args.render_mode) != "pointcloud" and not headless_capture:
-            raise ValueError("--tracker-backend tapnextpp requires --render-mode pointcloud")
+        if not _interactive_tracking_render_requested(args) and not headless_capture:
+            raise ValueError("--tracker-backend tapnextpp requires --render-mode pointcloud or panel")
 
 
 def _read_recording_metadata_fps(case_path: Path | None) -> float | None:
@@ -909,6 +931,14 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "edgetam_tracking_identities": _edgetam_tracking_identities(args),
         "track_mode": str(args.track_mode),
         "render_mode": str(args.render_mode),
+        "panel_layout": str(getattr(args, "panel_layout", masked_pcd.PANEL_LAYOUT_SIDE_BY_SIDE)),
+        "panel_video_output": None if getattr(args, "panel_video_output", None) is None else str(args.panel_video_output),
+        "tracking_background_mask": str(getattr(args, "tracking_background_mask", "target-union")),
+        "panel_sync_policy": (
+            "left_latest_rgb_right_strict_same_seq"
+            if str(getattr(args, "render_mode", "")) == "panel"
+            else "none"
+        ),
         "demo_visual_mode": str(args.demo_visual_mode),
         "headless_capture_enabled": bool(headless_capture),
         "headless_capture_dir": None if not headless_capture or args.headless_capture_dir is None else str(args.headless_capture_dir),
@@ -1018,6 +1048,10 @@ def format_contract(contract: dict[str, Any]) -> str:
         "controller_instance_mode",
         "edgetam_tracking_identities",
         "render_mode",
+        "panel_layout",
+        "panel_video_output",
+        "tracking_background_mask",
+        "panel_sync_policy",
         "demo_visual_mode",
         "headless_capture_enabled",
         "headless_capture_dir",
@@ -1095,6 +1129,10 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.track_mode),
         "--render-mode",
         str(args.render_mode),
+        "--panel-layout",
+        str(args.panel_layout),
+        "--tracking-background-mask",
+        str(args.tracking_background_mask),
         "--demo-visual-mode",
         str(args.demo_visual_mode),
         "--view-mode",
@@ -1217,6 +1255,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.extend(["--pcd-filter-preset", str(pcd_filter_preset)])
     if args.headless_capture_dir is not None:
         argv.extend(["--headless-capture-dir", str(args.headless_capture_dir)])
+    if args.panel_video_output is not None:
+        argv.extend(["--panel-video-output", str(args.panel_video_output)])
     if args.table_calibrate is not None:
         argv.extend(["--table-calibrate", str(args.table_calibrate)])
     if bool(args.debug):

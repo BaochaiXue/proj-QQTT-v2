@@ -364,6 +364,62 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(payload["contract"]["camera_count"], 1)
             self.assert_legacy_fields_removed(payload["contract"])
 
+    def test_demo32_panel_dry_run_contract_exposes_side_by_side_panel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            profile = Path(tmp_dir) / "profile.json"
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                result = runtime.main(
+                    [
+                        "--dry-run",
+                        "--profile-json-output",
+                        str(profile),
+                        "--input-source",
+                        "fake-live",
+                        "--render-mode",
+                        "panel",
+                        "--panel-layout",
+                        "side-by-side",
+                        "--panel-video-output",
+                        "result/panel.mp4",
+                        "--tracking-background-mask",
+                        "rgb",
+                    ],
+                    demo_version=runtime.DEMO_VERSION_3_2,
+                    connected_serials_provider=lambda: ["239222300781"],
+                )
+
+            self.assertEqual(result, 0)
+            self.assertIn("render_mode = panel", stdout.getvalue())
+            payload = json.loads(profile.read_text(encoding="utf-8"))
+            contract = payload["contract"]
+            self.assertEqual(contract["render_mode"], "panel")
+            self.assertEqual(contract["panel_layout"], "side-by-side")
+            self.assertEqual(contract["panel_video_output"], "result/panel.mp4")
+            self.assertEqual(contract["tracking_background_mask"], "rgb")
+            self.assertEqual(contract["panel_sync_policy"], "left_latest_rgb_right_strict_same_seq")
+
+            args = self._parse(
+                runtime.DEMO_VERSION_3_2,
+                [
+                    "--input-source",
+                    "fake-live",
+                    "--render-mode",
+                    "panel",
+                    "--panel-layout",
+                    "side-by-side",
+                    "--panel-video-output",
+                    "result/panel.mp4",
+                    "--tracking-background-mask",
+                    "rgb",
+                ],
+            )
+            runtime.validate_args(args)
+            delegate = runtime.build_live_delegate_argv(args)
+            self.assertEqual(_option_value(delegate, "--panel-layout"), "side-by-side")
+            self.assertEqual(_option_value(delegate, "--panel-video-output"), "result/panel.mp4")
+            self.assertEqual(_option_value(delegate, "--tracking-background-mask"), "rgb")
+
     def test_live_validation_uses_one_connected_serial(self) -> None:
         args = self._parse(runtime.DEMO_VERSION_3, [])
         validation = runtime.validate_live_contract(
