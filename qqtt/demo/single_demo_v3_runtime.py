@@ -664,6 +664,8 @@ def validate_args(args: argparse.Namespace) -> None:
         if args.recording_case is None:
             raise ValueError(f"--input-source {args.input_source} requires --recording-case or --fake-live-case")
         if not _interactive_tracking_render_requested(args) and not headless_capture:
+            if str(args.input_source) == INPUT_SOURCE_RECORDING:
+                raise ValueError(f"--input-source {args.input_source} requires --render-mode pointcloud")
             raise ValueError(f"--input-source {args.input_source} requires --render-mode pointcloud or panel")
         if str(args.track_mode) == TRACK_MODE_NONE:
             raise ValueError(f"--input-source {args.input_source} requires --track-mode controller-object")
@@ -671,6 +673,17 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--input-source {args.input_source} requires --tracker-backend tapnextpp")
     elif args.recording_case is not None:
         raise ValueError("--recording-case/--fake-live-case requires --input-source recording or fake-live")
+    if str(args.render_mode) == masked_pcd.RENDER_MODE_PANEL:
+        if str(args.input_source) != INPUT_SOURCE_FAKE_LIVE:
+            raise ValueError("--render-mode panel requires --input-source fake-live")
+        if str(args.depth_source) != DEPTH_SOURCE_FFS:
+            raise ValueError("--render-mode panel requires --depth-source ffs")
+        if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
+            raise ValueError("--render-mode panel requires --track-mode controller-object")
+        if hasattr(args, "pcd_mode") and str(args.pcd_mode) != "masked":
+            raise ValueError("--render-mode panel requires --pcd-mode masked")
+        if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
+            raise ValueError("--render-mode panel requires --tracker-backend tapnextpp")
     if args.table_calibrate is not None:
         table_path = Path(args.table_calibrate).expanduser()
         if not table_path.is_absolute():

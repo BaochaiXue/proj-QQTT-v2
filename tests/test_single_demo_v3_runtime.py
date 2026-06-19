@@ -420,6 +420,48 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(_option_value(delegate, "--panel-video-output"), "result/panel.mp4")
             self.assertEqual(_option_value(delegate, "--tracking-background-mask"), "rgb")
 
+    def test_demo3_fake_live_panel_requires_ffs_depth(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3,
+            [
+                "--input-source",
+                "fake-live",
+                "--render-mode",
+                "panel",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "--render-mode panel requires --depth-source ffs"):
+            runtime.validate_args(args)
+
+    def test_demo32_recording_panel_requires_fake_live_input(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "recording",
+                "--recording-case",
+                "data_collect/example_rgbd",
+                "--render-mode",
+                "panel",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "--render-mode panel requires --input-source fake-live"):
+            runtime.validate_args(args)
+
+    def test_demo32_live_panel_requires_fake_live_input(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--render-mode",
+                "panel",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "--render-mode panel requires --input-source fake-live"):
+            runtime.validate_args(args)
+
     def test_live_validation_uses_one_connected_serial(self) -> None:
         args = self._parse(runtime.DEMO_VERSION_3, [])
         validation = runtime.validate_live_contract(
@@ -1140,7 +1182,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             ],
         )
 
-        with self.assertRaisesRegex(ValueError, "requires --render-mode pointcloud"):
+        with self.assertRaisesRegex(ValueError, r"requires --render-mode pointcloud$"):
             runtime.validate_args(args)
 
     def test_demo32_fake_live_headless_capture_defaults_to_enhanced_pt_sync_filter(self) -> None:
