@@ -873,6 +873,37 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         with self.assertRaisesRegex(demo.LosslessPipelineError, "expected seq 1, got 2"):
             queue.put(self._mask_packet(seq=2))
 
+    def test_publish_mask_packet_waits_for_tracker_queue_capacity(self) -> None:
+        args = self._tracker_args()
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime._reset_lossless_state()
+        runtime.lossless_pcd_mask_queue.max_backlog_frames = 2
+        runtime.lossless_tracker_mask_queue.max_backlog_frames = 1
+        runtime.lossless_pcd_mask_queue.put(self._mask_packet(seq=0))
+        runtime.lossless_tracker_mask_queue.put(self._mask_packet(seq=0))
+
+        thread = threading.Thread(target=lambda: runtime._publish_mask_packet(self._mask_packet(seq=1)), daemon=True)
+        thread.start()
+
+        time.sleep(0.05)
+        self.assertTrue(thread.is_alive())
+        self.assertIsNone(runtime._fatal_error_snapshot())
+        self.assertEqual(runtime.lossless_pcd_mask_queue.pending_count(), 1)
+        self.assertEqual(runtime.lossless_tracker_mask_queue.pending_count(), 1)
+
+        drained = runtime.lossless_tracker_mask_queue.get(stop_event=runtime.stop_event)
+        self.assertIsNotNone(drained)
+        thread.join(timeout=1.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertIsNone(runtime._fatal_error_snapshot())
+        self.assertEqual(runtime.lossless_pcd_mask_queue.pending_count(), 2)
+        self.assertEqual(runtime.lossless_tracker_mask_queue.pending_count(), 1)
+        self.assertEqual(runtime.lossless_tracker_mask_queue.latest_seq(), 1)
+        self.assertEqual(runtime._lossless_segmented_frames, 1)
+        runtime.stop_event.set()
+        runtime._close_lossless_queues()
+
     def test_lossless_controller_filter_budget_can_drop_below_default_min_cap(self) -> None:
         args = self._tracker_args()
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
@@ -911,6 +942,113 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         pairs = pairer.add_tracker_packet(self._tracker_packet(seq=10))
 
         self.assertEqual([pair.seq for pair in pairs], [10, 11])
+
+    def test_same_seq_pairer_waits_for_fast_side_capacity_until_opposite_side_flushes(self) -> None:
+        pairer = demo.SameSeqPairer(max_backlog_frames=2)
+        stop_event = threading.Event()
+        wait_results: list[bool] = []
+        errors: list[BaseException] = []
+        waiter_entered = threading.Event()
+
+        self.assertEqual(
+            pairer.add_pcd_result(
+                demo.PcdBuildResult(
+                    packet=self._pcd_packet(seq=0),
+                    depth_m=None,
+                    mask_packet=self._mask_packet(seq=0),
+                )
+            ),
+            [],
+        )
+        self.assertEqual(
+            pairer.add_pcd_result(
+                demo.PcdBuildResult(
+                    packet=self._pcd_packet(seq=1),
+                    depth_m=None,
+                    mask_packet=self._mask_packet(seq=1),
+                )
+            ),
+            [],
+        )
+
+        def wait_for_pcd_capacity() -> None:
+            waiter_entered.set()
+            try:
+                wait_results.append(
+                    pairer.wait_for_side_capacity(
+                        "pcd",
+                        stop_event=stop_event,
+                        timeout_s=0.01,
+                    )
+                )
+            except BaseException as exc:  # pragma: no cover - re-raised below
+                errors.append(exc)
+
+        thread = threading.Thread(target=wait_for_pcd_capacity, daemon=True)
+        thread.start()
+
+        self.assertTrue(waiter_entered.wait(timeout=1.0))
+        time.sleep(0.05)
+        self.assertEqual(wait_results, [])
+
+        pairs = pairer.add_tracker_packet(self._tracker_packet(seq=0))
+
+        thread.join(timeout=1.0)
+        self.assertFalse(thread.is_alive())
+        if errors:
+            raise errors[0]
+        self.assertEqual([pair.seq for pair in pairs], [0])
+        self.assertEqual(wait_results, [True])
+
+    def test_lossless_pcd_worker_waits_for_pairer_capacity_when_tracker_lags(self) -> None:
+        args = self._tracker_args()
+        args.render_mode = "none"
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime._reset_lossless_state()
+        runtime.same_seq_pairer.max_backlog_frames = 1
+        runtime.lossless_pcd_mask_queue.put(self._mask_packet(seq=0))
+        runtime.lossless_pcd_mask_queue.put(self._mask_packet(seq=1))
+        runtime.lossless_pcd_mask_queue.close()
+
+        def build_pcd(
+            mask_packet: demo.MaskPacket,
+            *,
+            rng: np.random.Generator,
+            require_filter_seq: bool = False,
+        ) -> demo.PcdBuildResult:
+            _ = rng, require_filter_seq
+            return demo.PcdBuildResult(
+                packet=self._pcd_packet(seq=mask_packet.seq),
+                depth_m=None,
+                mask_packet=mask_packet,
+            )
+
+        runtime._build_pcd_packet_from_mask = build_pcd  # type: ignore[method-assign]
+        thread = threading.Thread(target=runtime._lossless_pcd_worker, daemon=True)
+        thread.start()
+
+        deadline = time.time() + 1.0
+        while time.time() < deadline and runtime.same_seq_pairer.stats.pending_pcd < 1:
+            time.sleep(0.01)
+        self.assertEqual(runtime.same_seq_pairer.stats.pending_pcd, 1)
+        time.sleep(0.05)
+        self.assertIsNone(runtime._fatal_error_snapshot())
+        self.assertTrue(thread.is_alive())
+
+        acquired = runtime._lossless_pairer_lock.acquire(timeout=1.0)
+        self.assertTrue(acquired)
+        try:
+            pairs = runtime.same_seq_pairer.add_tracker_packet(self._tracker_packet(seq=0))
+            runtime._publish_pairer_outputs(pairs)
+        finally:
+            runtime._lossless_pairer_lock.release()
+
+        thread.join(timeout=1.0)
+        self.assertFalse(thread.is_alive())
+        self.assertIsNone(runtime._fatal_error_snapshot())
+        self.assertEqual(runtime._lossless_pcd_results, 2)
+        runtime.stop_event.set()
+        runtime._close_lossless_queues()
 
     def test_strict_pair_rejects_mismatched_pcd_and_tracker_seq(self) -> None:
         args = self._tracker_args()
@@ -1035,6 +1173,70 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(published, [0, 1])
         self.assertEqual(runtime._lossless_next_publish_seq, 2)
+
+    def test_fake_live_lossless_capture_waits_for_first_pair_before_replay_clock(self) -> None:
+        class FakeRecordingSource:
+            frame_count = 100
+            effective_fps = 5.0
+
+            def __init__(self) -> None:
+                self.first_receive_s = time.perf_counter() - 2.0
+
+            def read_packet(
+                self,
+                *,
+                seq: int,
+                frame_index: int | None = None,
+                wait_ms: float = 0.0,
+            ) -> demo.FramePacket:
+                _ = frame_index
+                receive_s = self.first_receive_s if int(seq) == 0 else time.perf_counter()
+                return demo.FramePacket(
+                    seq=int(seq),
+                    color_bgr=np.zeros((4, 4, 3), dtype=np.uint8),
+                    depth_source="realsense",
+                    intrinsics=CameraIntrinsics(fx=100.0, fy=100.0, cx=0.0, cy=0.0),
+                    depth_scale_m_per_unit=0.001,
+                    receive_perf_s=receive_s,
+                    timing=demo.PipelineTiming(wait_ms=float(wait_ms)),
+                    depth_u16=np.ones((4, 4), dtype=np.uint16),
+                )
+
+        args = self._tracker_args()
+        args.input_source = demo.INPUT_SOURCE_FAKE_LIVE
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime._reset_lossless_state()
+        runtime.recording_source = FakeRecordingSource()
+        published: list[int] = []
+        first_published = threading.Event()
+
+        def publish(packet: demo.FramePacket, *, record_s: float | None = None) -> None:
+            _ = record_s
+            published.append(int(packet.seq))
+            if int(packet.seq) == 0:
+                first_published.set()
+
+        runtime._publish_capture_packet = publish  # type: ignore[method-assign]
+        thread = threading.Thread(target=runtime._capture_recording_worker, daemon=True)
+        thread.start()
+
+        self.assertTrue(first_published.wait(timeout=1.0))
+        runtime._recording_first_frame_segmented.set()
+        time.sleep(0.25)
+        try:
+            self.assertEqual(published, [0])
+            first_pair_ready = getattr(runtime, "_lossless_first_pair_published", None)
+            self.assertIsNotNone(first_pair_ready)
+            first_pair_ready.set()
+            deadline = time.time() + 1.0
+            while time.time() < deadline and len(published) <= 1:
+                time.sleep(0.01)
+            self.assertGreater(len(published), 1)
+            self.assertEqual(published[1], 1)
+        finally:
+            runtime.stop_event.set()
+            thread.join(timeout=1.0)
+            runtime._close_lossless_queues()
 
     def test_pcd_visual_mode_with_tracker_start_threads_uses_parallel_lossless_workers(self) -> None:
         args = self._tracker_args()

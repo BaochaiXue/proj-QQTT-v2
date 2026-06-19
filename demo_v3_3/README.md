@@ -40,9 +40,10 @@ demo mode.
 World-Z diagnostics are always reported for table-calibrated PCD. The runtime
 reports object/controller Z quantiles plus hand_a/hand_b stats when those masks
 are available, with candidate counts for table bands at 5, 10, 20, and 30 mm.
-Demo 3.3 `--demo-visual-mode pcd|tracking` enables runtime table-Z deletion by
-default at 0 mm signed clearance; use `--disable-table-z-filter` for unfiltered
-ablations, or pass a larger threshold explicitly:
+Demo 3.3 `--demo-visual-mode pcd|tracking`, including headless captures, enables
+runtime table-Z deletion by default at 0 mm signed clearance; use
+`--disable-table-z-filter` for unfiltered ablations, or pass a larger threshold
+explicitly:
 
 ```bash
 --table-z-filter-threshold-m 0.01 --table-z-filter-classes both

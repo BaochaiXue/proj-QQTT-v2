@@ -283,6 +283,7 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             self.assertIsNotNone(first)
             seen.append(first.seq)
             demo._recording_first_frame_segmented.set()
+            demo._lossless_first_pair_published.set()
 
             deadline = time.time() + 1.0
             while time.time() < deadline:
@@ -336,6 +337,9 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
 
             time.sleep(0.12)
             demo._recording_first_frame_segmented.set()
+            time.sleep(0.02)
+            self.assertIsNone(demo.lossless_frame_queue.get_nowait())
+            demo._lossless_first_pair_published.set()
             second = demo.lossless_frame_queue.get(stop_event=demo.stop_event)
             self.assertIsNotNone(second)
             assert second is not None
@@ -383,6 +387,7 @@ class RecordedRgbdReplaySourceTest(unittest.TestCase):
             self.assertIsNotNone(first)
             seen.append(first.seq)
             demo._recording_first_frame_segmented.set()
+            demo._lossless_first_pair_published.set()
             deadline = time.time() + 1.0
             while time.time() < deadline:
                 packet = demo.lossless_frame_queue.get(stop_event=demo.stop_event)

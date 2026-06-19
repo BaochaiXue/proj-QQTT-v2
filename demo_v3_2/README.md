@@ -94,9 +94,10 @@ World-Z diagnostics are always reported for table-calibrated PCD. After the curr
 enhanced-PT PCD output is transformed into table world, the runtime records
 object/controller Z quantiles plus hand_a/hand_b stats when those masks are
 available, with table-band candidate counts at 5, 10, 20, and 30 mm. Demo 3.2
-`--demo-visual-mode pcd|tracking` enables runtime table-Z deletion by default
-at 0 mm signed clearance; use `--disable-table-z-filter` for unfiltered
-ablations, or pass a larger threshold explicitly:
+`--demo-visual-mode pcd|tracking`, including headless captures, enables runtime
+table-Z deletion by default at 0 mm signed clearance; use
+`--disable-table-z-filter` for unfiltered ablations, or pass a larger threshold
+explicitly:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
@@ -113,7 +114,9 @@ open Open3D. It saves the sync filtered PCD selected by the visual mode
 (`pt-filter` for `pcd`, `enhanced-pt` for `tracking`), RGB frames,
 color-aligned FFS depth, EdgeTAM `hand_a`/`hand_b`/`object` masks plus legacy
 controller/object masks, TAPNext++ query trajectory artifacts, capture metadata
-with `camera_to_world_c2w`, and per-frame `world_z_stats.jsonl` diagnostics:
+with `camera_to_world_c2w`, and per-frame `world_z_stats.jsonl` diagnostics.
+By default these saved PCD artifacts have the 0 mm table-Z filter applied; add
+`--disable-table-z-filter` to capture the unfiltered PCD ablation:
 
 Demo 3.2 defaults both object and controller PCD mask erosion to 0px so small
 target regions are not eaten before point-cloud generation. Passing

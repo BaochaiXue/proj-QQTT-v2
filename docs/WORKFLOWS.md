@@ -74,9 +74,9 @@ plus hand_a/hand_b stats when those masks are available, after the current
 PT/enhanced-PT filter. The current table calibration uses negative Z as the
 direction above the tabletop (`table_z_above_direction = negative`), and the
 filter uses signed clearance from the table plane. Demo 3.1/3.2/3.3
-`--demo-visual-mode pcd|tracking` delete table-plane candidates by default at
-`--table-z-filter-threshold-m 0.0`; pass `--disable-table-z-filter` for
-unfiltered ablations. Demo 3.x Open3D
+`--demo-visual-mode pcd|tracking` windows, plus Demo 3.2/3.3 headless captures,
+delete table-plane candidates by default at `--table-z-filter-threshold-m 0.0`;
+pass `--disable-table-z-filter` for unfiltered ablations. Demo 3.x Open3D
 tracks demo-mode `human hand` controllers as three EdgeTAM identities
 (`hand_a`, `object`, `hand_b`) while keeping the controller PCD/depth mask as
 `hand_a | hand_b`; frame-0 needs two separable hands for that mode. Demo 3.x

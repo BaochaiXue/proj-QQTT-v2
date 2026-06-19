@@ -2,7 +2,7 @@
 
 > **For agentic workers:** Use TDD. Add failing tests before production code and keep existing uncommitted Demo 3.x PCD-filter changes intact.
 
-**Goal:** Make Demo 3.1, Demo 3.2, and Demo 3.3 expose table-world Z diagnostics, and make their visual PCD/tracking modes apply the table-Z filter by default at 0 mm signed clearance.
+**Goal:** Make Demo 3.1, Demo 3.2, and Demo 3.3 expose table-world Z diagnostics, and make their visual PCD/tracking modes apply the table-Z filter by default at 0 mm signed clearance. Demo 3.2/3.3 headless captures use the same default.
 
 **Architecture:** Reuse the existing `table_calibrate.pkl` / `table_world_z0` contract. Build PCD with existing PT/enhanced-PT behavior first, transform the output to table-world coordinates, compute world-Z stats and threshold candidates, then remove table-band points in Demo 3.1/3.2/3.3 visual modes unless `--disable-table-z-filter` is passed. Headless capture stores stats and metadata so offline RGB overlay videos can compare before/after without rerunning the demo. The tabletop is `table_z_m = 0.0`; the current table calibration uses negative Z as the workspace side (`table_z_above_direction = negative`), so diagnostics and filtering operate on signed clearance instead of assuming positive Z is up.
 
@@ -17,8 +17,8 @@
 - [x] Extend the headless render helper with table-world projection and RGB overlay sweep mode.
 - [x] Fix table-Z diagnostics/filter direction after sweep evidence showed the current calibration's target PCD lies on negative Z above the table.
 - [x] Change visual-mode runtime defaults: Demo 3.1/3.2/3.3 `pcd` and `tracking`
-  modes enable table-Z filtering at 0 mm signed clearance, with
-  `--disable-table-z-filter` for ablations.
+  modes, plus Demo 3.2/3.3 headless captures, enable table-Z filtering at
+  0 mm signed clearance, with `--disable-table-z-filter` for ablations.
 - [x] Update Demo 3.1/3.2/3.3 docs and workflows.
 - [x] Run focused unit tests, then smoke validation if focused tests pass.
 

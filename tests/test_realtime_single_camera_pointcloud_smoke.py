@@ -145,7 +145,10 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertIn("--init-mode {sam31-first-frame,saved-masks}", result.stdout)
         self.assertIn("--track-mode {controller-object,object-only,controller-only,none}", result.stdout)
         self.assertIn("--pcd-mode {masked,none}", result.stdout)
-        self.assertIn("--render-mode {pointcloud,none}", result.stdout)
+        self.assertIn("--render-mode {pointcloud,none,panel}", result.stdout)
+        self.assertIn("--panel-layout {side-by-side}", result.stdout)
+        self.assertIn("--panel-video-output PANEL_VIDEO_OUTPUT", result.stdout)
+        self.assertIn("--tracking-background-mask {target-union,rgb}", result.stdout)
         self.assertIn("--demo-preset {none,local-ffs-professor}", result.stdout)
         self.assertIn("--compile-mode {vision-reduce-overhead}", result.stdout)
         self.assertIn("--pcd-color-mode {rgb,class}", result.stdout)
@@ -437,6 +440,31 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
                 "pointcloud",
                 "--demo-visual-mode",
                 "tracking",
+            ]
+        )
+        masked_demo.apply_demo_preset(args)
+
+        self.assertTrue(args.enable_table_z_filter)
+        self.assertEqual(args.table_z_filter_threshold_m, 0.0)
+
+    def test_masked_edgetam_headless_defaults_table_z_filter_to_zero_when_calibrated(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--table-calibrate",
+                "table_calibrate.pkl",
+                "--input-source",
+                "fake-live",
+                "--depth-source",
+                "ffs",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/headless_case",
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+                "--pcd-filter-preset",
+                "enhanced-pt",
             ]
         )
         masked_demo.apply_demo_preset(args)

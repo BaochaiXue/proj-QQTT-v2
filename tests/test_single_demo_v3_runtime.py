@@ -1217,9 +1217,15 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["pcd_filter_mode"], "sync")
         self.assertEqual(contract["object_filter"], "enhanced-pt")
         self.assertEqual(contract["controller_filter"], "enhanced-pt")
+        self.assertTrue(contract["table_z_filter_enabled"])
+        self.assertEqual(contract["table_z_filter_threshold_m"], 0.0)
+        self.assertEqual(contract["table_z_filter_classes"], "both")
+        self.assertEqual(contract["table_z_above_direction"], "negative")
         self.assertEqual(_option_value(delegate, "--render-mode"), "none")
         self.assertEqual(_option_value(delegate, "--headless-capture-dir"), "result/headless_case")
         self.assertIn("--enable-pcd-filter", delegate)
+        self.assertIn("--enable-table-z-filter", delegate)
+        self.assertEqual(_option_value(delegate, "--table-z-filter-threshold-m"), "0.0")
 
     def test_demo32_fake_live_headless_capture_accepts_pt_filter(self) -> None:
         args = self._parse(

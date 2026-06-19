@@ -410,7 +410,8 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         default=None,
         help=(
             "Directory for Demo 3.2/3.3 fake-live headless filtered PCD artifacts. "
-            "Defaults to output-root/headless_capture_<timestamp> when --render-mode none is used."
+            "Defaults to output-root/headless_capture_<timestamp> when --render-mode none is used. "
+            "The saved PCD uses the same default 0 mm table-Z filter as visual PCD/tracking modes."
         ),
     )
     parser.add_argument(

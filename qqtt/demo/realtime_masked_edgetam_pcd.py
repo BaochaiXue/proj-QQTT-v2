@@ -1145,6 +1145,38 @@ class OrderedPacketQueue(Generic[PacketT]):
             self._condition.notify_all()
             return len(self._items)
 
+    def wait_for_capacity(self, *, stop_event: threading.Event, timeout_s: float = 0.05) -> bool:
+        with self._condition:
+            while not stop_event.is_set():
+                if self._closed:
+                    raise LosslessPipelineError(f"{self.name} queue is closed")
+                if len(self._items) < self.max_backlog_frames:
+                    return True
+                self._condition.wait(timeout=float(timeout_s))
+            return False
+
+    def put_wait(self, packet: PacketT, *, stop_event: threading.Event, timeout_s: float = 0.05) -> int:
+        seq = int(_packet_seq(packet))
+        with self._condition:
+            if self._closed:
+                raise LosslessPipelineError(f"{self.name} queue is closed")
+            expected = self._last_put_seq + 1
+            if seq != expected:
+                raise LosslessPipelineError(
+                    f"{self.name} queue expected seq {expected}, got {seq}"
+                )
+            while len(self._items) >= self.max_backlog_frames:
+                if stop_event.is_set():
+                    return 0
+                if self._closed:
+                    raise LosslessPipelineError(f"{self.name} queue is closed")
+                self._condition.wait(timeout=float(timeout_s))
+            self._items.append(packet)
+            self._last_put_seq = seq
+            self._max_size_seen = max(self._max_size_seen, len(self._items))
+            self._condition.notify_all()
+            return len(self._items)
+
     def get(self, *, stop_event: threading.Event, timeout_s: float = 0.05) -> PacketT | None:
         with self._condition:
             while not self._items:
@@ -1246,6 +1278,7 @@ class SameSeqPairer:
     def __init__(self, *, max_backlog_frames: int) -> None:
         self.max_backlog_frames = max(1, int(max_backlog_frames))
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
         self._pending_pcd: dict[int, PcdBuildResult] = {}
         self._pending_tracker: dict[int, TrackerMarkerPacket] = {}
         self._expected_seq = 0
@@ -1254,17 +1287,43 @@ class SameSeqPairer:
         self._tracker_closed = False
 
     def reset(self) -> None:
-        with self._lock:
+        with self._condition:
             self._pending_pcd.clear()
             self._pending_tracker.clear()
             self._expected_seq = 0
             self._emitted_seq = -1
             self._pcd_closed = False
             self._tracker_closed = False
+            self._condition.notify_all()
+
+    def wait_for_side_capacity(
+        self,
+        side: str,
+        *,
+        stop_event: threading.Event,
+        timeout_s: float = 0.05,
+    ) -> bool:
+        side_name = str(side)
+        if side_name not in {"pcd", "tracker"}:
+            raise ValueError("side must be 'pcd' or 'tracker'")
+        with self._condition:
+            while not stop_event.is_set():
+                if side_name == "pcd":
+                    if self._pcd_closed:
+                        raise LosslessPipelineError("same-seq pairer PCD side is closed")
+                    pending = len(self._pending_pcd)
+                else:
+                    if self._tracker_closed:
+                        raise LosslessPipelineError("same-seq pairer tracker side is closed")
+                    pending = len(self._pending_tracker)
+                if pending < self.max_backlog_frames:
+                    return True
+                self._condition.wait(timeout=float(timeout_s))
+            return False
 
     def add_pcd_result(self, result: PcdBuildResult) -> list[PairedBuildResult]:
         seq = int(result.packet.seq)
-        with self._lock:
+        with self._condition:
             if self._pcd_closed:
                 raise LosslessPipelineError("same-seq pairer PCD side is closed")
             if seq < self._expected_seq:
@@ -1275,11 +1334,13 @@ class SameSeqPairer:
                 raise LosslessPipelineError(f"same-seq pairer duplicate PCD seq {seq}")
             self._pending_pcd[seq] = result
             self._check_backlog_locked()
-            return self._flush_ready_locked()
+            pairs = self._flush_ready_locked()
+            self._condition.notify_all()
+            return pairs
 
     def add_tracker_packet(self, packet: TrackerMarkerPacket) -> list[PairedBuildResult]:
         seq = int(packet.seq)
-        with self._lock:
+        with self._condition:
             if self._tracker_closed:
                 raise LosslessPipelineError("same-seq pairer tracker side is closed")
             if seq < self._expected_seq:
@@ -1290,25 +1351,29 @@ class SameSeqPairer:
                 raise LosslessPipelineError(f"same-seq pairer duplicate tracker seq {seq}")
             self._pending_tracker[seq] = packet
             self._check_backlog_locked()
-            return self._flush_ready_locked()
+            pairs = self._flush_ready_locked()
+            self._condition.notify_all()
+            return pairs
 
     def close_pcd(self) -> list[PairedBuildResult]:
-        with self._lock:
+        with self._condition:
             self._pcd_closed = True
             pairs = self._flush_ready_locked()
             self._check_closed_locked()
+            self._condition.notify_all()
             return pairs
 
     def close_tracker(self) -> list[PairedBuildResult]:
-        with self._lock:
+        with self._condition:
             self._tracker_closed = True
             pairs = self._flush_ready_locked()
             self._check_closed_locked()
+            self._condition.notify_all()
             return pairs
 
     @property
     def done(self) -> bool:
-        with self._lock:
+        with self._condition:
             return (
                 self._pcd_closed
                 and self._tracker_closed
@@ -1318,7 +1383,7 @@ class SameSeqPairer:
 
     @property
     def stats(self) -> PairerStats:
-        with self._lock:
+        with self._condition:
             return PairerStats(
                 expected_seq=int(self._expected_seq),
                 pending_pcd=len(self._pending_pcd),
@@ -1840,7 +1905,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "When --render-mode none is used with fake-live FFS replay, save enhanced-pt filtered "
-            "PCD, color-aligned FFS depth, and TAPNext++ query trajectory artifacts here."
+            "PCD, color-aligned FFS depth, and TAPNext++ query trajectory artifacts here. "
+            "With --table-calibrate, the default demo preset also applies the 0 mm table-Z filter."
         ),
     )
     parser.add_argument("--controller-color", type=_parse_rgb_triplet, default=CONTROLLER_COLOR_RGB, help="Controller RGB color.")
@@ -3579,6 +3645,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.stop_event = threading.Event()
         self._lossless_capture_done = threading.Event()
         self._lossless_processing_done = threading.Event()
+        self._lossless_first_pair_published = threading.Event()
         self._lossless_pipeline_active = False
         self._threads: list[threading.Thread] = []
         self._request_render_update: Callable[[], None] = lambda: None
@@ -3708,6 +3775,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             self._lossless_publish_condition.notify_all()
         self._lossless_capture_done.clear()
         self._lossless_processing_done.clear()
+        self._lossless_first_pair_published.clear()
         self._recording_first_frame_segmented.clear()
         self._lossless_pipeline_active = True
         self._lossless_offered_frames = 0
@@ -3740,6 +3808,18 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"segmented={self._lossless_segmented_frames} pcd_results={self._lossless_pcd_results} "
             f"tracker_results={self._lossless_tracker_results} pairs={self._lossless_pairs_emitted}"
         )
+
+    def _wait_for_lossless_replay_startup_pair(self) -> bool:
+        if not (
+            self._lossless_enabled()
+            and self.args.track_mode != "none"
+            and _is_replay_input_source(str(self.args.input_source))
+        ):
+            return True
+        while not self.stop_event.is_set():
+            if self._lossless_first_pair_published.wait(timeout=0.01):
+                return True
+        return False
 
     def _build_headless_capture_metadata(self) -> dict[str, Any]:
         if self.runtime is None:
@@ -4061,7 +4141,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.headless_capture_writer is not None and _is_replay_input_source(str(self.args.input_source)):
             self.headless_capture_writer.write_input_frame(packet)
         if self._lossless_enabled():
-            self.lossless_frame_queue.put(packet)
+            if self.lossless_frame_queue.put_wait(packet, stop_event=self.stop_event) <= 0:
+                return
             self._lossless_offered_frames += 1
         self.capture_stats.record(packet.receive_perf_s if record_s is None else float(record_s))
 
@@ -4095,6 +4176,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     break
             if self.stop_event.is_set():
                 return
+        if not self._wait_for_lossless_replay_startup_pair():
+            return
         gate_done_s = time.perf_counter()
         self._startup_hold_s = max(0.0, float(gate_done_s - camera_start_s))
         if self.headless_capture_writer is not None:
@@ -4922,6 +5005,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.pcd_stats.record(pcd_result.packet.process_done_perf_s)
         self.tracker_stats.record(tracker_packet.process_done_perf_s)
         self._lossless_pairs_emitted += 1
+        if pair.seq == 0:
+            self._lossless_first_pair_published.set()
         if self.headless_capture_writer is not None:
             self.headless_capture_writer.write_tracker(tracker_packet)
             self._write_headless_pcd_result(pcd_result, tracker_packet=tracker_packet)
@@ -4992,6 +5077,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     require_filter_seq=True,
                 )
                 self._lossless_pcd_results += 1
+                if not self.same_seq_pairer.wait_for_side_capacity("pcd", stop_event=self.stop_event):
+                    break
                 with self._lossless_pairer_lock:
                     pairs = self.same_seq_pairer.add_pcd_result(result)
                     self._publish_pairer_outputs(pairs)
@@ -5022,6 +5109,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 if packet is None:
                     raise LosslessPipelineError(f"tracker did not produce packet for seq {mask_packet.seq}")
                 self._lossless_tracker_results += 1
+                if not self.same_seq_pairer.wait_for_side_capacity("tracker", stop_event=self.stop_event):
+                    break
                 with self._lossless_pairer_lock:
                     pairs = self.same_seq_pairer.add_tracker_packet(packet)
                     self._publish_pairer_outputs(pairs)
@@ -5083,6 +5172,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
     def _publish_mask_packet(self, packet: MaskPacket) -> None:
         self.mask_slot.put(packet)
         if self._lossless_enabled():
+            if not self.lossless_pcd_mask_queue.wait_for_capacity(stop_event=self.stop_event):
+                return
+            if not self.lossless_tracker_mask_queue.wait_for_capacity(stop_event=self.stop_event):
+                return
             self.lossless_pcd_mask_queue.put(packet)
             self.lossless_tracker_mask_queue.put(packet)
             self._lossless_segmented_frames += 1
