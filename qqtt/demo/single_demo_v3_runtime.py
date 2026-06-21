@@ -439,15 +439,15 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         "--tracker-retire-filtered-markers",
         dest="tracker_retire_filtered_markers",
         action="store_true",
-        help="Permanently hide any query marker after it fails the active PCD residual/table-Z gate.",
+        help="Opt in to permanently hiding any query marker after it fails the active PCD residual/table-Z gate.",
     )
     parser.add_argument(
         "--no-tracker-retire-filtered-markers",
         dest="tracker_retire_filtered_markers",
         action="store_false",
-        help="Keep legacy per-frame marker gating; filtered markers may reappear later.",
+        help="Use the default per-frame marker gate; filtered markers may reappear later.",
     )
-    parser.set_defaults(tracker_retire_filtered_markers=True)
+    parser.set_defaults(tracker_retire_filtered_markers=False)
     parser.add_argument("--tapnet-repo-dir", type=Path, default=masked_pcd.DEFAULT_TAPNET_REPO_DIR)
     parser.add_argument("--tapnextpp-checkpoint", type=Path, default=masked_pcd.DEFAULT_TAPNEXTPP_CHECKPOINT)
     parser.add_argument("--tapnextpp-image-size", default="256,256")

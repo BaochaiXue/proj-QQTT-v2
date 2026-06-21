@@ -688,11 +688,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["tracker_sync_policy"], "strict_same_seq_lossless_5fps")
         self.assertEqual(contract["query_display_policy"], "visible_3d_lifted_all")
         self.assertEqual(contract["query_color_mode"], "phystwin_rainbow_identity")
-        self.assertTrue(contract["tracker_retire_filtered_markers"])
-        self.assertEqual(
-            contract["tracker_marker_retirement_policy"],
-            "pcd_filter_residual_table_z_once_false",
-        )
+        self.assertFalse(contract["tracker_retire_filtered_markers"])
+        self.assertEqual(contract["tracker_marker_retirement_policy"], "disabled")
         self.assertTrue(contract["pcd_filter_enabled"])
         self.assertEqual(contract["pcd_filter_mode"], "sync")
         self.assertEqual(contract["pcd_filter_preset"], "original")
@@ -703,11 +700,12 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["table_z_filter_threshold_m"], 0.0)
         self.assertEqual(_option_value(delegate, "--demo-visual-mode"), "tracking")
         self.assertEqual(_option_value(delegate, "--tracker-overlay-max-points"), "0")
-        self.assertIn("--tracker-retire-filtered-markers", delegate)
+        self.assertIn("--no-tracker-retire-filtered-markers", delegate)
+        self.assertNotIn("--tracker-retire-filtered-markers", delegate)
         self.assertIn("--enable-pcd-filter", delegate)
         self.assertIn("--enable-table-z-filter", delegate)
 
-    def test_demo32_tracking_visual_mode_can_disable_filtered_marker_retirement(self) -> None:
+    def test_demo32_tracking_visual_mode_can_enable_filtered_marker_retirement(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_2,
             [
@@ -715,17 +713,20 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 "fake-live",
                 "--demo-visual-mode",
                 "tracking",
-                "--no-tracker-retire-filtered-markers",
+                "--tracker-retire-filtered-markers",
             ],
         )
         runtime.validate_args(args)
         contract = runtime.build_contract(args)
         delegate = runtime.build_live_delegate_argv(args)
 
-        self.assertFalse(contract["tracker_retire_filtered_markers"])
-        self.assertEqual(contract["tracker_marker_retirement_policy"], "disabled")
-        self.assertIn("--no-tracker-retire-filtered-markers", delegate)
-        self.assertNotIn("--tracker-retire-filtered-markers", delegate)
+        self.assertTrue(contract["tracker_retire_filtered_markers"])
+        self.assertEqual(
+            contract["tracker_marker_retirement_policy"],
+            "pcd_filter_residual_table_z_once_false",
+        )
+        self.assertIn("--tracker-retire-filtered-markers", delegate)
+        self.assertNotIn("--no-tracker-retire-filtered-markers", delegate)
 
     def test_demo32_pcd_visual_mode_keeps_full_pipeline_and_hides_tracker_render_only(self) -> None:
         args = self._parse(

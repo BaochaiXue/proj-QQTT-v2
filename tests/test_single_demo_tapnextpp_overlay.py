@@ -1731,6 +1731,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
     def test_tracker_marker_retirement_skips_permanent_loss_on_initial_marker_packet(self) -> None:
         args = self._tracker_residual_table_z_args(query_count=3)
         args.enable_table_z_filter = False
+        args.tracker_retire_filtered_markers = True
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
         self._seed_three_tracker_queries(runtime)
         self._install_three_query_residual_masks(
@@ -1775,6 +1776,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
     def test_tracker_marker_retirement_allows_grace_hidden_query_to_reappear_on_next_frame(self) -> None:
         args = self._tracker_residual_table_z_args(query_count=3)
         args.enable_table_z_filter = False
+        args.tracker_retire_filtered_markers = True
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
         self._seed_three_tracker_queries(runtime)
         self._install_three_query_residual_masks(
@@ -1807,10 +1809,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(second.remaining_hand_a_query_count, 1)
         self.assertEqual(second.remaining_hand_b_query_count, 1)
 
-    def test_tracker_marker_retirement_can_be_disabled_for_old_per_frame_gate_behavior(self) -> None:
+    def test_tracker_marker_retirement_defaults_to_old_per_frame_gate_behavior(self) -> None:
         args = self._tracker_residual_table_z_args(query_count=3)
         args.enable_table_z_filter = False
-        args.tracker_retire_filtered_markers = False
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
         self._seed_three_tracker_queries(runtime)
         self._install_three_query_residual_masks(
@@ -1841,6 +1842,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         args = self._tracker_residual_table_z_args(query_count=3)
         args.enable_table_z_filter = False
         args.tracker_overlay_max_points = 1
+        args.tracker_retire_filtered_markers = True
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
         self._seed_three_tracker_queries(runtime)
         self._install_three_query_residual_masks(

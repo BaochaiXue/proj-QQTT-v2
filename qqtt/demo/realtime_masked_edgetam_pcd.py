@@ -1885,15 +1885,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--tracker-retire-filtered-markers",
         dest="tracker_retire_filtered_markers",
         action="store_true",
-        help="Permanently hide any query marker after it fails the active PCD residual/table-Z gate.",
+        help="Opt in to permanently hiding any query marker after it fails the active PCD residual/table-Z gate.",
     )
     parser.add_argument(
         "--no-tracker-retire-filtered-markers",
         dest="tracker_retire_filtered_markers",
         action="store_false",
-        help="Keep legacy per-frame marker gating; filtered markers may reappear later.",
+        help="Use the default per-frame marker gate; filtered markers may reappear later.",
     )
-    parser.set_defaults(tracker_retire_filtered_markers=True)
+    parser.set_defaults(tracker_retire_filtered_markers=False)
     parser.add_argument(
         "--tapnet-repo-dir",
         type=Path,
@@ -2194,7 +2194,7 @@ def tracker_marker_gate(args: argparse.Namespace) -> str:
 
 
 def tracker_retire_filtered_markers(args: argparse.Namespace) -> bool:
-    return bool(getattr(args, "tracker_retire_filtered_markers", True))
+    return bool(getattr(args, "tracker_retire_filtered_markers", False))
 
 
 def tracker_marker_retirement_policy(args: argparse.Namespace) -> str:

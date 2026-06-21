@@ -64,12 +64,11 @@ running TAPNext++ so the displayed FPS reflects the full pipeline. Pass
 and TAPNext++ query initialization together; the default is `original`, and
 tracking query points are sampled from that preset's residual PCD pixels.
 Displayed query markers also obey the current residual/table-Z gate, and by
-default a marker that fails that gate after the initialization marker frame is
-permanently retired from visualization while TAPNext++ continues tracking
-internally. The initialization marker frame is a grace frame for the remaining
-baseline: invalid markers can be hidden for that frame, but permanent retirement
-starts on the next tracker frame. Use `--no-tracker-retire-filtered-markers` for
-debugging the older per-frame gate behavior. When
+default this is only per-frame display gating: invalid markers can be hidden for
+the current frame but can reappear if TAPNext++ later tracks them back into the
+filtered residual. Use `--tracker-retire-filtered-markers` only when explicitly
+testing the stricter once-false retirement policy; permanent retirement then
+starts after the initialization marker frame. When
 `enhanced-pt` component filtering is explicitly enabled, object filtering keeps
 one main component while controller filtering keeps two main components so
 two-hand controllers are not dropped as disconnected noise.
