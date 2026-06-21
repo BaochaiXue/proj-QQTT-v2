@@ -25,6 +25,12 @@ class SideBySidePanelHud:
     tracking_background: str = "target-union"
     object_point_count: int = 0
     controller_point_count: int = 0
+    query_count: int = 0
+    remaining_query_count: int = 0
+    remaining_object_query_count: int = 0
+    remaining_controller_query_count: int = 0
+    remaining_hand_a_query_count: int = 0
+    remaining_hand_b_query_count: int = 0
 
     @property
     def rgb_ahead_frames(self) -> int:
@@ -109,6 +115,18 @@ def _hud_lines(hud: SideBySidePanelHud) -> list[str]:
     ]
 
 
+def _remaining_query_legend_lines(hud: SideBySidePanelHud) -> list[str]:
+    query_count = max(0, int(hud.query_count))
+    remaining = max(0, int(hud.remaining_query_count))
+    if query_count <= 0 and remaining <= 0:
+        return []
+    return [
+        f"remaining {remaining}/{query_count}",
+        f"obj={int(hud.remaining_object_query_count)} ctrl={int(hud.remaining_controller_query_count)}",
+        f"hand_a={int(hud.remaining_hand_a_query_count)} hand_b={int(hud.remaining_hand_b_query_count)}",
+    ]
+
+
 def render_side_by_side_panel(
     inputs: SideBySidePanelInputs,
     *,
@@ -123,6 +141,7 @@ def render_side_by_side_panel(
     right = _resize_to_cell(inputs.tracking_panel_bgr, cell_size)
 
     panel = np.concatenate([left, middle, right], axis=1)
+    _draw_text_lines(panel, _remaining_query_legend_lines(inputs.hud), origin=(2, 2))
     hud_y = max(0, panel.shape[0] - 48)
     _draw_text_lines(panel, _hud_lines(inputs.hud), origin=(2, hud_y))
     return np.ascontiguousarray(panel, dtype=np.uint8)

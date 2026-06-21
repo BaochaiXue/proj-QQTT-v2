@@ -162,6 +162,10 @@ TRACKER_QUERY_SOURCE_UNION_MASK = "object_controller_union_mask"
 TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL = "pcd_filter_residual"
 TRACKER_MARKER_GATE_TARGET_MASK_DEPTH = "target_mask_depth"
 TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z = "pcd_filter_residual_table_z"
+TRACKER_MARKER_RETIREMENT_POLICY_DISABLED = "disabled"
+TRACKER_MARKER_RETIREMENT_POLICY_PCD_FILTER_RESIDUAL_TABLE_Z_ONCE_FALSE = (
+    "pcd_filter_residual_table_z_once_false"
+)
 FAKE_LIVE_FRAME_SELECTION_POLICY = "drop_source_frames_preserve_recording_time"
 DEMO_PRESETS = ("none", "local-ffs-professor")
 DEFAULT_DEMO_PRESET = "none"
@@ -764,6 +768,48 @@ class MarkerResidualAudit:
     gate: str = TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z
 
 
+def _fit_bool_array(values: np.ndarray, length: int, *, fill: bool = False) -> np.ndarray:
+    output = np.full((max(0, int(length)),), bool(fill), dtype=bool)
+    arr = np.asarray(values, dtype=bool).reshape(-1)
+    count = min(len(arr), len(output))
+    if count:
+        output[:count] = arr[:count]
+    return output
+
+
+def _fit_int_array(values: np.ndarray, length: int, *, fill: int = 0) -> np.ndarray:
+    output = np.full((max(0, int(length)),), int(fill), dtype=np.int64)
+    arr = np.asarray(values, dtype=np.int64).reshape(-1)
+    count = min(len(arr), len(output))
+    if count:
+        output[:count] = arr[:count]
+    return output
+
+
+def _remaining_query_class_counts(
+    alive_mask: np.ndarray,
+    *,
+    query_is_object: np.ndarray,
+    query_is_controller: np.ndarray,
+    query_controller_instance_id: np.ndarray,
+) -> tuple[int, int, int, int]:
+    alive = np.asarray(alive_mask, dtype=bool).reshape(-1)
+    count = int(alive.shape[0])
+    is_object = _fit_bool_array(query_is_object, count)
+    is_controller = _fit_bool_array(query_is_controller, count)
+    instance_id = _fit_int_array(query_controller_instance_id, count)
+    hand_a = alive & (instance_id == QUERY_CONTROLLER_INSTANCE_HAND_A)
+    hand_b = alive & (instance_id == QUERY_CONTROLLER_INSTANCE_HAND_B)
+    controller = alive & (is_controller | hand_a | hand_b)
+    obj = alive & is_object & ~controller
+    return (
+        int(np.count_nonzero(obj)),
+        int(np.count_nonzero(controller)),
+        int(np.count_nonzero(hand_a)),
+        int(np.count_nonzero(hand_b)),
+    )
+
+
 @dataclass(frozen=True)
 class TrackerMarkerPacket:
     seq: int
@@ -798,7 +844,56 @@ class TrackerMarkerPacket:
     marker_residual_checked_count: int = 0
     marker_residual_violation_count: int = 0
     marker_residual_gate: str = TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z
+    query_alive_mask: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=bool))
+    remaining_query_count: int = -1
+    remaining_object_query_count: int = -1
+    remaining_controller_query_count: int = -1
+    remaining_hand_a_query_count: int = -1
+    remaining_hand_b_query_count: int = -1
+    retired_query_count: int = -1
     coordinate_frame: str = COORDINATE_FRAME
+
+    def __post_init__(self) -> None:
+        alive = np.asarray(self.query_alive_mask, dtype=bool).reshape(-1)
+        query_count = max(0, int(self.query_count))
+        if alive.size == 0 and query_count > 0:
+            alive = np.ones((query_count,), dtype=bool)
+        elif alive.size != query_count and query_count > 0:
+            fitted = np.zeros((query_count,), dtype=bool)
+            count = min(int(alive.size), query_count)
+            if count:
+                fitted[:count] = alive[:count]
+            alive = fitted
+        alive = np.ascontiguousarray(alive, dtype=bool)
+        object.__setattr__(self, "query_alive_mask", alive)
+        if int(self.remaining_query_count) < 0:
+            object.__setattr__(self, "remaining_query_count", int(np.count_nonzero(alive)))
+        if int(self.retired_query_count) < 0:
+            object.__setattr__(
+                self,
+                "retired_query_count",
+                max(0, query_count - int(np.count_nonzero(alive))),
+            )
+        if (
+            int(self.remaining_object_query_count) < 0
+            or int(self.remaining_controller_query_count) < 0
+            or int(self.remaining_hand_a_query_count) < 0
+            or int(self.remaining_hand_b_query_count) < 0
+        ):
+            object_count, controller_count, hand_a_count, hand_b_count = _remaining_query_class_counts(
+                alive,
+                query_is_object=np.empty((0,), dtype=bool),
+                query_is_controller=np.empty((0,), dtype=bool),
+                query_controller_instance_id=self.query_all_controller_instance_id,
+            )
+            if int(self.remaining_object_query_count) < 0:
+                object.__setattr__(self, "remaining_object_query_count", object_count)
+            if int(self.remaining_controller_query_count) < 0:
+                object.__setattr__(self, "remaining_controller_query_count", controller_count)
+            if int(self.remaining_hand_a_query_count) < 0:
+                object.__setattr__(self, "remaining_hand_a_query_count", hand_a_count)
+            if int(self.remaining_hand_b_query_count) < 0:
+                object.__setattr__(self, "remaining_hand_b_query_count", hand_b_count)
 
     @property
     def marker_count(self) -> int:
@@ -1064,6 +1159,20 @@ class HeadlessCaptureWriter:
             "marker_residual_gate": (
                 str(tracker_packet.marker_residual_gate) if tracker_packet is not None else "none"
             ),
+            "remaining_query_count": int(tracker_packet.remaining_query_count) if tracker_packet is not None else 0,
+            "remaining_object_query_count": (
+                int(tracker_packet.remaining_object_query_count) if tracker_packet is not None else 0
+            ),
+            "remaining_controller_query_count": (
+                int(tracker_packet.remaining_controller_query_count) if tracker_packet is not None else 0
+            ),
+            "remaining_hand_a_query_count": (
+                int(tracker_packet.remaining_hand_a_query_count) if tracker_packet is not None else 0
+            ),
+            "remaining_hand_b_query_count": (
+                int(tracker_packet.remaining_hand_b_query_count) if tracker_packet is not None else 0
+            ),
+            "retired_query_count": int(tracker_packet.retired_query_count) if tracker_packet is not None else 0,
             "controller_point_count": int(packet.controller_point_count),
             "object_point_count": int(packet.object_point_count),
             "controller_mask_pixels": int(np.count_nonzero(mask_packet.controller_mask)),
@@ -1078,6 +1187,7 @@ class HeadlessCaptureWriter:
             "hand_a_query_count": int(tracker_packet.hand_a_query_count) if tracker_packet is not None else 0,
             "hand_b_query_count": int(tracker_packet.hand_b_query_count) if tracker_packet is not None else 0,
             "object_query_count": int(tracker_packet.object_query_count) if tracker_packet is not None else 0,
+            "query_count": int(tracker_packet.query_count) if tracker_packet is not None else 0,
             "receive_perf_s": float(packet.receive_perf_s),
             "process_done_perf_s": float(packet.process_done_perf_s),
             "pair_process_done_perf_s": float(pair_process_done_s),
@@ -1123,6 +1233,13 @@ class HeadlessCaptureWriter:
             marker_residual_checked_count=np.asarray([int(packet.marker_residual_checked_count)], dtype=np.int64),
             marker_residual_violation_count=np.asarray([int(packet.marker_residual_violation_count)], dtype=np.int64),
             marker_residual_gate=np.asarray([str(packet.marker_residual_gate)]),
+            query_alive_mask=np.ascontiguousarray(packet.query_alive_mask, dtype=bool),
+            remaining_query_count=np.asarray([int(packet.remaining_query_count)], dtype=np.int64),
+            remaining_object_query_count=np.asarray([int(packet.remaining_object_query_count)], dtype=np.int64),
+            remaining_controller_query_count=np.asarray([int(packet.remaining_controller_query_count)], dtype=np.int64),
+            remaining_hand_a_query_count=np.asarray([int(packet.remaining_hand_a_query_count)], dtype=np.int64),
+            remaining_hand_b_query_count=np.asarray([int(packet.remaining_hand_b_query_count)], dtype=np.int64),
+            retired_query_count=np.asarray([int(packet.retired_query_count)], dtype=np.int64),
             query_count=np.asarray([int(packet.query_count)], dtype=np.int64),
             consistent_visible_count=np.asarray([int(packet.consistent_visible_count)], dtype=np.int64),
             hand_a_query_count=np.asarray([int(packet.hand_a_query_count)], dtype=np.int64),
@@ -1765,6 +1882,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Open3D point size for TAPNext++ marker layer.",
     )
     parser.add_argument(
+        "--tracker-retire-filtered-markers",
+        dest="tracker_retire_filtered_markers",
+        action="store_true",
+        help="Permanently hide any query marker after it fails the active PCD residual/table-Z gate.",
+    )
+    parser.add_argument(
+        "--no-tracker-retire-filtered-markers",
+        dest="tracker_retire_filtered_markers",
+        action="store_false",
+        help="Keep legacy per-frame marker gating; filtered markers may reappear later.",
+    )
+    parser.set_defaults(tracker_retire_filtered_markers=True)
+    parser.add_argument(
         "--tapnet-repo-dir",
         type=Path,
         default=DEFAULT_TAPNET_REPO_DIR,
@@ -2061,6 +2191,19 @@ def tracker_marker_gate(args: argparse.Namespace) -> str:
         if tracker_query_source(args) == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL
         else TRACKER_MARKER_GATE_TARGET_MASK_DEPTH
     )
+
+
+def tracker_retire_filtered_markers(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "tracker_retire_filtered_markers", True))
+
+
+def tracker_marker_retirement_policy(args: argparse.Namespace) -> str:
+    if (
+        tracker_retire_filtered_markers(args)
+        and tracker_marker_gate(args) == TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z
+    ):
+        return TRACKER_MARKER_RETIREMENT_POLICY_PCD_FILTER_RESIDUAL_TABLE_Z_ONCE_FALSE
+    return TRACKER_MARKER_RETIREMENT_POLICY_DISABLED
 
 
 def headless_capture_enabled(args: argparse.Namespace) -> bool:
@@ -3833,6 +3976,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self._tracker_query_target_id: np.ndarray | None = None
         self._tracker_query_controller_instance_id: np.ndarray | None = None
         self._tracker_consistent_visible: np.ndarray | None = None
+        self._tracker_query_alive_mask: np.ndarray | None = None
         self._warned_remote_engine_contract = False
         self._fatal_error_lock = threading.Lock()
         self._fatal_error: FatalWorkerError | None = None
@@ -3978,6 +4122,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "tracker_query_count": int(self.args.tracker_query_count),
             "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
             "tracker_marker_gate": tracker_marker_gate(self.args) if tracker_enabled(self.args) else None,
+            "tracker_retire_filtered_markers": (
+                tracker_retire_filtered_markers(self.args) if tracker_enabled(self.args) else None
+            ),
+            "tracker_marker_retirement_policy": (
+                tracker_marker_retirement_policy(self.args) if tracker_enabled(self.args) else None
+            ),
             "tracker_display_scope": str(self.args.tracker_display_scope),
             "tracker_sync_policy": (
                 "strict_same_seq_lossless_5fps" if self._lossless_enabled() else "none"
@@ -4628,6 +4778,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "tracker_query_count": int(self.args.tracker_query_count),
             "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
             "tracker_marker_gate": tracker_marker_gate(self.args) if tracker_enabled(self.args) else None,
+            "tracker_retire_filtered_markers": (
+                tracker_retire_filtered_markers(self.args) if tracker_enabled(self.args) else None
+            ),
+            "tracker_marker_retirement_policy": (
+                tracker_marker_retirement_policy(self.args) if tracker_enabled(self.args) else None
+            ),
             "tracker_display_scope": str(self.args.tracker_display_scope),
             "tracker_overlay_max_points": int(self.args.tracker_overlay_max_points),
             "tracker_marker_point_size": float(self.args.tracker_marker_point_size),
@@ -4814,6 +4970,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self._tracker_query_target_id = np.ascontiguousarray(query_target_id, dtype=np.int64)
         self._tracker_query_controller_instance_id = np.ascontiguousarray(query_controller_instance_id, dtype=np.int64)
         self._tracker_consistent_visible = np.ones((len(query_points),), dtype=bool)
+        self._tracker_query_alive_mask = np.ones((len(query_points),), dtype=bool)
         print(
             "[tapnextpp-tracker] "
             f"initialized query_count={len(query_points)} requested={requested or 'phystwin_dense'} "
@@ -4970,6 +5127,30 @@ class RealtimeMaskedEdgeTamPcdDemo:
         controller_residual = _mask_from_yx(shape, controller_yx)
         return object_residual, controller_residual
 
+    def _ensure_tracker_query_alive_mask(self, query_count: int) -> np.ndarray:
+        count = max(0, int(query_count))
+        if self._tracker_query_alive_mask is None or len(self._tracker_query_alive_mask) != count:
+            self._tracker_query_alive_mask = np.ones((count,), dtype=bool)
+        return self._tracker_query_alive_mask
+
+    def _current_tracker_query_alive_mask(
+        self,
+        *,
+        query_count: int,
+        residual_visibility: np.ndarray | None,
+    ) -> np.ndarray:
+        alive = self._ensure_tracker_query_alive_mask(query_count)
+        if (
+            residual_visibility is not None
+            and tracker_marker_retirement_policy(self.args)
+            == TRACKER_MARKER_RETIREMENT_POLICY_PCD_FILTER_RESIDUAL_TABLE_Z_ONCE_FALSE
+        ):
+            residual = np.asarray(residual_visibility, dtype=bool).reshape(-1)
+            count = min(len(alive), len(residual))
+            if count:
+                alive[:count] &= residual[:count]
+        return np.ascontiguousarray(alive.copy(), dtype=bool)
+
     def _build_tracker_marker_packet(self, mask_packet: MaskPacket, adapter: Any) -> TrackerMarkerPacket | None:
         query_points = self._ensure_tracker_queries(mask_packet, adapter)
         if query_points is None:
@@ -4989,10 +5170,17 @@ class RealtimeMaskedEdgeTamPcdDemo:
         rgb = np.ascontiguousarray(mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8)
         result = adapter.update(rgb)
         tracks_latest, visibility_latest = _latest_tracker_arrays(result)
-        query_is_object = self._tracker_query_is_object
-        query_is_controller = self._tracker_query_is_controller
-        query_target_id = self._tracker_query_target_id
-        query_controller_instance_id = self._tracker_query_controller_instance_id
+        query_is_object_all = np.asarray(self._tracker_query_is_object, dtype=bool).reshape(-1)
+        query_is_controller_all = np.asarray(self._tracker_query_is_controller, dtype=bool).reshape(-1)
+        query_target_id_all = np.asarray(self._tracker_query_target_id, dtype=np.int64).reshape(-1)
+        query_controller_instance_id_all = np.asarray(
+            self._tracker_query_controller_instance_id,
+            dtype=np.int64,
+        ).reshape(-1)
+        query_is_object = query_is_object_all
+        query_is_controller = query_is_controller_all
+        query_target_id = query_target_id_all
+        query_controller_instance_id = query_controller_instance_id_all
         common_count = min(
             int(len(tracks_latest)),
             int(len(visibility_latest)),
@@ -5022,6 +5210,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         lift_mask = self._tracker_lift_mask(mask_packet)
         object_residual_mask: np.ndarray | None = None
         controller_residual_mask: np.ndarray | None = None
+        residual_visibility: np.ndarray | None = None
         if tracker_query_source(self.args) == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL:
             object_residual_mask, controller_residual_mask = self._tracker_pcd_filter_residual_masks(mask_packet)
             residual_visibility = _query_current_residual_visibility(
@@ -5033,6 +5222,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             )
             display_visibility = np.where(residual_visibility, display_visibility, 0.0).astype(np.float32, copy=False)
             lift_mask = np.logical_or(object_residual_mask, controller_residual_mask)
+        query_alive_mask = self._current_tracker_query_alive_mask(
+            query_count=len(query_points),
+            residual_visibility=residual_visibility,
+        )
+        alive_for_display = _fit_bool_array(query_alive_mask, len(display_visibility))
+        display_visibility = np.where(alive_for_display, display_visibility, 0.0).astype(np.float32, copy=False)
         selected = _select_visible_spread_indices(
             tracks_latest,
             display_visibility,
@@ -5109,6 +5304,16 @@ class RealtimeMaskedEdgeTamPcdDemo:
         hand_a_query_count = int(np.count_nonzero(lifted_query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_A))
         hand_b_query_count = int(np.count_nonzero(lifted_query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_B))
         object_query_count = int(np.count_nonzero(lifted_query_target_id == OBJECT_ID))
+        remaining_object_query_count, remaining_controller_query_count, remaining_hand_a_query_count, remaining_hand_b_query_count = (
+            _remaining_query_class_counts(
+                query_alive_mask,
+                query_is_object=query_is_object_all,
+                query_is_controller=query_is_controller_all,
+                query_controller_instance_id=query_controller_instance_id_all,
+            )
+        )
+        remaining_query_count = int(np.count_nonzero(query_alive_mask))
+        retired_query_count = max(0, int(len(query_points)) - remaining_query_count)
         done_s = time.perf_counter()
         stats = getattr(result, "stats", {}) or {}
         packet = TrackerMarkerPacket(
@@ -5133,8 +5338,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             query_indices=np.ascontiguousarray(lifted_query_indices, dtype=np.int64),
             query_target_id=np.ascontiguousarray(lifted_query_target_id, dtype=np.int64),
             query_controller_instance_id=np.ascontiguousarray(lifted_query_controller_instance_id, dtype=np.int64),
-            query_all_target_id=np.ascontiguousarray(query_target_id, dtype=np.int64),
-            query_all_controller_instance_id=np.ascontiguousarray(query_controller_instance_id, dtype=np.int64),
+            query_all_target_id=np.ascontiguousarray(query_target_id_all, dtype=np.int64),
+            query_all_controller_instance_id=np.ascontiguousarray(query_controller_instance_id_all, dtype=np.int64),
             hand_a_query_count=hand_a_query_count,
             hand_b_query_count=hand_b_query_count,
             object_query_count=object_query_count,
@@ -5144,6 +5349,13 @@ class RealtimeMaskedEdgeTamPcdDemo:
             marker_residual_checked_count=int(marker_residual_audit.checked_count),
             marker_residual_violation_count=int(marker_residual_audit.violation_count),
             marker_residual_gate=str(marker_residual_audit.gate),
+            query_alive_mask=np.ascontiguousarray(query_alive_mask, dtype=bool),
+            remaining_query_count=remaining_query_count,
+            remaining_object_query_count=remaining_object_query_count,
+            remaining_controller_query_count=remaining_controller_query_count,
+            remaining_hand_a_query_count=remaining_hand_a_query_count,
+            remaining_hand_b_query_count=remaining_hand_b_query_count,
+            retired_query_count=retired_query_count,
             coordinate_frame=self._pcd_coordinate_frame(),
         )
         if self.args.debug:
@@ -5152,6 +5364,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 f"seq={packet.seq} markers={packet.marker_count}/{len(selected_tracks)} "
                 f"residual_violations={packet.marker_residual_violation_count}/{packet.marker_residual_checked_count} "
                 f"consistent={packet.consistent_visible_count}/{packet.query_count} "
+                f"remaining={packet.remaining_query_count}/{packet.query_count} retired={packet.retired_query_count} "
                 f"hand_a={packet.hand_a_query_count} hand_b={packet.hand_b_query_count} object={packet.object_query_count} "
                 f"queries={packet.query_count} model_ms={packet.model_ms:.1f} "
                 f"lift_ms={packet.lift_ms:.1f} e2e_ms={packet.e2e_ms:.1f} "
@@ -6809,6 +7022,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             tracking_background=str(getattr(self.args, "tracking_background_mask", "target-union")),
             object_point_count=int(pcd_packet.object_point_count),
             controller_point_count=int(pcd_packet.controller_point_count),
+            query_count=int(tracker_packet.query_count),
+            remaining_query_count=int(tracker_packet.remaining_query_count),
+            remaining_object_query_count=int(tracker_packet.remaining_object_query_count),
+            remaining_controller_query_count=int(tracker_packet.remaining_controller_query_count),
+            remaining_hand_a_query_count=int(tracker_packet.remaining_hand_a_query_count),
+            remaining_hand_b_query_count=int(tracker_packet.remaining_hand_b_query_count),
         )
 
     def _format_panel_hud_label(self, hud: SideBySidePanelHud) -> str:
@@ -6819,6 +7038,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"disp={float(hud.display_latency_ms):.1f}ms hold={float(hud.startup_hold_s):.2f}s\n"
             f"filter={hud.filter_preset} markers={int(hud.marker_count)} "
             f"obj={int(hud.object_point_count)} ctrl={int(hud.controller_point_count)}\n"
+            f"remaining={int(hud.remaining_query_count)}/{int(hud.query_count)} "
+            f"obj={int(hud.remaining_object_query_count)} ctrl={int(hud.remaining_controller_query_count)} "
+            f"hand_a={int(hud.remaining_hand_a_query_count)} hand_b={int(hud.remaining_hand_b_query_count)}\n"
             f"panel={PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT}"
         )
 
@@ -7772,6 +7994,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 tracker_line = (
                     f"tracker: {tracker_packet.backend}  fps={self.tracker_stats.fps:.1f}  "
                     f"markers={tracker_packet.marker_count}/{tracker_packet.query_count}  "
+                    f"remaining={tracker_packet.remaining_query_count}/{tracker_packet.query_count}  "
                     f"hand_a/b/object={tracker_packet.hand_a_query_count}/{tracker_packet.hand_b_query_count}/"
                     f"{tracker_packet.object_query_count}  "
                     f"consistent={tracker_packet.consistent_visible_count}/{tracker_packet.query_count}  "

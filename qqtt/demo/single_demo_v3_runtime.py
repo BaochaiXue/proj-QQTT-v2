@@ -435,6 +435,19 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
     )
     parser.add_argument("--tracker-overlay-max-points", type=int, default=512)
     parser.add_argument("--tracker-marker-point-size", type=float, default=masked_pcd.DEFAULT_TRACKER_MARKER_POINT_SIZE)
+    parser.add_argument(
+        "--tracker-retire-filtered-markers",
+        dest="tracker_retire_filtered_markers",
+        action="store_true",
+        help="Permanently hide any query marker after it fails the active PCD residual/table-Z gate.",
+    )
+    parser.add_argument(
+        "--no-tracker-retire-filtered-markers",
+        dest="tracker_retire_filtered_markers",
+        action="store_false",
+        help="Keep legacy per-frame marker gating; filtered markers may reappear later.",
+    )
+    parser.set_defaults(tracker_retire_filtered_markers=True)
     parser.add_argument("--tapnet-repo-dir", type=Path, default=masked_pcd.DEFAULT_TAPNET_REPO_DIR)
     parser.add_argument("--tapnextpp-checkpoint", type=Path, default=masked_pcd.DEFAULT_TAPNEXTPP_CHECKPOINT)
     parser.add_argument("--tapnextpp-image-size", default="256,256")
@@ -993,6 +1006,12 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "tracker_marker_gate": (
             masked_pcd.tracker_marker_gate(args) if tracker_on else None
         ),
+        "tracker_retire_filtered_markers": (
+            masked_pcd.tracker_retire_filtered_markers(args) if tracker_on else None
+        ),
+        "tracker_marker_retirement_policy": (
+            masked_pcd.tracker_marker_retirement_policy(args) if tracker_on else None
+        ),
         "tracker_display_scope": str(args.tracker_display_scope),
         "tracker_visualization_mode": tracker_visualization_mode,
         "tracker_sync_policy": tracker_sync_policy,
@@ -1081,6 +1100,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "tracker_query_count",
         "tracker_query_source",
         "tracker_marker_gate",
+        "tracker_retire_filtered_markers",
+        "tracker_marker_retirement_policy",
         "tracker_display_scope",
         "object_prompt",
         "controller_prompt",
@@ -1286,6 +1307,10 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.append("--tapnextpp-compile")
     if not bool(args.tapnextpp_fast_postprocess):
         argv.append("--no-tapnextpp-fast-postprocess")
+    if bool(args.tracker_retire_filtered_markers):
+        argv.append("--tracker-retire-filtered-markers")
+    else:
+        argv.append("--no-tracker-retire-filtered-markers")
     if bool(args.enable_pcd_filter):
         argv.append("--enable-pcd-filter")
     if bool(args.enable_table_z_filter):

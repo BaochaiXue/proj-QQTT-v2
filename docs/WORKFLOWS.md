@@ -62,7 +62,12 @@ inspection views default object/controller filters to `none` while still
 running TAPNext++ so the displayed FPS reflects the full pipeline. Pass
 `--pcd-filter-preset {original,pt,enhanced-pt}` to control object/controller PCD
 and TAPNext++ query initialization together; the default is `original`, and
-tracking query points are sampled from that preset's residual PCD pixels. When
+tracking query points are sampled from that preset's residual PCD pixels.
+Displayed query markers also obey the current residual/table-Z gate, and by
+default a marker that ever fails that gate is permanently retired from
+visualization while TAPNext++ continues tracking internally. Use
+`--no-tracker-retire-filtered-markers` for debugging the older per-frame gate
+behavior. When
 `enhanced-pt` component filtering is explicitly enabled, object filtering keeps
 one main component while controller filtering keeps two main components so
 two-hand controllers are not dropped as disconnected noise.
@@ -120,7 +125,8 @@ conda run -n demo_2_max --no-capture-output \
 
 Demo 3.2 can also render a 1x3 fake-live review panel with latest RGB on the
 left, while the projected PCD and tracking columns stay on the same strict
-same-`seq` processed pair.
+same-`seq` processed pair. The panel legend reports remaining live tracking
+queries by total, object, controller, hand_a, and hand_b.
 
 Offline from a headless capture:
 

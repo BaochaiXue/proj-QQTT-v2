@@ -530,6 +530,89 @@ def _draw_query_points(
     return int(object_count + controller_count), int(object_count), int(controller_count), hand_a_count, hand_b_count
 
 
+def _fit_bool_array(values: np.ndarray, length: int, *, fill: bool = False) -> np.ndarray:
+    output = np.full((max(0, int(length)),), bool(fill), dtype=bool)
+    arr = np.asarray(values, dtype=bool).reshape(-1)
+    count = min(len(arr), len(output))
+    if count:
+        output[:count] = arr[:count]
+    return output
+
+
+def _fit_int_array(values: np.ndarray, length: int, *, fill: int = 0) -> np.ndarray:
+    output = np.full((max(0, int(length)),), int(fill), dtype=np.int64)
+    arr = np.asarray(values, dtype=np.int64).reshape(-1)
+    count = min(len(arr), len(output))
+    if count:
+        output[:count] = arr[:count]
+    return output
+
+
+def _query_remaining_counts(
+    *,
+    trajectory_path: Path | None,
+    fallback_query_count: int,
+    fallback_object_count: int,
+    fallback_controller_count: int,
+    fallback_hand_a_count: int,
+    fallback_hand_b_count: int,
+) -> dict[str, int]:
+    fallback = {
+        "all": max(0, int(fallback_query_count)),
+        "query_count": max(0, int(fallback_query_count)),
+        "object": max(0, int(fallback_object_count)),
+        "controller": max(0, int(fallback_controller_count)),
+        "hand_a": max(0, int(fallback_hand_a_count)),
+        "hand_b": max(0, int(fallback_hand_b_count)),
+    }
+    if trajectory_path is None or not trajectory_path.is_file():
+        return fallback
+    with np.load(trajectory_path, allow_pickle=False) as payload:
+        scalar_remaining = _npz_scalar_int(payload, "remaining_query_count")
+        if scalar_remaining is not None:
+            query_count = _npz_scalar_int(payload, "query_count")
+            return {
+                "all": max(0, int(scalar_remaining)),
+                "query_count": max(0, int(query_count if query_count is not None else scalar_remaining)),
+                "object": max(0, int(_npz_scalar_int(payload, "remaining_object_query_count") or 0)),
+                "controller": max(0, int(_npz_scalar_int(payload, "remaining_controller_query_count") or 0)),
+                "hand_a": max(0, int(_npz_scalar_int(payload, "remaining_hand_a_query_count") or 0)),
+                "hand_b": max(0, int(_npz_scalar_int(payload, "remaining_hand_b_query_count") or 0)),
+            }
+        query_count = _npz_scalar_int(payload, "query_count")
+        if query_count is None:
+            query_count = int(fallback["all"])
+        query_count = max(0, int(query_count))
+        if "query_alive_mask" in payload.files:
+            alive = _fit_bool_array(payload["query_alive_mask"], query_count)
+        else:
+            alive = np.ones((query_count,), dtype=bool)
+        remaining_all = int(np.count_nonzero(alive))
+        if "query_all_controller_instance_id" in payload.files:
+            instance_id = _fit_int_array(payload["query_all_controller_instance_id"], query_count)
+            hand_a = alive & (instance_id == 1)
+            hand_b = alive & (instance_id == 2)
+            controller = alive & ((instance_id == 1) | (instance_id == 2))
+            if "query_all_target_id" in payload.files:
+                target_id = _fit_int_array(payload["query_all_target_id"], query_count)
+                obj = alive & (target_id == 2)
+                controller = controller | (alive & ((target_id == 1) | (target_id == 3)))
+            else:
+                obj = np.zeros((query_count,), dtype=bool)
+            return {
+                "all": remaining_all,
+                "query_count": query_count,
+                "object": int(np.count_nonzero(obj)),
+                "controller": int(np.count_nonzero(controller)),
+                "hand_a": int(np.count_nonzero(hand_a)),
+                "hand_b": int(np.count_nonzero(hand_b)),
+            }
+    if query_count > int(fallback["all"]):
+        fallback["all"] = query_count
+        fallback["query_count"] = query_count
+    return fallback
+
+
 def _read_query_panel_payload(trajectory_path: Path | None) -> dict[str, np.ndarray] | None:
     if trajectory_path is None or not trajectory_path.is_file():
         return None
@@ -831,6 +914,14 @@ def render_capture_to_video(
             controller_count = object_count = 0
             query_count = query_object_count = query_controller_count = 0
             query_hand_a_count = query_hand_b_count = 0
+            remaining_query_counts = {
+                "all": 0,
+                "query_count": 0,
+                "object": 0,
+                "controller": 0,
+                "hand_a": 0,
+                "hand_b": 0,
+            }
             tracking_background_mask_pixels = 0
             marker_residual_checked_count = 0
             marker_residual_violation_count = 0
@@ -909,6 +1000,14 @@ def render_capture_to_video(
                 query_controller_count = int(query_counts["query_controller_points"])
                 query_hand_a_count = int(query_counts["query_hand_a_points"])
                 query_hand_b_count = int(query_counts["query_hand_b_points"])
+                remaining_query_counts = _query_remaining_counts(
+                    trajectory_path=query_path,
+                    fallback_query_count=query_count,
+                    fallback_object_count=query_object_count,
+                    fallback_controller_count=query_controller_count,
+                    fallback_hand_a_count=query_hand_a_count,
+                    fallback_hand_b_count=query_hand_b_count,
+                )
 
                 receive_time = _as_float_or_none(frame.get("receive_perf_s"))
                 pair_process_done_time = _pair_process_done_time(frame)
@@ -931,6 +1030,12 @@ def render_capture_to_video(
                     tracking_background=str(tracking_background_mask),
                     object_point_count=int(object_count),
                     controller_point_count=int(controller_count),
+                    query_count=int(remaining_query_counts["query_count"]),
+                    remaining_query_count=int(remaining_query_counts["all"]),
+                    remaining_object_query_count=int(remaining_query_counts["object"]),
+                    remaining_controller_query_count=int(remaining_query_counts["controller"]),
+                    remaining_hand_a_query_count=int(remaining_query_counts["hand_a"]),
+                    remaining_hand_b_query_count=int(remaining_query_counts["hand_b"]),
                 )
                 image = render_side_by_side_panel(
                     SideBySidePanelInputs(
@@ -969,6 +1074,14 @@ def render_capture_to_video(
                         image,
                         query_path,
                         marker_radius=int(query_point_radius),
+                    )
+                    remaining_query_counts = _query_remaining_counts(
+                        trajectory_path=query_path,
+                        fallback_query_count=query_count,
+                        fallback_object_count=query_object_count,
+                        fallback_controller_count=query_controller_count,
+                        fallback_hand_a_count=query_hand_a_count,
+                        fallback_hand_b_count=query_hand_b_count,
                     )
             else:
                 pcd_path = _resolve_capture_path(capture_dir, str(frame["pcd_path"]))
@@ -1021,6 +1134,12 @@ def render_capture_to_video(
                 "query_controller_points": int(query_controller_count),
                 "query_hand_a_points": int(query_hand_a_count),
                 "query_hand_b_points": int(query_hand_b_count),
+                "query_initialized_points": int(remaining_query_counts["query_count"]),
+                "remaining_query_points": int(remaining_query_counts["all"]),
+                "remaining_query_object_points": int(remaining_query_counts["object"]),
+                "remaining_query_controller_points": int(remaining_query_counts["controller"]),
+                "remaining_query_hand_a_points": int(remaining_query_counts["hand_a"]),
+                "remaining_query_hand_b_points": int(remaining_query_counts["hand_b"]),
                 "tracking_background_mask_pixels": int(tracking_background_mask_pixels),
                 "query_trajectory_exact": int(query_path is not None and query_path.is_file()),
                 "marker_residual_audit_present": int(marker_residual_audit_present),
@@ -1091,6 +1210,13 @@ def render_capture_to_video(
             "controller": int(sum(item["query_controller_points"] for item in rendered_counts)),
             "object": int(sum(item["query_object_points"] for item in rendered_counts)),
             "all": int(sum(item["query_points"] for item in rendered_counts)),
+        },
+        "remaining_query_count_totals": {
+            "hand_a": int(sum(item["remaining_query_hand_a_points"] for item in rendered_counts)),
+            "hand_b": int(sum(item["remaining_query_hand_b_points"] for item in rendered_counts)),
+            "controller": int(sum(item["remaining_query_controller_points"] for item in rendered_counts)),
+            "object": int(sum(item["remaining_query_object_points"] for item in rendered_counts)),
+            "all": int(sum(item["remaining_query_points"] for item in rendered_counts)),
         },
         "rendered_counts": rendered_counts,
     }

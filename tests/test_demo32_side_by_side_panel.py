@@ -12,6 +12,7 @@ from qqtt.demo.demo32_side_by_side_panel import (
     SideBySidePanelInputs,
     TABLE_WORLD_FRAME_KIND,
     compute_rgb_ahead_frames,
+    _remaining_query_legend_lines,
     render_projected_pcd_panel,
     render_side_by_side_panel,
     render_tracking_overlay_panel,
@@ -74,6 +75,32 @@ class Demo32SideBySidePanelTest(unittest.TestCase):
         )
 
         self.assertEqual(panel.shape, (4, 18, 3))
+
+    def test_remaining_query_legend_reports_total_and_class_breakdown(self) -> None:
+        hud = SideBySidePanelHud(
+            rgb_seq=1,
+            paired_seq=1,
+            input_time_s=0.0,
+            pipeline_latency_ms=1.0,
+            display_latency_ms=2.0,
+            startup_hold_s=0.0,
+            filter_preset="original",
+            marker_count=4,
+            query_count=10,
+            remaining_query_count=7,
+            remaining_object_query_count=2,
+            remaining_controller_query_count=5,
+            remaining_hand_a_query_count=3,
+            remaining_hand_b_query_count=2,
+        )
+
+        lines = _remaining_query_legend_lines(hud)
+
+        self.assertEqual(lines[0], "remaining 7/10")
+        self.assertIn("obj=2", lines[1])
+        self.assertIn("ctrl=5", lines[1])
+        self.assertIn("hand_a=3", lines[2])
+        self.assertIn("hand_b=2", lines[2])
 
     def test_render_projected_pcd_panel_draws_camera_frame_points(self) -> None:
         points = np.array([[0.0, 0.0, 1.0], [0.1, 0.0, 1.0]], dtype=np.float32)

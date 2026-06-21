@@ -955,6 +955,37 @@ class Demo32HeadlessRenderHelperTest(unittest.TestCase):
             self.assertEqual(summary["query_overlay"], "none")
             self.assertEqual(summary["rendered_counts"][0]["query_points"], 0)
 
+    def test_tracking_render_defaults_remaining_counts_for_old_trajectory_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_dir = Path(tmp) / "capture"
+            self._write_minimal_tracking_capture(
+                capture_dir,
+                row_extra={"marker_count": 2},
+            )
+            np.savez(
+                capture_dir / "query_trajectory" / "000000.npz",
+                tracks_yx=np.array([[2.0, 3.0], [3.0, 4.0]], dtype=np.float32),
+                visibility=np.ones((2,), dtype=np.float32),
+                marker_rgb_u8=np.array([[255, 0, 0], [0, 255, 0]], dtype=np.uint8),
+                query_indices=np.array([0, 1], dtype=np.int64),
+                query_is_object=np.array([True, False], dtype=bool),
+                query_is_controller=np.array([False, True], dtype=bool),
+                query_controller_instance_id=np.array([0, 1], dtype=np.int64),
+                query_count=np.array([3], dtype=np.int64),
+            )
+
+            summary = render_capture_to_video(
+                capture_dir=capture_dir,
+                output=capture_dir / "video.mp4",
+                fps=30.0,
+                demo_visual_mode="tracking",
+                tracking_background_mask=TRACKING_BACKGROUND_MASK_RGB,
+            )
+
+            self.assertEqual(summary["rendered_counts"][0]["query_points"], 2)
+            self.assertEqual(summary["rendered_counts"][0]["remaining_query_points"], 3)
+            self.assertEqual(summary["remaining_query_count_totals"]["all"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()
