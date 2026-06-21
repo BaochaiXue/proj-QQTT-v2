@@ -271,10 +271,23 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
         rgb_frame = self._frame_packet(seq=5, source_timestamp_s=105.5)
         pcd_packet = self._pcd_packet(seq=3, source_timestamp_s=103.0)
+        tracker_packet = replace(
+            self._tracker_packet(seq=3),
+            query_rgb_u8=query_rainbow_colors_rgb_u8(3),
+            query_points_yx=np.array([[1.0, 1.0], [1.0, 2.0], [1.0, 3.0]], dtype=np.float32),
+            query_count=3,
+            query_alive_mask=np.ones((3,), dtype=bool),
+            remaining_query_count=3,
+            remaining_object_query_count=1,
+            remaining_controller_query_count=2,
+            remaining_hand_a_query_count=1,
+            remaining_hand_b_query_count=1,
+            retired_query_count=0,
+        )
         pair = demo.PairedRenderPacket(
             seq=3,
             pcd_packet=pcd_packet,
-            tracker_packet=self._tracker_packet(seq=3),
+            tracker_packet=tracker_packet,
             mask_packet=self._mask_packet(seq=3),
         )
 
@@ -288,6 +301,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(hud.paired_seq, 3)
         self.assertEqual(hud.rgb_ahead_frames, 2)
         self.assertEqual(hud.marker_count, pair.tracker_packet.marker_count)
+        self.assertLess(hud.marker_count, hud.query_count)
+        self.assertEqual(hud.remaining_query_count, hud.query_count)
         self.assertEqual(hud.input_time_s, 105.5)
 
     def test_marker_residual_audit_accepts_markers_inside_union_residual(self) -> None:
@@ -1713,7 +1728,51 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(packet.hand_a_query_count, 1)
         self.assertEqual(packet.object_query_count, 0)
 
-    def test_tracker_marker_retirement_keeps_filtered_query_hidden_after_it_passes_again(self) -> None:
+    def test_tracker_marker_retirement_skips_permanent_loss_on_initial_marker_packet(self) -> None:
+        args = self._tracker_residual_table_z_args(query_count=3)
+        args.enable_table_z_filter = False
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        self._seed_three_tracker_queries(runtime)
+        self._install_three_query_residual_masks(
+            runtime,
+            object_points=[(0, 0)],
+            controller_points=[(2, 0), (2, 1)],
+        )
+
+        first = runtime._build_tracker_marker_packet(
+            self._mask_packet(),
+            _StaticTrackingAdapter(np.array([[0.0, 1.0], [2.0, 0.0], [2.0, 1.0]], dtype=np.float32)),
+        )
+        second = runtime._build_tracker_marker_packet(
+            self._mask_packet(seq=1),
+            _StaticTrackingAdapter(np.array([[0.0, 1.0], [2.0, 0.0], [2.0, 1.0]], dtype=np.float32)),
+        )
+        third = runtime._build_tracker_marker_packet(
+            self._mask_packet(seq=2),
+            _StaticTrackingAdapter(np.array([[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]], dtype=np.float32)),
+        )
+
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        self.assertIsNotNone(third)
+        assert first is not None and second is not None and third is not None
+        np.testing.assert_array_equal(first.query_alive_mask, np.array([True, True, True], dtype=bool))
+        np.testing.assert_array_equal(first.query_indices, np.array([1, 2], dtype=np.int64))
+        self.assertEqual(first.marker_count, 2)
+        self.assertEqual(first.remaining_query_count, 3)
+        self.assertEqual(first.retired_query_count, 0)
+        np.testing.assert_array_equal(second.query_alive_mask, np.array([False, True, True], dtype=bool))
+        np.testing.assert_array_equal(second.query_indices, np.array([1, 2], dtype=np.int64))
+        self.assertEqual(second.marker_count, 2)
+        self.assertEqual(second.remaining_query_count, 2)
+        self.assertEqual(second.retired_query_count, 1)
+        np.testing.assert_array_equal(third.query_alive_mask, np.array([False, True, True], dtype=bool))
+        np.testing.assert_array_equal(third.query_indices, np.array([1, 2], dtype=np.int64))
+        self.assertEqual(third.marker_count, 2)
+        self.assertEqual(third.remaining_query_count, 2)
+        self.assertEqual(third.retired_query_count, 1)
+
+    def test_tracker_marker_retirement_allows_grace_hidden_query_to_reappear_on_next_frame(self) -> None:
         args = self._tracker_residual_table_z_args(query_count=3)
         args.enable_table_z_filter = False
         runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
@@ -1736,13 +1795,14 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertIsNotNone(first)
         self.assertIsNotNone(second)
         assert first is not None and second is not None
-        np.testing.assert_array_equal(first.query_alive_mask, np.array([False, True, True], dtype=bool))
-        np.testing.assert_array_equal(second.query_alive_mask, np.array([False, True, True], dtype=bool))
-        np.testing.assert_array_equal(second.query_indices, np.array([1, 2], dtype=np.int64))
-        self.assertEqual(second.marker_count, 2)
-        self.assertEqual(second.remaining_query_count, 2)
-        self.assertEqual(second.retired_query_count, 1)
-        self.assertEqual(second.remaining_object_query_count, 0)
+        np.testing.assert_array_equal(first.query_alive_mask, np.array([True, True, True], dtype=bool))
+        np.testing.assert_array_equal(first.query_indices, np.array([1, 2], dtype=np.int64))
+        np.testing.assert_array_equal(second.query_alive_mask, np.array([True, True, True], dtype=bool))
+        np.testing.assert_array_equal(second.query_indices, np.array([0, 1, 2], dtype=np.int64))
+        self.assertEqual(second.marker_count, 3)
+        self.assertEqual(second.remaining_query_count, 3)
+        self.assertEqual(second.retired_query_count, 0)
+        self.assertEqual(second.remaining_object_query_count, 1)
         self.assertEqual(second.remaining_controller_query_count, 2)
         self.assertEqual(second.remaining_hand_a_query_count, 1)
         self.assertEqual(second.remaining_hand_b_query_count, 1)

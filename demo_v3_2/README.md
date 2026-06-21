@@ -56,11 +56,12 @@ Displayed tracking query markers are also strict current-frame residual markers:
 if a tracked query drifts outside its class residual mask, or the residual point
 is removed by the active table-Z filter, that marker is hidden instead of being
 lifted from raw target-mask depth. By default, Demo 3.2 then permanently
-retires that query marker from visualization: once the active PCD residual or
-table-Z gate filters it out, it will not reappear later even if TAPNext++ keeps
-tracking it internally. Use `--no-tracker-retire-filtered-markers` only for
-debugging the older per-frame gate behavior. The realtime and offline
-side-by-side panels show the remaining live query count in the top-left legend.
+retires that query marker from visualization after the initialization marker
+frame: the first marker packet still hides currently invalid markers, but it
+does not reduce the remaining-query baseline; later residual/table-Z failures
+are permanent. Use `--no-tracker-retire-filtered-markers` only for debugging the
+older per-frame gate behavior. The realtime and offline side-by-side panels show
+the remaining live query count in the top-left legend.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \

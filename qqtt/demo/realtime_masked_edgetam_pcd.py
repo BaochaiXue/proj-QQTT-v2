@@ -3977,6 +3977,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self._tracker_query_controller_instance_id: np.ndarray | None = None
         self._tracker_consistent_visible: np.ndarray | None = None
         self._tracker_query_alive_mask: np.ndarray | None = None
+        self._tracker_query_initial_seq: int | None = None
         self._warned_remote_engine_contract = False
         self._fatal_error_lock = threading.Lock()
         self._fatal_error: FatalWorkerError | None = None
@@ -4971,6 +4972,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self._tracker_query_controller_instance_id = np.ascontiguousarray(query_controller_instance_id, dtype=np.int64)
         self._tracker_consistent_visible = np.ones((len(query_points),), dtype=bool)
         self._tracker_query_alive_mask = np.ones((len(query_points),), dtype=bool)
+        self._tracker_query_initial_seq = int(mask_packet.seq)
         print(
             "[tapnextpp-tracker] "
             f"initialized query_count={len(query_points)} requested={requested or 'phystwin_dense'} "
@@ -5131,17 +5133,23 @@ class RealtimeMaskedEdgeTamPcdDemo:
         count = max(0, int(query_count))
         if self._tracker_query_alive_mask is None or len(self._tracker_query_alive_mask) != count:
             self._tracker_query_alive_mask = np.ones((count,), dtype=bool)
+            self._tracker_query_initial_seq = None
         return self._tracker_query_alive_mask
 
     def _current_tracker_query_alive_mask(
         self,
         *,
+        current_seq: int,
         query_count: int,
         residual_visibility: np.ndarray | None,
     ) -> np.ndarray:
         alive = self._ensure_tracker_query_alive_mask(query_count)
+        if self._tracker_query_initial_seq is None:
+            self._tracker_query_initial_seq = int(current_seq)
+        retirement_frame = int(current_seq) > int(self._tracker_query_initial_seq)
         if (
-            residual_visibility is not None
+            retirement_frame
+            and residual_visibility is not None
             and tracker_marker_retirement_policy(self.args)
             == TRACKER_MARKER_RETIREMENT_POLICY_PCD_FILTER_RESIDUAL_TABLE_Z_ONCE_FALSE
         ):
@@ -5223,6 +5231,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             display_visibility = np.where(residual_visibility, display_visibility, 0.0).astype(np.float32, copy=False)
             lift_mask = np.logical_or(object_residual_mask, controller_residual_mask)
         query_alive_mask = self._current_tracker_query_alive_mask(
+            current_seq=int(mask_packet.seq),
             query_count=len(query_points),
             residual_visibility=residual_visibility,
         )
