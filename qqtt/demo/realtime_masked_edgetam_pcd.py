@@ -138,6 +138,8 @@ RENDER_MODES = (RENDER_MODE_POINTCLOUD, RENDER_MODE_NONE, RENDER_MODE_PANEL)
 DEFAULT_RENDER_MODE = RENDER_MODE_POINTCLOUD
 PANEL_LAYOUT_SIDE_BY_SIDE = "side-by-side"
 PANEL_LAYOUTS = (PANEL_LAYOUT_SIDE_BY_SIDE,)
+PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT = "open3d_multi_viewport"
+PANEL_SYNC_POLICY_STRICT_SAME_SEQ = "left_latest_rgb_right_strict_same_seq"
 DEMO_VISUAL_MODE_PCD = "pcd"
 DEMO_VISUAL_MODE_TRACKING = "tracking"
 DEMO_VISUAL_MODES = (DEMO_VISUAL_MODE_PCD, DEMO_VISUAL_MODE_TRACKING)
@@ -240,6 +242,24 @@ HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "enhanced_pt_filtered"
 HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS = (PCD_FILTER_ENHANCED_PT, PCD_FILTER_PT_FILTER, PCD_FILTER_NONE)
 DEBUG_LOG_INTERVAL_S = 1.0
 DEFAULT_LOSSLESS_INPUT_FPS = 5.0
+
+
+def open3d_panel_viewport_layer_plan() -> dict[str, dict[str, Any]]:
+    return {
+        "middle": {
+            "kind": "filtered_pcd",
+            "layers": [GEOMETRY_CONTROLLER, GEOMETRY_OBJECT],
+        },
+        "right": {
+            "kind": "filtered_pcd_with_tracking",
+            "layers": [
+                GEOMETRY_CONTROLLER,
+                GEOMETRY_OBJECT,
+                GEOMETRY_TRACKER_OBJECT,
+                GEOMETRY_TRACKER_CONTROLLER,
+            ],
+        },
+    }
 DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS = 3.0
 FATAL_HUD_PREFIX = "FATAL WORKER ERROR"
 WARMUP_HUD_TEXT = (
@@ -905,7 +925,8 @@ class HeadlessCaptureWriter:
         payload["saved_mask_source"] = "edgetam_binary_masks"
         payload["saved_rgb_source"] = "segmentation_color_bgr"
         payload["panel_supported"] = True
-        payload["panel_sync_policy"] = "left_latest_rgb_right_strict_same_seq"
+        payload["panel_backend"] = PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT
+        payload["panel_sync_policy"] = PANEL_SYNC_POLICY_STRICT_SAME_SEQ
         payload["tracking_background_default"] = "target-union"
         payload["input_rgb_timeline"] = "input_frames.jsonl"
         payload["startup_hold_s"] = float(payload.get("startup_hold_s") or 0.0)
@@ -4260,6 +4281,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 return
             self._lossless_offered_frames += 1
         self.capture_stats.record(packet.receive_perf_s if record_s is None else float(record_s))
+        if str(self.args.render_mode) == RENDER_MODE_PANEL:
+            self._request_render_update()
 
     def _capture_recording_worker(self) -> None:
         assert self.recording_source is not None
@@ -6788,6 +6811,17 @@ class RealtimeMaskedEdgeTamPcdDemo:
             controller_point_count=int(pcd_packet.controller_point_count),
         )
 
+    def _format_panel_hud_label(self, hud: SideBySidePanelHud) -> str:
+        input_time = "none" if hud.input_time_s is None else f"{float(hud.input_time_s):.2f}s"
+        return (
+            f"rgb={int(hud.rgb_seq)} paired={int(hud.paired_seq)} ahead={hud.rgb_ahead_frames}f\n"
+            f"input={input_time} pipe={float(hud.pipeline_latency_ms):.1f}ms "
+            f"disp={float(hud.display_latency_ms):.1f}ms hold={float(hud.startup_hold_s):.2f}s\n"
+            f"filter={hud.filter_preset} markers={int(hud.marker_count)} "
+            f"obj={int(hud.object_point_count)} ctrl={int(hud.controller_point_count)}\n"
+            f"panel={PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT}"
+        )
+
     def _render_runtime_panel_frame(self, *, rgb_frame: FramePacket, pair: PairedRenderPacket) -> np.ndarray:
         if pair.mask_packet is None:
             raise RuntimeError("runtime panel requires paired mask_packet")
@@ -6851,78 +6885,447 @@ class RealtimeMaskedEdgeTamPcdDemo:
     def _run_panel_viewer(self) -> None:
         import cv2
 
-        self._start_threads()
+        o3d, gui, rendering = _load_open3d_modules()
+        o3c = o3d.core
+        device = o3c.Device("CPU:0")
+        app = gui.Application.instance
+        app.initialize()
+        window = app.create_window("Demo 3.2 Realtime Panel", 1680, 720)
+
+        blank_rgb = np.zeros((int(self.height), int(self.width), 3), dtype=np.uint8)
+        rgb_widget = gui.ImageWidget(o3d.geometry.Image(blank_rgb))
+        pcd_scene_widget = gui.SceneWidget()
+        pcd_scene_widget.scene = rendering.Open3DScene(window.renderer)
+        pcd_scene_widget.scene.set_background([0.02, 0.02, 0.02, 1.0])
+        tracking_scene_widget = gui.SceneWidget()
+        tracking_scene_widget.scene = rendering.Open3DScene(window.renderer)
+        tracking_scene_widget.scene.set_background([0.02, 0.02, 0.02, 1.0])
+
+        hud_label = gui.Label("Waiting for frames...")
+        hud_label.text_color = gui.Color(1.0, 1.0, 1.0)
+        hud_panel = gui.Vert(0, gui.Margins(8, 8, 8, 8))
+        hud_panel.add_child(hud_label)
+        window.add_child(rgb_widget)
+        window.add_child(pcd_scene_widget)
+        window.add_child(tracking_scene_widget)
+        window.add_child(hud_panel)
+
+        def on_layout(layout_context: object) -> None:
+            rect = window.content_rect
+            column_width = max(1, int(rect.width // 3))
+            right_width = max(1, int(rect.width - column_width * 2))
+            rgb_widget.frame = gui.Rect(rect.x, rect.y, column_width, rect.height)
+            pcd_scene_widget.frame = gui.Rect(rect.x + column_width, rect.y, column_width, rect.height)
+            tracking_scene_widget.frame = gui.Rect(rect.x + column_width * 2, rect.y, right_width, rect.height)
+            em = window.theme.font_size
+            preferred = hud_panel.calc_preferred_size(layout_context, gui.Widget.Constraints())
+            hud_panel.frame = gui.Rect(
+                rect.x + 0.5 * em,
+                rect.y + 0.5 * em,
+                max(preferred.width, 780),
+                max(preferred.height, 5.5 * em),
+            )
+
+        window.set_on_layout(on_layout)
+
+        pcd_material = rendering.MaterialRecord()
+        pcd_material.shader = "defaultUnlit"
+        pcd_material.point_size = float(self.args.point_size)
+        tracker_object_material = rendering.MaterialRecord()
+        tracker_object_material.shader = "defaultUnlit"
+        tracker_object_material.point_size = max(1.0, float(self.args.tracker_marker_point_size) * 0.65)
+        tracker_controller_material = rendering.MaterialRecord()
+        tracker_controller_material.shader = "defaultUnlit"
+        tracker_controller_material.point_size = float(self.args.tracker_marker_point_size)
+
+        def make_geometry_layer(
+            scene: object,
+            name: str,
+            material: object,
+            *,
+            min_capacity: int = 0,
+        ) -> Open3DSceneTensorLayer:
+            return Open3DSceneTensorLayer(
+                name=name,
+                o3d_module=o3d,
+                o3c_module=o3c,
+                rendering_module=rendering,
+                scene=scene,
+                material=material,
+                device=device,
+                min_capacity=max(0, int(min_capacity)),
+            )
+
+        def update_layer(
+            layer: Open3DSceneTensorLayer,
+            points_xyz_m: np.ndarray,
+            colors_rgb_u8: np.ndarray,
+            *,
+            max_points: int = 0,
+        ) -> tuple[float, float]:
+            cap_start_s = time.perf_counter()
+            display_points, display_colors = cap_render_points(
+                points_xyz_m,
+                colors_rgb_u8,
+                max_points=int(max_points),
+            )
+            cap_ms = _elapsed_ms(cap_start_s, time.perf_counter())
+            update = layer.update(display_points, display_colors)
+            open3d_ms = float(update.open3d_update_geometry_ms)
+            if update.points_count == 0:
+                open3d_ms += float(update.open3d_remove_geometry_ms)
+            return float(update.cpu_format_ms) + cap_ms, open3d_ms
+
+        pcd_caps = [
+            int(value)
+            for value in (self.args.pcd_max_points, self.args.render_max_points_per_layer)
+            if int(value) > 0
+        ]
+        pcd_layer_capacity = min(pcd_caps) if pcd_caps else 0
+        tracker_layer_capacity = int(self.args.tracker_overlay_max_points)
+        if tracker_layer_capacity <= 0:
+            tracker_layer_capacity = int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS
+
+        middle_controller_state = make_geometry_layer(
+            pcd_scene_widget.scene,
+            GEOMETRY_CONTROLLER,
+            pcd_material,
+            min_capacity=pcd_layer_capacity,
+        )
+        middle_object_state = make_geometry_layer(
+            pcd_scene_widget.scene,
+            GEOMETRY_OBJECT,
+            pcd_material,
+            min_capacity=pcd_layer_capacity,
+        )
+        right_controller_state = make_geometry_layer(
+            tracking_scene_widget.scene,
+            GEOMETRY_CONTROLLER,
+            pcd_material,
+            min_capacity=pcd_layer_capacity,
+        )
+        right_object_state = make_geometry_layer(
+            tracking_scene_widget.scene,
+            GEOMETRY_OBJECT,
+            pcd_material,
+            min_capacity=pcd_layer_capacity,
+        )
+        right_tracker_object_state = make_geometry_layer(
+            tracking_scene_widget.scene,
+            GEOMETRY_TRACKER_OBJECT,
+            tracker_object_material,
+            min_capacity=tracker_layer_capacity,
+        )
+        right_tracker_controller_state = make_geometry_layer(
+            tracking_scene_widget.scene,
+            GEOMETRY_TRACKER_CONTROLLER,
+            tracker_controller_material,
+            min_capacity=tracker_layer_capacity,
+        )
+
+        camera_initialized = {"middle": False, "right": False}
         window_name = "Demo 3.2 Realtime Panel"
         last_pair_seq = -1
         last_rgb_seq = -1
         latest_rgb: FramePacket | None = None
+        latest_pair: PairedRenderPacket | None = None
         writer: object | None = None
-        try:
-            while not self.stop_event.is_set():
-                fatal = self._fatal_error_snapshot()
-                if fatal is not None:
-                    print(f"[FATAL] closing panel viewer after {fatal.log_message()}", flush=True)
-                    break
+        render_post_gate = CoalescedPostGate()
+        fatal_exit_posted = {"value": False}
 
-                rgb_frame = self.capture_slot.get_latest_after(last_rgb_seq)
-                if rgb_frame is not None:
-                    last_rgb_seq = int(rgb_frame.seq)
-                    latest_rgb = rgb_frame
+        def reset_scene_camera(scene_widget: object) -> None:
+            if str(self.args.view_mode) == "camera":
+                intrinsic_matrix = np.array(
+                    [
+                        [self.intrinsics.fx, 0.0, self.intrinsics.cx],
+                        [0.0, self.intrinsics.fy, self.intrinsics.cy],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float64,
+                )
+                extrinsic = self._camera_view_extrinsic()
+                bounds = o3d.geometry.AxisAlignedBoundingBox([-10.0, -10.0, 0.01], [10.0, 10.0, 20.0])
+                scene_widget.setup_camera(intrinsic_matrix, extrinsic, self.width, self.height, bounds)
+                return
+            try:
+                scene_widget.look_at([0.0, 0.0, 0.8], [0.0, 0.0, -1.0], [0.0, -1.0, 0.0])
+            except Exception:
+                bounds = o3d.geometry.AxisAlignedBoundingBox([-0.5, -0.35, 0.1], [0.5, 0.35, 1.5])
+                scene_widget.setup_camera(60.0, bounds, [0.0, 0.0, 0.8])
 
-                if self._lossless_enabled() and self._lossless_pipeline_active:
-                    pair = self.lossless_paired_render_queue.get_nowait()
-                else:
-                    pair = self.paired_render_slot.get_latest_after(last_pair_seq)
-                if pair is None:
-                    if (
-                        self._lossless_enabled()
-                        and self._lossless_processing_done.is_set()
-                        and self.lossless_paired_render_queue.is_closed_and_empty()
-                    ):
-                        break
-                    key = cv2.waitKey(1) & 0xFF
-                    if key in (27, ord("q")):
-                        self.stop_event.set()
-                        break
-                    time.sleep(0.005)
-                    continue
+        def update_rgb_image(frame: FramePacket) -> tuple[float, float]:
+            convert_start_s = time.perf_counter()
+            rgb_u8 = np.ascontiguousarray(frame.color_bgr[:, :, ::-1], dtype=np.uint8)
+            o3d_image = o3d.geometry.Image(rgb_u8)
+            convert_ms = _elapsed_ms(convert_start_s, time.perf_counter())
+            update_start_s = time.perf_counter()
+            rgb_widget.update_image(o3d_image)
+            return convert_ms, _elapsed_ms(update_start_s, time.perf_counter())
 
+        def update_tracker_layers(marker_packet: TrackerMarkerPacket) -> tuple[float, float]:
+            point_count = int(marker_packet.marker_xyz_m.shape[0])
+            label_count = min(
+                point_count,
+                int(marker_packet.marker_colors_rgb_u8.shape[0]),
+                int(marker_packet.query_is_object.shape[0]),
+                int(marker_packet.query_is_controller.shape[0]),
+            )
+            if label_count <= 0:
+                object_convert_ms, object_update_ms = update_layer(
+                    right_tracker_object_state,
+                    np.empty((0, 3), dtype=np.float32),
+                    np.empty((0, 3), dtype=np.uint8),
+                )
+                controller_convert_ms, controller_update_ms = update_layer(
+                    right_tracker_controller_state,
+                    np.empty((0, 3), dtype=np.float32),
+                    np.empty((0, 3), dtype=np.uint8),
+                )
+                return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
+            points = np.asarray(marker_packet.marker_xyz_m[:label_count], dtype=np.float32).reshape(-1, 3)
+            colors = np.asarray(marker_packet.marker_colors_rgb_u8[:label_count], dtype=np.uint8).reshape(-1, 3)
+            is_controller = np.asarray(marker_packet.query_is_controller[:label_count], dtype=bool).reshape(-1)
+            is_object = np.asarray(marker_packet.query_is_object[:label_count], dtype=bool).reshape(-1) & ~is_controller
+            unlabelled = ~(is_object | is_controller)
+            if np.any(unlabelled):
+                is_object = is_object | unlabelled
+            object_convert_ms, object_update_ms = update_layer(
+                right_tracker_object_state,
+                points[is_object],
+                colors[is_object],
+            )
+            controller_convert_ms, controller_update_ms = update_layer(
+                right_tracker_controller_state,
+                points[is_controller],
+                colors[is_controller],
+            )
+            return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
+
+        def maybe_write_panel_video(rgb_frame: FramePacket, pair: PairedRenderPacket) -> None:
+            nonlocal writer
+            if self.args.panel_video_output is None:
+                return
+            panel = self._render_runtime_panel_frame(rgb_frame=rgb_frame, pair=pair)
+            if writer is None:
+                output_path = _resolve_path(self.args.panel_video_output)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                writer = cv2.VideoWriter(
+                    str(output_path),
+                    fourcc,
+                    max(1.0, float(self._lossless_input_fps())),
+                    (panel.shape[1], panel.shape[0]),
+                )
+                if not writer.isOpened():
+                    raise RuntimeError(f"failed to open panel video writer: {output_path}")
+            writer.write(panel)
+
+        def update_pair_views(pair: PairedRenderPacket, rgb_frame: FramePacket) -> bool:
+            packet = pair.pcd_packet
+            marker_packet = pair.tracker_packet
+            middle_controller_convert_ms, middle_controller_update_ms = update_layer(
+                middle_controller_state,
+                packet.controller_xyz_m,
+                packet.controller_colors_rgb_u8,
+                max_points=int(self.args.render_max_points_per_layer),
+            )
+            middle_object_convert_ms, middle_object_update_ms = update_layer(
+                middle_object_state,
+                packet.object_xyz_m,
+                packet.object_colors_rgb_u8,
+                max_points=int(self.args.render_max_points_per_layer),
+            )
+            right_controller_convert_ms, right_controller_update_ms = update_layer(
+                right_controller_state,
+                packet.controller_xyz_m,
+                packet.controller_colors_rgb_u8,
+                max_points=int(self.args.render_max_points_per_layer),
+            )
+            right_object_convert_ms, right_object_update_ms = update_layer(
+                right_object_state,
+                packet.object_xyz_m,
+                packet.object_colors_rgb_u8,
+                max_points=int(self.args.render_max_points_per_layer),
+            )
+            tracker_convert_ms, tracker_update_ms = update_tracker_layers(marker_packet)
+            if not camera_initialized["middle"] and packet.point_count > 0:
+                reset_scene_camera(pcd_scene_widget)
+                camera_initialized["middle"] = True
+            if not camera_initialized["right"] and (packet.point_count > 0 or marker_packet.marker_count > 0):
+                reset_scene_camera(tracking_scene_widget)
+                camera_initialized["right"] = True
+            render_time_s = time.perf_counter()
+            latency_ms = _elapsed_ms(packet.receive_perf_s, render_time_s)
+            open3d_convert_ms = (
+                middle_controller_convert_ms
+                + middle_object_convert_ms
+                + right_controller_convert_ms
+                + right_object_convert_ms
+                + tracker_convert_ms
+            )
+            open3d_update_ms = (
+                middle_controller_update_ms
+                + middle_object_update_ms
+                + right_controller_update_ms
+                + right_object_update_ms
+                + tracker_update_ms
+            )
+            timing = replace(
+                packet.timing,
+                open3d_convert_ms=float(open3d_convert_ms),
+                open3d_update_ms=float(open3d_update_ms),
+                receive_to_render_ms=latency_ms,
+            )
+            self.render_stats.record_render(render_time_s=render_time_s, latency_ms=latency_ms)
+            hud = self._build_panel_hud(rgb_frame=rgb_frame, pair=pair, display_time_s=render_time_s)
+            hud_label.text = self._format_panel_hud_label(hud)
+            self._maybe_log_debug(
+                packet=packet,
+                timing=timing,
+                now_s=render_time_s,
+                tracker_packet=marker_packet,
+                strict_sync=True,
+                waiting_for_pair=True,
+            )
+            maybe_write_panel_video(rgb_frame, pair)
+            return True
+
+        def render_latest() -> bool:
+            nonlocal last_pair_seq, last_rgb_seq, latest_rgb, latest_pair
+            rendered = False
+            rgb_frame = self.capture_slot.get_latest_after(last_rgb_seq)
+            if rgb_frame is not None:
+                last_rgb_seq = int(rgb_frame.seq)
+                latest_rgb = rgb_frame
+                update_rgb_image(rgb_frame)
+                rendered = True
+
+            if self._lossless_enabled() and self._lossless_pipeline_active:
+                pair = self.lossless_paired_render_queue.get_nowait()
+            else:
+                pair = self.paired_render_slot.get_latest_after(last_pair_seq)
+            if pair is not None:
                 last_pair_seq = int(pair.seq)
+                latest_pair = pair
                 if latest_rgb is None:
                     latest_rgb = self.capture_slot.get_latest_after(-1)
-                if latest_rgb is None:
-                    time.sleep(0.005)
-                    continue
+                    if latest_rgb is not None:
+                        last_rgb_seq = int(latest_rgb.seq)
+                        update_rgb_image(latest_rgb)
+                if latest_rgb is not None:
+                    rendered = update_pair_views(pair, latest_rgb) or rendered
+            elif latest_pair is None:
+                hud_label.text = (
+                    "Waiting for strict same-seq panel pair...\n"
+                    f"panel={PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT}\n"
+                    f"startup_hold={float(getattr(self, '_startup_hold_s', 0.0)):.2f}s"
+                )
+            return rendered
 
-                panel = self._render_runtime_panel_frame(rgb_frame=latest_rgb, pair=pair)
-                if writer is None and self.args.panel_video_output is not None:
-                    output_path = _resolve_path(self.args.panel_video_output)
-                    output_path.parent.mkdir(parents=True, exist_ok=True)
-                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                    writer = cv2.VideoWriter(
-                        str(output_path),
-                        fourcc,
-                        max(1.0, float(self._lossless_input_fps())),
-                        (panel.shape[1], panel.shape[0]),
-                    )
-                    if not writer.isOpened():
-                        raise RuntimeError(f"failed to open panel video writer: {output_path}")
-                if writer is not None:
-                    writer.write(panel)
-                cv2.imshow(window_name, panel)
-                key = cv2.waitKey(1) & 0xFF
-                if key in (27, ord("q")):
-                    self.stop_event.set()
-                    break
-        except KeyboardInterrupt:
-            self.stop_event.set()
-        finally:
-            if writer is not None:
-                writer.release()
+        def render_latest_on_main_thread() -> None:
             try:
-                cv2.destroyWindow(window_name)
+                fatal = self._fatal_error_snapshot()
+                if fatal is not None:
+                    hud_label.text = self._format_fatal_hud(fatal)
+                    hud_label.text_color = gui.Color(1.0, 0.25, 0.20)
+                    fatal_exit_posted["value"] = True
+                    print(f"[FATAL] closing {window_name} after {fatal.log_message()}", flush=True)
+                    if hasattr(window, "post_redraw"):
+                        try:
+                            window.post_redraw()
+                        except Exception:
+                            pass
+                    try:
+                        app.quit()
+                    except Exception:
+                        pass
+                    return
+                if self.stop_event.is_set():
+                    try:
+                        app.quit()
+                    except Exception:
+                        pass
+                    return
+                rendered = render_latest()
+                if (
+                    self._lossless_enabled()
+                    and self._lossless_processing_done.is_set()
+                    and self.lossless_paired_render_queue.is_closed_and_empty()
+                ):
+                    try:
+                        app.quit()
+                    except Exception:
+                        pass
+                    return
+                if rendered and hasattr(window, "post_redraw"):
+                    try:
+                        window.post_redraw()
+                    except Exception:
+                        pass
+            finally:
+                render_post_gate.mark_done()
+                if self._fatal_error_snapshot() is not None and not fatal_exit_posted["value"]:
+                    request_render_update()
+                elif not self.stop_event.is_set() and (
+                    self.capture_slot.latest_seq() > last_rgb_seq
+                    or (
+                        self._lossless_enabled()
+                        and self._lossless_pipeline_active
+                        and self.lossless_paired_render_queue.pending_count() > 0
+                    )
+                    or (
+                        not (self._lossless_enabled() and self._lossless_pipeline_active)
+                        and self.paired_render_slot.latest_seq() > last_pair_seq
+                    )
+                ):
+                    request_render_update()
+
+        def request_render_update() -> None:
+            if not render_post_gate.try_mark_pending():
+                return
+            try:
+                app.post_to_main_thread(window, render_latest_on_main_thread)
+            except Exception:
+                render_post_gate.mark_done()
+
+        fast_exit_after_open3d = os.environ.get("QQTT_WSLG_OPEN3D_FAST_EXIT") == "1"
+
+        def stop_and_quit_open3d() -> None:
+            self.stop_event.set()
+            self._request_render_update = lambda: None
+            if fast_exit_after_open3d:
+                self.stop()
+                os._exit(0)
+            try:
+                app.quit()
             except Exception:
                 pass
+
+        def on_close() -> bool:
+            stop_and_quit_open3d()
+            return True
+
+        window.set_on_close(on_close)
+        self._request_render_update = request_render_update
+        self._start_threads()
+        request_render_update()
+
+        timer: threading.Timer | None = None
+        if self.args.duration_s > 0 and not (self._lossless_enabled() and _is_replay_input_source(str(self.args.input_source))):
+            timer = threading.Timer(
+                float(self.args.duration_s),
+                lambda: app.post_to_main_thread(window, stop_and_quit_open3d),
+            )
+            timer.daemon = True
+            timer.start()
+        try:
+            app.run()
+        finally:
+            self._request_render_update = lambda: None
+            if timer is not None:
+                timer.cancel()
+            if writer is not None:
+                writer.release()
 
     def _run_open3d_viewer(self) -> None:
         o3d, gui, rendering = _load_open3d_modules()

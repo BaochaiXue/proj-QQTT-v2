@@ -1433,6 +1433,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(metadata["saved_rgb_source"], "segmentation_color_bgr")
             self.assertTrue(metadata["panel_supported"])
             self.assertEqual(metadata["panel_sync_policy"], "left_latest_rgb_right_strict_same_seq")
+            self.assertEqual(metadata["panel_backend"], "open3d_multi_viewport")
             self.assertEqual(metadata["input_rgb_timeline"], "input_frames.jsonl")
             rows = [json.loads(line) for line in (output_dir / "frames.jsonl").read_text(encoding="utf-8").splitlines()]
             input_rows = [
@@ -1448,6 +1449,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertTrue((output_dir / input_rows[0]["input_rgb_path"]).is_file())
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["world_z_stats_path"], "world_z_stats.jsonl")
+
             self.assertEqual(rows[0]["source_timestamp_s"], 12.5)
             self.assertEqual(rows[0]["source_frame_index"], 7)
             self.assertEqual(rows[0]["source_step"], 42)
@@ -1516,6 +1518,25 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 np.array([demo.QUERY_CONTROLLER_INSTANCE_NONE], dtype=np.int64),
             )
             self.assertEqual(int(trajectory["object_query_count"][0]), 1)
+
+    def test_open3d_panel_viewport_layer_plan_separates_pcd_and_tracking(self) -> None:
+        plan = demo.open3d_panel_viewport_layer_plan()
+
+        self.assertEqual(plan["middle"]["kind"], "filtered_pcd")
+        self.assertEqual(
+            plan["middle"]["layers"],
+            [demo.GEOMETRY_CONTROLLER, demo.GEOMETRY_OBJECT],
+        )
+        self.assertEqual(plan["right"]["kind"], "filtered_pcd_with_tracking")
+        self.assertEqual(
+            plan["right"]["layers"],
+            [
+                demo.GEOMETRY_CONTROLLER,
+                demo.GEOMETRY_OBJECT,
+                demo.GEOMETRY_TRACKER_OBJECT,
+                demo.GEOMETRY_TRACKER_CONTROLLER,
+            ],
+        )
 
     def test_tracker_worker_publishes_lifted_marker_packet_with_fake_adapter(self) -> None:
         args = self._tracker_args()

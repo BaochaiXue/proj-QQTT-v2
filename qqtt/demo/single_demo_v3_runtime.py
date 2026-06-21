@@ -966,8 +966,13 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "panel_layout": str(getattr(args, "panel_layout", masked_pcd.PANEL_LAYOUT_SIDE_BY_SIDE)),
         "panel_video_output": None if getattr(args, "panel_video_output", None) is None else str(args.panel_video_output),
         "tracking_background_mask": str(getattr(args, "tracking_background_mask", "target-union")),
+        "panel_backend": (
+            masked_pcd.PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT
+            if str(getattr(args, "render_mode", "")) == "panel"
+            else "none"
+        ),
         "panel_sync_policy": (
-            "left_latest_rgb_right_strict_same_seq"
+            masked_pcd.PANEL_SYNC_POLICY_STRICT_SAME_SEQ
             if str(getattr(args, "render_mode", "")) == "panel"
             else "none"
         ),
@@ -1085,6 +1090,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "panel_layout",
         "panel_video_output",
         "tracking_background_mask",
+        "panel_backend",
         "panel_sync_policy",
         "demo_visual_mode",
         "headless_capture_enabled",
@@ -1284,6 +1290,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.append("--enable-pcd-filter")
     if bool(args.enable_table_z_filter):
         argv.append("--enable-table-z-filter")
+    if bool(getattr(args, "disable_table_z_filter", False)):
+        argv.append("--disable-table-z-filter")
     pcd_filter_preset = _effective_pcd_filter_preset(args)
     if pcd_filter_preset is not None:
         argv.extend(["--pcd-filter-preset", str(pcd_filter_preset)])

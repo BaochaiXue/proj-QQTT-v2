@@ -291,7 +291,12 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
         self.assertFalse(contract["table_z_filter_enabled"])
         self.assertNotIn("--enable-table-z-filter", delegate)
+        self.assertIn("--disable-table-z-filter", delegate)
         self.assertEqual(_option_value(delegate, "--table-z-filter-threshold-m"), "0.0")
+        delegate_args = runtime.masked_pcd.build_parser().parse_args(delegate)
+        runtime.masked_pcd.apply_demo_preset(delegate_args)
+        self.assertFalse(delegate_args.enable_table_z_filter)
+        self.assertTrue(delegate_args.disable_table_z_filter)
 
     def test_demo32_rejects_missing_table_calibration_path(self) -> None:
         args = self._parse(
@@ -397,6 +402,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(contract["panel_video_output"], "result/panel.mp4")
             self.assertEqual(contract["tracking_background_mask"], "rgb")
             self.assertEqual(contract["panel_sync_policy"], "left_latest_rgb_right_strict_same_seq")
+            self.assertEqual(contract["panel_backend"], "open3d_multi_viewport")
             self.assertTrue(contract["pcd_filter_enabled"])
             self.assertEqual(contract["pcd_filter_mode"], "sync")
             self.assertEqual(contract["pcd_filter_preset"], "original")
