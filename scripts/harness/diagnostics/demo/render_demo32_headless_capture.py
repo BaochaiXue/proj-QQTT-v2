@@ -1103,7 +1103,7 @@ def render_capture_to_video(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Render Demo 3.2 headless enhanced-pt capture artifacts to MP4.")
+    parser = argparse.ArgumentParser(description="Render Demo 3.2 headless capture artifacts to MP4.")
     parser.add_argument("--capture-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--fps", type=float, default=30.0)

@@ -226,11 +226,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--table-z-above-direction"), "negative")
         self.assertEqual(_option_value(delegate, "--table-z-filter-classes"), "object")
 
-    def test_demo32_visual_modes_default_to_zero_mm_table_z_filter(self) -> None:
-        for visual_mode, expected_filter in (
-            ("tracking", "enhanced-pt"),
-            ("pcd", "pt-filter"),
-        ):
+    def test_demo32_visual_modes_default_to_no_filter_and_zero_mm_table_z_filter(self) -> None:
+        for visual_mode in ("tracking", "pcd"):
             with self.subTest(visual_mode=visual_mode):
                 args = self._parse(
                     runtime.DEMO_VERSION_3_2,
@@ -249,8 +246,9 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertEqual(contract["table_z_filter_threshold_m"], 0.0)
                 self.assertEqual(contract["table_z_filter_classes"], "both")
                 self.assertEqual(contract["table_z_above_direction"], "negative")
-                self.assertEqual(contract["object_filter"], expected_filter)
-                self.assertEqual(contract["controller_filter"], expected_filter)
+                self.assertEqual(contract["pcd_filter_preset"], "original")
+                self.assertEqual(contract["object_filter"], "none")
+                self.assertEqual(contract["controller_filter"], "none")
                 self.assertIn("--enable-table-z-filter", delegate)
                 self.assertEqual(_option_value(delegate, "--table-z-filter-threshold-m"), "0.0")
 
@@ -401,9 +399,9 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(contract["panel_sync_policy"], "left_latest_rgb_right_strict_same_seq")
             self.assertTrue(contract["pcd_filter_enabled"])
             self.assertEqual(contract["pcd_filter_mode"], "sync")
-            self.assertEqual(contract["pcd_filter_preset"], "enhanced-pt")
-            self.assertEqual(contract["object_filter"], "enhanced-pt")
-            self.assertEqual(contract["controller_filter"], "enhanced-pt")
+            self.assertEqual(contract["pcd_filter_preset"], "original")
+            self.assertEqual(contract["object_filter"], "none")
+            self.assertEqual(contract["controller_filter"], "none")
 
             args = self._parse(
                 runtime.DEMO_VERSION_3_2,
@@ -686,8 +684,9 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["query_color_mode"], "phystwin_rainbow_identity")
         self.assertTrue(contract["pcd_filter_enabled"])
         self.assertEqual(contract["pcd_filter_mode"], "sync")
-        self.assertEqual(contract["object_filter"], "enhanced-pt")
-        self.assertEqual(contract["controller_filter"], "enhanced-pt")
+        self.assertEqual(contract["pcd_filter_preset"], "original")
+        self.assertEqual(contract["object_filter"], "none")
+        self.assertEqual(contract["controller_filter"], "none")
         self.assertEqual(contract["pcd_color_mode"], "rgb")
         self.assertTrue(contract["table_z_filter_enabled"])
         self.assertEqual(contract["table_z_filter_threshold_m"], 0.0)
@@ -722,22 +721,19 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["query_color_mode"], "phystwin_rainbow_identity")
         self.assertTrue(contract["pcd_filter_enabled"])
         self.assertEqual(contract["pcd_filter_mode"], "sync")
-        self.assertEqual(contract["object_filter"], "pt-filter")
-        self.assertEqual(contract["controller_filter"], "pt-filter")
+        self.assertEqual(contract["pcd_filter_preset"], "original")
+        self.assertEqual(contract["object_filter"], "none")
+        self.assertEqual(contract["controller_filter"], "none")
         self.assertEqual(_option_value(delegate, "--demo-visual-mode"), "pcd")
         self.assertEqual(_option_value(delegate, "--tracker-backend"), "tapnextpp")
         self.assertEqual(_option_value(delegate, "--tracker-overlay-max-points"), "0")
-        self.assertEqual(_option_value(delegate, "--object-filter"), "pt-filter")
-        self.assertEqual(_option_value(delegate, "--controller-filter"), "pt-filter")
+        self.assertEqual(_option_value(delegate, "--object-filter"), "none")
+        self.assertEqual(_option_value(delegate, "--controller-filter"), "none")
         self.assertIn("--enable-pcd-filter", delegate)
         self.assertIn("--enable-table-z-filter", delegate)
 
     def test_demo32_visual_modes_record_effective_pcd_filter_preset(self) -> None:
-        cases = (
-            ("pcd", "pt", "pt-filter"),
-            ("tracking", "enhanced-pt", "enhanced-pt"),
-        )
-        for visual_mode, expected_preset, expected_filter in cases:
+        for visual_mode in ("pcd", "tracking"):
             with self.subTest(visual_mode=visual_mode):
                 args = self._parse(
                     runtime.DEMO_VERSION_3_2,
@@ -752,12 +748,12 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 contract = runtime.build_contract(args)
                 delegate = runtime.build_live_delegate_argv(args)
 
-                self.assertEqual(contract["pcd_filter_preset"], expected_preset)
+                self.assertEqual(contract["pcd_filter_preset"], "original")
                 self.assertEqual(contract["tracker_query_source"], "pcd_filter_residual")
                 self.assertEqual(contract["tracker_marker_gate"], "pcd_filter_residual_table_z")
-                self.assertEqual(contract["object_filter"], expected_filter)
-                self.assertEqual(contract["controller_filter"], expected_filter)
-                self.assertEqual(_option_value(delegate, "--pcd-filter-preset"), expected_preset)
+                self.assertEqual(contract["object_filter"], "none")
+                self.assertEqual(contract["controller_filter"], "none")
+                self.assertEqual(_option_value(delegate, "--pcd-filter-preset"), "original")
 
     def test_demo32_pcd_filter_preset_controls_both_classes_in_tracking_mode(self) -> None:
         args = self._parse(
@@ -856,7 +852,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 "enhanced-pt",
             ],
         )
-        with self.assertRaisesRegex(ValueError, "pcd requires --object-filter pt-filter"):
+        with self.assertRaisesRegex(ValueError, "pcd requires --object-filter none"):
             runtime.validate_args(enhanced_pcd_args)
 
         tracking_args = self._parse(
@@ -1134,8 +1130,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
         self.assertTrue(contract["pcd_filter_enabled"])
         self.assertEqual(contract["pcd_filter_mode"], "sync")
-        self.assertEqual(contract["object_filter"], "enhanced-pt")
-        self.assertEqual(contract["controller_filter"], "enhanced-pt")
+        self.assertEqual(contract["object_filter"], "none")
+        self.assertEqual(contract["controller_filter"], "none")
         self.assertEqual(contract["filter_radius_m"], runtime.FFS_SURFACE_FILTER_RADIUS_M)
         self.assertEqual(contract["filter_nb_points"], runtime.FFS_SURFACE_FILTER_NB_POINTS)
         self.assertEqual(contract["enhanced_component_voxel_size_m"], runtime.FFS_SURFACE_COMPONENT_VOXEL_SIZE_M)
@@ -1235,7 +1231,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r"requires --render-mode pointcloud$"):
             runtime.validate_args(args)
 
-    def test_demo32_fake_live_headless_capture_defaults_to_enhanced_pt_sync_filter(self) -> None:
+    def test_demo32_fake_live_headless_capture_defaults_to_no_filter_z_on_sync_pcd(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_2,
             [
@@ -1253,15 +1249,18 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
         self.assertTrue(contract["headless_capture_enabled"])
         self.assertEqual(contract["headless_capture_dir"], "result/headless_case")
-        self.assertEqual(contract["saved_pcd_source"], "enhanced_pt_filtered")
+        self.assertEqual(contract["saved_pcd_source"], "none_filtered")
         self.assertEqual(contract["track_mode"], "controller-object")
         self.assertEqual(contract["controller_instance_mode"], "two-hands")
         self.assertEqual(contract["edgetam_tracking_identities"], ["hand_a", "object", "hand_b"])
         self.assertEqual(contract["tracker_backend"], "tapnextpp")
         self.assertTrue(contract["pcd_filter_enabled"])
         self.assertEqual(contract["pcd_filter_mode"], "sync")
-        self.assertEqual(contract["object_filter"], "enhanced-pt")
-        self.assertEqual(contract["controller_filter"], "enhanced-pt")
+        self.assertEqual(contract["pcd_filter_preset"], "original")
+        self.assertEqual(contract["object_filter"], "none")
+        self.assertEqual(contract["controller_filter"], "none")
+        self.assertEqual(contract["object_filter_cap"], 0)
+        self.assertEqual(contract["controller_filter_cap"], 0)
         self.assertTrue(contract["table_z_filter_enabled"])
         self.assertEqual(contract["table_z_filter_threshold_m"], 0.0)
         self.assertEqual(contract["table_z_filter_classes"], "both")

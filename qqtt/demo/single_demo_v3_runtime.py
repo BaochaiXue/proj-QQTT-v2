@@ -199,15 +199,11 @@ def _table_z_filter_visual_default_requested(args: argparse.Namespace, version: 
 
 
 def _visual_mode_required_filter(args: argparse.Namespace) -> str:
-    if str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) == DEMO_VISUAL_MODE_PCD:
-        return masked_pcd.PCD_FILTER_PT_FILTER
-    return masked_pcd.PCD_FILTER_ENHANCED_PT
+    return masked_pcd.PCD_FILTER_NONE
 
 
 def _visual_mode_required_preset(args: argparse.Namespace) -> str:
-    if str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) == DEMO_VISUAL_MODE_PCD:
-        return masked_pcd.PCD_FILTER_PRESET_PT
-    return masked_pcd.PCD_FILTER_PRESET_ENHANCED_PT
+    return masked_pcd.PCD_FILTER_PRESET_ORIGINAL
 
 
 def _effective_pcd_filter_preset(args: argparse.Namespace) -> str | None:
@@ -578,7 +574,7 @@ def apply_preset_defaults(
         if "--pcd-filter-mode" not in explicit:
             args.pcd_filter_mode = "sync"
         if "--pcd-filter-preset" not in explicit:
-            args.pcd_filter_preset = masked_pcd.PCD_FILTER_PRESET_ENHANCED_PT
+            args.pcd_filter_preset = masked_pcd.PCD_FILTER_PRESET_ORIGINAL
         if "--headless-capture-dir" not in explicit and args.headless_capture_dir is None:
             args.headless_capture_dir = _default_headless_capture_dir(args, version)
     if filtered_visual:

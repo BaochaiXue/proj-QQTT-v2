@@ -44,13 +44,14 @@ conda run -n demo_2_max --no-capture-output \
 
 For PCD-only inspection, keep the full FFS + EdgeTAM + TAPNext++ tracking
 pipeline running, but hide the query markers in the render. This makes the
-displayed FPS reflect the same full pipeline cost as tracking mode. The PCD
-inspection view defaults both object and controller rendering filters to
-`pt-filter`; tracking mode keeps the stricter `enhanced-pt` defaults for its
-overlay path. Use `--pcd-filter-preset {original,pt,enhanced-pt}` to override
-the visual-mode default for both object and controller. The same preset drives
-rendered/saved PCD and TAPNext++ initialization: query points are sampled from
-the preset's residual PCD pixels, not the raw object/controller union mask.
+displayed FPS reflect the same full pipeline cost as tracking mode. Both PCD
+inspection and tracking views default object and controller rendering filters
+to `none`, with table-Z deletion still enabled by default. Use
+`--pcd-filter-preset {original,pt,enhanced-pt}` to override the visual-mode
+default for both object and controller; the default is `original`. The same
+preset drives rendered/saved PCD and TAPNext++ initialization: query points are
+sampled from the preset's residual PCD pixels, not the raw object/controller
+union mask.
 Displayed tracking query markers are also strict current-frame residual markers:
 if a tracked query drifts outside its class residual mask, or the residual point
 is removed by the active table-Z filter, that marker is hidden instead of being
@@ -90,8 +91,8 @@ execution is serialized inside the runtime and cached by frame sequence so
 point-cloud rendering and TAPNext++ marker lift can share depth without
 concurrent TensorRT context use.
 
-World-Z diagnostics are always reported for table-calibrated PCD. After the current PT or
-enhanced-PT PCD output is transformed into table world, the runtime records
+World-Z diagnostics are always reported for table-calibrated PCD. After the current
+PCD preset output is transformed into table world, the runtime records
 object/controller Z quantiles plus hand_a/hand_b stats when those masks are
 available, with table-band candidate counts at 5, 10, 20, and 30 mm. Demo 3.2
 `--demo-visual-mode pcd|tracking`, including headless captures, enables runtime
@@ -110,13 +111,13 @@ conda run -n demo_2_max --no-capture-output \
 ```
 
 Headless capture keeps the fake-live realtime pipeline running but does not
-open Open3D. It saves the sync filtered PCD selected by the visual mode
-(`pt-filter` for `pcd`, `enhanced-pt` for `tracking`), RGB frames,
+open Open3D. It saves the sync PCD selected by `--pcd-filter-preset`
+(`none` by default, or the explicit `pt`/`enhanced-pt` preset), RGB frames,
 color-aligned FFS depth, EdgeTAM `hand_a`/`hand_b`/`object` masks plus legacy
 controller/object masks, TAPNext++ query trajectory artifacts, capture metadata
 with `camera_to_world_c2w`, and per-frame `world_z_stats.jsonl` diagnostics.
 By default these saved PCD artifacts have the 0 mm table-Z filter applied; add
-`--disable-table-z-filter` to capture the unfiltered PCD ablation:
+`--disable-table-z-filter` to capture the no-table-Z ablation:
 
 Demo 3.2 defaults both object and controller PCD mask erosion to 0px so small
 target regions are not eaten before point-cloud generation. Passing

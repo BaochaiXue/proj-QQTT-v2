@@ -1960,9 +1960,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(
-            "When --render-mode none is used with fake-live FFS replay, save enhanced-pt filtered "
-            "PCD, color-aligned FFS depth, and TAPNext++ query trajectory artifacts here. "
-            "With --table-calibrate, the default demo preset also applies the 0 mm table-Z filter."
+            "When --render-mode none is used with fake-live FFS replay, save the selected sync "
+            "PCD preset, color-aligned FFS depth, and TAPNext++ query trajectory artifacts here. "
+            "With --table-calibrate, the default demo preset uses filter none plus the 0 mm table-Z filter."
         ),
     )
     parser.add_argument("--controller-color", type=_parse_rgb_triplet, default=CONTROLLER_COLOR_RGB, help="Controller RGB color.")

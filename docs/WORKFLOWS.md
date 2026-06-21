@@ -57,21 +57,21 @@ numerically sorted camera-0 step becomes demo `seq=0` for SAM3.1
 initialization. Demo 3 / 3.1 consume replayed RGB-D; Demo 3.2 / 3.3 consume
 replayed RGB plus IR stereo and compute FFS depth. Playback stops cleanly at
 the end of the recording. Fake-live runs in demo mode and defaults to 5 FPS;
-pass `--replay-fps 0` to replay at metadata FPS. Demo 3.2/3.3 tracking views
-default object/controller filters to enhanced-pt, while PCD-only inspection
-defaults both layers to pt-filter but still runs TAPNext++ so the displayed FPS
-reflects the full pipeline. Pass `--pcd-filter-preset {original,pt,enhanced-pt}`
-to control object/controller PCD and TAPNext++ query initialization together;
+pass `--replay-fps 0` to replay at metadata FPS. Demo 3.2/3.3 tracking and PCD
+inspection views default object/controller filters to `none` while still
+running TAPNext++ so the displayed FPS reflects the full pipeline. Pass
+`--pcd-filter-preset {original,pt,enhanced-pt}` to control object/controller PCD
+and TAPNext++ query initialization together; the default is `original`, and
 tracking query points are sampled from that preset's residual PCD pixels. When
-enhanced PCD component filtering is enabled,
-object filtering keeps one main component while controller filtering keeps two
-main components so two-hand controllers are not dropped as disconnected noise.
+`enhanced-pt` component filtering is explicitly enabled, object filtering keeps
+one main component while controller filtering keeps two main components so
+two-hand controllers are not dropped as disconnected noise.
 Demo 3.1, Demo 3.2, and Demo 3.3 use repo-root `table_calibrate.pkl` by default,
 so runtime PCD and lifted TAPNext++ markers are in `table_world_z0` with the
 tabletop at `table_z_m = 0.0`. The runtime reports world-Z quantiles and
 table-band candidate counts at 5, 10, 20, and 30 mm for object/controller PCD,
 plus hand_a/hand_b stats when those masks are available, after the current
-PT/enhanced-PT filter. The current table calibration uses negative Z as the
+PCD preset output. The current table calibration uses negative Z as the
 direction above the tabletop (`table_z_above_direction = negative`), and the
 filter uses signed clearance from the table plane. Demo 3.1/3.2/3.3
 `--demo-visual-mode pcd|tracking` windows, plus Demo 3.2/3.3 headless captures,

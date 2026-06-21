@@ -39,14 +39,15 @@ aligned-case data product.
   and timing HUD frames; it does not own camera capture, FFS, EdgeTAM, or
   runtime queues.
 - `qqtt/demo/realtime_masked_edgetam_pcd.py`: shared masked PCD runtime. Demo
-  3.2/3.3 tracking visualizations default object/controller filters to
-  enhanced-pt, while PCD-only inspection defaults both layers to pt-filter and
-  still runs the full tracker pipeline for honest FPS. The high-level
+  3.2/3.3 tracking visualizations and PCD-only inspection default
+  object/controller filters to `none` while still running the full tracker
+  pipeline for honest FPS. The high-level
   `--pcd-filter-preset {original,pt,enhanced-pt}` option overrides those
   defaults for both object/controller layers and also selects the residual PCD
-  pixels used for TAPNext++ query initialization. Object enhanced-pt
-  filtering keeps one component and controller enhanced-pt filtering keeps two
-  components, matching single-object plus two-hand demo scenes. It starts
+  pixels used for TAPNext++ query initialization. When explicitly selected,
+  object enhanced-pt filtering keeps one component and controller enhanced-pt
+  filtering keeps two components, matching single-object plus two-hand demo
+  scenes. It starts
   Open3D in a third-person orbit view by default, falls back to capped
   current-frame PCD when filtering
   would empty a nonempty layer, falls back for controller output that retains
@@ -67,7 +68,7 @@ aligned-case data product.
   Local FFS depth is serialized and cached by sequence inside the runtime so PCD
   and tracker threads share color-aligned depth without entering one TensorRT
   runner concurrently. Demo 3.1/3.2/3.3 table-calibrated output uses
-  `table_world_z0`; after PT/enhanced-PT output is transformed to table world,
+  `table_world_z0`; after the current PCD preset output is transformed to table world,
   the runtime records per-class world-Z quantiles and table-band candidate
   counts, including hand_a/hand_b when those masks are available. The tabletop
   is `table_z_m = 0.0`; the current single-camera table calibration marks the
