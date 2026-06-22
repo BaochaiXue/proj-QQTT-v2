@@ -1332,6 +1332,72 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--object-filter"), "pt-filter")
         self.assertEqual(_option_value(delegate, "--controller-filter"), "pt-filter")
 
+    def test_demo32_headless_strict_tracking_product_backend_contract_and_delegate(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/headless_case",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+                "--phystwin-strict-output-dir",
+                "result/headless_case/phystwin_custom",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(contract["tracking_product_backend"], "phystwin-strict-tracking")
+        self.assertEqual(contract["phystwin_strict_output_dir"], "result/headless_case/phystwin_custom")
+        self.assertEqual(contract["compatibility_target"], "PhysTwin")
+        self.assertEqual(contract["execution_mode"], "workstation_strict")
+        self.assertEqual(contract["mask_backend"], "edgetam")
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
+        self.assertEqual(contract["depth_backend"], "ffs")
+        self.assertEqual(_option_value(delegate, "--tracking-product-backend"), "phystwin-strict-tracking")
+        self.assertEqual(_option_value(delegate, "--phystwin-strict-output-dir"), "result/headless_case/phystwin_custom")
+
+    def test_demo32_strict_tracking_product_backend_rejects_live_panel_p0(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--render-mode",
+                "panel",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "phystwin-strict-tracking requires --render-mode none"):
+            runtime.validate_args(args)
+
+    def test_demo32_strict_tracking_product_backend_requires_tapnextpp_tracker(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/headless_case",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+                "--tracker-backend",
+                "none",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "phystwin-strict-tracking requires --tracker-backend tapnextpp"):
+            runtime.validate_args(args)
+
     def test_demo32_fake_live_headless_capture_rejects_async_filter(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_2,

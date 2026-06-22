@@ -31,6 +31,17 @@ for the single-camera branch.
 - Keep the external checkout outside this repo and document the path in the
   relevant validation plan or local environment notes.
 
+## PhysTwin-Compatible Tracking Products
+
+- Demo 3.2 `--tracking-product-backend phystwin-strict-tracking` targets the
+  PhysTwin data contract and postprocessing semantics while keeping the local
+  model stack.
+- It uses TAPNext++ as the tracker backend, EdgeTAM as the mask backend, and
+  RealSense/FFS as the depth backend.
+- CoTracker is not a runtime dependency for this mode. Compatibility outputs
+  may include a `cotracker/0.npz` path for scripts that expect the PhysTwin
+  folder name; manifests mark that path as TAPNext++ data.
+
 ## TensorRT Engines
 
 - Runtime role:

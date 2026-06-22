@@ -2012,6 +2012,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             remaining_hand_a_query_count=1,
             remaining_hand_b_query_count=1,
             retired_query_count=1,
+            all_tracks_yx=np.array([[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]], dtype=np.float32),
+            all_tracker_visibility=np.array([1.0, 0.5, 0.0], dtype=np.float32),
         )
         with tempfile.TemporaryDirectory() as tmp:
             writer = demo.HeadlessCaptureWriter(tmp, metadata={"saved_pcd_source": "none_filtered"})
@@ -2025,6 +2027,11 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(int(payload["remaining_hand_a_query_count"][0]), 1)
             self.assertEqual(int(payload["remaining_hand_b_query_count"][0]), 1)
             self.assertEqual(int(payload["retired_query_count"][0]), 1)
+            np.testing.assert_allclose(
+                payload["all_tracks_yx"],
+                np.array([[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]], dtype=np.float32),
+            )
+            np.testing.assert_allclose(payload["all_tracker_visibility"], np.array([1.0, 0.5, 0.0], dtype=np.float32))
 
     def test_tracker_query_initialization_fails_when_residual_candidates_are_too_few(self) -> None:
         args = demo.build_parser().parse_args(

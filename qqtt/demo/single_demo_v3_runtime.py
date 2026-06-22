@@ -443,6 +443,21 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
     parser.add_argument("--tracker-overlay-max-points", type=int, default=512)
     parser.add_argument("--tracker-marker-point-size", type=float, default=masked_pcd.DEFAULT_TRACKER_MARKER_POINT_SIZE)
     parser.add_argument(
+        "--tracking-product-backend",
+        choices=masked_pcd.TRACKING_PRODUCT_BACKENDS,
+        default=masked_pcd.DEFAULT_TRACKING_PRODUCT_BACKEND,
+        help=(
+            "Final tracking product backend. realtime-overlay keeps the live TAPNext++ overlay; "
+            "phystwin-strict-tracking writes PhysTwin-compatible headless artifacts using TAPNext++."
+        ),
+    )
+    parser.add_argument(
+        "--phystwin-strict-output-dir",
+        type=Path,
+        default=None,
+        help="Output directory for --tracking-product-backend phystwin-strict-tracking. Defaults to <headless-capture-dir>/phystwin_like.",
+    )
+    parser.add_argument(
         "--tracker-retire-filtered-markers",
         dest="tracker_retire_filtered_markers",
         action="store_true",
@@ -680,6 +695,22 @@ def validate_args(args: argparse.Namespace) -> None:
     if str(args.input_source) not in INPUT_SOURCES:
         raise ValueError(f"--input-source must be one of {INPUT_SOURCES}")
     headless_capture = _headless_capture_requested(args, version)
+    args.tracking_product_backend = masked_pcd.normalize_tracking_product_backend(
+        getattr(args, "tracking_product_backend", masked_pcd.DEFAULT_TRACKING_PRODUCT_BACKEND)
+    )
+    if masked_pcd.tracking_product_backend_is_strict(args.tracking_product_backend):
+        if str(args.input_source) != INPUT_SOURCE_FAKE_LIVE:
+            raise ValueError("phystwin-strict-tracking requires --input-source fake-live")
+        if str(args.render_mode) != masked_pcd.RENDER_MODE_NONE:
+            raise ValueError("phystwin-strict-tracking requires --render-mode none")
+        if args.headless_capture_dir is None:
+            raise ValueError("phystwin-strict-tracking requires --headless-capture-dir")
+        if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
+            raise ValueError("phystwin-strict-tracking requires --track-mode controller-object")
+        if str(args.tracker_backend) != masked_pcd.TRACKER_BACKEND_TAPNEXTPP:
+            raise ValueError("phystwin-strict-tracking requires --tracker-backend tapnextpp")
+        if args.phystwin_strict_output_dir is None:
+            args.phystwin_strict_output_dir = Path(args.headless_capture_dir) / "phystwin_like"
     if args.headless_capture_dir is not None and not headless_capture:
         raise ValueError("--headless-capture-dir requires Demo 3.2/3.3 --input-source fake-live --render-mode none")
     if float(args.replay_fps) < 0.0:
@@ -1005,6 +1036,24 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "tracker_backend_family": (
             "tapnext" if str(args.tracker_backend) == masked_pcd.TRACKER_BACKEND_TAPNEXTPP else "none"
         ),
+        "tracking_product_backend": str(args.tracking_product_backend),
+        "phystwin_strict_output_dir": (
+            None
+            if getattr(args, "phystwin_strict_output_dir", None) is None
+            else str(args.phystwin_strict_output_dir)
+        ),
+        "compatibility_target": (
+            masked_pcd.COMPATIBILITY_TARGET_PHYSTWIN
+            if masked_pcd.tracking_product_backend_is_strict(getattr(args, "tracking_product_backend", None))
+            else None
+        ),
+        "mask_backend": "edgetam",
+        "depth_backend": str(args.depth_source),
+        "execution_mode": (
+            masked_pcd.PHYSTWIN_STRICT_EXECUTION_MODE
+            if masked_pcd.tracking_product_backend_is_strict(getattr(args, "tracking_product_backend", None))
+            else masked_pcd.TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
+        ),
         "tracker_device": str(args.tracker_device),
         "tracker_query_count": int(args.tracker_query_count),
         "tracker_query_source": (
@@ -1103,6 +1152,10 @@ def format_contract(contract: dict[str, Any]) -> str:
         "mask_source",
         "track_mode",
         "tracker_backend",
+        "tracking_product_backend",
+        "phystwin_strict_output_dir",
+        "compatibility_target",
+        "execution_mode",
         "tracker_device",
         "tracker_query_count",
         "tracker_query_source",
@@ -1219,6 +1272,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(int(args.tracker_overlay_max_points)),
         "--tracker-marker-point-size",
         str(float(args.tracker_marker_point_size)),
+        "--tracking-product-backend",
+        str(args.tracking_product_backend),
         "--tapnet-repo-dir",
         str(args.tapnet_repo_dir),
         "--tapnextpp-checkpoint",
@@ -1318,6 +1373,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.append("--tracker-retire-filtered-markers")
     else:
         argv.append("--no-tracker-retire-filtered-markers")
+    if getattr(args, "phystwin_strict_output_dir", None) is not None:
+        argv.extend(["--phystwin-strict-output-dir", str(args.phystwin_strict_output_dir)])
     if bool(args.enable_pcd_filter):
         argv.append("--enable-pcd-filter")
     if bool(args.enable_table_z_filter):

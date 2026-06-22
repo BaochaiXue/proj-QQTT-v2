@@ -142,6 +142,54 @@ conda run -n demo_2_max --no-capture-output \
   --headless-capture-dir result/single_demo_v3_2_ffs_masked_pcd/headless_smoke
 ```
 
+### PhysTwin-like strict product
+
+Demo 3.2 can also generate a finite-window PhysTwin-compatible product from the
+current single-camera stack:
+
+- tracker backend remains TAPNext++;
+- mask backend remains EdgeTAM;
+- depth backend remains FFS/RealSense;
+- strictness applies to the PhysTwin querying, postprocessing, data contract,
+  sampling, and visualization semantics.
+
+This mode is headless/offline in P0. It does not run CoTracker and it does not
+replace the live side-by-side TAPNext++ overlay.
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --demo-visual-mode tracking \
+  --render-mode none \
+  --duration-s 5 \
+  --headless-capture-dir result/single_demo_v3_2_ffs_masked_pcd/phystwin_strict_smoke \
+  --tracking-product-backend phystwin-strict-tracking
+```
+
+The strict output defaults to
+`<headless-capture-dir>/phystwin_like/` and includes:
+
+```text
+manifest.json
+mask/processed_masks.pkl
+tracking/0.npz
+cotracker/0.npz
+pcd/<frame_idx>.npz
+track_process_data.pkl
+final_data.pkl
+tracking_2d.mp4
+track_process_data.mp4
+final_data.mp4
+final_pcd.mp4
+```
+
+The `cotracker/0.npz` path is compatibility naming only; the manifest records
+`tracker_backend=tapnextpp` and `not_actual_cotracker=true`. Query initialization
+uses the first-frame raw `object | controller` EdgeTAM mask union and exports
+`queries_txy=[0,x,y]`, while the internal/runtime tracker coordinates remain
+`tracks_yx`.
+
 Render the saved artifacts offline. In `pcd` mode, the helper draws only the
 saved filtered RGB point cloud. In `tracking` mode, the helper follows the
 FuturePhysTwin 2D tracker view: same-frame RGB target regions plus current-frame

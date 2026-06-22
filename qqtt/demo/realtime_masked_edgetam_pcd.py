@@ -89,6 +89,17 @@ from qqtt.env.camera.table_calibration import (  # noqa: E402
 )
 from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world  # noqa: E402
 from qqtt.demo.query_rainbow import query_rainbow_colors_from_points_yx_rgb_u8  # noqa: E402
+from qqtt.demo.phystwin_strict_product import (  # noqa: E402
+    COMPATIBILITY_TARGET_PHYSTWIN,
+    DEFAULT_TRACKING_PRODUCT_BACKEND,
+    PHYSTWIN_STRICT_EXECUTION_MODE,
+    TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
+    TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
+    TRACKING_PRODUCT_BACKENDS,
+    finalize_headless_capture,
+    normalize_tracking_product_backend,
+    tracking_product_backend_is_strict,
+)
 from qqtt.demo.demo32_side_by_side_panel import (  # noqa: E402
     SideBySidePanelHud,
     SideBySidePanelInputs,
@@ -895,6 +906,8 @@ class TrackerMarkerPacket:
     remaining_hand_a_query_count: int = -1
     remaining_hand_b_query_count: int = -1
     retired_query_count: int = -1
+    all_tracks_yx: np.ndarray = field(default_factory=lambda: np.empty((0, 2), dtype=np.float32))
+    all_tracker_visibility: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=np.float32))
     coordinate_frame: str = COORDINATE_FRAME
 
     def __post_init__(self) -> None:
@@ -1278,6 +1291,8 @@ class HeadlessCaptureWriter:
             marker_residual_violation_count=np.asarray([int(packet.marker_residual_violation_count)], dtype=np.int64),
             marker_residual_gate=np.asarray([str(packet.marker_residual_gate)]),
             query_alive_mask=np.ascontiguousarray(packet.query_alive_mask, dtype=bool),
+            all_tracks_yx=np.ascontiguousarray(packet.all_tracks_yx, dtype=np.float32).reshape(-1, 2),
+            all_tracker_visibility=np.ascontiguousarray(packet.all_tracker_visibility, dtype=np.float32).reshape(-1),
             remaining_query_count=np.asarray([int(packet.remaining_query_count)], dtype=np.int64),
             remaining_object_query_count=np.asarray([int(packet.remaining_object_query_count)], dtype=np.int64),
             remaining_controller_query_count=np.asarray([int(packet.remaining_controller_query_count)], dtype=np.int64),
@@ -1926,6 +1941,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Open3D point size for TAPNext++ marker layer.",
     )
     parser.add_argument(
+        "--tracking-product-backend",
+        choices=TRACKING_PRODUCT_BACKENDS,
+        default=DEFAULT_TRACKING_PRODUCT_BACKEND,
+        help=(
+            "Final tracking product backend. realtime-overlay keeps the live marker product; "
+            "phystwin-strict-tracking writes PhysTwin-compatible headless artifacts using TAPNext++ tracks."
+        ),
+    )
+    parser.add_argument(
+        "--phystwin-strict-output-dir",
+        type=Path,
+        default=None,
+        help="Output directory for --tracking-product-backend phystwin-strict-tracking. Defaults to <headless-capture-dir>/phystwin_like.",
+    )
+    parser.add_argument(
         "--tracker-retire-filtered-markers",
         dest="tracker_retire_filtered_markers",
         action="store_true",
@@ -2222,6 +2252,8 @@ def pcd_filter_preset_to_filter(preset: str | None) -> str | None:
 
 
 def tracker_query_source(args: argparse.Namespace) -> str:
+    if tracking_product_backend_is_strict(getattr(args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)):
+        return TRACKER_QUERY_SOURCE_UNION_MASK
     return (
         TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL
         if pcd_filter_preset_to_filter(getattr(args, "pcd_filter_preset", None)) is not None
@@ -2416,6 +2448,22 @@ def validate_args(args: argparse.Namespace) -> None:
             allowed = ", ".join(HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
             raise ValueError(f"--headless-capture-dir requires --controller-filter one of {allowed}")
     args.tracker_backend = normalize_tracker_backend(str(args.tracker_backend))
+    args.tracking_product_backend = normalize_tracking_product_backend(
+        getattr(args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)
+    )
+    if tracking_product_backend_is_strict(args.tracking_product_backend):
+        if str(args.input_source) != INPUT_SOURCE_FAKE_LIVE:
+            raise ValueError("phystwin-strict-tracking requires --input-source fake-live")
+        if str(args.render_mode) != RENDER_MODE_NONE:
+            raise ValueError("phystwin-strict-tracking requires --render-mode none")
+        if args.headless_capture_dir is None:
+            raise ValueError("phystwin-strict-tracking requires --headless-capture-dir")
+        if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
+            raise ValueError("phystwin-strict-tracking requires --track-mode controller-object")
+        if str(args.tracker_backend) != TRACKER_BACKEND_TAPNEXTPP:
+            raise ValueError("phystwin-strict-tracking requires --tracker-backend tapnextpp")
+        if args.phystwin_strict_output_dir is None:
+            args.phystwin_strict_output_dir = Path(args.headless_capture_dir) / "phystwin_like"
     if int(args.tracker_query_count) < 0:
         raise ValueError("--tracker-query-count must be >= 0")
     if int(args.tracker_overlay_max_points) < 0:
@@ -4167,6 +4215,26 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "edgetam_tracking_identities": list(active_object_id_labels(self.args).values()),
             "demo_visual_mode": str(self.args.demo_visual_mode),
             "tracker_backend": str(self.args.tracker_backend),
+            "tracking_product_backend": str(
+                normalize_tracking_product_backend(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
+            ),
+            "phystwin_strict_output_dir": (
+                None
+                if getattr(self.args, "phystwin_strict_output_dir", None) is None
+                else str(self.args.phystwin_strict_output_dir)
+            ),
+            "compatibility_target": (
+                COMPATIBILITY_TARGET_PHYSTWIN
+                if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
+                else None
+            ),
+            "mask_backend": "edgetam",
+            "depth_backend": str(self.args.depth_source),
+            "execution_mode": (
+                PHYSTWIN_STRICT_EXECUTION_MODE
+                if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
+                else TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
+            ),
             "tracker_query_count": int(self.args.tracker_query_count),
             "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
             "tracker_marker_gate": tracker_marker_gate(self.args) if tracker_enabled(self.args) else None,
@@ -4328,6 +4396,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             render_mode = str(self.args.render_mode)
             if render_mode == RENDER_MODE_NONE:
                 self._run_headless()
+                self._finalize_headless_tracking_product()
             elif render_mode == RENDER_MODE_PANEL:
                 self._run_panel_viewer()
             else:
@@ -4335,6 +4404,35 @@ class RealtimeMaskedEdgeTamPcdDemo:
         finally:
             self.stop()
         return 2 if self._fatal_error_snapshot() is not None else 0
+
+    def _finalize_headless_tracking_product(self) -> None:
+        if not tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)):
+            return
+        if self._fatal_error_snapshot() is not None:
+            return
+        if self.headless_capture_writer is None:
+            raise RuntimeError("phystwin-strict-tracking requires an initialized headless capture writer")
+        output_dir = (
+            Path(self.args.phystwin_strict_output_dir)
+            if getattr(self.args, "phystwin_strict_output_dir", None) is not None
+            else self.headless_capture_writer.output_dir / "phystwin_like"
+        )
+        print(f"[phystwin-strict] finalizing output_dir={output_dir}", flush=True)
+        manifest = finalize_headless_capture(self.headless_capture_writer.output_dir, output_dir=output_dir)
+        self.headless_capture_writer.update_metadata(
+            {
+                "phystwin_strict_output_dir": str(output_dir),
+                "phystwin_strict_manifest": str(output_dir / "manifest.json"),
+                "phystwin_strict_frame_count": int(manifest.get("frame_count", 0)),
+                "phystwin_strict_query_count": int(manifest.get("query_count", 0)),
+            }
+        )
+        print(
+            "[phystwin-strict] "
+            f"frames={manifest.get('frame_count')} queries={manifest.get('query_count')} "
+            f"manifest={output_dir / 'manifest.json'}",
+            flush=True,
+        )
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -4920,6 +5018,26 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "render_mode": self.args.render_mode,
             "view_mode": str(self.args.view_mode),
             "tracker_backend": str(self.args.tracker_backend),
+            "tracking_product_backend": str(
+                normalize_tracking_product_backend(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
+            ),
+            "phystwin_strict_output_dir": (
+                None
+                if getattr(self.args, "phystwin_strict_output_dir", None) is None
+                else str(self.args.phystwin_strict_output_dir)
+            ),
+            "compatibility_target": (
+                COMPATIBILITY_TARGET_PHYSTWIN
+                if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
+                else None
+            ),
+            "mask_backend": "edgetam",
+            "depth_backend": str(self.args.depth_source),
+            "execution_mode": (
+                PHYSTWIN_STRICT_EXECUTION_MODE
+                if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
+                else TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
+            ),
             "tracker_device": str(self.args.tracker_device),
             "tracker_query_count": int(self.args.tracker_query_count),
             "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
@@ -5510,6 +5628,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             remaining_hand_a_query_count=remaining_hand_a_query_count,
             remaining_hand_b_query_count=remaining_hand_b_query_count,
             retired_query_count=retired_query_count,
+            all_tracks_yx=np.ascontiguousarray(tracks_latest, dtype=np.float32).reshape(-1, 2),
+            all_tracker_visibility=np.ascontiguousarray(visibility_latest, dtype=np.float32).reshape(-1),
             coordinate_frame=self._pcd_coordinate_frame(),
         )
         if self.args.debug:
