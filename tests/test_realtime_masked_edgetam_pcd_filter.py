@@ -24,8 +24,11 @@ class RealtimeMaskedEdgeTamPcdFilterTest(unittest.TestCase):
         self.assertIn("--edgetam-live-session-keep-frames EDGETAM_LIVE_SESSION_KEEP_FRAMES", help_text)
 
         args = masked_demo.build_parser().parse_args([])
-        self.assertEqual(args.object_filter, "enhanced-pt")
-        self.assertEqual(args.controller_filter, "enhanced-pt")
+        self.assertEqual(args.object_filter, "none")
+        self.assertEqual(args.controller_filter, "none")
+        self.assertEqual(args.object_filter_cap, 0)
+        self.assertEqual(args.controller_filter_cap, 0)
+        self.assertEqual(masked_demo.headless_capture_saved_pcd_source(args), "none_filtered")
         self.assertEqual(args.object_filter_keep_components, 1)
         self.assertEqual(args.controller_filter_keep_components, 2)
         self.assertEqual(args.filter_max_age_frames, 3)
