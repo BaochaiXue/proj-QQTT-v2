@@ -305,6 +305,21 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(hud.remaining_query_count, hud.query_count)
         self.assertEqual(hud.input_time_s, 105.5)
 
+    def test_panel_rgb_source_prefers_input_preview_slot(self) -> None:
+        args = self._tracker_args()
+        args.input_source = demo.INPUT_SOURCE_FAKE_LIVE
+        args.render_mode = "panel"
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime.capture_slot.put(self._frame_packet(seq=1, source_timestamp_s=101.0))
+        runtime.input_preview_slot.put(self._frame_packet(seq=5, source_timestamp_s=105.0))
+
+        frame = runtime._latest_panel_rgb_frame_after(-1)
+
+        self.assertIsNotNone(frame)
+        assert frame is not None
+        self.assertEqual(frame.seq, 5)
+        self.assertEqual(frame.source_timestamp_s, 105.0)
+
     def test_marker_residual_audit_accepts_markers_inside_union_residual(self) -> None:
         object_residual = np.zeros((4, 4), dtype=bool)
         controller_residual = np.zeros((4, 4), dtype=bool)
@@ -1281,17 +1296,37 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 frame_index: int | None = None,
                 wait_ms: float = 0.0,
             ) -> demo.FramePacket:
-                _ = frame_index
+                source_index = int(seq) if frame_index is None else int(frame_index)
                 receive_s = self.first_receive_s if int(seq) == 0 else time.perf_counter()
                 return demo.FramePacket(
                     seq=int(seq),
-                    color_bgr=np.zeros((4, 4, 3), dtype=np.uint8),
+                    color_bgr=np.full((4, 4, 3), source_index, dtype=np.uint8),
                     depth_source="realsense",
                     intrinsics=CameraIntrinsics(fx=100.0, fy=100.0, cx=0.0, cy=0.0),
                     depth_scale_m_per_unit=0.001,
                     receive_perf_s=receive_s,
                     timing=demo.PipelineTiming(wait_ms=float(wait_ms)),
                     depth_u16=np.ones((4, 4), dtype=np.uint16),
+                    source_frame_index=source_index,
+                )
+
+            def read_preview_packet(
+                self,
+                *,
+                seq: int,
+                frame_index: int | None = None,
+                wait_ms: float = 0.0,
+            ) -> demo.FramePacket:
+                source_index = int(seq) if frame_index is None else int(frame_index)
+                return demo.FramePacket(
+                    seq=int(seq),
+                    color_bgr=np.full((4, 4, 3), source_index, dtype=np.uint8),
+                    depth_source="realsense",
+                    intrinsics=CameraIntrinsics(fx=100.0, fy=100.0, cx=0.0, cy=0.0),
+                    depth_scale_m_per_unit=0.001,
+                    receive_perf_s=time.perf_counter(),
+                    timing=demo.PipelineTiming(wait_ms=float(wait_ms)),
+                    source_frame_index=source_index,
                 )
 
         args = self._tracker_args()
@@ -1300,15 +1335,28 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         runtime._reset_lossless_state()
         runtime.recording_source = FakeRecordingSource()
         published: list[int] = []
+        published_sources: list[int | None] = []
+        previewed: list[tuple[int, int | None]] = []
         first_published = threading.Event()
 
-        def publish(packet: demo.FramePacket, *, record_s: float | None = None) -> None:
-            _ = record_s
+        def publish(
+            packet: demo.FramePacket,
+            *,
+            record_s: float | None = None,
+            write_input_timeline: bool = True,
+        ) -> None:
+            _ = record_s, write_input_timeline
             published.append(int(packet.seq))
+            published_sources.append(packet.source_frame_index)
             if int(packet.seq) == 0:
                 first_published.set()
 
+        def publish_preview(packet: demo.FramePacket, *, record_s: float | None = None) -> None:
+            _ = record_s
+            previewed.append((int(packet.seq), packet.source_frame_index))
+
         runtime._publish_capture_packet = publish  # type: ignore[method-assign]
+        runtime._publish_input_preview_packet = publish_preview  # type: ignore[method-assign]
         thread = threading.Thread(target=runtime._capture_recording_worker, daemon=True)
         thread.start()
 
@@ -1317,6 +1365,10 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         time.sleep(0.25)
         try:
             self.assertEqual(published, [0])
+            self.assertGreater(len(previewed), 1)
+            self.assertGreater(previewed[-1][0], 0)
+            self.assertGreater(previewed[-1][1] or 0, 0)
+            last_preview_source_before_pair = previewed[-1][1]
             first_pair_ready = getattr(runtime, "_lossless_first_pair_published", None)
             self.assertIsNotNone(first_pair_ready)
             first_pair_ready.set()
@@ -1325,6 +1377,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 time.sleep(0.01)
             self.assertGreater(len(published), 1)
             self.assertEqual(published[1], 1)
+            self.assertIsNotNone(published_sources[1])
+            self.assertGreater(published_sources[1] or 0, last_preview_source_before_pair or 0)
+            self.assertGreater(published[-1], 0)
         finally:
             runtime.stop_event.set()
             thread.join(timeout=1.0)
@@ -1404,7 +1459,14 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 source_frame_index=7,
                 source_step=42,
             )
+            preview_packet = self._frame_packet(
+                seq=2,
+                source_timestamp_s=12.9,
+                source_frame_index=13,
+                source_step=48,
+            )
             writer.write_input_frame(input_packet)
+            writer.write_input_frame(preview_packet)
             now = time.perf_counter()
             query_points_yx = np.array([[1.0, 1.0]], dtype=np.float32)
             query_rgb_u8 = query_rainbow_colors_from_points_yx_rgb_u8(query_points_yx)
@@ -1485,13 +1547,19 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 json.loads(line)
                 for line in (output_dir / "input_frames.jsonl").read_text(encoding="utf-8").splitlines()
             ]
-            self.assertEqual(len(input_rows), 1)
+            self.assertEqual(len(input_rows), 2)
             self.assertEqual(input_rows[0]["seq"], 0)
             self.assertEqual(input_rows[0]["input_rgb_path"], "input_rgb/000000.png")
             self.assertEqual(input_rows[0]["source_timestamp_s"], 12.5)
             self.assertEqual(input_rows[0]["source_frame_index"], 7)
             self.assertEqual(input_rows[0]["source_step"], 42)
+            self.assertEqual(input_rows[1]["seq"], 2)
+            self.assertEqual(input_rows[1]["input_rgb_path"], "input_rgb/000002.png")
+            self.assertEqual(input_rows[1]["source_timestamp_s"], 12.9)
+            self.assertEqual(input_rows[1]["source_frame_index"], 13)
+            self.assertEqual(input_rows[1]["source_step"], 48)
             self.assertTrue((output_dir / input_rows[0]["input_rgb_path"]).is_file())
+            self.assertTrue((output_dir / input_rows[1]["input_rgb_path"]).is_file())
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["world_z_stats_path"], "world_z_stats.jsonl")
 

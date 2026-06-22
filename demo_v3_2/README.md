@@ -190,10 +190,11 @@ Demo 3.2 can render a 1x3 panel for fake-live review:
 3. tracking overlay with current-frame query markers
 
 The left RGB column follows the latest fake-live input frame and may lead the
-processed output. The PCD and tracking columns always use the same strict
-same-seq paired frame. The HUD reports `rgb_seq`, `paired_seq`, `rgb_ahead`,
-source input time, pipeline latency, display latency, startup hold, filter
-preset, marker count, and remaining live tracking query counts.
+processed output, including during startup warmup before the first strict pair is
+available. The PCD and tracking columns always use the same strict same-seq
+paired frame. The HUD reports `rgb_seq`, `paired_seq`, `rgb_ahead`, source input
+time, pipeline latency, display latency, startup hold, filter preset, marker
+count, and remaining live tracking query counts.
 
 Offline from a headless capture:
 

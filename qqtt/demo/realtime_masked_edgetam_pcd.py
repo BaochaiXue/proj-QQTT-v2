@@ -180,8 +180,10 @@ DEFAULT_OBJECT_PCD_MASK_ERODE_PIXELS: int | None = None
 DEFAULT_CONTROLLER_PCD_MASK_ERODE_PIXELS: int | None = None
 DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.01
 DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.0
-DEFAULT_OBJECT_FILTER = PCD_FILTER_ENHANCED_PT
-DEFAULT_CONTROLLER_FILTER = PCD_FILTER_ENHANCED_PT
+DEFAULT_OBJECT_FILTER = PCD_FILTER_NONE
+DEFAULT_CONTROLLER_FILTER = PCD_FILTER_NONE
+DEFAULT_OBJECT_FILTER_CAP = 0
+DEFAULT_CONTROLLER_FILTER_CAP = 0
 DEFAULT_OBJECT_FILTER_KEEP_COMPONENTS = 1
 DEFAULT_CONTROLLER_FILTER_KEEP_COMPONENTS = 2
 DEFAULT_OBJECT_FILTER_MIN_RETAIN_RATIO = 0.0
@@ -242,7 +244,7 @@ CONTROLLER_INSTANCE_MODES = (CONTROLLER_INSTANCE_MODE_SINGLE, CONTROLLER_INSTANC
 QUERY_CONTROLLER_INSTANCE_NONE = 0
 QUERY_CONTROLLER_INSTANCE_HAND_A = 1
 QUERY_CONTROLLER_INSTANCE_HAND_B = 2
-HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "enhanced_pt_filtered"
+HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "none_filtered"
 HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS = (PCD_FILTER_ENHANCED_PT, PCD_FILTER_PT_FILTER, PCD_FILTER_NONE)
 DEBUG_LOG_INTERVAL_S = 1.0
 DEFAULT_LOSSLESS_INPUT_FPS = 5.0
@@ -533,6 +535,48 @@ class RecordedRgbdFrameSource:
             t_ir_left_to_color=self.t_ir_left_to_color if ir_left_u8 is not None else None,
             k_color=self.k_color,
             ir_baseline_m=float(self.ir_baseline_m) if ir_left_u8 is not None else 0.0,
+            source_timestamp_s=float(ref.timestamp_s),
+            source_frame_index=int(source_index),
+            source_step=int(ref.step),
+        )
+
+    def read_preview_packet(
+        self,
+        *,
+        seq: int,
+        frame_index: int | None = None,
+        wait_ms: float = 0.0,
+        receive_perf_s: float | None = None,
+    ) -> FramePacket:
+        packet_seq = int(seq)
+        source_index = packet_seq if frame_index is None else int(frame_index)
+        if source_index < 0 or source_index >= len(self.frames):
+            raise IndexError(
+                f"recording preview frame_index {source_index} out of range for {len(self.frames)} frames"
+            )
+        ref = self.frames[source_index]
+        copy_start_s = time.perf_counter()
+        color_bgr = self._load_color_bgr(ref.color_path)
+        copy_done_s = time.perf_counter()
+        if tuple(color_bgr.shape[:2]) != (self.height, self.width):
+            raise ValueError(
+                f"recording preview frame shape {tuple(color_bgr.shape[:2])} does not match metadata "
+                f"height/width {(self.height, self.width)} for step {ref.step}"
+            )
+        receive_s = copy_done_s if receive_perf_s is None else float(receive_perf_s)
+        return FramePacket(
+            seq=packet_seq,
+            color_bgr=color_bgr,
+            depth_source=self.depth_source,
+            intrinsics=self.intrinsics,
+            depth_scale_m_per_unit=self.depth_scale_m_per_unit,
+            receive_perf_s=receive_s,
+            timing=PipelineTiming(
+                wait_ms=float(wait_ms),
+                align_ms=0.0,
+                frame_copy_ms=_elapsed_ms(copy_start_s, copy_done_s),
+            ),
+            k_color=self.k_color,
             source_timestamp_s=float(ref.timestamp_s),
             source_frame_index=int(source_index),
             source_step=int(ref.step),
@@ -2030,8 +2074,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--object-filter", choices=PCD_FILTERS, default=DEFAULT_OBJECT_FILTER)
     parser.add_argument("--controller-filter", choices=PCD_FILTERS, default=DEFAULT_CONTROLLER_FILTER)
-    parser.add_argument("--object-filter-cap", type=int, default=20_000)
-    parser.add_argument("--controller-filter-cap", type=int, default=20_000)
+    parser.add_argument("--object-filter-cap", type=int, default=DEFAULT_OBJECT_FILTER_CAP)
+    parser.add_argument("--controller-filter-cap", type=int, default=DEFAULT_CONTROLLER_FILTER_CAP)
     parser.add_argument(
         "--object-filter-keep-components",
         type=int,
@@ -2211,8 +2255,8 @@ def headless_capture_enabled(args: argparse.Namespace) -> bool:
 
 
 def headless_capture_saved_pcd_source(args: argparse.Namespace) -> str:
-    object_filter = str(getattr(args, "object_filter", PCD_FILTER_ENHANCED_PT)).replace("-", "_")
-    controller_filter = str(getattr(args, "controller_filter", PCD_FILTER_ENHANCED_PT)).replace("-", "_")
+    object_filter = str(getattr(args, "object_filter", DEFAULT_OBJECT_FILTER)).replace("-", "_")
+    controller_filter = str(getattr(args, "controller_filter", DEFAULT_CONTROLLER_FILTER)).replace("-", "_")
     if object_filter == controller_filter:
         return f"{object_filter}_filtered"
     return f"object_{object_filter}_controller_{controller_filter}_filtered"
@@ -3879,6 +3923,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.runtime: RealtimeCameraRuntime | None = None
         self.ray_x: np.ndarray | None = None
         self.ray_y: np.ndarray | None = None
+        self.input_preview_slot: LatestSlot[FramePacket] = LatestSlot()
         self.capture_slot: LatestSlot[FramePacket] = LatestSlot()
         self.mask_slot: LatestSlot[MaskPacket] = LatestSlot()
         self.depth_profile_slot: LatestSlot[DepthProfilePacket] = LatestSlot()
@@ -4080,7 +4125,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"tracker_results={self._lossless_tracker_results} pairs={self._lossless_pairs_emitted}"
         )
 
-    def _wait_for_lossless_replay_startup_pair(self) -> bool:
+    def _wait_for_lossless_replay_startup_pair(self, on_wait_tick: Callable[[], None] | None = None) -> bool:
         if not (
             self._lossless_enabled()
             and self.args.track_mode != "none"
@@ -4090,6 +4135,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         while not self.stop_event.is_set():
             if self._lossless_first_pair_published.wait(timeout=0.01):
                 return True
+            if on_wait_tick is not None:
+                on_wait_tick()
         return False
 
     def _build_headless_capture_metadata(self) -> dict[str, Any]:
@@ -4423,10 +4470,23 @@ class RealtimeMaskedEdgeTamPcdDemo:
         except KeyboardInterrupt:
             self.stop_event.set()
 
-    def _publish_capture_packet(self, packet: FramePacket, *, record_s: float | None = None) -> None:
-        self.capture_slot.put(packet)
+    def _publish_input_preview_packet(self, packet: FramePacket, *, record_s: float | None = None) -> None:
+        self.input_preview_slot.put(packet)
         if self.headless_capture_writer is not None and _is_replay_input_source(str(self.args.input_source)):
             self.headless_capture_writer.write_input_frame(packet)
+        if str(self.args.render_mode) == RENDER_MODE_PANEL:
+            self._request_render_update()
+
+    def _publish_capture_packet(
+        self,
+        packet: FramePacket,
+        *,
+        record_s: float | None = None,
+        write_input_timeline: bool = True,
+    ) -> None:
+        if bool(write_input_timeline):
+            self._publish_input_preview_packet(packet, record_s=record_s)
+        self.capture_slot.put(packet)
         if self._lossless_enabled():
             if self.lossless_frame_queue.put_wait(packet, stop_event=self.stop_event) <= 0:
                 return
@@ -4450,7 +4510,83 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 self._record_fatal_worker_error("recording replay", exc)
             return
         camera_start_s = float(first_packet.receive_perf_s)
-        self._publish_capture_packet(first_packet, record_s=first_packet.receive_perf_s)
+        preview_seq = 0
+        preview_tick = 1
+        last_preview_source_index = -1
+
+        def preview_from_packet(packet: FramePacket, *, seq: int) -> FramePacket:
+            return replace(
+                packet,
+                seq=int(seq),
+                depth_u16=None,
+                ir_left_u8=None,
+                ir_right_u8=None,
+                k_ir_left=None,
+                t_ir_left_to_color=None,
+                ir_baseline_m=0.0,
+            )
+
+        def read_preview_packet(
+            *,
+            seq: int,
+            source_index: int,
+            wait_ms: float = 0.0,
+        ) -> FramePacket:
+            reader = getattr(source, "read_preview_packet", None)
+            if callable(reader):
+                return reader(seq=int(seq), frame_index=int(source_index), wait_ms=float(wait_ms))
+            packet = source.read_packet(seq=int(seq), frame_index=int(source_index), wait_ms=float(wait_ms))
+            return preview_from_packet(packet, seq=int(seq))
+
+        def publish_preview_packet(packet: FramePacket) -> None:
+            nonlocal preview_seq, last_preview_source_index
+            self._publish_input_preview_packet(packet, record_s=packet.receive_perf_s)
+            preview_seq += 1
+            if packet.source_frame_index is not None:
+                last_preview_source_index = max(last_preview_source_index, int(packet.source_frame_index))
+
+        def publish_preview_source_index(*, source_index: int, wait_ms: float = 0.0) -> None:
+            nonlocal preview_seq, last_preview_source_index
+            if int(source_index) <= int(last_preview_source_index):
+                return
+            packet = read_preview_packet(seq=preview_seq, source_index=int(source_index), wait_ms=float(wait_ms))
+            publish_preview_packet(packet)
+
+        def publish_due_fake_live_previews() -> bool:
+            nonlocal preview_tick
+            if not fake_live_clock:
+                return True
+            now_s = time.perf_counter()
+            while not self.stop_event.is_set():
+                source_elapsed_s = float(preview_tick) * frame_period_s
+                target_s = camera_start_s + source_elapsed_s
+                if target_s > now_s:
+                    break
+                source_index = source.source_index_for_recording_elapsed_s(source_elapsed_s)
+                preview_tick += 1
+                if source_index <= last_preview_source_index:
+                    if last_preview_source_index >= source.frame_count - 1:
+                        break
+                    continue
+                try:
+                    publish_preview_source_index(source_index=source_index)
+                except Exception as exc:
+                    if not self.stop_event.is_set():
+                        self._record_fatal_worker_error("recording replay preview", exc)
+                    return False
+                if source_index >= source.frame_count - 1:
+                    break
+            return True
+
+        if fake_live_clock:
+            publish_preview_packet(preview_from_packet(first_packet, seq=preview_seq))
+            self._publish_capture_packet(
+                first_packet,
+                record_s=first_packet.receive_perf_s,
+                write_input_timeline=False,
+            )
+        else:
+            self._publish_capture_packet(first_packet, record_s=first_packet.receive_perf_s)
         if source.frame_count <= 1:
             if self._lossless_enabled():
                 self._lossless_capture_done.set()
@@ -4463,19 +4599,23 @@ class RealtimeMaskedEdgeTamPcdDemo:
             while not self.stop_event.is_set():
                 if self._recording_first_frame_segmented.wait(timeout=0.01):
                     break
+                if not publish_due_fake_live_previews():
+                    return
             if self.stop_event.is_set():
                 return
-        if not self._wait_for_lossless_replay_startup_pair():
+        if not self._wait_for_lossless_replay_startup_pair(on_wait_tick=publish_due_fake_live_previews):
             return
         gate_done_s = time.perf_counter()
+        if not publish_due_fake_live_previews():
+            return
         self._startup_hold_s = max(0.0, float(gate_done_s - camera_start_s))
         if self.headless_capture_writer is not None:
             self.headless_capture_writer.update_metadata({"startup_hold_s": float(self._startup_hold_s)})
         replay_start_s = gate_done_s
         runtime_seq = 1
         if fake_live_clock:
-            output_tick = max(1, int(max(0.0, gate_done_s - camera_start_s) / frame_period_s))
-            last_source_index = 0
+            output_tick = max(1, int(preview_tick))
+            last_source_index = max(0, int(last_preview_source_index))
             while not self.stop_event.is_set():
                 source_elapsed_s = float(output_tick) * frame_period_s
                 if (
@@ -4506,7 +4646,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     if not self.stop_event.is_set():
                         self._record_fatal_worker_error("recording replay", exc)
                     break
-                self._publish_capture_packet(packet, record_s=packet.receive_perf_s)
+                publish_preview_packet(preview_from_packet(packet, seq=preview_seq))
+                self._publish_capture_packet(
+                    packet,
+                    record_s=packet.receive_perf_s,
+                    write_input_timeline=False,
+                )
                 runtime_seq += 1
                 last_source_index = source_index
                 if last_source_index >= source.frame_count - 1:
@@ -7039,6 +7184,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             remaining_hand_b_query_count=int(tracker_packet.remaining_hand_b_query_count),
         )
 
+    def _latest_panel_rgb_frame_after(self, last_seq: int) -> FramePacket | None:
+        preview_frame = self.input_preview_slot.get_latest_after(last_seq)
+        if preview_frame is not None:
+            return preview_frame
+        return self.capture_slot.get_latest_after(last_seq)
+
     def _format_panel_hud_label(self, hud: SideBySidePanelHud) -> str:
         input_time = "none" if hud.input_time_s is None else f"{float(hud.input_time_s):.2f}s"
         return (
@@ -7424,7 +7575,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         def render_latest() -> bool:
             nonlocal last_pair_seq, last_rgb_seq, latest_rgb, latest_pair
             rendered = False
-            rgb_frame = self.capture_slot.get_latest_after(last_rgb_seq)
+            rgb_frame = self._latest_panel_rgb_frame_after(last_rgb_seq)
             if rgb_frame is not None:
                 last_rgb_seq = int(rgb_frame.seq)
                 latest_rgb = rgb_frame
@@ -7439,7 +7590,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 last_pair_seq = int(pair.seq)
                 latest_pair = pair
                 if latest_rgb is None:
-                    latest_rgb = self.capture_slot.get_latest_after(-1)
+                    latest_rgb = self._latest_panel_rgb_frame_after(-1)
                     if latest_rgb is not None:
                         last_rgb_seq = int(latest_rgb.seq)
                         update_rgb_image(latest_rgb)
@@ -7498,7 +7649,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 if self._fatal_error_snapshot() is not None and not fatal_exit_posted["value"]:
                     request_render_update()
                 elif not self.stop_event.is_set() and (
-                    self.capture_slot.latest_seq() > last_rgb_seq
+                    self.input_preview_slot.latest_seq() > last_rgb_seq
+                    or self.capture_slot.latest_seq() > last_rgb_seq
                     or (
                         self._lossless_enabled()
                         and self._lossless_pipeline_active
