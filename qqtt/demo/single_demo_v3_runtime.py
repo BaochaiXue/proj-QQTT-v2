@@ -51,6 +51,7 @@ DEFAULT_TRACKER_BACKEND = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
 DEFAULT_TRACKER_DEVICE = "cuda:1"
 DEFAULT_TABLE_CALIBRATE_PATH = Path("table_calibrate.pkl")
 DEFAULT_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_2min_e45_g35_20260614_155543")
+DEFAULT_DEMO32_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_3min_e70_g60_20260621_202627")
 DEFAULT_FAKE_LIVE_REPLAY_FPS = 5.0
 DEFAULT_RECORDING_FPS = 30.0
 FFS_SURFACE_FILTER_RADIUS_M = 0.015
@@ -82,6 +83,12 @@ VERSION_LABELS = {
     DEMO_VERSION_3_2: "Single Demo 3.2",
     DEMO_VERSION_3_3: "Single Demo 3.3",
 }
+
+
+def default_fake_live_case_for_version(version: str) -> Path:
+    if normalize_demo_version(version) == DEMO_VERSION_3_2:
+        return DEFAULT_DEMO32_FAKE_LIVE_CASE
+    return DEFAULT_FAKE_LIVE_CASE
 
 ConnectedSerialsProvider = Callable[[], Sequence[str]]
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -304,7 +311,7 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         dest="recording_case",
         type=Path,
         default=None,
-        help=f"Alias for --recording-case. fake-live defaults to {DEFAULT_FAKE_LIVE_CASE}.",
+        help=f"Alias for --recording-case. fake-live defaults to {default_fake_live_case_for_version(version)}.",
     )
     parser.add_argument(
         "--replay-fps",
@@ -621,7 +628,7 @@ def apply_preset_defaults(
     ):
         args.tracker_backend = masked_pcd.TRACKER_BACKEND_NONE
     if str(args.input_source) == INPUT_SOURCE_FAKE_LIVE and args.recording_case is None:
-        args.recording_case = DEFAULT_FAKE_LIVE_CASE
+        args.recording_case = default_fake_live_case_for_version(version)
     if str(args.input_source) == INPUT_SOURCE_FAKE_LIVE and "--replay-fps" not in explicit:
         args.replay_fps = DEFAULT_FAKE_LIVE_REPLAY_FPS
         args.fake_live_replay_fps_defaulted = True

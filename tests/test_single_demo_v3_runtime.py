@@ -542,7 +542,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(_option_value(delegate, "--render-max-points-per-layer"), "5000")
             self.assertNotIn("--serial", delegate)
 
-    def test_fake_live_uses_default_case_and_allows_ffs_versions(self) -> None:
+    def test_fake_live_uses_version_default_case_and_allows_ffs_versions(self) -> None:
+        new_demo32_case = Path("data_collect/sloth_both_eval_3min_e70_g60_20260621_202627")
         for version, expected_depth in (
             (runtime.DEMO_VERSION_3, "realsense"),
             (runtime.DEMO_VERSION_3_1, "realsense"),
@@ -550,6 +551,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             (runtime.DEMO_VERSION_3_3, "ffs"),
         ):
             with self.subTest(version=version):
+                expected_case = new_demo32_case if version == runtime.DEMO_VERSION_3_2 else runtime.DEFAULT_FAKE_LIVE_CASE
                 args = self._parse(version, ["--input-source", "fake-live"])
                 runtime.validate_args(args)
                 contract = runtime.build_contract(args)
@@ -557,7 +559,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
                 self.assertEqual(contract["input_source"], "fake_live_recorded_single_camera")
                 self.assertEqual(contract["input_source_mode"], "fake-live")
-                self.assertEqual(contract["recording_case"], str(runtime.DEFAULT_FAKE_LIVE_CASE))
+                self.assertEqual(contract["recording_case"], str(expected_case))
                 self.assertEqual(contract["replay_fps"], runtime.DEFAULT_FAKE_LIVE_REPLAY_FPS)
                 self.assertEqual(contract["replay_fps_source"], "default_fake_live")
                 self.assertEqual(contract["recording_fps"], runtime.DEFAULT_RECORDING_FPS)
@@ -575,7 +577,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 self.assertIn("--input-source", delegate)
                 self.assertIn("fake-live", delegate)
                 self.assertIn("--recording-case", delegate)
-                self.assertIn(str(runtime.DEFAULT_FAKE_LIVE_CASE), delegate)
+                self.assertIn(str(expected_case), delegate)
                 self.assertEqual(_option_value(delegate, "--replay-fps"), str(float(runtime.DEFAULT_FAKE_LIVE_REPLAY_FPS)))
                 self.assertEqual(_option_value(delegate, "--controller-prompt"), "human hand")
                 self.assertNotIn("--serial", delegate)
