@@ -82,7 +82,7 @@ python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 - `metadata.json` exists.
 - `calibrate.pkl` is copied into the case if available.
 - `calibrate_metadata.json` is copied into the case when available.
-- short `--max_frames` runs fail quickly instead of hanging forever when the camera stalls.
+- short non-interactive `--max_frames ... --disable-keyboard-listener` runs fail quickly instead of hanging forever when the camera stalls.
 
 ## Alignment Checklist
 

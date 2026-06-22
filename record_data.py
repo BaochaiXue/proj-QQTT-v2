@@ -45,6 +45,16 @@ def _resolve_path(path: str) -> Path:
     return (_PROJECT_ROOT / path).resolve()
 
 
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--max_frames must be an integer > 0") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("--max_frames must be > 0")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -100,9 +110,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max_frames",
-        type=int,
+        type=_positive_int,
         default=None,
-        help="Record this many frames per camera then stop automatically.",
+        help="Record this many frames per camera then stop automatically. Must be > 0 when provided.",
     )
     parser.add_argument(
         "--camera-start-timeout-s",
@@ -113,9 +123,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--disable-keyboard-listener",
         action="store_true",
-        help="Disable the keyboard listener used for spacebar start/stop.",
+        help="Disable the keyboard listener used for spacebar start/stop. Requires --max_frames > 0.",
     )
     return parser
+
+
+def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.disable_keyboard_listener and args.max_frames is None:
+        parser.error("--disable-keyboard-listener requires --max_frames > 0")
 
 
 def _print_preflight_summary(*, decision, stage_label: str) -> None:
@@ -227,7 +242,9 @@ def copy_table_calibration_into_case(
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    _validate_args(parser, args)
     from qqtt.env import CameraSystem
 
     output_root = Path(args.output_dir).resolve()

@@ -168,47 +168,7 @@ assembly and `cv2.imshow()`:
 conda run -n FFS-SAM-RS python cameras_viewer_FFS.py --render-mode none
 ```
 
-## 2. Calibrate
-
-```bash
-python cameras_calibrate.py
-```
-
-The default target is the current lab Calib.io ChArUco board:
-`calibio-12x9-30mm`. This writes `calibrate.pkl` and
-`calibrate_metadata.json` in the repo root by default.
-
-Useful options:
-
-```bash
-python cameras_calibrate.py --width 1280 --height 720 --fps 5
-python cameras_calibrate.py --serials 239222300781
-python cameras_calibrate.py --exposure 70 --gain 60
-```
-
-Rerun calibration after any physical camera-position change.
-
-## 2a. Table Z0 Calibration
-
-Place the current lab ChArUco board flat on the table surface, with the printed
-board plane touching the tabletop. Then run:
-
-```bash
-conda run -n demo_2_max --no-capture-output python cameras_calibrate_table.py
-```
-
-This writes `table_calibrate.pkl`, `table_calibrate_metadata.json`, and
-`table_calibrate_diagnostic.png` in the repo root when the strict one-shot
-check passes. The table calibration is separate from `calibrate.pkl`. Demo 3.1,
-Demo 3.2, and Demo 3.3 use repo-root `table_calibrate.pkl` by default and fail
-fast when it is missing or invalid; pass `--table-calibrate <path>` only to use an
-alternate table calibration. Recording and alignment commands still require an
-explicit `--table-calibrate` when table-world output is requested.
-
-Rerun table calibration after moving the camera, moving the table, changing the
-camera mount, or changing the tabletop surface used as `Z=0`.
-
-## 3. Record
+## 2. Record
 
 Default RealSense RGB-D path:
 
@@ -228,7 +188,51 @@ Short non-interactive smoke capture:
 python record_data.py --case_name smoke_case --capture_mode rgbd --max_frames 5 --disable-keyboard-listener
 ```
 
+`--disable-keyboard-listener` is only valid with a positive `--max_frames` value;
+interactive recordings without `--max_frames` still use the spacebar start/stop
+listener.
+
 Raw recordings are written under `data_collect/<case_name>/`.
+
+## 3. Calibrate
+
+```bash
+python cameras_calibrate.py
+```
+
+The default target is the current lab Calib.io ChArUco board:
+`calibio-12x9-30mm`. This writes `calibrate.pkl` and
+`calibrate_metadata.json` in the repo root by default.
+
+Useful options:
+
+```bash
+python cameras_calibrate.py --width 1280 --height 720 --fps 5
+python cameras_calibrate.py --serials 239222300781
+python cameras_calibrate.py --exposure 70 --gain 60
+```
+
+Rerun calibration after any physical camera-position change.
+
+## 3a. Table Z0 Calibration
+
+Place the current lab ChArUco board flat on the table surface, with the printed
+board plane touching the tabletop. Then run:
+
+```bash
+conda run -n demo_2_max --no-capture-output python cameras_calibrate_table.py
+```
+
+This writes `table_calibrate.pkl`, `table_calibrate_metadata.json`, and
+`table_calibrate_diagnostic.png` in the repo root when the strict one-shot
+check passes. The table calibration is separate from `calibrate.pkl`. Demo 3.1,
+Demo 3.2, and Demo 3.3 use repo-root `table_calibrate.pkl` by default and fail
+fast when it is missing or invalid; pass `--table-calibrate <path>` only to use an
+alternate table calibration. Recording and alignment commands still require an
+explicit `--table-calibrate` when table-world output is requested.
+
+Rerun table calibration after moving the camera, moving the table, changing the
+camera mount, or changing the tabletop surface used as `Z=0`.
 
 ## 4. Realtime Native Aligned Export
 

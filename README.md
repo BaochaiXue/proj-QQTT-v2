@@ -122,6 +122,12 @@ python record_data.py --case_name my_case --capture_mode rgbd
 
 Raw cases are written under `data_collect/<case_name>/`. If `calibrate.pkl`
 exists, `record_data.py` copies it into the recorded case folder.
+For non-interactive captures with `--disable-keyboard-listener`, pass a positive
+`--max_frames` so the recording starts and stops deterministically.
+
+```bash
+python record_data.py --case_name smoke_case --capture_mode rgbd --max_frames 5 --disable-keyboard-listener
+```
 
 Optional FFS raw capture path:
 

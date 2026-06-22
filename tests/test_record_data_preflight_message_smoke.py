@@ -67,6 +67,71 @@ class _FakeCameraSystem:
 
 
 class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
+    def test_disable_keyboard_listener_requires_max_frames(self) -> None:
+        _FakeCameraSystem.last_instance = None
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            argv = [
+                "record_data.py",
+                "--case_name",
+                "noninteractive_without_limit",
+                "--output_dir",
+                tmp_dir,
+                "--disable-keyboard-listener",
+            ]
+            with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch("sys.argv", argv):
+                with self.assertRaises(SystemExit) as raised:
+                    record_data.main()
+
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIsNone(_FakeCameraSystem.last_instance)
+
+    def test_max_frames_must_be_positive(self) -> None:
+        for value in ("0", "-1"):
+            with self.subTest(value=value):
+                with self.assertRaises(SystemExit) as raised:
+                    record_data.build_parser().parse_args(["--max_frames", value])
+                self.assertEqual(raised.exception.code, 2)
+
+    def test_disable_keyboard_listener_with_max_frames_records_bounded_case(self) -> None:
+        _FakeCameraSystem.last_instance = None
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            argv = [
+                "record_data.py",
+                "--case_name",
+                "noninteractive_bounded",
+                "--output_dir",
+                tmp_dir,
+                "--serials",
+                "a",
+                "--disable-keyboard-listener",
+                "--max_frames",
+                "1",
+            ]
+            with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch.object(
+                record_data,
+                "evaluate_capture_preflight",
+                side_effect=[
+                    _decision(
+                        capture_mode="rgbd",
+                        operator_status="supported",
+                        allowed_to_record=True,
+                        serials=["a"],
+                        reason="ok",
+                    ),
+                    _decision(
+                        capture_mode="rgbd",
+                        operator_status="supported",
+                        allowed_to_record=True,
+                        serials=["a"],
+                        reason="ok",
+                    ),
+                ],
+            ), patch("sys.argv", argv):
+                self.assertEqual(record_data.main(), 0)
+
+            self.assertIsNotNone(_FakeCameraSystem.last_instance)
+            self.assertEqual(_FakeCameraSystem.last_instance.record_calls[0][1], 1)
+
     def test_explicit_serials_allow_both_eval_with_warning(self) -> None:
         _FakeCameraSystem.last_instance = None
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -85,6 +150,8 @@ class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
                 "b",
                 "c",
                 "--disable-keyboard-listener",
+                "--max_frames",
+                "1",
             ]
             stdout = io.StringIO()
             with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch.object(
@@ -130,6 +197,8 @@ class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
                 "--emitter",
                 "on",
                 "--disable-keyboard-listener",
+                "--max_frames",
+                "1",
             ]
             stdout = io.StringIO()
             with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch.object(
@@ -176,6 +245,8 @@ class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
                 "--emitter",
                 "on",
                 "--disable-keyboard-listener",
+                "--max_frames",
+                "1",
             ]
             stdout = io.StringIO()
             with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch.object(
@@ -218,6 +289,8 @@ class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
                 "--emitter",
                 "on",
                 "--disable-keyboard-listener",
+                "--max_frames",
+                "1",
             ]
             stdout = io.StringIO()
             with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch.object(
@@ -273,6 +346,8 @@ class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
                 "b",
                 "c",
                 "--disable-keyboard-listener",
+                "--max_frames",
+                "1",
             ]
             with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch.object(
                 record_data,
@@ -317,6 +392,8 @@ class RecordDataPreflightMessageSmokeTest(unittest.TestCase):
                 "--camera-start-timeout-s",
                 "4.5",
                 "--disable-keyboard-listener",
+                "--max_frames",
+                "1",
             ]
             with patch.object(qqtt.env, "CameraSystem", _FakeCameraSystem), patch.object(
                 record_data,
