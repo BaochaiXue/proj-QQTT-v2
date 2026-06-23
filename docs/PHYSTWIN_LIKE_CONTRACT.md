@@ -125,7 +125,17 @@ Strict products must record:
   "tracking_product_backend": "phystwin-strict-tracking",
   "tracker_backend": "tapnextpp",
   "mask_backend": "edgetam",
-  "depth_backend": "ffs",
+  "depth_backend": "ir-ffs",
+  "depth_source_internal": "ffs",
   "execution_mode": "workstation_strict"
+}
+```
+
+For native-depth Demo 3.2 runs, the corresponding fields are:
+
+```json
+{
+  "depth_backend": "native-realsense",
+  "depth_source_internal": "realsense"
 }
 ```

@@ -133,8 +133,11 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
 
         self.assertEqual(contract["demo"], "single-demo3.2")
         self.assertEqual(contract["camera_count"], 1)
+        self.assertEqual(args.depth_backend, "ir-ffs")
+        self.assertEqual(contract["depth_backend"], "ir-ffs")
         self.assertEqual(contract["depth_source"], "ffs")
-        self.assertEqual(contract["depth_pipeline"], "ffs_tensorrt_batch1")
+        self.assertEqual(contract["depth_source_internal"], "ffs")
+        self.assertEqual(contract["depth_pipeline"], "ffs_tensorrt_batch1_ir_stereo")
         self.assertTrue(contract["uses_ffs"])
         self.assertEqual(contract["ffs_trt_batch_size"], 1)
         self.assertEqual(contract["tracker_backend"], "tapnextpp")
@@ -149,6 +152,57 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertIn("towel", delegate)
         self.assertIn("--tracker-backend", delegate)
         self.assertIn("tapnextpp", delegate)
+
+    def test_demo32_native_realsense_backend_contract_and_delegate(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--dry-run",
+                "--depth-backend",
+                "native-realsense",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
+
+        self.assertEqual(args.depth_backend, "native-realsense")
+        self.assertEqual(args.depth_source, "realsense")
+        self.assertEqual(contract["depth_backend"], "native-realsense")
+        self.assertEqual(contract["depth_source"], "realsense")
+        self.assertEqual(contract["depth_source_internal"], "realsense")
+        self.assertEqual(contract["depth_pipeline"], "realsense_native_color_aligned")
+        self.assertFalse(contract["uses_ffs"])
+        self.assertIsNone(contract["ffs_trt_batch_size"])
+        self.assertEqual(_option_value(delegate, "--depth-source"), "realsense")
+        self.assertEqual(_option_value(delegate, "--depth-backend-label"), "native-realsense")
+        self.assertNotIn("--ffs-repo", delegate)
+        self.assertNotIn("--ffs-trt-model-dir", delegate)
+        self.assertNotIn("--ffs-trt-root", delegate)
+
+    def test_depth_backend_option_is_public_only_for_demo32(self) -> None:
+        for version in (runtime.DEMO_VERSION_3, runtime.DEMO_VERSION_3_1, runtime.DEMO_VERSION_3_3):
+            with self.subTest(version=version):
+                parser = runtime.build_arg_parser(demo_version=version)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        parser.parse_args(["--depth-backend", "native-realsense"])
+
+    def test_demo32_native_realsense_rejects_explicit_ffs_paths(self) -> None:
+        for option in ("--ffs-repo", "--ffs-trt-model-dir", "--ffs-trt-root"):
+            with self.subTest(option=option):
+                args = self._parse(
+                    runtime.DEMO_VERSION_3_2,
+                    [
+                        "--depth-backend",
+                        "native-realsense",
+                        option,
+                        "/tmp/ffs",
+                    ],
+                )
+
+                with self.assertRaisesRegex(ValueError, rf"{option} requires --depth-backend ir-ffs"):
+                    runtime.validate_args(args)
 
     def test_demo32_contract_includes_table_calibration_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -429,6 +483,30 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(_option_value(delegate, "--panel-layout"), "side-by-side")
             self.assertEqual(_option_value(delegate, "--panel-video-output"), "result/panel.mp4")
             self.assertEqual(_option_value(delegate, "--tracking-background-mask"), "rgb")
+
+    def test_demo32_native_realsense_panel_validation_and_delegate(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--depth-backend",
+                "native-realsense",
+                "--render-mode",
+                "panel",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(contract["depth_backend"], "native-realsense")
+        self.assertEqual(contract["depth_source_internal"], "realsense")
+        self.assertEqual(contract["render_mode"], "panel")
+        self.assertEqual(_option_value(delegate, "--depth-source"), "realsense")
+        self.assertEqual(_option_value(delegate, "--depth-backend-label"), "native-realsense")
+        self.assertEqual(_option_value(delegate, "--render-mode"), "panel")
+        self.assertNotIn("--ffs-trt-model-dir", delegate)
 
     def test_demo3_fake_live_panel_requires_ffs_depth(self) -> None:
         args = self._parse(
@@ -1306,6 +1384,34 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertIn("--enable-table-z-filter", delegate)
         self.assertEqual(_option_value(delegate, "--table-z-filter-threshold-m"), "0.0")
 
+    def test_demo32_native_realsense_headless_capture_contract_and_delegate(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--depth-backend",
+                "native-realsense",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/headless_native",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertTrue(contract["headless_capture_enabled"])
+        self.assertEqual(contract["depth_backend"], "native-realsense")
+        self.assertEqual(contract["depth_source_internal"], "realsense")
+        self.assertFalse(contract["uses_ffs"])
+        self.assertEqual(_option_value(delegate, "--depth-source"), "realsense")
+        self.assertEqual(_option_value(delegate, "--depth-backend-label"), "native-realsense")
+        self.assertEqual(_option_value(delegate, "--headless-capture-dir"), "result/headless_native")
+        self.assertNotIn("--ffs-repo", delegate)
+        self.assertIn("--enable-pcd-filter", delegate)
+
     def test_demo32_fake_live_headless_capture_accepts_pt_filter(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_2,
@@ -1358,7 +1464,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["execution_mode"], "workstation_strict")
         self.assertEqual(contract["mask_backend"], "edgetam")
         self.assertEqual(contract["tracker_backend"], "tapnextpp")
-        self.assertEqual(contract["depth_backend"], "ffs")
+        self.assertEqual(contract["depth_backend"], "ir-ffs")
+        self.assertEqual(contract["depth_source_internal"], "ffs")
         self.assertEqual(_option_value(delegate, "--tracking-product-backend"), "phystwin-strict-tracking")
         self.assertEqual(_option_value(delegate, "--phystwin-strict-output-dir"), "result/headless_case/phystwin_custom")
 

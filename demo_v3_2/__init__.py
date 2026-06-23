@@ -1,1 +1,1 @@
-"""Single-camera Demo 3.2 FFS-depth public entrypoints."""
+"""Single-camera Demo 3.2 dual-depth public entrypoints."""

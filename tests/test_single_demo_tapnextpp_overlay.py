@@ -97,6 +97,34 @@ class _FakeFfsAligner:
 
 
 class SingleDemoTapNextOverlayTest(unittest.TestCase):
+    def _write_recording_case(self, case_dir: Path, *, streams_present: tuple[str, ...]) -> None:
+        from PIL import Image
+
+        (case_dir / "color" / "0").mkdir(parents=True)
+        (case_dir / "depth" / "0").mkdir(parents=True)
+        (case_dir / "ir_left" / "0").mkdir(parents=True)
+        (case_dir / "ir_right" / "0").mkdir(parents=True)
+        Image.fromarray(np.full((4, 5, 3), 80, dtype=np.uint8)).save(case_dir / "color" / "0" / "0.png")
+        if "depth" in streams_present:
+            np.save(case_dir / "depth" / "0" / "0.npy", np.ones((4, 5), dtype=np.uint16))
+        if "ir_left" in streams_present:
+            Image.fromarray(np.full((4, 5), 32, dtype=np.uint8)).save(case_dir / "ir_left" / "0" / "0.png")
+        if "ir_right" in streams_present:
+            Image.fromarray(np.full((4, 5), 48, dtype=np.uint8)).save(case_dir / "ir_right" / "0" / "0.png")
+        metadata = {
+            "streams_present": list(streams_present),
+            "recording": {"0": {"0": 0.0}},
+            "K_color": [np.eye(3, dtype=np.float32).tolist()],
+            "K_ir_left": [np.eye(3, dtype=np.float32).tolist()],
+            "T_ir_left_to_color": [np.eye(4, dtype=np.float32).tolist()],
+            "ir_baseline_m": [0.05],
+            "depth_scale_m_per_unit": [0.001],
+            "serial_numbers": ["recording-cam0"],
+            "WH": [5, 4],
+            "fps": 30.0,
+        }
+        (case_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
     def test_transform_points_c2w_matches_phystwin_homogeneous_lift(self) -> None:
         c2w = np.eye(4, dtype=np.float32)
         c2w[:3, 3] = np.array([0.25, -0.5, 1.0], dtype=np.float32)
@@ -263,6 +291,79 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "--render-mode panel requires --input-source fake-live"):
             demo.validate_args(args)
+
+    def test_native_realsense_panel_mode_passes_validation(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--render-mode",
+                "panel",
+                "--input-source",
+                "fake-live",
+                "--recording-case",
+                "data_collect/example_rgbd",
+                "--track-mode",
+                "controller-object",
+                "--pcd-mode",
+                "masked",
+                "--tracker-backend",
+                "tapnextpp",
+            ]
+        )
+
+        demo.validate_args(args)
+
+        self.assertEqual(args.depth_source, "realsense")
+        self.assertEqual(args.render_mode, "panel")
+
+    def test_native_realsense_headless_capture_passes_validation(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--input-source",
+                "fake-live",
+                "--recording-case",
+                "data_collect/example_rgbd",
+                "--render-mode",
+                "none",
+                "--pcd-mode",
+                "masked",
+                "--track-mode",
+                "controller-object",
+                "--tracker-backend",
+                "tapnextpp",
+                "--headless-capture-dir",
+                "result/headless_native",
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+            ]
+        )
+
+        demo.validate_args(args)
+
+        self.assertEqual(args.depth_source, "realsense")
+        self.assertEqual(args.headless_capture_dir, Path("result/headless_native"))
+
+    def test_recording_replay_depth_source_compatibility_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rgbd_case = root / "rgbd"
+            stereo_ir_case = root / "stereo_ir"
+            self._write_recording_case(rgbd_case, streams_present=("color", "depth"))
+            self._write_recording_case(stereo_ir_case, streams_present=("color", "ir_left", "ir_right"))
+
+            rgbd = demo.RecordedRgbdFrameSource(rgbd_case, depth_source="realsense")
+            stereo_ir = demo.RecordedRgbdFrameSource(stereo_ir_case, depth_source="ffs")
+
+            self.assertEqual(rgbd.depth_source, "realsense")
+            self.assertEqual(stereo_ir.depth_source, "ffs")
+            with self.assertRaisesRegex(ValueError, "FFS fake-live replay requires streams_present to include ir_left and ir_right"):
+                demo.RecordedRgbdFrameSource(rgbd_case, depth_source="ffs")
+            with self.assertRaisesRegex(ValueError, "RealSense recording replay requires streams_present to include depth"):
+                demo.RecordedRgbdFrameSource(stereo_ir_case, depth_source="realsense")
 
     def test_panel_hud_from_runtime_pair_uses_latest_rgb_and_paired_seq(self) -> None:
         args = self._tracker_args()
@@ -954,6 +1055,32 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
 
         self.assertIn("consistent=3/4", text)
 
+    def test_hud_reports_public_depth_backend_and_timing(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--render-mode",
+                "none",
+                "--track-mode",
+                "none",
+                "--pcd-mode",
+                "none",
+                "--depth-source",
+                "realsense",
+                "--depth-backend-label",
+                "native-realsense",
+            ]
+        )
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+
+        text = runtime._format_hud(
+            packet=self._pcd_packet(),
+            timing=demo.PipelineTiming(align_ms=1.25, depth_convert_ms=0.75),
+        )
+
+        self.assertIn("depth: backend=native-realsense source=realsense", text)
+        self.assertIn("depth_ms=0.8", text)
+        self.assertIn("align_ms=1.2", text)
+
     def test_ordered_lossless_queue_rejects_gaps_and_backlog_overflow(self) -> None:
         queue = demo.OrderedPacketQueue[demo.MaskPacket](name="unit", max_backlog_frames=2)
         stop_event = threading.Event()
@@ -1451,6 +1578,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                     "saved_pcd_source": "pt_filter_filtered",
                     "pcd_coordinate_frame": "table_world_z0",
                     "camera_to_world_c2w": np.eye(4, dtype=np.float32).tolist(),
+                    "depth_backend": "native-realsense",
+                    "depth_source_internal": "realsense",
                 },
             )
             input_packet = self._frame_packet(
@@ -1536,6 +1665,8 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(metadata["saved_pcd_source"], "pt_filter_filtered")
             self.assertEqual(metadata["pcd_coordinate_frame"], "table_world_z0")
             self.assertEqual(metadata["camera_to_world_c2w"][3], [0.0, 0.0, 0.0, 1.0])
+            self.assertEqual(metadata["depth_backend"], "native-realsense")
+            self.assertEqual(metadata["depth_source_internal"], "realsense")
             self.assertEqual(metadata["saved_mask_source"], "edgetam_binary_masks")
             self.assertEqual(metadata["saved_rgb_source"], "segmentation_color_bgr")
             self.assertTrue(metadata["panel_supported"])
@@ -1574,7 +1705,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(z_rows[0]["classes"]["object"]["count"], 1)
             self.assertEqual(rows[0]["filter_telemetry"]["mode"], "sync")
             self.assertTrue((output_dir / rows[0]["pcd_path"]).is_file())
-            self.assertTrue((output_dir / rows[0]["ffs_depth_path"]).is_file())
+            self.assertEqual(rows[0]["depth_color_m_path"], "depth_color_m/000000.npy")
+            self.assertNotIn("ffs_depth_path", rows[0])
+            self.assertTrue((output_dir / rows[0]["depth_color_m_path"]).is_file())
             self.assertTrue((output_dir / rows[0]["rgb_path"]).is_file())
             self.assertTrue((output_dir / rows[0]["query_trajectory_path"]).is_file())
             self.assertTrue((output_dir / rows[0]["mask_path"]).is_file())

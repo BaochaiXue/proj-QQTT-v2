@@ -1,14 +1,29 @@
-# Demo 3.2: Single-Camera FFS Masked PCD
+# Demo 3.2: Single-Camera Dual-Depth Masked PCD
 
-Demo 3.2 is the single-camera FFS-depth masked point-cloud runtime. It uses one
-camera or the shared fake-live source, runs Fast-FoundationStereo from the IR
-stereo pair, propagates SAM3.1/HF EdgeTAM masks, and renders masked PCD plus
-TAPNext++ 3D marker overlay.
+Demo 3.2 is the single-camera masked point-cloud runtime with a per-run depth
+backend. The default `--depth-backend ir-ffs` path runs Fast-FoundationStereo
+from the D455 IR stereo pair. The optional `--depth-backend native-realsense`
+path uses D455 native depth aligned to color. Both paths feed the same
+color-aligned float depth contract into EdgeTAM, TAPNext++, PCD filtering,
+table-world transforms, headless capture, panel rendering, and PhysTwin-like
+strict product generation.
 
 Dry-run:
 
 ```bash
 python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
+```
+
+Choose the depth backend for each run:
+
+```bash
+python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --depth-backend ir-ffs
+```
+
+```bash
+python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --depth-backend native-realsense
 ```
 
 Demo 3.2 uses repo-root `table_calibrate.pkl` by default. If that file or its
@@ -89,11 +104,14 @@ The default Demo 3.2 fake-live case is
 `data_collect/sloth_both_eval_3min_e70_g60_20260621_202627`. It is a 3-minute
 `both_eval` recording with `color/`, `depth/`, `ir_left/`, `ir_right/`,
 `calibrate.pkl`, `calibrate_metadata.json`, and IR calibration metadata. Demo
-3.2 ignores native depth for the FFS path and computes color-aligned depth from
-the replayed IR stereo frames, matching the live camera contract. Table-world
-output still uses repo-root `table_calibrate.pkl` unless `--table-calibrate` is
-passed explicitly. Fake-live runs in demo mode and defaults to 5 FPS unless
-`--replay-fps` is explicitly set. Use `--replay-fps 0` to replay at metadata FPS.
+3.2 ignores native depth for `--depth-backend ir-ffs` and computes
+color-aligned depth from the replayed IR stereo frames, matching the live camera
+contract. `--depth-backend native-realsense` reads the recording's native depth
+stream and uses librealsense-style color alignment. Table-world output still
+uses repo-root `table_calibrate.pkl` unless `--table-calibrate` is passed
+explicitly. Fake-live runs in demo mode and defaults to 5 FPS unless
+`--replay-fps` is explicitly set. Use `--replay-fps 0` to replay at metadata
+FPS.
 Local FFS TensorRT depth execution is serialized inside the runtime and cached
 by frame sequence so point-cloud rendering and TAPNext++ marker lift can share
 depth without concurrent TensorRT context use.
@@ -120,9 +138,12 @@ conda run -n demo_2_max --no-capture-output \
 Headless capture keeps the fake-live realtime pipeline running but does not
 open Open3D. It saves the sync PCD selected by `--pcd-filter-preset`
 (`none` by default, or the explicit `pt`/`enhanced-pt` preset), RGB frames,
-color-aligned FFS depth, EdgeTAM `hand_a`/`hand_b`/`object` masks plus legacy
-controller/object masks, TAPNext++ query trajectory artifacts, capture metadata
-with `camera_to_world_c2w`, and per-frame `world_z_stats.jsonl` diagnostics.
+color-aligned depth in `depth_color_m/`, EdgeTAM `hand_a`/`hand_b`/`object`
+masks plus legacy controller/object masks, TAPNext++ query trajectory
+artifacts, capture metadata with `depth_backend`, `depth_source_internal`, and
+`camera_to_world_c2w`, and per-frame `world_z_stats.jsonl` diagnostics. Older
+headless captures that used `ffs_depth_path` remain readable by the strict
+finalizer and offline helpers.
 By default these saved PCD artifacts have the 0 mm table-Z filter applied; add
 `--disable-table-z-filter` to capture the no-table-Z ablation:
 
@@ -149,7 +170,7 @@ current single-camera stack:
 
 - tracker backend remains TAPNext++;
 - mask backend remains EdgeTAM;
-- depth backend remains FFS/RealSense;
+- depth backend is the selected `ir-ffs` or `native-realsense` backend;
 - strictness applies to the PhysTwin querying, postprocessing, data contract,
   sampling, and visualization semantics.
 

@@ -460,6 +460,14 @@ def _write_tracking_npz(
         )
 
 
+def _depth_path_for_row(capture_dir: Path, row: Mapping[str, Any]) -> Path:
+    if "depth_color_m_path" in row:
+        return capture_dir / str(row["depth_color_m_path"])
+    if "ffs_depth_path" in row:
+        return capture_dir / str(row["ffs_depth_path"])
+    raise KeyError("headless capture row must contain depth_color_m_path or legacy ffs_depth_path")
+
+
 def _write_pcd_frames(
     output_dir: Path,
     rows: Sequence[Mapping[str, Any]],
@@ -474,7 +482,7 @@ def _write_pcd_frames(
     all_points: list[np.ndarray] = []
     all_colors: list[np.ndarray] = []
     for idx, row in enumerate(rows):
-        depth = np.load(capture_dir / str(row["ffs_depth_path"]))
+        depth = np.load(_depth_path_for_row(capture_dir, row))
         rgb = _load_rgb(capture_dir / str(row["rgb_path"]))
         points, colors = dense_world_pcd_grid(
             depth_m=depth,
@@ -782,7 +790,12 @@ def finalize_headless_capture(
         "tracking_product_backend": TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
         "tracker_backend": "tapnextpp",
         "mask_backend": "edgetam",
-        "depth_backend": str(metadata.get("depth_source", "")),
+        "depth_backend": str(metadata.get("depth_backend") or metadata.get("depth_source", "")),
+        "depth_source_internal": str(
+            metadata.get("depth_source_internal")
+            or metadata.get("depth_source")
+            or metadata.get("depth_backend", "")
+        ),
         "execution_mode": PHYSTWIN_STRICT_EXECUTION_MODE,
         "compatibility_path_name": PHYSTWIN_COMPATIBILITY_PATH_NAME,
         "not_actual_cotracker": True,

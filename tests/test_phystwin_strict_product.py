@@ -246,6 +246,65 @@ class PhysTwinStrictProductTest(unittest.TestCase):
             self.assertEqual(final_data["controller_points"].shape, (2, 30, 3))
             self.assertEqual(final_data["object_points"].shape[0], 2)
 
+    def test_finalize_headless_capture_accepts_depth_color_m_path_and_native_manifest(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = Path(tmp) / "capture"
+            for name in ("masks", "depth_color_m", "rgb", "query_trajectory"):
+                (capture / name).mkdir(parents=True, exist_ok=True)
+            metadata = {
+                "depth_backend": "native-realsense",
+                "depth_source_internal": "realsense",
+                "intrinsics": {"fx": 1000.0, "fy": 1000.0, "cx": 0.0, "cy": 0.0},
+                "camera_to_world_c2w": np.eye(4, dtype=np.float32).tolist(),
+            }
+            (capture / "metadata.json").write_text(__import__("json").dumps(metadata), encoding="utf-8")
+            height, width = 8, 40
+            object_mask = np.zeros((height, width), dtype=bool)
+            controller_mask = np.zeros((height, width), dtype=bool)
+            object_mask[1, :6] = True
+            controller_mask[3, :32] = True
+            query_points = np.array(
+                [[1.0, float(x)] for x in range(6)] + [[3.0, float(x)] for x in range(32)],
+                dtype=np.float32,
+            )
+            with (capture / "frames.jsonl").open("w", encoding="utf-8") as handle:
+                for seq in range(2):
+                    np.save(capture / "depth_color_m" / f"{seq:06d}.npy", np.ones((height, width), dtype=np.float32))
+                    Image.fromarray(np.full((height, width, 3), 120 + seq, dtype=np.uint8), mode="RGB").save(
+                        capture / "rgb" / f"{seq:06d}.png"
+                    )
+                    np.savez(
+                        capture / "masks" / f"{seq:06d}.npz",
+                        object_mask=object_mask,
+                        controller_mask=controller_mask,
+                        hand_a_mask=controller_mask,
+                        hand_b_mask=np.zeros_like(controller_mask),
+                    )
+                    np.savez(
+                        capture / "query_trajectory" / f"{seq:06d}.npz",
+                        seq=np.asarray([seq], dtype=np.int64),
+                        query_points_yx=query_points,
+                        all_tracks_yx=query_points,
+                        all_tracker_visibility=np.ones((len(query_points),), dtype=np.float32),
+                    )
+                    row = {
+                        "seq": seq,
+                        "depth_color_m_path": f"depth_color_m/{seq:06d}.npy",
+                        "rgb_path": f"rgb/{seq:06d}.png",
+                        "mask_path": f"masks/{seq:06d}.npz",
+                        "query_trajectory_path": f"query_trajectory/{seq:06d}.npz",
+                    }
+                    handle.write(__import__("json").dumps(row) + "\n")
+
+            manifest = strict.finalize_headless_capture(capture)
+
+            self.assertEqual(manifest["depth_backend"], "native-realsense")
+            self.assertEqual(manifest["depth_source_internal"], "realsense")
+            self.assertEqual(manifest["frame_count"], 2)
+            self.assertTrue((capture / "phystwin_like" / "final_data.pkl").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1050,7 +1050,7 @@ class HeadlessCaptureWriter:
             or COORDINATE_FRAME
         )
         self.pcd_dir = self.output_dir / "pcd"
-        self.depth_dir = self.output_dir / "ffs_depth"
+        self.depth_dir = self.output_dir / "depth_color_m"
         self.rgb_dir = self.output_dir / "rgb"
         self.trajectory_dir = self.output_dir / "query_trajectory"
         self.mask_dir = self.output_dir / "masks"
@@ -1191,7 +1191,7 @@ class HeadlessCaptureWriter:
         row = {
             "seq": int(packet.seq),
             "pcd_path": self._relative(pcd_path),
-            "ffs_depth_path": self._relative(depth_path),
+            "depth_color_m_path": self._relative(depth_path),
             "rgb_path": self._relative(rgb_path),
             "query_trajectory_path": self._relative(query_path),
             "mask_path": self._relative(mask_path),
@@ -1696,6 +1696,13 @@ def _is_replay_input_source(input_source: str) -> bool:
     return str(input_source) in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_RECORDING}
 
 
+def depth_backend_label(args: argparse.Namespace) -> str:
+    label = getattr(args, "depth_backend_label", None)
+    if label is not None and str(label):
+        return str(label)
+    return str(args.depth_source)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -1756,6 +1763,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Depth source. ffs streams color+IR stereo and runs local TensorRT FFS; "
             "ffs_remote streams color+IR stereo and requests color-aligned FFS depth from a remote service."
         ),
+    )
+    parser.add_argument(
+        "--depth-backend-label",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--ffs-repo",
@@ -2185,8 +2197,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(
-            "When --render-mode none is used with fake-live FFS replay, save the selected sync "
-            "PCD preset, color-aligned FFS depth, and TAPNext++ query trajectory artifacts here. "
+            "When --render-mode none is used with fake-live replay, save the selected sync "
+            "PCD preset, color-aligned depth, and TAPNext++ query trajectory artifacts here. "
             "With --table-calibrate, the default demo preset uses filter none plus the 0 mm table-Z filter."
         ),
     )
@@ -2418,8 +2430,8 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.render_mode == RENDER_MODE_PANEL:
         if args.input_source != INPUT_SOURCE_FAKE_LIVE:
             raise ValueError("--render-mode panel requires --input-source fake-live")
-        if args.depth_source != "ffs":
-            raise ValueError("--render-mode panel requires --depth-source ffs")
+        if args.depth_source not in {"ffs", "realsense"}:
+            raise ValueError("--render-mode panel requires --depth-source ffs or realsense")
         if args.track_mode != TRACK_MODE_CONTROLLER_OBJECT:
             raise ValueError("--render-mode panel requires --track-mode controller-object")
         if args.pcd_mode != "masked":
@@ -2431,8 +2443,8 @@ def validate_args(args: argparse.Namespace) -> None:
     if headless_capture_enabled(args):
         if args.input_source != INPUT_SOURCE_FAKE_LIVE:
             raise ValueError("--headless-capture-dir requires --input-source fake-live")
-        if args.depth_source != "ffs":
-            raise ValueError("--headless-capture-dir requires --depth-source ffs")
+        if args.depth_source not in {"ffs", "realsense"}:
+            raise ValueError("--headless-capture-dir requires --depth-source ffs or realsense")
         if args.render_mode != "none":
             raise ValueError("--headless-capture-dir requires --render-mode none")
         if args.pcd_mode != "masked":
@@ -4210,6 +4222,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "fake_live_frame_selection_policy": frame_selection_policy,
             "recording_frame_count": frame_count,
             "depth_source": str(self.args.depth_source),
+            "depth_source_internal": str(self.args.depth_source),
+            "depth_units": "meters",
+            "depth_coordinate_frame": COORDINATE_FRAME,
+            "depth_alignment_target": "color",
             "track_mode": str(self.args.track_mode),
             "controller_instance_mode": str(self.args.controller_instance_mode),
             "edgetam_tracking_identities": list(active_object_id_labels(self.args).values()),
@@ -4229,7 +4245,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 else None
             ),
             "mask_backend": "edgetam",
-            "depth_backend": str(self.args.depth_source),
+            "depth_backend": depth_backend_label(self.args),
             "execution_mode": (
                 PHYSTWIN_STRICT_EXECUTION_MODE
                 if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
@@ -4946,6 +4962,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "controller_instance_mode": str(self.args.controller_instance_mode),
             "edgetam_tracking_identities": list(active_object_id_labels(self.args).values()),
             "depth_source": self.args.depth_source,
+            "depth_source_internal": str(self.args.depth_source),
+            "depth_units": "meters",
+            "depth_coordinate_frame": COORDINATE_FRAME,
+            "depth_alignment_target": "color",
             "local_ffs_depth_cache_frames": (
                 DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES if self.args.depth_source == "ffs" else None
             ),
@@ -5032,7 +5052,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 else None
             ),
             "mask_backend": "edgetam",
-            "depth_backend": str(self.args.depth_source),
+            "depth_backend": depth_backend_label(self.args),
             "execution_mode": (
                 PHYSTWIN_STRICT_EXECUTION_MODE
                 if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
@@ -8255,7 +8275,16 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if int(self.args.render_max_points_per_layer) == 0
             else str(int(self.args.render_max_points_per_layer))
         )
-        depth_line = f"depth: {self.args.depth_source}  color={self.args.pcd_color_mode}"
+        if self.args.depth_source in {"ffs", "ffs_remote"}:
+            depth_ms = float(timing.ffs_ms)
+            depth_align_ms = float(timing.ffs_align_ms)
+        else:
+            depth_ms = float(timing.depth_convert_ms)
+            depth_align_ms = float(timing.align_ms)
+        depth_line = (
+            f"depth: backend={depth_backend_label(self.args)} source={self.args.depth_source}  "
+            f"depth_ms={depth_ms:.1f} align_ms={depth_align_ms:.1f}  color={self.args.pcd_color_mode}"
+        )
         preset_text = "" if self.args.demo_preset == "none" else f"  preset={self.args.demo_preset}"
         if tracker_enabled(self.args):
             if tracker_packet is None:

@@ -25,6 +25,14 @@ DEMO_VERSIONS = (DEMO_VERSION_3, DEMO_VERSION_3_1, DEMO_VERSION_3_2, DEMO_VERSIO
 DEPTH_SOURCE_REALSENSE = "realsense"
 DEPTH_SOURCE_FFS = "ffs"
 
+DEMO32_DEPTH_BACKEND_IR_FFS = "ir-ffs"
+DEMO32_DEPTH_BACKEND_NATIVE_REALSENSE = "native-realsense"
+DEMO32_DEPTH_BACKENDS = (DEMO32_DEPTH_BACKEND_IR_FFS, DEMO32_DEPTH_BACKEND_NATIVE_REALSENSE)
+DEMO32_DEPTH_BACKEND_TO_INTERNAL_SOURCE = {
+    DEMO32_DEPTH_BACKEND_IR_FFS: DEPTH_SOURCE_FFS,
+    DEMO32_DEPTH_BACKEND_NATIVE_REALSENSE: DEPTH_SOURCE_REALSENSE,
+}
+
 INPUT_SOURCE_LIVE = "live"
 INPUT_SOURCE_FAKE_LIVE = "fake-live"
 INPUT_SOURCE_RECORDING = "recording"
@@ -89,6 +97,32 @@ def default_fake_live_case_for_version(version: str) -> Path:
     if normalize_demo_version(version) == DEMO_VERSION_3_2:
         return DEFAULT_DEMO32_FAKE_LIVE_CASE
     return DEFAULT_FAKE_LIVE_CASE
+
+
+def resolve_depth_backend(args: argparse.Namespace, version: str) -> str:
+    resolved_version = normalize_demo_version(version)
+    if resolved_version == DEMO_VERSION_3_2:
+        backend = str(getattr(args, "depth_backend", DEMO32_DEPTH_BACKEND_IR_FFS))
+        if backend not in DEMO32_DEPTH_BACKENDS:
+            raise ValueError(f"--depth-backend must be one of {DEMO32_DEPTH_BACKENDS}")
+        return backend
+    return DEFAULT_DEPTH_SOURCES[resolved_version]
+
+
+def resolve_depth_source(args: argparse.Namespace, version: str) -> str:
+    resolved_version = normalize_demo_version(version)
+    if resolved_version == DEMO_VERSION_3_2:
+        return DEMO32_DEPTH_BACKEND_TO_INTERNAL_SOURCE[resolve_depth_backend(args, resolved_version)]
+    return DEFAULT_DEPTH_SOURCES[resolved_version]
+
+
+def depth_pipeline_for(version: str, depth_source: str) -> str:
+    resolved_version = normalize_demo_version(version)
+    if depth_source == DEPTH_SOURCE_FFS:
+        return "ffs_tensorrt_batch1_ir_stereo" if resolved_version == DEMO_VERSION_3_2 else "ffs_tensorrt_batch1"
+    if depth_source == DEPTH_SOURCE_REALSENSE:
+        return "realsense_native_color_aligned" if resolved_version == DEMO_VERSION_3_2 else "realsense_native"
+    return str(depth_source)
 
 ConnectedSerialsProvider = Callable[[], Sequence[str]]
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -357,6 +391,13 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         default=masked_pcd.TABLE_Z_FILTER_CLASS_BOTH,
         help="Semantic classes affected by --enable-table-z-filter.",
     )
+    if version == DEMO_VERSION_3_2:
+        parser.add_argument(
+            "--depth-backend",
+            choices=DEMO32_DEPTH_BACKENDS,
+            default=DEMO32_DEPTH_BACKEND_IR_FFS,
+            help="Demo 3.2 depth backend. ir-ffs uses D455 IR stereo FFS; native-realsense uses D455 native depth aligned to color.",
+        )
     if depth_source == DEPTH_SOURCE_FFS:
         parser.add_argument("--ffs-repo", type=Path, default=single_pcd.DEFAULT_FFS_REPO)
         parser.add_argument("--ffs-trt-model-dir", type=Path, default=single_pcd.DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR)
@@ -578,7 +619,7 @@ def apply_preset_defaults(
     version = normalize_demo_version(getattr(args, "single_demo_version", DEMO_VERSION_3))
     if "--output-root" not in explicit:
         args.output_root = DEFAULT_OUTPUT_ROOTS[version]
-    args.depth_source = DEFAULT_DEPTH_SOURCES[version]
+    args.depth_source = resolve_depth_source(args, version)
     if (
         _requires_table_world_default(version)
         and "--table-calibrate" not in explicit
@@ -690,7 +731,11 @@ def apply_preset_defaults(
 def validate_args(args: argparse.Namespace) -> None:
     version = normalize_demo_version(getattr(args, "single_demo_version", DEMO_VERSION_3))
     explicit = set(getattr(args, "_explicit_options", set()))
-    args.depth_source = DEFAULT_DEPTH_SOURCES[version]
+    args.depth_source = resolve_depth_source(args, version)
+    if version == DEMO_VERSION_3_2 and str(args.depth_source) != DEPTH_SOURCE_FFS:
+        for option in ("--ffs-repo", "--ffs-trt-model-dir", "--ffs-trt-root"):
+            if option in explicit:
+                raise ValueError(f"{option} requires --depth-backend ir-ffs")
     args.tracker_backend = masked_pcd.normalize_tracker_backend(str(args.tracker_backend))
     if str(args.input_source) not in INPUT_SOURCES:
         raise ValueError(f"--input-source must be one of {INPUT_SOURCES}")
@@ -731,7 +776,10 @@ def validate_args(args: argparse.Namespace) -> None:
     if str(args.render_mode) == masked_pcd.RENDER_MODE_PANEL:
         if str(args.input_source) != INPUT_SOURCE_FAKE_LIVE:
             raise ValueError("--render-mode panel requires --input-source fake-live")
-        if str(args.depth_source) != DEPTH_SOURCE_FFS:
+        if version == DEMO_VERSION_3_2:
+            if str(args.depth_source) not in {DEPTH_SOURCE_FFS, DEPTH_SOURCE_REALSENSE}:
+                raise ValueError("--render-mode panel requires --depth-backend ir-ffs or native-realsense")
+        elif str(args.depth_source) != DEPTH_SOURCE_FFS:
             raise ValueError("--render-mode panel requires --depth-source ffs")
         if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
             raise ValueError("--render-mode panel requires --track-mode controller-object")
@@ -852,8 +900,8 @@ def validate_args(args: argparse.Namespace) -> None:
     if bool(args.enable_pcd_filter) and str(args.track_mode) == TRACK_MODE_NONE:
         raise ValueError("--enable-pcd-filter requires --track-mode controller-object")
     if headless_capture:
-        if DEFAULT_DEPTH_SOURCES[version] != DEPTH_SOURCE_FFS:
-            raise ValueError("headless capture requires Demo 3.2/3.3 FFS depth")
+        if str(args.depth_source) not in {DEPTH_SOURCE_FFS, DEPTH_SOURCE_REALSENSE}:
+            raise ValueError("headless capture requires Demo 3.2/3.3 RGB-D depth")
         if not bool(args.enable_pcd_filter):
             raise ValueError("headless capture requires --enable-pcd-filter")
         if str(args.pcd_filter_mode) != "sync":
@@ -949,9 +997,11 @@ def _contract_replay_fps(args: argparse.Namespace) -> tuple[float | None, str | 
 
 def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     version = normalize_demo_version(getattr(args, "single_demo_version", DEMO_VERSION_3))
-    depth_source = DEFAULT_DEPTH_SOURCES[version]
+    depth_backend = resolve_depth_backend(args, version)
+    depth_source = resolve_depth_source(args, version)
+    args.depth_source = depth_source
     uses_ffs = depth_source == DEPTH_SOURCE_FFS
-    depth_pipeline = "ffs_tensorrt_batch1" if uses_ffs else "realsense_native"
+    depth_pipeline = depth_pipeline_for(version, depth_source)
     prompts = _mode_prompts(str(args.mode))
     controller_prompt = str(getattr(args, "controller_prompt", None) or prompts["controller_prompt"])
     controller_label = DEFAULT_DEMO_CONTROLLER_LABEL if str(args.mode) == MODE_DEMO else controller_prompt
@@ -1000,6 +1050,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "table_z_above_direction": str(args.table_z_above_direction),
         "table_z_filter_classes": str(args.table_z_filter_classes),
         "depth_source": depth_source,
+        "depth_source_internal": depth_source,
         "depth_pipeline": depth_pipeline,
         "uses_ffs": uses_ffs,
         "ffs_trt_batch_size": 1 if uses_ffs else None,
@@ -1048,7 +1099,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             else None
         ),
         "mask_backend": "edgetam",
-        "depth_backend": str(args.depth_source),
+        "depth_backend": depth_backend,
         "execution_mode": (
             masked_pcd.PHYSTWIN_STRICT_EXECUTION_MODE
             if masked_pcd.tracking_product_backend_is_strict(getattr(args, "tracking_product_backend", None))
@@ -1119,7 +1170,9 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     }
     contract["profile_summary_fields"] = {
         "camera_count": 1,
+        "depth_backend": depth_backend,
         "depth_source": depth_source,
+        "depth_source_internal": depth_source,
         "depth_pipeline": depth_pipeline,
         "uses_ffs": uses_ffs,
         "ffs_trt_batch_size": contract["ffs_trt_batch_size"],
@@ -1145,7 +1198,9 @@ def format_contract(contract: dict[str, Any]) -> str:
         "camera_count",
         "serial",
         "pcd_coordinate_frame",
+        "depth_backend",
         "depth_source",
+        "depth_source_internal",
         "depth_pipeline",
         "uses_ffs",
         "ffs_trt_batch_size",
@@ -1235,6 +1290,7 @@ def validate_live_contract(
 
 def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | None = None) -> list[str]:
     validate_args(args)
+    version = normalize_demo_version(getattr(args, "single_demo_version", DEMO_VERSION_3))
     argv = [
         "--profile",
         str(args.profile),
@@ -1244,6 +1300,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.input_source),
         "--depth-source",
         str(args.depth_source),
+        "--depth-backend-label",
+        str(resolve_depth_backend(args, version)),
         "--duration-s",
         str(float(args.duration_s)),
         "--track-mode",
@@ -1436,6 +1494,8 @@ __all__ = [
     "DEMO_VERSION_3_1",
     "DEMO_VERSION_3_2",
     "DEMO_VERSION_3_3",
+    "DEMO32_DEPTH_BACKEND_IR_FFS",
+    "DEMO32_DEPTH_BACKEND_NATIVE_REALSENSE",
     "INPUT_SOURCE_LIVE",
     "INPUT_SOURCE_FAKE_LIVE",
     "INPUT_SOURCE_RECORDING",
