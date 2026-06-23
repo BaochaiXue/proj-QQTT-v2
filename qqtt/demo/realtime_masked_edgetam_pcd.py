@@ -75,6 +75,7 @@ from services.ffs_remote.protocol import (  # noqa: E402
     RETURN_TYPES,
     SPARSE_RETURN_TYPES,
 )
+from services.shape_prior_remote import ShapePriorRemoteClient  # noqa: E402
 from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_MAX_DISP,
     DEFAULT_FFS_MODEL_NAME,
@@ -216,6 +217,7 @@ CONTROLLER_COLOR_RGB = (255, 96, 32)
 OBJECT_COLOR_RGB = (64, 180, 255)
 GEOMETRY_CONTROLLER = "masked_edgetam_controller"
 GEOMETRY_OBJECT = "masked_edgetam_object"
+GEOMETRY_SHAPE_PRIOR = "sam3d_shape_prior_reference"
 GEOMETRY_TRACKER_OBJECT = "tapnextpp_tracker_markers_object"
 GEOMETRY_TRACKER_CONTROLLER = "tapnextpp_tracker_markers_controller"
 COORDINATE_FRAME = "camera_color_frame"
@@ -266,13 +268,14 @@ def open3d_panel_viewport_layer_plan() -> dict[str, dict[str, Any]]:
     return {
         "middle": {
             "kind": "filtered_pcd",
-            "layers": [GEOMETRY_CONTROLLER, GEOMETRY_OBJECT],
+            "layers": [GEOMETRY_CONTROLLER, GEOMETRY_OBJECT, GEOMETRY_SHAPE_PRIOR],
         },
         "right": {
             "kind": "filtered_pcd_with_tracking",
             "layers": [
                 GEOMETRY_CONTROLLER,
                 GEOMETRY_OBJECT,
+                GEOMETRY_SHAPE_PRIOR,
                 GEOMETRY_TRACKER_OBJECT,
                 GEOMETRY_TRACKER_CONTROLLER,
             ],
@@ -800,6 +803,10 @@ class MaskedPcdPacket:
     source_timestamp_s: float | None = None
     source_frame_index: int | None = None
     source_step: int | None = None
+    shape_prior_points_m: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.float32))
+    shape_prior_colors_rgb_u8: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.uint8))
+    shape_prior_status: str = shape_prior_warmup.SHAPE_PRIOR_STATUS_DISABLED
+    shape_prior_profile: dict[str, Any] = field(default_factory=dict)
 
     @property
     def controller_point_count(self) -> int:
@@ -812,6 +819,10 @@ class MaskedPcdPacket:
     @property
     def point_count(self) -> int:
         return self.controller_point_count + self.object_point_count
+
+    @property
+    def shape_prior_point_count(self) -> int:
+        return int(np.asarray(self.shape_prior_points_m, dtype=np.float32).reshape(-1, 3).shape[0])
 
 
 @dataclass(frozen=True)
@@ -1055,6 +1066,7 @@ class HeadlessCaptureWriter:
         self.rgb_dir = self.output_dir / "rgb"
         self.trajectory_dir = self.output_dir / "query_trajectory"
         self.mask_dir = self.output_dir / "masks"
+        self.shape_prior_dir = self.output_dir / "shape_prior"
         self.input_rgb_dir = self.output_dir / "input_rgb"
         self.frames_path = self.output_dir / "frames.jsonl"
         self.input_frames_path = self.output_dir / "input_frames.jsonl"
@@ -1099,6 +1111,34 @@ class HeadlessCaptureWriter:
             payload.update(values)
             self._metadata_payload = payload
             self.metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    def write_shape_prior_result(self, result: shape_prior_warmup.ShapePriorResult) -> None:
+        self.shape_prior_dir.mkdir(parents=True, exist_ok=True)
+        path = self.shape_prior_dir / "points.npz"
+        np.savez_compressed(
+            path,
+            seq=np.asarray([int(result.seq)], dtype=np.int64),
+            source_seq=np.asarray([-1 if result.source_seq is None else int(result.source_seq)], dtype=np.int64),
+            source_timestamp_s=np.asarray(
+                [np.nan if result.source_timestamp_s is None else float(result.source_timestamp_s)],
+                dtype=np.float64,
+            ),
+            points_m=np.ascontiguousarray(result.points_m, dtype=np.float32).reshape(-1, 3),
+            colors_rgb_u8=np.ascontiguousarray(result.colors_rgb_u8, dtype=np.uint8).reshape(-1, 3),
+            metadata_json=np.asarray([json.dumps(dict(result.metadata), sort_keys=True)]),
+        )
+        values = dict(result.metadata)
+        values.update(
+            {
+                "shape_prior_status": str(result.status),
+                "shape_prior_source_seq": result.source_seq,
+                "shape_prior_source_time_s": result.source_timestamp_s,
+                "shape_prior_ready_seq": int(result.seq),
+                "shape_prior_path": self._relative(path),
+                "shape_prior_point_count": int(np.asarray(result.points_m).reshape(-1, 3).shape[0]),
+            }
+        )
+        self.update_metadata(values)
 
     def write_input_frame(self, packet: FramePacket) -> None:
         seq_name = f"{int(packet.seq):06d}"
@@ -1992,6 +2032,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=shape_prior_warmup.SHAPE_PRIOR_EXECUTION_REMOTE_WORKER,
     )
     parser.add_argument("--shape-prior-endpoint", default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT)
+    parser.add_argument("--shape-prior-profile-json", type=Path, default=None)
     parser.add_argument("--shape-prior-device", default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_DEVICE)
     parser.add_argument(
         "--shape-prior-skip-route-visualizations",
@@ -4103,6 +4144,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.remote_quality_client: FfsRemoteDepthClient | None = None
         self.recording_source: RecordedRgbdFrameSource | None = None
         self.headless_capture_writer: HeadlessCaptureWriter | None = None
+        self.shape_prior_manager = self._create_shape_prior_manager()
+        self._shape_prior_written = False
+        self._shape_prior_deferred_snapshot: shape_prior_warmup.ShapePriorSnapshot | None = None
         self.table_c2w: np.ndarray | None = None
         self.table_calibration_path: Path | None = None
         self._recording_first_frame_segmented = threading.Event()
@@ -4141,6 +4185,54 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
     def _pcd_coordinate_frame(self) -> str:
         return TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else COORDINATE_FRAME
+
+    def _create_shape_prior_manager(self) -> shape_prior_warmup.ShapePriorWarmupManager:
+        enabled = bool(getattr(self.args, "shape_prior_warmup", False))
+        client = None
+        if enabled and str(getattr(self.args, "shape_prior_execution", "")) == shape_prior_warmup.SHAPE_PRIOR_EXECUTION_REMOTE_WORKER:
+            client = ShapePriorRemoteClient(
+                endpoint=str(getattr(self.args, "shape_prior_endpoint", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT)),
+                timeout_ms=5000,
+            )
+        return shape_prior_warmup.ShapePriorWarmupManager(
+            enabled=enabled,
+            client=client,
+            start_policy=str(
+                getattr(
+                    self.args,
+                    "shape_prior_start_policy",
+                    shape_prior_warmup.SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR,
+                )
+            ),
+        )
+
+    def _shape_prior_profile(self) -> dict[str, Any]:
+        manager = getattr(self, "shape_prior_manager", None)
+        if manager is None:
+            return shape_prior_warmup.default_profile(enabled=False)
+        return manager.profile()
+
+    def _shape_prior_profile_payload(self) -> dict[str, Any]:
+        profile = self._shape_prior_profile()
+        payload = dict(profile)
+        if payload.get("input_source") is None:
+            payload["input_source"] = str(getattr(self.args, "input_source", ""))
+        if payload.get("depth_backend") is None:
+            payload["depth_backend"] = depth_backend_label(self.args)
+        if payload.get("depth_source_internal") is None:
+            payload["depth_source_internal"] = str(getattr(self.args, "depth_source", ""))
+        if payload.get("shape_backend") is None and bool(getattr(self.args, "shape_prior_warmup", False)):
+            payload["shape_backend"] = shape_prior_warmup.SHAPE_BACKEND_SAM3D_OBJECTS
+        return payload
+
+    def _write_shape_prior_profile_json(self, profile: dict[str, Any] | None = None) -> None:
+        path = getattr(self.args, "shape_prior_profile_json", None)
+        if path is None:
+            return
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = self._shape_prior_profile_payload() if profile is None else dict(profile)
+        output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def _frame_hud_line(self) -> str:
         if self._table_world_enabled():
@@ -4239,6 +4331,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
     def _build_headless_capture_metadata(self) -> dict[str, Any]:
         if self.runtime is None:
             raise RuntimeError("camera runtime is not initialized")
+        shape_profile = self._shape_prior_profile_payload()
         replay_fps = None
         recording_fps = None
         frame_count = None
@@ -4283,6 +4376,20 @@ class RealtimeMaskedEdgeTamPcdDemo:
             ),
             "mask_backend": "edgetam",
             "depth_backend": depth_backend_label(self.args),
+            "shape_prior_enabled": bool(shape_profile.get("shape_prior_enabled", False)),
+            "shape_prior_status": str(shape_profile.get("shape_prior_status", shape_prior_warmup.SHAPE_PRIOR_STATUS_DISABLED)),
+            "shape_backend": shape_profile.get("shape_backend"),
+            "shape_prior_start_policy": str(getattr(self.args, "shape_prior_start_policy", "")),
+            "shape_prior_execution": str(getattr(self.args, "shape_prior_execution", "")),
+            "shape_prior_endpoint": str(getattr(self.args, "shape_prior_endpoint", "")),
+            "shape_prior_device": str(getattr(self.args, "shape_prior_device", "")),
+            "shape_prior_skip_route_visualizations": bool(
+                getattr(self.args, "shape_prior_skip_route_visualizations", True)
+            ),
+            "shape_prior_source_seq": shape_profile.get("shape_prior_source_seq"),
+            "shape_prior_source_time_s": shape_profile.get("shape_prior_source_time_s"),
+            "shape_prior_depth_backend": depth_backend_label(self.args),
+            "shape_prior_depth_source_internal": str(self.args.depth_source),
             "execution_mode": (
                 PHYSTWIN_STRICT_EXECUTION_MODE
                 if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
@@ -4507,6 +4614,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if self.remote_quality_client is not None:
             self.remote_quality_client.close()
             self.remote_quality_client = None
+        self._run_deferred_shape_prior_after_teardown()
+        self._write_shape_prior_profile_json()
+        shape_prior_client = getattr(self.shape_prior_manager, "client", None)
+        if shape_prior_client is not None and hasattr(shape_prior_client, "close"):
+            try:
+                shape_prior_client.close()
+            except Exception:
+                pass
         self.headless_capture_writer = None
         if self.filter_worker is not None:
             self.filter_worker.stop()
@@ -5733,11 +5848,113 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("TAPNext++ tracker worker", exc)
 
+    def _shape_prior_snapshot_from_pcd_result(
+        self,
+        result: PcdBuildResult,
+    ) -> shape_prior_warmup.ShapePriorSnapshot | None:
+        if not bool(getattr(self.args, "shape_prior_warmup", False)):
+            return None
+        if self.table_c2w is None:
+            return None
+        if result.depth_m is None:
+            return None
+        mask_packet = result.mask_packet
+        if int(result.packet.seq) != int(mask_packet.seq):
+            return None
+        k_color = mask_packet.k_color
+        if k_color is None and self.runtime is not None:
+            k_color = np.asarray(self.runtime.k_color, dtype=np.float32)
+        if k_color is None:
+            return None
+        snapshot = shape_prior_warmup.ShapePriorSnapshot(
+            seq=int(mask_packet.seq),
+            source_timestamp_s=mask_packet.source_timestamp_s,
+            input_source=str(self.args.input_source),
+            depth_backend=depth_backend_label(self.args),
+            depth_source_internal=str(self.args.depth_source),
+            rgb_u8=np.ascontiguousarray(mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8),
+            object_mask=np.ascontiguousarray(mask_packet.object_mask, dtype=bool),
+            controller_mask=np.ascontiguousarray(mask_packet.controller_mask, dtype=bool),
+            depth_color_m=np.ascontiguousarray(result.depth_m, dtype=np.float32),
+            k_color=np.ascontiguousarray(k_color, dtype=np.float32).reshape(3, 3),
+            camera_to_world_c2w=np.ascontiguousarray(self.table_c2w, dtype=np.float32).reshape(4, 4),
+        )
+        try:
+            return shape_prior_warmup.normalize_snapshot(snapshot)
+        except ValueError as exc:
+            if self.args.debug:
+                print(f"[shape-prior] snapshot skipped seq={mask_packet.seq}: {exc}", flush=True)
+            return None
+
+    def _packet_with_shape_prior_state(self, packet: MaskedPcdPacket) -> MaskedPcdPacket:
+        profile = self._shape_prior_profile()
+        result = self.shape_prior_manager.ready_result()
+        if result is not None and result.ready:
+            return replace(
+                packet,
+                shape_prior_points_m=np.ascontiguousarray(result.points_m, dtype=np.float32).reshape(-1, 3),
+                shape_prior_colors_rgb_u8=np.ascontiguousarray(result.colors_rgb_u8, dtype=np.uint8).reshape(-1, 3),
+                shape_prior_status=shape_prior_warmup.SHAPE_PRIOR_STATUS_READY,
+                shape_prior_profile=profile,
+            )
+        return replace(
+            packet,
+            shape_prior_points_m=np.empty((0, 3), dtype=np.float32),
+            shape_prior_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            shape_prior_status=str(profile.get("shape_prior_status", shape_prior_warmup.SHAPE_PRIOR_STATUS_DISABLED)),
+            shape_prior_profile=profile,
+        )
+
+    def _maybe_start_shape_prior_from_pcd_result(self, result: PcdBuildResult) -> None:
+        snapshot = self._shape_prior_snapshot_from_pcd_result(result)
+        if snapshot is None:
+            return
+        policy = str(getattr(self.args, "shape_prior_start_policy", ""))
+        if policy == shape_prior_warmup.SHAPE_PRIOR_START_POLICY_AFTER_TEARDOWN:
+            if self._shape_prior_deferred_snapshot is None:
+                self._shape_prior_deferred_snapshot = snapshot
+            self._write_shape_prior_profile_json()
+            return
+        submitted = self.shape_prior_manager.maybe_submit(snapshot)
+        if submitted and policy == shape_prior_warmup.SHAPE_PRIOR_START_POLICY_BLOCKING_BEFORE_FIRST_OUTPUT:
+            self.shape_prior_manager.wait()
+        if submitted:
+            self._write_shape_prior_profile_json()
+
+    def _maybe_write_shape_prior_headless_result(self) -> None:
+        profile = self._shape_prior_profile_payload()
+        result = self.shape_prior_manager.ready_result()
+        if self.headless_capture_writer is not None and result is not None and result.ready and not self._shape_prior_written:
+            self.headless_capture_writer.write_shape_prior_result(result)
+            self._shape_prior_written = True
+            self._write_shape_prior_profile_json(profile)
+            return
+        if self.headless_capture_writer is not None:
+            self.headless_capture_writer.update_metadata(profile)
+        self._write_shape_prior_profile_json(profile)
+
+    def _run_deferred_shape_prior_after_teardown(self) -> None:
+        if str(getattr(self.args, "shape_prior_start_policy", "")) != shape_prior_warmup.SHAPE_PRIOR_START_POLICY_AFTER_TEARDOWN:
+            return
+        snapshot = self._shape_prior_deferred_snapshot
+        if snapshot is None:
+            self._write_shape_prior_profile_json()
+            return
+        submitted = self.shape_prior_manager.maybe_submit(snapshot)
+        if submitted:
+            self.shape_prior_manager.wait()
+        self._maybe_write_shape_prior_headless_result()
+
     def _publish_strict_render_pair(
         self,
         pcd_result: PcdBuildResult,
         tracker_packet: TrackerMarkerPacket,
     ) -> PairedRenderPacket:
+        self._maybe_start_shape_prior_from_pcd_result(pcd_result)
+        pcd_result = replace(
+            pcd_result,
+            packet=self._packet_with_shape_prior_state(pcd_result.packet),
+        )
         pair = PairedRenderPacket(
             seq=int(pcd_result.packet.seq),
             pcd_packet=pcd_result.packet,
@@ -5753,6 +5970,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if pair.seq == 0:
             self._lossless_first_pair_published.set()
         if self.headless_capture_writer is not None:
+            self._maybe_write_shape_prior_headless_result()
             self.headless_capture_writer.write_tracker(tracker_packet)
             self._write_headless_pcd_result(pcd_result, tracker_packet=tracker_packet)
         self._request_render_update()
@@ -6819,7 +7037,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 if not self.stop_event.is_set():
                     print(f"[WARN] PCD frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}", flush=True)
                 continue
+            result = replace(result, packet=self._packet_with_shape_prior_state(result.packet))
             self.render_slot.put(result.packet)
+            self._maybe_write_shape_prior_headless_result()
             self._write_headless_pcd_result(result)
             self.pcd_stats.record(result.packet.process_done_perf_s)
             self._request_render_update()
@@ -7359,6 +7579,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             remaining_controller_query_count=int(tracker_packet.remaining_controller_query_count),
             remaining_hand_a_query_count=int(tracker_packet.remaining_hand_a_query_count),
             remaining_hand_b_query_count=int(tracker_packet.remaining_hand_b_query_count),
+            shape_prior_status=str(pcd_packet.shape_prior_status),
+            shape_prior_point_count=int(pcd_packet.shape_prior_point_count),
         )
 
     def _latest_panel_rgb_frame_after(self, last_seq: int) -> FramePacket | None:
@@ -7401,6 +7623,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             max_render_points=int(self.args.render_max_points_per_layer),
             coordinate_frame=str(pcd_packet.coordinate_frame),
             camera_to_world_c2w=self.table_c2w,
+            shape_prior_xyz_m=pcd_packet.shape_prior_points_m,
+            shape_prior_rgb_u8=pcd_packet.shape_prior_colors_rgb_u8,
         )
 
         tracking_bgr = np.ascontiguousarray(mask_packet.color_bgr, dtype=np.uint8).copy()
@@ -7431,6 +7655,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             marker_count=int(tracking_counts.get("query_points", hud.marker_count)),
             object_point_count=int(pcd_counts.get("object_points", hud.object_point_count)),
             controller_point_count=int(pcd_counts.get("controller_points", hud.controller_point_count)),
+            shape_prior_status=str(pcd_packet.shape_prior_status),
+            shape_prior_point_count=int(pcd_counts.get("shape_prior_points", pcd_packet.shape_prior_point_count)),
         )
         return render_side_by_side_panel(
             SideBySidePanelInputs(
@@ -7496,6 +7722,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
         tracker_controller_material = rendering.MaterialRecord()
         tracker_controller_material.shader = "defaultUnlit"
         tracker_controller_material.point_size = float(self.args.tracker_marker_point_size)
+        shape_prior_material = rendering.MaterialRecord()
+        shape_prior_material.shader = "defaultUnlit"
+        shape_prior_material.point_size = max(1.0, float(self.args.point_size) * 0.75)
 
         def make_geometry_layer(
             scene: object,
@@ -7972,6 +8201,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
             tracker_layer_capacity = int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS
         controller_state = make_geometry_layer(GEOMETRY_CONTROLLER, pcd_material, min_capacity=pcd_layer_capacity)
         object_state = make_geometry_layer(GEOMETRY_OBJECT, pcd_material, min_capacity=pcd_layer_capacity)
+        shape_prior_state = make_geometry_layer(
+            GEOMETRY_SHAPE_PRIOR,
+            shape_prior_material,
+            min_capacity=pcd_layer_capacity,
+        )
         tracker_object_state = make_geometry_layer(
             GEOMETRY_TRACKER_OBJECT,
             tracker_object_material,
@@ -8098,6 +8332,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     packet.object_colors_rgb_u8,
                     max_points=int(self.args.render_max_points_per_layer),
                 )
+                shape_convert_ms, shape_update_ms = update_layer(
+                    shape_prior_state,
+                    packet.shape_prior_points_m,
+                    packet.shape_prior_colors_rgb_u8,
+                    max_points=int(self.args.render_max_points_per_layer),
+                )
                 if render_tracker_markers:
                     tracker_convert_ms, tracker_update_ms = update_tracker_layers(marker_packet)
                 else:
@@ -8109,8 +8349,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 latency_ms = _elapsed_ms(packet.receive_perf_s, render_time_s)
                 timing = replace(
                     packet.timing,
-                    open3d_convert_ms=float(controller_convert_ms + object_convert_ms + tracker_convert_ms),
-                    open3d_update_ms=float(controller_update_ms + object_update_ms + tracker_update_ms),
+                    open3d_convert_ms=float(
+                        controller_convert_ms + object_convert_ms + shape_convert_ms + tracker_convert_ms
+                    ),
+                    open3d_update_ms=float(
+                        controller_update_ms + object_update_ms + shape_update_ms + tracker_update_ms
+                    ),
                     receive_to_render_ms=latency_ms,
                 )
                 self.render_stats.record_render(render_time_s=render_time_s, latency_ms=latency_ms)
@@ -8137,6 +8381,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 return False
             controller_convert_ms = controller_update_ms = 0.0
             object_convert_ms = object_update_ms = 0.0
+            shape_convert_ms = shape_update_ms = 0.0
             tracker_convert_ms = tracker_update_ms = 0.0
             if packet is not None:
                 last_render_seq["value"] = packet.seq
@@ -8151,6 +8396,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     object_state,
                     packet.object_xyz_m,
                     packet.object_colors_rgb_u8,
+                    max_points=int(self.args.render_max_points_per_layer),
+                )
+                shape_convert_ms, shape_update_ms = update_layer(
+                    shape_prior_state,
+                    packet.shape_prior_points_m,
+                    packet.shape_prior_colors_rgb_u8,
                     max_points=int(self.args.render_max_points_per_layer),
                 )
             if marker_packet is not None:
@@ -8171,8 +8422,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             latency_ms = _elapsed_ms(latency_start_s, render_time_s)
             timing = replace(
                 active_packet.timing,
-                open3d_convert_ms=float(controller_convert_ms + object_convert_ms + tracker_convert_ms),
-                open3d_update_ms=float(controller_update_ms + object_update_ms + tracker_update_ms),
+                open3d_convert_ms=float(
+                    controller_convert_ms + object_convert_ms + shape_convert_ms + tracker_convert_ms
+                ),
+                open3d_update_ms=float(
+                    controller_update_ms + object_update_ms + shape_update_ms + tracker_update_ms
+                ),
                 receive_to_render_ms=latency_ms,
             )
             self.render_stats.record_render(render_time_s=render_time_s, latency_ms=latency_ms)
@@ -8375,6 +8630,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             filter_points_line = ""
         if self.args.depth_source == "ffs_remote":
             depth_line += f"  remote={self.args.ffs_remote_endpoint}"
+        shape_profile = packet.shape_prior_profile or self._shape_prior_profile()
+        shape_line = (
+            f"shape_prior: status={packet.shape_prior_status} "
+            f"points={packet.shape_prior_point_count} "
+            f"source_seq={shape_profile.get('shape_prior_source_seq')}"
+        )
         quality_line = ""
         if self.args.enable_remote_ffs_quality:
             quality_packet = self.remote_quality_slot.get_latest_after(-1)
@@ -8403,6 +8664,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"{lossless_line}\n"
             f"{filter_line}\n"
             f"{filter_points_line}\n"
+            f"{shape_line}\n"
             f"dropped capture/seg/pcd: {packet.dropped_capture_frames} / {packet.dropped_seg_frames} / "
             f"{self.paired_render_slot.dropped_count if bool(strict_sync) else self.render_slot.dropped_count}\n"
             f"EdgeTAM: {self.args.model_id}  mode={self.args.track_mode}  compile={self.args.compile_mode}  "

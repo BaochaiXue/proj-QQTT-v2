@@ -6,11 +6,13 @@ import json
 from pathlib import Path
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 import numpy as np
 
+from qqtt.demo import realtime_masked_edgetam_pcd as masked_demo
 from qqtt.demo import single_demo_v3_runtime as runtime
 from qqtt.demo import shape_prior_warmup as warmup
 from qqtt.demo.single_view_shape_align import (
@@ -89,10 +91,26 @@ class Demo32ShapePriorWrapperTest(unittest.TestCase):
         self.assertEqual(contract["shape_prior_start_policy"], "async-after-first-strict-pair")
         self.assertEqual(contract["shape_prior_execution"], "remote-worker")
         self.assertEqual(contract["shape_backend"], "sam3d-objects")
+        self.assertIsNone(contract["shape_prior_profile_json"])
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_status"], "pending")
         self.assertEqual(_option_value(delegate, "--shape-prior-endpoint"), "tcp://127.0.0.1:7100")
         self.assertIn("--shape-prior-warmup", delegate)
         self.assertIn("--shape-prior-skip-route-visualizations", delegate)
+        self.assertNotIn("--shape-prior-profile-json", delegate)
+
+    def test_demo32_shape_prior_profile_json_is_forwarded(self) -> None:
+        profile_path = self.repo_root / "shape_profile.json"
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            ["--dry-run", "--shape-prior-profile-json", str(profile_path)],
+        )
+
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
+
+        self.assertEqual(contract["shape_prior_profile_json"], str(profile_path))
+        self.assertEqual(_option_value(delegate, "--shape-prior-profile-json"), str(profile_path))
 
     def test_demo32_shape_prior_can_be_disabled(self) -> None:
         args = self._parse(runtime.DEMO_VERSION_3_2, ["--dry-run", "--no-shape-prior-warmup"])
@@ -227,6 +245,377 @@ class ShapePriorProtocolAndSnapshotTest(unittest.TestCase):
         self.assertEqual(manager.status, "failed")
         self.assertIn("no worker", manager.profile()["shape_prior_error"])
         self.assertIsNone(manager.ready_result())
+
+
+class RuntimeShapePriorIntegrationTest(unittest.TestCase):
+    def test_masked_delegate_shape_prior_warmup_defaults_off_unless_wrapper_enables(self) -> None:
+        args = masked_demo.build_parser().parse_args([])
+
+        self.assertFalse(args.shape_prior_warmup)
+        self.assertEqual(args.shape_prior_start_policy, "async-after-first-strict-pair")
+        self.assertEqual(args.shape_prior_execution, "remote-worker")
+        self.assertEqual(args.shape_prior_endpoint, "tcp://127.0.0.1:7100")
+        self.assertIsNone(args.shape_prior_profile_json)
+        self.assertEqual(args.shape_prior_device, "cuda:0")
+        self.assertTrue(args.shape_prior_skip_route_visualizations)
+
+    def test_masked_delegate_shape_prior_warmup_can_be_disabled(self) -> None:
+        args = masked_demo.build_parser().parse_args(["--no-shape-prior-warmup"])
+
+        self.assertFalse(args.shape_prior_warmup)
+
+    def test_masked_delegate_accepts_shape_prior_options_from_wrapper(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--shape-prior-warmup",
+                "--shape-prior-start-policy",
+                "blocking-before-first-output",
+                "--shape-prior-execution",
+                "remote-worker",
+                "--shape-prior-endpoint",
+                "tcp://127.0.0.1:7100",
+                "--shape-prior-profile-json",
+                "result/shape_profile.json",
+                "--shape-prior-device",
+                "cuda:0",
+                "--shape-prior-skip-route-visualizations",
+            ]
+        )
+
+        self.assertTrue(args.shape_prior_warmup)
+        self.assertEqual(args.shape_prior_start_policy, "blocking-before-first-output")
+        self.assertEqual(args.shape_prior_execution, "remote-worker")
+        self.assertEqual(args.shape_prior_endpoint, "tcp://127.0.0.1:7100")
+        self.assertEqual(args.shape_prior_profile_json, Path("result/shape_profile.json"))
+        self.assertEqual(args.shape_prior_device, "cuda:0")
+        self.assertTrue(args.shape_prior_skip_route_visualizations)
+
+    def test_masked_pcd_packet_carries_optional_shape_prior_reference_layer(self) -> None:
+        packet = masked_demo.MaskedPcdPacket(
+            seq=3,
+            controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            object_xyz_m=np.empty((0, 3), dtype=np.float32),
+            object_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            intrinsics=masked_demo.CameraIntrinsics(1.0, 1.0, 0.0, 0.0),
+            receive_perf_s=1.0,
+            process_done_perf_s=2.0,
+            dropped_capture_frames=0,
+            dropped_seg_frames=0,
+            timing=masked_demo.PipelineTiming(),
+            shape_prior_points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+            shape_prior_colors_rgb_u8=np.array([[150, 150, 150]], dtype=np.uint8),
+            shape_prior_status="ready",
+            shape_prior_profile={"shape_backend": "sam3d-objects"},
+        )
+
+        self.assertEqual(packet.shape_prior_point_count, 1)
+        self.assertEqual(packet.point_count, 0)
+        self.assertEqual(packet.shape_prior_status, "ready")
+
+    def test_headless_metadata_records_shape_prior_status_and_backend(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--render-mode",
+                "none",
+                "--track-mode",
+                "none",
+                "--pcd-mode",
+                "none",
+                "--depth-source",
+                "realsense",
+                "--depth-backend-label",
+                "native-realsense",
+                "--shape-prior-warmup",
+            ]
+        )
+        demo = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        demo.runtime = SimpleNamespace(
+            serial="s0",
+            intrinsics=masked_demo.CameraIntrinsics(100.0, 100.0, 2.0, 2.0),
+            k_color=np.eye(3, dtype=np.float32),
+        )
+        demo.shape_prior_manager = warmup.ShapePriorWarmupManager(
+            enabled=True,
+            client=None,
+            start_policy="async-after-first-strict-pair",
+        )
+
+        metadata = demo._build_headless_capture_metadata()
+
+        self.assertTrue(metadata["shape_prior_enabled"])
+        self.assertEqual(metadata["shape_prior_status"], "pending")
+        self.assertEqual(metadata["shape_backend"], "sam3d-objects")
+        self.assertEqual(metadata["shape_prior_depth_backend"], "native-realsense")
+        self.assertEqual(metadata["shape_prior_depth_source_internal"], "realsense")
+
+    def _runtime_for_snapshot(self) -> masked_demo.RealtimeMaskedEdgeTamPcdDemo:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--render-mode",
+                "none",
+                "--track-mode",
+                "none",
+                "--pcd-mode",
+                "none",
+                "--depth-source",
+                "realsense",
+                "--depth-backend-label",
+                "native-realsense",
+                "--shape-prior-warmup",
+            ]
+        )
+        demo = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        demo.runtime = SimpleNamespace(
+            serial="s0",
+            intrinsics=masked_demo.CameraIntrinsics(100.0, 100.0, 1.0, 1.0),
+            k_color=np.eye(3, dtype=np.float32),
+        )
+        demo.table_c2w = np.eye(4, dtype=np.float32)
+        return demo
+
+    def test_shape_prior_snapshot_uses_selected_depth_mask_rgb_and_table_transform(self) -> None:
+        demo = self._runtime_for_snapshot()
+        color_bgr = np.zeros((2, 3, 3), dtype=np.uint8)
+        color_bgr[..., 0] = 10
+        color_bgr[..., 1] = 20
+        color_bgr[..., 2] = 30
+        object_mask = np.zeros((2, 3), dtype=bool)
+        object_mask[1, 1] = True
+        mask_packet = masked_demo.MaskPacket(
+            seq=5,
+            color_bgr=color_bgr,
+            depth_source="realsense",
+            intrinsics=masked_demo.CameraIntrinsics(100.0, 100.0, 1.0, 1.0),
+            depth_scale_m_per_unit=0.001,
+            receive_perf_s=1.0,
+            process_done_perf_s=2.0,
+            dropped_capture_frames=0,
+            timing=masked_demo.PipelineTiming(),
+            controller_mask=np.zeros((2, 3), dtype=bool),
+            object_mask=object_mask,
+            k_color=np.eye(3, dtype=np.float32),
+            source_timestamp_s=12.5,
+        )
+        packet = masked_demo.MaskedPcdPacket(
+            seq=5,
+            controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            object_xyz_m=np.empty((0, 3), dtype=np.float32),
+            object_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            intrinsics=mask_packet.intrinsics,
+            receive_perf_s=1.0,
+            process_done_perf_s=2.0,
+            dropped_capture_frames=0,
+            dropped_seg_frames=0,
+            timing=masked_demo.PipelineTiming(),
+        )
+        result = masked_demo.PcdBuildResult(
+            packet=packet,
+            depth_m=np.ones((2, 3), dtype=np.float32),
+            mask_packet=mask_packet,
+        )
+
+        snapshot = demo._shape_prior_snapshot_from_pcd_result(result)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.seq, 5)
+        self.assertEqual(snapshot.source_timestamp_s, 12.5)
+        self.assertEqual(snapshot.depth_backend, "native-realsense")
+        self.assertEqual(snapshot.depth_source_internal, "realsense")
+        np.testing.assert_array_equal(snapshot.rgb_u8[0, 0], np.array([30, 20, 10], dtype=np.uint8))
+        np.testing.assert_array_equal(snapshot.object_mask, object_mask)
+        np.testing.assert_allclose(snapshot.depth_color_m, np.ones((2, 3), dtype=np.float32))
+        np.testing.assert_allclose(snapshot.camera_to_world_c2w, np.eye(4, dtype=np.float32))
+
+    def test_after_teardown_policy_defers_worker_request_until_teardown(self) -> None:
+        class CountingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def request_shape_prior(self, snapshot: warmup.ShapePriorSnapshot) -> warmup.ShapePriorResult:
+                self.calls += 1
+                return warmup.ShapePriorResult(
+                    seq=snapshot.seq,
+                    status="ready",
+                    points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+                    colors_rgb_u8=np.array([[150, 150, 150]], dtype=np.uint8),
+                    source_seq=snapshot.seq,
+                    source_timestamp_s=snapshot.source_timestamp_s,
+                    metadata={"shape_backend": "sam3d-objects"},
+                )
+
+        demo = self._runtime_for_snapshot()
+        demo.args.shape_prior_start_policy = "after-teardown"
+        client = CountingClient()
+        demo.shape_prior_manager = warmup.ShapePriorWarmupManager(
+            enabled=True,
+            client=client,
+            start_policy="after-teardown",
+        )
+        color_bgr = np.zeros((2, 2, 3), dtype=np.uint8)
+        object_mask = np.array([[True, False], [False, False]], dtype=bool)
+        mask_packet = masked_demo.MaskPacket(
+            seq=6,
+            color_bgr=color_bgr,
+            depth_source="realsense",
+            intrinsics=masked_demo.CameraIntrinsics(100.0, 100.0, 1.0, 1.0),
+            depth_scale_m_per_unit=0.001,
+            receive_perf_s=1.0,
+            process_done_perf_s=2.0,
+            dropped_capture_frames=0,
+            timing=masked_demo.PipelineTiming(),
+            controller_mask=np.zeros((2, 2), dtype=bool),
+            object_mask=object_mask,
+            k_color=np.eye(3, dtype=np.float32),
+            source_timestamp_s=1.0,
+        )
+        pcd_packet = masked_demo.MaskedPcdPacket(
+            seq=6,
+            controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            object_xyz_m=np.empty((0, 3), dtype=np.float32),
+            object_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            intrinsics=mask_packet.intrinsics,
+            receive_perf_s=1.0,
+            process_done_perf_s=2.0,
+            dropped_capture_frames=0,
+            dropped_seg_frames=0,
+            timing=masked_demo.PipelineTiming(),
+        )
+        result = masked_demo.PcdBuildResult(
+            packet=pcd_packet,
+            depth_m=np.ones((2, 2), dtype=np.float32),
+            mask_packet=mask_packet,
+        )
+
+        demo._maybe_start_shape_prior_from_pcd_result(result)
+        self.assertEqual(client.calls, 0)
+        self.assertEqual(demo.shape_prior_manager.status, "pending")
+
+        demo._run_deferred_shape_prior_after_teardown()
+
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(demo.shape_prior_manager.status, "ready")
+
+    def test_packet_with_shape_prior_state_attaches_ready_result_without_changing_pcd_counts(self) -> None:
+        class ReadyClient:
+            def request_shape_prior(self, snapshot: warmup.ShapePriorSnapshot) -> warmup.ShapePriorResult:
+                return warmup.ShapePriorResult(
+                    seq=snapshot.seq,
+                    status="ready",
+                    points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+                    colors_rgb_u8=np.array([[150, 150, 150]], dtype=np.uint8),
+                    source_seq=snapshot.seq,
+                    source_timestamp_s=snapshot.source_timestamp_s,
+                    metadata={"shape_backend": "sam3d-objects"},
+                )
+
+        demo = self._runtime_for_snapshot()
+        demo.shape_prior_manager = warmup.ShapePriorWarmupManager(
+            enabled=True,
+            client=ReadyClient(),
+            start_policy="async-after-first-strict-pair",
+        )
+        snapshot = warmup.ShapePriorSnapshot(
+            seq=1,
+            source_timestamp_s=0.5,
+            input_source="fake-live",
+            depth_backend="native-realsense",
+            depth_source_internal="realsense",
+            rgb_u8=np.zeros((2, 2, 3), dtype=np.uint8),
+            object_mask=np.array([[True, False], [False, False]], dtype=bool),
+            controller_mask=np.zeros((2, 2), dtype=bool),
+            depth_color_m=np.ones((2, 2), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+        demo.shape_prior_manager.maybe_submit(snapshot)
+        demo.shape_prior_manager.wait(timeout_s=1.0)
+        packet = masked_demo.MaskedPcdPacket(
+            seq=2,
+            controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            object_xyz_m=np.empty((0, 3), dtype=np.float32),
+            object_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            intrinsics=masked_demo.CameraIntrinsics(1.0, 1.0, 0.0, 0.0),
+            receive_perf_s=1.0,
+            process_done_perf_s=2.0,
+            dropped_capture_frames=0,
+            dropped_seg_frames=0,
+            timing=masked_demo.PipelineTiming(),
+        )
+
+        attached = demo._packet_with_shape_prior_state(packet)
+
+        self.assertEqual(attached.shape_prior_status, "ready")
+        self.assertEqual(attached.shape_prior_point_count, 1)
+        self.assertEqual(attached.point_count, 0)
+
+    def test_headless_writer_saves_shape_prior_artifact_and_updates_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = masked_demo.HeadlessCaptureWriter(
+                Path(tmp),
+                metadata={
+                    "shape_prior_enabled": True,
+                    "shape_prior_status": "pending",
+                    "shape_backend": "sam3d-objects",
+                },
+            )
+            result = warmup.ShapePriorResult(
+                seq=4,
+                status="ready",
+                points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+                colors_rgb_u8=np.array([[150, 150, 150]], dtype=np.uint8),
+                source_seq=4,
+                source_timestamp_s=2.5,
+                metadata={"shape_prior_total_ms": 10.0},
+            )
+
+            writer.write_shape_prior_result(result)
+
+            metadata = json.loads((Path(tmp) / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["shape_prior_status"], "ready")
+            self.assertEqual(metadata["shape_prior_source_seq"], 4)
+            self.assertEqual(metadata["shape_prior_source_time_s"], 2.5)
+            self.assertEqual(metadata["shape_prior_path"], "shape_prior/points.npz")
+            payload = np.load(Path(tmp) / metadata["shape_prior_path"])
+            np.testing.assert_allclose(payload["points_m"], result.points_m)
+            np.testing.assert_array_equal(payload["colors_rgb_u8"], result.colors_rgb_u8)
+
+    def test_shape_prior_profile_json_records_fail_soft_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_path = Path(tmp) / "shape_profile.json"
+            demo = self._runtime_for_snapshot()
+            demo.args.shape_prior_profile_json = profile_path
+            demo.shape_prior_manager = warmup.ShapePriorWarmupManager(
+                enabled=True,
+                client=None,
+                start_policy="async-after-first-strict-pair",
+            )
+            snapshot = warmup.ShapePriorSnapshot(
+                seq=9,
+                source_timestamp_s=3.0,
+                input_source="fake-live",
+                depth_backend="native-realsense",
+                depth_source_internal="realsense",
+                rgb_u8=np.zeros((2, 2, 3), dtype=np.uint8),
+                object_mask=np.array([[True, False], [False, False]], dtype=bool),
+                controller_mask=np.zeros((2, 2), dtype=bool),
+                depth_color_m=np.ones((2, 2), dtype=np.float32),
+                k_color=np.eye(3, dtype=np.float32),
+                camera_to_world_c2w=np.eye(4, dtype=np.float32),
+            )
+
+            demo.shape_prior_manager.maybe_submit(snapshot)
+            demo._write_shape_prior_profile_json()
+
+            payload = json.loads(profile_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["shape_prior_status"], "failed")
+            self.assertEqual(payload["shape_prior_source_seq"], 9)
+            self.assertEqual(payload["input_source"], "fake-live")
+            self.assertEqual(payload["depth_backend"], "native-realsense")
 
 
 class SingleViewShapeAlignmentTest(unittest.TestCase):

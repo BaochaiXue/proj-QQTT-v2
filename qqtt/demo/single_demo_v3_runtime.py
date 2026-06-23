@@ -426,6 +426,7 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
             "--shape-prior-endpoint",
             default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT,
         )
+        parser.add_argument("--shape-prior-profile-json", type=Path, default=None)
         parser.add_argument(
             "--shape-prior-device",
             default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_DEVICE,
@@ -1178,6 +1179,11 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             if version == DEMO_VERSION_3_2
             else None
         ),
+        "shape_prior_profile_json": (
+            None
+            if version != DEMO_VERSION_3_2 or getattr(args, "shape_prior_profile_json", None) is None
+            else str(args.shape_prior_profile_json)
+        ),
         "shape_prior_device": (
             str(getattr(args, "shape_prior_device", ""))
             if version == DEMO_VERSION_3_2
@@ -1303,6 +1309,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "shape_prior_execution",
         "shape_backend",
         "shape_prior_endpoint",
+        "shape_prior_profile_json",
         "shape_prior_device",
         "tracker_device",
         "tracker_query_count",
@@ -1543,6 +1550,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
                 str(args.shape_prior_device),
             ]
         )
+        if getattr(args, "shape_prior_profile_json", None) is not None:
+            argv.extend(["--shape-prior-profile-json", str(args.shape_prior_profile_json)])
         if bool(getattr(args, "shape_prior_skip_route_visualizations", True)):
             argv.append("--shape-prior-skip-route-visualizations")
         else:

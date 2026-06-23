@@ -68,6 +68,26 @@ FORBIDDEN_DATA_PROCESS_FILES = [
     "shape_prior.py",
 ]
 
+DEMO32_SHAPE_PRIOR_CARVEOUTS = [
+    "qqtt/demo/shape_prior_warmup.py",
+    "qqtt/demo/single_view_shape_align.py",
+    "services/shape_prior_remote",
+]
+
+FORMAL_RECORDING_ALIGNMENT_FILES = [
+    "record_data.py",
+    "record_data_realtime_align.py",
+    "data_process/record_data_align.py",
+]
+
+FORMAL_SHAPE_PRIOR_BANNED_FRAGMENTS = [
+    "shape_prior_warmup",
+    "single_view_shape_align",
+    "shape_prior_remote",
+    "data_process_sam3d",
+    "sam3d",
+]
+
 README_BANNED_FRAGMENTS = [
     "builds digital twins",
     "inverse physics over a differentiable spring-mass model",
@@ -127,6 +147,22 @@ def check_data_process_scope(errors: list[str]) -> None:
             errors.append(f"Forbidden data_process file still present: data_process/{name}")
 
 
+def check_demo32_shape_prior_carveout(errors: list[str]) -> None:
+    for relative in DEMO32_SHAPE_PRIOR_CARVEOUTS:
+        if not (ROOT / relative).exists():
+            errors.append(f"Missing Demo 3.2 shape-prior carveout path: {relative}")
+    for relative in FORMAL_RECORDING_ALIGNMENT_FILES:
+        path = ROOT / relative
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8").lower()
+        for fragment in FORMAL_SHAPE_PRIOR_BANNED_FRAGMENTS:
+            if fragment in text:
+                errors.append(
+                    f"Formal recording/alignment file {relative} references shape-prior fragment: {fragment}"
+                )
+
+
 def check_qqtt_exports(errors: list[str]) -> None:
     text = (ROOT / "qqtt" / "__init__.py").read_text(encoding="utf-8")
     if "CameraSystem" not in text:
@@ -169,6 +205,7 @@ def main() -> int:
     check_absent(FORBIDDEN_TOP_LEVEL_FILES, errors)
     check_top_level_patterns(errors)
     check_data_process_scope(errors)
+    check_demo32_shape_prior_carveout(errors)
     check_qqtt_exports(errors)
     check_readme_scope(errors)
     check_env_install(errors)

@@ -27,6 +27,12 @@ remain a diagnostic layer around that data product.
   `data_process/visualization/experiments/` and `scripts/harness/experiments/`
 - single-camera realtime point-cloud workflows under `scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py` and `demo_v3*`
 - SAM/EdgeTAM mask usage when it is scoped to demo initialization or visualization; masks are not part of the formal aligned-case compatibility contract
+- isolated Demo 3.2 SAM3D shape-prior warmup diagnostics under
+  `qqtt/demo/shape_prior_warmup.py`, `qqtt/demo/single_view_shape_align.py`,
+  and `services/shape_prior_remote/`; this may render a gray reference layer
+  and write diagnostic profile/artifact metadata, but it must not alter
+  EdgeTAM, TAPNext++, query identity, observed PCD, or recording/alignment
+  products
 - manual hardware validation documentation
 - deterministic tests and scope guards for the kept workflow
 
@@ -37,7 +43,8 @@ remain a diagnostic layer around that data product.
 - batch-3 demo runtimes and batch-3 TRT helper scripts
 - tracking backend registries, lifted tracking overlays, and tracker benchmark harnesses
 - training or vendoring segmentation / tracking models
-- shape-prior generation
+- formal shape-prior generation as part of recording/alignment products,
+  except for the isolated Demo 3.2 warmup diagnostic carveout listed above
 - scene / point-cloud modeling beyond aligned packaging and sanctioned realtime demo/diagnostic views
 - `final_data.pkl`
 - inverse physics
@@ -57,9 +64,11 @@ external weights, but it must not make segmentation artifacts part of the
 formal aligned-case output contract.
 
 If a file, dependency, CLI, or README section exists only to support downstream
-physics, shape priors, tracking backends, reconstruction/rendering evaluation,
-robot control, or simulation/manipulation pipelines, it does not belong in this
-branch.
+physics, formal shape priors, tracking backends, reconstruction/rendering
+evaluation, robot control, or simulation/manipulation pipelines, it does not
+belong in this branch. The only shape-prior exception is the isolated Demo 3.2
+SAM3D warmup diagnostic path, which is explicitly outside the formal
+recording/alignment data product.
 
 Experiment-only FFS depth diagnostics are allowed only when they consume
 aligned cases, write diagnostic artifacts outside formal case directories, and

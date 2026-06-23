@@ -116,6 +116,85 @@ Local FFS TensorRT depth execution is serialized inside the runtime and cached
 by frame sequence so point-cloud rendering and TAPNext++ marker lift can share
 depth without concurrent TensorRT context use.
 
+### Shape Prior Warmup
+
+Demo 3.2 enables SAM3D shape-prior warmup by default. Warmup is diagnostic
+only: the first valid same-seq RGB-D + EdgeTAM object mask is copied into a
+`ShapePriorSnapshot`, the live/fake-live pipeline continues, and a remote worker
+returns an aligned gray canonical reference layer when it is ready. Shape prior
+does not change EdgeTAM masks, TAPNext++ queries/tracks, query identity,
+observed PCD, table-world filtering, or the strict tracking product.
+
+The default worker endpoint is `tcp://127.0.0.1:7100`. Start the worker on the
+SAM3D workstation with the external model checkout:
+
+```bash
+conda run -n <sam3d-env> --no-capture-output \
+  python services/shape_prior_remote/server.py \
+  --bind tcp://0.0.0.0:7100 \
+  --sam3d-root /home/xinjie/external/sam-3d-objects \
+  --futurephystwin-root /home/xinjie/FuturePhysTwin
+```
+
+For protocol/debug testing without loading SAM3D, use:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python services/shape_prior_remote/server.py \
+  --bind tcp://0.0.0.0:7100 \
+  --echo-observation
+```
+
+Disable warmup explicitly when measuring a baseline:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --depth-backend ir-ffs \
+  --no-shape-prior-warmup
+```
+
+Record detailed warmup timing:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --depth-backend ir-ffs \
+  --replay-fps 5 \
+  --duration-s 60 \
+  --shape-prior-profile-json result/bench/fake_ir_ffs_warm.json
+```
+
+Native depth uses the same snapshot/worker protocol and only changes the depth
+used for single-view alignment:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --depth-backend native-realsense \
+  --replay-fps 5 \
+  --duration-s 60 \
+  --shape-prior-profile-json result/bench/fake_native_warm.json
+```
+
+Default scheduling is
+`--shape-prior-start-policy async-after-first-strict-pair`, so first track and
+first render must not wait for SAM3D. Use
+`--shape-prior-start-policy blocking-before-first-output` only to measure the
+startup penalty of waiting for shape prior completion. Use
+`--shape-prior-start-policy after-teardown` for an offline diagnostic request
+from the first valid snapshot after the live/replay run has stopped.
+
+If the worker is missing, times out, or rejects a snapshot, Demo 3.2 records
+`shape_prior_status=failed`, keeps running, and leaves the shape layer empty.
+Headless captures write ready shape results to `shape_prior/points.npz` and
+record `shape_prior_enabled/status/source_seq/source_time_s`,
+`shape_backend=sam3d-objects`, `input_source`, `depth_backend`, and
+`depth_source_internal` in metadata/profile JSON.
+
 World-Z diagnostics are always reported for table-calibrated PCD. After the current
 PCD preset output is transformed into table world, the runtime records
 object/controller Z quantiles plus hand_a/hand_b stats when those masks are

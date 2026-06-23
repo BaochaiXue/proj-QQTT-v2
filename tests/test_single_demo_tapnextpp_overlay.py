@@ -1771,7 +1771,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(plan["middle"]["kind"], "filtered_pcd")
         self.assertEqual(
             plan["middle"]["layers"],
-            [demo.GEOMETRY_CONTROLLER, demo.GEOMETRY_OBJECT],
+            [demo.GEOMETRY_CONTROLLER, demo.GEOMETRY_OBJECT, demo.GEOMETRY_SHAPE_PRIOR],
         )
         self.assertEqual(plan["right"]["kind"], "filtered_pcd_with_tracking")
         self.assertEqual(
@@ -1779,6 +1779,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             [
                 demo.GEOMETRY_CONTROLLER,
                 demo.GEOMETRY_OBJECT,
+                demo.GEOMETRY_SHAPE_PRIOR,
                 demo.GEOMETRY_TRACKER_OBJECT,
                 demo.GEOMETRY_TRACKER_CONTROLLER,
             ],

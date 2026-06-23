@@ -31,6 +31,8 @@ class SideBySidePanelHud:
     remaining_controller_query_count: int = 0
     remaining_hand_a_query_count: int = 0
     remaining_hand_b_query_count: int = 0
+    shape_prior_status: str = "disabled"
+    shape_prior_point_count: int = 0
 
     @property
     def rgb_ahead_frames(self) -> int:
@@ -112,6 +114,7 @@ def _hud_lines(hud: SideBySidePanelHud) -> list[str]:
         f"input={input_time} pipe={float(hud.pipeline_latency_ms):.1f}ms disp={float(hud.display_latency_ms):.1f}ms",
         f"hold={float(hud.startup_hold_s):.2f}s filter={hud.filter_preset} markers={int(hud.marker_count)}",
         f"bg={hud.tracking_background} obj={int(hud.object_point_count)} ctrl={int(hud.controller_point_count)}",
+        f"shape_prior={hud.shape_prior_status} pts={int(hud.shape_prior_point_count)}",
     ]
 
 
@@ -142,8 +145,9 @@ def render_side_by_side_panel(
 
     panel = np.concatenate([left, middle, right], axis=1)
     _draw_text_lines(panel, _remaining_query_legend_lines(inputs.hud), origin=(2, 2))
-    hud_y = max(0, panel.shape[0] - 48)
-    _draw_text_lines(panel, _hud_lines(inputs.hud), origin=(2, hud_y))
+    hud_lines = _hud_lines(inputs.hud)
+    hud_y = max(0, panel.shape[0] - (14 * len(hud_lines) + 6))
+    _draw_text_lines(panel, hud_lines, origin=(2, hud_y))
     return np.ascontiguousarray(panel, dtype=np.uint8)
 
 
@@ -308,6 +312,8 @@ def render_projected_pcd_panel(
     max_render_points: int,
     coordinate_frame: str,
     camera_to_world_c2w: Any | None,
+    shape_prior_xyz_m: np.ndarray | None = None,
+    shape_prior_rgb_u8: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, int]]:
     if int(width) <= 0 or int(height) <= 0:
         raise ValueError("width and height must be positive")
@@ -337,7 +343,23 @@ def render_projected_pcd_panel(
         coordinate_frame=coordinate_frame,
         camera_to_world_c2w=camera_to_world_c2w,
     )
-    return image, {"controller_points": controller_count, "object_points": object_count}
+    shape_prior_count = _draw_projected_points(
+        image,
+        np.empty((0, 3), dtype=np.float32) if shape_prior_xyz_m is None else shape_prior_xyz_m,
+        np.empty((0, 3), dtype=np.uint8) if shape_prior_rgb_u8 is None else shape_prior_rgb_u8,
+        intrinsics,
+        points_name="shape_prior_xyz_m",
+        colors_name="shape_prior_rgb_u8",
+        point_size=point_size,
+        max_points=max_render_points,
+        coordinate_frame=coordinate_frame,
+        camera_to_world_c2w=camera_to_world_c2w,
+    )
+    return image, {
+        "controller_points": controller_count,
+        "object_points": object_count,
+        "shape_prior_points": shape_prior_count,
+    }
 
 
 def render_tracking_overlay_panel(

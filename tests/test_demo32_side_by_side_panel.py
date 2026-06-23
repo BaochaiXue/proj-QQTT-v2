@@ -124,6 +124,26 @@ class Demo32SideBySidePanelTest(unittest.TestCase):
         self.assertEqual(count["object_points"], 1)
         self.assertGreater(int(panel.sum()), 0)
 
+    def test_render_projected_pcd_panel_draws_shape_prior_reference_points(self) -> None:
+        panel, count = render_projected_pcd_panel(
+            width=8,
+            height=6,
+            intrinsics={"fx": 4.0, "fy": 4.0, "cx": 4.0, "cy": 3.0},
+            controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+            controller_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            object_xyz_m=np.empty((0, 3), dtype=np.float32),
+            object_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            shape_prior_xyz_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+            shape_prior_rgb_u8=np.array([[150, 150, 150]], dtype=np.uint8),
+            point_size=1,
+            max_render_points=0,
+            coordinate_frame=CAMERA_COLOR_FRAME,
+            camera_to_world_c2w=None,
+        )
+
+        self.assertEqual(count["shape_prior_points"], 1)
+        self.assertGreater(int(panel.sum()), 0)
+
     def test_render_projected_pcd_panel_accepts_intrinsics_object(self) -> None:
         panel, count = render_projected_pcd_panel(
             width=8,

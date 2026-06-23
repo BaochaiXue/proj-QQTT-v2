@@ -136,6 +136,9 @@ def default_profile(*, enabled: bool) -> dict[str, Any]:
         "shape_prior_enabled": bool(enabled),
         "shape_prior_status": status,
         "shape_backend": SHAPE_BACKEND_SAM3D_OBJECTS if bool(enabled) else None,
+        "input_source": None,
+        "depth_backend": None,
+        "depth_source_internal": None,
         "shape_prior_source_seq": None,
         "shape_prior_source_time_s": None,
         "shape_prior_ready_seq": None,
@@ -190,15 +193,26 @@ class ShapePriorWarmupManager:
         with self._lock:
             return str(self._status)
 
+    @staticmethod
+    def _snapshot_profile_fields(snapshot: ShapePriorSnapshot) -> dict[str, Any]:
+        return {
+            "input_source": str(snapshot.input_source),
+            "depth_backend": str(snapshot.depth_backend),
+            "depth_source_internal": str(snapshot.depth_source_internal),
+            "shape_prior_source_seq": int(snapshot.seq),
+            "shape_prior_source_time_s": snapshot.source_timestamp_s,
+        }
+
     def maybe_submit(self, snapshot: ShapePriorSnapshot) -> bool:
         if not self.enabled:
             return False
+        normalized = normalize_snapshot(snapshot)
         with self._lock:
             if self._submitted:
                 return False
             self._submitted = True
             self._status = SHAPE_PRIOR_STATUS_PENDING
-        normalized = normalize_snapshot(snapshot)
+            self._profile.update(self._snapshot_profile_fields(normalized))
         if self.client is None:
             self._mark_failed(normalized, "shape-prior client is unavailable")
             return True
@@ -232,11 +246,10 @@ class ShapePriorWarmupManager:
             self._status = status
             self._result = result if status == SHAPE_PRIOR_STATUS_READY else None
             self._profile.update(dict(result.metadata))
+            self._profile.update(self._snapshot_profile_fields(snapshot))
             self._profile.update(
                 {
                     "shape_prior_status": status,
-                    "shape_prior_source_seq": int(snapshot.seq),
-                    "shape_prior_source_time_s": snapshot.source_timestamp_s,
                     "shape_prior_ready_seq": int(result.seq),
                     "time_to_shape_prior_ready_ms": (
                         time.perf_counter() - float(self.created_perf_s)
@@ -250,11 +263,10 @@ class ShapePriorWarmupManager:
         with self._lock:
             self._status = SHAPE_PRIOR_STATUS_FAILED
             self._result = None
+            self._profile.update(self._snapshot_profile_fields(snapshot))
             self._profile.update(
                 {
                     "shape_prior_status": SHAPE_PRIOR_STATUS_FAILED,
-                    "shape_prior_source_seq": int(snapshot.seq),
-                    "shape_prior_source_time_s": snapshot.source_timestamp_s,
                     "shape_prior_error": str(error),
                 }
             )

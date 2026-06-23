@@ -46,6 +46,70 @@ python demo_v3/realtime_single_camera_realsense_masked_pcd.py --dry-run
 python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
+## Demo 3.2 Shape Prior Warmup Checklist
+
+Demo 3.2 enables SAM3D shape-prior warmup by default at the wrapper layer. This
+is a diagnostic gray reference layer only: it must not change EdgeTAM masks,
+TAPNext++ queries/tracks, current observed PCD, table-world filtering, or the
+strict tracking product.
+
+- Start a resident worker on the SAM3D workstation:
+
+```bash
+conda run -n <sam3d-env> --no-capture-output \
+  python services/shape_prior_remote/server.py \
+  --bind tcp://0.0.0.0:7100 \
+  --sam3d-root /home/xinjie/external/sam-3d-objects \
+  --futurephystwin-root /home/xinjie/FuturePhysTwin
+```
+
+- For protocol-only validation without SAM3D weights, start:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python services/shape_prior_remote/server.py \
+  --bind tcp://0.0.0.0:7100 \
+  --echo-observation
+```
+
+- Run fake-live IR-FFS with the default async policy:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --depth-backend ir-ffs \
+  --replay-fps 5 \
+  --duration-s 60 \
+  --shape-prior-profile-json result/bench/fake_ir_ffs_warm.json
+```
+
+- Run fake-live native depth with the same worker:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --depth-backend native-realsense \
+  --replay-fps 5 \
+  --duration-s 60 \
+  --shape-prior-profile-json result/bench/fake_native_warm.json
+```
+
+- For real-live validation, remove `--input-source fake-live` and repeat for
+  both `--depth-backend ir-ffs` and `--depth-backend native-realsense`.
+- For each command, run a baseline with `--no-shape-prior-warmup` and the same
+  input/depth settings.
+- Repeat the matrix with
+  `--shape-prior-start-policy blocking-before-first-output` only for startup
+  penalty measurement.
+- Verify missing or unreachable worker records `shape_prior_status=failed` in
+  the profile JSON/HUD and does not terminate real-live or fake-live.
+- Verify async runs publish first track/render before full SAM3D inference
+  completes.
+- Verify ready runs mount a gray shape reference layer and keep strict product
+  `queries_txy`, `tracks_yx`, and visibility unchanged versus the baseline.
+
 ## Calibration Checklist
 
 - `python cameras_calibrate.py` uses the current lab Calib.io ChArUco board by default:

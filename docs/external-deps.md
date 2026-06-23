@@ -31,6 +31,39 @@ for the single-camera branch.
 - Keep the external checkout outside this repo and document the path in the
   relevant validation plan or local environment notes.
 
+## SAM3D Shape Prior Warmup
+
+- Runtime role:
+  - Demo 3.2 optional warmup diagnostic/reference layer
+  - remote resident worker for `--shape-prior-execution remote-worker`
+  - single-view alignment of SAM3D canonical geometry to the first valid
+    same-seq RGB-D + EdgeTAM object mask snapshot
+- Default external SAM3D Objects checkout:
+  - `/home/xinjie/external/sam-3d-objects`
+- Default FuturePhysTwin checkout reference:
+  - `/home/xinjie/FuturePhysTwin`
+- Worker entrypoint in this repo:
+
+```bash
+python services/shape_prior_remote/server.py \
+  --bind tcp://0.0.0.0:7100 \
+  --sam3d-root /home/xinjie/external/sam-3d-objects \
+  --futurephystwin-root /home/xinjie/FuturePhysTwin
+```
+
+- Protocol/debug self-test mode that avoids importing SAM3D:
+
+```bash
+python services/shape_prior_remote/server.py \
+  --bind tcp://0.0.0.0:7100 \
+  --echo-observation
+```
+
+SAM3D, PyTorch3D, Kaolin, checkpoints, generated route videos, and model
+weights remain external and must not be vendored into this repo. The Demo 3.2
+process talks to the worker over the lightweight `services/shape_prior_remote`
+protocol; it does not import SAM3D heavy dependencies.
+
 ## PhysTwin-Compatible Tracking Products
 
 - Demo 3.2 `--tracking-product-backend phystwin-strict-tracking` targets the
