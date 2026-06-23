@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 from typing import Any, Callable, Sequence
 
+from qqtt.demo import shape_prior_warmup
 from qqtt.demo import realtime_masked_edgetam_pcd as masked_pcd
 from qqtt.demo import realtime_single_camera_pointcloud as single_pcd
 from qqtt.env.camera.table_calibration import (
@@ -398,6 +399,50 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
             default=DEMO32_DEPTH_BACKEND_IR_FFS,
             help="Demo 3.2 depth backend. ir-ffs uses D455 IR stereo FFS; native-realsense uses D455 native depth aligned to color.",
         )
+        parser.add_argument(
+            "--shape-prior-warmup",
+            dest="shape_prior_warmup",
+            action="store_true",
+            help="Start the Demo 3.2 SAM3D shape-prior warmup path.",
+        )
+        parser.add_argument(
+            "--no-shape-prior-warmup",
+            dest="shape_prior_warmup",
+            action="store_false",
+            help="Disable the Demo 3.2 SAM3D shape-prior warmup path.",
+        )
+        parser.set_defaults(shape_prior_warmup=True)
+        parser.add_argument(
+            "--shape-prior-start-policy",
+            choices=shape_prior_warmup.SHAPE_PRIOR_START_POLICIES,
+            default=shape_prior_warmup.SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR,
+        )
+        parser.add_argument(
+            "--shape-prior-execution",
+            choices=shape_prior_warmup.SHAPE_PRIOR_EXECUTIONS,
+            default=shape_prior_warmup.SHAPE_PRIOR_EXECUTION_REMOTE_WORKER,
+        )
+        parser.add_argument(
+            "--shape-prior-endpoint",
+            default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT,
+        )
+        parser.add_argument(
+            "--shape-prior-device",
+            default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_DEVICE,
+        )
+        parser.add_argument(
+            "--shape-prior-skip-route-visualizations",
+            dest="shape_prior_skip_route_visualizations",
+            action="store_true",
+            help="Skip route/debug visualizations in the shape-prior warmup path.",
+        )
+        parser.add_argument(
+            "--shape-prior-render-route-visualizations",
+            dest="shape_prior_skip_route_visualizations",
+            action="store_false",
+            help="Render route/debug visualizations in the shape-prior warmup path.",
+        )
+        parser.set_defaults(shape_prior_skip_route_visualizations=True)
     if depth_source == DEPTH_SOURCE_FFS:
         parser.add_argument("--ffs-repo", type=Path, default=single_pcd.DEFAULT_FFS_REPO)
         parser.add_argument("--ffs-trt-model-dir", type=Path, default=single_pcd.DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR)
@@ -1020,6 +1065,14 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     tracker_sync_policy = "strict_same_seq_lossless_5fps" if tracker_on and str(args.track_mode) != TRACK_MODE_NONE else "none"
     query_display_policy = "visible_3d_lifted_all" if tracker_on else "none"
     query_color_mode = "phystwin_rainbow_identity" if tracker_on else "none"
+    shape_prior_enabled = bool(
+        version == DEMO_VERSION_3_2 and getattr(args, "shape_prior_warmup", False)
+    )
+    shape_prior_status = (
+        shape_prior_warmup.SHAPE_PRIOR_STATUS_PENDING
+        if shape_prior_enabled
+        else shape_prior_warmup.SHAPE_PRIOR_STATUS_DISABLED
+    )
     contract: dict[str, Any] = {
         "demo": f"single-demo{version}",
         "demo_version": version,
@@ -1105,6 +1158,38 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             if masked_pcd.tracking_product_backend_is_strict(getattr(args, "tracking_product_backend", None))
             else masked_pcd.TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
         ),
+        "shape_prior_warmup_enabled": shape_prior_enabled,
+        "shape_prior_status": shape_prior_status,
+        "shape_prior_start_policy": (
+            str(getattr(args, "shape_prior_start_policy", ""))
+            if version == DEMO_VERSION_3_2
+            else None
+        ),
+        "shape_prior_execution": (
+            str(getattr(args, "shape_prior_execution", ""))
+            if version == DEMO_VERSION_3_2
+            else None
+        ),
+        "shape_backend": (
+            shape_prior_warmup.SHAPE_BACKEND_SAM3D_OBJECTS if shape_prior_enabled else None
+        ),
+        "shape_prior_endpoint": (
+            str(getattr(args, "shape_prior_endpoint", ""))
+            if version == DEMO_VERSION_3_2
+            else None
+        ),
+        "shape_prior_device": (
+            str(getattr(args, "shape_prior_device", ""))
+            if version == DEMO_VERSION_3_2
+            else None
+        ),
+        "shape_prior_skip_route_visualizations": (
+            bool(getattr(args, "shape_prior_skip_route_visualizations", True))
+            if version == DEMO_VERSION_3_2
+            else None
+        ),
+        "shape_prior_depth_backend": depth_backend if version == DEMO_VERSION_3_2 else None,
+        "shape_prior_depth_source_internal": depth_source if version == DEMO_VERSION_3_2 else None,
         "tracker_device": str(args.tracker_device),
         "tracker_query_count": int(args.tracker_query_count),
         "tracker_query_source": (
@@ -1180,6 +1265,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "capture_fps": 0.0,
         "mask_fps": 0.0,
         "tracker_fps": 0.0,
+        "shape_prior_status": shape_prior_status,
     }
     return contract
 
@@ -1211,6 +1297,13 @@ def format_contract(contract: dict[str, Any]) -> str:
         "phystwin_strict_output_dir",
         "compatibility_target",
         "execution_mode",
+        "shape_prior_warmup_enabled",
+        "shape_prior_status",
+        "shape_prior_start_policy",
+        "shape_prior_execution",
+        "shape_backend",
+        "shape_prior_endpoint",
+        "shape_prior_device",
         "tracker_device",
         "tracker_query_count",
         "tracker_query_source",
@@ -1433,6 +1526,27 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.append("--no-tracker-retire-filtered-markers")
     if getattr(args, "phystwin_strict_output_dir", None) is not None:
         argv.extend(["--phystwin-strict-output-dir", str(args.phystwin_strict_output_dir)])
+    if version == DEMO_VERSION_3_2:
+        if bool(getattr(args, "shape_prior_warmup", False)):
+            argv.append("--shape-prior-warmup")
+        else:
+            argv.append("--no-shape-prior-warmup")
+        argv.extend(
+            [
+                "--shape-prior-start-policy",
+                str(args.shape_prior_start_policy),
+                "--shape-prior-execution",
+                str(args.shape_prior_execution),
+                "--shape-prior-endpoint",
+                str(args.shape_prior_endpoint),
+                "--shape-prior-device",
+                str(args.shape_prior_device),
+            ]
+        )
+        if bool(getattr(args, "shape_prior_skip_route_visualizations", True)):
+            argv.append("--shape-prior-skip-route-visualizations")
+        else:
+            argv.append("--shape-prior-render-route-visualizations")
     if bool(args.enable_pcd_filter):
         argv.append("--enable-pcd-filter")
     if bool(args.enable_table_z_filter):

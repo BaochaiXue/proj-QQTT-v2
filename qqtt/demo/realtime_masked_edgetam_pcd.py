@@ -100,6 +100,7 @@ from qqtt.demo.phystwin_strict_product import (  # noqa: E402
     normalize_tracking_product_backend,
     tracking_product_backend_is_strict,
 )
+from qqtt.demo import shape_prior_warmup  # noqa: E402
 from qqtt.demo.demo32_side_by_side_panel import (  # noqa: E402
     SideBySidePanelHud,
     SideBySidePanelInputs,
@@ -1967,6 +1968,42 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Output directory for --tracking-product-backend phystwin-strict-tracking. Defaults to <headless-capture-dir>/phystwin_like.",
     )
+    parser.add_argument(
+        "--shape-prior-warmup",
+        dest="shape_prior_warmup",
+        action="store_true",
+        help="Enable the optional SAM3D shape-prior warmup request path.",
+    )
+    parser.add_argument(
+        "--no-shape-prior-warmup",
+        dest="shape_prior_warmup",
+        action="store_false",
+        help="Disable the optional SAM3D shape-prior warmup request path.",
+    )
+    parser.set_defaults(shape_prior_warmup=False)
+    parser.add_argument(
+        "--shape-prior-start-policy",
+        choices=shape_prior_warmup.SHAPE_PRIOR_START_POLICIES,
+        default=shape_prior_warmup.SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR,
+    )
+    parser.add_argument(
+        "--shape-prior-execution",
+        choices=shape_prior_warmup.SHAPE_PRIOR_EXECUTIONS,
+        default=shape_prior_warmup.SHAPE_PRIOR_EXECUTION_REMOTE_WORKER,
+    )
+    parser.add_argument("--shape-prior-endpoint", default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT)
+    parser.add_argument("--shape-prior-device", default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_DEVICE)
+    parser.add_argument(
+        "--shape-prior-skip-route-visualizations",
+        dest="shape_prior_skip_route_visualizations",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--shape-prior-render-route-visualizations",
+        dest="shape_prior_skip_route_visualizations",
+        action="store_false",
+    )
+    parser.set_defaults(shape_prior_skip_route_visualizations=True)
     parser.add_argument(
         "--tracker-retire-filtered-markers",
         dest="tracker_retire_filtered_markers",
