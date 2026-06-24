@@ -30,9 +30,7 @@ def _reference_motion_valid_for_class(
     motions = np.zeros_like(pts, dtype=np.float32)
     motions[:-1] = pts[1:] - pts[:-1]
     for frame_idx in range(max(0, pts.shape[0] - 1)):
-        current_valid = motions_valid[frame_idx].copy()
         if once_false_mask:
-            current_valid &= global_mask
             motions_valid[frame_idx] &= global_mask
         for query_idx in range(pts.shape[1]):
             if once_false_mask and not global_mask[query_idx]:
@@ -41,7 +39,7 @@ def _reference_motion_valid_for_class(
             if not motions_valid[frame_idx, query_idx]:
                 continue
             distances = np.linalg.norm(pts[frame_idx] - pts[frame_idx, query_idx], axis=1)
-            neighbors = np.flatnonzero((distances <= float(neighbor_dist)) & current_valid)
+            neighbors = np.flatnonzero((distances <= float(neighbor_dist)) & motions_valid[frame_idx])
             if len(neighbors) < int(min_neighbors):
                 motions_valid[frame_idx, query_idx] = False
                 if once_false_mask:
@@ -219,6 +217,36 @@ class PhysTwinStrictProductTest(unittest.TestCase):
         np.testing.assert_array_equal(filtered["object_motions_valid"], object_expected)
         np.testing.assert_array_equal(filtered["controller_motions_valid"], controller_expected)
         np.testing.assert_array_equal(filtered["controller_mask"], controller_mask_expected)
+
+    def test_motion_filter_removes_same_frame_failed_queries_from_later_neighbors(self) -> None:
+        frame0 = np.array(
+            [
+                [0.000, 0.0, 0.0],
+                [0.001, 0.0, 0.0],
+                [0.002, 0.0, 0.0],
+                [0.003, 0.0, 0.0],
+                [0.004, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        frame1 = frame0.copy()
+        frame1[0] += np.array([0.02, 0.0, 0.0], dtype=np.float32)
+        points = np.stack([frame0, frame1], axis=0)
+        vis = np.ones((2, 5), dtype=bool)
+        track_data = {
+            "object_points": points,
+            "object_colors": np.ones_like(points),
+            "object_visibilities": vis,
+            "controller_points": points,
+            "controller_colors": np.ones_like(points),
+            "controller_visibilities": vis,
+        }
+
+        filtered = strict.apply_phystwin_motion_filters(track_data)
+
+        self.assertFalse(np.any(filtered["object_motions_valid"][0]))
+        self.assertFalse(np.any(filtered["controller_motions_valid"][0]))
+        self.assertFalse(np.any(filtered["controller_mask"]))
 
     def test_object_volume_sampling_slices_all_object_arrays(self) -> None:
         object_points = np.array(

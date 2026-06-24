@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from data_process.depth_backends.geometry import transform_points
+from qqtt.demo.pcd_postprocess import _detect_radius_outlier_indices
 from qqtt.demo.realtime_single_camera_pointcloud import build_projection_grid_from_matrix
 from qqtt.tracking.sampling import PHYSTWIN_DENSE_QUERY_POINTS, sample_phystwin_dense
 
@@ -31,6 +32,21 @@ class StrictQuerySample:
     query_txy: np.ndarray
     query_points_yx: np.ndarray
     union_mask: np.ndarray
+
+
+@dataclass(frozen=True)
+class PreparedPhysTwinFrame:
+    seq: int
+    rgb_frame: np.ndarray
+    processed_mask_frame: Mapping[str, np.ndarray]
+    pcd_points: np.ndarray
+    pcd_colors: np.ndarray
+    tracks_yx: np.ndarray
+    visibility: np.ndarray
+    query_points_yx: np.ndarray
+    source_timestamp_s: float | None = None
+    source_frame_index: int | None = None
+    source_step: int | None = None
 
 
 def normalize_tracking_product_backend(value: str | None) -> str:
@@ -183,6 +199,187 @@ def dense_world_pcd_grid(
     return points[None].astype(np.float32, copy=False), color[None].astype(np.uint8, copy=False)
 
 
+def apply_depth_validity_to_mask_frame(
+    frame: Mapping[str, np.ndarray],
+    depth_m: np.ndarray,
+) -> dict[str, np.ndarray]:
+    depth = np.asarray(depth_m, dtype=np.float32)
+    valid = np.isfinite(depth) & (depth > 0.0)
+    normalized = normalize_processed_mask_frame(frame)
+    filtered: dict[str, np.ndarray] = {}
+    for key, mask in normalized.items():
+        arr = np.asarray(mask, dtype=bool)
+        if arr.shape != valid.shape:
+            raise ValueError(f"mask {key!r} shape {arr.shape} does not match depth shape {valid.shape}")
+        filtered[key] = np.ascontiguousarray(arr & valid, dtype=bool)
+    return normalize_processed_mask_frame(filtered)
+
+
+def apply_radius_outlier_to_mask_frame(
+    frame: Mapping[str, np.ndarray],
+    points_grid: np.ndarray,
+    *,
+    enabled: bool,
+    radius_m: float,
+    nb_points: int,
+) -> dict[str, np.ndarray]:
+    normalized = normalize_processed_mask_frame(frame)
+    if not bool(enabled):
+        return normalized
+    grid = np.asarray(points_grid, dtype=np.float32)
+    if grid.ndim == 4:
+        grid = grid[0]
+    if grid.ndim != 3 or grid.shape[-1] != 3:
+        raise ValueError(f"points_grid must have shape H,W,3 or 1,H,W,3; got {grid.shape}")
+
+    filtered = {key: np.asarray(value, dtype=bool).copy() for key, value in normalized.items()}
+    for key in ("object", "controller"):
+        mask = filtered[key]
+        if mask.shape != grid.shape[:2]:
+            raise ValueError(f"mask {key!r} shape {mask.shape} does not match points grid {grid.shape[:2]}")
+        yy, xx = np.nonzero(mask)
+        if len(yy) == 0:
+            continue
+        class_points = grid[yy, xx]
+        finite = np.isfinite(class_points).all(axis=1) & (np.linalg.norm(class_points, axis=1) > 1e-9)
+        if not np.all(finite):
+            invalid_rows = yy[~finite]
+            invalid_cols = xx[~finite]
+            filtered[key][invalid_rows, invalid_cols] = False
+            yy = yy[finite]
+            xx = xx[finite]
+            class_points = class_points[finite]
+        if len(class_points) == 0:
+            continue
+        result = _detect_radius_outlier_indices(
+            class_points,
+            radius_m=float(radius_m),
+            nb_points=int(nb_points),
+        )
+        outlier_indices = np.asarray(result["outlier_indices"], dtype=np.int64)
+        if len(outlier_indices):
+            filtered[key][yy[outlier_indices], xx[outlier_indices]] = False
+    return normalize_processed_mask_frame(filtered)
+
+
+def prepare_phystwin_frame(
+    *,
+    seq: int,
+    rgb_frame: np.ndarray,
+    depth_m: np.ndarray,
+    mask_frame: Mapping[str, np.ndarray],
+    tracks_yx: np.ndarray,
+    visibility: np.ndarray,
+    query_points_yx: np.ndarray,
+    intrinsics: Any,
+    c2w: np.ndarray,
+    mask_radius_outlier_filter: bool = True,
+    mask_radius_outlier_radius_m: float = 0.01,
+    mask_radius_outlier_nb_points: int = 40,
+    source_timestamp_s: float | None = None,
+    source_frame_index: int | None = None,
+    source_step: int | None = None,
+) -> PreparedPhysTwinFrame:
+    rgb = np.ascontiguousarray(np.asarray(rgb_frame, dtype=np.uint8))
+    depth = np.asarray(depth_m, dtype=np.float32)
+    points, colors = dense_world_pcd_grid(
+        depth_m=depth,
+        color_rgb_u8=rgb,
+        intrinsics=intrinsics,
+        c2w=c2w,
+    )
+    depth_valid_masks = apply_depth_validity_to_mask_frame(mask_frame, depth)
+    processed = apply_radius_outlier_to_mask_frame(
+        depth_valid_masks,
+        points,
+        enabled=bool(mask_radius_outlier_filter),
+        radius_m=float(mask_radius_outlier_radius_m),
+        nb_points=int(mask_radius_outlier_nb_points),
+    )
+    tracks = np.ascontiguousarray(np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2))
+    vis = np.ascontiguousarray(np.asarray(visibility, dtype=bool).reshape(-1))
+    queries = np.ascontiguousarray(np.asarray(query_points_yx, dtype=np.float32).reshape(-1, 2))
+    if tracks.shape[0] != queries.shape[0] or vis.shape[0] != queries.shape[0]:
+        raise ValueError(
+            "prepared PhysTwin frame requires full tracks/visibility matching query_points_yx; "
+            f"tracks={tracks.shape[0]} visibility={vis.shape[0]} queries={queries.shape[0]}"
+        )
+    return PreparedPhysTwinFrame(
+        seq=int(seq),
+        rgb_frame=rgb,
+        processed_mask_frame=processed,
+        pcd_points=np.ascontiguousarray(points, dtype=np.float32),
+        pcd_colors=np.ascontiguousarray(colors, dtype=np.uint8),
+        tracks_yx=tracks,
+        visibility=vis,
+        query_points_yx=queries,
+        source_timestamp_s=None if source_timestamp_s is None else float(source_timestamp_s),
+        source_frame_index=None if source_frame_index is None else int(source_frame_index),
+        source_step=None if source_step is None else int(source_step),
+    )
+
+
+def _optional_float_payload(value: float | None) -> np.ndarray:
+    return np.asarray([np.nan if value is None else float(value)], dtype=np.float64)
+
+
+def _optional_int_payload(value: int | None) -> np.ndarray:
+    return np.asarray([-1 if value is None else int(value)], dtype=np.int64)
+
+
+def write_prepared_phystwin_frame(path: str | Path, frame: PreparedPhysTwinFrame) -> Path:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output.with_name(f"{output.name}.tmp")
+    masks = normalize_processed_mask_frame(frame.processed_mask_frame)
+    mask_keys = np.asarray(sorted(masks.keys()))
+    payload: dict[str, Any] = {
+        "seq": np.asarray([int(frame.seq)], dtype=np.int64),
+        "rgb_frame": np.ascontiguousarray(frame.rgb_frame, dtype=np.uint8),
+        "pcd_points": np.ascontiguousarray(frame.pcd_points, dtype=np.float32),
+        "pcd_colors": np.ascontiguousarray(frame.pcd_colors, dtype=np.uint8),
+        "tracks_yx": np.ascontiguousarray(frame.tracks_yx, dtype=np.float32),
+        "visibility": np.ascontiguousarray(frame.visibility, dtype=bool),
+        "query_points_yx": np.ascontiguousarray(frame.query_points_yx, dtype=np.float32),
+        "mask_keys": mask_keys,
+        "source_timestamp_s": _optional_float_payload(frame.source_timestamp_s),
+        "source_frame_index": _optional_int_payload(frame.source_frame_index),
+        "source_step": _optional_int_payload(frame.source_step),
+    }
+    for key in mask_keys:
+        payload[f"mask_{str(key)}"] = np.ascontiguousarray(masks[str(key)], dtype=bool)
+    with tmp.open("wb") as handle:
+        np.savez_compressed(handle, **payload)
+    tmp.replace(output)
+    return output
+
+
+def _none_if_negative(value: int) -> int | None:
+    return None if int(value) < 0 else int(value)
+
+
+def load_prepared_phystwin_frame(path: str | Path) -> PreparedPhysTwinFrame:
+    payload = np.load(Path(path), allow_pickle=False)
+    mask_frame: dict[str, np.ndarray] = {}
+    for key in payload["mask_keys"]:
+        name = str(key)
+        mask_frame[name] = np.ascontiguousarray(np.asarray(payload[f"mask_{name}"], dtype=bool))
+    timestamp = float(payload["source_timestamp_s"][0])
+    return PreparedPhysTwinFrame(
+        seq=int(payload["seq"][0]),
+        rgb_frame=np.ascontiguousarray(np.asarray(payload["rgb_frame"], dtype=np.uint8)),
+        processed_mask_frame=normalize_processed_mask_frame(mask_frame),
+        pcd_points=np.ascontiguousarray(np.asarray(payload["pcd_points"], dtype=np.float32)),
+        pcd_colors=np.ascontiguousarray(np.asarray(payload["pcd_colors"], dtype=np.uint8)),
+        tracks_yx=np.ascontiguousarray(np.asarray(payload["tracks_yx"], dtype=np.float32).reshape(-1, 2)),
+        visibility=np.ascontiguousarray(np.asarray(payload["visibility"], dtype=bool).reshape(-1)),
+        query_points_yx=np.ascontiguousarray(np.asarray(payload["query_points_yx"], dtype=np.float32).reshape(-1, 2)),
+        source_timestamp_s=None if not np.isfinite(timestamp) else timestamp,
+        source_frame_index=_none_if_negative(int(payload["source_frame_index"][0])),
+        source_step=_none_if_negative(int(payload["source_step"][0])),
+    )
+
+
 def _round_tracks_to_indices(tracks_yx: np.ndarray, shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
     yy = np.rint(tracks[:, 0]).astype(np.int64)
@@ -299,26 +496,25 @@ def _motion_valid_for_class(
     from scipy.spatial import cKDTree
 
     for frame_idx in range(max(0, pts.shape[0] - 1)):
-        current_valid = motions_valid[frame_idx].copy()
         if once_false_mask:
-            current_valid &= global_mask
             motions_valid[frame_idx] &= global_mask
-        valid_indices = np.flatnonzero(current_valid)
-        if len(valid_indices) == 0:
+        if not np.any(motions_valid[frame_idx]):
             continue
-        tree = cKDTree(pts[frame_idx, valid_indices])
-        neighbor_lists = tree.query_ball_point(
-            pts[frame_idx, valid_indices],
+        tree = cKDTree(pts[frame_idx])
+        all_neighbors = tree.query_ball_point(
+            pts[frame_idx],
             r=float(neighbor_dist),
+            workers=-1,
             return_sorted=False,
         )
-        for local_idx, query_idx in enumerate(valid_indices):
+        for query_idx in range(pts.shape[1]):
             if once_false_mask and not global_mask[query_idx]:
                 motions_valid[frame_idx, query_idx] = False
                 continue
             if not motions_valid[frame_idx, query_idx]:
                 continue
-            neighbors = valid_indices[np.asarray(neighbor_lists[local_idx], dtype=np.int64)]
+            neighbors = np.asarray(all_neighbors[query_idx], dtype=np.int64)
+            neighbors = neighbors[motions_valid[frame_idx, neighbors]]
             if len(neighbors) < int(min_neighbors):
                 motions_valid[frame_idx, query_idx] = False
                 if once_false_mask:
@@ -834,18 +1030,24 @@ __all__ = [
     "COMPATIBILITY_TARGET_PHYSTWIN",
     "DEFAULT_TRACKING_PRODUCT_BACKEND",
     "PHYSTWIN_STRICT_EXECUTION_MODE",
+    "PreparedPhysTwinFrame",
     "TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT",
     "TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY",
     "TRACKING_PRODUCT_BACKENDS",
     "StrictQuerySample",
+    "apply_depth_validity_to_mask_frame",
     "apply_phystwin_motion_filters",
+    "apply_radius_outlier_to_mask_frame",
     "build_track_process_input",
     "dense_world_pcd_grid",
     "finalize_headless_capture",
+    "load_prepared_phystwin_frame",
     "normalize_tracking_product_backend",
+    "prepare_phystwin_frame",
     "sample_first_frame_union_queries",
     "sample_object_first_frame_volume",
     "select_final_controller_points",
     "tracking_product_backend_is_strict",
+    "write_prepared_phystwin_frame",
     "write_processed_masks",
 ]
