@@ -73,6 +73,43 @@ def _sample_points(points: np.ndarray, max_points: int) -> np.ndarray:
     return np.ascontiguousarray(arr, dtype=np.float32)
 
 
+def _mesh_vertices(mesh_like: Any) -> np.ndarray | None:
+    if mesh_like is None:
+        return None
+    vertices = getattr(mesh_like, "vertices", None)
+    if vertices is not None:
+        if hasattr(vertices, "detach"):
+            vertices = vertices.detach().cpu().numpy()
+        return np.asarray(vertices, dtype=np.float32).reshape(-1, 3)
+    if isinstance(mesh_like, dict):
+        candidates = mesh_like.values()
+    elif isinstance(mesh_like, (list, tuple)):
+        candidates = mesh_like
+    else:
+        geometry = getattr(mesh_like, "geometry", None)
+        if isinstance(geometry, dict):
+            candidates = geometry.values()
+        elif geometry is not None and geometry is not mesh_like:
+            candidates = (geometry,)
+        else:
+            dump = getattr(mesh_like, "dump", None)
+            if callable(dump):
+                try:
+                    dumped = dump(concatenate=True)
+                except TypeError:
+                    dumped = dump()
+                return _mesh_vertices(dumped)
+            return None
+    parts = []
+    for candidate in candidates:
+        candidate_vertices = _mesh_vertices(candidate)
+        if candidate_vertices is not None and len(candidate_vertices) > 0:
+            parts.append(candidate_vertices)
+    if not parts:
+        return None
+    return np.concatenate(parts, axis=0).astype(np.float32, copy=False)
+
+
 def _object_observation_points_world(request: ShapePriorRequest, *, max_points: int) -> np.ndarray:
     mask = np.asarray(request.object_mask, dtype=bool)
     depth = np.asarray(request.depth_color_m, dtype=np.float32)
@@ -220,26 +257,23 @@ class ShapePriorSam3DWorker:
             with_layout_postprocess=True,
             use_vertex_color=False,
         )
-        mesh_obj = outputs.get("glb", None)
-        if mesh_obj is None:
-            mesh_list = outputs.get("mesh", [])
-            mesh_obj = mesh_list[0] if mesh_list else None
-        if mesh_obj is None:
+        mesh_vertices = _mesh_vertices(outputs.get("glb", None))
+        mesh_source = "glb"
+        if mesh_vertices is None or len(mesh_vertices) <= 0:
+            mesh_vertices = _mesh_vertices(outputs.get("mesh", None))
+            mesh_source = "mesh"
+        if mesh_vertices is None or len(mesh_vertices) <= 0:
             raise RuntimeError("SAM3D output did not include a mesh/glb object")
-        vertices = getattr(mesh_obj, "vertices", None)
-        if vertices is None and hasattr(mesh_obj, "geometry"):
-            vertices = getattr(mesh_obj.geometry, "vertices", None)
-        if vertices is None:
-            raise RuntimeError("SAM3D mesh output has no vertices")
-        if hasattr(vertices, "detach"):
-            vertices = vertices.detach().cpu().numpy()
-        canonical = _sample_points(np.asarray(vertices, dtype=np.float32).reshape(-1, 3), self.max_points)
+        if hasattr(mesh_vertices, "detach"):
+            mesh_vertices = mesh_vertices.detach().cpu().numpy()
+        canonical = _sample_points(np.asarray(mesh_vertices, dtype=np.float32).reshape(-1, 3), self.max_points)
         if len(canonical) < 3:
             raise RuntimeError("SAM3D canonical mesh has fewer than 3 finite vertices")
         stats = {
             "sam3d_model_load_ms": float(self._model_load_ms),
             "sam3d_inference_ms": _elapsed_ms(start_s),
             "geometry_export_ms": 0.0,
+            "sam3d_mesh_source": mesh_source,
         }
         stats.update(prep_stats)
         return canonical, stats
@@ -370,7 +404,8 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "[shape-prior-worker] "
                 f"seq={metadata.get('seq')} status={metadata.get('status')} "
-                f"points={metadata.get('point_count')} total_ms={_elapsed_ms(recv_s):.1f}",
+                f"points={metadata.get('point_count')} total_ms={_elapsed_ms(recv_s):.1f} "
+                f"error={metadata.get('error')}",
                 flush=True,
             )
         socket.send_multipart(reply)

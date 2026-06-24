@@ -361,6 +361,62 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
         self.assertGreaterEqual(metadata["mask_refinement_ms"], 0.0)
         self.assertEqual(metadata["sam3d_input_shape"], list(calls["sam3d_image_shape"]))
 
+    def test_sam3d_scene_geometry_vertices_are_accepted(self) -> None:
+        rgb = np.zeros((10, 10, 3), dtype=np.uint8)
+        object_mask = np.zeros((10, 10), dtype=bool)
+        object_mask[2:8, 2:8] = True
+        request = shape_prior_server.ShapePriorRequest(
+            metadata={"request_id": "req", "seq": 0},
+            rgb_u8=rgb,
+            object_mask=object_mask,
+            controller_mask=np.zeros_like(object_mask),
+            depth_color_m=np.ones((10, 10), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+
+        class FakeUpscaler:
+            def __call__(self, *, prompt: str, image: Image.Image):
+                return SimpleNamespace(images=[image.resize((16, 16), Image.Resampling.NEAREST)])
+
+        class FakePipeline:
+            def run(self, image_rgb, mask_u8, **kwargs):
+                return {
+                    "glb": SimpleNamespace(
+                        geometry={
+                            "part_a": SimpleNamespace(
+                                vertices=np.array(
+                                    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                                    dtype=np.float32,
+                                )
+                            ),
+                            "part_b": SimpleNamespace(
+                                vertices=np.array(
+                                    [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                                    dtype=np.float32,
+                                )
+                            ),
+                        }
+                    )
+                }
+
+        worker = shape_prior_server.ShapePriorSam3DWorker(
+            sam3d_root=Path("/does/not/matter"),
+            config=None,
+            device="cuda:0",
+            seed=42,
+            max_points=128,
+            upscale_category="stuffed animal",
+        )
+        worker._load_upscaler = lambda: FakeUpscaler()  # type: ignore[method-assign]
+        worker._load_inference = lambda: SimpleNamespace(_pipeline=FakePipeline())  # type: ignore[method-assign]
+
+        canonical, metadata = worker._canonical_points_from_sam3d(request)
+
+        self.assertEqual(canonical.shape, (4, 3))
+        self.assertEqual(metadata["sam3d_mesh_source"], "glb")
+        self.assertTrue(np.isfinite(canonical).all())
+
 
 class RuntimeShapePriorIntegrationTest(unittest.TestCase):
     def test_masked_delegate_shape_prior_warmup_defaults_off_unless_wrapper_enables(self) -> None:
