@@ -1,143 +1,19 @@
-# Demo v4 FuturePhysTwin Chunks
+# Demo v4 FuturePhysTwin Chunk Runner
 
-Demo v4 is an isolated single-camera realtime preprocessing path for
-FuturePhysTwin acceptance testing. It launches the sanctioned Demo 3.2
-headless realtime runtime by default, then streams complete FuturePhysTwin case
-roots one chunk at a time.
+Demo v4 turns the single-camera Demo 3.2 realtime output into complete
+FuturePhysTwin case folders. It is the isolated bridge for acceptance testing:
+Demo 3.2 handles RGB-D, masks, tracking, and optional SAM3D shape prior; Demo v4
+publishes ready-to-consume per-window chunk cases.
 
-This is a diagnostic carveout, not the formal aligned-case data product. The
-canonical recording/alignment product still stops at `data_process/`.
+This is not the formal aligned-case product. The normal recording/alignment
+pipeline still ends at `data_process/`.
 
-## Default Realtime Contract
+## Quick Start
 
-The default path is full fake realtime camera input:
+Run from the repo root on the `single-camera` branch.
 
-```text
-Demo 3.2 fake-live camera
-  -> native RealSense color-aligned depth
-  -> EdgeTAM masks
-  -> TAPNext++ strict same-seq tracks
-  -> async SAM3D shape-prior warmup
-  -> Demo v4 5 FPS / 25-frame FuturePhysTwin chunks
-```
-
-Defaults:
-
-```text
-input_source=fake-live
-depth_backend=native-realsense
-replay_fps=5
-chunk_seconds=5
-chunk_frame_count=25
-max_chunks=None
-gpu_mode=single
-realtime_gpu_mode=single
-warmup_gpu_mode=dual
-demo32_cuda_visible_devices=0
-shape_prior_device=cuda:1
-demo32_device=cuda
-demo32_tracker_device=cuda
-shape_prior_warmup=true
-shape_prior_execution=remote-worker
-shape_prior_start_policy=async-after-first-mask-depth-pair
-demo32_headless_prepared_only=true
-write_final_pcd=false
-```
-
-Chunk length is time-first. Operators should normally change
-`--chunk-seconds`; Demo v4 derives `chunk_frame_count` as
-`round(replay_fps * chunk_seconds)`. The default is therefore 5 seconds at
-5 FPS, or 25 frames. `--chunk-frame-count` remains available as an explicit
-frame-count override for tests and advanced debugging, but `--chunk-seconds`
-and `--replay-fps` must still be positive so manifests keep a meaningful source
-time window.
-
-Demo v4 writes each complete case under `--futurephystwin-base-path`:
-
-```text
-<base>/<case>/
-  final_data.pkl
-  track_process_data.pkl
-  calibrate.pkl
-  metadata.json
-  split.json
-  color/0/<frame>.png
-  mask/processed_masks.pkl
-  pcd/<frame>.npz        # only when --write-final-pcd is enabled
-  tracking/0.npz
-  cotracker/0.npz
-  manifest.json
-  READY
-```
-
-Consumers must treat `READY` as the publish marker and ignore directories
-without it. Demo v4 writes and validates each chunk under `<base>/.publishing/`,
-creates `READY` last, and then atomically renames the staged directory to
-`<base>/<case>/`.
-
-The default realtime path is optimized for FuturePhysTwin `final_data.pkl`
-cadence and skips dense per-frame `pcd/` files. The final-data, mask, RGB,
-tracking/cotracker, calibration, metadata, split, manifest, and READY contract
-remain complete. Use `--write-final-pcd` when a diagnostic/export consumer
-needs dense per-frame point-cloud files in each published chunk.
-
-The `final_data.pkl` schema follows
-`/home/xinjie/FuturePhysTwin/qqtt/data/real_data.py`:
-
-```text
-object_points
-object_colors
-object_visibilities
-object_motions_valid
-controller_points
-controller_mask
-surface_points
-interior_points
-```
-
-FuturePhysTwin loads structure points as:
-
-```text
-object_points[0] + surface_points + interior_points
-```
-
-## Data Process SAM3D Compatibility
-
-Demo v4 intentionally mirrors the parts of
-`/home/xinjie/FuturePhysTwin/data_process_sam3d` that matter for optimization:
-
-- first-frame object/controller semantic labels define the track classes
-- per-frame masks gate semantic visibility
-- masks are intersected with valid depth before track processing
-- masks then run the same 3D radius-outlier refinement used by
-  `data_process_sam3d/data_process_mask.py` by default: 1 cm radius and 40
-  neighbors
-- object/controller overlap is resolved with controller priority
-- motion filtering uses the same 1 cm neighborhood, 5-neighbor minimum, and 5
-  mm motion-similarity threshold
-- controller points are selected by FPS down to 30 points
-- object points are sampled on a 5 mm grid with observed object points taking
-  priority over shape-prior points
-- shape-prior surface/interior samples are kept as separate final-data fields
-- z-down/table frame is preserved; the ground policy is not clamped by default
-
-Shape-prior warmup also keeps the same split used by the offline SAM3D path:
-the raw object mask remains the SAM3D image prompt/crop mask, while the 3D
-alignment observation uses `object_observation_mask`, a processed mask carried
-through the shape-prior protocol from the Demo 3.2 PCD/filter output. New
-remote-worker requests report both `object_mask_pixels` and
-`object_observation_mask_pixels`; older seven-frame requests remain accepted
-and fall back to using the raw object mask as the observation mask.
-
-The important realtime-specific difference is scheduling: `data_process_sam3d`
-is offline and can block between stages, while Demo v4 streams chunks from the
-fake-live camera timeline. SAM3D shape prior is asynchronous and does not change
-EdgeTAM masks, TAPNext++ queries/tracks, current observation PCD, or strict
-tracking identities.
-
-## Shape Prior Worker
-
-Start the SAM3D worker separately in the FuturePhysTwin/SAM3D environment:
+Terminal 1: start the SAM3D shape-prior worker. Use the SAM3D/FuturePhysTwin
+environment for this process.
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 \
@@ -150,182 +26,438 @@ conda run -n phystwin-max --no-capture-output \
   --debug
 ```
 
-`--preload-models` keeps the x4 upscaler and SAM3D model resident before Demo
-v4 starts. `--warmup-models` runs an additional dummy SAM3D pass, but it needs
-more VRAM; on the 2026-06-24 GPU1 test it OOMed during `decode_slat`, while
-preload-only was stable.
-
-Then run Demo v4:
+Terminal 2: run Demo v4. Use the integrated realtime demo environment.
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python demo_v4/realtime_futurephystwin_chunks.py \
   --realtime-gpu-mode single \
   --warmup-gpu-mode dual \
-  --demo32-cuda-visible-devices 0 \
   --shape-prior-endpoint tcp://127.0.0.1:7103 \
-  --demo32-source-replay-fps 5.2 \
-  --futurephystwin-base-path result/demo_v4/warmup_fast_sampling_dual_rt_single_lossless52_20260624/cases \
-  --case-prefix demo_v4_warmup_fast_sampling_dual_rt_single_lossless52 \
-  --capture-extra-seconds 140 \
+  --futurephystwin-base-path /home/xinjie/FuturePhysTwin/data/demo_v4_chunks \
+  --case-prefix demo_v4
+```
+
+This default path uses:
+
+```text
+input source:        fake-live
+depth backend:       native-realsense
+output FPS:          5
+chunk length:        5 seconds = 25 frames
+shape prior:         enabled, remote worker
+Demo 3.2 GPU:        CUDA_VISIBLE_DEVICES=0
+shape-prior GPU:     cuda:1
+dense pcd/ output:   disabled
+output base path:    /home/xinjie/FuturePhysTwin/data/demo_v4_chunks
+```
+
+For a short smoke run, add `--max-chunks 2`. When `--max-chunks` is used, Demo
+v4 stops the Demo 3.2 subprocess after the requested number of chunks. A summary
+with `demo32_stop_reason=max_chunks_reached` is expected.
+
+## What Demo v4 Runs
+
+The default realtime chain is:
+
+```text
+Demo 3.2 fake-live camera
+  -> native RealSense color-aligned depth
+  -> EdgeTAM object/controller masks
+  -> TAPNext++ strict same-sequence tracks
+  -> async SAM3D single-view shape prior
+  -> Demo v4 FuturePhysTwin chunk cases
+```
+
+Demo v4 derives the frame count from time: `round(--replay-fps *
+--chunk-seconds)`. The default is `round(5 * 5) = 25` frames. Prefer changing
+`--chunk-seconds` for operator runs; use `--chunk-frame-count` only when you
+need an explicit test/debug override.
+
+## Output Locations
+
+Demo v4 writes into `--futurephystwin-base-path`. Each completed chunk is a
+separate FuturePhysTwin case:
+
+```text
+<base>/
+  <case-prefix>_chunks_manifest.json
+  <case-prefix>_demo32_capture_<timestamp>/
+    metadata.json
+    frames.jsonl
+    shape_prior_profile.json
+    shape_prior/points.npz
+    ...
+  <case-prefix>_chunk_0001/
+    READY
+    manifest.json
+    final_data.pkl
+    track_process_data.pkl
+    calibrate.pkl
+    metadata.json
+    split.json
+    color/0/0.png
+    color/0/1.png
+    ...
+    mask/processed_masks.pkl
+    tracking/0.npz
+    cotracker/0.npz
+    pcd/0.npz              # only with --write-final-pcd
+```
+
+Consumers should only read chunk directories that contain `READY`. Demo v4
+writes each chunk under `<base>/.publishing/`, validates it, writes `READY`, and
+then atomically renames it to `<base>/<case-prefix>_chunk_XXXX/`.
+
+The top-level `<case-prefix>_chunks_manifest.json` summarizes the whole run.
+Each chunk also has its own `manifest.json` with publish timing, point counts,
+shape-prior status, and validation metadata.
+
+## Check A Run
+
+List ready chunks:
+
+```bash
+find /home/xinjie/FuturePhysTwin/data/demo_v4_chunks \
+  -maxdepth 2 -name READY -print | sort
+```
+
+Inspect the run summary:
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+
+base = Path("/home/xinjie/FuturePhysTwin/data/demo_v4_chunks")
+summary = json.loads((base / "demo_v4_chunks_manifest.json").read_text())
+print("chunks:", summary["chunk_count"])
+print("stop:", summary.get("demo32_stop_reason"))
+print("first ready wall s:", summary.get("first_ready_chunk_wall_s"))
+print("max backlog:", summary.get("max_backlog_chunks"))
+print("validation cases:", summary.get("validation_chunk_cases"))
+PY
+```
+
+Validate one published chunk with the writer's built-in checker:
+
+```bash
+python - <<'PY'
+from demo_v4.futurephystwin_chunk_writer import validate_futurephystwin_case
+
+case = "/home/xinjie/FuturePhysTwin/data/demo_v4_chunks/demo_v4_chunk_0001"
+print(validate_futurephystwin_case(case, require_ready=True))
+PY
+```
+
+The generated case can then be used from FuturePhysTwin as a normal case root
+under `data/different_types`-style expectations: `final_data.pkl`,
+`calibrate.pkl`, `metadata.json`, `split.json`, masks, RGB, and tracking files
+are present.
+
+## Common Commands
+
+Short debug run with two chunks:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v4/realtime_futurephystwin_chunks.py \
+  --shape-prior-endpoint tcp://127.0.0.1:7103 \
+  --futurephystwin-base-path result/demo_v4/debug_cases \
+  --case-prefix demo_v4_debug \
+  --max-chunks 2
+```
+
+Full default run. Published chunk metadata and Demo 3.2 fake-live pacing both
+stay at 5 FPS.
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v4/realtime_futurephystwin_chunks.py \
+  --shape-prior-endpoint tcp://127.0.0.1:7103 \
+  --futurephystwin-base-path result/demo_v4/cadence_cases \
+  --case-prefix demo_v4_cadence \
+  --replay-fps 5 \
   --shape-prior-timeout-ms 240000 \
-  --shape-prior-chunk-wait-timeout-s 240 \
+  --shape-prior-chunk-wait-timeout-s 240
+```
+
+For cadence stress testing only, add a slightly faster Demo 3.2 source pace:
+
+```bash
+  --demo32-source-replay-fps 5.2 \
   --demo32-lossless-max-backlog-seconds 45
 ```
 
-For a short debug run, add `--max-chunks <N>`. Omit `--max-chunks` for the
-default full fake-live recording pass.
+That keeps published chunks at `fps=5` when `--replay-fps 5` remains set, but
+feeds fake-live frames about 4% faster to prove the pipeline has margin.
 
-GPU routing is explicit and split by role. The default production route is
-dual-GPU warmup plus single-GPU realtime:
+Run without SAM3D shape prior. This is useful for debugging RGB/mask/tracking
+chunking without waiting for the worker.
 
 ```bash
-# Default: run Demo 3.2 with CUDA_VISIBLE_DEVICES=0 and resolve
-# the SAM3D shape-prior device to cuda:1.
-python demo_v4/realtime_futurephystwin_chunks.py \
-  --realtime-gpu-mode single \
-  --warmup-gpu-mode dual
+conda run -n demo_2_max --no-capture-output \
+  python demo_v4/realtime_futurephystwin_chunks.py \
+  --no-shape-prior-warmup \
+  --futurephystwin-base-path result/demo_v4/no_shape_cases \
+  --case-prefix demo_v4_no_shape \
+  --max-chunks 2
+```
 
-# Single-GPU fallback: run Demo 3.2 realtime and SAM3D warmup on GPU0.
+Write dense per-frame PCD files inside each chunk:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v4/realtime_futurephystwin_chunks.py \
+  --shape-prior-endpoint tcp://127.0.0.1:7103 \
+  --futurephystwin-base-path result/demo_v4/pcd_cases \
+  --case-prefix demo_v4_pcd \
+  --write-final-pcd \
+  --max-chunks 2
+```
+
+Convert an existing Demo 3.2 headless capture without launching Demo 3.2:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v4/realtime_futurephystwin_chunks.py \
+  --source-headless-capture result/demo_v4/debug_cases/demo_v4_debug_demo32_capture_YYYYMMDD_HHMMSS \
+  --futurephystwin-base-path result/demo_v4/rechunked_cases \
+  --case-prefix demo_v4_rechunked \
+  --max-chunks 2
+```
+
+Print the resolved contract and exit:
+
+```bash
+python demo_v4/realtime_futurephystwin_chunks.py --dry-run
+```
+
+## Important Options
+
+### Input And Chunk Timing
+
+| Option | Default | Use |
+| --- | --- | --- |
+| `--input-source {fake-live,live}` | `fake-live` | Choose replay-like fake camera input or live camera input for Demo 3.2. |
+| `--replay-fps` | `5.0` | Logical FPS written to chunk `metadata.json` and used for chunk window math. |
+| `--demo32-source-replay-fps` | unset | Optional Demo 3.2 fake-live pacing FPS. Leave unset for normal runs; use values like `5.2` only for cadence stress tests. |
+| `--chunk-seconds` | `5.0` | Preferred way to change chunk duration. |
+| `--chunk-frame-count` | unset | Explicit frame-count override. Still requires positive `--chunk-seconds` and `--replay-fps`. |
+| `--max-chunks` | unset | Stop after N chunks for debug runs. Omit for a full source run. |
+| `--capture-extra-seconds` | `10.0` | Extra Demo 3.2 runtime for max-chunk runs so startup/warmup latency does not cut capture short. |
+
+### Output
+
+| Option | Default | Use |
+| --- | --- | --- |
+| `--futurephystwin-base-path` | `/home/xinjie/FuturePhysTwin/data/demo_v4_chunks` | Directory where chunk cases and the run manifest are published. |
+| `--case-prefix` | `demo_v4` | Prefix for chunk case names and the top-level manifest. |
+| `--demo32-capture-dir` | auto under output base | Where the intermediate Demo 3.2 headless capture is written. |
+| `--source-headless-capture` | unset | Rechunk an existing Demo 3.2 capture instead of launching Demo 3.2. |
+| `--write-final-pcd` | off | Also write dense `pcd/<frame>.npz` files in each chunk. |
+| `--no-write-final-pcd` | on by default | Keep chunks smaller; `final_data.pkl` and tracking outputs still exist. |
+
+### GPU Routing
+
+| Option | Default | Use |
+| --- | --- | --- |
+| `--realtime-gpu-mode {single,dual}` | `single` | Select Demo 3.2 subprocess CUDA visibility. `single` maps to `CUDA_VISIBLE_DEVICES=0`; `dual` maps to `CUDA_VISIBLE_DEVICES=1`. |
+| `--warmup-gpu-mode {single,dual}` | `dual` | Select default shape-prior device. `single` maps to `cuda:0`; `dual` maps to `cuda:1`. |
+| `--gpu-mode` | `single` | Backward-compatible alias for realtime routing. Prefer `--realtime-gpu-mode`. |
+| `--demo32-cuda-visible-devices` | derived | Explicit override for the Demo 3.2 subprocess. |
+| `--shape-prior-device` | derived | Explicit override for the shape-prior device passed to Demo 3.2. |
+| `--demo32-device` | `cuda` | Segmentation/runtime device inside the Demo 3.2 subprocess namespace. |
+| `--demo32-tracker-device` | `cuda` | TAPNext++ tracker device inside the Demo 3.2 subprocess namespace. |
+| `--demo32-dtype` | `bfloat16` | Demo 3.2 segmentation/runtime dtype. |
+
+Default production routing is `--realtime-gpu-mode single --warmup-gpu-mode
+dual`: Demo 3.2 realtime runs on GPU0 and the external SAM3D worker runs on
+GPU1.
+
+Single-GPU fallback:
+
+```bash
 python demo_v4/realtime_futurephystwin_chunks.py \
   --realtime-gpu-mode single \
   --warmup-gpu-mode single
+```
 
-# Realtime isolation: run Demo 3.2 inside CUDA_VISIBLE_DEVICES=1.
+Realtime isolation on GPU1:
+
+```bash
 python demo_v4/realtime_futurephystwin_chunks.py \
   --realtime-gpu-mode dual
 ```
 
-`--gpu-mode` remains a backward-compatible alias for realtime routing.
-`--demo32-cuda-visible-devices` and `--shape-prior-device` remain explicit
-debug overrides.
+### Shape Prior
 
-When `--max-chunks` is supplied, the process terminates the Demo 3.2 subprocess
-after that many chunks are written; `demo32_return_code=-15` with
-`demo32_stop_reason=max_chunks_reached` is the expected controlled stop. The
-default unlimited fake-live path runs until the recording source finishes.
+| Option | Default | Use |
+| --- | --- | --- |
+| `--shape-prior-warmup` / `--no-shape-prior-warmup` | on | Enable or disable SAM3D shape prior. |
+| `--shape-prior-execution {remote-worker,local-subprocess}` | `remote-worker` | Worker mode used by Demo 3.2. Demo v4 runs should use `remote-worker`. |
+| `--shape-prior-endpoint` | `tcp://127.0.0.1:7100` | Endpoint of `services/shape_prior_remote/server.py`. |
+| `--shape-prior-timeout-ms` | `180000` | Demo 3.2 request timeout for the worker. |
+| `--shape-prior-chunk-wait-timeout-s` | `300` | How long Demo v4 waits for required shape-prior points before writing chunks. |
+| `--shape-prior-start-policy` | `async-after-first-mask-depth-pair` | When Demo 3.2 submits the shape-prior request. |
+| `--shape-prior-profile-json` | capture dir | Where Demo 3.2 writes shape-prior timing/status JSON. |
+| `--shape-prior-skip-route-visualizations` | on | Skip worker route visualizations. |
+| `--shape-prior-render-route-visualizations` | off | Render worker route visualizations for debugging. |
 
-## Chunk Cadence Telemetry
-
-The 25-frame chunk setting defines the source window, not by itself the
-wall-clock publish cadence. Every chunk manifest records:
+Shape-prior start policies:
 
 ```text
-source_window_start_s
-source_window_end_s
-window_closed_wall_s
-track_finalize_done_wall_s
-final_data_written_wall_s
-validation_done_wall_s
-atomic_rename_done_wall_s
-materialize_start_wall_s
-materialize_end_wall_s
-publish_wall_s
-materialize_latency_ms
+async-after-first-mask-depth-pair   default; request starts as soon as mask+depth are available
+async-after-first-strict-pair       wait for strict tracking pair before request
+blocking-before-first-output        block first output until shape prior is done
+after-teardown                      submit after capture teardown for offline diagnostics
+```
+
+### Mask And PCD Filtering
+
+| Option | Default | Use |
+| --- | --- | --- |
+| `--mask-radius-outlier-filter` | on | Apply data-process-style 3D radius-outlier cleanup before final-data chunking. |
+| `--no-mask-radius-outlier-filter` | off | Disable cleanup for tiny synthetic fixtures only. |
+| `--mask-radius-outlier-radius-m` | `0.01` | Radius for the mask outlier filter. |
+| `--mask-radius-outlier-nb-points` | `40` | Neighbor threshold for the mask outlier filter. |
+| `--surface-points-npy` | unset | External `Nx3` surface points override/augmentation for tests. |
+| `--interior-points-npy` | unset | External `Nx3` interior points override/augmentation for tests. |
+
+## Shape-Prior Worker Options
+
+The worker command is:
+
+```bash
+python services/shape_prior_remote/server.py --help
+```
+
+Useful worker options:
+
+| Option | Default | Use |
+| --- | --- | --- |
+| `--bind` | `tcp://0.0.0.0:7100` | ZeroMQ REP endpoint. Match Demo v4 `--shape-prior-endpoint`. |
+| `--sam3d-root` | local default | External SAM3D Objects checkout. |
+| `--futurephystwin-root` | local default | FuturePhysTwin checkout used by worker imports. |
+| `--config` | SAM3D default YAML | Explicit SAM3D pipeline config. |
+| `--device` | `cuda:0` | Device visible inside the worker process. |
+| `--max-points` | `60000` | Maximum observation/aligned point count returned by worker. |
+| `--upscale-category` | default category text | Prompt category used by the x4 upscaler. |
+| `--echo-observation` | off | Debug mode: return the observation PCD without loading SAM3D. |
+| `--preload-models` | off | Load upscaler and SAM3D model before binding the endpoint. |
+| `--warmup-models` | off | Also run a dummy warmup pass; implies `--preload-models` and needs more VRAM. |
+| `--debug` | off | Print worker diagnostics. |
+
+Prefer `--preload-models` for normal runs. `--warmup-models` can OOM on the
+SAM3D decode path on tighter GPUs; use it only when validating warmup behavior.
+
+## Published Case Contract
+
+Each ready chunk contains the files FuturePhysTwin needs:
+
+```text
+final_data.pkl
+track_process_data.pkl
+calibrate.pkl
+metadata.json
+split.json
+color/0/<frame>.png
+mask/processed_masks.pkl
+tracking/0.npz
+cotracker/0.npz
+manifest.json
+READY
+```
+
+`final_data.pkl` contains:
+
+```text
+object_points
+object_colors
+object_visibilities
+object_motions_valid
+controller_points
+controller_mask
+surface_points
+interior_points
+```
+
+FuturePhysTwin uses the first observed object points plus the SAM3D
+surface/interior samples as structure points:
+
+```text
+object_points[0] + surface_points + interior_points
+```
+
+`metadata.json` includes the output FPS, frame count, image size, one-camera
+intrinsics, serial number, `camera_count=1`, `demo_version=demo_v4`, and depth
+backend fields. Recent FuturePhysTwin code must consume `metadata["fps"]` so
+5 FPS chunks simulate one frame over 0.2 seconds.
+
+## Manifest Fields To Watch
+
+The top-level run manifest and each chunk manifest include:
+
+```text
+chunk_count
+validation_chunk_cases
+first_ready_chunk_wall_s
+first_shape_prior_ready_chunk_wall_s
+steady_state_publish_interval_max_s
+max_backlog_chunks
+demo32_stop_reason
 publish_latency_ms
 publish_lag_ms
 backlog_chunks
+shape_prior_complete
+shape_prior_target_counts_met
+object_point_count
+controller_point_count
+surface_point_count
+interior_point_count
 ```
 
-`source_window_*` is nominal source time from row offsets and FPS. The
-`*_wall_s` fields are relative to Demo v4 chunk streaming startup.
-`publish_wall_s` is an alias of `atomic_rename_done_wall_s`, so
-`publish_latency_ms` measures the real consumer-visible path from
-`window_closed_wall_s` until the validated READY case has been atomically
-published. `materialize_latency_ms` remains useful for internal finalizer work
-but is not the READY-visible publish metric. Realtime cadence is acceptable only
-when steady-state `publish_wall_s` intervals are no larger than the chunk source
-window and `backlog_chunks` does not grow after startup.
+For realtime cadence, watch `steady_state_publish_interval_max_s`,
+`publish_latency_ms`, and `backlog_chunks`. A stable run should not show
+steadily growing backlog after startup. `publish_wall_s` is the consumer-visible
+READY publish time.
 
-`--replay-fps` remains the PhysTwin logical FPS used for chunk window math and
-published `metadata.json`. `--demo32-source-replay-fps` is separate: it controls
-Demo 3.2 fake-live/lossless wall-clock pacing and, when non-default, Demo v4
-forwards the same value as Demo 3.2 `--lossless-input-fps`. The 2026-06-24
-cadence proof used `--replay-fps 5.0`, 25-frame chunks, and
-`--demo32-source-replay-fps 5.2` to give wall-clock headroom while preserving
-published `fps=5`.
+When at least five chunks exist, Demo v4 selects validation cases from the
+second-last and fifth-last chunks. This avoids validating only an early chunk
+before the controller has moved enough.
 
-## Validation Chunks
+## Notes On Data-Process Compatibility
 
-The validation selector uses the second-last and fifth-last chunks. A short
-seven-chunk debug run selects:
+Demo v4 mirrors the data-process behavior that matters for FuturePhysTwin:
 
-```text
-demo_v4_native_full_sam3d_chunk_0006
-demo_v4_native_full_sam3d_chunk_0003
-```
+- object/controller labels come from first-frame semantic masks
+- per-frame masks gate visibility
+- masks are intersected with valid depth before track processing
+- 3D mask radius-outlier cleanup defaults to 1 cm radius and 40 neighbors
+- controller/object overlap resolves with controller priority
+- motion filtering follows the data-process 1 cm / 5-neighbor / 5 mm policy
+- controller points are selected down to 30 points
+- object points are sampled on a 5 mm grid
+- shape-prior surface and interior samples stay in separate final-data fields
+- table-world z-down coordinates are preserved
 
-This avoids proving the path only on an early chunk where the controller may not
-have moved enough.
+Scheduling is different from offline `data_process_sam3d`: Demo v4 streams
+chunks from the realtime/fake-live timeline, while SAM3D shape prior runs
+asynchronously and does not rewrite EdgeTAM masks, TAPNext++ tracks, or strict
+tracking identities.
 
-Demo v4 supports independent warmup and realtime GPU routing:
+## Troubleshooting
 
-- `--realtime-gpu-mode single` is the default. Demo 3.2 receives
-  `CUDA_VISIBLE_DEVICES=0`, logical `--device cuda`, and logical
-  `--tracker-device cuda`.
-- `--realtime-gpu-mode dual` runs Demo 3.2 with `CUDA_VISIBLE_DEVICES=1`.
-- `--warmup-gpu-mode dual` is the default and resolves
-  `--shape-prior-device cuda:1`, supporting dual-GPU warmup plus single-GPU
-  realtime camera/fake-camera finalization without extra flags.
-- `--warmup-gpu-mode single` resolves `--shape-prior-device cuda:0` for
-  same-card fallback/debug runs.
-- `--gpu-mode` remains a compatibility alias for realtime routing.
-
-## Verified 2026-06-24 Optimization Run
-
-The current passing warmup run is:
-
-```text
-result/demo_v4/warmup_fast_sampling_dual_rt_single_lossless52_20260624/cases
-
-realtime_gpu_mode=single
-warmup_gpu_mode=dual
-demo32_cuda_visible_devices=0
-shape_prior_worker=GPU1 preload-only remote worker
-demo32_source_replay_fps=5.2
-demo32_lossless_input_fps=5.2
-write_final_pcd=false
-chunk_count=7
-first_shape_prior_ready_chunk_wall_s=43.942
-shape_prior_total_ms=27154.2
-sampling_ms=64.1
-steady_state_publish_interval_max_s=1.747
-max_backlog_chunks=4, drained to 0 by chunk_0007
-surface/interior target counts=700/1000
-```
-
-The steady-state no-warmup cadence proof is:
-
-```text
-result/demo_v4/realtime_final_data_only_lossless52_20260624/cases
-
-external_shape_prior_points=true
-chunk_count=7
-steady_publish_intervals_s=[4.706, 4.779, 4.820, 4.766, 4.760, 4.853]
-steady_state_publish_interval_max_s=4.853
-max_backlog_chunks=0
-materialize_latency_s=[1.714, 1.603, 1.582, 1.607, 1.557, 1.516, 1.560]
-```
-
-Both validation chunks in both runs passed `validate_futurephystwin_case` with
-`require_ready=True`, 25 frames, 30 controller points, finite object/controller
-points, and 700/1000 shape-prior target counts. The warmup run still records
-`single_view_shape_prior_sampling_backend=sam3d-single-view`, source
-`data_process_sam3d/data_process_sample.py`, and keeps the same final-data
-fields consumed by FuturePhysTwin.
-
-Single-GPU cold same-card SAM3D remains above target and can break realtime
-backlog: the 2026-06-24 cold run produced no chunks and hit lossless backlog
-while the worker reported about 78.8 seconds for shape prior. The supported
-sub-60s path is therefore dual warmup plus single realtime, with the long-lived
-remote worker preloaded before the Demo v4 run.
-
-## Known External Environment Notes
-
-- SAM3D/FuturePhysTwin weights and repos remain external.
-- The worker can finish SAM3D even if optional gsplat post-optimization fails
-  because the local `phystwin-max` environment has no `nvcc`.
-- A FuturePhysTwin visualization-only W&B logging compatibility patch was made
-  outside this repo in `/home/xinjie/FuturePhysTwin/qqtt/engine/trainer_warp.py`
-  so missing H.264 videos do not abort `train_warp.py`. This does not change
-  optimization math or final-data loading.
+- No chunk folders appear: check the Demo 3.2 capture directory for
+  `metadata.json` and `frames.jsonl`, and confirm the shape-prior worker
+  endpoint matches `--shape-prior-endpoint`.
+- Chunk folder exists without `READY`: ignore it. A valid consumer should only
+  read ready chunks.
+- Shape prior is slow: increase `--shape-prior-timeout-ms` and
+  `--shape-prior-chunk-wait-timeout-s`, or run a debug pass with
+  `--no-shape-prior-warmup`.
+- GPU contention: keep the default split,
+  `--realtime-gpu-mode single --warmup-gpu-mode dual`, and start the worker
+  with `CUDA_VISIBLE_DEVICES=1`.
+- Need smaller output: keep the default `--no-write-final-pcd`.
+- Need dense point-cloud diagnostics: add `--write-final-pcd`.
