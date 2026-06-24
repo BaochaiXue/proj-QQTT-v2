@@ -1057,6 +1057,52 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             self.assertEqual(summary["first_shape_prior_ready_chunk_wall_s"], 12.5)
             self.assertEqual(summary["max_backlog_chunks"], 0)
 
+    def test_demo_v4_stops_demo32_process_when_streaming_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture_dir = root / "capture"
+            base_path = root / "cases"
+
+            class FakeProcess:
+                returncode = None
+
+                def poll(self):
+                    return None
+
+            fake_process = FakeProcess()
+
+            with mock.patch(
+                "demo_v4.realtime_futurephystwin_chunks.subprocess.Popen",
+                return_value=fake_process,
+            ):
+                with mock.patch(
+                    "demo_v4.realtime_futurephystwin_chunks.stream_chunks_from_headless_capture",
+                    side_effect=RuntimeError("stream failed"),
+                ):
+                    with mock.patch(
+                        "demo_v4.realtime_futurephystwin_chunks._stop_process",
+                        return_value=-15,
+                    ) as stop_process:
+                        with self.assertRaisesRegex(RuntimeError, "stream failed"):
+                            demo_v4_main(
+                                [
+                                    "--futurephystwin-base-path",
+                                    str(base_path),
+                                    "--case-prefix",
+                                    "demo_v4_rt",
+                                    "--demo32-capture-dir",
+                                    str(capture_dir),
+                                    "--max-chunks",
+                                    "1",
+                                    "--surface-points-npy",
+                                    str(self._write_points(root / "surface.npy", [[0.0, 0.0, -0.02]])),
+                                    "--interior-points-npy",
+                                    str(self._write_points(root / "interior.npy", [[0.01, 0.0, -0.03]])),
+                                ]
+                            )
+
+            stop_process.assert_called_once_with(fake_process)
+
     def test_demo_v4_cli_can_use_dual_warmup_single_realtime_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

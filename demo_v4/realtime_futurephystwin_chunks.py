@@ -594,25 +594,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     process = subprocess.Popen(command, env=demo32_env)
     surface_points = _load_optional_points(args.surface_points_npy)
     interior_points = _load_optional_points(args.interior_points_npy)
-    manifests = stream_chunks_from_headless_capture(
-        capture_dir,
-        base_path=base_path,
-        case_prefix=str(args.case_prefix),
-        chunk_frame_count=chunk_frame_count,
-        fps=int(round(float(args.replay_fps))),
-        max_chunks=args.max_chunks,
-        capture_finished=lambda: process.poll() is not None,
-        require_shape_prior=bool(args.shape_prior_warmup),
-        shape_prior_wait_timeout_s=float(args.shape_prior_chunk_wait_timeout_s),
-        poll_interval_s=float(args.chunk_poll_interval_s),
-        surface_points=surface_points,
-        interior_points=interior_points,
-        mask_radius_outlier_filter=bool(args.mask_radius_outlier_filter),
-        mask_radius_outlier_radius_m=float(args.mask_radius_outlier_radius_m),
-        mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
-        write_final_pcd=bool(args.write_final_pcd),
-    )
-    return_code = _stop_process(process)
+    try:
+        manifests = stream_chunks_from_headless_capture(
+            capture_dir,
+            base_path=base_path,
+            case_prefix=str(args.case_prefix),
+            chunk_frame_count=chunk_frame_count,
+            fps=int(round(float(args.replay_fps))),
+            max_chunks=args.max_chunks,
+            capture_finished=lambda: process.poll() is not None,
+            require_shape_prior=bool(args.shape_prior_warmup),
+            shape_prior_wait_timeout_s=float(args.shape_prior_chunk_wait_timeout_s),
+            poll_interval_s=float(args.chunk_poll_interval_s),
+            surface_points=surface_points,
+            interior_points=interior_points,
+            mask_radius_outlier_filter=bool(args.mask_radius_outlier_filter),
+            mask_radius_outlier_radius_m=float(args.mask_radius_outlier_radius_m),
+            mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
+            write_final_pcd=bool(args.write_final_pcd),
+        )
+    finally:
+        return_code = _stop_process(process)
     validation_cases = select_validation_chunk_cases(manifests) if len(manifests) >= 5 else []
     if args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
         stop_reason = "max_chunks_reached"
