@@ -39,6 +39,14 @@ shape_prior_execution=remote-worker
 shape_prior_start_policy=async-after-first-mask-depth-pair
 ```
 
+Chunk length is time-first. Operators should normally change
+`--chunk-seconds`; Demo v4 derives `chunk_frame_count` as
+`round(replay_fps * chunk_seconds)`. The default is therefore 5 seconds at
+5 FPS, or 25 frames. `--chunk-frame-count` remains available as an explicit
+frame-count override for tests and advanced debugging, but `--chunk-seconds`
+and `--replay-fps` must still be positive so manifests keep a meaningful source
+time window.
+
 Demo v4 writes each complete case under `--futurephystwin-base-path`:
 
 ```text

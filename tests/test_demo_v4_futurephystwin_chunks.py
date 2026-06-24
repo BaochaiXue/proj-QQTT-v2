@@ -30,6 +30,7 @@ from demo_v4.realtime_futurephystwin_chunks import (
     build_demo32_realtime_command,
     build_parser,
     main as demo_v4_main,
+    resolve_chunk_frame_count,
     resolve_demo32_cuda_visible_devices,
     select_validation_chunk_cases,
 )
@@ -113,6 +114,7 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         self.assertEqual(args.replay_fps, 5.0)
         self.assertEqual(args.chunk_seconds, 5.0)
         self.assertIsNone(args.chunk_frame_count)
+        self.assertEqual(resolve_chunk_frame_count(args), 25)
         self.assertTrue(args.shape_prior_warmup)
         self.assertEqual(args.depth_backend, "native-realsense")
         self.assertEqual(args.max_chunks, 7)
@@ -127,6 +129,76 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         self.assertEqual(args.mask_radius_outlier_radius_m, 0.01)
         self.assertEqual(args.mask_radius_outlier_nb_points, 40)
         self.assertEqual(str(args.futurephystwin_base_path), "/home/xinjie/FuturePhysTwin/data/demo_v4_chunks")
+
+    def test_demo_v4_chunk_seconds_controls_frame_count_and_capture_duration(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--chunk-seconds",
+                "8",
+                "--replay-fps",
+                "5",
+                "--max-chunks",
+                "3",
+                "--capture-extra-seconds",
+                "1",
+            ]
+        )
+
+        self.assertEqual(resolve_chunk_frame_count(args), 40)
+        self.assertEqual(_contract(args)["chunk_seconds"], 8.0)
+        self.assertEqual(_contract(args)["chunk_frame_count"], 40)
+
+        command = build_demo32_realtime_command(
+            args,
+            capture_dir=Path("result/demo_v4/capture"),
+            profile_json=Path("result/demo_v4/shape_profile.json"),
+            chunk_frame_count=resolve_chunk_frame_count(args),
+        )
+        self.assertEqual(command[command.index("--duration-s") + 1], "25.000")
+
+    def test_demo_v4_chunk_frame_count_override_keeps_valid_time_contract(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--chunk-seconds",
+                "8",
+                "--chunk-frame-count",
+                "12",
+                "--replay-fps",
+                "5",
+                "--max-chunks",
+                "2",
+                "--capture-extra-seconds",
+                "0",
+            ]
+        )
+
+        self.assertEqual(resolve_chunk_frame_count(args), 12)
+        self.assertEqual(_contract(args)["chunk_seconds"], 8.0)
+        self.assertEqual(_contract(args)["chunk_frame_count"], 12)
+
+        command = build_demo32_realtime_command(
+            args,
+            capture_dir=Path("result/demo_v4/capture"),
+            profile_json=Path("result/demo_v4/shape_profile.json"),
+            chunk_frame_count=resolve_chunk_frame_count(args),
+        )
+        self.assertEqual(command[command.index("--duration-s") + 1], "4.800")
+
+    def test_demo_v4_rejects_nonpositive_chunk_seconds_even_with_frame_override(self) -> None:
+        with self.assertRaisesRegex(ValueError, "chunk seconds must be positive"):
+            demo_v4_main(
+                [
+                    "--dry-run",
+                    "--chunk-seconds",
+                    "0",
+                    "--chunk-frame-count",
+                    "10",
+                ]
+            )
+
+    def test_demo_v4_rejects_nonpositive_replay_fps_for_time_chunks(self) -> None:
+        with self.assertRaisesRegex(ValueError, "replay fps must be positive"):
+            demo_v4_main(["--dry-run", "--replay-fps", "0"])
 
     def test_demo_v4_gpu_mode_resolves_single_dual_and_explicit_override(self) -> None:
         single_args = build_parser().parse_args(["--dry-run"])

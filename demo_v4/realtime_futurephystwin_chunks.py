@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -193,10 +194,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_chunk_frame_count(args: argparse.Namespace) -> int:
+    chunk_seconds = float(args.chunk_seconds)
+    if not math.isfinite(chunk_seconds) or chunk_seconds <= 0.0:
+        raise ValueError("chunk seconds must be positive")
+    replay_fps = float(args.replay_fps)
+    if not math.isfinite(replay_fps) or replay_fps <= 0.0:
+        raise ValueError("replay fps must be positive")
     if args.chunk_frame_count is not None:
         value = int(args.chunk_frame_count)
     else:
-        value = int(round(float(args.replay_fps) * float(args.chunk_seconds)))
+        value = int(round(replay_fps * chunk_seconds))
     if value <= 0:
         raise ValueError("chunk frame count must be positive")
     return value
