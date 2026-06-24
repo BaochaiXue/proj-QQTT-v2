@@ -320,22 +320,23 @@ def sample_data_process_sam3d_single_view_shape_prior_points(
         reference_tree=reference_tree,
     )
     interior_points = np.empty((0, 3), dtype=np.float32)
+    voxel_candidates = _voxel_interior_candidates(
+        mesh,
+        reference,
+        volume_sample_size_m=float(volume_sample_size_m),
+        max_dist_m=max_dist,
+    )
+    if voxel_candidates.size:
+        interior_selector.add_batch(voxel_candidates, limit=int(target_interior_points))
+        interior_points = interior_selector.points()
     for count in [10000, 50000, 200000]:
+        if len(interior_points) >= int(target_interior_points):
+            break
         sampled = _sample_volume(mesh, sample_count=int(count))
         interior_selector.add_batch(sampled, limit=int(target_interior_points))
         interior_points = interior_selector.points()
         if len(interior_points) >= int(target_interior_points):
             break
-    if len(interior_points) < int(target_interior_points):
-        fallback = _voxel_interior_candidates(
-            mesh,
-            reference,
-            volume_sample_size_m=float(volume_sample_size_m),
-            max_dist_m=max_dist,
-        )
-        if fallback.size:
-            interior_selector.add_batch(fallback, limit=int(target_interior_points))
-            interior_points = interior_selector.points()
 
     return SingleViewShapePriorSamples(
         surface_points_m=_points(surface_points),

@@ -1,8 +1,12 @@
 import unittest
+from unittest import mock
+import importlib.util
 
 import numpy as np
 from scipy.spatial import cKDTree
 
+from qqtt.demo import single_view_shape_prior_sampling as single_view_sampling
+from qqtt.demo.single_view_shape_prior_sampling import SimpleShapeMesh
 from data_process_sam3d.shape_prior_sampling import (
     ShapePriorBatchSelector,
     effective_shape_prior_max_dist,
@@ -49,6 +53,41 @@ def _legacy_select(
         if len(selected) >= limit:
             break
     return selected
+
+
+def _cube_mesh(size: float = 0.10) -> SimpleShapeMesh:
+    half = float(size) * 0.5
+    vertices = np.array(
+        [
+            [-half, -half, -half],
+            [half, -half, -half],
+            [half, half, -half],
+            [-half, half, -half],
+            [-half, -half, half],
+            [half, -half, half],
+            [half, half, half],
+            [-half, half, half],
+        ],
+        dtype=np.float32,
+    )
+    faces = np.array(
+        [
+            [0, 1, 2],
+            [0, 2, 3],
+            [4, 6, 5],
+            [4, 7, 6],
+            [0, 4, 5],
+            [0, 5, 1],
+            [1, 5, 6],
+            [1, 6, 2],
+            [2, 6, 7],
+            [2, 7, 3],
+            [3, 7, 4],
+            [3, 4, 0],
+        ],
+        dtype=np.int64,
+    )
+    return SimpleShapeMesh(vertices=vertices, faces=faces)
 
 
 class ShapePriorSamplingOptimizationTest(unittest.TestCase):
@@ -169,6 +208,29 @@ class ShapePriorSamplingOptimizationTest(unittest.TestCase):
 
         np.testing.assert_allclose(selector.points(), expected)
         self.assertEqual(selector.accepted_candidate_count, 7)
+
+    @unittest.skipUnless(importlib.util.find_spec("open3d") is not None, "open3d is required for voxel interior sampling")
+    def test_single_view_sampling_uses_voxel_interior_before_random_volume(self) -> None:
+        mesh = _cube_mesh()
+        reference = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+
+        with mock.patch.object(
+            single_view_sampling,
+            "_sample_volume",
+            side_effect=AssertionError("random volume sampling should not run when voxel candidates are enough"),
+        ):
+            samples = single_view_sampling.sample_data_process_sam3d_single_view_shape_prior_points(
+                mesh,
+                reference,
+                volume_sample_size_m=0.005,
+                shape_prior_max_dist_m=1.0,
+                target_surface_points=16,
+                target_interior_points=64,
+            )
+
+        self.assertEqual(samples.surface_points_m.shape, (16, 3))
+        self.assertEqual(samples.interior_points_m.shape, (64, 3))
+        self.assertEqual(samples.metadata["shape_prior_interior_points"], 64)
 
 
 if __name__ == "__main__":
