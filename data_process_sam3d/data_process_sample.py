@@ -11,6 +11,17 @@ from utils.align_util import as_mesh
 from argparse import ArgumentParser
 from scipy.spatial import cKDTree
 
+try:
+    from data_process_sam3d.shape_prior_sampling import (
+        ShapePriorBatchSelector,
+        effective_shape_prior_max_dist,
+    )
+except ModuleNotFoundError:
+    from shape_prior_sampling import (
+        ShapePriorBatchSelector,
+        effective_shape_prior_max_dist,
+    )
+
 parser = ArgumentParser()
 parser.add_argument(
     "--base_path",
@@ -27,7 +38,7 @@ parser.add_argument(
     default=0.05,
     help=(
         "Filter sampled shape-prior points that are too far from observed object points "
-        "(meters; set <=0 to disable)."
+        "(meters; set <=0 to disable; positive values are capped at 0.035 m)."
     ),
 )
 parser.add_argument(
@@ -166,8 +177,7 @@ def voxel_interior_candidates(
         except Exception:
             interior = np.zeros((0, 3), dtype=np.float32)
 
-    interior = filter_points_by_nn_distance(interior, reference_points, max_dist)
-    return sort_by_reference_distance(interior, reference_points)
+    return interior
 
 
 def sample_sam3d_prior_points(
@@ -177,59 +187,46 @@ def sample_sam3d_prior_points(
     np.random.seed(42)
     min_bound = np.min(reference_points, axis=0)
     prior_grid_size = max(volume_sample_size * 0.4, 1e-4)
-    max_dist = shape_prior_max_dist
+    max_dist = effective_shape_prior_max_dist(shape_prior_max_dist)
+    reference_tree = cKDTree(reference_points)
 
-    surface_candidates = []
+    surface_selector = ShapePriorBatchSelector(
+        reference_points=reference_points,
+        min_bound=min_bound,
+        grid_size=prior_grid_size,
+        max_dist=max_dist,
+        reference_tree=reference_tree,
+    )
     surface_points = np.zeros((0, 3), dtype=np.float32)
     for count in [max(num_surface_points, 4096), 10000, 50000, 200000]:
         sampled, _ = trimesh.sample.sample_surface(trimesh_mesh, count)
-        sampled = filter_points_by_nn_distance(
-            sampled, reference_points, max_dist
-        )
-        sampled = sort_by_reference_distance(sampled, reference_points)
-        surface_candidates.append(sampled)
-        surface_points = dedupe_points(
-            np.vstack(surface_candidates),
-            min_bound,
-            limit=target_surface_points,
-            grid_size=prior_grid_size,
-        )
+        surface_selector.add_batch(sampled, limit=target_surface_points)
+        surface_points = surface_selector.points()
         if len(surface_points) >= target_surface_points:
             break
     if len(surface_points) < target_surface_points:
         for _ in range(2):
             sampled, _ = trimesh.sample.sample_surface(trimesh_mesh, 200000)
-            if max_dist > 0:
-                sampled = filter_points_by_nn_distance(sampled, reference_points, max_dist)
-            sampled = sort_by_reference_distance(sampled, reference_points)
-            surface_candidates.append(sampled)
-            surface_points = dedupe_points(
-                np.vstack(surface_candidates),
-                min_bound,
-                limit=target_surface_points,
-                grid_size=prior_grid_size,
-            )
+            surface_selector.add_batch(sampled, limit=target_surface_points)
+            surface_points = surface_selector.points()
             if len(surface_points) >= target_surface_points:
                 break
 
-    interior_candidates = []
+    interior_selector = ShapePriorBatchSelector(
+        reference_points=reference_points,
+        min_bound=min_bound,
+        grid_size=prior_grid_size,
+        max_dist=max_dist,
+        reference_tree=reference_tree,
+    )
     interior_points = np.zeros((0, 3), dtype=np.float32)
     for count in [10000, 50000, 200000]:
         try:
             sampled = trimesh.sample.volume_mesh(trimesh_mesh, count)
         except Exception:
             sampled = np.zeros((0, 3), dtype=np.float32)
-        sampled = filter_points_by_nn_distance(
-            sampled, reference_points, max_dist
-        )
-        sampled = sort_by_reference_distance(sampled, reference_points)
-        interior_candidates.append(sampled)
-        interior_points = dedupe_points(
-            np.vstack(interior_candidates),
-            min_bound,
-            limit=target_interior_points,
-            grid_size=prior_grid_size,
-        )
+        interior_selector.add_batch(sampled, limit=target_interior_points)
+        interior_points = interior_selector.points()
         if len(interior_points) >= target_interior_points:
             break
 
@@ -238,12 +235,8 @@ def sample_sam3d_prior_points(
             trimesh_mesh, reference_points, max_dist
         )
         if fallback.size:
-            interior_points = dedupe_points(
-                np.vstack([*interior_candidates, fallback]),
-                min_bound,
-                limit=target_interior_points,
-                grid_size=prior_grid_size,
-            )
+            interior_selector.add_batch(fallback, limit=target_interior_points)
+            interior_points = interior_selector.points()
 
     return surface_points, interior_points
 

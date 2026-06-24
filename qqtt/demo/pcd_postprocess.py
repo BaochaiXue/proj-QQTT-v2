@@ -28,25 +28,17 @@ def _detect_radius_outlier_indices(
         empty = np.empty((0,), dtype=np.int32)
         return {"inlier_indices": empty, "outlier_indices": empty}
 
-    if point_count <= 4096:
-        radius_sq = float(radius_m) * float(radius_m)
-        deltas = cloud[:, None, :] - cloud[None, :, :]
-        neighbor_counts = np.count_nonzero(np.sum(deltas * deltas, axis=2) <= radius_sq + 1e-12, axis=1)
-        inliers = np.flatnonzero(neighbor_counts >= int(nb_points)).astype(np.int32)
-        keep_mask = np.zeros((point_count,), dtype=bool)
-        keep_mask[inliers] = True
-        outliers = np.flatnonzero(~keep_mask).astype(np.int32)
-        return {"inlier_indices": inliers, "outlier_indices": outliers}
+    from scipy.spatial import cKDTree
 
-    import open3d as o3d
-
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(cloud)
-    _, inlier_indices = pcd.remove_radius_outlier(
-        nb_points=int(nb_points),
-        radius=float(radius_m),
-    )
-    inliers = np.asarray(inlier_indices, dtype=np.int32).reshape(-1)
+    tree = cKDTree(cloud)
+    try:
+        neighbor_counts = tree.query_ball_point(cloud, r=float(radius_m), return_length=True)
+    except TypeError:
+        neighbor_counts = np.asarray(
+            [len(indices) for indices in tree.query_ball_point(cloud, r=float(radius_m))],
+            dtype=np.int64,
+        )
+    inliers = np.flatnonzero(np.asarray(neighbor_counts, dtype=np.int64) >= int(nb_points)).astype(np.int32)
     if len(inliers) == 0:
         return {
             "inlier_indices": inliers,

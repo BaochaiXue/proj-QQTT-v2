@@ -10,6 +10,53 @@ import numpy as np
 from qqtt.demo import phystwin_strict_product as strict
 
 
+def _reference_motion_valid_for_class(
+    points: np.ndarray,
+    visibilities: np.ndarray,
+    *,
+    neighbor_dist: float,
+    min_neighbors: int,
+    motion_similarity_m: float,
+    once_false_mask: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    pts = np.asarray(points, dtype=np.float32)
+    vis = np.asarray(visibilities, dtype=bool)
+    motions_valid = np.zeros_like(vis, dtype=bool)
+    if pts.shape[0] > 1:
+        motions_valid[:-1] = vis[:-1] & vis[1:]
+    global_mask = np.prod(vis, axis=0).astype(bool) if once_false_mask and vis.size else np.ones((pts.shape[1],), dtype=bool)
+    if pts.shape[1] == 0:
+        return motions_valid, global_mask
+    motions = np.zeros_like(pts, dtype=np.float32)
+    motions[:-1] = pts[1:] - pts[:-1]
+    for frame_idx in range(max(0, pts.shape[0] - 1)):
+        current_valid = motions_valid[frame_idx].copy()
+        if once_false_mask:
+            current_valid &= global_mask
+            motions_valid[frame_idx] &= global_mask
+        for query_idx in range(pts.shape[1]):
+            if once_false_mask and not global_mask[query_idx]:
+                motions_valid[frame_idx, query_idx] = False
+                continue
+            if not motions_valid[frame_idx, query_idx]:
+                continue
+            distances = np.linalg.norm(pts[frame_idx] - pts[frame_idx, query_idx], axis=1)
+            neighbors = np.flatnonzero((distances <= float(neighbor_dist)) & current_valid)
+            if len(neighbors) < int(min_neighbors):
+                motions_valid[frame_idx, query_idx] = False
+                if once_false_mask:
+                    global_mask[query_idx] = False
+                continue
+            motion_diff = np.linalg.norm(motions[frame_idx, query_idx] - motions[frame_idx, neighbors], axis=1)
+            if int(np.count_nonzero(motion_diff < float(motion_similarity_m))) < 0.5 * float(len(neighbors)):
+                motions_valid[frame_idx, query_idx] = False
+                if once_false_mask:
+                    global_mask[query_idx] = False
+        if once_false_mask:
+            motions_valid[frame_idx] &= global_mask
+    return motions_valid, global_mask.astype(bool, copy=False)
+
+
 class PhysTwinStrictProductTest(unittest.TestCase):
     def test_first_frame_union_sampler_exports_txy_and_internal_yx(self) -> None:
         object_mask = np.zeros((3, 4), dtype=bool)
@@ -132,6 +179,46 @@ class PhysTwinStrictProductTest(unittest.TestCase):
 
         self.assertEqual(int(np.count_nonzero(filtered["controller_mask"])), 30)
         self.assertEqual(final_data["controller_points"].shape, (2, 30, 3))
+
+    def test_motion_filter_matches_reference_neighbor_semantics(self) -> None:
+        rng = np.random.default_rng(7)
+        points = (rng.normal(size=(5, 37, 3)) * 0.003).astype(np.float32)
+        points[1:] += np.array([0.001, 0.0, 0.0], dtype=np.float32)
+        points[2, 5] += np.array([0.03, 0.0, 0.0], dtype=np.float32)
+        points[3, 13] += np.array([0.0, 0.03, 0.0], dtype=np.float32)
+        vis = rng.random((5, 37)) > 0.08
+        vis[:, :10] = True
+
+        object_expected, _ = _reference_motion_valid_for_class(
+            points,
+            vis,
+            neighbor_dist=0.01,
+            min_neighbors=5,
+            motion_similarity_m=0.005,
+            once_false_mask=False,
+        )
+        controller_expected, controller_mask_expected = _reference_motion_valid_for_class(
+            points,
+            vis,
+            neighbor_dist=0.01,
+            min_neighbors=5,
+            motion_similarity_m=0.005,
+            once_false_mask=True,
+        )
+
+        track_data = {
+            "object_points": points,
+            "object_colors": np.ones_like(points),
+            "object_visibilities": vis,
+            "controller_points": points,
+            "controller_colors": np.ones_like(points),
+            "controller_visibilities": vis,
+        }
+        filtered = strict.apply_phystwin_motion_filters(track_data)
+
+        np.testing.assert_array_equal(filtered["object_motions_valid"], object_expected)
+        np.testing.assert_array_equal(filtered["controller_motions_valid"], controller_expected)
+        np.testing.assert_array_equal(filtered["controller_mask"], controller_mask_expected)
 
     def test_object_volume_sampling_slices_all_object_arrays(self) -> None:
         object_points = np.array(

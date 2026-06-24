@@ -6,13 +6,18 @@ from typing import Any
 import numpy as np
 from scipy.spatial import cKDTree
 
+from data_process_sam3d.shape_prior_sampling import (
+    DATA_PROCESS_SAM3D_MAX_DIST_CAP_M,
+    ShapePriorBatchSelector,
+    effective_shape_prior_max_dist,
+)
+
 
 DEFAULT_NUM_SURFACE_POINTS = 1024
 DEFAULT_VOLUME_SAMPLE_SIZE_M = 0.005
 DEFAULT_SHAPE_PRIOR_MAX_DIST_M = 0.05
 DEFAULT_TARGET_SURFACE_POINTS = 700
 DEFAULT_TARGET_INTERIOR_POINTS = 1000
-DATA_PROCESS_SAM3D_MAX_DIST_CAP_M = 0.035
 
 
 @dataclass(frozen=True)
@@ -59,10 +64,7 @@ def filter_points_by_nn_distance(points: np.ndarray, reference_points: np.ndarra
 
 
 def _effective_data_process_sam3d_max_dist(max_dist: float) -> float:
-    value = float(max_dist)
-    if value <= 0.0:
-        return value
-    return min(value, DATA_PROCESS_SAM3D_MAX_DIST_CAP_M)
+    return effective_shape_prior_max_dist(max_dist)
 
 
 def _sort_by_reference_distance(points: np.ndarray, reference_points: np.ndarray) -> np.ndarray:
@@ -226,8 +228,7 @@ def _voxel_interior_candidates(
             interior = grid[mesh.contains(grid)]
         except Exception:
             interior = np.empty((0, 3), dtype=np.float32)
-    interior = filter_points_by_nn_distance(interior, reference_points, max_dist_m)
-    return _sort_by_reference_distance(interior, reference_points)
+    return _points(interior)
 
 
 def sample_data_process_sam3d_single_view_shape_prior_points(
@@ -278,50 +279,44 @@ def sample_data_process_sam3d_single_view_shape_prior_points(
     min_bound = np.min(reference, axis=0)
     prior_grid_size = max(float(volume_sample_size_m) * 0.4, 1e-4)
     max_dist = _effective_data_process_sam3d_max_dist(shape_prior_max_dist_m)
+    reference_tree = cKDTree(reference)
 
-    surface_candidates: list[np.ndarray] = []
+    surface_selector = ShapePriorBatchSelector(
+        reference_points=reference,
+        min_bound=min_bound,
+        grid_size=prior_grid_size,
+        max_dist=max_dist,
+        force_float32_voxel_keys=True,
+        reference_tree=reference_tree,
+    )
     surface_points = np.empty((0, 3), dtype=np.float32)
     for count in [max(int(num_surface_points), 4096), 10000, 50000, 200000]:
         sampled = _sample_surface(mesh, int(count))
-        sampled = filter_points_by_nn_distance(sampled, reference, max_dist)
-        sampled = _sort_by_reference_distance(sampled, reference)
-        surface_candidates.append(sampled)
-        surface_points = _dedupe_points(
-            np.vstack(surface_candidates),
-            min_bound,
-            limit=int(target_surface_points),
-            grid_size=prior_grid_size,
-        )
+        surface_selector.add_batch(sampled, limit=int(target_surface_points))
+        surface_points = surface_selector.points()
         if len(surface_points) >= int(target_surface_points):
             break
     if len(surface_points) < int(target_surface_points):
         for _ in range(2):
             sampled = _sample_surface(mesh, 200000)
-            sampled = filter_points_by_nn_distance(sampled, reference, max_dist)
-            sampled = _sort_by_reference_distance(sampled, reference)
-            surface_candidates.append(sampled)
-            surface_points = _dedupe_points(
-                np.vstack(surface_candidates),
-                min_bound,
-                limit=int(target_surface_points),
-                grid_size=prior_grid_size,
-            )
+            surface_selector.add_batch(sampled, limit=int(target_surface_points))
+            surface_points = surface_selector.points()
             if len(surface_points) >= int(target_surface_points):
                 break
 
-    interior_candidates: list[np.ndarray] = []
+    interior_selector = ShapePriorBatchSelector(
+        reference_points=reference,
+        min_bound=min_bound,
+        grid_size=prior_grid_size,
+        max_dist=max_dist,
+        force_float32_voxel_keys=True,
+        reference_tree=reference_tree,
+    )
     interior_points = np.empty((0, 3), dtype=np.float32)
     for count in [10000, 50000, 200000]:
         sampled = _sample_volume(mesh, sample_count=int(count))
-        sampled = filter_points_by_nn_distance(sampled, reference, max_dist)
-        sampled = _sort_by_reference_distance(sampled, reference)
-        interior_candidates.append(sampled)
-        interior_points = _dedupe_points(
-            np.vstack(interior_candidates),
-            min_bound,
-            limit=int(target_interior_points),
-            grid_size=prior_grid_size,
-        )
+        interior_selector.add_batch(sampled, limit=int(target_interior_points))
+        interior_points = interior_selector.points()
         if len(interior_points) >= int(target_interior_points):
             break
     if len(interior_points) < int(target_interior_points):
@@ -332,12 +327,8 @@ def sample_data_process_sam3d_single_view_shape_prior_points(
             max_dist_m=max_dist,
         )
         if fallback.size:
-            interior_points = _dedupe_points(
-                np.vstack([*interior_candidates, fallback]),
-                min_bound,
-                limit=int(target_interior_points),
-                grid_size=prior_grid_size,
-            )
+            interior_selector.add_batch(fallback, limit=int(target_interior_points))
+            interior_points = interior_selector.points()
 
     return SingleViewShapePriorSamples(
         surface_points_m=_points(surface_points),
@@ -352,8 +343,8 @@ def sample_data_process_sam3d_single_view_shape_prior_points(
             "shape_prior_max_dist_m": float(shape_prior_max_dist_m),
             "shape_prior_effective_max_dist_m": float(max_dist),
             "shape_prior_volume_sample_size_m": float(volume_sample_size_m),
-            "shape_prior_surface_candidates": int(sum(len(item) for item in surface_candidates)),
-            "shape_prior_interior_candidates": int(sum(len(item) for item in interior_candidates)),
+            "shape_prior_surface_candidates": int(surface_selector.accepted_candidate_count),
+            "shape_prior_interior_candidates": int(interior_selector.accepted_candidate_count),
             "shape_prior_surface_points": int(len(surface_points)),
             "shape_prior_interior_points": int(len(interior_points)),
         },

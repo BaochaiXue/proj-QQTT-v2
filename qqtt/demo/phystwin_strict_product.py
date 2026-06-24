@@ -296,19 +296,29 @@ def _motion_valid_for_class(
         return motions_valid, global_mask
     motions = np.zeros_like(pts, dtype=np.float32)
     motions[:-1] = pts[1:] - pts[:-1]
+    from scipy.spatial import cKDTree
+
     for frame_idx in range(max(0, pts.shape[0] - 1)):
         current_valid = motions_valid[frame_idx].copy()
         if once_false_mask:
             current_valid &= global_mask
             motions_valid[frame_idx] &= global_mask
-        for query_idx in range(pts.shape[1]):
+        valid_indices = np.flatnonzero(current_valid)
+        if len(valid_indices) == 0:
+            continue
+        tree = cKDTree(pts[frame_idx, valid_indices])
+        neighbor_lists = tree.query_ball_point(
+            pts[frame_idx, valid_indices],
+            r=float(neighbor_dist),
+            return_sorted=False,
+        )
+        for local_idx, query_idx in enumerate(valid_indices):
             if once_false_mask and not global_mask[query_idx]:
                 motions_valid[frame_idx, query_idx] = False
                 continue
             if not motions_valid[frame_idx, query_idx]:
                 continue
-            distances = np.linalg.norm(pts[frame_idx] - pts[frame_idx, query_idx], axis=1)
-            neighbors = np.flatnonzero((distances <= float(neighbor_dist)) & current_valid)
+            neighbors = valid_indices[np.asarray(neighbor_lists[local_idx], dtype=np.int64)]
             if len(neighbors) < int(min_neighbors):
                 motions_valid[frame_idx, query_idx] = False
                 if once_false_mask:
