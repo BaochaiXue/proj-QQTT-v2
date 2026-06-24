@@ -135,6 +135,15 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         self.assertEqual(_contract(args)["realtime_gpu_mode"], "single")
         self.assertEqual(_contract(args)["warmup_gpu_mode"], "dual")
         self.assertEqual(_contract(args)["shape_prior_device"], "cuda:1")
+        self.assertEqual(_contract(args)["output_format"], "online-primary-static-case")
+        self.assertEqual(
+            _contract(args)["online_dir"],
+            "/home/xinjie/FuturePhysTwin/data/demo_v4_chunks/online_data/demo_v4",
+        )
+        self.assertEqual(
+            _contract(args)["static_data_path"],
+            "/home/xinjie/FuturePhysTwin/data/demo_v4_chunks/data/demo_v4/final_data.pkl",
+        )
         self.assertTrue(args.mask_radius_outlier_filter)
         self.assertEqual(args.mask_radius_outlier_radius_m, 0.01)
         self.assertEqual(args.mask_radius_outlier_nb_points, 40)
@@ -174,6 +183,67 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             chunk_frame_count=resolve_chunk_frame_count(args),
         )
         self.assertEqual(command[command.index("--duration-s") + 1], "25.000")
+
+    def test_online_chunk_output_writes_fake_tracker_contract(self) -> None:
+        from demo_v4.online_chunk_output import DemoV4OnlineOutputWriter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp)
+            writer = DemoV4OnlineOutputWriter(
+                base_path=base_path,
+                case_name="demo_v4",
+                chunk_size=2,
+                num_frames_total=4,
+            )
+
+            first = _track_process_data(2)
+            first["surface_points"] = np.array([[0.0, 0.0, -0.02]], dtype=np.float64)
+            first["interior_points"] = np.array([[0.01, 0.0, -0.03]], dtype=np.float64)
+            second = _track_process_data(2)
+            second["surface_points"] = np.array([[0.0, 0.0, -0.02]], dtype=np.float64)
+            second["interior_points"] = np.array([[0.01, 0.0, -0.03]], dtype=np.float64)
+
+            writer.commit_final_data_chunk(
+                first,
+                source_frame_indices=[0, 1],
+                status="recording",
+            )
+            writer.commit_final_data_chunk(
+                second,
+                source_frame_indices=[2, 3],
+                status="recording",
+            )
+
+            online_dir = base_path / "online_data" / "demo_v4"
+            manifest = json.loads((online_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["case_name"], "demo_v4")
+            self.assertEqual(manifest["status"], "recording")
+            self.assertEqual(manifest["chunk_size"], 2)
+            self.assertEqual(manifest["num_frames_total"], 4)
+            self.assertEqual(manifest["latest_committed_chunk"], 1)
+            self.assertEqual(manifest["latest_committed_frame"], 4)
+            self.assertEqual(manifest["version"], 2)
+            self.assertEqual(manifest["source_start_frame"], 0)
+            self.assertEqual(manifest["source_end_frame"], 4)
+            self.assertEqual(manifest["source_frame_step"], 1)
+            self.assertEqual(manifest["online_num_frames_total"], 4)
+
+            self.assertTrue((online_dir / "chunks" / "chunk_000000.pkl").is_file())
+            self.assertTrue((online_dir / "chunks" / "chunk_000001.pkl").is_file())
+            with (online_dir / "chunks" / "chunk_000000.pkl").open("rb") as handle:
+                chunk = pickle.load(handle)
+            self.assertEqual(chunk["case_name"], "demo_v4")
+            self.assertEqual(chunk["chunk_id"], 0)
+            self.assertEqual(chunk["start_frame"], 0)
+            self.assertEqual(chunk["end_frame"], 2)
+            self.assertEqual(chunk["source_frame_indices"], [0, 1])
+            self.assertIn("object_points", chunk)
+            self.assertIn("object_colors", chunk)
+            self.assertIn("object_visibilities", chunk)
+            self.assertIn("object_motions_valid", chunk)
+            self.assertIn("controller_points", chunk)
+            self.assertNotIn("surface_points", chunk)
+            self.assertNotIn("interior_points", chunk)
 
     def test_demo_v4_can_decouple_source_pacing_from_output_fps(self) -> None:
         args = build_parser().parse_args(
@@ -617,6 +687,25 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                 self.assertEqual(summary["controller_point_count"], 30)
                 self.assertEqual(summary["surface_point_count"], 1)
                 self.assertEqual(summary["interior_point_count"], 1)
+            online_dir = base_path / "online_data" / "demo_v4_capture"
+            static_path = base_path / "data" / "demo_v4_capture" / "final_data.pkl"
+            self.assertTrue((online_dir / "manifest.json").is_file())
+            self.assertTrue((online_dir / "chunks" / "chunk_000000.pkl").is_file())
+            self.assertTrue((online_dir / "chunks" / "chunk_000001.pkl").is_file())
+            self.assertTrue(static_path.is_file())
+            online_manifest = json.loads((online_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(online_manifest["case_name"], "demo_v4_capture")
+            self.assertEqual(online_manifest["latest_committed_chunk"], 1)
+            self.assertEqual(online_manifest["latest_committed_frame"], 4)
+            self.assertEqual(online_manifest["status"], "finished")
+            self.assertEqual(manifests[0]["online_dir"], str(online_dir))
+            self.assertEqual(manifests[0]["static_data_path"], str(static_path))
+            with static_path.open("rb") as handle:
+                static_data = pickle.load(handle)
+            self.assertEqual(static_data["object_points"].shape[0], 4)
+            self.assertEqual(static_data["controller_points"].shape[0], 4)
+            np.testing.assert_allclose(static_data["surface_points"], np.array([[0.0, 0.0, -0.02]], dtype=np.float64))
+            np.testing.assert_allclose(static_data["interior_points"], np.array([[0.01, 0.0, -0.03]], dtype=np.float64))
 
     def test_prepared_frame_helper_exports_chunk_compatible_arrays(self) -> None:
         height, width = 8, 40

@@ -342,6 +342,14 @@ def _load_optional_points(path: Path | None) -> np.ndarray | None:
     return np.ascontiguousarray(arr, dtype=np.float64)
 
 
+def resolve_online_dir(args: argparse.Namespace) -> Path:
+    return Path(args.futurephystwin_base_path) / "online_data" / str(args.case_prefix)
+
+
+def resolve_static_data_path(args: argparse.Namespace) -> Path:
+    return Path(args.futurephystwin_base_path) / "data" / str(args.case_prefix) / "final_data.pkl"
+
+
 def _contract(args: argparse.Namespace) -> dict[str, object]:
     return {
         "demo_version": "demo_v4",
@@ -357,6 +365,9 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "chunk_frame_count": int(resolve_chunk_frame_count(args)),
         "futurephystwin_base_path": str(args.futurephystwin_base_path),
         "case_prefix": str(args.case_prefix),
+        "output_format": "online-primary-static-case",
+        "online_dir": str(resolve_online_dir(args)),
+        "static_data_path": str(resolve_static_data_path(args)),
         "max_chunks": args.max_chunks,
         "depth_backend": str(args.depth_backend),
         "capture_extra_seconds": float(args.capture_extra_seconds),
@@ -566,6 +577,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "source_headless_capture": str(args.source_headless_capture),
             "futurephystwin_base_path": str(base_path),
             "case_prefix": str(args.case_prefix),
+            "output_format": "online-primary-static-case",
+            "online_dir": str(resolve_online_dir(args)),
+            "static_data_path": str(resolve_static_data_path(args)),
             "chunk_frame_count": int(chunk_frame_count),
             "max_chunks": args.max_chunks,
             "chunk_count": int(len(manifests)),
@@ -649,6 +663,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "demo32_capture_dir": str(capture_dir),
         "futurephystwin_base_path": str(base_path),
         "case_prefix": str(args.case_prefix),
+        "output_format": "online-primary-static-case",
+        "online_dir": str(resolve_online_dir(args)),
+        "static_data_path": str(resolve_static_data_path(args)),
         "chunk_frame_count": int(chunk_frame_count),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
         "max_chunks": args.max_chunks,

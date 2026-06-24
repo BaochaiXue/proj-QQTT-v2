@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import pickle
 import time
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
@@ -12,6 +13,7 @@ from demo_v4.futurephystwin_chunk_writer import (
     FuturePhysTwinChunk,
     write_futurephystwin_chunk_case,
 )
+from demo_v4.online_chunk_output import DemoV4OnlineOutputWriter
 from qqtt.demo.pcd_postprocess import _detect_radius_outlier_indices
 from qqtt.demo import phystwin_strict_product as strict
 
@@ -63,6 +65,21 @@ def _count_jsonl_rows(path: Path) -> int:
             if line.strip():
                 count += 1
     return count
+
+
+def _online_total_frame_count(
+    frames_path: Path,
+    *,
+    chunk_size: int,
+    max_chunks: int | None,
+) -> int | None:
+    if int(chunk_size) <= 0:
+        return None
+    row_count = _count_jsonl_rows(frames_path)
+    full_chunks = row_count // int(chunk_size)
+    if max_chunks is not None:
+        full_chunks = min(full_chunks, int(max_chunks))
+    return int(full_chunks * int(chunk_size))
 
 
 def _relative_wall_s(origin_s: float) -> float:
@@ -545,6 +562,7 @@ def _write_chunk_from_rows(
     prepared_frames: Sequence[strict.PreparedPhysTwinFrame | None] | None = None,
     backlog_chunks: Callable[[], int] | None = None,
     write_final_pcd: bool = True,
+    online_writer: DemoV4OnlineOutputWriter | None = None,
 ) -> dict[str, Any]:
     case_name = f"{case_prefix}_chunk_{chunk_index:04d}"
     source_window_start_s = float(row_start) / float(fps)
@@ -616,6 +634,27 @@ def _write_chunk_from_rows(
         manifest_extras=manifest_extras,
         relative_wall_time_s=lambda: _relative_wall_s(float(wall_time_origin_s)),
     )
+    if online_writer is not None:
+        with (Path(manifest["futurephystwin_case_root"]) / "final_data.pkl").open("rb") as handle:
+            final_data = pickle.load(handle)
+        online_result = online_writer.commit_final_data_chunk(
+            final_data,
+            source_frame_indices=[
+                int(row.get("seq", row_start + offset))
+                for offset, row in enumerate(rows)
+            ],
+            status="recording",
+        )
+        manifest.update(
+            {
+                "online_dir": online_result["online_dir"],
+                "online_manifest_path": online_result["online_manifest_path"],
+                "online_chunk_path": online_result["online_chunk_path"],
+                "online_chunk_id": online_result["online_chunk_id"],
+                "online_latest_committed_frame": online_result["online_latest_committed_frame"],
+                "static_data_path": online_result["static_data_path"],
+            }
+        )
     return manifest
 
 
@@ -634,6 +673,8 @@ def write_chunks_from_headless_capture(
     mask_radius_outlier_nb_points: int = 40,
     on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
     write_final_pcd: bool = True,
+    write_online_output: bool = True,
+    online_case_name: str | None = None,
 ) -> list[dict[str, Any]]:
     capture = Path(capture_dir)
     if int(chunk_frame_count) <= 0:
@@ -660,6 +701,18 @@ def write_chunks_from_headless_capture(
     row_start = 0
     wall_time_origin_s = time.monotonic()
     frames_path = capture / "frames.jsonl"
+    online_writer = None
+    if bool(write_online_output):
+        online_writer = DemoV4OnlineOutputWriter(
+            base_path=base_path,
+            case_name=str(online_case_name or case_prefix),
+            chunk_size=chunk_size,
+            num_frames_total=_online_total_frame_count(
+                frames_path,
+                chunk_size=chunk_size,
+                max_chunks=max_chunks,
+            ),
+        )
     for row_idx, row in enumerate(_iter_jsonl(capture / "frames.jsonl")):
         if max_chunks is not None and len(manifests) >= int(max_chunks):
             break
@@ -695,6 +748,7 @@ def write_chunks_from_headless_capture(
                 published_chunk_count=published,
             ),
             write_final_pcd=bool(write_final_pcd),
+            online_writer=online_writer,
         )
         manifests.append(manifest)
         if on_chunk_written is not None:
@@ -703,6 +757,8 @@ def write_chunks_from_headless_capture(
         row_start = row_idx + 1
         row_buffer = []
         prepared_buffer = []
+    if online_writer is not None:
+        online_writer.finish()
     return manifests
 
 
@@ -744,6 +800,8 @@ def stream_chunks_from_headless_capture(
     mask_radius_outlier_nb_points: int = 40,
     on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
     write_final_pcd: bool = True,
+    write_online_output: bool = True,
+    online_case_name: str | None = None,
 ) -> list[dict[str, Any]]:
     capture = Path(capture_dir)
     if int(chunk_frame_count) <= 0:
@@ -765,6 +823,16 @@ def stream_chunks_from_headless_capture(
     chunk_index = 1
     chunk_size = int(chunk_frame_count)
     wall_time_origin_s = time.monotonic()
+    online_writer = None
+    if bool(write_online_output):
+        online_writer = DemoV4OnlineOutputWriter(
+            base_path=base_path,
+            case_name=str(online_case_name or case_prefix),
+            chunk_size=chunk_size,
+            num_frames_total=(
+                None if max_chunks is None else int(max_chunks) * int(chunk_size)
+            ),
+        )
 
     while True:
         if max_chunks is not None and len(manifests) >= int(max_chunks):
@@ -816,6 +884,7 @@ def stream_chunks_from_headless_capture(
                     published_chunk_count=published,
                 ),
                 write_final_pcd=bool(write_final_pcd),
+                online_writer=online_writer,
             )
             manifests.append(manifest)
             if on_chunk_written is not None:
@@ -831,6 +900,8 @@ def stream_chunks_from_headless_capture(
         if capture_finished() and not saw_new_rows:
             break
         time.sleep(max(0.0, float(poll_interval_s)))
+    if online_writer is not None:
+        online_writer.finish()
     return manifests
 
 
