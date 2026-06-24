@@ -121,6 +121,14 @@ Demo v4 intentionally mirrors the parts of
 - shape-prior surface/interior samples are kept as separate final-data fields
 - z-down/table frame is preserved; the ground policy is not clamped by default
 
+Shape-prior warmup also keeps the same split used by the offline SAM3D path:
+the raw object mask remains the SAM3D image prompt/crop mask, while the 3D
+alignment observation uses `object_observation_mask`, a processed mask carried
+through the shape-prior protocol from the Demo 3.2 PCD/filter output. New
+remote-worker requests report both `object_mask_pixels` and
+`object_observation_mask_pixels`; older seven-frame requests remain accepted
+and fall back to using the raw object mask as the observation mask.
+
 The important realtime-specific difference is scheduling: `data_process_sam3d`
 is offline and can block between stages, while Demo v4 streams chunks from the
 fake-live camera timeline. SAM3D shape prior is asynchronous and does not change

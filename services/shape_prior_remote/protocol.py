@@ -25,6 +25,7 @@ class ShapePriorRequest:
     depth_color_m: np.ndarray
     k_color: np.ndarray
     camera_to_world_c2w: np.ndarray
+    object_observation_mask: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -68,13 +69,22 @@ def _require_protocol(metadata: dict[str, Any]) -> None:
 def build_shape_prior_request_parts(*, snapshot: Any, request_id: str) -> list[bytes]:
     rgb = np.ascontiguousarray(snapshot.rgb_u8, dtype=np.uint8)
     object_mask = np.ascontiguousarray(snapshot.object_mask, dtype=bool)
+    object_observation_mask = getattr(snapshot, "object_observation_mask", None)
+    if object_observation_mask is None:
+        object_observation_mask = object_mask
+    object_observation_mask = np.ascontiguousarray(object_observation_mask, dtype=bool)
     controller_mask = np.ascontiguousarray(snapshot.controller_mask, dtype=bool)
     depth = np.ascontiguousarray(snapshot.depth_color_m, dtype=np.float32)
     k_color = np.ascontiguousarray(snapshot.k_color, dtype=np.float32).reshape(3, 3)
     c2w = np.ascontiguousarray(snapshot.camera_to_world_c2w, dtype=np.float32).reshape(4, 4)
     if rgb.ndim != 3 or rgb.shape[2] != 3:
         raise ShapePriorProtocolError(f"rgb_u8 must be HxWx3, got {rgb.shape}")
-    if object_mask.shape != rgb.shape[:2] or controller_mask.shape != rgb.shape[:2] or depth.shape != rgb.shape[:2]:
+    if (
+        object_mask.shape != rgb.shape[:2]
+        or object_observation_mask.shape != rgb.shape[:2]
+        or controller_mask.shape != rgb.shape[:2]
+        or depth.shape != rgb.shape[:2]
+    ):
         raise ShapePriorProtocolError("mask/depth shapes must match RGB height and width")
     metadata = {
         "protocol": PROTOCOL_NAME,
@@ -91,12 +101,14 @@ def build_shape_prior_request_parts(*, snapshot: Any, request_id: str) -> list[b
         "rgb_shape": [int(v) for v in rgb.shape],
         "depth_shape": [int(v) for v in depth.shape],
         "object_mask_pixels": int(np.count_nonzero(object_mask)),
+        "object_observation_mask_pixels": int(np.count_nonzero(object_observation_mask)),
         "controller_mask_pixels": int(np.count_nonzero(controller_mask)),
     }
     return [
         _json_dumps(metadata),
         _array_to_bytes(rgb),
         _array_to_bytes(object_mask),
+        _array_to_bytes(object_observation_mask),
         _array_to_bytes(controller_mask),
         _array_to_bytes(depth),
         _array_to_bytes(k_color),
@@ -105,20 +117,33 @@ def build_shape_prior_request_parts(*, snapshot: Any, request_id: str) -> list[b
 
 
 def parse_shape_prior_request_parts(parts: list[bytes]) -> ShapePriorRequest:
-    if len(parts) != 7:
-        raise ShapePriorProtocolError(f"shape-prior request expected 7 frames, got {len(parts)}")
+    if len(parts) not in {7, 8}:
+        raise ShapePriorProtocolError(f"shape-prior request expected 7 or 8 frames, got {len(parts)}")
     metadata = _json_loads(parts[0])
     _require_protocol(metadata)
     rgb = np.ascontiguousarray(_array_from_bytes(parts[1]), dtype=np.uint8)
     object_mask = np.ascontiguousarray(_array_from_bytes(parts[2]), dtype=bool)
-    controller_mask = np.ascontiguousarray(_array_from_bytes(parts[3]), dtype=bool)
-    depth = np.ascontiguousarray(_array_from_bytes(parts[4]), dtype=np.float32)
-    k_color = np.ascontiguousarray(_array_from_bytes(parts[5]), dtype=np.float32).reshape(3, 3)
-    c2w = np.ascontiguousarray(_array_from_bytes(parts[6]), dtype=np.float32).reshape(4, 4)
+    if len(parts) == 8:
+        object_observation_mask = np.ascontiguousarray(_array_from_bytes(parts[3]), dtype=bool)
+        controller_idx = 4
+    else:
+        object_observation_mask = object_mask
+        controller_idx = 3
+    controller_mask = np.ascontiguousarray(_array_from_bytes(parts[controller_idx]), dtype=bool)
+    depth = np.ascontiguousarray(_array_from_bytes(parts[controller_idx + 1]), dtype=np.float32)
+    k_color = np.ascontiguousarray(_array_from_bytes(parts[controller_idx + 2]), dtype=np.float32).reshape(3, 3)
+    c2w = np.ascontiguousarray(_array_from_bytes(parts[controller_idx + 3]), dtype=np.float32).reshape(4, 4)
     if rgb.ndim != 3 or rgb.shape[2] != 3:
         raise ShapePriorProtocolError(f"rgb payload must be HxWx3, got {rgb.shape}")
-    if object_mask.shape != rgb.shape[:2] or controller_mask.shape != rgb.shape[:2] or depth.shape != rgb.shape[:2]:
+    if (
+        object_mask.shape != rgb.shape[:2]
+        or object_observation_mask.shape != rgb.shape[:2]
+        or controller_mask.shape != rgb.shape[:2]
+        or depth.shape != rgb.shape[:2]
+    ):
         raise ShapePriorProtocolError("request mask/depth payload shapes must match RGB")
+    metadata.setdefault("object_mask_pixels", int(np.count_nonzero(object_mask)))
+    metadata.setdefault("object_observation_mask_pixels", int(np.count_nonzero(object_observation_mask)))
     return ShapePriorRequest(
         metadata=metadata,
         rgb_u8=rgb,
@@ -127,6 +152,7 @@ def parse_shape_prior_request_parts(parts: list[bytes]) -> ShapePriorRequest:
         depth_color_m=depth,
         k_color=k_color,
         camera_to_world_c2w=c2w,
+        object_observation_mask=object_observation_mask,
     )
 
 

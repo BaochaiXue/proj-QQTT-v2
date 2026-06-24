@@ -312,6 +312,21 @@ class ShapePriorProtocolAndSnapshotTest(unittest.TestCase):
         np.testing.assert_array_equal(request.object_mask, snapshot.object_mask)
         np.testing.assert_allclose(request.depth_color_m, snapshot.depth_color_m)
 
+    def test_protocol_roundtrip_keeps_raw_prompt_mask_and_processed_observation_mask(self) -> None:
+        snapshot = self._snapshot()
+        observation_mask = np.zeros_like(snapshot.object_mask)
+        observation_mask[1, 1] = True
+        snapshot = warmup.replace_snapshot(snapshot, object_observation_mask=observation_mask)
+
+        request = parse_shape_prior_request_parts(
+            build_shape_prior_request_parts(snapshot=snapshot, request_id="req-mask-split")
+        )
+
+        self.assertEqual(request.metadata["object_mask_pixels"], 2)
+        self.assertEqual(request.metadata["object_observation_mask_pixels"], 1)
+        np.testing.assert_array_equal(request.object_mask, self._snapshot().object_mask)
+        np.testing.assert_array_equal(request.object_observation_mask, observation_mask)
+
         response_parts = build_shape_prior_response_parts(
             request_id="req-7",
             seq=7,
@@ -403,10 +418,13 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
         rgb[:, :, 1] = np.arange(12, dtype=np.uint8)[:, None]
         object_mask = np.zeros((12, 16), dtype=bool)
         object_mask[3:9, 5:11] = True
+        observation_mask = np.zeros_like(object_mask)
+        observation_mask[5, 7] = True
         request = shape_prior_server.ShapePriorRequest(
             metadata={"request_id": "req", "seq": 0},
             rgb_u8=rgb,
             object_mask=object_mask,
+            object_observation_mask=observation_mask,
             controller_mask=np.zeros_like(object_mask),
             depth_color_m=np.ones((12, 16), dtype=np.float32),
             k_color=np.eye(3, dtype=np.float32),
@@ -437,15 +455,39 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
 
         self.assertEqual(calls["prompt"], "Hand manipulates a stuffed animal.")
         self.assertNotEqual(calls["sam3d_image_shape"], tuple(rgb.shape))
+        self.assertEqual(calls["crop_size"], (9, 9))
         self.assertEqual(calls["sam3d_image_shape"][:2], calls["sam3d_mask_shape"])
         self.assertEqual(calls["sam3d_image_shape"][0], calls["crop_size"][1] * 4)
         self.assertEqual(calls["sam3d_image_shape"][1], calls["crop_size"][0] * 4)
-        self.assertGreater(calls["sam3d_mask_pixels"], 0)
+        self.assertEqual(calls["sam3d_mask_pixels"], 6 * 6 * 4 * 4)
         self.assertEqual(canonical.shape, (3, 3))
         self.assertGreaterEqual(metadata["image_upscale_ms"], 0.0)
         self.assertIn("upscaler_model_load_ms", metadata)
         self.assertGreaterEqual(metadata["mask_refinement_ms"], 0.0)
         self.assertEqual(metadata["sam3d_input_shape"], list(calls["sam3d_image_shape"]))
+
+    def test_echo_observation_uses_processed_observation_mask_not_raw_prompt_mask(self) -> None:
+        worker = self._worker()
+        worker.echo_observation = True
+        object_mask = np.ones((2, 2), dtype=bool)
+        observation_mask = np.array([[True, False], [True, True]], dtype=bool)
+        request = shape_prior_server.ShapePriorRequest(
+            metadata={"request_id": "req-observation-mask", "seq": 4},
+            rgb_u8=np.zeros((2, 2, 3), dtype=np.uint8),
+            object_mask=object_mask,
+            object_observation_mask=observation_mask,
+            controller_mask=np.zeros_like(object_mask),
+            depth_color_m=np.ones((2, 2), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+
+        response = parse_shape_prior_response_parts(worker.handle(request))
+
+        self.assertEqual(response.metadata["status"], "ready")
+        self.assertEqual(response.metadata["object_mask_pixels"], 4)
+        self.assertEqual(response.metadata["object_observation_mask_pixels"], 3)
+        self.assertEqual(len(response.points_m), 3)
 
     def test_preload_models_loads_upscaler_and_sam3d_before_requests(self) -> None:
         worker = self._worker()
@@ -992,10 +1034,57 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
         self.assertEqual(snapshot.depth_source_internal, "realsense")
         np.testing.assert_array_equal(snapshot.rgb_u8[0, 0], np.array([30, 20, 10], dtype=np.uint8))
         np.testing.assert_array_equal(snapshot.object_mask, object_mask)
+        np.testing.assert_array_equal(snapshot.object_observation_mask, object_mask)
         np.testing.assert_allclose(snapshot.depth_color_m, np.ones((2, 3), dtype=np.float32))
         np.testing.assert_allclose(snapshot.camera_to_world_c2w, np.eye(4, dtype=np.float32))
         self.assertEqual(snapshot.table_z_m, masked_demo.TABLE_Z_M)
         self.assertEqual(snapshot.table_z_above_direction, "negative")
+
+    def test_shape_prior_snapshot_keeps_raw_prompt_mask_and_uses_processed_observation_mask(self) -> None:
+        demo = self._runtime_for_snapshot()
+        raw_mask = np.array([[True, True, False], [False, True, False]], dtype=bool)
+        processed_mask = np.array([[False, True, False], [False, False, False]], dtype=bool)
+        mask_packet = masked_demo.MaskPacket(
+            seq=11,
+            color_bgr=np.zeros((2, 3, 3), dtype=np.uint8),
+            depth_source="realsense",
+            intrinsics=masked_demo.CameraIntrinsics(100.0, 100.0, 1.0, 1.0),
+            depth_scale_m_per_unit=0.001,
+            receive_perf_s=1.0,
+            process_done_perf_s=2.0,
+            dropped_capture_frames=0,
+            timing=masked_demo.PipelineTiming(),
+            controller_mask=np.zeros((2, 3), dtype=bool),
+            object_mask=raw_mask,
+            k_color=np.eye(3, dtype=np.float32),
+            source_timestamp_s=21.0,
+        )
+        packet = masked_demo.MaskedPcdPacket(
+            seq=11,
+            controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            object_xyz_m=np.empty((0, 3), dtype=np.float32),
+            object_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            intrinsics=mask_packet.intrinsics,
+            receive_perf_s=1.0,
+            process_done_perf_s=2.0,
+            dropped_capture_frames=0,
+            dropped_seg_frames=0,
+            timing=masked_demo.PipelineTiming(),
+        )
+        result = masked_demo.PcdBuildResult(
+            packet=packet,
+            depth_m=np.ones((2, 3), dtype=np.float32),
+            mask_packet=mask_packet,
+            object_observation_mask=processed_mask,
+        )
+
+        snapshot = demo._shape_prior_snapshot_from_pcd_result(result)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        np.testing.assert_array_equal(snapshot.object_mask, raw_mask)
+        np.testing.assert_array_equal(snapshot.object_observation_mask, processed_mask)
 
     def test_after_teardown_policy_defers_worker_request_until_teardown(self) -> None:
         class CountingClient:

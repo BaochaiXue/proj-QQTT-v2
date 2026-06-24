@@ -51,6 +51,7 @@ class ShapePriorSnapshot:
     camera_to_world_c2w: np.ndarray | None
     table_z_m: float = 0.0
     table_z_above_direction: str = "negative"
+    object_observation_mask: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,13 @@ def validate_shape_prior_snapshot(snapshot: ShapePriorSnapshot) -> None:
     _as_mask("controller mask", snapshot.controller_mask, shape)
     if int(np.count_nonzero(object_mask)) <= 0:
         raise ValueError("shape-prior snapshot requires a non-empty object mask")
+    object_observation_mask = (
+        object_mask
+        if snapshot.object_observation_mask is None
+        else _as_mask("object observation mask", snapshot.object_observation_mask, shape)
+    )
+    if int(np.count_nonzero(object_observation_mask)) <= 0:
+        raise ValueError("shape-prior snapshot requires a non-empty object observation mask")
     k_color = np.asarray(snapshot.k_color, dtype=np.float32)
     if k_color.shape != (3, 3):
         raise ValueError(f"k_color must be 3x3, got {k_color.shape}")
@@ -138,6 +146,11 @@ def normalize_snapshot(snapshot: ShapePriorSnapshot) -> ShapePriorSnapshot:
         camera_to_world_c2w=np.ascontiguousarray(snapshot.camera_to_world_c2w, dtype=np.float32).reshape(4, 4),
         table_z_m=float(snapshot.table_z_m),
         table_z_above_direction=str(snapshot.table_z_above_direction),
+        object_observation_mask=(
+            _as_mask("object observation mask", snapshot.object_observation_mask, shape)
+            if snapshot.object_observation_mask is not None
+            else _as_mask("object mask", snapshot.object_mask, shape)
+        ),
     )
 
 
@@ -223,6 +236,14 @@ class ShapePriorWarmupManager:
             "shape_prior_source_time_s": snapshot.source_timestamp_s,
             "table_z_m": float(snapshot.table_z_m),
             "table_z_above_direction": str(snapshot.table_z_above_direction),
+            "object_mask_pixels": int(np.count_nonzero(snapshot.object_mask)),
+            "object_observation_mask_pixels": int(
+                np.count_nonzero(
+                    snapshot.object_observation_mask
+                    if snapshot.object_observation_mask is not None
+                    else snapshot.object_mask
+                )
+            ),
         }
 
     def maybe_submit(self, snapshot: ShapePriorSnapshot) -> bool:

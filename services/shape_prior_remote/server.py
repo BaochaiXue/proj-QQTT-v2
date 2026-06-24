@@ -204,7 +204,8 @@ def _transform_trimesh(mesh: Any, *, scale: float, rotation: np.ndarray, transla
 
 
 def _object_observation_points_world(request: ShapePriorRequest, *, max_points: int) -> np.ndarray:
-    mask = np.asarray(request.object_mask, dtype=bool)
+    observation_mask = getattr(request, "object_observation_mask", None)
+    mask = np.asarray(request.object_mask if observation_mask is None else observation_mask, dtype=bool)
     depth = np.asarray(request.depth_color_m, dtype=np.float32)
     valid = mask & np.isfinite(depth) & (depth > np.float32(0.0))
     if not np.any(valid):
@@ -225,6 +226,16 @@ def _object_observation_points_world(request: ShapePriorRequest, *, max_points: 
     homogeneous = np.concatenate([camera_points, np.ones((len(camera_points), 1), dtype=np.float32)], axis=1)
     world = (c2w @ homogeneous.T).T[:, :3]
     return _sample_points(world, max_points)
+
+
+def _request_mask_metadata(request: ShapePriorRequest) -> dict[str, int]:
+    observation_mask = getattr(request, "object_observation_mask", None)
+    if observation_mask is None:
+        observation_mask = request.object_mask
+    return {
+        "object_mask_pixels": int(np.count_nonzero(np.asarray(request.object_mask, dtype=bool))),
+        "object_observation_mask_pixels": int(np.count_nonzero(np.asarray(observation_mask, dtype=bool))),
+    }
 
 
 def _alignment_config_from_request(request: ShapePriorRequest) -> ShapeAlignmentConfig:
@@ -557,6 +568,7 @@ class ShapePriorSam3DWorker:
                     }
                 )
             metadata.update(self.startup_metadata())
+            metadata.update(_request_mask_metadata(request))
             colors = np.full((len(points), 3), DEFAULT_SHAPE_PRIOR_RENDER_RGB, dtype=np.uint8)
             metadata.update(
                 {

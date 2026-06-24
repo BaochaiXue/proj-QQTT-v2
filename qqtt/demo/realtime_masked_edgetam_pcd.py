@@ -1030,6 +1030,7 @@ class PcdBuildResult:
     mask_packet: MaskPacket
     controller_pcd_mask: np.ndarray | None = None
     object_pcd_mask: np.ndarray | None = None
+    object_observation_mask: np.ndarray | None = None
     pcd_stride: int = 1
     pcd_mask_erode_pixels: int = 0
     object_pcd_mask_erode_pixels: int = 0
@@ -6014,6 +6015,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             k_color = np.asarray(self.runtime.k_color, dtype=np.float32)
         if k_color is None:
             return None
+        object_observation_mask = self._shape_prior_observation_mask_from_pcd_result(result)
         snapshot = shape_prior_warmup.ShapePriorSnapshot(
             seq=int(mask_packet.seq),
             source_timestamp_s=mask_packet.source_timestamp_s,
@@ -6022,6 +6024,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             depth_source_internal=str(self.args.depth_source),
             rgb_u8=np.ascontiguousarray(mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8),
             object_mask=np.ascontiguousarray(mask_packet.object_mask, dtype=bool),
+            object_observation_mask=object_observation_mask,
             controller_mask=np.ascontiguousarray(mask_packet.controller_mask, dtype=bool),
             depth_color_m=np.ascontiguousarray(result.depth_m, dtype=np.float32),
             k_color=np.ascontiguousarray(k_color, dtype=np.float32).reshape(3, 3),
@@ -6035,6 +6038,26 @@ class RealtimeMaskedEdgeTamPcdDemo:
             if self.args.debug:
                 print(f"[shape-prior] snapshot skipped seq={mask_packet.seq}: {exc}", flush=True)
             return None
+
+    def _shape_prior_observation_mask_from_pcd_result(self, result: PcdBuildResult) -> np.ndarray:
+        raw = np.asarray(result.mask_packet.object_mask, dtype=bool)
+        candidate = result.object_observation_mask
+        if candidate is None:
+            candidate = result.object_pcd_mask
+        if candidate is None:
+            return np.ascontiguousarray(raw, dtype=bool)
+
+        mask = np.asarray(candidate, dtype=bool)
+        if mask.shape == raw.shape:
+            return np.ascontiguousarray(mask, dtype=bool)
+
+        stride = max(1, int(result.pcd_stride))
+        if stride > 1 and mask.shape == raw[::stride, ::stride].shape:
+            expanded = np.zeros_like(raw, dtype=bool)
+            expanded[::stride, ::stride] = mask
+            return np.ascontiguousarray(expanded, dtype=bool)
+
+        return np.ascontiguousarray(mask, dtype=bool)
 
     def _packet_with_shape_prior_state(self, packet: MaskedPcdPacket) -> MaskedPcdPacket:
         profile = self._shape_prior_profile()
@@ -7006,6 +7029,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         render_controller_yx = controller_yx
         render_object_xyz = object_xyz
         render_object_colors = object_colors
+        render_object_yx = object_yx
         filter_output: FilterOutput | None = None
         using_filtered = False
 
@@ -7113,9 +7137,15 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if bool(self.args.enable_table_z_filter):
             classes = str(self.args.table_z_filter_classes)
             if classes in {TABLE_Z_FILTER_CLASS_OBJECT, TABLE_Z_FILTER_CLASS_BOTH}:
-                render_object_xyz, render_object_colors, object_table_z_stats = apply_table_z_filter(
+                (
                     render_object_xyz,
                     render_object_colors,
+                    render_object_yx,
+                    object_table_z_stats,
+                ) = apply_table_z_filter_with_yx(
+                    render_object_xyz,
+                    render_object_colors,
+                    render_object_yx,
                     enabled=True,
                     threshold_m=float(self.args.table_z_filter_threshold_m),
                     table_z_m=TABLE_Z_M,
@@ -7123,9 +7153,15 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 )
                 table_z_filter_stats["object"] = object_table_z_stats
             if classes in {TABLE_Z_FILTER_CLASS_CONTROLLER, TABLE_Z_FILTER_CLASS_BOTH}:
-                render_controller_xyz, render_controller_colors, controller_table_z_stats = apply_table_z_filter(
+                (
                     render_controller_xyz,
                     render_controller_colors,
+                    render_controller_yx,
+                    controller_table_z_stats,
+                ) = apply_table_z_filter_with_yx(
+                    render_controller_xyz,
+                    render_controller_colors,
+                    render_controller_yx,
                     enabled=True,
                     threshold_m=float(self.args.table_z_filter_threshold_m),
                     table_z_m=TABLE_Z_M,
@@ -7186,6 +7222,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
             mask_packet=mask_packet,
             controller_pcd_mask=controller_mask,
             object_pcd_mask=object_mask,
+            object_observation_mask=_mask_from_yx(
+                tuple(mask_packet.object_mask.shape[:2]),
+                render_object_yx,
+            ),
             pcd_stride=stride,
             pcd_mask_erode_pixels=pcd_mask_erode_pixels,
             object_pcd_mask_erode_pixels=object_erode_pixels,
