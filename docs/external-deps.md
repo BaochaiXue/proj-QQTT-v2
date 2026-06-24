@@ -38,6 +38,8 @@ for the single-camera branch.
   - remote resident worker for `--shape-prior-execution remote-worker`
   - single-view alignment of SAM3D canonical geometry to the first valid
     same-seq RGB-D + EdgeTAM object mask snapshot
+  - object-mask crop and x4 image upscaling before SAM3D inference, matching
+    `data_process_sam3d/image_upscale.py`
   - SAM3D Objects single-view is the only supported shape-prior backend in this
     branch
 - Default external SAM3D Objects checkout:
@@ -50,6 +52,7 @@ for the single-camera branch.
 python services/shape_prior_remote/server.py \
   --bind tcp://0.0.0.0:7100 \
   --sam3d-root /home/xinjie/external/sam-3d-objects \
+  --upscale-category "stuffed animal" \
   --futurephystwin-root /home/xinjie/FuturePhysTwin
 ```
 
@@ -61,10 +64,11 @@ python services/shape_prior_remote/server.py \
   --echo-observation
 ```
 
-SAM3D, PyTorch3D, Kaolin, checkpoints, generated route videos, and model
-weights remain external and must not be vendored into this repo. The Demo 3.2
-process talks to the worker over the lightweight `services/shape_prior_remote`
-protocol; it does not import SAM3D heavy dependencies.
+SAM3D, Stable Diffusion x4 upscaler, PyTorch3D, Kaolin, checkpoints, generated
+route videos, and model weights remain external and must not be vendored into
+this repo. The Demo 3.2 process talks to the worker over the lightweight
+`services/shape_prior_remote` protocol; it does not import SAM3D or upscaler
+heavy dependencies.
 
 ## PhysTwin-Compatible Tracking Products
 

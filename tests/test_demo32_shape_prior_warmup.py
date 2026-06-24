@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 import numpy as np
+from PIL import Image
 
 from qqtt.demo import realtime_masked_edgetam_pcd as masked_demo
 from qqtt.demo import single_demo_v3_runtime as runtime
@@ -34,6 +35,7 @@ from services.shape_prior_remote.protocol import (
     parse_shape_prior_request_parts,
     parse_shape_prior_response_parts,
 )
+from services.shape_prior_remote import server as shape_prior_server
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -297,6 +299,64 @@ class ShapePriorProtocolAndSnapshotTest(unittest.TestCase):
         self.assertEqual(manager.status, "failed")
         self.assertIn("no worker", manager.profile()["shape_prior_error"])
         self.assertIsNone(manager.ready_result())
+
+
+class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
+    def test_sam3d_receives_upscaled_object_crop_and_resized_mask(self) -> None:
+        rgb = np.zeros((12, 16, 3), dtype=np.uint8)
+        rgb[:, :, 0] = np.arange(16, dtype=np.uint8)[None, :]
+        rgb[:, :, 1] = np.arange(12, dtype=np.uint8)[:, None]
+        object_mask = np.zeros((12, 16), dtype=bool)
+        object_mask[3:9, 5:11] = True
+        request = shape_prior_server.ShapePriorRequest(
+            metadata={"request_id": "req", "seq": 0},
+            rgb_u8=rgb,
+            object_mask=object_mask,
+            controller_mask=np.zeros_like(object_mask),
+            depth_color_m=np.ones((12, 16), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+        calls: dict[str, object] = {}
+
+        class FakeUpscaler:
+            def __call__(self, *, prompt: str, image: Image.Image):
+                calls["prompt"] = prompt
+                calls["crop_size"] = image.size
+                upscaled = image.resize((image.width * 4, image.height * 4), Image.Resampling.NEAREST)
+                return SimpleNamespace(images=[upscaled])
+
+        class FakePipeline:
+            def run(self, image_rgb, mask_u8, **kwargs):
+                calls["sam3d_image_shape"] = tuple(image_rgb.shape)
+                calls["sam3d_mask_shape"] = tuple(mask_u8.shape)
+                calls["sam3d_mask_pixels"] = int(np.count_nonzero(mask_u8))
+                calls["sam3d_kwargs"] = dict(kwargs)
+                return {"glb": SimpleNamespace(vertices=np.eye(3, dtype=np.float32))}
+
+        worker = shape_prior_server.ShapePriorSam3DWorker(
+            sam3d_root=Path("/does/not/matter"),
+            config=None,
+            device="cuda:0",
+            seed=42,
+            max_points=128,
+            upscale_category="stuffed animal",
+        )
+        worker._load_upscaler = lambda: FakeUpscaler()  # type: ignore[method-assign]
+        worker._load_inference = lambda: SimpleNamespace(_pipeline=FakePipeline())  # type: ignore[method-assign]
+
+        canonical, metadata = worker._canonical_points_from_sam3d(request)
+
+        self.assertEqual(calls["prompt"], "Hand manipulates a stuffed animal.")
+        self.assertNotEqual(calls["sam3d_image_shape"], tuple(rgb.shape))
+        self.assertEqual(calls["sam3d_image_shape"][:2], calls["sam3d_mask_shape"])
+        self.assertEqual(calls["sam3d_image_shape"][0], calls["crop_size"][1] * 4)
+        self.assertEqual(calls["sam3d_image_shape"][1], calls["crop_size"][0] * 4)
+        self.assertGreater(calls["sam3d_mask_pixels"], 0)
+        self.assertEqual(canonical.shape, (3, 3))
+        self.assertGreaterEqual(metadata["image_upscale_ms"], 0.0)
+        self.assertGreaterEqual(metadata["mask_refinement_ms"], 0.0)
+        self.assertEqual(metadata["sam3d_input_shape"], list(calls["sam3d_image_shape"]))
 
 
 class RuntimeShapePriorIntegrationTest(unittest.TestCase):

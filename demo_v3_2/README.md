@@ -121,10 +121,13 @@ depth without concurrent TensorRT context use.
 Demo 3.2 enables SAM3D Objects single-view shape-prior warmup by default.
 Warmup is diagnostic only: the first valid same-seq RGB-D + EdgeTAM object mask is copied into a
 `ShapePriorSnapshot`, the live/fake-live pipeline continues, and a remote worker
-returns an aligned gray canonical reference layer when it is ready. Shape prior
-does not change EdgeTAM masks, TAPNext++ queries/tracks, query identity,
-observed PCD, table-world filtering, or the strict tracking product. No
-alternate multi-view SAM shape-prior backend is supported in this branch.
+first crops the object mask, runs the same x4 upscaler prompt style as
+`data_process_sam3d/image_upscale.py`, and then sends the upscaled crop and
+resized object mask to SAM3D. The worker returns an aligned gray canonical
+reference layer when it is ready. Shape prior does not change EdgeTAM masks,
+TAPNext++ queries/tracks, query identity, observed PCD, table-world filtering,
+or the strict tracking product. No alternate multi-view SAM shape-prior backend
+is supported in this branch.
 
 The default worker endpoint is `tcp://127.0.0.1:7100`. Start the worker on the
 SAM3D workstation with the external model checkout:
@@ -134,6 +137,7 @@ conda run -n <sam3d-env> --no-capture-output \
   python services/shape_prior_remote/server.py \
   --bind tcp://0.0.0.0:7100 \
   --sam3d-root /home/xinjie/external/sam-3d-objects \
+  --upscale-category "stuffed animal" \
   --futurephystwin-root /home/xinjie/FuturePhysTwin
 ```
 

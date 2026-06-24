@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 import numpy as np
+from PIL import Image
 
 
 def _resolve_repo_root() -> Path:
@@ -45,6 +46,7 @@ from services.shape_prior_remote.protocol import (  # noqa: E402
 
 DEFAULT_SAM3D_ROOT = Path("/home/xinjie/external/sam-3d-objects")
 DEFAULT_FUTUREPHYSTWIN_ROOT = Path("/home/xinjie/FuturePhysTwin")
+DEFAULT_UPSCALE_CATEGORY = "stuffed animal"
 
 
 def _elapsed_ms(start_s: float, end_s: float | None = None) -> float:
@@ -95,6 +97,27 @@ def _object_observation_points_world(request: ShapePriorRequest, *, max_points: 
     return _sample_points(world, max_points)
 
 
+def _object_crop_box(mask: np.ndarray) -> tuple[int, int, int, int]:
+    coords = np.argwhere(np.asarray(mask, dtype=bool))
+    if coords.size == 0:
+        raise ValueError("shape-prior object mask is empty")
+    y0 = int(np.min(coords[:, 0]))
+    y1 = int(np.max(coords[:, 0]))
+    x0 = int(np.min(coords[:, 1]))
+    x1 = int(np.max(coords[:, 1]))
+    center_x = (x0 + x1) / 2.0
+    center_y = (y0 + y1) / 2.0
+    size = max(x1 - x0, y1 - y0)
+    size = max(1, int(size * 1.2))
+    half = size // 2
+    return (
+        int(center_x - half),
+        int(center_y - half),
+        int(center_x + half),
+        int(center_y + half),
+    )
+
+
 class ShapePriorSam3DWorker:
     def __init__(
         self,
@@ -104,6 +127,7 @@ class ShapePriorSam3DWorker:
         device: str,
         seed: int,
         max_points: int,
+        upscale_category: str = DEFAULT_UPSCALE_CATEGORY,
         echo_observation: bool = False,
     ) -> None:
         self.sam3d_root = Path(sam3d_root).expanduser()
@@ -111,9 +135,24 @@ class ShapePriorSam3DWorker:
         self.device = str(device)
         self.seed = int(seed)
         self.max_points = int(max_points)
+        self.upscale_category = str(upscale_category)
         self.echo_observation = bool(echo_observation)
         self._inference: Any | None = None
+        self._upscaler: Any | None = None
         self._model_load_ms = 0.0
+
+    def _load_upscaler(self) -> Any:
+        if self._upscaler is not None:
+            return self._upscaler
+        from diffusers import StableDiffusionUpscalePipeline
+        import torch
+
+        pipeline = StableDiffusionUpscalePipeline.from_pretrained(
+            "stabilityai/stable-diffusion-x4-upscaler",
+            torch_dtype=torch.float16,
+        )
+        self._upscaler = pipeline.to(self.device)
+        return self._upscaler
 
     def _load_inference(self) -> Any:
         if self._inference is not None:
@@ -135,12 +174,45 @@ class ShapePriorSam3DWorker:
         self._model_load_ms = _elapsed_ms(start_s)
         return self._inference
 
+    def _upscaled_sam3d_input(
+        self,
+        request: ShapePriorRequest,
+    ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+        upscale_start_s = time.perf_counter()
+        rgb = np.ascontiguousarray(request.rgb_u8, dtype=np.uint8)
+        object_mask = np.asarray(request.object_mask, dtype=bool)
+        crop_box = _object_crop_box(object_mask)
+        crop_rgb = Image.fromarray(rgb).crop(crop_box)
+        crop_mask_u8 = (object_mask.astype(np.uint8) * 255)
+        crop_mask = Image.fromarray(crop_mask_u8).crop(crop_box)
+        prompt = f"Hand manipulates a {self.upscale_category}."
+        upscaled = self._load_upscaler()(prompt=prompt, image=crop_rgb).images[0]
+        upscaled_rgb = np.ascontiguousarray(np.asarray(upscaled.convert("RGB"), dtype=np.uint8))
+        image_upscale_ms = _elapsed_ms(upscale_start_s)
+
+        mask_start_s = time.perf_counter()
+        resized_mask = crop_mask.resize(upscaled.size, Image.Resampling.NEAREST)
+        mask_u8 = (np.asarray(resized_mask, dtype=np.uint8) > 0).astype(np.uint8) * 255
+        mask_refinement_ms = _elapsed_ms(mask_start_s)
+        if int(np.count_nonzero(mask_u8)) <= 0:
+            raise RuntimeError("upscaled shape-prior mask is empty")
+        return upscaled_rgb, np.ascontiguousarray(mask_u8, dtype=np.uint8), {
+            "image_upscale_ms": image_upscale_ms,
+            "mask_refinement_ms": mask_refinement_ms,
+            "shape_prior_upscale_prompt": prompt,
+            "sam3d_original_rgb_shape": [int(v) for v in rgb.shape],
+            "sam3d_crop_box_xyxy": [int(v) for v in crop_box],
+            "sam3d_crop_shape": [int(crop_rgb.height), int(crop_rgb.width), 3],
+            "sam3d_input_shape": [int(v) for v in upscaled_rgb.shape],
+            "sam3d_input_mask_pixels": int(np.count_nonzero(mask_u8)),
+        }
+
     def _canonical_points_from_sam3d(self, request: ShapePriorRequest) -> tuple[np.ndarray, dict[str, Any]]:
+        image_rgb, mask_u8, prep_stats = self._upscaled_sam3d_input(request)
         infer = self._load_inference()
         start_s = time.perf_counter()
-        mask_u8 = (np.asarray(request.object_mask, dtype=np.uint8) > 0).astype(np.uint8) * 255
         outputs = infer._pipeline.run(  # type: ignore[attr-defined]
-            np.ascontiguousarray(request.rgb_u8, dtype=np.uint8),
+            image_rgb,
             mask_u8,
             seed=self.seed,
             with_mesh_postprocess=True,
@@ -164,11 +236,13 @@ class ShapePriorSam3DWorker:
         canonical = _sample_points(np.asarray(vertices, dtype=np.float32).reshape(-1, 3), self.max_points)
         if len(canonical) < 3:
             raise RuntimeError("SAM3D canonical mesh has fewer than 3 finite vertices")
-        return canonical, {
+        stats = {
             "sam3d_model_load_ms": float(self._model_load_ms),
             "sam3d_inference_ms": _elapsed_ms(start_s),
             "geometry_export_ms": 0.0,
         }
+        stats.update(prep_stats)
+        return canonical, stats
 
     def handle(self, request: ShapePriorRequest) -> list[bytes]:
         total_start_s = time.perf_counter()
@@ -247,6 +321,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-points", type=int, default=60000)
     parser.add_argument(
+        "--upscale-category",
+        default=DEFAULT_UPSCALE_CATEGORY,
+        help="Category text used in the data_process_sam3d x4 upscaler prompt.",
+    )
+    parser.add_argument(
         "--echo-observation",
         action="store_true",
         help="Protocol/debug mode: return first-frame object observation PCD without loading SAM3D.",
@@ -263,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
         device=str(args.device),
         seed=int(args.seed),
         max_points=int(args.max_points),
+        upscale_category=str(args.upscale_category),
         echo_observation=bool(args.echo_observation),
     )
     import zmq
