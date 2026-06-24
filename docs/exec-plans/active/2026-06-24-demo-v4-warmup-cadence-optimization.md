@@ -9,7 +9,8 @@ quality-consistent while:
   `READY` chunk with shape prior, targets 60 seconds or less;
 - fake-live/live camera to `final_data.pkl` maintains 5 FPS chunk cadence;
 - warmup GPU routing and realtime GPU routing are independently configurable;
-- dual-GPU warmup plus single-GPU realtime is supported as an explicit combo.
+- dual-GPU warmup plus single-GPU realtime is the default path, while
+  same-card single-GPU warmup remains an explicit fallback.
 
 The primary acceptance metric is cold shape-prior generation without reusing
 old surface/interior point caches. Cache reuse may be reported separately for
@@ -34,6 +35,8 @@ repeat experiments, but it does not count as the main 60-second proof.
 - [x] Split Demo v4 routing into `--realtime-gpu-mode` and
   `--warmup-gpu-mode`, while keeping `--gpu-mode` as a realtime compatibility
   alias.
+- [x] Make the passing dual-warmup plus single-realtime route the default
+  (`realtime_gpu_mode=single`, `warmup_gpu_mode=dual`).
 - [x] Add manifest quality fields for object/controller counts, shape-prior
   presence/target counts, finiteness, and zero-depth first-frame counts.
 - [x] Add READY-visible publish telemetry:

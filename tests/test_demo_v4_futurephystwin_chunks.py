@@ -123,12 +123,17 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         self.assertEqual(args.depth_backend, "native-realsense")
         self.assertIsNone(args.max_chunks)
         self.assertEqual(args.gpu_mode, "single")
+        self.assertIsNone(args.realtime_gpu_mode)
+        self.assertEqual(args.warmup_gpu_mode, "dual")
         self.assertIsNone(args.demo32_cuda_visible_devices)
         self.assertEqual(resolve_demo32_cuda_visible_devices(args), "0")
         self.assertEqual(args.demo32_device, "cuda")
         self.assertEqual(args.demo32_tracker_device, "cuda")
         self.assertEqual(args.demo32_dtype, "bfloat16")
         self.assertEqual(args.shape_prior_start_policy, "async-after-first-mask-depth-pair")
+        self.assertEqual(_contract(args)["realtime_gpu_mode"], "single")
+        self.assertEqual(_contract(args)["warmup_gpu_mode"], "dual")
+        self.assertEqual(_contract(args)["shape_prior_device"], "cuda:1")
         self.assertTrue(args.mask_radius_outlier_filter)
         self.assertEqual(args.mask_radius_outlier_radius_m, 0.01)
         self.assertEqual(args.mask_radius_outlier_nb_points, 40)
@@ -140,6 +145,7 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             profile_json=Path("result/demo_v4/shape_profile.json"),
             chunk_frame_count=resolve_chunk_frame_count(args),
         )
+        self.assertEqual(command[command.index("--shape-prior-device") + 1], "cuda:1")
         self.assertEqual(command[command.index("--duration-s") + 1], "0.000")
 
     def test_demo_v4_chunk_seconds_controls_frame_count_and_capture_duration(self) -> None:

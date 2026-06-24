@@ -36,7 +36,9 @@ DEFAULT_CAPTURE_EXTRA_SECONDS = 10.0
 DEFAULT_SHAPE_PRIOR_ENDPOINT = "tcp://127.0.0.1:7100"
 DEFAULT_MASK_RADIUS_OUTLIER_RADIUS_M = 0.01
 DEFAULT_MASK_RADIUS_OUTLIER_NB_POINTS = 40
-DEFAULT_GPU_MODE = "single"
+DEFAULT_REALTIME_GPU_MODE = "single"
+DEFAULT_WARMUP_GPU_MODE = "dual"
+DEFAULT_GPU_MODE = DEFAULT_REALTIME_GPU_MODE
 GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES = {
     "single": "0",
     "dual": "1",
@@ -93,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--gpu-mode",
         choices=tuple(GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES),
-        default=DEFAULT_GPU_MODE,
+        default=DEFAULT_REALTIME_GPU_MODE,
         help=(
             "Backward-compatible realtime GPU routing preset. Prefer "
             "--realtime-gpu-mode for new experiments."
@@ -108,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--warmup-gpu-mode",
         choices=tuple(GPU_MODE_SHAPE_PRIOR_DEVICE),
-        default=DEFAULT_GPU_MODE,
+        default=DEFAULT_WARMUP_GPU_MODE,
         help="GPU routing preset for SAM3D shape-prior warmup device selection.",
     )
     parser.add_argument(
@@ -295,7 +297,7 @@ def resolve_demo32_source_replay_fps(args: argparse.Namespace) -> float:
 def resolve_realtime_gpu_mode(args: argparse.Namespace) -> str:
     value = getattr(args, "realtime_gpu_mode", None)
     if value is None:
-        value = getattr(args, "gpu_mode", DEFAULT_GPU_MODE)
+        value = getattr(args, "gpu_mode", DEFAULT_REALTIME_GPU_MODE)
     value = str(value)
     if value not in GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES:
         raise ValueError(f"unsupported realtime gpu mode: {value!r}")
@@ -303,7 +305,7 @@ def resolve_realtime_gpu_mode(args: argparse.Namespace) -> str:
 
 
 def resolve_warmup_gpu_mode(args: argparse.Namespace) -> str:
-    value = str(getattr(args, "warmup_gpu_mode", DEFAULT_GPU_MODE))
+    value = str(getattr(args, "warmup_gpu_mode", DEFAULT_WARMUP_GPU_MODE))
     if value not in GPU_MODE_SHAPE_PRIOR_DEVICE:
         raise ValueError(f"unsupported warmup gpu mode: {value!r}")
     return value

@@ -32,9 +32,9 @@ chunk_frame_count=25
 max_chunks=None
 gpu_mode=single
 realtime_gpu_mode=single
-warmup_gpu_mode=single
+warmup_gpu_mode=dual
 demo32_cuda_visible_devices=0
-shape_prior_device=cuda:0
+shape_prior_device=cuda:1
 demo32_device=cuda
 demo32_tracker_device=cuda
 shape_prior_warmup=true
@@ -168,19 +168,20 @@ conda run -n demo_2_max --no-capture-output \
 For a short debug run, add `--max-chunks <N>`. Omit `--max-chunks` for the
 default full fake-live recording pass.
 
-GPU routing is explicit and split by role:
+GPU routing is explicit and split by role. The default production route is
+dual-GPU warmup plus single-GPU realtime:
 
 ```bash
-# Default: Demo 3.2 realtime and SAM3D warmup both resolve to GPU0.
-python demo_v4/realtime_futurephystwin_chunks.py \
-  --realtime-gpu-mode single \
-  --warmup-gpu-mode single
-
-# Dual warmup + single realtime: run Demo 3.2 with CUDA_VISIBLE_DEVICES=0
-# and resolve shape-prior device to cuda:1.
+# Default: run Demo 3.2 with CUDA_VISIBLE_DEVICES=0 and resolve
+# the SAM3D shape-prior device to cuda:1.
 python demo_v4/realtime_futurephystwin_chunks.py \
   --realtime-gpu-mode single \
   --warmup-gpu-mode dual
+
+# Single-GPU fallback: run Demo 3.2 realtime and SAM3D warmup on GPU0.
+python demo_v4/realtime_futurephystwin_chunks.py \
+  --realtime-gpu-mode single \
+  --warmup-gpu-mode single
 
 # Realtime isolation: run Demo 3.2 inside CUDA_VISIBLE_DEVICES=1.
 python demo_v4/realtime_futurephystwin_chunks.py \
@@ -255,9 +256,11 @@ Demo v4 supports independent warmup and realtime GPU routing:
   `CUDA_VISIBLE_DEVICES=0`, logical `--device cuda`, and logical
   `--tracker-device cuda`.
 - `--realtime-gpu-mode dual` runs Demo 3.2 with `CUDA_VISIBLE_DEVICES=1`.
-- `--warmup-gpu-mode single` resolves `--shape-prior-device cuda:0`.
-- `--warmup-gpu-mode dual` resolves `--shape-prior-device cuda:1`, supporting
-  dual-GPU warmup plus single-GPU realtime camera/fake-camera finalization.
+- `--warmup-gpu-mode dual` is the default and resolves
+  `--shape-prior-device cuda:1`, supporting dual-GPU warmup plus single-GPU
+  realtime camera/fake-camera finalization without extra flags.
+- `--warmup-gpu-mode single` resolves `--shape-prior-device cuda:0` for
+  same-card fallback/debug runs.
 - `--gpu-mode` remains a compatibility alias for realtime routing.
 
 ## Verified 2026-06-24 Optimization Run
