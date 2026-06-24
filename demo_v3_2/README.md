@@ -130,6 +130,12 @@ TAPNext++ queries/tracks, query identity, observed PCD, table-world filtering,
 or the strict tracking product. No alternate multi-view SAM shape-prior backend
 is supported in this branch.
 
+The worker treats SAM3D vertices and RGB-D observation points as unordered point
+sets. It does not assume equal array lengths imply point correspondences. The
+single-view aligner builds PCA orientation hypotheses, scores them with
+nearest-neighbor Chamfer/coverage metrics, and refines the selected similarity
+with nearest-neighbor ICP before table-Z validation.
+
 The default worker endpoint is `tcp://127.0.0.1:7100`. Start the worker on the
 SAM3D workstation with the external model checkout:
 

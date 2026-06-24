@@ -1342,6 +1342,47 @@ class SingleViewShapeAlignmentTest(unittest.TestCase):
         np.testing.assert_allclose(result.aligned_points_m, observation, atol=1e-5)
         self.assertLessEqual(result.validation["centroid_drift_m"], 1e-5)
 
+    def test_align_canonical_shape_to_observation_handles_unordered_equal_size_points(self) -> None:
+        from scipy.spatial import cKDTree
+
+        rng = np.random.default_rng(42)
+        canonical = rng.normal(size=(96, 3)).astype(np.float32)
+        canonical *= np.array([0.018, 0.010, 0.006], dtype=np.float32)
+        canonical[:, 0] += np.linspace(-0.012, 0.018, len(canonical), dtype=np.float32)
+        canonical[:, 2] -= np.float32(0.08)
+
+        angle = np.deg2rad(37.0)
+        rotation_z = np.array(
+            [
+                [np.cos(angle), -np.sin(angle), 0.0],
+                [np.sin(angle), np.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        scale = np.float32(1.7)
+        translation = np.array([0.12, -0.04, -0.03], dtype=np.float32)
+        observation = scale * (canonical @ rotation_z.T) + translation
+        observation = observation[rng.permutation(len(observation))]
+
+        result = align_canonical_shape_to_observation(
+            canonical,
+            observation,
+            config=ShapeAlignmentConfig(
+                max_centroid_drift_m=1e-5,
+                max_ground_z_fraction=1.0,
+            ),
+        )
+
+        aligned_tree = cKDTree(result.aligned_points_m)
+        observation_tree = cKDTree(observation)
+        aligned_to_observation, _ = observation_tree.query(result.aligned_points_m, k=1)
+        observation_to_aligned, _ = aligned_tree.query(observation, k=1)
+        self.assertTrue(result.valid, result.validation)
+        self.assertLess(float(np.percentile(aligned_to_observation, 95)), 1e-4)
+        self.assertLess(float(np.percentile(observation_to_aligned, 95)), 1e-4)
+        self.assertAlmostEqual(result.scale, float(scale), places=4)
+
     def test_alignment_invalid_when_ground_fraction_is_too_high(self) -> None:
         canonical = np.array(
             [[0.0, 0.0, 0.0], [0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.01, 0.01, 0.0]],
