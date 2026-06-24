@@ -1,9 +1,9 @@
 # Demo 3.2: Single-Camera Dual-Depth Masked PCD
 
 Demo 3.2 is the single-camera masked point-cloud runtime with a per-run depth
-backend. The default `--depth-backend ir-ffs` path runs Fast-FoundationStereo
-from the D455 IR stereo pair. The optional `--depth-backend native-realsense`
-path uses D455 native depth aligned to color. Both paths feed the same
+backend. The default `--depth-backend native-realsense` path uses D455 native
+depth aligned to color. The optional `--depth-backend ir-ffs` path runs
+Fast-FoundationStereo from the D455 IR stereo pair. Both paths feed the same
 color-aligned float depth contract into EdgeTAM, TAPNext++, PCD filtering,
 table-world transforms, headless capture, panel rendering, and PhysTwin-like
 strict product generation.
@@ -14,16 +14,17 @@ Dry-run:
 python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py --dry-run
 ```
 
-Choose the depth backend for each run:
+The default run uses native RealSense depth:
+
+```bash
+python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py
+```
+
+Choose IR-FFS explicitly when comparing against stereo depth:
 
 ```bash
 python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
   --depth-backend ir-ffs
-```
-
-```bash
-python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
-  --depth-backend native-realsense
 ```
 
 Demo 3.2 uses repo-root `table_calibrate.pkl` by default. If that file or its
@@ -57,11 +58,11 @@ conda run -n demo_2_max --no-capture-output \
   --replay-fps 5
 ```
 
-For PCD-only inspection, keep the full FFS + EdgeTAM + TAPNext++ tracking
-pipeline running, but hide the query markers in the render. This makes the
-displayed FPS reflect the same full pipeline cost as tracking mode. Both PCD
-inspection and tracking views default object and controller rendering filters
-to `none`, with table-Z deletion still enabled by default. Use
+For PCD-only inspection, keep the full selected-depth + EdgeTAM + TAPNext++
+tracking pipeline running, but hide the query markers in the render. This makes
+the displayed FPS reflect the same full pipeline cost as tracking mode. Both
+PCD inspection and tracking views default object and controller rendering
+filters to `none`, with table-Z deletion still enabled by default. Use
 `--pcd-filter-preset {original,pt,enhanced-pt}` to override the visual-mode
 default for both object and controller; the default is `original`. The same
 preset drives rendered/saved PCD and TAPNext++ initialization: query points are
@@ -86,8 +87,8 @@ conda run -n demo_2_max --no-capture-output \
   --replay-fps 5
 ```
 
-If the default TensorRT engine is not present in this checkout, pass the local
-engine explicitly:
+When using `--depth-backend ir-ffs`, pass the local TensorRT engine explicitly
+if the default engine is not present in this checkout:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
@@ -156,7 +157,6 @@ Disable warmup explicitly when measuring a baseline:
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
   --input-source fake-live \
-  --depth-backend ir-ffs \
   --no-shape-prior-warmup
 ```
 
@@ -166,23 +166,22 @@ Record detailed warmup timing:
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
   --input-source fake-live \
-  --depth-backend ir-ffs \
   --replay-fps 5 \
   --duration-s 60 \
-  --shape-prior-profile-json result/bench/fake_ir_ffs_warm.json
+  --shape-prior-profile-json result/bench/fake_native_warm.json
 ```
 
-Native depth uses the same snapshot/worker protocol and only changes the depth
-used for single-view alignment:
+IR-FFS uses the same snapshot/worker protocol and only changes the depth used
+for single-view alignment:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
   --input-source fake-live \
-  --depth-backend native-realsense \
+  --depth-backend ir-ffs \
   --replay-fps 5 \
   --duration-s 60 \
-  --shape-prior-profile-json result/bench/fake_native_warm.json
+  --shape-prior-profile-json result/bench/fake_ir_ffs_warm.json
 ```
 
 Default scheduling is

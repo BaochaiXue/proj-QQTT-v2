@@ -3,8 +3,10 @@
 ## Goal
 
 Expose a Demo 3.2 user-facing depth backend switch so each run can choose
-between the current IR stereo FFS path and native RealSense color-aligned depth,
-while preserving IR-FFS as the default behavior.
+between the current IR stereo FFS path and native RealSense color-aligned depth.
+This plan originally preserved IR-FFS as the default; that default is superseded
+by `2026-06-24-demo32-native-realsense-default.md`, which makes
+`native-realsense` the Demo 3.2 default.
 
 ## Guardrails
 

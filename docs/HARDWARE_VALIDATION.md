@@ -72,7 +72,19 @@ conda run -n demo_2_max --no-capture-output \
   --echo-observation
 ```
 
-- Run fake-live IR-FFS with the default async policy:
+- Run fake-live with the default native RealSense backend and default async
+  policy:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
+  --input-source fake-live \
+  --replay-fps 5 \
+  --duration-s 60 \
+  --shape-prior-profile-json result/bench/fake_native_warm.json
+```
+
+- Run fake-live IR-FFS explicitly with the same worker:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
@@ -84,20 +96,8 @@ conda run -n demo_2_max --no-capture-output \
   --shape-prior-profile-json result/bench/fake_ir_ffs_warm.json
 ```
 
-- Run fake-live native depth with the same worker:
-
-```bash
-conda run -n demo_2_max --no-capture-output \
-  python demo_v3_2/realtime_single_camera_ffs_masked_pcd.py \
-  --input-source fake-live \
-  --depth-backend native-realsense \
-  --replay-fps 5 \
-  --duration-s 60 \
-  --shape-prior-profile-json result/bench/fake_native_warm.json
-```
-
 - For real-live validation, remove `--input-source fake-live` and repeat for
-  both `--depth-backend ir-ffs` and `--depth-backend native-realsense`.
+  the native default plus explicit `--depth-backend ir-ffs`.
 - For each command, run a baseline with `--no-shape-prior-warmup` and the same
   input/depth settings.
 - Repeat the matrix with

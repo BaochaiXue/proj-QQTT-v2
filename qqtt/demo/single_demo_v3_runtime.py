@@ -29,6 +29,7 @@ DEPTH_SOURCE_FFS = "ffs"
 DEMO32_DEPTH_BACKEND_IR_FFS = "ir-ffs"
 DEMO32_DEPTH_BACKEND_NATIVE_REALSENSE = "native-realsense"
 DEMO32_DEPTH_BACKENDS = (DEMO32_DEPTH_BACKEND_IR_FFS, DEMO32_DEPTH_BACKEND_NATIVE_REALSENSE)
+DEMO32_DEFAULT_DEPTH_BACKEND = DEMO32_DEPTH_BACKEND_NATIVE_REALSENSE
 DEMO32_DEPTH_BACKEND_TO_INTERNAL_SOURCE = {
     DEMO32_DEPTH_BACKEND_IR_FFS: DEPTH_SOURCE_FFS,
     DEMO32_DEPTH_BACKEND_NATIVE_REALSENSE: DEPTH_SOURCE_REALSENSE,
@@ -103,7 +104,7 @@ def default_fake_live_case_for_version(version: str) -> Path:
 def resolve_depth_backend(args: argparse.Namespace, version: str) -> str:
     resolved_version = normalize_demo_version(version)
     if resolved_version == DEMO_VERSION_3_2:
-        backend = str(getattr(args, "depth_backend", DEMO32_DEPTH_BACKEND_IR_FFS))
+        backend = str(getattr(args, "depth_backend", DEMO32_DEFAULT_DEPTH_BACKEND))
         if backend not in DEMO32_DEPTH_BACKENDS:
             raise ValueError(f"--depth-backend must be one of {DEMO32_DEPTH_BACKENDS}")
         return backend
@@ -396,8 +397,11 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         parser.add_argument(
             "--depth-backend",
             choices=DEMO32_DEPTH_BACKENDS,
-            default=DEMO32_DEPTH_BACKEND_IR_FFS,
-            help="Demo 3.2 depth backend. ir-ffs uses D455 IR stereo FFS; native-realsense uses D455 native depth aligned to color.",
+            default=DEMO32_DEFAULT_DEPTH_BACKEND,
+            help=(
+                "Demo 3.2 depth backend. Defaults to native-realsense, which uses D455 native depth "
+                "aligned to color; ir-ffs uses D455 IR stereo FFS."
+            ),
         )
         parser.add_argument(
             "--shape-prior-warmup",
@@ -1619,6 +1623,7 @@ __all__ = [
     "DEMO_VERSION_3_3",
     "DEMO32_DEPTH_BACKEND_IR_FFS",
     "DEMO32_DEPTH_BACKEND_NATIVE_REALSENSE",
+    "DEMO32_DEFAULT_DEPTH_BACKEND",
     "INPUT_SOURCE_LIVE",
     "INPUT_SOURCE_FAKE_LIVE",
     "INPUT_SOURCE_RECORDING",

@@ -127,27 +127,47 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["edgetam_tracking_identities"], ["controller", "object"])
         self.assert_legacy_fields_removed(contract)
 
-    def test_ffs_contract_is_single_camera_ffs_batch_one(self) -> None:
+    def test_demo32_default_contract_is_native_realsense(self) -> None:
         args = self._parse(runtime.DEMO_VERSION_3_2, ["--dry-run"])
+        runtime.validate_args(args)
         contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
 
         self.assertEqual(contract["demo"], "single-demo3.2")
         self.assertEqual(contract["camera_count"], 1)
+        self.assertEqual(args.depth_backend, "native-realsense")
+        self.assertEqual(args.depth_source, "realsense")
+        self.assertEqual(contract["depth_backend"], "native-realsense")
+        self.assertEqual(contract["depth_source"], "realsense")
+        self.assertEqual(contract["depth_source_internal"], "realsense")
+        self.assertEqual(contract["depth_pipeline"], "realsense_native_color_aligned")
+        self.assertFalse(contract["uses_ffs"])
+        self.assertIsNone(contract["ffs_trt_batch_size"])
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
+        self.assert_legacy_fields_removed(contract)
+        self.assertEqual(_option_value(delegate, "--depth-source"), "realsense")
+        self.assertEqual(_option_value(delegate, "--depth-backend-label"), "native-realsense")
+        self.assertNotIn("--ffs-repo", delegate)
+        self.assertNotIn("--ffs-trt-model-dir", delegate)
+
+    def test_demo32_ir_ffs_backend_contract_and_delegate(self) -> None:
+        args = self._parse(runtime.DEMO_VERSION_3_2, ["--dry-run", "--depth-backend", "ir-ffs"])
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
+
         self.assertEqual(args.depth_backend, "ir-ffs")
+        self.assertEqual(args.depth_source, "ffs")
         self.assertEqual(contract["depth_backend"], "ir-ffs")
         self.assertEqual(contract["depth_source"], "ffs")
         self.assertEqual(contract["depth_source_internal"], "ffs")
         self.assertEqual(contract["depth_pipeline"], "ffs_tensorrt_batch1_ir_stereo")
         self.assertTrue(contract["uses_ffs"])
         self.assertEqual(contract["ffs_trt_batch_size"], 1)
-        self.assertEqual(contract["tracker_backend"], "tapnextpp")
-        self.assert_legacy_fields_removed(contract)
-
-        delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
         self.assertIn("--serial", delegate)
         self.assertIn("s0", delegate)
-        self.assertIn("--depth-source", delegate)
-        self.assertIn("ffs", delegate)
+        self.assertEqual(_option_value(delegate, "--depth-source"), "ffs")
+        self.assertEqual(_option_value(delegate, "--depth-backend-label"), "ir-ffs")
         self.assertIn("--controller-prompt", delegate)
         self.assertIn("towel", delegate)
         self.assertIn("--tracker-backend", delegate)
@@ -388,13 +408,22 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 realsense_parser.parse_args(["--ffs-repo", "/tmp/ffs"])
 
-        ffs_parser = runtime.build_arg_parser(demo_version=runtime.DEMO_VERSION_3_2)
-        args = runtime.apply_preset_defaults(
-            ffs_parser.parse_args(["--ffs-repo", "/tmp/ffs"]),
+        demo32_parser = runtime.build_arg_parser(demo_version=runtime.DEMO_VERSION_3_2)
+        native_args = runtime.apply_preset_defaults(
+            demo32_parser.parse_args(["--ffs-repo", "/tmp/ffs"]),
             explicit_options={"--ffs-repo"},
+        )
+        self.assertEqual(native_args.depth_source, "realsense")
+        with self.assertRaisesRegex(ValueError, "--ffs-repo requires --depth-backend ir-ffs"):
+            runtime.validate_args(native_args)
+
+        args = runtime.apply_preset_defaults(
+            demo32_parser.parse_args(["--depth-backend", "ir-ffs", "--ffs-repo", "/tmp/ffs"]),
+            explicit_options={"--depth-backend", "--ffs-repo"},
         )
         self.assertEqual(str(args.ffs_repo), "/tmp/ffs")
         self.assertEqual(args.depth_source, "ffs")
+        runtime.validate_args(args)
 
     def test_dry_run_main_prints_reduced_single_camera_contract_and_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -413,13 +442,16 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
             self.assertEqual(code, 0)
             output = stdout.getvalue()
             self.assertIn("camera_count = 1", output)
-            self.assertIn("depth_source = ffs", output)
-            self.assertIn("ffs_trt_batch_size = 1", output)
+            self.assertIn("depth_backend = native-realsense", output)
+            self.assertIn("depth_source = realsense", output)
+            self.assertIn("ffs_trt_batch_size = None", output)
             self.assertNotIn("requires_three_realsense", output)
             self.assertNotIn("multi_camera_world_fusion", output)
 
             payload = json.loads(profile.read_text(encoding="utf-8"))
             self.assertEqual(payload["contract"]["camera_count"], 1)
+            self.assertEqual(payload["contract"]["depth_backend"], "native-realsense")
+            self.assertEqual(payload["contract"]["depth_source_internal"], "realsense")
             self.assert_legacy_fields_removed(payload["contract"])
 
     def test_demo32_panel_dry_run_contract_exposes_side_by_side_panel(self) -> None:
@@ -625,7 +657,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         for version, expected_depth in (
             (runtime.DEMO_VERSION_3, "realsense"),
             (runtime.DEMO_VERSION_3_1, "realsense"),
-            (runtime.DEMO_VERSION_3_2, "ffs"),
+            (runtime.DEMO_VERSION_3_2, "realsense"),
             (runtime.DEMO_VERSION_3_3, "ffs"),
         ):
             with self.subTest(version=version):
@@ -1464,8 +1496,8 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["execution_mode"], "workstation_strict")
         self.assertEqual(contract["mask_backend"], "edgetam")
         self.assertEqual(contract["tracker_backend"], "tapnextpp")
-        self.assertEqual(contract["depth_backend"], "ir-ffs")
-        self.assertEqual(contract["depth_source_internal"], "ffs")
+        self.assertEqual(contract["depth_backend"], "native-realsense")
+        self.assertEqual(contract["depth_source_internal"], "realsense")
         self.assertEqual(_option_value(delegate, "--tracking-product-backend"), "phystwin-strict-tracking")
         self.assertEqual(_option_value(delegate, "--phystwin-strict-output-dir"), "result/headless_case/phystwin_custom")
 
@@ -1585,7 +1617,7 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         delegate = runtime.build_live_delegate_argv(args)
 
         self.assertEqual(contract["input_source_mode"], "recording")
-        self.assertEqual(contract["depth_source"], "ffs")
+        self.assertEqual(contract["depth_source"], "realsense")
         self.assertIn("recording", delegate)
         self.assertIn("--recording-case", delegate)
 
