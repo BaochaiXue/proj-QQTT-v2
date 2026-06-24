@@ -12,6 +12,7 @@ from qqtt.demo.demo32_side_by_side_panel import (
     SideBySidePanelInputs,
     TABLE_WORLD_FRAME_KIND,
     compute_rgb_ahead_frames,
+    _hud_lines,
     _remaining_query_legend_lines,
     render_projected_pcd_panel,
     render_side_by_side_panel,
@@ -101,6 +102,29 @@ class Demo32SideBySidePanelTest(unittest.TestCase):
         self.assertIn("ctrl=5", lines[1])
         self.assertIn("hand_a=3", lines[2])
         self.assertIn("hand_b=2", lines[2])
+
+    def test_hud_lines_report_stage_fps(self) -> None:
+        hud = SideBySidePanelHud(
+            rgb_seq=1,
+            paired_seq=1,
+            input_time_s=0.0,
+            pipeline_latency_ms=1.0,
+            display_latency_ms=2.0,
+            startup_hold_s=0.0,
+            filter_preset="original",
+            marker_count=4,
+            capture_fps=5.0,
+            seg_fps=4.5,
+            depth_fps=4.0,
+            pcd_fps=3.5,
+            tracker_fps=3.0,
+            render_fps=2.5,
+        )
+
+        lines = _hud_lines(hud)
+
+        self.assertIn("FPS cap/seg/depth/pcd/tracker/render", lines[-1])
+        self.assertIn("5.0/4.5/4.0/3.5/3.0/2.5", lines[-1])
 
     def test_render_projected_pcd_panel_draws_camera_frame_points(self) -> None:
         points = np.array([[0.0, 0.0, 1.0], [0.1, 0.0, 1.0]], dtype=np.float32)

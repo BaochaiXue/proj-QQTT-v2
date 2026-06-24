@@ -22,6 +22,12 @@ class SideBySidePanelHud:
     startup_hold_s: float
     filter_preset: str
     marker_count: int
+    capture_fps: float = 0.0
+    seg_fps: float = 0.0
+    depth_fps: float = 0.0
+    pcd_fps: float = 0.0
+    tracker_fps: float = 0.0
+    render_fps: float = 0.0
     tracking_background: str = "target-union"
     object_point_count: int = 0
     controller_point_count: int = 0
@@ -49,6 +55,18 @@ class SideBySidePanelInputs:
 
 def compute_rgb_ahead_frames(*, rgb_seq: int, paired_seq: int) -> int:
     return max(0, int(rgb_seq) - int(paired_seq))
+
+
+def format_side_by_side_fps_line(hud: SideBySidePanelHud) -> str:
+    return (
+        "FPS cap/seg/depth/pcd/tracker/render: "
+        f"{float(hud.capture_fps):.1f}/"
+        f"{float(hud.seg_fps):.1f}/"
+        f"{float(hud.depth_fps):.1f}/"
+        f"{float(hud.pcd_fps):.1f}/"
+        f"{float(hud.tracker_fps):.1f}/"
+        f"{float(hud.render_fps):.1f}"
+    )
 
 
 def _as_bgr_u8(image: np.ndarray) -> np.ndarray:
@@ -115,6 +133,7 @@ def _hud_lines(hud: SideBySidePanelHud) -> list[str]:
         f"hold={float(hud.startup_hold_s):.2f}s filter={hud.filter_preset} markers={int(hud.marker_count)}",
         f"bg={hud.tracking_background} obj={int(hud.object_point_count)} ctrl={int(hud.controller_point_count)}",
         f"shape_prior={hud.shape_prior_status} pts={int(hud.shape_prior_point_count)}",
+        format_side_by_side_fps_line(hud),
     ]
 
 

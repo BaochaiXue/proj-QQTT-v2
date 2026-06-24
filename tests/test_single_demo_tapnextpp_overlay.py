@@ -1081,6 +1081,30 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertIn("depth_ms=0.8", text)
         self.assertIn("align_ms=1.2", text)
 
+    def test_panel_hud_label_reports_stage_fps(self) -> None:
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(self._tracker_args())
+        hud = demo.SideBySidePanelHud(
+            rgb_seq=3,
+            paired_seq=2,
+            input_time_s=1.25,
+            pipeline_latency_ms=10.0,
+            display_latency_ms=20.0,
+            startup_hold_s=0.5,
+            filter_preset="original",
+            marker_count=4,
+            capture_fps=5.0,
+            seg_fps=4.5,
+            depth_fps=4.0,
+            pcd_fps=3.5,
+            tracker_fps=3.0,
+            render_fps=2.5,
+        )
+
+        text = runtime._format_panel_hud_label(hud)
+
+        self.assertIn("FPS cap/seg/depth/pcd/tracker/render", text)
+        self.assertIn("5.0/4.5/4.0/3.5/3.0/2.5", text)
+
     def test_ordered_lossless_queue_rejects_gaps_and_backlog_overflow(self) -> None:
         queue = demo.OrderedPacketQueue[demo.MaskPacket](name="unit", max_backlog_frames=2)
         stop_event = threading.Event()
@@ -1653,6 +1677,14 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 object_pcd_mask_erode_pixels=3,
                 controller_pcd_mask_erode_pixels=0,
                 tracker_packet=tracker_packet,
+                stage_fps={
+                    "capture_fps": 5.0,
+                    "seg_fps": 4.5,
+                    "depth_fps": 4.0,
+                    "pcd_fps": 3.5,
+                    "tracker_fps": 3.0,
+                    "render_fps": 2.5,
+                },
                 world_z_diagnostics={
                     "seq": 0,
                     "table_z_m": 0.0,
@@ -1697,6 +1729,12 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             self.assertEqual(rows[0]["source_timestamp_s"], 12.5)
             self.assertEqual(rows[0]["source_frame_index"], 7)
             self.assertEqual(rows[0]["source_step"], 42)
+            self.assertEqual(rows[0]["capture_fps"], 5.0)
+            self.assertEqual(rows[0]["seg_fps"], 4.5)
+            self.assertEqual(rows[0]["depth_fps"], 4.0)
+            self.assertEqual(rows[0]["pcd_fps"], 3.5)
+            self.assertEqual(rows[0]["tracker_fps"], 3.0)
+            self.assertEqual(rows[0]["render_fps"], 2.5)
             z_rows = [
                 json.loads(line)
                 for line in (output_dir / "world_z_stats.jsonl").read_text(encoding="utf-8").splitlines()

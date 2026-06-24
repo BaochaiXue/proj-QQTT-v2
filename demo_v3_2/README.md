@@ -354,7 +354,8 @@ processed output, including during startup warmup before the first strict pair i
 available. The PCD and tracking columns always use the same strict same-seq
 paired frame. The HUD reports `rgb_seq`, `paired_seq`, `rgb_ahead`, source input
 time, pipeline latency, display latency, startup hold, filter preset, marker
-count, and remaining live tracking query counts.
+count, remaining live tracking query counts, and live measured FPS for capture,
+segmentation, depth, PCD, tracker, and render.
 
 Offline from a headless capture:
 

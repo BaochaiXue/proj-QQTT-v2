@@ -105,6 +105,7 @@ from qqtt.demo import shape_prior_warmup  # noqa: E402
 from qqtt.demo.demo32_side_by_side_panel import (  # noqa: E402
     SideBySidePanelHud,
     SideBySidePanelInputs,
+    format_side_by_side_fps_line,
     render_projected_pcd_panel,
     render_side_by_side_panel,
     render_tracking_overlay_panel,
@@ -1173,12 +1174,14 @@ class HeadlessCaptureWriter:
         object_pcd_mask_erode_pixels: int,
         controller_pcd_mask_erode_pixels: int,
         tracker_packet: TrackerMarkerPacket | None = None,
+        stage_fps: dict[str, float] | None = None,
         world_z_diagnostics: dict[str, Any] | None = None,
         startup_hold_s: float = 0.0,
     ) -> None:
         filter_info = packet.filter_telemetry
         if not (filter_info.enabled and filter_info.mode == "sync" and filter_info.render_using_filtered):
             raise RuntimeError("headless capture refuses to save non-filtered PCD output")
+        fps_info = stage_fps or {}
         seq_name = f"{int(packet.seq):06d}"
         pcd_path = self.pcd_dir / f"{seq_name}.npz"
         depth_path = self.depth_dir / f"{seq_name}.npy"
@@ -1246,6 +1249,12 @@ class HeadlessCaptureWriter:
             "source_step": None if packet.source_step is None else int(packet.source_step),
             "startup_hold_s": float(startup_hold_s),
             "pipeline_latency_ms": float(pair_process_done_s - float(packet.receive_perf_s)) * 1000.0,
+            "capture_fps": float(fps_info.get("capture_fps", 0.0)),
+            "seg_fps": float(fps_info.get("seg_fps", 0.0)),
+            "depth_fps": float(fps_info.get("depth_fps", 0.0)),
+            "pcd_fps": float(fps_info.get("pcd_fps", 0.0)),
+            "tracker_fps": float(fps_info.get("tracker_fps", 0.0)),
+            "render_fps": float(fps_info.get("render_fps", 0.0)),
             "filter_preset": self.saved_pcd_source,
             "marker_count": int(tracker_packet.marker_count) if tracker_packet is not None else 0,
             "marker_residual_checked_count": (
@@ -4498,7 +4507,18 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"{FATAL_HUD_PREFIX}\n"
             f"{fatal.stage} failed\n"
             f"{fatal.exc_type}: {fatal.message}\n"
-            "Closing Open3D viewer; check the terminal log for details."
+            "Closing Open3D viewer; check the terminal log for details.\n"
+            + self._stage_fps_hud_line()
+        )
+
+    def _format_warmup_hud(self) -> str:
+        return f"{WARMUP_HUD_TEXT}\n{self._stage_fps_hud_line()}"
+
+    def _stage_fps_hud_line(self) -> str:
+        return (
+            f"capture/seg/depth/pcd/tracker/render FPS: {self.capture_stats.fps:.1f} / "
+            f"{self.seg_stats.fps:.1f} / {self.depth_stats.fps:.1f} / {self.pcd_stats.fps:.1f} / "
+            f"{self.tracker_stats.fps:.1f} / {self.render_stats.render_fps:.1f}"
         )
 
     def run(self) -> int:
@@ -6708,6 +6728,14 @@ class RealtimeMaskedEdgeTamPcdDemo:
             object_pcd_mask_erode_pixels=int(result.object_pcd_mask_erode_pixels),
             controller_pcd_mask_erode_pixels=int(result.controller_pcd_mask_erode_pixels),
             tracker_packet=tracker_packet,
+            stage_fps={
+                "capture_fps": float(self.capture_stats.fps),
+                "seg_fps": float(self.seg_stats.fps),
+                "depth_fps": float(self.depth_stats.fps),
+                "pcd_fps": float(self.pcd_stats.fps),
+                "tracker_fps": float(self.tracker_stats.fps),
+                "render_fps": float(self.render_stats.render_fps),
+            },
             world_z_diagnostics=result.world_z_diagnostics,
             startup_hold_s=float(getattr(self, "_startup_hold_s", 0.0)),
         )
@@ -7582,6 +7610,12 @@ class RealtimeMaskedEdgeTamPcdDemo:
             startup_hold_s=float(getattr(self, "_startup_hold_s", 0.0)),
             filter_preset=str(filter_preset),
             marker_count=int(tracker_packet.marker_count),
+            capture_fps=float(self.capture_stats.fps),
+            seg_fps=float(self.seg_stats.fps),
+            depth_fps=float(self.depth_stats.fps),
+            pcd_fps=float(self.pcd_stats.fps),
+            tracker_fps=float(self.tracker_stats.fps),
+            render_fps=float(self.render_stats.render_fps),
             tracking_background=str(getattr(self.args, "tracking_background_mask", "target-union")),
             object_point_count=int(pcd_packet.object_point_count),
             controller_point_count=int(pcd_packet.controller_point_count),
@@ -7612,6 +7646,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             f"remaining={int(hud.remaining_query_count)}/{int(hud.query_count)} "
             f"obj={int(hud.remaining_object_query_count)} ctrl={int(hud.remaining_controller_query_count)} "
             f"hand_a={int(hud.remaining_hand_a_query_count)} hand_b={int(hud.remaining_hand_b_query_count)}\n"
+            f"{format_side_by_side_fps_line(hud)}\n"
             f"panel={PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT}"
         )
 
@@ -7698,7 +7733,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         tracking_scene_widget.scene = rendering.Open3DScene(window.renderer)
         tracking_scene_widget.scene.set_background([0.02, 0.02, 0.02, 1.0])
 
-        hud_label = gui.Label("Waiting for frames...")
+        hud_label = gui.Label(f"Waiting for frames...\n{self._stage_fps_hud_line()}")
         hud_label.text_color = gui.Color(1.0, 1.0, 1.0)
         hud_panel = gui.Vert(0, gui.Margins(8, 8, 8, 8))
         hud_panel.add_child(hud_label)
@@ -8018,7 +8053,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 hud_label.text = (
                     "Waiting for strict same-seq panel pair...\n"
                     f"panel={PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT}\n"
-                    f"startup_hold={float(getattr(self, '_startup_hold_s', 0.0)):.2f}s"
+                    f"startup_hold={float(getattr(self, '_startup_hold_s', 0.0)):.2f}s\n"
+                    f"{self._stage_fps_hud_line()}"
                 )
             return rendered
 
@@ -8138,7 +8174,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         scene_widget = gui.SceneWidget()
         scene_widget.scene = rendering.Open3DScene(window.renderer)
         scene_widget.scene.set_background([0.02, 0.02, 0.02, 1.0])
-        hud_label = gui.Label(WARMUP_HUD_TEXT)
+        hud_label = gui.Label(self._format_warmup_hud())
         hud_label.text_color = gui.Color(1.0, 1.0, 1.0)
         hud_panel = gui.Vert(0, gui.Margins(8, 8, 8, 8))
         hud_panel.add_child(hud_label)
@@ -8667,8 +8703,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     f"return={quality_packet.return_type}"
                 )
         return (
-            f"capture/seg/pcd/tracker/render FPS: {self.capture_stats.fps:.1f} / {self.seg_stats.fps:.1f} / "
-            f"{self.pcd_stats.fps:.1f} / {self.tracker_stats.fps:.1f} / {self.render_stats.render_fps:.1f}\n"
+            f"{self._stage_fps_hud_line()}\n"
             f"latency: {timing.receive_to_render_ms:.1f} ms ({status}, target {self.args.latency_target_ms:.1f} ms)\n"
             f"points controller/object: {packet.controller_point_count} / {packet.object_point_count}  "
             f"pcd max/object: {max_points}  render max/layer: {render_cap}\n"
@@ -8688,8 +8723,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
     def _format_strict_sync_waiting_hud(self) -> str:
         return (
-            f"capture/seg/pcd/tracker/render FPS: {self.capture_stats.fps:.1f} / {self.seg_stats.fps:.1f} / "
-            f"{self.pcd_stats.fps:.1f} / {self.tracker_stats.fps:.1f} / {self.render_stats.render_fps:.1f}\n"
+            f"{self._stage_fps_hud_line()}\n"
             "strict_sync=1  waiting_for_pair=1  paired_seq=none\n"
             f"{self._lossless_queue_debug_text() if self._lossless_enabled() else ''}\n"
             f"tracker: {self.args.tracker_backend} waiting  "
