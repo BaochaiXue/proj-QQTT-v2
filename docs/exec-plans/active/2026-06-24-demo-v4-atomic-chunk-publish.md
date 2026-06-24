@@ -35,17 +35,17 @@ readiness signal.
 
 ## Tasks
 
-- [ ] Add failing tests proving `READY` exists on complete chunks and partial
+- [x] Add failing tests proving `READY` exists on complete chunks and partial
       materialization is not visible at `<base>/<case>`.
-- [ ] Update the chunk writer to use staging, final manifest extras,
+- [x] Update the chunk writer to use staging, final manifest extras,
       validation, `READY`, and atomic rename.
-- [ ] Update the bridge so cadence/backlog fields are passed into the writer
+- [x] Update the bridge so cadence/backlog fields are passed into the writer
       before publish instead of rewriting published manifests.
-- [ ] Document that FuturePhysTwin consumers must require `READY` and ignore
+- [x] Document that FuturePhysTwin consumers must require `READY` and ignore
       staging directories.
-- [ ] Run focused Demo v4 tests and the repo smoke validation profile.
+- [x] Run focused Demo v4 tests and the repo smoke validation profile.
 
 ## Validation
 
-- `conda run -n demo_2_max --no-capture-output python -m pytest tests/test_demo_v4_futurephystwin_chunks.py`
-- `conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile smoke`
+- Passed: `conda run -n demo_2_max --no-capture-output python -m pytest tests/test_demo_v4_futurephystwin_chunks.py`
+- Passed: `conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile smoke`
