@@ -272,9 +272,13 @@ def _effective_pcd_filter_preset(args: argparse.Namespace) -> str | None:
 
 def _headless_capture_requested(args: argparse.Namespace, version: str | None = None) -> bool:
     resolved_version = normalize_demo_version(version or getattr(args, "single_demo_version", DEMO_VERSION_3))
+    input_source = str(args.input_source)
     return bool(
         _supports_headless_capture(resolved_version)
-        and str(args.input_source) == INPUT_SOURCE_FAKE_LIVE
+        and (
+            input_source == INPUT_SOURCE_FAKE_LIVE
+            or (input_source == INPUT_SOURCE_LIVE and args.headless_capture_dir is not None)
+        )
         and str(args.render_mode) == "none"
     )
 
@@ -812,8 +816,8 @@ def validate_args(args: argparse.Namespace) -> None:
         getattr(args, "tracking_product_backend", masked_pcd.DEFAULT_TRACKING_PRODUCT_BACKEND)
     )
     if masked_pcd.tracking_product_backend_is_strict(args.tracking_product_backend):
-        if str(args.input_source) != INPUT_SOURCE_FAKE_LIVE:
-            raise ValueError("phystwin-strict-tracking requires --input-source fake-live")
+        if str(args.input_source) not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
+            raise ValueError("phystwin-strict-tracking requires --input-source live or fake-live")
         if str(args.render_mode) != masked_pcd.RENDER_MODE_NONE:
             raise ValueError("phystwin-strict-tracking requires --render-mode none")
         if args.headless_capture_dir is None:
@@ -825,7 +829,7 @@ def validate_args(args: argparse.Namespace) -> None:
         if args.phystwin_strict_output_dir is None:
             args.phystwin_strict_output_dir = Path(args.headless_capture_dir) / "phystwin_like"
     if args.headless_capture_dir is not None and not headless_capture:
-        raise ValueError("--headless-capture-dir requires Demo 3.2/3.3 --input-source fake-live --render-mode none")
+        raise ValueError("--headless-capture-dir requires Demo 3.2/3.3 --input-source live or fake-live --render-mode none")
     if float(args.replay_fps) < 0.0:
         raise ValueError("--replay-fps must be >= 0")
     if _is_replay_input_source(str(args.input_source)):

@@ -472,6 +472,121 @@ class RealtimeSingleCameraPointCloudSmokeTest(unittest.TestCase):
         self.assertTrue(args.enable_table_z_filter)
         self.assertEqual(args.table_z_filter_threshold_m, 0.0)
 
+    def test_masked_edgetam_live_headless_strict_product_is_valid(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--input-source",
+                "live",
+                "--depth-source",
+                "realsense",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/live_headless_case",
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+                "--pcd-filter-preset",
+                "enhanced-pt",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+                "--track-mode",
+                "controller-object",
+                "--tracker-backend",
+                "tapnextpp",
+            ]
+        )
+
+        masked_demo.validate_args(args)
+
+        self.assertEqual(args.input_source, "live")
+        self.assertEqual(args.track_mode, "controller-object")
+        self.assertEqual(args.tracker_backend, "tapnextpp")
+
+    def test_masked_edgetam_live_headless_strict_product_requires_tapnextpp(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--input-source",
+                "live",
+                "--depth-source",
+                "realsense",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/live_headless_case",
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+                "--pcd-filter-preset",
+                "enhanced-pt",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+                "--track-mode",
+                "controller-object",
+                "--tracker-backend",
+                "none",
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires --tracker-backend tapnextpp"):
+            masked_demo.validate_args(args)
+
+    def test_masked_edgetam_live_strict_product_requires_headless_capture_dir(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--input-source",
+                "live",
+                "--depth-source",
+                "realsense",
+                "--render-mode",
+                "none",
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+                "--pcd-filter-preset",
+                "enhanced-pt",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+                "--track-mode",
+                "controller-object",
+                "--tracker-backend",
+                "tapnextpp",
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires --headless-capture-dir"):
+            masked_demo.validate_args(args)
+
+    def test_masked_edgetam_live_headless_strict_product_rejects_async_filter(self) -> None:
+        args = masked_demo.build_parser().parse_args(
+            [
+                "--input-source",
+                "live",
+                "--depth-source",
+                "realsense",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/live_headless_case",
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "async",
+                "--object-filter",
+                "enhanced-pt",
+                "--controller-filter",
+                "enhanced-pt",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+                "--track-mode",
+                "controller-object",
+                "--tracker-backend",
+                "tapnextpp",
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires --pcd-filter-mode sync"):
+            masked_demo.validate_args(args)
+
     def test_masked_edgetam_visual_mode_table_z_filter_can_be_disabled(self) -> None:
         args = masked_demo.build_parser().parse_args(
             [

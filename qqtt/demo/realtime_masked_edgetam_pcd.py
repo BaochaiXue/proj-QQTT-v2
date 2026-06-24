@@ -2544,8 +2544,8 @@ def validate_args(args: argparse.Namespace) -> None:
     if str(args.demo_visual_mode) not in DEMO_VISUAL_MODES:
         raise ValueError(f"--demo-visual-mode must be one of {', '.join(DEMO_VISUAL_MODES)}")
     if headless_capture_enabled(args):
-        if args.input_source != INPUT_SOURCE_FAKE_LIVE:
-            raise ValueError("--headless-capture-dir requires --input-source fake-live")
+        if args.input_source not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
+            raise ValueError("--headless-capture-dir requires --input-source live or fake-live")
         if args.depth_source not in {"ffs", "realsense"}:
             raise ValueError("--headless-capture-dir requires --depth-source ffs or realsense")
         if args.render_mode != "none":
@@ -2567,8 +2567,8 @@ def validate_args(args: argparse.Namespace) -> None:
         getattr(args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)
     )
     if tracking_product_backend_is_strict(args.tracking_product_backend):
-        if str(args.input_source) != INPUT_SOURCE_FAKE_LIVE:
-            raise ValueError("phystwin-strict-tracking requires --input-source fake-live")
+        if str(args.input_source) not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
+            raise ValueError("phystwin-strict-tracking requires --input-source live or fake-live")
         if str(args.render_mode) != RENDER_MODE_NONE:
             raise ValueError("phystwin-strict-tracking requires --render-mode none")
         if args.headless_capture_dir is None:

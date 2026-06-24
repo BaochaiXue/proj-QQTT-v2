@@ -1509,6 +1509,57 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--tracking-product-backend"), "phystwin-strict-tracking")
         self.assertEqual(_option_value(delegate, "--phystwin-strict-output-dir"), "result/headless_case/phystwin_custom")
 
+    def test_demo32_live_headless_strict_tracking_product_backend_contract_and_delegate(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "live",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/live_headless_case",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
+
+        self.assertEqual(contract["input_source_mode"], "live")
+        self.assertTrue(contract["headless_capture_enabled"])
+        self.assertEqual(contract["headless_capture_dir"], "result/live_headless_case")
+        self.assertEqual(contract["tracking_product_backend"], "phystwin-strict-tracking")
+        self.assertEqual(contract["compatibility_target"], "PhysTwin")
+        self.assertEqual(contract["execution_mode"], "workstation_strict")
+        self.assertEqual(contract["track_mode"], "controller-object")
+        self.assertEqual(contract["tracker_backend"], "tapnextpp")
+        self.assertEqual(_option_value(delegate, "--input-source"), "live")
+        self.assertEqual(_option_value(delegate, "--track-mode"), "controller-object")
+        self.assertEqual(_option_value(delegate, "--tracker-backend"), "tapnextpp")
+        self.assertEqual(_option_value(delegate, "--headless-capture-dir"), "result/live_headless_case")
+
+    def test_demo32_strict_tracking_product_backend_rejects_recording(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "recording",
+                "--recording-case",
+                "data_collect/example_rgbd",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/headless_recording",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires --input-source live or fake-live"):
+            runtime.validate_args(args)
+
     def test_demo32_strict_tracking_product_backend_rejects_live_panel_p0(self) -> None:
         args = self._parse(
             runtime.DEMO_VERSION_3_2,
