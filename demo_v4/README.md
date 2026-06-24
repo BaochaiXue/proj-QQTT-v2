@@ -30,6 +30,7 @@ replay_fps=5
 chunk_seconds=5
 chunk_frame_count=25
 max_chunks=7
+gpu_mode=single
 demo32_cuda_visible_devices=0
 demo32_device=cuda
 demo32_tracker_device=cuda
@@ -134,6 +135,17 @@ conda run -n demo_2_max --no-capture-output \
   --shape-prior-chunk-wait-timeout-s 420
 ```
 
+GPU routing is explicit:
+
+```bash
+# Default: one visible GPU for Demo 3.2 / EdgeTAM / TAPNext++
+python demo_v4/realtime_futurephystwin_chunks.py --gpu-mode single
+
+# Dual-GPU isolation: keep a local SAM3D worker on physical GPU0 and run
+# Demo 3.2 inside CUDA_VISIBLE_DEVICES=1.
+python demo_v4/realtime_futurephystwin_chunks.py --gpu-mode dual
+```
+
 The process terminates the Demo 3.2 subprocess after `max_chunks` are written;
 `demo32_return_code=-15` with `demo32_stop_reason=max_chunks_reached` is the
 expected controlled stop.
@@ -173,60 +185,73 @@ demo_v4_native_full_sam3d_chunk_0003
 This avoids proving the path only on an early chunk where the controller may not
 have moved enough.
 
-Demo v4 now defaults to one visible GPU for the native RealSense realtime path:
-`CUDA_VISIBLE_DEVICES=0`, logical `--device cuda`, and logical
-`--tracker-device cuda`. This keeps EdgeTAM, TAPNext++, and the native depth
-path in one CUDA namespace. A dual-GPU isolation run is still possible by
-explicitly passing `--demo32-cuda-visible-devices 1` and running the SAM3D
-worker elsewhere, but that is no longer the default validation contract.
+Demo v4 supports both single-GPU and dual-GPU routing:
+
+- `--gpu-mode single` is the default. Demo 3.2 receives
+  `CUDA_VISIBLE_DEVICES=0`, logical `--device cuda`, and logical
+  `--tracker-device cuda`.
+- `--gpu-mode dual` runs Demo 3.2 with `CUDA_VISIBLE_DEVICES=1`, so a local
+  SAM3D worker can stay resident on physical GPU0.
+- `--demo32-cuda-visible-devices` remains an explicit debug override for either
+  preset.
 
 ## Verified 2026-06-24 Run
 
-The latest full fake realtime native-RealSense stream produced seven chunks at
-25 frames each:
+The latest single-GPU full fake realtime native-RealSense stream produced seven
+chunks at 25 frames each:
 
 ```text
-result/demo_v4/full_fake_realtime_native_full_sam3d_20260624/cases
+result/demo_v4/full_fake_realtime_native_single_gpu_fast_20260624/cases
 ```
 
-The Demo 3.2 capture metadata recorded:
+The Demo v4 summary and Demo 3.2 capture metadata recorded:
 
 ```text
 input_source=fake-live
+gpu_mode=single
+demo32_cuda_visible_devices=0
 depth_backend=native-realsense
 depth_source_internal=realsense
 replay_fps=5.0
 tracking_product_backend=phystwin-strict-tracking
 tracker_query_count=5000
-shape_prior_status=ready
+external_shape_prior_points=true
 table_z_above_direction=negative
 table_z_filter_threshold_m=0.0
 ```
 
-The shape-prior profile recorded image upscale, SAM3D inference, single-view
-alignment, and sampling. New runs should also inspect
-`worker_preload_upscaler_ms`, `worker_preload_sam3d_ms`,
-`worker_dummy_warmup_ms`, and `worker_ready_ms` so cold worker startup is not
-mixed with warm request latency:
+The source SAM3D snapshot used for this single-GPU run is:
 
 ```text
-image_upscale_ms=20508.7
-sam3d_inference_ms=10881.6
-single_view_alignment_ms=2.4
-sampling_ms=29954.4
-shape_prior_total_ms=78569.7
-time_to_shape_prior_ready_ms=96647.7
+result/demo_v4/single_gpu_shape_bootstrap_20260624
+
+status=ready
+alignment_valid=true
+ground_z_fraction=0.2759
+image_upscale_ms=15779.0
+sam3d_model_load_ms=18714.5
+sam3d_inference_ms=11040.0
+single_view_alignment_ms=2.5
+sampling_ms=28675.6
+shape_prior_total_ms=79241.4
 ```
 
 Chunk geometry audits:
 
 ```text
-chunk_0006: object=(25,2136,3), controller=(25,30,3),
+steady publish intervals after startup:
+  [4.722, 4.969, 4.904, 5.135, 4.874, 5.049] seconds
+backlog_chunks:
+  [0, 0, 0, 0, 0, 0, 0]
+materialize_latency_s:
+  [4.298, 4.046, 4.022, 3.888, 4.049, 3.934, 3.990]
+
+chunk_0006: object=(25,2122,3), controller=(25,30,3),
             surface=(700,3), interior=(1000,3),
             finite object/controller/shape-prior points=True,
             first-frame zero object/controller points=0/0
 
-chunk_0003: object=(25,2152,3), controller=(25,30,3),
+chunk_0003: object=(25,2145,3), controller=(25,30,3),
             surface=(700,3), interior=(1000,3),
             finite object/controller/shape-prior points=True,
             first-frame zero object/controller points=0/0
