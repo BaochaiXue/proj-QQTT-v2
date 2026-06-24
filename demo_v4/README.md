@@ -119,8 +119,8 @@ Then run Demo v4:
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python demo_v4/realtime_futurephystwin_chunks.py \
-  --futurephystwin-base-path result/demo_v4/full_fake_realtime_native_radius_20260624/cases \
-  --case-prefix demo_v4_native_radius \
+  --futurephystwin-base-path result/demo_v4/full_fake_realtime_native_full_sam3d_20260624/cases \
+  --case-prefix demo_v4_native_full_sam3d \
   --max-chunks 7 \
   --capture-extra-seconds 220 \
   --shape-prior-chunk-wait-timeout-s 420
@@ -136,8 +136,8 @@ The validation selector uses the second-last and fifth-last chunks. With the
 default seven chunks this means:
 
 ```text
-demo_v4_native_radius_chunk_0006
-demo_v4_native_radius_chunk_0003
+demo_v4_native_full_sam3d_chunk_0006
+demo_v4_native_full_sam3d_chunk_0003
 ```
 
 This avoids proving the path only on an early chunk where the controller may not
@@ -156,7 +156,7 @@ The latest full fake realtime native-RealSense stream produced seven chunks at
 25 frames each:
 
 ```text
-result/demo_v4/full_fake_realtime_native_radius_20260624/cases
+result/demo_v4/full_fake_realtime_native_full_sam3d_20260624/cases
 ```
 
 The Demo 3.2 capture metadata recorded:
@@ -177,31 +177,35 @@ The shape-prior profile recorded image upscale, SAM3D inference, single-view
 alignment, and sampling:
 
 ```text
-image_upscale_ms=15533.8
-sam3d_inference_ms=8485.0
+image_upscale_ms=20508.7
+sam3d_inference_ms=10881.6
 single_view_alignment_ms=2.4
-sampling_ms=5040.7
-shape_prior_total_ms=29063.3
-time_to_shape_prior_ready_ms=46986.5
+sampling_ms=29954.4
+shape_prior_total_ms=78569.7
+time_to_shape_prior_ready_ms=96647.7
 ```
 
 Chunk geometry audits:
 
 ```text
-chunk_0006: object=(25,2135,3), controller=(25,30,3),
-            surface=(465,3), interior=(610,3),
-            first-frame zero object/controller points=0/0,
-            min controller-object distance=0.00413 m
+chunk_0006: object=(25,2136,3), controller=(25,30,3),
+            surface=(700,3), interior=(1000,3),
+            finite object/controller/shape-prior points=True,
+            first-frame zero object/controller points=0/0
 
-chunk_0003: object=(25,2149,3), controller=(25,30,3),
-            surface=(465,3), interior=(610,3),
-            first-frame zero object/controller points=0/0,
-            min controller-object distance=0.00666 m
+chunk_0003: object=(25,2152,3), controller=(25,30,3),
+            surface=(700,3), interior=(1000,3),
+            finite object/controller/shape-prior points=True,
+            first-frame zero object/controller points=0/0
 ```
 
 This run includes the `data_process_sam3d/data_process_mask.py` radius-outlier
 mask refinement before chunk finalization. Tiny synthetic tests can disable it
 with `--no-mask-radius-outlier-filter`; product runs keep it enabled.
+Shape-prior sampling records `single_view_shape_prior_sampling_backend=
+sam3d-single-view`, source `data_process_sam3d/data_process_sample.py`, and the
+same full target counts used by the offline SAM3D route: 700 surface points and
+1000 interior points.
 
 Both validation chunks loaded in FuturePhysTwin and completed 0-order CMA plus
 1-order `train_warp.py`. Exact commands and outcomes are recorded in

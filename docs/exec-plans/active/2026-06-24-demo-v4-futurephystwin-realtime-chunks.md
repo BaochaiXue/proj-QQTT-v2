@@ -68,10 +68,10 @@ shape prior isolated from tracking identities and live observation PCD.
 - `qqtt/demo/phystwin_strict_product.py` keeps first-frame semantic identity,
   applies per-frame semantic masks, performs the same neighbor motion filtering
   constants, and selects 30 controller points by FPS.
-- `qqtt/demo/single_view_shape_prior_sampling.py` ports the relevant legacy
+- `qqtt/demo/single_view_shape_prior_sampling.py` ports the relevant
   `data_process_sam3d/data_process_sample.py` sampling semantics for single
-  view: surface/interior sampling, NN distance filtering, observed-object
-  priority, and 5 mm voxel dedupe.
+  view: full 700 surface / 1000 interior targets, NN distance filtering with
+  the 0.035 m cap, observed-object priority, and 5 mm voxel dedupe.
 
 ## Illegal Simplification Found And Removed
 
@@ -99,6 +99,14 @@ Fixes:
 After this fix, FuturePhysTwin CMA and train no longer produce the earlier
 all-NaN failure.
 
+A second audit found another illegal simplification: the single-view shape
+prior sampler was returning the smaller available set from the legacy single
+view path, such as 465 surface points and 610 interior points. That does not
+match the offline `data_process_sam3d/data_process_sample.py` target counts.
+The sampler now targets the full 700 surface points and 1000 interior points
+with the same 5 mm volume sampling scale and records
+`single_view_shape_prior_sampling_backend=sam3d-single-view`.
+
 ## Verified Full Fake Realtime Run
 
 Command:
@@ -115,8 +123,8 @@ conda run -n phystwin-max --no-capture-output \
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python demo_v4/realtime_futurephystwin_chunks.py \
-  --futurephystwin-base-path result/demo_v4/full_fake_realtime_native_radius_20260624/cases \
-  --case-prefix demo_v4_native_radius \
+  --futurephystwin-base-path result/demo_v4/full_fake_realtime_native_full_sam3d_20260624/cases \
+  --case-prefix demo_v4_native_full_sam3d \
   --max-chunks 7 \
   --capture-extra-seconds 220 \
   --shape-prior-chunk-wait-timeout-s 420
@@ -132,8 +140,8 @@ demo32_stop_reason=max_chunks_reached
 chunk_frame_count=25
 chunk_count=7
 validation_chunk_cases=[
-  demo_v4_native_radius_chunk_0006,
-  demo_v4_native_radius_chunk_0003
+  demo_v4_native_full_sam3d_chunk_0006,
+  demo_v4_native_full_sam3d_chunk_0003
 ]
 ```
 
@@ -155,12 +163,12 @@ table_z_filter_threshold_m=0.0
 Shape-prior profile:
 
 ```text
-image_upscale_ms=15533.8
-sam3d_inference_ms=8485.0
+image_upscale_ms=20508.7
+sam3d_inference_ms=10881.6
 single_view_alignment_ms=2.4
-sampling_ms=5040.7
-shape_prior_total_ms=29063.3
-time_to_shape_prior_ready_ms=46986.5
+sampling_ms=29954.4
+shape_prior_total_ms=78569.7
+time_to_shape_prior_ready_ms=96647.7
 shape_prior_ready_seq=0
 ```
 
@@ -170,18 +178,18 @@ The validated chunks were generated from the full fake-realtime capture after
 the final radius-outlier/default GPU-isolation audit:
 
 ```text
-result/demo_v4/full_fake_realtime_native_radius_20260624/cases/demo_v4_native_radius_chunk_0006
-result/demo_v4/full_fake_realtime_native_radius_20260624/cases/demo_v4_native_radius_chunk_0003
+result/demo_v4/full_fake_realtime_native_full_sam3d_20260624/cases/demo_v4_native_full_sam3d_chunk_0006
+result/demo_v4/full_fake_realtime_native_full_sam3d_20260624/cases/demo_v4_native_full_sam3d_chunk_0003
 ```
 
 FuturePhysTwin loader accepted both chunks:
 
 ```text
-chunk_0006: frames=25, object=(25,2135,3), controller=(25,30,3),
-            surface=(465,3), interior=(610,3),
+chunk_0006: frames=25, object=(25,2136,3), controller=(25,30,3),
+            surface=(700,3), interior=(1000,3),
             first-frame zero object/controller=0/0
-chunk_0003: frames=25, object=(25,2149,3), controller=(25,30,3),
-            surface=(465,3), interior=(610,3),
+chunk_0003: frames=25, object=(25,2152,3), controller=(25,30,3),
+            surface=(700,3), interior=(1000,3),
             first-frame zero object/controller=0/0
 ```
 
@@ -190,20 +198,20 @@ Optimization results:
 ```text
 chunk_0006 optimize_cma:
   optimal_params.pkl written
-  Optimal error: 8.20782170194434e-05
+  Optimal error: 9.326892291028344e-05
 
 chunk_0006 train_warp:
   completed iteration 199/199
-  iteration 199 loss: 2.656478261542361e-05
-  best_160.pth and iter_199.pth written
+  iteration 199 loss: 1.4373730721217726e-05
+  best_199.pth and iter_199.pth written
 
 chunk_0003 optimize_cma:
   optimal_params.pkl written
-  Optimal error: 0.00010896797653003887
+  Optimal error: 8.594641485615284e-05
 
 chunk_0003 train_warp:
   completed iteration 199/199
-  iteration 199 loss: 2.4058800818238524e-05
+  iteration 199 loss: 1.1899847095264704e-05
   best_199.pth and iter_199.pth written
 ```
 

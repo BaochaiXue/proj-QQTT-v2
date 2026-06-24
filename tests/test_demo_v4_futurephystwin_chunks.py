@@ -30,6 +30,10 @@ from demo_v4.realtime_futurephystwin_chunks import (
     main as demo_v4_main,
     select_validation_chunk_cases,
 )
+from qqtt.demo.single_view_shape_prior_sampling import (
+    SimpleShapeMesh,
+    sample_data_process_sam3d_single_view_shape_prior_points,
+)
 
 
 def _rgb_frames(frame_count: int, height: int = 4, width: int = 5) -> list[np.ndarray]:
@@ -205,6 +209,17 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             self.assertEqual(manifest["data_process_sam3d_metrics"]["object_volume_sample_size_m"], 0.005)
             self.assertEqual(manifest["data_process_sam3d_metrics"]["mask_radius_outlier_radius_m"], 0.01)
             self.assertEqual(manifest["data_process_sam3d_metrics"]["mask_radius_outlier_nb_points"], 40)
+            self.assertEqual(
+                manifest["data_process_sam3d_metrics"]["shape_prior_sampling_backend"],
+                "sam3d-single-view",
+            )
+            self.assertEqual(
+                manifest["data_process_sam3d_metrics"]["shape_prior_sampling_source"],
+                "data_process_sam3d/data_process_sample.py",
+            )
+            self.assertEqual(manifest["data_process_sam3d_metrics"]["shape_prior_target_surface_points"], 700)
+            self.assertEqual(manifest["data_process_sam3d_metrics"]["shape_prior_target_interior_points"], 1000)
+            self.assertFalse(manifest["data_process_sam3d_metrics"]["shape_prior_uses_mvsam3d"])
             for relative in (
                 "final_data.pkl",
                 "track_process_data.pkl",
@@ -631,6 +646,59 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             with (base_path / "shape_min_bound" / "final_data.pkl").open("rb") as handle:
                 final_data = pickle.load(handle)
             self.assertEqual(final_data["object_points"].shape[1], 2)
+
+    def test_single_view_sam3d_sampling_matches_data_process_sam3d_targets(self) -> None:
+        vertices = np.array(
+            [
+                [-0.05, -0.05, -0.10],
+                [0.05, -0.05, -0.10],
+                [0.05, 0.05, -0.10],
+                [-0.05, 0.05, -0.10],
+                [-0.05, -0.05, 0.0],
+                [0.05, -0.05, 0.0],
+                [0.05, 0.05, 0.0],
+                [-0.05, 0.05, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        faces = np.array(
+            [
+                [0, 1, 2],
+                [0, 2, 3],
+                [4, 6, 5],
+                [4, 7, 6],
+                [0, 4, 5],
+                [0, 5, 1],
+                [1, 5, 6],
+                [1, 6, 2],
+                [2, 6, 7],
+                [2, 7, 3],
+                [3, 7, 4],
+                [3, 4, 0],
+            ],
+            dtype=np.int64,
+        )
+        mesh = SimpleShapeMesh(vertices=vertices, faces=faces)
+        axis = np.linspace(-0.045, 0.045, 10, dtype=np.float32)
+        reference_points = np.stack(
+            np.meshgrid(axis, axis, np.linspace(-0.095, -0.005, 10, dtype=np.float32), indexing="ij"),
+            axis=-1,
+        ).reshape(-1, 3)
+
+        samples = sample_data_process_sam3d_single_view_shape_prior_points(
+            mesh,
+            reference_points,
+            target_surface_points=700,
+            target_interior_points=1000,
+            shape_prior_max_dist_m=0.08,
+        )
+
+        self.assertEqual(samples.surface_points_m.shape, (700, 3))
+        self.assertEqual(samples.interior_points_m.shape, (1000, 3))
+        self.assertEqual(samples.metadata["single_view_shape_prior_sampling_backend"], "sam3d-single-view")
+        self.assertFalse(samples.metadata["uses_mvsam3d"])
+        self.assertEqual(samples.metadata["shape_prior_target_surface_points"], 700)
+        self.assertEqual(samples.metadata["shape_prior_target_interior_points"], 1000)
 
     def test_select_validation_chunks_uses_second_last_and_fifth_last(self) -> None:
         manifests = [{"case_name": f"chunk_{idx:04d}"} for idx in range(1, 8)]

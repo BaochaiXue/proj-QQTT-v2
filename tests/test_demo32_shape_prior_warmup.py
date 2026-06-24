@@ -541,7 +541,7 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
 
         self.assertEqual(config.above_direction, "negative")
 
-    def test_worker_response_includes_single_view_legacy_shape_prior_samples(self) -> None:
+    def test_worker_response_includes_data_process_sam3d_single_view_shape_prior_samples(self) -> None:
         object_mask = np.zeros((8, 8), dtype=bool)
         object_mask[3:5, 3:5] = True
         depth = np.full((8, 8), 0.5, dtype=np.float32)
@@ -605,8 +605,10 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
         response = parse_shape_prior_response_parts(worker.handle(request))
 
         self.assertEqual(response.metadata["status"], "ready")
-        self.assertEqual(response.metadata["single_view_shape_prior_sampling_backend"], "legacy")
+        self.assertEqual(response.metadata["single_view_shape_prior_sampling_backend"], "sam3d-single-view")
         self.assertFalse(response.metadata["uses_mvsam3d"])
+        self.assertEqual(response.metadata["shape_prior_target_surface_points"], 700)
+        self.assertEqual(response.metadata["shape_prior_target_interior_points"], 1000)
         self.assertGreater(response.surface_points_m.shape[0], 0)
         self.assertGreater(response.interior_points_m.shape[0], 0)
 

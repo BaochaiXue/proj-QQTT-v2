@@ -39,7 +39,7 @@ from qqtt.demo.single_view_shape_align import (  # noqa: E402
 )
 from qqtt.demo.single_view_shape_prior_sampling import (  # noqa: E402
     SimpleShapeMesh,
-    sample_legacy_single_view_shape_prior_points,
+    sample_data_process_sam3d_single_view_shape_prior_points,
 )
 from services.shape_prior_remote.protocol import (  # noqa: E402
     ShapePriorRequest,
@@ -423,7 +423,7 @@ class ShapePriorSam3DWorker:
                         rotation=aligned.rotation,
                         translation=aligned.translation,
                     )
-                    samples = sample_legacy_single_view_shape_prior_points(
+                    samples = sample_data_process_sam3d_single_view_shape_prior_points(
                         aligned_mesh,
                         observation,
                     )

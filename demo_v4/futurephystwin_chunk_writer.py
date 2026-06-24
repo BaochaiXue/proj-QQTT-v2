@@ -43,6 +43,13 @@ DATA_PROCESS_SAM3D_METRICS = {
     "controller_fps_count": 30,
     "object_sampling_source": "data_process_sam3d/data_process_sample.py::process_unique_points",
     "object_volume_sample_size_m": 0.005,
+    "shape_prior_sampling_backend": "sam3d-single-view",
+    "shape_prior_sampling_source": "data_process_sam3d/data_process_sample.py",
+    "shape_prior_target_surface_points": 700,
+    "shape_prior_target_interior_points": 1000,
+    "shape_prior_volume_sample_size_m": 0.005,
+    "shape_prior_effective_max_dist_m": 0.035,
+    "shape_prior_uses_mvsam3d": False,
     "shape_prior_ground_policy": "preserve",
 }
 

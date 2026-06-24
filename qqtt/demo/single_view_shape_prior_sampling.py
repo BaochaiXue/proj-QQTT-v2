@@ -7,6 +7,14 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
+DEFAULT_NUM_SURFACE_POINTS = 1024
+DEFAULT_VOLUME_SAMPLE_SIZE_M = 0.005
+DEFAULT_SHAPE_PRIOR_MAX_DIST_M = 0.05
+DEFAULT_TARGET_SURFACE_POINTS = 700
+DEFAULT_TARGET_INTERIOR_POINTS = 1000
+DATA_PROCESS_SAM3D_MAX_DIST_CAP_M = 0.035
+
+
 @dataclass(frozen=True)
 class SingleViewShapePriorSamples:
     surface_points_m: np.ndarray
@@ -50,15 +58,75 @@ def filter_points_by_nn_distance(points: np.ndarray, reference_points: np.ndarra
     return np.ascontiguousarray(pts[distances <= float(max_dist)], dtype=np.float32)
 
 
+def _effective_data_process_sam3d_max_dist(max_dist: float) -> float:
+    value = float(max_dist)
+    if value <= 0.0:
+        return value
+    return min(value, DATA_PROCESS_SAM3D_MAX_DIST_CAP_M)
+
+
+def _sort_by_reference_distance(points: np.ndarray, reference_points: np.ndarray) -> np.ndarray:
+    pts = _points(points)
+    ref = _points(reference_points)
+    if len(pts) == 0:
+        return pts
+    tree = cKDTree(ref)
+    distances, _ = tree.query(pts, k=1)
+    return np.ascontiguousarray(pts[np.argsort(distances)], dtype=np.float32)
+
+
 def _point_grid_index(point: np.ndarray, min_bound: np.ndarray, grid_size: float) -> tuple[int, int, int]:
     return tuple(np.floor((np.asarray(point, dtype=np.float32) - min_bound) / np.float32(grid_size)).astype(int))
+
+
+def _dedupe_points(
+    points: np.ndarray,
+    min_bound: np.ndarray,
+    *,
+    occupied: set[tuple[int, int, int]] | None = None,
+    limit: int | None = None,
+    grid_size: float,
+) -> np.ndarray:
+    pts = _points(points)
+    if len(pts) == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    seen = set() if occupied is None else set(occupied)
+    selected: list[np.ndarray] = []
+    for point in pts:
+        grid_index = _point_grid_index(point, min_bound, float(grid_size))
+        if grid_index in seen:
+            continue
+        seen.add(grid_index)
+        selected.append(point)
+        if limit is not None and len(selected) >= int(limit):
+            break
+    if not selected:
+        return np.empty((0, 3), dtype=np.float32)
+    return _points(np.asarray(selected, dtype=np.float32))
+
+
+def _as_trimesh_mesh(mesh: Any) -> Any:
+    try:
+        import trimesh
+
+        if isinstance(mesh, trimesh.Trimesh):
+            return mesh
+        if hasattr(mesh, "vertices") and hasattr(mesh, "faces"):
+            return trimesh.Trimesh(
+                vertices=np.asarray(mesh.vertices, dtype=np.float32),
+                faces=np.asarray(mesh.faces, dtype=np.int64),
+                process=False,
+            )
+    except Exception:
+        return mesh
+    return mesh
 
 
 def _sample_surface(mesh: Any, count: int) -> np.ndarray:
     try:
         import trimesh
 
-        sampled, _ = trimesh.sample.sample_surface(mesh, int(count))
+        sampled, _ = trimesh.sample.sample_surface(_as_trimesh_mesh(mesh), int(count))
         return _points(sampled)
     except Exception:
         pass
@@ -89,11 +157,11 @@ def _sample_surface(mesh: Any, count: int) -> np.ndarray:
     return _points(sampled)
 
 
-def _interior_candidates(mesh: Any, *, sample_count: int) -> np.ndarray:
+def _sample_volume(mesh: Any, *, sample_count: int) -> np.ndarray:
     try:
         import trimesh
 
-        sampled = trimesh.sample.volume_mesh(mesh, int(sample_count))
+        sampled = trimesh.sample.volume_mesh(_as_trimesh_mesh(mesh), int(sample_count))
         sampled = _points(sampled)
         if len(sampled):
             return sampled
@@ -118,6 +186,180 @@ def _interior_candidates(mesh: Any, *, sample_count: int) -> np.ndarray:
     return _points(grid[:grid_count])
 
 
+def _voxel_interior_candidates(
+    mesh: Any,
+    reference_points: np.ndarray,
+    *,
+    volume_sample_size_m: float,
+    max_dist_m: float,
+) -> np.ndarray:
+    try:
+        import open3d as o3d
+    except Exception:
+        return _points(_sample_volume(mesh, sample_count=200000))
+
+    mesh = _as_trimesh_mesh(mesh)
+    bounds = np.asarray(mesh.bounds, dtype=np.float32)
+    spacing = max(float(volume_sample_size_m), 1e-4)
+    axes = [
+        np.arange(bounds[0, axis] + spacing * 0.5, bounds[1, axis], spacing)
+        for axis in range(3)
+    ]
+    if any(len(axis) == 0 for axis in axes):
+        return np.empty((0, 3), dtype=np.float32)
+    grid = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+    if grid.shape[0] > 250000:
+        step = int(np.ceil(grid.shape[0] / 250000))
+        grid = grid[::step]
+
+    try:
+        scene = o3d.t.geometry.RaycastingScene()
+        vertices = o3d.core.Tensor(np.asarray(mesh.vertices), dtype=o3d.core.Dtype.Float32)
+        triangles = o3d.core.Tensor(np.asarray(mesh.faces), dtype=o3d.core.Dtype.UInt32)
+        scene.add_triangles(vertices, triangles)
+        signed = scene.compute_signed_distance(
+            o3d.core.Tensor(grid.astype(np.float32), dtype=o3d.core.Dtype.Float32)
+        ).numpy()
+        interior = grid[signed < 0]
+    except Exception:
+        try:
+            interior = grid[mesh.contains(grid)]
+        except Exception:
+            interior = np.empty((0, 3), dtype=np.float32)
+    interior = filter_points_by_nn_distance(interior, reference_points, max_dist_m)
+    return _sort_by_reference_distance(interior, reference_points)
+
+
+def sample_data_process_sam3d_single_view_shape_prior_points(
+    mesh: Any,
+    reference_points_m: np.ndarray,
+    *,
+    num_surface_points: int = DEFAULT_NUM_SURFACE_POINTS,
+    volume_sample_size_m: float = DEFAULT_VOLUME_SAMPLE_SIZE_M,
+    shape_prior_max_dist_m: float = DEFAULT_SHAPE_PRIOR_MAX_DIST_M,
+    target_surface_points: int = DEFAULT_TARGET_SURFACE_POINTS,
+    target_interior_points: int = DEFAULT_TARGET_INTERIOR_POINTS,
+) -> SingleViewShapePriorSamples:
+    reference = _points(reference_points_m)
+    if len(reference) == 0:
+        return SingleViewShapePriorSamples(
+            surface_points_m=np.empty((0, 3), dtype=np.float32),
+            interior_points_m=np.empty((0, 3), dtype=np.float32),
+            metadata={
+                "single_view_shape_prior_sampling_backend": "sam3d-single-view",
+                "uses_mvsam3d": False,
+                "shape_prior_sampling_reason": "empty_reference_points",
+                "shape_prior_target_surface_points": int(target_surface_points),
+                "shape_prior_target_interior_points": int(target_interior_points),
+            },
+        )
+    mesh = _as_trimesh_mesh(mesh.copy() if hasattr(mesh, "copy") else mesh)
+    if getattr(mesh, "faces", None) is None or len(mesh.faces) == 0:
+        vertices = filter_points_by_nn_distance(
+            np.asarray(mesh.vertices),
+            reference,
+            _effective_data_process_sam3d_max_dist(shape_prior_max_dist_m),
+        )
+        return SingleViewShapePriorSamples(
+            surface_points_m=vertices,
+            interior_points_m=np.empty((0, 3), dtype=np.float32),
+            metadata={
+                "single_view_shape_prior_sampling_backend": "sam3d-single-view",
+                "uses_mvsam3d": False,
+                "shape_prior_sampling_reason": "mesh_without_faces",
+                "shape_prior_target_surface_points": int(target_surface_points),
+                "shape_prior_target_interior_points": int(target_interior_points),
+                "shape_prior_surface_points": int(len(vertices)),
+                "shape_prior_interior_points": 0,
+            },
+        )
+
+    np.random.seed(42)
+    min_bound = np.min(reference, axis=0)
+    prior_grid_size = max(float(volume_sample_size_m) * 0.4, 1e-4)
+    max_dist = _effective_data_process_sam3d_max_dist(shape_prior_max_dist_m)
+
+    surface_candidates: list[np.ndarray] = []
+    surface_points = np.empty((0, 3), dtype=np.float32)
+    for count in [max(int(num_surface_points), 4096), 10000, 50000, 200000]:
+        sampled = _sample_surface(mesh, int(count))
+        sampled = filter_points_by_nn_distance(sampled, reference, max_dist)
+        sampled = _sort_by_reference_distance(sampled, reference)
+        surface_candidates.append(sampled)
+        surface_points = _dedupe_points(
+            np.vstack(surface_candidates),
+            min_bound,
+            limit=int(target_surface_points),
+            grid_size=prior_grid_size,
+        )
+        if len(surface_points) >= int(target_surface_points):
+            break
+    if len(surface_points) < int(target_surface_points):
+        for _ in range(2):
+            sampled = _sample_surface(mesh, 200000)
+            sampled = filter_points_by_nn_distance(sampled, reference, max_dist)
+            sampled = _sort_by_reference_distance(sampled, reference)
+            surface_candidates.append(sampled)
+            surface_points = _dedupe_points(
+                np.vstack(surface_candidates),
+                min_bound,
+                limit=int(target_surface_points),
+                grid_size=prior_grid_size,
+            )
+            if len(surface_points) >= int(target_surface_points):
+                break
+
+    interior_candidates: list[np.ndarray] = []
+    interior_points = np.empty((0, 3), dtype=np.float32)
+    for count in [10000, 50000, 200000]:
+        sampled = _sample_volume(mesh, sample_count=int(count))
+        sampled = filter_points_by_nn_distance(sampled, reference, max_dist)
+        sampled = _sort_by_reference_distance(sampled, reference)
+        interior_candidates.append(sampled)
+        interior_points = _dedupe_points(
+            np.vstack(interior_candidates),
+            min_bound,
+            limit=int(target_interior_points),
+            grid_size=prior_grid_size,
+        )
+        if len(interior_points) >= int(target_interior_points):
+            break
+    if len(interior_points) < int(target_interior_points):
+        fallback = _voxel_interior_candidates(
+            mesh,
+            reference,
+            volume_sample_size_m=float(volume_sample_size_m),
+            max_dist_m=max_dist,
+        )
+        if fallback.size:
+            interior_points = _dedupe_points(
+                np.vstack([*interior_candidates, fallback]),
+                min_bound,
+                limit=int(target_interior_points),
+                grid_size=prior_grid_size,
+            )
+
+    return SingleViewShapePriorSamples(
+        surface_points_m=_points(surface_points),
+        interior_points_m=_points(interior_points),
+        metadata={
+            "single_view_shape_prior_sampling_backend": "sam3d-single-view",
+            "single_view_shape_prior_sampling_source": "data_process_sam3d/data_process_sample.py",
+            "uses_mvsam3d": False,
+            "shape_prior_num_surface_points": int(num_surface_points),
+            "shape_prior_target_surface_points": int(target_surface_points),
+            "shape_prior_target_interior_points": int(target_interior_points),
+            "shape_prior_max_dist_m": float(shape_prior_max_dist_m),
+            "shape_prior_effective_max_dist_m": float(max_dist),
+            "shape_prior_volume_sample_size_m": float(volume_sample_size_m),
+            "shape_prior_surface_candidates": int(sum(len(item) for item in surface_candidates)),
+            "shape_prior_interior_candidates": int(sum(len(item) for item in interior_candidates)),
+            "shape_prior_surface_points": int(len(surface_points)),
+            "shape_prior_interior_points": int(len(interior_points)),
+        },
+    )
+
+
 def sample_legacy_single_view_shape_prior_points(
     mesh: Any,
     reference_points_m: np.ndarray,
@@ -127,81 +369,18 @@ def sample_legacy_single_view_shape_prior_points(
     shape_prior_max_dist_m: float = 0.05,
     interior_sample_count: int = 10000,
 ) -> SingleViewShapePriorSamples:
-    reference = _points(reference_points_m)
-    if len(reference) == 0:
-        return SingleViewShapePriorSamples(
-            surface_points_m=np.empty((0, 3), dtype=np.float32),
-            interior_points_m=np.empty((0, 3), dtype=np.float32),
-            metadata={
-                "single_view_shape_prior_sampling_backend": "legacy",
-                "uses_mvsam3d": False,
-                "shape_prior_sampling_reason": "empty_reference_points",
-            },
-        )
-    mesh = mesh.copy() if hasattr(mesh, "copy") else mesh
-    if getattr(mesh, "faces", None) is None or len(mesh.faces) == 0:
-        vertices = filter_points_by_nn_distance(np.asarray(mesh.vertices), reference, float(shape_prior_max_dist_m))
-        return SingleViewShapePriorSamples(
-            surface_points_m=vertices,
-            interior_points_m=np.empty((0, 3), dtype=np.float32),
-            metadata={
-                "single_view_shape_prior_sampling_backend": "legacy",
-                "uses_mvsam3d": False,
-                "shape_prior_sampling_reason": "mesh_without_faces",
-            },
-        )
-
-    surface_points = filter_points_by_nn_distance(_sample_surface(mesh, int(num_surface_points)), reference, float(shape_prior_max_dist_m))
-    interior_points = filter_points_by_nn_distance(
-        _interior_candidates(mesh, sample_count=int(interior_sample_count)),
-        reference,
-        float(shape_prior_max_dist_m),
-    )
-
-    min_bound = np.min(np.concatenate([surface_points, interior_points, reference], axis=0), axis=0)
-    grid_size = float(volume_sample_size_m)
-    object_grid = {_point_grid_index(point, min_bound, grid_size) for point in reference}
-
-    prior_grid = set(object_grid)
-    final_surface: list[np.ndarray] = []
-    for point in surface_points:
-        grid_index = _point_grid_index(point, min_bound, grid_size)
-        if grid_index in prior_grid:
-            continue
-        prior_grid.add(grid_index)
-        final_surface.append(point)
-
-    interior_grid = set(object_grid)
-    final_interior: list[np.ndarray] = []
-    for point in interior_points:
-        grid_index = _point_grid_index(point, min_bound, grid_size)
-        if grid_index in interior_grid:
-            continue
-        interior_grid.add(grid_index)
-        final_interior.append(point)
-
-    surface_arr = _points(np.asarray(final_surface, dtype=np.float32))
-    interior_arr = _points(np.asarray(final_interior, dtype=np.float32))
-    return SingleViewShapePriorSamples(
-        surface_points_m=surface_arr,
-        interior_points_m=interior_arr,
-        metadata={
-            "single_view_shape_prior_sampling_backend": "legacy",
-            "uses_mvsam3d": False,
-            "shape_prior_num_surface_points": int(num_surface_points),
-            "shape_prior_interior_sample_count": int(interior_sample_count),
-            "shape_prior_max_dist_m": float(shape_prior_max_dist_m),
-            "shape_prior_volume_sample_size_m": float(volume_sample_size_m),
-            "shape_prior_surface_candidates": int(len(surface_points)),
-            "shape_prior_interior_candidates": int(len(interior_points)),
-            "shape_prior_surface_points": int(len(surface_arr)),
-            "shape_prior_interior_points": int(len(interior_arr)),
-        },
+    return sample_data_process_sam3d_single_view_shape_prior_points(
+        mesh,
+        reference_points_m,
+        num_surface_points=int(num_surface_points),
+        volume_sample_size_m=float(volume_sample_size_m),
+        shape_prior_max_dist_m=float(shape_prior_max_dist_m),
     )
 
 
 __all__ = [
     "SingleViewShapePriorSamples",
     "filter_points_by_nn_distance",
+    "sample_data_process_sam3d_single_view_shape_prior_points",
     "sample_legacy_single_view_shape_prior_points",
 ]
