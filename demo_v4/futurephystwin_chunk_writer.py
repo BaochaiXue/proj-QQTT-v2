@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 import pickle
-from typing import Any, Mapping, Sequence
+import shutil
+from typing import Any, Callable, Mapping, Sequence
+import uuid
 
 import numpy as np
 from PIL import Image
@@ -102,7 +105,10 @@ def _write_rgb_frames(case_dir: Path, rgb_frames: Sequence[np.ndarray]) -> None:
         rgb = np.asarray(frame, dtype=np.uint8)
         if rgb.ndim != 3 or rgb.shape[2] != 3:
             raise ValueError(f"rgb frame {frame_idx} must be HxWx3, got {rgb.shape}")
-        Image.fromarray(np.ascontiguousarray(rgb, dtype=np.uint8), mode="RGB").save(color_dir / f"{frame_idx}.png")
+        Image.fromarray(np.ascontiguousarray(rgb, dtype=np.uint8), mode="RGB").save(
+            color_dir / f"{frame_idx}.png",
+            compress_level=1,
+        )
 
 
 def _write_processed_masks(case_dir: Path, processed_masks: Sequence[Sequence[Mapping[str, np.ndarray]]]) -> None:
@@ -281,60 +287,85 @@ def write_futurephystwin_chunk_case(
     base_path: str | Path,
     case_name: str,
     chunk: FuturePhysTwinChunk,
+    manifest_extras: Mapping[str, Any] | Callable[[], Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     base = Path(base_path)
+    base.mkdir(parents=True, exist_ok=True)
     case = base / str(case_name)
-    case.mkdir(parents=True, exist_ok=True)
+    if case.exists():
+        raise FileExistsError(f"FuturePhysTwin chunk case already exists: {case}")
+    staging_root = base / ".publishing"
+    staging_root.mkdir(parents=True, exist_ok=True)
+    staging = staging_root / f"{case.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    staging.mkdir(parents=True)
     frame_count = _ensure_frame_count(chunk)
     first_rgb = np.asarray(chunk.rgb_frames[0], dtype=np.uint8)
     height, width = first_rgb.shape[:2]
 
-    _write_rgb_frames(case, chunk.rgb_frames)
-    _write_processed_masks(case, chunk.processed_masks)
-    _write_tracking(case, chunk, frame_count)
-    _write_optional_pcd(case, chunk, frame_count)
+    try:
+        _write_rgb_frames(staging, chunk.rgb_frames)
+        _write_processed_masks(staging, chunk.processed_masks)
+        _write_tracking(staging, chunk, frame_count)
+        _write_optional_pcd(staging, chunk, frame_count)
 
-    c2w = np.asarray(chunk.camera_to_world_c2w, dtype=np.float32)
-    if c2w.shape != (4, 4):
-        raise ValueError(f"camera_to_world_c2w must be 4x4, got {c2w.shape}")
-    with (case / "calibrate.pkl").open("wb") as handle:
-        pickle.dump([np.ascontiguousarray(c2w, dtype=np.float32)], handle)
+        c2w = np.asarray(chunk.camera_to_world_c2w, dtype=np.float32)
+        if c2w.shape != (4, 4):
+            raise ValueError(f"camera_to_world_c2w must be 4x4, got {c2w.shape}")
+        with (staging / "calibrate.pkl").open("wb") as handle:
+            pickle.dump([np.ascontiguousarray(c2w, dtype=np.float32)], handle)
 
-    metadata = _metadata_payload(chunk, frame_count, (width, height))
-    (case / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        metadata = _metadata_payload(chunk, frame_count, (width, height))
+        (staging / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    split = _split_payload(frame_count)
-    (case / "split.json").write_text(json.dumps(split, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        split = _split_payload(frame_count)
+        (staging / "split.json").write_text(json.dumps(split, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    track_process = _track_process_payload(chunk.track_process_data)
-    with (case / "track_process_data.pkl").open("wb") as handle:
-        pickle.dump(track_process, handle)
+        track_process = _track_process_payload(chunk.track_process_data)
+        with (staging / "track_process_data.pkl").open("wb") as handle:
+            pickle.dump(track_process, handle)
 
-    final_data = _final_data_payload(
-        track_process,
-        surface_points=chunk.surface_points,
-        interior_points=chunk.interior_points,
-    )
-    with (case / "final_data.pkl").open("wb") as handle:
-        pickle.dump(final_data, handle)
+        final_data = _final_data_payload(
+            track_process,
+            surface_points=chunk.surface_points,
+            interior_points=chunk.interior_points,
+        )
+        with (staging / "final_data.pkl").open("wb") as handle:
+            pickle.dump(final_data, handle)
 
-    manifest = {
-        "case_name": str(case_name),
-        "frame_count": int(frame_count),
-        "chunk_index": None if chunk.chunk_index is None else int(chunk.chunk_index),
-        "camera_count": 1,
-        "futurephystwin_case_root": str(case),
-        "final_data_path": "final_data.pkl",
-        "track_process_data_path": "track_process_data.pkl",
-        "surface_point_count": int(final_data["surface_points"].shape[0]),
-        "interior_point_count": int(final_data["interior_points"].shape[0]),
-        "depth_backend": str(chunk.depth_backend),
-        "depth_source_internal": str(chunk.depth_source_internal),
-        "data_process_sam3d_metrics": dict(DATA_PROCESS_SAM3D_METRICS),
-    }
-    (case / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    validate_futurephystwin_case(case)
-    return manifest
+        manifest = {
+            "case_name": str(case_name),
+            "frame_count": int(frame_count),
+            "chunk_index": None if chunk.chunk_index is None else int(chunk.chunk_index),
+            "camera_count": 1,
+            "futurephystwin_case_root": str(case),
+            "final_data_path": "final_data.pkl",
+            "track_process_data_path": "track_process_data.pkl",
+            "surface_point_count": int(final_data["surface_points"].shape[0]),
+            "interior_point_count": int(final_data["interior_points"].shape[0]),
+            "depth_backend": str(chunk.depth_backend),
+            "depth_source_internal": str(chunk.depth_source_internal),
+            "data_process_sam3d_metrics": dict(DATA_PROCESS_SAM3D_METRICS),
+            "publish_contract": "ready_marker_atomic_rename",
+        }
+        if manifest_extras is not None:
+            extras = manifest_extras() if callable(manifest_extras) else manifest_extras
+            manifest.update(dict(extras))
+        (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        validate_futurephystwin_case(staging)
+        (staging / "READY").write_text("ready\n", encoding="utf-8")
+        os.replace(staging, case)
+        try:
+            staging_root.rmdir()
+        except OSError:
+            pass
+        return manifest
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        try:
+            staging_root.rmdir()
+        except OSError:
+            pass
+        raise
 
 
 def _load_pickle(path: Path) -> Any:
@@ -388,8 +419,10 @@ def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
             raise ValueError(f"{key} must have shape N,3")
 
 
-def validate_futurephystwin_case(case_dir: str | Path) -> dict[str, Any]:
+def validate_futurephystwin_case(case_dir: str | Path, *, require_ready: bool = False) -> dict[str, Any]:
     case = Path(case_dir)
+    if require_ready and not (case / "READY").is_file():
+        raise ValueError(f"missing READY marker for FuturePhysTwin case: {case / 'READY'}")
     final_path = case / "final_data.pkl"
     if not final_path.is_file():
         raise ValueError(f"missing final_data.pkl: {final_path}")

@@ -53,7 +53,12 @@ Demo v4 writes each complete case under `--futurephystwin-base-path`:
   tracking/0.npz
   cotracker/0.npz
   manifest.json
+  READY
 ```
+
+Consumers should treat `READY` as the publish marker. Demo v4 writes and
+validates each chunk in a hidden staging directory before atomically publishing
+the final case directory.
 
 The `final_data.pkl` schema follows
 `/home/xinjie/FuturePhysTwin/qqtt/data/real_data.py`:

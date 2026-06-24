@@ -441,32 +441,34 @@ def _write_chunk_from_rows(
         mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
         mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
     )
-    manifest = write_futurephystwin_chunk_case(base_path, case_name, chunk)
-    materialize_end_wall_s = _relative_wall_s(float(wall_time_origin_s))
-    backlog_count = 0 if backlog_chunks is None else int(backlog_chunks())
-    publish_wall_s = _relative_wall_s(float(wall_time_origin_s))
-    source_window_start_s = float(row_start) / float(fps)
-    source_window_end_s = float(row_end) / float(fps)
-    manifest["source_capture_dir"] = str(capture)
-    manifest["source_row_start"] = int(row_start)
-    manifest["source_row_end"] = int(row_end)
-    manifest["source_window_start_s"] = source_window_start_s
-    manifest["source_window_end_s"] = source_window_end_s
-    manifest["chunk_ready_source_seq"] = int(rows[-1].get("seq", row_end - 1))
-    manifest["chunk_ready_source_time_s"] = (
-        None
-        if rows[-1].get("source_timestamp_s") is None
-        else float(rows[-1]["source_timestamp_s"])
-    )
-    manifest["materialize_start_wall_s"] = materialize_start_wall_s
-    manifest["materialize_end_wall_s"] = materialize_end_wall_s
-    manifest["publish_wall_s"] = publish_wall_s
-    manifest["materialize_latency_ms"] = float((materialize_end_wall_s - materialize_start_wall_s) * 1000.0)
-    manifest["publish_lag_ms"] = float((publish_wall_s - source_window_end_s) * 1000.0)
-    manifest["backlog_chunks"] = backlog_count
-    manifest_path = Path(base_path) / case_name / "manifest.json"
-    if manifest_path.is_file():
-        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    def manifest_extras() -> dict[str, Any]:
+        materialize_end_wall_s = _relative_wall_s(float(wall_time_origin_s))
+        backlog_count = 0 if backlog_chunks is None else int(backlog_chunks())
+        publish_wall_s = _relative_wall_s(float(wall_time_origin_s))
+        source_window_start_s = float(row_start) / float(fps)
+        source_window_end_s = float(row_end) / float(fps)
+        return {
+            "source_capture_dir": str(capture),
+            "source_row_start": int(row_start),
+            "source_row_end": int(row_end),
+            "source_window_start_s": source_window_start_s,
+            "source_window_end_s": source_window_end_s,
+            "chunk_ready_source_seq": int(rows[-1].get("seq", row_end - 1)),
+            "chunk_ready_source_time_s": (
+                None
+                if rows[-1].get("source_timestamp_s") is None
+                else float(rows[-1]["source_timestamp_s"])
+            ),
+            "materialize_start_wall_s": materialize_start_wall_s,
+            "materialize_end_wall_s": materialize_end_wall_s,
+            "publish_wall_s": publish_wall_s,
+            "materialize_latency_ms": float((materialize_end_wall_s - materialize_start_wall_s) * 1000.0),
+            "publish_lag_ms": float((publish_wall_s - source_window_end_s) * 1000.0),
+            "backlog_chunks": backlog_count,
+        }
+
+    manifest = write_futurephystwin_chunk_case(base_path, case_name, chunk, manifest_extras=manifest_extras)
     return manifest
 
 

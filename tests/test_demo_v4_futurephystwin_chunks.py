@@ -14,6 +14,7 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 
+import demo_v4.futurephystwin_chunk_writer as chunk_writer
 from demo_v4.futurephystwin_chunk_writer import (
     FuturePhysTwinChunk,
     validate_futurephystwin_case,
@@ -83,6 +84,25 @@ def _track_process_data(frame_count: int) -> dict[str, np.ndarray]:
         "controller_points": controller_points,
         "controller_mask": np.ones((30,), dtype=bool),
     }
+
+
+def _futurephystwin_chunk(frame_count: int = 3) -> FuturePhysTwinChunk:
+    return FuturePhysTwinChunk(
+        rgb_frames=_rgb_frames(frame_count),
+        processed_masks=_processed_masks(frame_count),
+        track_process_data=_track_process_data(frame_count),
+        intrinsics=np.array([[600.0, 0.0, 2.0], [0.0, 601.0, 1.5], [0.0, 0.0, 1.0]], dtype=np.float32),
+        camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        tracks_yx=np.zeros((frame_count, 4, 2), dtype=np.float32),
+        tracker_visibility=np.ones((frame_count, 4), dtype=bool),
+        queries_txy=np.zeros((4, 3), dtype=np.float32),
+        surface_points=np.array([[0.0, 0.0, -0.02], [0.01, 0.0, -0.03]], dtype=np.float64),
+        interior_points=np.array([[0.005, 0.0, -0.025]], dtype=np.float64),
+        fps=5,
+        serial_number="demo-v4-single-camera",
+        depth_backend="native-realsense",
+        depth_source_internal="realsense",
+    )
 
 
 class FuturePhysTwinChunkWriterTest(unittest.TestCase):
@@ -217,6 +237,44 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             self.assertEqual(manifest["chunk_count"], 1)
             self.assertEqual(manifest["chunks"][0]["case_name"], "demo_v4_cli_chunk_0001")
             self.assertTrue(validate_futurephystwin_case(base_path / "demo_v4_cli_chunk_0001")["valid"])
+
+    def test_chunk_writer_publishes_ready_marker_after_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp)
+
+            write_futurephystwin_chunk_case(base_path, "ready_chunk", _futurephystwin_chunk())
+
+            self.assertTrue((base_path / "ready_chunk" / "READY").is_file())
+            self.assertFalse((base_path / ".publishing").exists())
+
+    def test_validate_futurephystwin_case_can_require_ready_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp)
+            write_futurephystwin_chunk_case(base_path, "ready_required", _futurephystwin_chunk())
+            case_dir = base_path / "ready_required"
+
+            self.assertTrue(validate_futurephystwin_case(case_dir, require_ready=True)["valid"])
+            (case_dir / "READY").unlink()
+
+            with self.assertRaisesRegex(ValueError, "READY"):
+                validate_futurephystwin_case(case_dir, require_ready=True)
+
+    def test_chunk_writer_does_not_expose_final_case_while_materializing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp)
+            final_case = base_path / "atomic_chunk"
+            original_write_rgb_frames = chunk_writer._write_rgb_frames
+            final_case_visible_during_write: list[bool] = []
+
+            def observing_write_rgb_frames(case_dir: Path, rgb_frames: list[np.ndarray]) -> None:
+                final_case_visible_during_write.append(final_case.exists())
+                original_write_rgb_frames(case_dir, rgb_frames)
+
+            with mock.patch.object(chunk_writer, "_write_rgb_frames", side_effect=observing_write_rgb_frames):
+                write_futurephystwin_chunk_case(base_path, "atomic_chunk", _futurephystwin_chunk())
+
+            self.assertEqual(final_case_visible_during_write, [False])
+            self.assertTrue((final_case / "READY").is_file())
 
     def test_writer_emits_futurephystwin_case_root_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -914,6 +972,7 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         self.assertFalse(samples.metadata["uses_mvsam3d"])
         self.assertEqual(samples.metadata["shape_prior_target_surface_points"], 700)
         self.assertEqual(samples.metadata["shape_prior_target_interior_points"], 1000)
+        self.assertEqual(samples.metadata["shape_prior_effective_max_dist_m"], 0.035)
 
     def test_select_validation_chunks_uses_second_last_and_fifth_last(self) -> None:
         manifests = [{"case_name": f"chunk_{idx:04d}"} for idx in range(1, 8)]
