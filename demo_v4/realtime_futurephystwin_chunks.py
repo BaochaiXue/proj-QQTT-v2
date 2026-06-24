@@ -27,6 +27,8 @@ DEFAULT_FUTUREPHYSTWIN_BASE_PATH = Path("/home/xinjie/FuturePhysTwin/data/demo_v
 DEFAULT_INPUT_SOURCE = "fake-live"
 DEFAULT_REPLAY_FPS = 5.0
 DEFAULT_CHUNK_SECONDS = 5.0
+DEFAULT_CHUNK_POLL_INTERVAL_S = 0.001
+DEFAULT_DEMO32_LOSSLESS_INPUT_FPS = 5.0
 DEFAULT_CASE_PREFIX = "demo_v4"
 DEFAULT_DEPTH_BACKEND = "native-realsense"
 DEFAULT_MAX_CHUNKS: int | None = None
@@ -63,7 +65,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Camera source mode used when Demo v4 launches its own capture.",
     )
     parser.add_argument("--replay-fps", type=float, default=DEFAULT_REPLAY_FPS)
+    parser.add_argument(
+        "--demo32-source-replay-fps",
+        type=float,
+        default=None,
+        help=(
+            "Optional Demo 3.2 fake-live pacing FPS. When omitted, Demo 3.2 uses "
+            "--replay-fps; Demo v4 output metadata/window math still use --replay-fps."
+        ),
+    )
     parser.add_argument("--chunk-seconds", type=float, default=DEFAULT_CHUNK_SECONDS)
+    parser.add_argument(
+        "--chunk-poll-interval-s",
+        type=float,
+        default=DEFAULT_CHUNK_POLL_INTERVAL_S,
+        help="Polling interval for realtime frames.jsonl chunk tailing.",
+    )
     parser.add_argument("--depth-backend", choices=("ir-ffs", "native-realsense"), default=DEFAULT_DEPTH_BACKEND)
     parser.add_argument(
         "--chunk-frame-count",
@@ -116,6 +133,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Segmentation/runtime dtype passed to Demo 3.2 inside the subprocess CUDA namespace.",
     )
     parser.add_argument(
+        "--demo32-lossless-max-backlog-seconds",
+        type=float,
+        default=None,
+        help=(
+            "Optional strict lossless replay backlog window passed to Demo 3.2. "
+            "Omit it to keep Demo 3.2 defaults."
+        ),
+    )
+    parser.add_argument(
+        "--demo32-headless-prepared-only",
+        dest="demo32_headless_prepared_only",
+        action="store_true",
+        help="Ask Demo 3.2 to write only prepared PhysTwin frames needed by Demo v4 chunking.",
+    )
+    parser.add_argument(
+        "--demo32-legacy-headless-artifacts",
+        dest="demo32_headless_prepared_only",
+        action="store_false",
+        help="Keep Demo 3.2 legacy per-frame headless artifacts in addition to prepared PhysTwin frames.",
+    )
+    parser.set_defaults(demo32_headless_prepared_only=True)
+    parser.add_argument(
         "--max-chunks",
         type=int,
         default=DEFAULT_MAX_CHUNKS,
@@ -144,6 +183,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--surface-points-npy", type=Path, default=None)
     parser.add_argument("--interior-points-npy", type=Path, default=None)
+    parser.add_argument(
+        "--write-final-pcd",
+        dest="write_final_pcd",
+        action="store_true",
+        help="Write dense per-frame pcd/*.npz into each published chunk case for diagnostics/export.",
+    )
+    parser.add_argument(
+        "--no-write-final-pcd",
+        dest="write_final_pcd",
+        action="store_false",
+        help="Skip dense per-frame pcd/*.npz in chunk cases; final_data/tracking/mask/color remain complete.",
+    )
+    parser.set_defaults(write_final_pcd=False)
     parser.add_argument(
         "--shape-prior-warmup",
         dest="shape_prior_warmup",
@@ -232,6 +284,14 @@ def resolve_chunk_frame_count(args: argparse.Namespace) -> int:
     return value
 
 
+def resolve_demo32_source_replay_fps(args: argparse.Namespace) -> float:
+    value = args.demo32_source_replay_fps
+    fps = float(args.replay_fps if value is None else value)
+    if not math.isfinite(fps) or fps <= 0.0:
+        raise ValueError("Demo 3.2 source replay fps must be positive")
+    return fps
+
+
 def resolve_realtime_gpu_mode(args: argparse.Namespace) -> str:
     value = getattr(args, "realtime_gpu_mode", None)
     if value is None:
@@ -285,7 +345,13 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "demo_version": "demo_v4",
         "input_source": str(args.input_source),
         "replay_fps": float(args.replay_fps),
+        "demo32_source_replay_fps": resolve_demo32_source_replay_fps(args),
+        "demo32_source_replay_fps_override": (
+            None if args.demo32_source_replay_fps is None else float(args.demo32_source_replay_fps)
+        ),
+        "demo32_lossless_input_fps": resolve_demo32_source_replay_fps(args),
         "chunk_seconds": float(args.chunk_seconds),
+        "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
         "chunk_frame_count": int(resolve_chunk_frame_count(args)),
         "futurephystwin_base_path": str(args.futurephystwin_base_path),
         "case_prefix": str(args.case_prefix),
@@ -303,6 +369,8 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "demo32_device": str(args.demo32_device),
         "demo32_tracker_device": str(args.demo32_tracker_device),
         "demo32_dtype": str(args.demo32_dtype),
+        "demo32_lossless_max_backlog_seconds": args.demo32_lossless_max_backlog_seconds,
+        "demo32_headless_prepared_only": bool(args.demo32_headless_prepared_only),
         "shape_prior_warmup": bool(args.shape_prior_warmup),
         "shape_prior_start_policy": str(args.shape_prior_start_policy),
         "shape_prior_execution": str(args.shape_prior_execution),
@@ -313,6 +381,7 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "mask_radius_outlier_filter": bool(args.mask_radius_outlier_filter),
         "mask_radius_outlier_radius_m": float(args.mask_radius_outlier_radius_m),
         "mask_radius_outlier_nb_points": int(args.mask_radius_outlier_nb_points),
+        "write_final_pcd": bool(args.write_final_pcd),
         "source_headless_capture": None if args.source_headless_capture is None else str(args.source_headless_capture),
     }
 
@@ -320,7 +389,7 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
 def _demo32_duration_s(args: argparse.Namespace, *, chunk_frame_count: int) -> float:
     if args.max_chunks is None:
         return 0.0
-    fps = float(args.replay_fps)
+    fps = resolve_demo32_source_replay_fps(args)
     if fps <= 0.0:
         fps = DEFAULT_REPLAY_FPS
     return (float(args.max_chunks) * float(chunk_frame_count) / fps) + float(args.capture_extra_seconds)
@@ -334,6 +403,7 @@ def build_demo32_realtime_command(
     chunk_frame_count: int,
 ) -> list[str]:
     script = REPO_ROOT / "demo_v3_2" / "realtime_single_camera_ffs_masked_pcd.py"
+    demo32_source_replay_fps = resolve_demo32_source_replay_fps(args)
     command = [
         sys.executable,
         str(script),
@@ -356,7 +426,7 @@ def build_demo32_realtime_command(
         "--demo-visual-mode",
         "tracking",
         "--replay-fps",
-        str(float(args.replay_fps)),
+        str(demo32_source_replay_fps),
         "--device",
         str(args.demo32_device),
         "--dtype",
@@ -364,6 +434,17 @@ def build_demo32_realtime_command(
         "--tracker-device",
         str(args.demo32_tracker_device),
     ]
+    if args.demo32_lossless_max_backlog_seconds is not None:
+        command.extend(
+            [
+                "--lossless-max-backlog-seconds",
+                str(float(args.demo32_lossless_max_backlog_seconds)),
+            ]
+        )
+    if float(demo32_source_replay_fps) != float(DEFAULT_DEMO32_LOSSLESS_INPUT_FPS):
+        command.extend(["--lossless-input-fps", str(float(demo32_source_replay_fps))])
+    if bool(args.demo32_headless_prepared_only):
+        command.append("--headless-prepared-only")
     if bool(args.shape_prior_warmup):
         command.extend(
             [
@@ -452,6 +533,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     chunk_frame_count = resolve_chunk_frame_count(args)
+    if float(args.chunk_poll_interval_s) <= 0.0:
+        raise ValueError("--chunk-poll-interval-s must be positive")
+    resolve_demo32_source_replay_fps(args)
 
     if bool(args.dry_run):
         print(json.dumps(_contract(args), indent=2, sort_keys=True))
@@ -472,6 +556,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             mask_radius_outlier_filter=bool(args.mask_radius_outlier_filter),
             mask_radius_outlier_radius_m=float(args.mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
+            write_final_pcd=bool(args.write_final_pcd),
         )
         summary = {
             "demo_version": "demo_v4",
@@ -483,6 +568,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "max_chunks": args.max_chunks,
             "chunk_count": int(len(manifests)),
             "chunks": manifests,
+            "write_final_pcd": bool(args.write_final_pcd),
         }
         summary.update(_runtime_chunk_summary(manifests))
         summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"
@@ -516,11 +602,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         capture_finished=lambda: process.poll() is not None,
         require_shape_prior=bool(args.shape_prior_warmup),
         shape_prior_wait_timeout_s=float(args.shape_prior_chunk_wait_timeout_s),
+        poll_interval_s=float(args.chunk_poll_interval_s),
         surface_points=surface_points,
         interior_points=interior_points,
         mask_radius_outlier_filter=bool(args.mask_radius_outlier_filter),
         mask_radius_outlier_radius_m=float(args.mask_radius_outlier_radius_m),
         mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
+        write_final_pcd=bool(args.write_final_pcd),
     )
     return_code = _stop_process(process)
     validation_cases = select_validation_chunk_cases(manifests) if len(manifests) >= 5 else []
@@ -543,6 +631,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "demo32_cuda_visible_devices_override": (
             None if args.demo32_cuda_visible_devices is None else str(args.demo32_cuda_visible_devices)
         ),
+        "demo32_lossless_max_backlog_seconds": args.demo32_lossless_max_backlog_seconds,
+        "demo32_headless_prepared_only": bool(args.demo32_headless_prepared_only),
+        "demo32_source_replay_fps": resolve_demo32_source_replay_fps(args),
+        "demo32_source_replay_fps_override": (
+            None if args.demo32_source_replay_fps is None else float(args.demo32_source_replay_fps)
+        ),
+        "demo32_lossless_input_fps": resolve_demo32_source_replay_fps(args),
         "shape_prior_device": resolve_shape_prior_device(args),
         "shape_prior_device_override": None if args.shape_prior_device is None else str(args.shape_prior_device),
         "demo32_return_code": return_code,
@@ -551,11 +646,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "futurephystwin_base_path": str(base_path),
         "case_prefix": str(args.case_prefix),
         "chunk_frame_count": int(chunk_frame_count),
+        "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
         "max_chunks": args.max_chunks,
         "chunk_count": int(len(manifests)),
         "chunks": manifests,
         "validation_chunk_cases": validation_cases,
         "external_shape_prior_points": bool(surface_points is not None or interior_points is not None),
+        "write_final_pcd": bool(args.write_final_pcd),
     }
     summary.update(_runtime_chunk_summary(manifests))
     summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"

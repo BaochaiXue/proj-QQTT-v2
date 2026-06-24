@@ -366,6 +366,18 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         ),
     )
     parser.add_argument(
+        "--lossless-max-backlog-seconds",
+        type=float,
+        default=masked_pcd.DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS,
+        help="Maximum strict 5 FPS lossless replay backlog window before treating the run as stalled.",
+    )
+    parser.add_argument(
+        "--lossless-input-fps",
+        type=float,
+        default=masked_pcd.DEFAULT_LOSSLESS_INPUT_FPS,
+        help="Strict lossless camera/fake-live cadence used by tracker-synchronized masked PCD replay.",
+    )
+    parser.add_argument(
         "--table-calibrate",
         type=Path,
         default=None,
@@ -521,6 +533,11 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
             "Defaults to output-root/headless_capture_<timestamp> when --render-mode none is used. "
             "The saved PCD uses the same default 0 mm table-Z filter as visual PCD/tracking modes."
         ),
+    )
+    parser.add_argument(
+        "--headless-prepared-only",
+        action="store_true",
+        help="Save prepared PhysTwin frames for Demo v4 chunking without legacy per-frame headless artifacts.",
     )
     parser.add_argument(
         "--view-mode",
@@ -832,6 +849,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--headless-capture-dir requires Demo 3.2/3.3 --input-source live or fake-live --render-mode none")
     if float(args.replay_fps) < 0.0:
         raise ValueError("--replay-fps must be >= 0")
+    if float(args.lossless_max_backlog_seconds) <= 0.0:
+        raise ValueError("--lossless-max-backlog-seconds must be positive")
+    if float(args.lossless_input_fps) <= 0.0:
+        raise ValueError("--lossless-input-fps must be positive")
     if _is_replay_input_source(str(args.input_source)):
         if args.recording_case is None:
             raise ValueError(f"--input-source {args.input_source} requires --recording-case or --fake-live-case")
@@ -1162,6 +1183,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "demo_visual_mode": str(args.demo_visual_mode),
         "headless_capture_enabled": bool(headless_capture),
+        "headless_prepared_only": bool(getattr(args, "headless_prepared_only", False)),
         "headless_capture_dir": None if not headless_capture or args.headless_capture_dir is None else str(args.headless_capture_dir),
         "saved_pcd_source": _headless_capture_saved_pcd_source(args) if headless_capture else None,
         "view_mode": str(args.view_mode),
@@ -1248,6 +1270,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "tracker_display_scope": str(args.tracker_display_scope),
         "tracker_visualization_mode": tracker_visualization_mode,
         "tracker_sync_policy": tracker_sync_policy,
+        "lossless_max_backlog_seconds": float(args.lossless_max_backlog_seconds),
+        "lossless_input_fps": float(args.lossless_input_fps),
         "query_display_policy": query_display_policy,
         "query_color_mode": query_color_mode,
         "tracker_overlay_max_points": int(args.tracker_overlay_max_points),
@@ -1557,6 +1581,10 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.extend(["--recording-case", str(args.recording_case)])
         if float(args.replay_fps) > 0.0:
             argv.extend(["--replay-fps", str(float(args.replay_fps))])
+        if float(args.lossless_max_backlog_seconds) != float(masked_pcd.DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS):
+            argv.extend(["--lossless-max-backlog-seconds", str(float(args.lossless_max_backlog_seconds))])
+        if float(args.lossless_input_fps) != float(masked_pcd.DEFAULT_LOSSLESS_INPUT_FPS):
+            argv.extend(["--lossless-input-fps", str(float(args.lossless_input_fps))])
     if not _is_replay_input_source(str(args.input_source)):
         serial = active_serial or args.serial
         if serial:
@@ -1611,6 +1639,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         argv.extend(["--pcd-filter-preset", str(pcd_filter_preset)])
     if args.headless_capture_dir is not None:
         argv.extend(["--headless-capture-dir", str(args.headless_capture_dir)])
+    if bool(getattr(args, "headless_prepared_only", False)):
+        argv.append("--headless-prepared-only")
     if args.panel_video_output is not None:
         argv.extend(["--panel-video-output", str(args.panel_video_output)])
     if args.table_calibrate is not None:

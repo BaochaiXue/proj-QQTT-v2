@@ -111,7 +111,7 @@ def _write_rgb_frames(case_dir: Path, rgb_frames: Sequence[np.ndarray]) -> None:
             raise ValueError(f"rgb frame {frame_idx} must be HxWx3, got {rgb.shape}")
         Image.fromarray(np.ascontiguousarray(rgb, dtype=np.uint8), mode="RGB").save(
             color_dir / f"{frame_idx}.png",
-            compress_level=1,
+            compress_level=0,
         )
 
 
@@ -132,7 +132,7 @@ def _write_processed_masks(case_dir: Path, processed_masks: Sequence[Sequence[Ma
             )
         normalized.append(camera_entries)
     with (mask_dir / "processed_masks.pkl").open("wb") as handle:
-        pickle.dump(normalized, handle)
+        pickle.dump(normalized, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def _write_tracking(case_dir: Path, chunk: FuturePhysTwinChunk, frame_count: int) -> None:
@@ -380,7 +380,7 @@ def write_futurephystwin_chunk_case(
         if c2w.shape != (4, 4):
             raise ValueError(f"camera_to_world_c2w must be 4x4, got {c2w.shape}")
         with (staging / "calibrate.pkl").open("wb") as handle:
-            pickle.dump([np.ascontiguousarray(c2w, dtype=np.float32)], handle)
+            pickle.dump([np.ascontiguousarray(c2w, dtype=np.float32)], handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         metadata = _metadata_payload(chunk, frame_count, (width, height))
         (staging / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -390,7 +390,7 @@ def write_futurephystwin_chunk_case(
 
         track_process = _track_process_payload(chunk.track_process_data)
         with (staging / "track_process_data.pkl").open("wb") as handle:
-            pickle.dump(track_process, handle)
+            pickle.dump(track_process, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         final_data = _final_data_payload(
             track_process,
@@ -398,7 +398,7 @@ def write_futurephystwin_chunk_case(
             interior_points=chunk.interior_points,
         )
         with (staging / "final_data.pkl").open("wb") as handle:
-            pickle.dump(final_data, handle)
+            pickle.dump(final_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
         final_data_written_wall_s = now_wall_s()
 
         manifest = {

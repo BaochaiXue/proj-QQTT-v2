@@ -1090,6 +1090,7 @@ class RemoteFfsQualityPacket:
 class HeadlessCaptureWriter:
     def __init__(self, output_dir: str | Path, *, metadata: dict[str, Any]) -> None:
         self.output_dir = _resolve_path(output_dir)
+        self.prepared_only = bool(metadata.get("headless_prepared_only", False))
         self.saved_pcd_source = str(metadata.get("saved_pcd_source") or HEADLESS_CAPTURE_SAVED_PCD_SOURCE)
         self.pcd_coordinate_frame = str(
             metadata.get("pcd_coordinate_frame")
@@ -1123,6 +1124,7 @@ class HeadlessCaptureWriter:
         self.world_z_stats_path.write_text("", encoding="utf-8")
         payload = dict(metadata)
         payload["headless_capture_enabled"] = True
+        payload["headless_prepared_only"] = bool(self.prepared_only)
         payload["saved_pcd_source"] = self.saved_pcd_source
         payload["saved_mask_source"] = "edgetam_binary_masks"
         payload["saved_rgb_source"] = "segmentation_color_bgr"
@@ -1189,10 +1191,8 @@ class HeadlessCaptureWriter:
     def write_input_frame(self, packet: FramePacket) -> None:
         seq_name = f"{int(packet.seq):06d}"
         rgb_path = self.input_rgb_dir / f"{seq_name}.png"
-        _bgr_to_pil_rgb(packet.color_bgr).save(rgb_path)
         row = {
             "seq": int(packet.seq),
-            "input_rgb_path": self._relative(rgb_path),
             "source_timestamp_s": (
                 None if packet.source_timestamp_s is None else float(packet.source_timestamp_s)
             ),
@@ -1202,6 +1202,9 @@ class HeadlessCaptureWriter:
             "source_step": None if packet.source_step is None else int(packet.source_step),
             "receive_perf_s": float(packet.receive_perf_s),
         }
+        if not self.prepared_only:
+            _bgr_to_pil_rgb(packet.color_bgr).save(rgb_path)
+            row["input_rgb_path"] = self._relative(rgb_path)
         with self._lock:
             with self.input_frames_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(row, sort_keys=True) + "\n")
@@ -1226,6 +1229,8 @@ class HeadlessCaptureWriter:
         filter_info = packet.filter_telemetry
         if not (filter_info.enabled and filter_info.mode == "sync" and filter_info.render_using_filtered):
             raise RuntimeError("headless capture refuses to save non-filtered PCD output")
+        if self.prepared_only and tracker_packet is None:
+            raise RuntimeError("prepared-only headless capture requires a tracker packet")
         fps_info = stage_fps or {}
         seq_name = f"{int(packet.seq):06d}"
         pcd_path = self.pcd_dir / f"{seq_name}.npz"
@@ -1234,45 +1239,46 @@ class HeadlessCaptureWriter:
         query_path = self.trajectory_dir / f"{seq_name}.npz"
         mask_path = self.mask_dir / f"{seq_name}.npz"
         prepared_phystwin_path = self.prepared_phystwin_dir / f"{seq_name}.npz"
-        _bgr_to_pil_rgb(mask_packet.color_bgr).save(rgb_path)
-        np.save(
-            depth_path,
-            np.ascontiguousarray(depth_m, dtype=np.float32),
-        )
-        np.savez_compressed(
-            mask_path,
-            seq=np.asarray([int(packet.seq)], dtype=np.int64),
-            controller_mask=np.ascontiguousarray(mask_packet.controller_mask, dtype=bool),
-            object_mask=np.ascontiguousarray(mask_packet.object_mask, dtype=bool),
-            hand_a_mask=np.ascontiguousarray(_mask_packet_hand_a_mask(mask_packet), dtype=bool),
-            hand_b_mask=np.ascontiguousarray(_mask_packet_hand_b_mask(mask_packet), dtype=bool),
-            controller_pcd_mask=np.ascontiguousarray(controller_pcd_mask, dtype=bool),
-            object_pcd_mask=np.ascontiguousarray(object_pcd_mask, dtype=bool),
-            pcd_stride=np.asarray([int(pcd_stride)], dtype=np.int64),
-            pcd_mask_erode_pixels=np.asarray([int(pcd_mask_erode_pixels)], dtype=np.int64),
-            object_pcd_mask_erode_pixels=np.asarray([int(object_pcd_mask_erode_pixels)], dtype=np.int64),
-            controller_pcd_mask_erode_pixels=np.asarray([int(controller_pcd_mask_erode_pixels)], dtype=np.int64),
-            mask_source=np.asarray(["edgetam_binary_masks"]),
-        )
-        np.savez(
-            pcd_path,
-            seq=np.asarray([int(packet.seq)], dtype=np.int64),
-            controller_xyz_m=np.ascontiguousarray(packet.controller_xyz_m, dtype=np.float32),
-            controller_rgb_u8=np.ascontiguousarray(packet.controller_colors_rgb_u8, dtype=np.uint8),
-            object_xyz_m=np.ascontiguousarray(packet.object_xyz_m, dtype=np.float32),
-            object_rgb_u8=np.ascontiguousarray(packet.object_colors_rgb_u8, dtype=np.uint8),
-            intrinsics=np.asarray(
-                [
-                    float(packet.intrinsics.fx),
-                    float(packet.intrinsics.fy),
-                    float(packet.intrinsics.cx),
-                    float(packet.intrinsics.cy),
-                ],
-                dtype=np.float32,
-            ),
-            saved_pcd_source=np.asarray([self.saved_pcd_source]),
-            coordinate_frame=np.asarray([str(packet.coordinate_frame or self.pcd_coordinate_frame)]),
-        )
+        if not self.prepared_only:
+            _bgr_to_pil_rgb(mask_packet.color_bgr).save(rgb_path)
+            np.save(
+                depth_path,
+                np.ascontiguousarray(depth_m, dtype=np.float32),
+            )
+            np.savez_compressed(
+                mask_path,
+                seq=np.asarray([int(packet.seq)], dtype=np.int64),
+                controller_mask=np.ascontiguousarray(mask_packet.controller_mask, dtype=bool),
+                object_mask=np.ascontiguousarray(mask_packet.object_mask, dtype=bool),
+                hand_a_mask=np.ascontiguousarray(_mask_packet_hand_a_mask(mask_packet), dtype=bool),
+                hand_b_mask=np.ascontiguousarray(_mask_packet_hand_b_mask(mask_packet), dtype=bool),
+                controller_pcd_mask=np.ascontiguousarray(controller_pcd_mask, dtype=bool),
+                object_pcd_mask=np.ascontiguousarray(object_pcd_mask, dtype=bool),
+                pcd_stride=np.asarray([int(pcd_stride)], dtype=np.int64),
+                pcd_mask_erode_pixels=np.asarray([int(pcd_mask_erode_pixels)], dtype=np.int64),
+                object_pcd_mask_erode_pixels=np.asarray([int(object_pcd_mask_erode_pixels)], dtype=np.int64),
+                controller_pcd_mask_erode_pixels=np.asarray([int(controller_pcd_mask_erode_pixels)], dtype=np.int64),
+                mask_source=np.asarray(["edgetam_binary_masks"]),
+            )
+            np.savez(
+                pcd_path,
+                seq=np.asarray([int(packet.seq)], dtype=np.int64),
+                controller_xyz_m=np.ascontiguousarray(packet.controller_xyz_m, dtype=np.float32),
+                controller_rgb_u8=np.ascontiguousarray(packet.controller_colors_rgb_u8, dtype=np.uint8),
+                object_xyz_m=np.ascontiguousarray(packet.object_xyz_m, dtype=np.float32),
+                object_rgb_u8=np.ascontiguousarray(packet.object_colors_rgb_u8, dtype=np.uint8),
+                intrinsics=np.asarray(
+                    [
+                        float(packet.intrinsics.fx),
+                        float(packet.intrinsics.fy),
+                        float(packet.intrinsics.cx),
+                        float(packet.intrinsics.cy),
+                    ],
+                    dtype=np.float32,
+                ),
+                saved_pcd_source=np.asarray([self.saved_pcd_source]),
+                coordinate_frame=np.asarray([str(packet.coordinate_frame or self.pcd_coordinate_frame)]),
+            )
         prepared_phystwin_frame_path: str | None = None
         if tracker_packet is not None:
             c2w = np.asarray(self._metadata_payload.get("camera_to_world_c2w", np.eye(4)), dtype=np.float32).reshape(4, 4)
@@ -1309,12 +1315,6 @@ class HeadlessCaptureWriter:
         )
         row = {
             "seq": int(packet.seq),
-            "pcd_path": self._relative(pcd_path),
-            "depth_color_m_path": self._relative(depth_path),
-            "rgb_path": self._relative(rgb_path),
-            "query_trajectory_path": self._relative(query_path),
-            "mask_path": self._relative(mask_path),
-            "world_z_stats_path": self._relative(self.world_z_stats_path),
             "source_timestamp_s": (
                 None if packet.source_timestamp_s is None else float(packet.source_timestamp_s)
             ),
@@ -1376,13 +1376,24 @@ class HeadlessCaptureWriter:
             "timing": asdict(packet.timing),
             "filter_telemetry": asdict(packet.filter_telemetry),
         }
+        if not self.prepared_only:
+            row.update(
+                {
+                    "pcd_path": self._relative(pcd_path),
+                    "depth_color_m_path": self._relative(depth_path),
+                    "rgb_path": self._relative(rgb_path),
+                    "query_trajectory_path": self._relative(query_path),
+                    "mask_path": self._relative(mask_path),
+                    "world_z_stats_path": self._relative(self.world_z_stats_path),
+                }
+            )
         if prepared_phystwin_frame_path is not None:
             row["prepared_phystwin_frame_path"] = prepared_phystwin_frame_path
         line = json.dumps(row, sort_keys=True)
         with self._lock:
             with self.frames_path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
-            if world_z_diagnostics is not None:
+            if world_z_diagnostics is not None and not self.prepared_only:
                 z_payload = dict(world_z_diagnostics)
                 z_payload.setdefault("seq", int(packet.seq))
                 with self.world_z_stats_path.open("a", encoding="utf-8") as handle:
@@ -1390,6 +1401,8 @@ class HeadlessCaptureWriter:
             self._saved_pcd_count += 1
 
     def write_tracker(self, packet: TrackerMarkerPacket) -> None:
+        if self.prepared_only:
+            return
         seq_name = f"{int(packet.seq):06d}"
         path = self.trajectory_dir / f"{seq_name}.npz"
         np.savez(
@@ -1872,6 +1885,18 @@ def build_parser() -> argparse.ArgumentParser:
             "Replay FPS for --input-source recording or fake-live. For fake-live this is the emitted "
             "sample cadence; lower values drop source frames rather than slow motion. Use 0 to read metadata fps."
         ),
+    )
+    parser.add_argument(
+        "--lossless-max-backlog-seconds",
+        type=float,
+        default=DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS,
+        help="Maximum strict 5 FPS lossless replay backlog window before treating the run as stalled.",
+    )
+    parser.add_argument(
+        "--lossless-input-fps",
+        type=float,
+        default=DEFAULT_LOSSLESS_INPUT_FPS,
+        help="Strict lossless camera/fake-live cadence used by tracker-synchronized masked PCD replay.",
     )
     parser.add_argument(
         "--table-calibrate",
@@ -2371,6 +2396,11 @@ def build_parser() -> argparse.ArgumentParser:
             "With --table-calibrate, the default demo preset uses filter none plus the 0 mm table-Z filter."
         ),
     )
+    parser.add_argument(
+        "--headless-prepared-only",
+        action="store_true",
+        help="For strict PhysTwin chunk preprocessing, save prepared_phystwin frames and frames.jsonl without legacy per-frame artifacts.",
+    )
     parser.add_argument("--controller-color", type=_parse_rgb_triplet, default=CONTROLLER_COLOR_RGB, help="Controller RGB color.")
     parser.add_argument("--object-color", type=_parse_rgb_triplet, default=OBJECT_COLOR_RGB, help="Object RGB color.")
     parser.add_argument(
@@ -2485,6 +2515,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"--view-mode must be one of {', '.join(VIEW_MODES)}")
     if float(args.replay_fps) < 0.0:
         raise ValueError("--replay-fps must be >= 0")
+    if float(args.lossless_max_backlog_seconds) <= 0.0:
+        raise ValueError("--lossless-max-backlog-seconds must be positive")
+    if float(args.lossless_input_fps) <= 0.0:
+        raise ValueError("--lossless-input-fps must be positive")
     if args.table_calibrate is not None:
         table_path = Path(args.table_calibrate).expanduser()
         if not table_path.is_absolute():
@@ -2647,6 +2681,8 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("phystwin-strict-tracking requires --tracker-backend tapnextpp")
         if args.phystwin_strict_output_dir is None:
             args.phystwin_strict_output_dir = Path(args.headless_capture_dir) / "phystwin_like"
+    elif bool(getattr(args, "headless_prepared_only", False)):
+        raise ValueError("--headless-prepared-only requires --tracking-product-backend phystwin-strict-tracking")
     if int(args.tracker_query_count) < 0:
         raise ValueError("--tracker-query-count must be >= 0")
     if int(args.tracker_overlay_max_points) < 0:
@@ -4149,7 +4185,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.width, self.height = parse_profile(args.profile)
         self.lossless_max_backlog_frames = max(
             1,
-            int(round(DEFAULT_LOSSLESS_INPUT_FPS * DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS)),
+            int(round(self._lossless_input_fps() * float(args.lossless_max_backlog_seconds))),
         )
         self.runtime: RealtimeCameraRuntime | None = None
         self.ray_x: np.ndarray | None = None
@@ -4359,7 +4395,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         return bool(tracker_enabled(self.args) and self.args.pcd_mode == "masked")
 
     def _lossless_input_fps(self) -> float:
-        return DEFAULT_LOSSLESS_INPUT_FPS
+        return float(getattr(self.args, "lossless_input_fps", DEFAULT_LOSSLESS_INPUT_FPS))
 
     def _reset_lossless_state(self) -> None:
         self.lossless_frame_queue.reset()
@@ -4457,6 +4493,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "tracking_product_backend": str(
                 normalize_tracking_product_backend(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
             ),
+            "headless_prepared_only": bool(getattr(self.args, "headless_prepared_only", False)),
             "phystwin_strict_output_dir": (
                 None
                 if getattr(self.args, "phystwin_strict_output_dir", None) is None
@@ -5274,6 +5311,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "table_z_filter_threshold_m": float(self.args.table_z_filter_threshold_m),
             "table_z_filter_classes": str(self.args.table_z_filter_classes),
             "headless_capture_enabled": headless_capture_enabled(self.args),
+            "headless_prepared_only": bool(getattr(self.args, "headless_prepared_only", False)),
             "headless_capture_dir": (
                 str(self.args.headless_capture_dir) if headless_capture_enabled(self.args) else None
             ),

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import threading
 import time
@@ -472,7 +473,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 mask_packet=self._mask_packet(seq=4),
             )
 
-    def _tracker_args(self):
+    def _tracker_args(self, *extra_args: str):
         args = demo.build_parser().parse_args(
             [
                 "--depth-source",
@@ -485,6 +486,7 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 "4",
                 "--tracker-display-scope",
                 "union",
+                *extra_args,
             ]
         )
         demo.apply_demo_preset(args)
@@ -1164,6 +1166,102 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         self.assertEqual(runtime.object_filter_budget.min_cap, int(args.filter_min_cap))
         self.assertLess(runtime.controller_filter_budget.min_cap, int(args.filter_min_cap))
         self.assertEqual(runtime.controller_filter_budget.min_cap, demo.DEFAULT_LOSSLESS_CONTROLLER_FILTER_MIN_CAP)
+
+    def test_lossless_backlog_seconds_is_configurable_for_replay_experiments(self) -> None:
+        args = self._tracker_args("--lossless-max-backlog-seconds", "24")
+        demo.validate_args(args)
+
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+
+        self.assertEqual(runtime.lossless_max_backlog_frames, 120)
+        self.assertEqual(runtime.lossless_frame_queue.max_backlog_frames, 120)
+
+    def test_lossless_input_fps_controls_clock_and_backlog_budget(self) -> None:
+        args = self._tracker_args(
+            "--lossless-input-fps",
+            "5.2",
+            "--lossless-max-backlog-seconds",
+            "10",
+        )
+        demo.validate_args(args)
+
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+
+        self.assertEqual(runtime._lossless_input_fps(), 5.2)
+        self.assertEqual(runtime.lossless_max_backlog_frames, 52)
+        self.assertEqual(runtime.lossless_frame_queue.max_backlog_frames, 52)
+
+    def test_lossless_backlog_seconds_rejects_non_positive_values(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--tracker-backend",
+                "tapnextpp",
+                "--tracker-query-count",
+                "4",
+                "--lossless-max-backlog-seconds",
+                "0",
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "--lossless-max-backlog-seconds must be positive"):
+            demo.validate_args(args)
+
+    def test_lossless_input_fps_rejects_non_positive_values(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--depth-source",
+                "realsense",
+                "--tracker-backend",
+                "tapnextpp",
+                "--tracker-query-count",
+                "4",
+                "--lossless-input-fps",
+                "0",
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "--lossless-input-fps must be positive"):
+            demo.validate_args(args)
+
+    def test_headless_capture_metadata_preserves_prepared_only_flag(self) -> None:
+        args = demo.build_parser().parse_args(
+            [
+                "--input-source",
+                "fake-live",
+                "--depth-source",
+                "realsense",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/demo_v3_2/headless",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+                "--track-mode",
+                "controller-object",
+                "--tracker-backend",
+                "tapnextpp",
+                "--enable-pcd-filter",
+                "--pcd-filter-mode",
+                "sync",
+                "--pcd-filter-preset",
+                "original",
+                "--headless-prepared-only",
+            ]
+        )
+        demo.apply_demo_preset(args)
+        demo.validate_args(args)
+        runtime = demo.RealtimeMaskedEdgeTamPcdDemo(args)
+        runtime.runtime = SimpleNamespace(
+            serial="unit",
+            intrinsics=SimpleNamespace(fx=1.0, fy=1.0, cx=0.0, cy=0.0),
+            k_color=np.eye(3, dtype=np.float32),
+        )
+
+        metadata = runtime._build_headless_capture_metadata()
+
+        self.assertTrue(metadata["headless_prepared_only"])
 
     def test_same_seq_pairer_holds_later_complete_pair_until_missing_seq_arrives(self) -> None:
         pairer = demo.SameSeqPairer(max_backlog_frames=4)

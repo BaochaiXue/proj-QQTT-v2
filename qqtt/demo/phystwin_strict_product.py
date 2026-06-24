@@ -349,7 +349,7 @@ def write_prepared_phystwin_frame(path: str | Path, frame: PreparedPhysTwinFrame
     for key in mask_keys:
         payload[f"mask_{str(key)}"] = np.ascontiguousarray(masks[str(key)], dtype=bool)
     with tmp.open("wb") as handle:
-        np.savez_compressed(handle, **payload)
+        np.savez(handle, **payload)
     tmp.replace(output)
     return output
 

@@ -31,6 +31,7 @@ from demo_v4.realtime_futurephystwin_chunks import (
     build_parser,
     main as demo_v4_main,
     resolve_chunk_frame_count,
+    resolve_demo32_source_replay_fps,
     resolve_demo32_cuda_visible_devices,
     select_validation_chunk_cases,
 )
@@ -113,6 +114,8 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
 
         self.assertEqual(args.input_source, "fake-live")
         self.assertEqual(args.replay_fps, 5.0)
+        self.assertIsNone(args.demo32_source_replay_fps)
+        self.assertEqual(resolve_demo32_source_replay_fps(args), 5.0)
         self.assertEqual(args.chunk_seconds, 5.0)
         self.assertIsNone(args.chunk_frame_count)
         self.assertEqual(resolve_chunk_frame_count(args), 25)
@@ -165,6 +168,37 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         )
         self.assertEqual(command[command.index("--duration-s") + 1], "25.000")
 
+    def test_demo_v4_can_decouple_source_pacing_from_output_fps(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--replay-fps",
+                "5",
+                "--demo32-source-replay-fps",
+                "5.2",
+                "--max-chunks",
+                "3",
+                "--capture-extra-seconds",
+                "1",
+            ]
+        )
+
+        self.assertEqual(resolve_chunk_frame_count(args), 25)
+        self.assertEqual(resolve_demo32_source_replay_fps(args), 5.2)
+        self.assertEqual(_contract(args)["replay_fps"], 5.0)
+        self.assertEqual(_contract(args)["demo32_source_replay_fps"], 5.2)
+        self.assertEqual(_contract(args)["demo32_source_replay_fps_override"], 5.2)
+        self.assertEqual(_contract(args)["demo32_lossless_input_fps"], 5.2)
+
+        command = build_demo32_realtime_command(
+            args,
+            capture_dir=Path("result/demo_v4/capture"),
+            profile_json=Path("result/demo_v4/shape_profile.json"),
+            chunk_frame_count=resolve_chunk_frame_count(args),
+        )
+        self.assertEqual(command[command.index("--replay-fps") + 1], "5.2")
+        self.assertEqual(command[command.index("--lossless-input-fps") + 1], "5.2")
+        self.assertEqual(command[command.index("--duration-s") + 1], "15.423")
+
     def test_demo_v4_chunk_frame_count_override_keeps_valid_time_contract(self) -> None:
         args = build_parser().parse_args(
             [
@@ -208,6 +242,10 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
     def test_demo_v4_rejects_nonpositive_replay_fps_for_time_chunks(self) -> None:
         with self.assertRaisesRegex(ValueError, "replay fps must be positive"):
             demo_v4_main(["--dry-run", "--replay-fps", "0"])
+
+    def test_demo_v4_rejects_nonpositive_demo32_source_replay_fps(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Demo 3.2 source replay fps must be positive"):
+            demo_v4_main(["--dry-run", "--demo32-source-replay-fps", "0"])
 
     def test_demo_v4_gpu_mode_resolves_single_dual_and_explicit_override(self) -> None:
         single_args = build_parser().parse_args(["--dry-run"])
@@ -619,6 +657,27 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             self.assertEqual(summary["frame_count"], 2)
             self.assertEqual(summary["controller_point_count"], 30)
 
+    def test_headless_capture_bridge_can_skip_dense_final_pcd_for_final_data_cadence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = self._write_prepared_only_headless_capture(root / "capture", frame_count=2)
+            base_path = root / "futurephystwin_cases"
+
+            manifests = write_chunks_from_headless_capture(
+                capture,
+                base_path=base_path,
+                case_prefix="demo_v4_final_data_only",
+                chunk_frame_count=2,
+                surface_points=np.array([[0.0, 0.0, -0.02]], dtype=np.float64),
+                interior_points=np.array([[0.01, 0.0, -0.03]], dtype=np.float64),
+                write_final_pcd=False,
+            )
+
+            case_dir = base_path / manifests[0]["case_name"]
+            summary = validate_futurephystwin_case(case_dir)
+            self.assertTrue(summary["valid"])
+            self.assertFalse((case_dir / "pcd").exists())
+
     def test_stable_json_reader_retries_empty_metadata_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "metadata.json"
@@ -956,6 +1015,10 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                                 str(capture_dir),
                                 "--max-chunks",
                                 "1",
+                                "--demo32-source-replay-fps",
+                                "5.2",
+                                "--demo32-lossless-max-backlog-seconds",
+                                "24",
                                 "--surface-points-npy",
                                 str(self._write_points(root / "surface.npy", [[0.0, 0.0, -0.02]])),
                                 "--interior-points-npy",
@@ -967,15 +1030,22 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             command = popen.call_args.args[0]
             env = popen.call_args.kwargs["env"]
             self.assertEqual(command[command.index("--input-source") + 1], "fake-live")
-            self.assertEqual(command[command.index("--replay-fps") + 1], "5.0")
+            self.assertEqual(command[command.index("--replay-fps") + 1], "5.2")
             self.assertEqual(command[command.index("--track-mode") + 1], "controller-object")
             self.assertEqual(command[command.index("--tracker-backend") + 1], "tapnextpp")
             self.assertEqual(command[command.index("--headless-capture-dir") + 1], str(capture_dir))
+            self.assertEqual(command[command.index("--lossless-max-backlog-seconds") + 1], "24.0")
+            self.assertIn("--headless-prepared-only", command)
             self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "0")
             summary = json.loads(stdout.getvalue())
             self.assertEqual(summary["mode"], "full-fake-realtime-camera")
             self.assertEqual(summary["gpu_mode"], "single")
             self.assertEqual(summary["demo32_cuda_visible_devices"], "0")
+            self.assertEqual(summary["demo32_source_replay_fps"], 5.2)
+            self.assertEqual(summary["demo32_source_replay_fps_override"], 5.2)
+            self.assertEqual(summary["demo32_lossless_input_fps"], 5.2)
+            self.assertEqual(summary["demo32_lossless_max_backlog_seconds"], 24.0)
+            self.assertTrue(summary["demo32_headless_prepared_only"])
             self.assertEqual(summary["chunk_count"], 1)
             self.assertEqual(summary["first_ready_chunk_wall_s"], 12.5)
             self.assertEqual(summary["first_shape_prior_ready_chunk_wall_s"], 12.5)

@@ -733,6 +733,82 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(_option_value(delegate, "--replay-fps"), "30.0")
         self.assertEqual(_option_value(delegate, "--controller-prompt"), "human hand")
 
+    def test_lossless_backlog_seconds_is_forwarded_to_delegate(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/demo_v3_2/headless",
+                "--track-mode",
+                "controller-object",
+                "--tracker-backend",
+                "tapnextpp",
+                "--lossless-max-backlog-seconds",
+                "30",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(contract["lossless_max_backlog_seconds"], 30.0)
+        self.assertEqual(_option_value(delegate, "--lossless-max-backlog-seconds"), "30.0")
+
+    def test_lossless_input_fps_is_forwarded_to_delegate(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/demo_v3_2/headless",
+                "--track-mode",
+                "controller-object",
+                "--tracker-backend",
+                "tapnextpp",
+                "--lossless-input-fps",
+                "5.2",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertEqual(contract["lossless_input_fps"], 5.2)
+        self.assertEqual(_option_value(delegate, "--lossless-input-fps"), "5.2")
+
+    def test_headless_prepared_only_is_forwarded_to_delegate(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            [
+                "--input-source",
+                "fake-live",
+                "--render-mode",
+                "none",
+                "--headless-capture-dir",
+                "result/demo_v3_2/headless",
+                "--tracking-product-backend",
+                "phystwin-strict-tracking",
+                "--track-mode",
+                "controller-object",
+                "--tracker-backend",
+                "tapnextpp",
+                "--headless-prepared-only",
+            ],
+        )
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args)
+
+        self.assertTrue(contract["headless_prepared_only"])
+        self.assertIn("--headless-prepared-only", delegate)
+
     def test_fake_live_explicit_zero_uses_metadata_fps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             case_dir = Path(tmp_dir) / "case"

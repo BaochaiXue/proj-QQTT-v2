@@ -26,6 +26,26 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _read_jsonl_from_offset(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
+    rows: list[dict[str, Any]] = []
+    if not path.is_file():
+        return rows, int(offset)
+    with path.open("r", encoding="utf-8") as handle:
+        handle.seek(max(0, int(offset)))
+        while True:
+            row_offset = handle.tell()
+            line = handle.readline()
+            if not line:
+                break
+            stripped = line.strip()
+            if stripped:
+                try:
+                    rows.append(json.loads(stripped))
+                except json.JSONDecodeError:
+                    return rows, int(row_offset)
+        return rows, int(handle.tell())
+
+
 def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -314,6 +334,7 @@ def _chunk_payload_from_rows(
     mask_radius_outlier_filter: bool,
     mask_radius_outlier_radius_m: float,
     mask_radius_outlier_nb_points: int,
+    write_final_pcd: bool = True,
 ) -> FuturePhysTwinChunk:
     c2w = _camera_to_world(metadata)
     intrinsics = _intrinsics_matrix(metadata)
@@ -391,8 +412,6 @@ def _chunk_payload_from_rows(
         queries_txy=queries_txy,
         surface_points=surface_points,
         interior_points=interior_points,
-        pcd_points=pcd_points_arr,
-        pcd_colors=pcd_colors_arr,
         fps=int(fps),
         serial_number=serial_number,
         depth_backend=str(metadata.get("depth_backend") or metadata.get("depth_source", "")),
@@ -403,6 +422,8 @@ def _chunk_payload_from_rows(
         ),
         chunk_index=int(chunk_index),
         source_frame_indices=[int(row.get("seq", idx)) for idx, row in enumerate(rows)],
+        pcd_points=pcd_points_arr if bool(write_final_pcd) else None,
+        pcd_colors=pcd_colors_arr if bool(write_final_pcd) else None,
     )
 
 
@@ -434,6 +455,7 @@ def _chunk_payload_from_prepared_frames(
     fps: int,
     serial_number: str,
     chunk_index: int,
+    write_final_pcd: bool = True,
 ) -> FuturePhysTwinChunk:
     if not frames:
         raise ValueError("prepared PhysTwin chunk requires at least one frame")
@@ -486,8 +508,6 @@ def _chunk_payload_from_prepared_frames(
         queries_txy=_queries_txy_from_yx(first_queries),
         surface_points=surface_points,
         interior_points=interior_points,
-        pcd_points=pcd_points_arr,
-        pcd_colors=pcd_colors_arr,
         fps=int(fps),
         serial_number=serial_number,
         depth_backend=str(metadata.get("depth_backend") or metadata.get("depth_source", "")),
@@ -498,6 +518,8 @@ def _chunk_payload_from_prepared_frames(
         ),
         chunk_index=int(chunk_index),
         source_frame_indices=source_frame_indices,
+        pcd_points=pcd_points_arr if bool(write_final_pcd) else None,
+        pcd_colors=pcd_colors_arr if bool(write_final_pcd) else None,
     )
 
 
@@ -522,6 +544,7 @@ def _write_chunk_from_rows(
     window_closed_wall_s: float,
     prepared_frames: Sequence[strict.PreparedPhysTwinFrame | None] | None = None,
     backlog_chunks: Callable[[], int] | None = None,
+    write_final_pcd: bool = True,
 ) -> dict[str, Any]:
     case_name = f"{case_prefix}_chunk_{chunk_index:04d}"
     source_window_start_s = float(row_start) / float(fps)
@@ -538,6 +561,7 @@ def _write_chunk_from_rows(
             fps=int(fps),
             serial_number=serial_number,
             chunk_index=chunk_index,
+            write_final_pcd=bool(write_final_pcd),
         )
         materialization_source = "prepared_phystwin_frame"
         legacy_reprocess_count = 0
@@ -554,6 +578,7 @@ def _write_chunk_from_rows(
             mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
             mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
+            write_final_pcd=bool(write_final_pcd),
         )
         materialization_source = "legacy_reprocess"
         legacy_reprocess_count = len(rows)
@@ -608,6 +633,7 @@ def write_chunks_from_headless_capture(
     mask_radius_outlier_radius_m: float = 0.01,
     mask_radius_outlier_nb_points: int = 40,
     on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
+    write_final_pcd: bool = True,
 ) -> list[dict[str, Any]]:
     capture = Path(capture_dir)
     if int(chunk_frame_count) <= 0:
@@ -668,6 +694,7 @@ def write_chunks_from_headless_capture(
                 chunk_size=size,
                 published_chunk_count=published,
             ),
+            write_final_pcd=bool(write_final_pcd),
         )
         manifests.append(manifest)
         if on_chunk_written is not None:
@@ -716,6 +743,7 @@ def stream_chunks_from_headless_capture(
     mask_radius_outlier_radius_m: float = 0.01,
     mask_radius_outlier_nb_points: int = 40,
     on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
+    write_final_pcd: bool = True,
 ) -> list[dict[str, Any]]:
     capture = Path(capture_dir)
     if int(chunk_frame_count) <= 0:
@@ -730,6 +758,7 @@ def stream_chunks_from_headless_capture(
     frames_path = capture / "frames.jsonl"
     manifests: list[dict[str, Any]] = []
     next_row_idx = 0
+    frames_offset = 0
     row_start = 0
     row_buffer: list[dict[str, Any]] = []
     prepared_buffer: list[strict.PreparedPhysTwinFrame | None] = []
@@ -742,8 +771,9 @@ def stream_chunks_from_headless_capture(
             break
         if before_poll is not None:
             before_poll()
-        rows = _read_jsonl(frames_path) if frames_path.is_file() else []
-        for row in rows[next_row_idx:]:
+        rows, frames_offset = _read_jsonl_from_offset(frames_path, frames_offset)
+        saw_new_rows = bool(rows)
+        for row in rows:
             row_buffer.append(row)
             prepared_buffer.append(_prepared_frame_from_row(capture, row))
             next_row_idx += 1
@@ -785,6 +815,7 @@ def stream_chunks_from_headless_capture(
                     chunk_size=size,
                     published_chunk_count=published,
                 ),
+                write_final_pcd=bool(write_final_pcd),
             )
             manifests.append(manifest)
             if on_chunk_written is not None:
@@ -797,7 +828,7 @@ def stream_chunks_from_headless_capture(
                 break
         if max_chunks is not None and len(manifests) >= int(max_chunks):
             break
-        if capture_finished() and next_row_idx >= len(rows):
+        if capture_finished() and not saw_new_rows:
             break
         time.sleep(max(0.0, float(poll_interval_s)))
     return manifests
