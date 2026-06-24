@@ -180,6 +180,10 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
                 "--dry-run",
                 "--depth-backend",
                 "native-realsense",
+                "--device",
+                "cuda:1",
+                "--dtype",
+                "float32",
             ],
         )
         runtime.validate_args(args)
@@ -194,8 +198,12 @@ class SingleDemoV3RuntimeTest(unittest.TestCase):
         self.assertEqual(contract["depth_pipeline"], "realsense_native_color_aligned")
         self.assertFalse(contract["uses_ffs"])
         self.assertIsNone(contract["ffs_trt_batch_size"])
+        self.assertEqual(contract["runtime_device"], "cuda:1")
+        self.assertEqual(contract["runtime_dtype"], "float32")
         self.assertEqual(_option_value(delegate, "--depth-source"), "realsense")
         self.assertEqual(_option_value(delegate, "--depth-backend-label"), "native-realsense")
+        self.assertEqual(_option_value(delegate, "--device"), "cuda:1")
+        self.assertEqual(_option_value(delegate, "--dtype"), "float32")
         self.assertNotIn("--ffs-repo", delegate)
         self.assertNotIn("--ffs-trt-model-dir", delegate)
         self.assertNotIn("--ffs-trt-root", delegate)

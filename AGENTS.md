@@ -32,6 +32,9 @@ repo-wide default.
 - `demo_v3_1/`: one-camera RealSense masked PCD demo
 - `demo_v3_2/`: one-camera FFS masked PCD demo
 - `demo_v3_3/`: one-camera FFS masked PCD demo
+- `demo_v4/`: isolated realtime FuturePhysTwin chunk preprocessing demo that
+  converts Demo 3.2-style single-camera headless/realtime artifacts into
+  FuturePhysTwin-consumable per-window chunk cases
 - `qqtt/demo/single_demo_v3_runtime.py`: shared single Demo 3.x launcher
 - `services/ffs_remote/`: single-camera remote FFS request/response services for demo/profiling use
 - `qqtt/env/camera/`: shared RealSense camera runtime
@@ -102,11 +105,35 @@ repo-wide default.
 9. For comparison visualization changes, validate the calibration loader and non-interactive render path.
 10. After committing validated modifications, push them to GitHub with `git push origin single-camera` for single-camera work, otherwise `git push origin main`, unless the user explicitly says not to push.
 
+## Autonomous Goal Execution Policy
+
+- When the user starts or resumes an explicit implementation goal, assume the
+  user will be offline until the goal is complete.
+- Do not block on design approval, execution-plan approval, or implementation
+  approach approval while pursuing that goal. Default to the recommended design
+  and continue making concrete progress toward the requested end state.
+- Use the exec plan to record decisions, tradeoffs, and validation gates, but do
+  not treat the plan as something that requires a separate user approval before
+  coding.
+- Ask the user only when progress is truly impossible without information that
+  cannot be inferred from the repo, external dependency contracts, or the
+  stated goal.
+- This policy does not override safety and branch invariants: still keep work on
+  the correct branch, avoid destructive commands, keep external weights out of
+  the repo, update docs/tests with behavior changes, and validate before
+  committing/pushing.
+
 ## Invariants
 
 - The repo's primary data product stops at `data_process/record_data_align.py`; aligned native-vs-FFS comparison visualization remains an in-scope diagnostic utility built on aligned cases.
 - Demo-only segmentation/mask code may exist only in the sanctioned single-camera demo, proxy, visualization, and diagnostic layers; formal recording/alignment code must not depend on those layers or make their artifacts part of the aligned-case compatibility contract.
-- Do not reintroduce three-camera demo entrypoints, dual-GPU demo contracts, batch-3 demo runtimes, shape prior, inverse physics, Gaussian Splatting, reconstruction/rendering evaluation, robot control, manipulation policy, or teleop code.
+- Do not reintroduce three-camera demo entrypoints, dual-GPU demo contracts,
+  batch-3 demo runtimes, inverse physics, Gaussian Splatting,
+  reconstruction/rendering evaluation, robot control, manipulation policy, or
+  teleop code. Shape-prior and `final_data.pkl` generation are allowed only in
+  the explicitly isolated Demo 3.2 warmup diagnostic and Demo v4
+  FuturePhysTwin chunk preprocessing carveouts; they must not alter formal
+  recording/alignment products.
 - `qqtt/__init__.py` exports only `CameraSystem`.
 - `env_install/env_install.sh` stays camera-only.
 - Hardware checks remain manual and documented; do not fake them in CI.

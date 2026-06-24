@@ -1098,7 +1098,7 @@ class HeadlessCaptureWriter:
         payload["startup_hold_s"] = float(payload.get("startup_hold_s") or 0.0)
         payload["output_dir"] = str(self.output_dir)
         self._metadata_payload = payload
-        self.metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self._write_metadata_payload(payload)
 
     def _relative(self, path: Path) -> str:
         try:
@@ -1106,12 +1106,17 @@ class HeadlessCaptureWriter:
         except ValueError:
             return str(path)
 
+    def _write_metadata_payload(self, payload: dict[str, Any]) -> None:
+        tmp_path = self.metadata_path.with_name(f"{self.metadata_path.name}.tmp")
+        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        tmp_path.replace(self.metadata_path)
+
     def update_metadata(self, values: dict[str, Any]) -> None:
         with self._lock:
             payload = dict(self._metadata_payload)
             payload.update(values)
             self._metadata_payload = payload
-            self.metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            self._write_metadata_payload(payload)
 
     def write_shape_prior_result(self, result: shape_prior_warmup.ShapePriorResult) -> None:
         self.shape_prior_dir.mkdir(parents=True, exist_ok=True)
@@ -1126,6 +1131,8 @@ class HeadlessCaptureWriter:
             ),
             points_m=np.ascontiguousarray(result.points_m, dtype=np.float32).reshape(-1, 3),
             colors_rgb_u8=np.ascontiguousarray(result.colors_rgb_u8, dtype=np.uint8).reshape(-1, 3),
+            surface_points_m=np.ascontiguousarray(result.surface_points_m, dtype=np.float32).reshape(-1, 3),
+            interior_points_m=np.ascontiguousarray(result.interior_points_m, dtype=np.float32).reshape(-1, 3),
             metadata_json=np.asarray([json.dumps(dict(result.metadata), sort_keys=True)]),
         )
         values = dict(result.metadata)
@@ -1137,6 +1144,8 @@ class HeadlessCaptureWriter:
                 "shape_prior_ready_seq": int(result.seq),
                 "shape_prior_path": self._relative(path),
                 "shape_prior_point_count": int(np.asarray(result.points_m).reshape(-1, 3).shape[0]),
+                "shape_prior_surface_point_count": int(np.asarray(result.surface_points_m).reshape(-1, 3).shape[0]),
+                "shape_prior_interior_point_count": int(np.asarray(result.interior_points_m).reshape(-1, 3).shape[0]),
             }
         )
         self.update_metadata(values)

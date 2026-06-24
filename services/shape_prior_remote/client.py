@@ -98,6 +98,8 @@ class ShapePriorRemoteClient:
                 status=SHAPE_PRIOR_STATUS_FAILED,
                 points_m=np.empty((0, 3), dtype=np.float32),
                 colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+                surface_points_m=np.empty((0, 3), dtype=np.float32),
+                interior_points_m=np.empty((0, 3), dtype=np.float32),
                 metadata=metadata,
                 error=str(metadata.get("error", f"shape-prior worker returned status={status!r}")),
             )
@@ -108,5 +110,7 @@ class ShapePriorRemoteClient:
             status=SHAPE_PRIOR_STATUS_READY,
             points_m=np.ascontiguousarray(response.points_m, dtype=np.float32),
             colors_rgb_u8=np.ascontiguousarray(response.colors_rgb_u8, dtype=np.uint8),
+            surface_points_m=np.ascontiguousarray(response.surface_points_m, dtype=np.float32),
+            interior_points_m=np.ascontiguousarray(response.interior_points_m, dtype=np.float32),
             metadata=metadata,
         )

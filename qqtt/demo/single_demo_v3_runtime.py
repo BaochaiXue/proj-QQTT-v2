@@ -59,6 +59,8 @@ DEFAULT_DEMO_CONTROLLER_LABEL = "hand"
 DEFAULT_MODE = MODE_EXP
 DEFAULT_TRACKER_BACKEND = masked_pcd.TRACKER_BACKEND_TAPNEXTPP
 DEFAULT_TRACKER_DEVICE = "cuda:1"
+DEFAULT_RUNTIME_DEVICE = masked_pcd.DEFAULT_DEVICE
+DEFAULT_RUNTIME_DTYPE = masked_pcd.DEFAULT_DTYPE
 DEFAULT_TABLE_CALIBRATE_PATH = Path("table_calibrate.pkl")
 DEFAULT_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_2min_e45_g35_20260614_155543")
 DEFAULT_DEMO32_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_3min_e70_g60_20260621_202627")
@@ -521,6 +523,17 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         choices=masked_pcd.VIEW_MODES,
         default=masked_pcd.DEFAULT_VIEW_MODE,
         help="Initial Open3D view. orbit starts from a third-person view; camera uses RealSense color intrinsics.",
+    )
+    parser.add_argument(
+        "--device",
+        default=DEFAULT_RUNTIME_DEVICE,
+        help="Segmentation/runtime inference device forwarded to the masked PCD delegate.",
+    )
+    parser.add_argument(
+        "--dtype",
+        choices=("bfloat16", "float16", "float32"),
+        default=DEFAULT_RUNTIME_DTYPE,
+        help="Segmentation/runtime inference dtype forwarded to the masked PCD delegate.",
     )
     parser.add_argument(
         "--tracker-backend",
@@ -1212,6 +1225,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "shape_prior_depth_backend": depth_backend if version == DEMO_VERSION_3_2 else None,
         "shape_prior_depth_source_internal": depth_source if version == DEMO_VERSION_3_2 else None,
+        "runtime_device": str(args.device),
+        "runtime_dtype": str(args.dtype),
         "tracker_device": str(args.tracker_device),
         "tracker_query_count": int(args.tracker_query_count),
         "tracker_query_source": (
@@ -1328,6 +1343,8 @@ def format_contract(contract: dict[str, Any]) -> str:
         "shape_prior_timeout_ms",
         "shape_prior_profile_json",
         "shape_prior_device",
+        "runtime_device",
+        "runtime_dtype",
         "tracker_device",
         "tracker_query_count",
         "tracker_query_source",
@@ -1433,6 +1450,10 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
         str(args.demo_visual_mode),
         "--view-mode",
         str(args.view_mode),
+        "--device",
+        str(args.device),
+        "--dtype",
+        str(args.dtype),
         "--tracker-backend",
         str(args.tracker_backend),
         "--tracker-device",

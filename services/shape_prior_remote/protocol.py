@@ -32,6 +32,8 @@ class ShapePriorResponse:
     metadata: dict[str, Any]
     points_m: np.ndarray
     colors_rgb_u8: np.ndarray
+    surface_points_m: np.ndarray
+    interior_points_m: np.ndarray
 
 
 def _json_dumps(data: dict[str, Any]) -> bytes:
@@ -135,12 +137,24 @@ def build_shape_prior_response_parts(
     status: str,
     points_m: np.ndarray,
     colors_rgb_u8: np.ndarray,
+    surface_points_m: np.ndarray | None = None,
+    interior_points_m: np.ndarray | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> list[bytes]:
     points = np.asarray(points_m, dtype=np.float32).reshape(-1, 3)
     colors = np.asarray(colors_rgb_u8, dtype=np.uint8).reshape(-1, 3)
     if len(points) != len(colors):
         raise ShapePriorProtocolError("points_m and colors_rgb_u8 must have the same length")
+    surface = (
+        np.empty((0, 3), dtype=np.float32)
+        if surface_points_m is None
+        else np.asarray(surface_points_m, dtype=np.float32).reshape(-1, 3)
+    )
+    interior = (
+        np.empty((0, 3), dtype=np.float32)
+        if interior_points_m is None
+        else np.asarray(interior_points_m, dtype=np.float32).reshape(-1, 3)
+    )
     payload = dict(metadata or {})
     payload.update(
         {
@@ -150,9 +164,17 @@ def build_shape_prior_response_parts(
             "seq": int(seq),
             "status": str(status),
             "point_count": int(len(points)),
+            "surface_point_count": int(len(surface)),
+            "interior_point_count": int(len(interior)),
         }
     )
-    return [_json_dumps(payload), _array_to_bytes(points), _array_to_bytes(colors)]
+    return [
+        _json_dumps(payload),
+        _array_to_bytes(points),
+        _array_to_bytes(colors),
+        _array_to_bytes(surface),
+        _array_to_bytes(interior),
+    ]
 
 
 def build_error_response_parts(*, request_id: str, seq: int, error: str) -> list[bytes]:
@@ -172,8 +194,8 @@ def build_error_response_parts(*, request_id: str, seq: int, error: str) -> list
 
 
 def parse_shape_prior_response_parts(parts: list[bytes]) -> ShapePriorResponse:
-    if len(parts) not in {1, 3}:
-        raise ShapePriorProtocolError(f"shape-prior response expected 1 or 3 frames, got {len(parts)}")
+    if len(parts) not in {1, 3, 5}:
+        raise ShapePriorProtocolError(f"shape-prior response expected 1, 3, or 5 frames, got {len(parts)}")
     metadata = _json_loads(parts[0])
     _require_protocol(metadata)
     if len(parts) == 1:
@@ -181,9 +203,23 @@ def parse_shape_prior_response_parts(parts: list[bytes]) -> ShapePriorResponse:
             metadata=metadata,
             points_m=np.empty((0, 3), dtype=np.float32),
             colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            surface_points_m=np.empty((0, 3), dtype=np.float32),
+            interior_points_m=np.empty((0, 3), dtype=np.float32),
         )
     points = np.ascontiguousarray(_array_from_bytes(parts[1]), dtype=np.float32).reshape(-1, 3)
     colors = np.ascontiguousarray(_array_from_bytes(parts[2]), dtype=np.uint8).reshape(-1, 3)
     if len(points) != len(colors):
         raise ShapePriorProtocolError("response points and colors have different lengths")
-    return ShapePriorResponse(metadata=metadata, points_m=points, colors_rgb_u8=colors)
+    if len(parts) == 5:
+        surface = np.ascontiguousarray(_array_from_bytes(parts[3]), dtype=np.float32).reshape(-1, 3)
+        interior = np.ascontiguousarray(_array_from_bytes(parts[4]), dtype=np.float32).reshape(-1, 3)
+    else:
+        surface = np.empty((0, 3), dtype=np.float32)
+        interior = np.empty((0, 3), dtype=np.float32)
+    return ShapePriorResponse(
+        metadata=metadata,
+        points_m=points,
+        colors_rgb_u8=colors,
+        surface_points_m=surface,
+        interior_points_m=interior,
+    )

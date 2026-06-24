@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from pathlib import Path
 import sys
@@ -35,6 +36,10 @@ from qqtt.demo.shape_prior_warmup import DEFAULT_SHAPE_PRIOR_RENDER_RGB  # noqa:
 from qqtt.demo.single_view_shape_align import (  # noqa: E402
     ShapeAlignmentConfig,
     align_canonical_shape_to_observation,
+)
+from qqtt.demo.single_view_shape_prior_sampling import (  # noqa: E402
+    SimpleShapeMesh,
+    sample_legacy_single_view_shape_prior_points,
 )
 from services.shape_prior_remote.protocol import (  # noqa: E402
     ShapePriorRequest,
@@ -110,6 +115,82 @@ def _mesh_vertices(mesh_like: Any) -> np.ndarray | None:
     return np.concatenate(parts, axis=0).astype(np.float32, copy=False)
 
 
+def _mesh_to_trimesh(mesh_like: Any) -> Any | None:
+    if mesh_like is None:
+        return None
+    try:
+        import trimesh
+    except Exception:
+        trimesh = None
+
+    if trimesh is not None and isinstance(mesh_like, trimesh.Trimesh):
+        return mesh_like.copy()
+    if trimesh is not None and isinstance(mesh_like, trimesh.Scene):
+        dumped = mesh_like.dump(concatenate=True)
+        return dumped.copy() if isinstance(dumped, trimesh.Trimesh) else None
+    vertices = getattr(mesh_like, "vertices", None)
+    faces = getattr(mesh_like, "faces", None)
+    if vertices is not None and faces is not None:
+        if hasattr(vertices, "detach"):
+            vertices = vertices.detach().cpu().numpy()
+        if hasattr(faces, "detach"):
+            faces = faces.detach().cpu().numpy()
+        vertices_arr = np.asarray(vertices, dtype=np.float32).reshape(-1, 3)
+        faces_arr = np.asarray(faces, dtype=np.int64).reshape(-1, 3)
+        if len(vertices_arr) and len(faces_arr):
+            if trimesh is None:
+                return SimpleShapeMesh(vertices=vertices_arr, faces=faces_arr)
+            return trimesh.Trimesh(vertices=vertices_arr, faces=faces_arr, process=False)
+    if isinstance(mesh_like, dict):
+        candidates = mesh_like.values()
+    elif isinstance(mesh_like, (list, tuple)):
+        candidates = mesh_like
+    else:
+        geometry = getattr(mesh_like, "geometry", None)
+        if isinstance(geometry, dict):
+            candidates = geometry.values()
+        elif geometry is not None and geometry is not mesh_like:
+            candidates = (geometry,)
+        else:
+            dump = getattr(mesh_like, "dump", None)
+            if callable(dump):
+                try:
+                    return _mesh_to_trimesh(dump(concatenate=True))
+                except TypeError:
+                    return _mesh_to_trimesh(dump())
+                except Exception:
+                    return None
+            return None
+    parts = []
+    for candidate in candidates:
+        mesh = _mesh_to_trimesh(candidate)
+        if mesh is not None and len(mesh.vertices) and len(mesh.faces):
+            parts.append(mesh)
+    if not parts:
+        return None
+    if trimesh is not None:
+        return trimesh.util.concatenate(parts)
+    vertices: list[np.ndarray] = []
+    faces: list[np.ndarray] = []
+    offset = 0
+    for mesh in parts:
+        verts = np.asarray(mesh.vertices, dtype=np.float32).reshape(-1, 3)
+        tri = np.asarray(mesh.faces, dtype=np.int64).reshape(-1, 3)
+        vertices.append(verts)
+        faces.append(tri + offset)
+        offset += len(verts)
+    return SimpleShapeMesh(vertices=np.concatenate(vertices, axis=0), faces=np.concatenate(faces, axis=0))
+
+
+def _transform_trimesh(mesh: Any, *, scale: float, rotation: np.ndarray, translation: np.ndarray) -> Any:
+    transformed = mesh.copy()
+    vertices = np.asarray(transformed.vertices, dtype=np.float32).reshape(-1, 3)
+    aligned = np.float32(scale) * (vertices @ np.asarray(rotation, dtype=np.float32).reshape(3, 3).T)
+    aligned = aligned + np.asarray(translation, dtype=np.float32).reshape(1, 3)
+    transformed.vertices = aligned
+    return transformed
+
+
 def _object_observation_points_world(request: ShapePriorRequest, *, max_points: int) -> np.ndarray:
     mask = np.asarray(request.object_mask, dtype=bool)
     depth = np.asarray(request.depth_color_m, dtype=np.float32)
@@ -155,14 +236,14 @@ def _object_crop_box(mask: np.ndarray) -> tuple[int, int, int, int]:
     x1 = int(np.max(coords[:, 1]))
     center_x = (x0 + x1) / 2.0
     center_y = (y0 + y1) / 2.0
-    size = max(x1 - x0, y1 - y0)
-    size = max(1, int(size * 1.2))
-    half = size // 2
+    size = max(x1 - x0 + 1, y1 - y0 + 1)
+    size = max(2, int(math.ceil(size * 1.2)))
+    half = size / 2.0
     return (
-        int(center_x - half),
-        int(center_y - half),
-        int(center_x + half),
-        int(center_y + half),
+        int(math.floor(center_x - half)),
+        int(math.floor(center_y - half)),
+        int(math.ceil(center_x + half)),
+        int(math.ceil(center_y + half)),
     )
 
 
@@ -188,6 +269,7 @@ class ShapePriorSam3DWorker:
         self._inference: Any | None = None
         self._upscaler: Any | None = None
         self._model_load_ms = 0.0
+        self._last_canonical_mesh: Any | None = None
 
     def _load_upscaler(self) -> Any:
         if self._upscaler is not None:
@@ -268,15 +350,20 @@ class ShapePriorSam3DWorker:
             with_layout_postprocess=True,
             use_vertex_color=False,
         )
-        mesh_vertices = _mesh_vertices(outputs.get("glb", None))
+        mesh_like = outputs.get("glb", None)
+        canonical_mesh = _mesh_to_trimesh(mesh_like)
+        mesh_vertices = np.asarray(canonical_mesh.vertices, dtype=np.float32).reshape(-1, 3) if canonical_mesh is not None else _mesh_vertices(mesh_like)
         mesh_source = "glb"
         if mesh_vertices is None or len(mesh_vertices) <= 0:
-            mesh_vertices = _mesh_vertices(outputs.get("mesh", None))
+            mesh_like = outputs.get("mesh", None)
+            canonical_mesh = _mesh_to_trimesh(mesh_like)
+            mesh_vertices = np.asarray(canonical_mesh.vertices, dtype=np.float32).reshape(-1, 3) if canonical_mesh is not None else _mesh_vertices(mesh_like)
             mesh_source = "mesh"
         if mesh_vertices is None or len(mesh_vertices) <= 0:
             raise RuntimeError("SAM3D output did not include a mesh/glb object")
         if hasattr(mesh_vertices, "detach"):
             mesh_vertices = mesh_vertices.detach().cpu().numpy()
+        self._last_canonical_mesh = canonical_mesh
         canonical = _sample_points(np.asarray(mesh_vertices, dtype=np.float32).reshape(-1, 3), self.max_points)
         if len(canonical) < 3:
             raise RuntimeError("SAM3D canonical mesh has fewer than 3 finite vertices")
@@ -301,6 +388,8 @@ class ShapePriorSam3DWorker:
                 raise RuntimeError("shape prior requires at least 3 valid object observation depth points")
             if self.echo_observation:
                 points = observation
+                surface_points = np.empty((0, 3), dtype=np.float32)
+                interior_points = np.empty((0, 3), dtype=np.float32)
                 metadata = {
                     "sam3d_model_load_ms": 0.0,
                     "sam3d_inference_ms": 0.0,
@@ -312,6 +401,7 @@ class ShapePriorSam3DWorker:
                     "echo_observation": True,
                 }
             else:
+                self._last_canonical_mesh = None
                 canonical, sam3d_stats = self._canonical_points_from_sam3d(request)
                 align_start_s = time.perf_counter()
                 aligned = align_canonical_shape_to_observation(
@@ -322,12 +412,32 @@ class ShapePriorSam3DWorker:
                 align_ms = _elapsed_ms(align_start_s)
                 if not aligned.valid:
                     raise RuntimeError(f"shape-prior single-view alignment invalid: {aligned.validation}")
-                points = _sample_points(aligned.aligned_points_m, self.max_points)
+                surface_points = np.empty((0, 3), dtype=np.float32)
+                interior_points = np.empty((0, 3), dtype=np.float32)
+                canonical_mesh = self._last_canonical_mesh
+                sampling_start_s = time.perf_counter()
+                if canonical_mesh is not None:
+                    aligned_mesh = _transform_trimesh(
+                        canonical_mesh,
+                        scale=float(aligned.scale),
+                        rotation=aligned.rotation,
+                        translation=aligned.translation,
+                    )
+                    samples = sample_legacy_single_view_shape_prior_points(
+                        aligned_mesh,
+                        observation,
+                    )
+                    surface_points = samples.surface_points_m
+                    interior_points = samples.interior_points_m
+                    sam3d_stats.update(samples.metadata)
+                structure = np.concatenate([surface_points, interior_points], axis=0)
+                points = _sample_points(structure if len(structure) else aligned.aligned_points_m, self.max_points)
                 metadata = dict(sam3d_stats)
                 metadata.update(
                     {
                         "single_view_alignment_ms": align_ms,
-                        "sampling_ms": observation_ms,
+                        "sampling_ms": observation_ms + _elapsed_ms(sampling_start_s),
+                        "single_view_shape_prior_sampling_ms": _elapsed_ms(sampling_start_s),
                         "shape_prior_total_ms": _elapsed_ms(total_start_s),
                         "alignment_valid": True,
                         "alignment": aligned.validation,
@@ -350,6 +460,8 @@ class ShapePriorSam3DWorker:
                 status="ready",
                 points_m=points,
                 colors_rgb_u8=colors,
+                surface_points_m=surface_points,
+                interior_points_m=interior_points,
                 metadata=metadata,
             )
         except Exception as exc:

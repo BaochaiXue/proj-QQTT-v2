@@ -101,6 +101,7 @@ def normalize_processed_mask_frame(frame: Mapping[str, Any]) -> dict[str, np.nda
         ctrl = np.logical_or(hand_a, hand_b)
     if obj.shape != ctrl.shape:
         raise ValueError("object/controller masks must have the same shape")
+    obj = np.asarray(obj, dtype=bool) & ~np.asarray(ctrl, dtype=bool)
     out = {
         "object": np.ascontiguousarray(obj, dtype=bool),
         "controller": np.ascontiguousarray(ctrl, dtype=bool),
@@ -244,8 +245,17 @@ def build_track_process_input(
         yy, xx, in_bounds = _round_tracks_to_indices(tracks[frame_idx], (height, width))
         valid = semantic_vis[frame_idx] & in_bounds
         if np.any(valid):
-            track_points[frame_idx, valid] = points_grid[frame_idx, 0, yy[valid], xx[valid]]
-            track_colors[frame_idx, valid] = colors_grid[frame_idx, 0, yy[valid], xx[valid]].astype(np.float32) / 255.0
+            sampled_points = points_grid[frame_idx, 0, yy[valid], xx[valid]]
+            finite_depth = np.isfinite(sampled_points).all(axis=1)
+            nonzero_depth = np.linalg.norm(sampled_points, axis=1) > 1e-9
+            valid_indices = np.flatnonzero(valid)
+            invalid_indices = valid_indices[~(finite_depth & nonzero_depth)]
+            if len(invalid_indices):
+                semantic_vis[frame_idx, invalid_indices] = False
+            keep_indices = valid_indices[finite_depth & nonzero_depth]
+            if len(keep_indices):
+                track_points[frame_idx, keep_indices] = points_grid[frame_idx, 0, yy[keep_indices], xx[keep_indices]]
+                track_colors[frame_idx, keep_indices] = colors_grid[frame_idx, 0, yy[keep_indices], xx[keep_indices]].astype(np.float32) / 255.0
 
     object_indices = np.flatnonzero(object_label)
     controller_indices = np.flatnonzero(controller_label)

@@ -33,6 +33,13 @@ remain a diagnostic layer around that data product.
   and write diagnostic profile/artifact metadata, but it must not alter
   EdgeTAM, TAPNext++, query identity, observed PCD, or recording/alignment
   products
+- isolated Demo v4 FuturePhysTwin chunk preprocessing under `demo_v4/`; this
+  may consume Demo 3.2-style single-camera realtime/headless artifacts, chunk
+  them into 5-second windows, and write `final_data.pkl`,
+  `track_process_data.pkl`, `calibrate.pkl`, `metadata.json`, `split.json`,
+  `color/0`, `mask`, `pcd`, and tracking compatibility files for
+  FuturePhysTwin acceptance testing. These chunk cases are demo/diagnostic
+  artifacts and are not part of the formal recording/alignment data product.
 - manual hardware validation documentation
 - deterministic tests and scope guards for the kept workflow
 
@@ -44,9 +51,11 @@ remain a diagnostic layer around that data product.
 - tracking backend registries, lifted tracking overlays, and tracker benchmark harnesses
 - training or vendoring segmentation / tracking models
 - formal shape-prior generation as part of recording/alignment products,
-  except for the isolated Demo 3.2 warmup diagnostic carveout listed above
+  except for the isolated Demo 3.2 warmup diagnostic and Demo v4 chunk
+  preprocessing carveouts listed above
 - scene / point-cloud modeling beyond aligned packaging and sanctioned realtime demo/diagnostic views
-- `final_data.pkl`
+- `final_data.pkl` outside the isolated Demo v4 FuturePhysTwin chunk
+  preprocessing carveout
 - inverse physics
 - Warp simulation
 - Gaussian Splatting
@@ -66,9 +75,11 @@ formal aligned-case output contract.
 If a file, dependency, CLI, or README section exists only to support downstream
 physics, formal shape priors, tracking backends, reconstruction/rendering
 evaluation, robot control, or simulation/manipulation pipelines, it does not
-belong in this branch. The only shape-prior exception is the isolated Demo 3.2
-SAM3D warmup diagnostic path, which is explicitly outside the formal
-recording/alignment data product.
+belong in this branch unless it is part of an explicitly isolated demo
+diagnostic carveout. The shape-prior exceptions are the isolated Demo 3.2 SAM3D
+warmup diagnostic path and the isolated Demo v4 FuturePhysTwin chunk
+preprocessing path; both are explicitly outside the formal recording/alignment
+data product.
 
 Experiment-only FFS depth diagnostics are allowed only when they consume
 aligned cases, write diagnostic artifacts outside formal case directories, and

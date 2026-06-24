@@ -292,6 +292,8 @@ class ShapePriorProtocolAndSnapshotTest(unittest.TestCase):
             status="ready",
             points_m=np.array([[0.0, 0.0, 0.0], [0.01, 0.0, 0.0]], dtype=np.float32),
             colors_rgb_u8=np.full((2, 3), 150, dtype=np.uint8),
+            surface_points_m=np.array([[0.0, 0.0, -0.01]], dtype=np.float32),
+            interior_points_m=np.array([[0.002, 0.002, -0.02]], dtype=np.float32),
             metadata={"single_view_alignment_ms": 3.5},
         )
         response = parse_shape_prior_response_parts(response_parts)
@@ -300,6 +302,10 @@ class ShapePriorProtocolAndSnapshotTest(unittest.TestCase):
         self.assertEqual(response.metadata["seq"], 7)
         self.assertEqual(response.points_m.shape, (2, 3))
         self.assertEqual(response.colors_rgb_u8.shape, (2, 3))
+        np.testing.assert_allclose(response.surface_points_m, [[0.0, 0.0, -0.01]])
+        np.testing.assert_allclose(response.interior_points_m, [[0.002, 0.002, -0.02]])
+        self.assertEqual(response.metadata["surface_point_count"], 1)
+        self.assertEqual(response.metadata["interior_point_count"], 1)
         self.assertEqual(response.metadata["single_view_alignment_ms"], 3.5)
 
     def test_protocol_fallback_defaults_to_negative_table_z_direction(self) -> None:
@@ -534,6 +540,75 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
         config = shape_prior_server._alignment_config_from_request(request)
 
         self.assertEqual(config.above_direction, "negative")
+
+    def test_worker_response_includes_single_view_legacy_shape_prior_samples(self) -> None:
+        object_mask = np.zeros((8, 8), dtype=bool)
+        object_mask[3:5, 3:5] = True
+        depth = np.full((8, 8), 0.5, dtype=np.float32)
+        depth[3, 3] = 0.46
+        depth[4, 4] = 0.54
+        request = shape_prior_server.ShapePriorRequest(
+            metadata={
+                "request_id": "req-single-view",
+                "seq": 2,
+                "table_z_m": 0.0,
+                "table_z_above_direction": "positive",
+            },
+            rgb_u8=np.zeros((8, 8, 3), dtype=np.uint8),
+            object_mask=object_mask,
+            controller_mask=np.zeros_like(object_mask),
+            depth_color_m=depth,
+            k_color=np.array([[10.0, 0.0, 3.5], [0.0, 10.0, 3.5], [0.0, 0.0, 1.0]], dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+
+        class FakeUpscaler:
+            def __call__(self, *, prompt: str, image: Image.Image):
+                return SimpleNamespace(images=[image.resize((16, 16), Image.Resampling.NEAREST)])
+
+        class FakePipeline:
+            def run(self, image_rgb, mask_u8, **kwargs):
+                return {
+                    "glb": SimpleNamespace(
+                        vertices=np.array(
+                            [
+                                [0.0, 0.0, 0.0],
+                                [1.0, 0.0, 0.0],
+                                [0.0, 1.0, 0.0],
+                                [0.0, 0.0, 1.0],
+                            ],
+                            dtype=np.float32,
+                        ),
+                        faces=np.array(
+                            [
+                                [0, 1, 2],
+                                [0, 1, 3],
+                                [0, 2, 3],
+                                [1, 2, 3],
+                            ],
+                            dtype=np.int32,
+                        ),
+                    )
+                }
+
+        worker = shape_prior_server.ShapePriorSam3DWorker(
+            sam3d_root=Path("/does/not/matter"),
+            config=None,
+            device="cuda:0",
+            seed=42,
+            max_points=512,
+            upscale_category="stuffed animal",
+        )
+        worker._load_upscaler = lambda: FakeUpscaler()  # type: ignore[method-assign]
+        worker._load_inference = lambda: SimpleNamespace(_pipeline=FakePipeline())  # type: ignore[method-assign]
+
+        response = parse_shape_prior_response_parts(worker.handle(request))
+
+        self.assertEqual(response.metadata["status"], "ready")
+        self.assertEqual(response.metadata["single_view_shape_prior_sampling_backend"], "legacy")
+        self.assertFalse(response.metadata["uses_mvsam3d"])
+        self.assertGreater(response.surface_points_m.shape[0], 0)
+        self.assertGreater(response.interior_points_m.shape[0], 0)
 
 
 class RuntimeShapePriorIntegrationTest(unittest.TestCase):
@@ -863,6 +938,8 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
                 status="ready",
                 points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
                 colors_rgb_u8=np.array([[150, 150, 150]], dtype=np.uint8),
+                surface_points_m=np.array([[0.0, 0.0, -0.01]], dtype=np.float32),
+                interior_points_m=np.array([[0.01, 0.0, -0.02]], dtype=np.float32),
                 source_seq=4,
                 source_timestamp_s=2.5,
                 metadata={"shape_prior_total_ms": 10.0},
@@ -878,6 +955,8 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
             payload = np.load(Path(tmp) / metadata["shape_prior_path"])
             np.testing.assert_allclose(payload["points_m"], result.points_m)
             np.testing.assert_array_equal(payload["colors_rgb_u8"], result.colors_rgb_u8)
+            np.testing.assert_allclose(payload["surface_points_m"], result.surface_points_m)
+            np.testing.assert_allclose(payload["interior_points_m"], result.interior_points_m)
 
     def test_shape_prior_profile_json_records_fail_soft_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

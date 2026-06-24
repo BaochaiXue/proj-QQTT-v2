@@ -57,6 +57,8 @@ class ShapePriorResult:
     status: str
     points_m: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.float32))
     colors_rgb_u8: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.uint8))
+    surface_points_m: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.float32))
+    interior_points_m: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.float32))
     source_timestamp_s: float | None = None
     source_seq: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
