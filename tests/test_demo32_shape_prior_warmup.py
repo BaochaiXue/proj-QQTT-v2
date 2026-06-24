@@ -138,6 +138,7 @@ class Demo32ShapePriorWrapperTest(unittest.TestCase):
         self.assertEqual(args.shape_prior_start_policy, "async-after-first-strict-pair")
         self.assertEqual(args.shape_prior_execution, "remote-worker")
         self.assertEqual(args.shape_prior_endpoint, "tcp://127.0.0.1:7100")
+        self.assertEqual(args.shape_prior_timeout_ms, 180000)
         self.assertEqual(args.shape_prior_device, "cuda:0")
         self.assertTrue(args.shape_prior_skip_route_visualizations)
         self.assertTrue(contract["shape_prior_warmup_enabled"])
@@ -145,12 +146,14 @@ class Demo32ShapePriorWrapperTest(unittest.TestCase):
         self.assertEqual(contract["shape_prior_start_policy"], "async-after-first-strict-pair")
         self.assertEqual(contract["shape_prior_execution"], "remote-worker")
         self.assertEqual(contract["shape_backend"], "sam3d-objects")
+        self.assertEqual(contract["shape_prior_timeout_ms"], 180000)
         self.assertEqual(contract["shape_prior_depth_backend"], "native-realsense")
         self.assertEqual(contract["shape_prior_depth_source_internal"], "realsense")
         self.assertIsNone(contract["shape_prior_profile_json"])
         self.assertEqual(contract["profile_summary_fields"]["shape_prior_status"], "pending")
         self.assertEqual(_option_value(delegate, "--depth-source"), "realsense")
         self.assertEqual(_option_value(delegate, "--shape-prior-endpoint"), "tcp://127.0.0.1:7100")
+        self.assertEqual(_option_value(delegate, "--shape-prior-timeout-ms"), "180000")
         self.assertIn("--shape-prior-warmup", delegate)
         self.assertIn("--shape-prior-skip-route-visualizations", delegate)
         self.assertNotIn("--shape-prior-profile-json", delegate)
@@ -224,6 +227,8 @@ class ShapePriorProtocolAndSnapshotTest(unittest.TestCase):
             depth_color_m=np.ones((3, 4), dtype=np.float32),
             k_color=np.eye(3, dtype=np.float32),
             camera_to_world_c2w=np.eye(4, dtype=np.float32),
+            table_z_m=0.0,
+            table_z_above_direction="negative",
         )
 
     def test_snapshot_requires_nonempty_object_mask_and_table_transform(self) -> None:
@@ -253,6 +258,8 @@ class ShapePriorProtocolAndSnapshotTest(unittest.TestCase):
         self.assertEqual(request.metadata["request_id"], "req-7")
         self.assertEqual(request.metadata["seq"], 7)
         self.assertEqual(request.metadata["depth_backend"], "ir-ffs")
+        self.assertEqual(request.metadata["table_z_m"], 0.0)
+        self.assertEqual(request.metadata["table_z_above_direction"], "negative")
         np.testing.assert_array_equal(request.rgb_u8, snapshot.rgb_u8)
         np.testing.assert_array_equal(request.object_mask, snapshot.object_mask)
         np.testing.assert_allclose(request.depth_color_m, snapshot.depth_color_m)
@@ -417,6 +424,59 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
         self.assertEqual(metadata["sam3d_mesh_source"], "glb")
         self.assertTrue(np.isfinite(canonical).all())
 
+    def test_worker_alignment_uses_request_table_above_direction(self) -> None:
+        object_mask = np.zeros((2, 2), dtype=bool)
+        object_mask[:, :] = True
+        depth = np.full((2, 2), 0.05, dtype=np.float32)
+        k_color = np.eye(3, dtype=np.float32)
+        c2w = np.diag([1.0, 1.0, -1.0, 1.0]).astype(np.float32)
+        request = shape_prior_server.ShapePriorRequest(
+            metadata={
+                "request_id": "req",
+                "seq": 0,
+                "table_z_m": 0.0,
+                "table_z_above_direction": "negative",
+            },
+            rgb_u8=np.zeros((2, 2, 3), dtype=np.uint8),
+            object_mask=object_mask,
+            controller_mask=np.zeros_like(object_mask),
+            depth_color_m=depth,
+            k_color=k_color,
+            camera_to_world_c2w=c2w,
+        )
+        observation = np.array(
+            [
+                [0.0, 0.0, -0.05],
+                [0.05, 0.0, -0.05],
+                [0.0, 0.05, -0.05],
+                [0.05, 0.05, -0.05],
+            ],
+            dtype=np.float32,
+        )
+        worker = shape_prior_server.ShapePriorSam3DWorker(
+            sam3d_root=Path("/does/not/matter"),
+            config=None,
+            device="cuda:0",
+            seed=42,
+            max_points=128,
+            upscale_category="stuffed animal",
+        )
+        worker._canonical_points_from_sam3d = lambda _request: (  # type: ignore[method-assign]
+            observation,
+            {
+                "sam3d_model_load_ms": 0.0,
+                "image_upscale_ms": 0.0,
+                "mask_refinement_ms": 0.0,
+                "sam3d_inference_ms": 0.0,
+                "geometry_export_ms": 0.0,
+            },
+        )
+
+        response = parse_shape_prior_response_parts(worker.handle(request))
+
+        self.assertEqual(response.metadata["status"], "ready")
+        self.assertEqual(response.metadata["alignment"]["ground_z_fraction"], 0.0)
+
 
 class RuntimeShapePriorIntegrationTest(unittest.TestCase):
     def test_masked_delegate_shape_prior_warmup_defaults_off_unless_wrapper_enables(self) -> None:
@@ -426,6 +486,7 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
         self.assertEqual(args.shape_prior_start_policy, "async-after-first-strict-pair")
         self.assertEqual(args.shape_prior_execution, "remote-worker")
         self.assertEqual(args.shape_prior_endpoint, "tcp://127.0.0.1:7100")
+        self.assertEqual(args.shape_prior_timeout_ms, 180000)
         self.assertIsNone(args.shape_prior_profile_json)
         self.assertEqual(args.shape_prior_device, "cuda:0")
         self.assertTrue(args.shape_prior_skip_route_visualizations)
@@ -445,6 +506,8 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
                 "remote-worker",
                 "--shape-prior-endpoint",
                 "tcp://127.0.0.1:7100",
+                "--shape-prior-timeout-ms",
+                "250000",
                 "--shape-prior-profile-json",
                 "result/shape_profile.json",
                 "--shape-prior-device",
@@ -457,6 +520,7 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
         self.assertEqual(args.shape_prior_start_policy, "blocking-before-first-output")
         self.assertEqual(args.shape_prior_execution, "remote-worker")
         self.assertEqual(args.shape_prior_endpoint, "tcp://127.0.0.1:7100")
+        self.assertEqual(args.shape_prior_timeout_ms, 250000)
         self.assertEqual(args.shape_prior_profile_json, Path("result/shape_profile.json"))
         self.assertEqual(args.shape_prior_device, "cuda:0")
         self.assertTrue(args.shape_prior_skip_route_visualizations)
@@ -599,6 +663,8 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
         np.testing.assert_array_equal(snapshot.object_mask, object_mask)
         np.testing.assert_allclose(snapshot.depth_color_m, np.ones((2, 3), dtype=np.float32))
         np.testing.assert_allclose(snapshot.camera_to_world_c2w, np.eye(4, dtype=np.float32))
+        self.assertEqual(snapshot.table_z_m, masked_demo.TABLE_Z_M)
+        self.assertEqual(snapshot.table_z_above_direction, "negative")
 
     def test_after_teardown_policy_defers_worker_request_until_teardown(self) -> None:
         class CountingClient:

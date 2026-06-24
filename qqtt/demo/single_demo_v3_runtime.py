@@ -430,6 +430,11 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
             "--shape-prior-endpoint",
             default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT,
         )
+        parser.add_argument(
+            "--shape-prior-timeout-ms",
+            type=int,
+            default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
+        )
         parser.add_argument("--shape-prior-profile-json", type=Path, default=None)
         parser.add_argument(
             "--shape-prior-device",
@@ -852,6 +857,8 @@ def validate_args(args: argparse.Namespace) -> None:
         args.table_calibrate = table_path
     if float(args.duration_s) < 0.0:
         raise ValueError("--duration-s must be >= 0")
+    if version == DEMO_VERSION_3_2 and int(getattr(args, "shape_prior_timeout_ms", 1)) <= 0:
+        raise ValueError("--shape-prior-timeout-ms must be positive")
     if int(args.fps) not in single_pcd.SUPPORTED_CAPTURE_FPS:
         raise ValueError(f"--fps must be one of {single_pcd.SUPPORTED_CAPTURE_FPS}")
     if str(args.profile) not in single_pcd.SUPPORTED_PROFILES:
@@ -1183,6 +1190,11 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
             if version == DEMO_VERSION_3_2
             else None
         ),
+        "shape_prior_timeout_ms": (
+            int(getattr(args, "shape_prior_timeout_ms", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS))
+            if version == DEMO_VERSION_3_2
+            else None
+        ),
         "shape_prior_profile_json": (
             None
             if version != DEMO_VERSION_3_2 or getattr(args, "shape_prior_profile_json", None) is None
@@ -1313,6 +1325,7 @@ def format_contract(contract: dict[str, Any]) -> str:
         "shape_prior_execution",
         "shape_backend",
         "shape_prior_endpoint",
+        "shape_prior_timeout_ms",
         "shape_prior_profile_json",
         "shape_prior_device",
         "tracker_device",
@@ -1550,6 +1563,8 @@ def build_live_delegate_argv(args: argparse.Namespace, *, active_serial: str | N
                 str(args.shape_prior_execution),
                 "--shape-prior-endpoint",
                 str(args.shape_prior_endpoint),
+                "--shape-prior-timeout-ms",
+                str(args.shape_prior_timeout_ms),
                 "--shape-prior-device",
                 str(args.shape_prior_device),
             ]

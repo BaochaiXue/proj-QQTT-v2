@@ -134,6 +134,17 @@ def _object_observation_points_world(request: ShapePriorRequest, *, max_points: 
     return _sample_points(world, max_points)
 
 
+def _alignment_config_from_request(request: ShapePriorRequest) -> ShapeAlignmentConfig:
+    metadata = dict(request.metadata)
+    above_direction = str(metadata.get("table_z_above_direction", "positive"))
+    if above_direction not in {"positive", "negative"}:
+        raise ValueError("table_z_above_direction must be positive or negative")
+    return ShapeAlignmentConfig(
+        table_z_m=float(metadata.get("table_z_m", 0.0)),
+        above_direction=above_direction,
+    )
+
+
 def _object_crop_box(mask: np.ndarray) -> tuple[int, int, int, int]:
     coords = np.argwhere(np.asarray(mask, dtype=bool))
     if coords.size == 0:
@@ -306,7 +317,7 @@ class ShapePriorSam3DWorker:
                 aligned = align_canonical_shape_to_observation(
                     canonical,
                     observation,
-                    config=ShapeAlignmentConfig(),
+                    config=_alignment_config_from_request(request),
                 )
                 align_ms = _elapsed_ms(align_start_s)
                 if not aligned.valid:

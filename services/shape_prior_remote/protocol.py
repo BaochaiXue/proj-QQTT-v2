@@ -83,6 +83,8 @@ def build_shape_prior_request_parts(*, snapshot: Any, request_id: str) -> list[b
         "input_source": str(snapshot.input_source),
         "depth_backend": str(snapshot.depth_backend),
         "depth_source_internal": str(snapshot.depth_source_internal),
+        "table_z_m": float(getattr(snapshot, "table_z_m", 0.0)),
+        "table_z_above_direction": str(getattr(snapshot, "table_z_above_direction", "positive")),
         "shape_backend": "sam3d-objects",
         "rgb_shape": [int(v) for v in rgb.shape],
         "depth_shape": [int(v) for v in depth.shape],

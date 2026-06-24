@@ -142,6 +142,12 @@ conda run -n <sam3d-env> --no-capture-output \
   --futurephystwin-root /home/xinjie/FuturePhysTwin
 ```
 
+The Demo 3.2 client waits up to `--shape-prior-timeout-ms 180000` by default so
+cold upscaler + SAM3D requests can complete. The `ShapePriorSnapshot` also
+forwards `table_z_m` and `table_z_above_direction` to the worker; single-view
+alignment validation uses those table-world semantics instead of assuming a
+positive-Z-above-table frame.
+
 For protocol/debug testing without loading SAM3D, use:
 
 ```bash

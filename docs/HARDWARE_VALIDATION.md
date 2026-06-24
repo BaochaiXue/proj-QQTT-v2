@@ -98,6 +98,8 @@ conda run -n demo_2_max --no-capture-output \
 
 - For real-live validation, remove `--input-source fake-live` and repeat for
   the native default plus explicit `--depth-backend ir-ffs`.
+- Keep the default `--shape-prior-timeout-ms 180000` unless measuring timeout
+  behavior; cold worker requests can include x4 upscaling plus SAM3D model load.
 - For each command, run a baseline with `--no-shape-prior-warmup` and the same
   input/depth settings.
 - Repeat the matrix with
@@ -109,6 +111,8 @@ conda run -n demo_2_max --no-capture-output \
   completes.
 - Verify ready runs mount a gray shape reference layer and keep strict product
   `queries_txy`, `tracks_yx`, and visibility unchanged versus the baseline.
+- Verify the profile records `table_z_above_direction` and alignment validation
+  uses the same table-world direction as the runtime metadata.
 
 ## Calibration Checklist
 

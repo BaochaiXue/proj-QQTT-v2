@@ -2032,6 +2032,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=shape_prior_warmup.SHAPE_PRIOR_EXECUTION_REMOTE_WORKER,
     )
     parser.add_argument("--shape-prior-endpoint", default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT)
+    parser.add_argument(
+        "--shape-prior-timeout-ms",
+        type=int,
+        default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
+    )
     parser.add_argument("--shape-prior-profile-json", type=Path, default=None)
     parser.add_argument("--shape-prior-device", default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_DEVICE)
     parser.add_argument(
@@ -2442,6 +2447,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--point-size must be positive")
     if float(args.table_z_filter_threshold_m) < 0:
         raise ValueError("--table-z-filter-threshold-m must be >= 0")
+    if int(getattr(args, "shape_prior_timeout_ms", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS)) <= 0:
+        raise ValueError("--shape-prior-timeout-ms must be positive")
     if bool(getattr(args, "enable_table_z_filter", False)) and bool(getattr(args, "disable_table_z_filter", False)):
         raise ValueError("--enable-table-z-filter conflicts with --disable-table-z-filter")
     if str(args.table_z_above_direction) not in TABLE_Z_ABOVE_DIRECTIONS:
@@ -4192,7 +4199,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         if enabled and str(getattr(self.args, "shape_prior_execution", "")) == shape_prior_warmup.SHAPE_PRIOR_EXECUTION_REMOTE_WORKER:
             client = ShapePriorRemoteClient(
                 endpoint=str(getattr(self.args, "shape_prior_endpoint", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT)),
-                timeout_ms=5000,
+                timeout_ms=int(getattr(self.args, "shape_prior_timeout_ms", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS)),
             )
         return shape_prior_warmup.ShapePriorWarmupManager(
             enabled=enabled,
@@ -4382,6 +4389,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "shape_prior_start_policy": str(getattr(self.args, "shape_prior_start_policy", "")),
             "shape_prior_execution": str(getattr(self.args, "shape_prior_execution", "")),
             "shape_prior_endpoint": str(getattr(self.args, "shape_prior_endpoint", "")),
+            "shape_prior_timeout_ms": int(
+                getattr(self.args, "shape_prior_timeout_ms", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS)
+            ),
             "shape_prior_device": str(getattr(self.args, "shape_prior_device", "")),
             "shape_prior_skip_route_visualizations": bool(
                 getattr(self.args, "shape_prior_skip_route_visualizations", True)
@@ -5878,6 +5888,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             depth_color_m=np.ascontiguousarray(result.depth_m, dtype=np.float32),
             k_color=np.ascontiguousarray(k_color, dtype=np.float32).reshape(3, 3),
             camera_to_world_c2w=np.ascontiguousarray(self.table_c2w, dtype=np.float32).reshape(4, 4),
+            table_z_m=TABLE_Z_M,
+            table_z_above_direction=str(self.args.table_z_above_direction),
         )
         try:
             return shape_prior_warmup.normalize_snapshot(snapshot)

@@ -31,6 +31,7 @@ SHAPE_PRIOR_EXECUTIONS = (
 DEFAULT_SHAPE_PRIOR_ENDPOINT = "tcp://127.0.0.1:7100"
 DEFAULT_SHAPE_PRIOR_DEVICE = "cuda:0"
 DEFAULT_SHAPE_PRIOR_RENDER_RGB = (150, 150, 150)
+DEFAULT_SHAPE_PRIOR_TIMEOUT_MS = 180_000
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,8 @@ class ShapePriorSnapshot:
     depth_color_m: np.ndarray
     k_color: np.ndarray
     camera_to_world_c2w: np.ndarray | None
+    table_z_m: float = 0.0
+    table_z_above_direction: str = "positive"
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,8 @@ def validate_shape_prior_snapshot(snapshot: ShapePriorSnapshot) -> None:
     c2w = np.asarray(snapshot.camera_to_world_c2w, dtype=np.float32)
     if c2w.shape != (4, 4):
         raise ValueError(f"camera_to_world_c2w must be 4x4, got {c2w.shape}")
+    if str(snapshot.table_z_above_direction) not in {"positive", "negative"}:
+        raise ValueError("shape-prior snapshot table_z_above_direction must be positive or negative")
 
 
 def normalize_snapshot(snapshot: ShapePriorSnapshot) -> ShapePriorSnapshot:
@@ -127,6 +132,8 @@ def normalize_snapshot(snapshot: ShapePriorSnapshot) -> ShapePriorSnapshot:
         depth_color_m=np.ascontiguousarray(snapshot.depth_color_m, dtype=np.float32),
         k_color=np.ascontiguousarray(snapshot.k_color, dtype=np.float32).reshape(3, 3),
         camera_to_world_c2w=np.ascontiguousarray(snapshot.camera_to_world_c2w, dtype=np.float32).reshape(4, 4),
+        table_z_m=float(snapshot.table_z_m),
+        table_z_above_direction=str(snapshot.table_z_above_direction),
     )
 
 
@@ -201,6 +208,8 @@ class ShapePriorWarmupManager:
             "depth_source_internal": str(snapshot.depth_source_internal),
             "shape_prior_source_seq": int(snapshot.seq),
             "shape_prior_source_time_s": snapshot.source_timestamp_s,
+            "table_z_m": float(snapshot.table_z_m),
+            "table_z_above_direction": str(snapshot.table_z_above_direction),
         }
 
     def maybe_submit(self, snapshot: ShapePriorSnapshot) -> bool:
