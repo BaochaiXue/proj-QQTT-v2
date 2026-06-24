@@ -207,3 +207,154 @@ After the `trainer_warp.py` compatibility patch, these warnings no longer abort 
 
 - `taichi` and `rerun` were not installed because exact import searches in `realtime_phystwin` and `/home/xinjie/FuturePhysTwin` did not find direct runtime imports.
 - Generated optimization/training artifacts remain ignored outputs and are not part of the source change.
+
+## Supplemental audit after realtime_phystwin update check
+
+After a later check for `realtime_phystwin` updates, `git fetch origin --prune`
+inside `realtime_phystwin` showed no divergence between local `online` and
+`origin/online`:
+
+```text
+git rev-list --left-right --count HEAD...origin/online
+0 0
+```
+
+The updated dependency audit found that the core Demo v4 realtime PhysTwin path
+was already covered, but full-repo optional imports still needed real packages
+or real source paths for shape-prior and Gaussian rendering/evaluation scripts.
+
+Additional packages installed into `demo_2_max`:
+
+```bash
+conda run -n demo_2_max --no-capture-output python -m pip install \
+  --upgrade-strategy only-if-needed \
+  diffusers \
+  flow-vis \
+  ipdb \
+  pytorch-msssim \
+  supervision \
+  addict \
+  yapf \
+  pycocotools \
+  easydict \
+  rembg
+```
+
+Additional compiled/source packages:
+
+```bash
+CUDA_HOME=/usr/local/cuda \
+CUDACXX=/usr/local/cuda/bin/nvcc \
+FORCE_CUDA=1 \
+TORCH_CUDA_ARCH_LIST=8.9 \
+MAX_JOBS=8 \
+conda run -n demo_2_max --no-capture-output python -m pip install \
+  --no-build-isolation --no-deps \
+  /home/xinjie/single_proj_qqtt/realtime_phystwin/gaussian_splatting/submodules/fused-ssim
+```
+
+```bash
+CUDA_HOME=/usr/local/cuda \
+CUDACXX=/usr/local/cuda/bin/nvcc \
+FORCE_CUDA=1 \
+TORCH_CUDA_ARCH_LIST=8.9 \
+MAX_JOBS=8 \
+conda run -n demo_2_max --no-capture-output python -m pip install \
+  --no-build-isolation --no-deps \
+  /home/xinjie/external/GroundingDINO-phystwin-max
+```
+
+`utils3d==0.1.3` was installed with `--no-deps` because its package metadata
+requires `open3d<0.14`, while the active environment uses Open3D `0.19.0`.
+The installed `utils3d` metadata was patched from:
+
+```text
+Requires-Dist: open3d (>=0.13.0,<0.14.0)
+```
+
+to:
+
+```text
+Requires-Dist: open3d (>=0.13.0)
+```
+
+This avoided downgrading Open3D.
+
+External source paths were registered with:
+
+```text
+/home/xinjie/miniforge3/envs/demo_2_max/lib/python3.12/site-packages/realtime_phystwin_external_paths.pth
+```
+
+Contents:
+
+```text
+/home/xinjie/FuturePhysTwin/data_process
+/home/xinjie/single_proj_qqtt/realtime_phystwin/data_process
+/home/xinjie/single_proj_qqtt/realtime_phystwin/gaussian_splatting
+/home/xinjie/single_proj_qqtt/realtime_phystwin/gaussian_splatting/utils
+```
+
+This lets old scripts resolve real local modules such as `TRELLIS`,
+`match_pairs`, `models`, `lpipsPyTorch`, and `read_write_model` without copying
+or faking modules.
+
+Supplemental import validation:
+
+```text
+diffusers ok
+flow_vis ok
+ipdb ok
+pytorch_msssim ok
+supervision ok
+fused_ssim ok
+groundingdino ok
+easydict ok
+rembg ok
+utils3d ok
+TRELLIS.trellis.pipelines ok
+lpipsPyTorch ok
+match_pairs ok
+models.matching ok
+read_write_model ok
+supplemental_realtime_phystwin_imports_ok
+```
+
+CUDA extension validation:
+
+```text
+fused_ssim_cuda_ok
+groundingdino_cuda_ext_ok
+```
+
+Static import audit after the supplemental install:
+
+```text
+missing_imports
+missing_count 0
+```
+
+Post-supplement validation:
+
+```text
+python -m unittest tests.test_demo_v4_futurephystwin_chunks
+Ran 40 tests
+OK
+```
+
+```text
+python scripts/harness/validation/run.py --profile smoke
+Ran 301 tests
+OK
+[validation] smoke checks passed
+```
+
+`pip check` after the supplemental install reports only the pre-existing `sam3`
+metadata conflict:
+
+```text
+sam3 0.1.0 has requirement numpy<2,>=1.26, but you have numpy 2.4.5.
+```
+
+The TRELLIS import emits a Numba/TBB warning because the installed TBB is older
+than the optional parallel threading layer wants. Import still succeeds.
