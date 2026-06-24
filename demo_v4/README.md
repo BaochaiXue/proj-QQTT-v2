@@ -30,12 +30,12 @@ replay_fps=5
 chunk_seconds=5
 chunk_frame_count=25
 max_chunks=7
-demo32_cuda_visible_devices=1
+demo32_cuda_visible_devices=0
 demo32_device=cuda
 demo32_tracker_device=cuda
 shape_prior_warmup=true
 shape_prior_execution=remote-worker
-shape_prior_start_policy=async-after-first-strict-pair
+shape_prior_start_policy=async-after-first-mask-depth-pair
 ```
 
 Demo v4 writes each complete case under `--futurephystwin-base-path`:
@@ -132,6 +132,28 @@ The process terminates the Demo 3.2 subprocess after `max_chunks` are written;
 `demo32_return_code=-15` with `demo32_stop_reason=max_chunks_reached` is the
 expected controlled stop.
 
+## Chunk Cadence Telemetry
+
+The 25-frame chunk setting defines the source window, not by itself the
+wall-clock publish cadence. Every chunk manifest records:
+
+```text
+source_window_start_s
+source_window_end_s
+materialize_start_wall_s
+materialize_end_wall_s
+publish_wall_s
+materialize_latency_ms
+publish_lag_ms
+backlog_chunks
+```
+
+`source_window_*` is nominal source time from row offsets and FPS. The
+`*_wall_s` fields are relative to Demo v4 chunk streaming startup. Realtime
+cadence is acceptable only when steady-state `publish_wall_s` intervals are no
+larger than the chunk source window and `backlog_chunks` does not grow after
+startup.
+
 ## Validation Chunks
 
 The validation selector uses the second-last and fifth-last chunks. With the
@@ -145,12 +167,12 @@ demo_v4_native_full_sam3d_chunk_0003
 This avoids proving the path only on an early chunk where the controller may not
 have moved enough.
 
-On the local dual-4090 workstation, Demo v4 starts the Demo 3.2 subprocess with
-`CUDA_VISIBLE_DEVICES=1` by default, then passes logical `--device cuda` and
-`--tracker-device cuda`. This keeps the local SAM3D worker on physical GPU0
-isolated from EdgeTAM/TAPNext++ runtime memory pressure without exposing
-physical GPU indices to SAM3.1/EdgeTAM internals. On a real remote-worker setup,
-the SAM3D worker should run on its own workstation.
+Demo v4 now defaults to one visible GPU for the native RealSense realtime path:
+`CUDA_VISIBLE_DEVICES=0`, logical `--device cuda`, and logical
+`--tracker-device cuda`. This keeps EdgeTAM, TAPNext++, and the native depth
+path in one CUDA namespace. A dual-GPU isolation run is still possible by
+explicitly passing `--demo32-cuda-visible-devices 1` and running the SAM3D
+worker elsewhere, but that is no longer the default validation contract.
 
 ## Verified 2026-06-24 Run
 

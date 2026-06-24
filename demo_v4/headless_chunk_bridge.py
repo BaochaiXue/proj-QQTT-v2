@@ -34,6 +34,28 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                 yield json.loads(line)
 
 
+def _count_jsonl_rows(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    count = 0
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                count += 1
+    return count
+
+
+def _relative_wall_s(origin_s: float) -> float:
+    return float(time.monotonic() - float(origin_s))
+
+
+def _complete_chunk_backlog(frames_path: Path, *, chunk_size: int, published_chunk_count: int) -> int:
+    if int(chunk_size) <= 0:
+        return 0
+    complete_chunks = _count_jsonl_rows(frames_path) // int(chunk_size)
+    return max(0, int(complete_chunks) - int(published_chunk_count))
+
+
 def _load_rgb(path: Path) -> np.ndarray:
     return np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
 
@@ -401,8 +423,11 @@ def _write_chunk_from_rows(
     mask_radius_outlier_filter: bool,
     mask_radius_outlier_radius_m: float,
     mask_radius_outlier_nb_points: int,
+    wall_time_origin_s: float,
+    backlog_chunks: Callable[[], int] | None = None,
 ) -> dict[str, Any]:
     case_name = f"{case_prefix}_chunk_{chunk_index:04d}"
+    materialize_start_wall_s = _relative_wall_s(float(wall_time_origin_s))
     chunk = _chunk_payload_from_rows(
         capture,
         metadata,
@@ -417,15 +442,28 @@ def _write_chunk_from_rows(
         mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
     )
     manifest = write_futurephystwin_chunk_case(base_path, case_name, chunk)
+    materialize_end_wall_s = _relative_wall_s(float(wall_time_origin_s))
+    backlog_count = 0 if backlog_chunks is None else int(backlog_chunks())
+    publish_wall_s = _relative_wall_s(float(wall_time_origin_s))
+    source_window_start_s = float(row_start) / float(fps)
+    source_window_end_s = float(row_end) / float(fps)
     manifest["source_capture_dir"] = str(capture)
     manifest["source_row_start"] = int(row_start)
     manifest["source_row_end"] = int(row_end)
+    manifest["source_window_start_s"] = source_window_start_s
+    manifest["source_window_end_s"] = source_window_end_s
     manifest["chunk_ready_source_seq"] = int(rows[-1].get("seq", row_end - 1))
     manifest["chunk_ready_source_time_s"] = (
         None
         if rows[-1].get("source_timestamp_s") is None
         else float(rows[-1]["source_timestamp_s"])
     )
+    manifest["materialize_start_wall_s"] = materialize_start_wall_s
+    manifest["materialize_end_wall_s"] = materialize_end_wall_s
+    manifest["publish_wall_s"] = publish_wall_s
+    manifest["materialize_latency_ms"] = float((materialize_end_wall_s - materialize_start_wall_s) * 1000.0)
+    manifest["publish_lag_ms"] = float((publish_wall_s - source_window_end_s) * 1000.0)
+    manifest["backlog_chunks"] = backlog_count
     manifest_path = Path(base_path) / case_name / "manifest.json"
     if manifest_path.is_file():
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -469,6 +507,8 @@ def write_chunks_from_headless_capture(
     chunk_index = 1
     row_buffer: list[dict[str, Any]] = []
     row_start = 0
+    wall_time_origin_s = time.monotonic()
+    frames_path = capture / "frames.jsonl"
     for row_idx, row in enumerate(_iter_jsonl(capture / "frames.jsonl")):
         if max_chunks is not None and len(manifests) >= int(max_chunks):
             break
@@ -492,6 +532,12 @@ def write_chunks_from_headless_capture(
             mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
             mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
+            wall_time_origin_s=wall_time_origin_s,
+            backlog_chunks=lambda path=frames_path, size=chunk_size, published=chunk_index: _complete_chunk_backlog(
+                path,
+                chunk_size=size,
+                published_chunk_count=published,
+            ),
         )
         manifests.append(manifest)
         if on_chunk_written is not None:
@@ -557,6 +603,7 @@ def stream_chunks_from_headless_capture(
     row_buffer: list[dict[str, Any]] = []
     chunk_index = 1
     chunk_size = int(chunk_frame_count)
+    wall_time_origin_s = time.monotonic()
 
     while True:
         if max_chunks is not None and len(manifests) >= int(max_chunks):
@@ -595,6 +642,12 @@ def stream_chunks_from_headless_capture(
                 mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
                 mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
                 mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
+                wall_time_origin_s=wall_time_origin_s,
+                backlog_chunks=lambda path=frames_path, size=chunk_size, published=chunk_index: _complete_chunk_backlog(
+                    path,
+                    chunk_size=size,
+                    published_chunk_count=published,
+                ),
             )
             manifests.append(manifest)
             if on_chunk_written is not None:

@@ -25,9 +25,11 @@ from demo_v4.headless_chunk_bridge import (
     write_chunks_from_headless_capture,
 )
 from demo_v4.realtime_futurephystwin_chunks import (
+    _contract,
     build_demo32_realtime_command,
     build_parser,
     main as demo_v4_main,
+    resolve_demo32_cuda_visible_devices,
     select_validation_chunk_cases,
 )
 from qqtt.demo.single_view_shape_prior_sampling import (
@@ -94,14 +96,31 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         self.assertTrue(args.shape_prior_warmup)
         self.assertEqual(args.depth_backend, "native-realsense")
         self.assertEqual(args.max_chunks, 7)
-        self.assertEqual(args.demo32_cuda_visible_devices, "1")
+        self.assertEqual(args.gpu_mode, "single")
+        self.assertIsNone(args.demo32_cuda_visible_devices)
+        self.assertEqual(resolve_demo32_cuda_visible_devices(args), "0")
         self.assertEqual(args.demo32_device, "cuda")
         self.assertEqual(args.demo32_tracker_device, "cuda")
         self.assertEqual(args.demo32_dtype, "bfloat16")
+        self.assertEqual(args.shape_prior_start_policy, "async-after-first-mask-depth-pair")
         self.assertTrue(args.mask_radius_outlier_filter)
         self.assertEqual(args.mask_radius_outlier_radius_m, 0.01)
         self.assertEqual(args.mask_radius_outlier_nb_points, 40)
         self.assertEqual(str(args.futurephystwin_base_path), "/home/xinjie/FuturePhysTwin/data/demo_v4_chunks")
+
+    def test_demo_v4_gpu_mode_resolves_single_dual_and_explicit_override(self) -> None:
+        single_args = build_parser().parse_args(["--dry-run"])
+        dual_args = build_parser().parse_args(["--gpu-mode", "dual", "--dry-run"])
+        override_args = build_parser().parse_args(
+            ["--gpu-mode", "dual", "--demo32-cuda-visible-devices", "0", "--dry-run"]
+        )
+
+        self.assertEqual(resolve_demo32_cuda_visible_devices(single_args), "0")
+        self.assertEqual(resolve_demo32_cuda_visible_devices(dual_args), "1")
+        self.assertEqual(resolve_demo32_cuda_visible_devices(override_args), "0")
+        self.assertEqual(_contract(dual_args)["gpu_mode"], "dual")
+        self.assertEqual(_contract(dual_args)["demo32_cuda_visible_devices"], "1")
+        self.assertEqual(_contract(override_args)["demo32_cuda_visible_devices_override"], "0")
 
     def test_demo_v4_builds_full_fake_realtime_demo32_command(self) -> None:
         args = build_parser().parse_args(
@@ -132,9 +151,37 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         self.assertEqual(command[command.index("--render-mode") + 1], "none")
         self.assertEqual(command[command.index("--headless-capture-dir") + 1], "result/demo_v4/capture")
         self.assertEqual(command[command.index("--tracking-product-backend") + 1], "phystwin-strict-tracking")
+        self.assertEqual(command[command.index("--track-mode") + 1], "controller-object")
+        self.assertEqual(command[command.index("--tracker-backend") + 1], "tapnextpp")
         self.assertEqual(command[command.index("--shape-prior-endpoint") + 1], "tcp://worker:7100")
         self.assertIn("--shape-prior-warmup", command)
         self.assertIn("--shape-prior-skip-route-visualizations", command)
+
+    def test_demo_v4_live_command_enables_strict_headless_tracking_explicitly(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--input-source",
+                "live",
+                "--futurephystwin-base-path",
+                "result/demo_v4/cases",
+                "--case-prefix",
+                "rt_live",
+            ]
+        )
+
+        command = build_demo32_realtime_command(
+            args,
+            capture_dir=Path("result/demo_v4/live_capture"),
+            profile_json=Path("result/demo_v4/live_shape_profile.json"),
+            chunk_frame_count=25,
+        )
+
+        self.assertEqual(command[command.index("--input-source") + 1], "live")
+        self.assertEqual(command[command.index("--render-mode") + 1], "none")
+        self.assertEqual(command[command.index("--headless-capture-dir") + 1], "result/demo_v4/live_capture")
+        self.assertEqual(command[command.index("--tracking-product-backend") + 1], "phystwin-strict-tracking")
+        self.assertEqual(command[command.index("--track-mode") + 1], "controller-object")
+        self.assertEqual(command[command.index("--tracker-backend") + 1], "tapnextpp")
 
     def test_demo_v4_cli_converts_existing_headless_capture_to_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -497,6 +544,57 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             self.assertEqual(emitted, ["demo_v4_tail_chunk_0001", "demo_v4_tail_chunk_0002"])
             self.assertEqual([item["chunk_ready_source_seq"] for item in manifests], [1, 3])
 
+    def test_streaming_manifest_records_wall_cadence_and_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = self._write_minimal_headless_capture(root / "capture", frame_count=0)
+            rows = self._headless_rows(capture, frame_count=6)
+            base_path = root / "cases"
+            state = {"primed": False, "done": False}
+
+            def pump() -> None:
+                if not state["primed"]:
+                    with (capture / "frames.jsonl").open("a", encoding="utf-8") as handle:
+                        for row in rows:
+                            handle.write(json.dumps(row) + "\n")
+                    state["primed"] = True
+                else:
+                    state["done"] = True
+
+            manifests = stream_chunks_from_headless_capture(
+                capture,
+                base_path=base_path,
+                case_prefix="demo_v4_cadence",
+                chunk_frame_count=2,
+                fps=5,
+                max_chunks=1,
+                capture_finished=lambda: bool(state["done"]),
+                before_poll=pump,
+                poll_interval_s=0.0,
+                surface_points=np.array([[0.0, 0.0, -0.02]], dtype=np.float64),
+                interior_points=np.array([[0.01, 0.0, -0.03]], dtype=np.float64),
+                mask_radius_outlier_filter=False,
+            )
+
+            self.assertEqual(len(manifests), 1)
+            manifest = manifests[0]
+            self.assertEqual(manifest["source_window_start_s"], 0.0)
+            self.assertEqual(manifest["source_window_end_s"], 0.4)
+            self.assertGreaterEqual(manifest["materialize_end_wall_s"], manifest["materialize_start_wall_s"])
+            self.assertGreaterEqual(manifest["publish_wall_s"], manifest["materialize_end_wall_s"])
+            self.assertGreaterEqual(manifest["materialize_latency_ms"], 0)
+            self.assertAlmostEqual(
+                manifest["publish_lag_ms"],
+                (manifest["publish_wall_s"] - manifest["source_window_end_s"]) * 1000.0,
+                places=3,
+            )
+            self.assertEqual(manifest["backlog_chunks"], 2)
+
+            manifest_path = base_path / "demo_v4_cadence_chunk_0001" / "manifest.json"
+            persisted = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["backlog_chunks"], 2)
+            self.assertEqual(persisted["publish_wall_s"], manifest["publish_wall_s"])
+
     def test_streaming_bridge_waits_for_shape_prior_when_required(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -562,6 +660,8 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
 
             def fake_stream(capture_dir_arg, **kwargs):
                 self.assertEqual(Path(capture_dir_arg), capture_dir)
+                np.testing.assert_allclose(kwargs["surface_points"], np.array([[0.0, 0.0, -0.02]], dtype=np.float64))
+                np.testing.assert_allclose(kwargs["interior_points"], np.array([[0.01, 0.0, -0.03]], dtype=np.float64))
                 manifest = {
                     "case_name": "demo_v4_rt_chunk_0001",
                     "frame_count": 25,
@@ -582,16 +682,131 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                                 str(capture_dir),
                                 "--max-chunks",
                                 "1",
+                                "--surface-points-npy",
+                                str(self._write_points(root / "surface.npy", [[0.0, 0.0, -0.02]])),
+                                "--interior-points-npy",
+                                str(self._write_points(root / "interior.npy", [[0.01, 0.0, -0.03]])),
                             ]
                         )
 
             self.assertEqual(exit_code, 0)
             command = popen.call_args.args[0]
+            env = popen.call_args.kwargs["env"]
             self.assertEqual(command[command.index("--input-source") + 1], "fake-live")
             self.assertEqual(command[command.index("--replay-fps") + 1], "5.0")
+            self.assertEqual(command[command.index("--track-mode") + 1], "controller-object")
+            self.assertEqual(command[command.index("--tracker-backend") + 1], "tapnextpp")
             self.assertEqual(command[command.index("--headless-capture-dir") + 1], str(capture_dir))
+            self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "0")
             summary = json.loads(stdout.getvalue())
             self.assertEqual(summary["mode"], "full-fake-realtime-camera")
+            self.assertEqual(summary["gpu_mode"], "single")
+            self.assertEqual(summary["demo32_cuda_visible_devices"], "0")
+            self.assertEqual(summary["chunk_count"], 1)
+
+    def test_demo_v4_cli_dual_gpu_mode_routes_demo32_to_gpu1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture_dir = root / "capture"
+            base_path = root / "cases"
+
+            class FakeProcess:
+                returncode = 0
+
+                def poll(self):
+                    return 0
+
+                def wait(self):
+                    return 0
+
+            def fake_stream(_capture_dir_arg, **_kwargs):
+                return [
+                    {
+                        "case_name": "demo_v4_dual_chunk_0001",
+                        "frame_count": 25,
+                        "futurephystwin_case_root": str(base_path / "demo_v4_dual_chunk_0001"),
+                    }
+                ]
+
+            with mock.patch("demo_v4.realtime_futurephystwin_chunks.subprocess.Popen", return_value=FakeProcess()) as popen:
+                with mock.patch("demo_v4.realtime_futurephystwin_chunks.stream_chunks_from_headless_capture", side_effect=fake_stream):
+                    with redirect_stdout(io.StringIO()) as stdout:
+                        exit_code = demo_v4_main(
+                            [
+                                "--gpu-mode",
+                                "dual",
+                                "--futurephystwin-base-path",
+                                str(base_path),
+                                "--case-prefix",
+                                "demo_v4_dual",
+                                "--demo32-capture-dir",
+                                str(capture_dir),
+                                "--max-chunks",
+                                "1",
+                                "--surface-points-npy",
+                                str(self._write_points(root / "surface.npy", [[0.0, 0.0, -0.02]])),
+                                "--interior-points-npy",
+                                str(self._write_points(root / "interior.npy", [[0.01, 0.0, -0.03]])),
+                            ]
+                        )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(popen.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"], "1")
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary["gpu_mode"], "dual")
+            self.assertEqual(summary["demo32_cuda_visible_devices"], "1")
+
+    def test_demo_v4_cli_live_launches_demo32_headless_strict_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture_dir = root / "live_capture"
+            base_path = root / "cases"
+
+            class FakeProcess:
+                returncode = 0
+
+                def poll(self):
+                    return 0
+
+                def wait(self):
+                    return 0
+
+            def fake_stream(capture_dir_arg, **kwargs):
+                self.assertEqual(Path(capture_dir_arg), capture_dir)
+                return [
+                    {
+                        "case_name": "demo_v4_live_chunk_0001",
+                        "frame_count": 25,
+                        "futurephystwin_case_root": str(base_path / "demo_v4_live_chunk_0001"),
+                    }
+                ]
+
+            with mock.patch("demo_v4.realtime_futurephystwin_chunks.subprocess.Popen", return_value=FakeProcess()) as popen:
+                with mock.patch("demo_v4.realtime_futurephystwin_chunks.stream_chunks_from_headless_capture", side_effect=fake_stream):
+                    with redirect_stdout(io.StringIO()) as stdout:
+                        exit_code = demo_v4_main(
+                            [
+                                "--input-source",
+                                "live",
+                                "--futurephystwin-base-path",
+                                str(base_path),
+                                "--case-prefix",
+                                "demo_v4_live",
+                                "--demo32-capture-dir",
+                                str(capture_dir),
+                                "--max-chunks",
+                                "1",
+                            ]
+                        )
+
+            self.assertEqual(exit_code, 0)
+            command = popen.call_args.args[0]
+            self.assertEqual(command[command.index("--input-source") + 1], "live")
+            self.assertEqual(command[command.index("--track-mode") + 1], "controller-object")
+            self.assertEqual(command[command.index("--tracker-backend") + 1], "tapnextpp")
+            self.assertEqual(command[command.index("--headless-capture-dir") + 1], str(capture_dir))
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary["mode"], "full-live-camera")
             self.assertEqual(summary["chunk_count"], 1)
 
     def test_headless_capture_bridge_expands_active_query_subsets(self) -> None:
