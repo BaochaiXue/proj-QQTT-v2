@@ -57,11 +57,13 @@ shape prior isolated from tracking identities and live observation PCD.
 ## Compatibility Decisions
 
 - `demo_v4/realtime_futurephystwin_chunks.py` defaults to fake-live, 5 FPS,
-  native RealSense, 5-second chunks, 7 chunks, and shape-prior warmup enabled.
-  It starts Demo 3.2 with `CUDA_VISIBLE_DEVICES=1` by default and passes
-  logical `--device cuda` / `--tracker-device cuda`, so local SAM3D workers can
-  occupy physical GPU0 without starving EdgeTAM or exposing physical GPU
-  indices to SAM3.1/EdgeTAM internals.
+  native RealSense, 5-second chunks, unlimited chunks, and shape-prior warmup
+  enabled. Its default route is split by role: realtime camera/fake-camera to
+  final-data runs in single-GPU mode on physical GPU0
+  (`CUDA_VISIBLE_DEVICES=0` with logical `--device cuda` /
+  `--tracker-device cuda`), while SAM3D warmup defaults to dual-GPU mode on
+  `cuda:1`. If warmup is explicitly switched to single-GPU mode, it also
+  resolves to GPU0 (`--shape-prior-device cuda:0`).
 - The validation selector uses the second-last and fifth-last chunk. With seven
   chunks this validates chunk `0006` and chunk `0003`.
 - `demo_v4/headless_chunk_bridge.py` tails Demo 3.2 headless rows while the
@@ -154,6 +156,10 @@ validation_chunk_cases=[
 ]
 ```
 
+This is a historical validation run captured before the current routing
+default was changed to realtime single-GPU GPU0 plus warmup dual-GPU GPU1. New
+default dry-runs should report `demo32_cuda_visible_devices=0`.
+
 Demo 3.2 capture metadata:
 
 ```text
@@ -237,9 +243,10 @@ The exact commands and external log paths are recorded in
 - A FuturePhysTwin visualization/logging compatibility patch was made outside
   this repo in `/home/xinjie/FuturePhysTwin/qqtt/engine/trainer_warp.py` so
   missing H.264 videos do not abort `train_warp.py`.
-- Local full-pipeline runs require GPU isolation. If a SAM3D worker is resident
-  on GPU0, Demo 3.2 and FuturePhysTwin should run with
-  `CUDA_VISIBLE_DEVICES=1` or an equivalent separate device.
+- Local full-pipeline runs can use the default realtime single-GPU GPU0 route
+  with warmup on GPU1. For deliberate realtime isolation when another resident
+  worker occupies GPU0, pass `--realtime-gpu-mode dual` or an explicit
+  `--demo32-cuda-visible-devices` override.
 
 ## Validation Commands
 

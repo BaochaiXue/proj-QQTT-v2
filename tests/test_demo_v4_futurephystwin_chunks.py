@@ -33,6 +33,7 @@ from demo_v4.realtime_futurephystwin_chunks import (
     resolve_chunk_frame_count,
     resolve_demo32_source_replay_fps,
     resolve_demo32_cuda_visible_devices,
+    resolve_shape_prior_device,
     select_validation_chunk_cases,
 )
 from qqtt.demo.single_view_shape_prior_sampling import (
@@ -290,6 +291,32 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             chunk_frame_count=25,
         )
         self.assertEqual(command[command.index("--shape-prior-device") + 1], "cuda:1")
+
+    def test_demo_v4_single_gpu_modes_route_realtime_and_warmup_to_gpu0(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--realtime-gpu-mode",
+                "single",
+                "--warmup-gpu-mode",
+                "single",
+                "--dry-run",
+            ]
+        )
+
+        self.assertEqual(resolve_demo32_cuda_visible_devices(args), "0")
+        self.assertEqual(resolve_shape_prior_device(args), "cuda:0")
+        self.assertEqual(_contract(args)["realtime_gpu_mode"], "single")
+        self.assertEqual(_contract(args)["warmup_gpu_mode"], "single")
+        self.assertEqual(_contract(args)["demo32_cuda_visible_devices"], "0")
+        self.assertEqual(_contract(args)["shape_prior_device"], "cuda:0")
+
+        command = build_demo32_realtime_command(
+            args,
+            capture_dir=Path("result/demo_v4/capture"),
+            profile_json=Path("result/demo_v4/shape_profile.json"),
+            chunk_frame_count=25,
+        )
+        self.assertEqual(command[command.index("--shape-prior-device") + 1], "cuda:0")
 
     def test_demo_v4_builds_full_fake_realtime_demo32_command(self) -> None:
         args = build_parser().parse_args(
