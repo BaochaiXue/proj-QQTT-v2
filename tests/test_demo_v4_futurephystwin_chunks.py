@@ -482,6 +482,12 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["chunk_count"], 1)
             self.assertEqual(manifest["chunks"][0]["case_name"], "demo_v4_cli_chunk_0001")
+            self.assertEqual(manifest["output_format"], "online-primary-static-case")
+            self.assertEqual(manifest["online_dir"], str(base_path / "online_data" / "demo_v4_cli"))
+            self.assertEqual(manifest["static_data_path"], str(base_path / "data" / "demo_v4_cli" / "final_data.pkl"))
+            self.assertTrue((base_path / "online_data" / "demo_v4_cli" / "manifest.json").is_file())
+            self.assertTrue((base_path / "online_data" / "demo_v4_cli" / "chunks" / "chunk_000000.pkl").is_file())
+            self.assertTrue((base_path / "data" / "demo_v4_cli" / "final_data.pkl").is_file())
             self.assertTrue(validate_futurephystwin_case(base_path / "demo_v4_cli_chunk_0001")["valid"])
 
     def test_chunk_writer_publishes_ready_marker_after_validation(self) -> None:

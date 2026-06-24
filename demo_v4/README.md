@@ -1,9 +1,10 @@
 # Demo v4 FuturePhysTwin Chunk Runner
 
-Demo v4 turns the single-camera Demo 3.2 realtime output into complete
-FuturePhysTwin case folders. It is the isolated bridge for acceptance testing:
+Demo v4 turns the single-camera Demo 3.2 realtime output into an online
+FuturePhysTwin stream. It is the isolated bridge for acceptance testing:
 Demo 3.2 handles RGB-D, masks, tracking, and optional SAM3D shape prior; Demo v4
-publishes ready-to-consume per-window chunk cases.
+publishes `online_data/<case>/manifest.json` plus `chunks/chunk_*.pkl`, with a
+matching static `data/<case>/final_data.pkl` for realtime_phystwin consumers.
 
 This is not the formal aligned-case product. The normal recording/alignment
 pipeline still ends at `data_process/`.
@@ -66,7 +67,7 @@ Demo 3.2 fake-live camera
   -> EdgeTAM object/controller masks
   -> TAPNext++ strict same-sequence tracks
   -> async SAM3D single-view shape prior
-  -> Demo v4 FuturePhysTwin chunk cases
+  -> Demo v4 online FuturePhysTwin chunks
 ```
 
 Demo v4 derives the frame count from time: `round(--replay-fps *
@@ -76,11 +77,21 @@ need an explicit test/debug override.
 
 ## Output Locations
 
-Demo v4 writes into `--futurephystwin-base-path`. Each completed chunk is a
-separate FuturePhysTwin case:
+Demo v4 writes into `--futurephystwin-base-path`. The default consumer-facing
+layout matches `realtime_phystwin/scripts/fake_online_tracker.py`:
 
 ```text
 <base>/
+  data/<case-prefix>/
+    final_data.pkl
+    metadata.json
+
+  online_data/<case-prefix>/
+    manifest.json
+    chunks/
+      chunk_000000.pkl
+      chunk_000001.pkl
+
   <case-prefix>_chunks_manifest.json
   <case-prefix>_demo32_capture_<timestamp>/
     metadata.json
@@ -105,9 +116,22 @@ separate FuturePhysTwin case:
     pcd/0.npz              # only with --write-final-pcd
 ```
 
-Consumers should only read chunk directories that contain `READY`. Demo v4
-writes each chunk under `<base>/.publishing/`, validates it, writes `READY`, and
-then atomically renames it to `<base>/<case-prefix>_chunk_XXXX/`.
+Use these paths with realtime_phystwin online scripts:
+
+```bash
+--online_dir <base>/online_data/<case-prefix> \
+--static_data_path <base>/data/<case-prefix>/final_data.pkl
+```
+
+`online_data/<case-prefix>/manifest.json` is atomically updated after each
+`chunks/chunk_*.pkl` file is committed. The static `final_data.pkl` contains the
+concatenated committed chunks plus `surface_points` and `interior_points`.
+
+The per-window `<case-prefix>_chunk_XXXX/` directories remain diagnostic
+compatibility artifacts. Consumers that read those directories should only read
+ones containing `READY`. Demo v4 writes each diagnostic case under
+`<base>/.publishing/`, validates it, writes `READY`, and then atomically renames
+it to `<base>/<case-prefix>_chunk_XXXX/`.
 
 The top-level `<case-prefix>_chunks_manifest.json` summarizes the whole run.
 Each chunk also has its own `manifest.json` with publish timing, point counts,
@@ -132,6 +156,8 @@ from pathlib import Path
 base = Path("/home/xinjie/FuturePhysTwin/data/demo_v4_chunks")
 summary = json.loads((base / "demo_v4_chunks_manifest.json").read_text())
 print("chunks:", summary["chunk_count"])
+print("online:", summary["online_dir"])
+print("static:", summary["static_data_path"])
 print("stop:", summary.get("demo32_stop_reason"))
 print("first ready wall s:", summary.get("first_ready_chunk_wall_s"))
 print("max backlog:", summary.get("max_backlog_chunks"))
@@ -150,10 +176,11 @@ print(validate_futurephystwin_case(case, require_ready=True))
 PY
 ```
 
-The generated case can then be used from FuturePhysTwin as a normal case root
-under `data/different_types`-style expectations: `final_data.pkl`,
+The generated diagnostic case can still be used from FuturePhysTwin as a normal
+case root under `data/different_types`-style expectations: `final_data.pkl`,
 `calibrate.pkl`, `metadata.json`, `split.json`, masks, RGB, and tracking files
-are present.
+are present. For online training and rollout, prefer the `online_dir` and
+`static_data_path` pair shown above.
 
 ## Common Commands
 
