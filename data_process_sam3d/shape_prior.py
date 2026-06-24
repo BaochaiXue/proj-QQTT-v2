@@ -16,12 +16,12 @@ import sys
 
 DEFAULT_SAM3D_ROOT_CANDIDATES = [
     Path(os.environ[key]).expanduser()
-    for key in ("SAM3D_ROOT", "MVSAM3D_ROOT")
+    for key in ("SAM3D_ROOT",)
     if os.environ.get(key)
 ]
 DEFAULT_SAM3D_ROOT_CANDIDATES += [
     Path("sam-3d-objects"),
-    Path("/home/xinjie/external/MV-SAM3D"),
+    Path("/home/xinjie/external/sam-3d-objects"),
 ]
 DEFAULT_SEED = 42
 
@@ -37,7 +37,7 @@ def resolve_sam3d_root(value: str | None = None) -> Path:
             return root
     searched = ", ".join(str(path) for path in candidates)
     raise FileNotFoundError(
-        "SAM3D root not found. Set SAM3D_ROOT or MVSAM3D_ROOT to a checkout "
+        "SAM3D root not found. Set SAM3D_ROOT to a checkout "
         f"containing notebook/inference.py and sam3d_objects/. Searched: {searched}"
     )
 
@@ -156,8 +156,8 @@ def main() -> None:
         type=str,
         default=None,
         help=(
-            "External SAM3D checkout. Defaults to SAM3D_ROOT, then MVSAM3D_ROOT, "
-            "then local known checkouts."
+            "External SAM3D checkout. Defaults to SAM3D_ROOT, then local sam-3d-objects "
+            "checkouts."
         ),
     )
     parser.add_argument(

@@ -3,7 +3,10 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import time
 from types import SimpleNamespace
@@ -33,6 +36,9 @@ from services.shape_prior_remote.protocol import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
 def _explicit(argv: list[str]) -> set[str]:
     return {item.split("=", 1)[0] for item in argv if item.startswith("--")}
 
@@ -56,6 +62,52 @@ def _write_valid_table_calibration(path: Path) -> None:
         per_camera_corner_fraction=[60 / 88],
     )
     write_table_calibration_files(path, [np.eye(4, dtype=np.float32)], metadata)
+
+
+class Sam3dOnlyCliContractTest(unittest.TestCase):
+    def _help_text(self, script: str, *, env: dict[str, str] | None = None) -> str:
+        result = subprocess.run(
+            [sys.executable, script, "--help"],
+            cwd=REPO_ROOT,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+        return result.stdout
+
+    def test_shape_prior_help_mentions_only_sam3d_root(self) -> None:
+        help_text = self._help_text("data_process_sam3d/shape_prior.py")
+        removed_env = "MV" + "SAM3D"
+        removed_label = "MV-" + "SAM3D"
+
+        self.assertIn("SAM3D_ROOT", help_text)
+        self.assertIn("sam-3d-objects", help_text)
+        self.assertNotIn(removed_env, help_text)
+        self.assertNotIn(removed_label, help_text)
+
+    def test_data_process_sample_help_has_no_sampling_backend_switch(self) -> None:
+        script_text = (REPO_ROOT / "data_process_sam3d" / "data_process_sample.py").read_text()
+        removed_backend_option = "shape_prior_" + "sampling_backend"
+        removed_marker = "mv" + "sam3d"
+
+        self.assertIn("--shape_prior", script_text)
+        self.assertNotIn(removed_backend_option, script_text)
+        self.assertNotIn(removed_marker, script_text.lower())
+
+    def test_shape_prior_worker_help_prefers_script_checkout_over_env_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stale_root = Path(tmp)
+            (stale_root / "qqtt").mkdir()
+            (stale_root / "services").mkdir()
+            env = dict(os.environ)
+            env["QQTT_REPO_ROOT"] = str(stale_root)
+
+            help_text = self._help_text("services/shape_prior_remote/server.py", env=env)
+
+        self.assertIn("Long-lived remote SAM3D shape-prior worker", help_text)
+        self.assertIn("--sam3d-root", help_text)
 
 
 class Demo32ShapePriorWrapperTest(unittest.TestCase):

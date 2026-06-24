@@ -118,12 +118,13 @@ depth without concurrent TensorRT context use.
 
 ### Shape Prior Warmup
 
-Demo 3.2 enables SAM3D shape-prior warmup by default. Warmup is diagnostic
-only: the first valid same-seq RGB-D + EdgeTAM object mask is copied into a
+Demo 3.2 enables SAM3D Objects single-view shape-prior warmup by default.
+Warmup is diagnostic only: the first valid same-seq RGB-D + EdgeTAM object mask is copied into a
 `ShapePriorSnapshot`, the live/fake-live pipeline continues, and a remote worker
 returns an aligned gray canonical reference layer when it is ready. Shape prior
 does not change EdgeTAM masks, TAPNext++ queries/tracks, query identity,
-observed PCD, table-world filtering, or the strict tracking product.
+observed PCD, table-world filtering, or the strict tracking product. No
+alternate multi-view SAM shape-prior backend is supported in this branch.
 
 The default worker endpoint is `tcp://127.0.0.1:7100`. Start the worker on the
 SAM3D workstation with the external model checkout:

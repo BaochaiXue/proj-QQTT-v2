@@ -12,10 +12,11 @@ import numpy as np
 
 
 def _resolve_repo_root() -> Path:
-    candidates = [Path(__file__).resolve().parents[2], Path.cwd()]
+    candidates = [Path(__file__).resolve().parents[2]]
     env_root = os.environ.get("QQTT_REPO_ROOT")
     if env_root:
-        candidates.insert(0, Path(env_root))
+        candidates.append(Path(env_root))
+    candidates.append(Path.cwd())
     for candidate in candidates:
         root = candidate.expanduser().resolve()
         if (root / "qqtt").is_dir() and (root / "services").is_dir():
@@ -24,8 +25,10 @@ def _resolve_repo_root() -> Path:
 
 
 REPO_ROOT = _resolve_repo_root()
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+REPO_ROOT_STR = str(REPO_ROOT)
+if REPO_ROOT_STR in sys.path:
+    sys.path.remove(REPO_ROOT_STR)
+sys.path.insert(0, REPO_ROOT_STR)
 
 from qqtt.demo.shape_prior_warmup import DEFAULT_SHAPE_PRIOR_RENDER_RGB  # noqa: E402
 from qqtt.demo.single_view_shape_align import (  # noqa: E402

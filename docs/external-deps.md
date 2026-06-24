@@ -38,6 +38,8 @@ for the single-camera branch.
   - remote resident worker for `--shape-prior-execution remote-worker`
   - single-view alignment of SAM3D canonical geometry to the first valid
     same-seq RGB-D + EdgeTAM object mask snapshot
+  - SAM3D Objects single-view is the only supported shape-prior backend in this
+    branch
 - Default external SAM3D Objects checkout:
   - `/home/xinjie/external/sam-3d-objects`
 - Default FuturePhysTwin checkout reference:

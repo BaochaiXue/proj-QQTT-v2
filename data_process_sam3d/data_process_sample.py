@@ -9,7 +9,6 @@ import trimesh
 import cv2
 from utils.align_util import as_mesh
 from argparse import ArgumentParser
-from pathlib import Path
 from scipy.spatial import cKDTree
 
 parser = ArgumentParser()
@@ -30,11 +29,6 @@ parser.add_argument(
         "Filter sampled shape-prior points that are too far from observed object points "
         "(meters; set <=0 to disable)."
     ),
-)
-parser.add_argument(
-    "--shape_prior_sampling_backend",
-    choices=["legacy", "mvsam3d", "auto"],
-    default="auto",
 )
 parser.add_argument(
     "--ground-policy",
@@ -72,13 +66,11 @@ SHAPE_PRIOR = args.shape_prior
 num_surface_points = args.num_surface_points
 volume_sample_size = args.volume_sample_size
 shape_prior_max_dist = args.shape_prior_max_dist
-shape_prior_sampling_backend = args.shape_prior_sampling_backend
 ground_policy = args.ground_policy
 ground_z = args.ground_z
 target_surface_points = args.target_surface_points
 target_interior_points = args.target_interior_points
 skip_visualization = args.skip_visualization
-MVSAM3D_MAX_DIST_CAP = 0.035
 
 
 def filter_points_by_nn_distance(
@@ -89,19 +81,6 @@ def filter_points_by_nn_distance(
     tree = cKDTree(reference_points)
     distances, _ = tree.query(points, k=1)
     return points[distances <= max_dist]
-
-
-def resolve_sampling_backend() -> str:
-    if shape_prior_sampling_backend != "auto":
-        return shape_prior_sampling_backend
-    marker = Path(base_path) / case_name / "shape" / "mvsam3d"
-    return "mvsam3d" if marker.exists() else "legacy"
-
-
-def effective_mvsam3d_max_dist() -> float:
-    if shape_prior_max_dist <= 0:
-        return shape_prior_max_dist
-    return min(shape_prior_max_dist, MVSAM3D_MAX_DIST_CAP)
 
 
 def apply_ground_policy(points: np.ndarray) -> np.ndarray:
@@ -191,14 +170,14 @@ def voxel_interior_candidates(
     return sort_by_reference_distance(interior, reference_points)
 
 
-def sample_mvsam3d_prior_points(
+def sample_sam3d_prior_points(
     trimesh_mesh: trimesh.Trimesh,
     reference_points: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     np.random.seed(42)
     min_bound = np.min(reference_points, axis=0)
     prior_grid_size = max(volume_sample_size * 0.4, 1e-4)
-    max_dist = effective_mvsam3d_max_dist()
+    max_dist = shape_prior_max_dist
 
     surface_candidates = []
     surface_points = np.zeros((0, 3), dtype=np.float32)
@@ -296,28 +275,9 @@ def process_unique_points(track_data):
         shape_mesh_path = f"{base_path}/{case_name}/shape/matching/final_mesh.glb"
         trimesh_mesh = trimesh.load(shape_mesh_path, force="mesh")
         trimesh_mesh = as_mesh(trimesh_mesh)
-        if resolve_sampling_backend() == "mvsam3d":
-            surface_points, interior_points = sample_mvsam3d_prior_points(
-                trimesh_mesh, object_points[0]
-            )
-        else:
-            # Sample the surface points
-            surface_points, _ = trimesh.sample.sample_surface(
-                trimesh_mesh, num_surface_points
-            )
-            # Sample the interior points
-            try:
-                interior_points = trimesh.sample.volume_mesh(trimesh_mesh, 10000)
-            except Exception:
-                interior_points = np.zeros((0, 3), dtype=np.float32)
-
-            # Guard against shape-prior outliers by keeping only points near observed object points.
-            surface_points = filter_points_by_nn_distance(
-                surface_points, object_points[0], shape_prior_max_dist
-            )
-            interior_points = filter_points_by_nn_distance(
-                interior_points, object_points[0], shape_prior_max_dist
-            )
+        surface_points, interior_points = sample_sam3d_prior_points(
+            trimesh_mesh, object_points[0]
+        )
 
     if SHAPE_PRIOR:
         all_points = np.concatenate(
@@ -337,28 +297,8 @@ def process_unique_points(track_data):
             grid_flag[grid_index] = 1
             index.append(i)
     if SHAPE_PRIOR:
-        final_surface_points = []
-        final_interior_points = []
-        use_mvsam3d_sampling = resolve_sampling_backend() == "mvsam3d"
-        if use_mvsam3d_sampling:
-            final_surface_points = surface_points[:target_surface_points]
-            final_interior_points = interior_points[:target_interior_points]
-        else:
-            prior_grid_size = volume_sample_size
-            prior_grid_flag = set(grid_flag)
-            interior_grid_flag = prior_grid_flag
-            for i in range(surface_points.shape[0]):
-                grid_index = point_grid_index(surface_points[i], min_bound, prior_grid_size)
-                if grid_index not in prior_grid_flag:
-                    prior_grid_flag.add(grid_index)
-                    grid_flag[grid_index] = 1
-                    final_surface_points.append(surface_points[i])
-            for i in range(interior_points.shape[0]):
-                grid_index = point_grid_index(interior_points[i], min_bound, prior_grid_size)
-                if grid_index not in interior_grid_flag:
-                    interior_grid_flag.add(grid_index)
-                    grid_flag[grid_index] = 1
-                    final_interior_points.append(interior_points[i])
+        final_surface_points = surface_points[:target_surface_points]
+        final_interior_points = interior_points[:target_interior_points]
         all_points = np.concatenate(
             [final_surface_points, final_interior_points, object_points[0][index]],
             axis=0,
