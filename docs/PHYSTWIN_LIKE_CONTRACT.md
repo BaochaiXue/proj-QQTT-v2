@@ -115,6 +115,11 @@ controller_points
 `track_process_data.pkl` is after controller whole-window filtering and FPS 30.
 `final_data.pkl` additionally applies 5 mm first-frame object grid sampling.
 
+Demo v4 FuturePhysTwin chunk roots add a top-level `READY` marker. Directory
+watchers and batch consumers must ignore any discovered case directory until
+that marker exists; producer-side temporary materialization lives under
+`<base>/.publishing/` and is not a consumable case root.
+
 ## Manifest
 
 Strict products must record:

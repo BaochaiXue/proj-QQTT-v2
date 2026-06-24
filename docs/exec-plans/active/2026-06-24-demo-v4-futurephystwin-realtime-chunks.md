@@ -42,7 +42,13 @@ pcd/<frame>.npz
 tracking/0.npz
 cotracker/0.npz
 manifest.json
+READY
 ```
+
+Chunk roots are published atomically. Demo v4 materializes files under
+`<base>/.publishing/`, validates the staged case, writes `READY` last, and then
+renames the staged directory to the final case name. Consumers must require
+`READY` before loading a chunk.
 
 The implementation is intentionally single-camera. It does not fake three
 cameras, does not call the old `data_process_sam3d/align.py`, and keeps SAM3D

@@ -56,9 +56,10 @@ Demo v4 writes each complete case under `--futurephystwin-base-path`:
   READY
 ```
 
-Consumers should treat `READY` as the publish marker. Demo v4 writes and
-validates each chunk in a hidden staging directory before atomically publishing
-the final case directory.
+Consumers must treat `READY` as the publish marker and ignore directories
+without it. Demo v4 writes and validates each chunk under `<base>/.publishing/`,
+creates `READY` last, and then atomically renames the staged directory to
+`<base>/<case>/`.
 
 The `final_data.pkl` schema follows
 `/home/xinjie/FuturePhysTwin/qqtt/data/real_data.py`:
