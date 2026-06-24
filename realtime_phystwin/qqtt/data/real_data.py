@@ -20,6 +20,42 @@ class RealData:
         controller_points = data["controller_points"]
         other_surface_points = data["surface_points"]
         interior_points = data["interior_points"]
+        asap_object_points_filled = data.get("asap_object_points_filled", None)
+        asap_surface_points = data.get("asap_surface_points", None)
+        asap_interior_points = data.get("asap_interior_points", None)
+
+        if asap_object_points_filled is None:
+            asap_object_points_filled = object_points
+        if asap_object_points_filled.shape != object_points.shape:
+            raise ValueError(
+                "asap_object_points_filled must have the same shape as object_points"
+            )
+
+        if asap_surface_points is None:
+            asap_surface_points = np.repeat(
+                other_surface_points[None], object_points.shape[0], axis=0
+            )
+        if asap_interior_points is None:
+            asap_interior_points = np.repeat(
+                interior_points[None], object_points.shape[0], axis=0
+            )
+
+        if asap_surface_points.shape[0] != object_points.shape[0]:
+            raise ValueError(
+                "asap_surface_points must have the same frame count as object_points"
+            )
+        if asap_interior_points.shape[0] != object_points.shape[0]:
+            raise ValueError(
+                "asap_interior_points must have the same frame count as object_points"
+            )
+        if asap_surface_points.shape[1] != other_surface_points.shape[0]:
+            raise ValueError(
+                "asap_surface_points point count must match surface_points"
+            )
+        if asap_interior_points.shape[1] != interior_points.shape[0]:
+            raise ValueError(
+                "asap_interior_points point count must match interior_points"
+            )
 
         # Get the rainbow color for the object_colors
         y_min, y_max = np.min(object_points[0, :, 1]), np.max(object_points[0, :, 1])
@@ -34,7 +70,7 @@ class RealData:
 
         # Concatenate the surface points and interior points
         self.structure_points = np.concatenate(
-            [object_points[0], other_surface_points, interior_points], axis=0
+            [object_points[0], asap_surface_points[0], asap_interior_points[0]], axis=0
         )
         self.structure_points = torch.tensor(
             self.structure_points, dtype=torch.float32, device=cfg.device
@@ -42,6 +78,15 @@ class RealData:
 
         self.object_points = torch.tensor(
             object_points, dtype=torch.float32, device=cfg.device
+        )
+        self.asap_object_points_filled = torch.tensor(
+            asap_object_points_filled, dtype=torch.float32, device=cfg.device
+        )
+        self.asap_surface_points = torch.tensor(
+            asap_surface_points, dtype=torch.float32, device=cfg.device
+        )
+        self.asap_interior_points = torch.tensor(
+            asap_interior_points, dtype=torch.float32, device=cfg.device
         )
         # self.object_colors = torch.tensor(
         #     object_colors, dtype=torch.float32, device=cfg.device

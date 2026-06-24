@@ -3,11 +3,15 @@ from qqtt.utils import logger, visualize_pc, cfg
 from qqtt.model.diff_simulator import (
     SpringMassSystemWarp,
 )
+from qqtt.model.diff_simulator.spring_mass_warp_batched import (
+    SpringMassSystemWarp as SpringMassSystemWarpBatched,
+)
 import open3d as o3d
 import numpy as np
 import torch
 import wandb
 import os
+import shutil
 from tqdm import tqdm
 import warp as wp
 from scipy.spatial import KDTree
@@ -41,6 +45,7 @@ import time
 import threading
 import time
 import csv
+import json
 
 
 class InvPhyTrainerWarp:
@@ -53,6 +58,28 @@ class InvPhyTrainerWarp:
         velocity_path=None,
         pure_inference_mode=False,
         device="cuda:0",
+        dataset_override=None,
+        batch_mode=False,
+        batch_size=1,
+        segment_len=10,
+        segment_stride=10,
+        batch_vis_per_instance=False,
+        batch_vis_interval=50,
+        batch_vis_num_instances=1,
+        batch_vis_num_groups=1,
+        rollout_prefix_switch=False,
+        rollout_switch_start_iter=50,
+        rollout_switch_ramp_iters=100,
+        rollout_replace_thresh=0.03,
+        rollout_baseline_iters=5,
+        rollout_baseline_ratio=0.8,
+        rollout_check_len=5,
+        rollout_switch_log_interval=10,
+        batch_loss_weighting=False,
+        batch_loss_weight_min=0.5,
+        batch_loss_weight_max=2.0,
+        batch_loss_weight_eps=1e-8,
+        batch_loss_weight_log_interval=10,
     ):
         cfg.data_path = data_path
         cfg.base_dir = base_dir
@@ -60,28 +87,64 @@ class InvPhyTrainerWarp:
         cfg.run_name = base_dir.split("/")[-1]
         cfg.train_frame = train_frame
 
+        self.batch_mode = batch_mode
+        self.batch_size = batch_size
+        self.segment_len = segment_len
+        self.segment_stride = segment_stride
+        self.batch_simulator = None
+        self.batch_size_loaded = None
+        self.batch_segment_len_loaded = None
+        self.batch_vis_per_instance = bool(batch_vis_per_instance)
+        self.batch_vis_interval = max(1, int(batch_vis_interval))
+        self.batch_vis_num_instances = int(batch_vis_num_instances)
+        self.batch_vis_num_groups = max(1, int(batch_vis_num_groups))
+        self.rollout_prefix_switch = bool(rollout_prefix_switch)
+        self.rollout_switch_start_iter = int(rollout_switch_start_iter)
+        self.rollout_switch_ramp_iters = max(1, int(rollout_switch_ramp_iters))
+        self.rollout_replace_thresh = float(rollout_replace_thresh)
+        self.rollout_baseline_iters = max(0, int(rollout_baseline_iters))
+        self.rollout_baseline_ratio = float(rollout_baseline_ratio)
+        self.rollout_check_len = max(0, int(rollout_check_len))
+        self.rollout_switch_log_interval = max(1, int(rollout_switch_log_interval))
+        self.batch_loss_weighting = bool(batch_loss_weighting)
+        self.batch_loss_weight_min = float(batch_loss_weight_min)
+        self.batch_loss_weight_max = float(batch_loss_weight_max)
+        if self.batch_loss_weight_max < self.batch_loss_weight_min:
+            raise ValueError("batch_loss_weight_max must be >= batch_loss_weight_min")
+        self.batch_loss_weight_eps = float(batch_loss_weight_eps)
+        self.batch_loss_weight_log_interval = max(1, int(batch_loss_weight_log_interval))
+        self.window_loss_weights_by_global_id = None
+        self.prev_rollout_pos_cache = None
+        self.prev_rollout_vel_cache = None
+        self.rollout_overlap_error_history = {}
+        self._last_rollout_switch_count = None
+        self.rest_debug_log_count = 0
+        self.nonfinite_debug_log_count = 0
+
         self.init_masks = None
         self.init_velocities = None
         # Load the data
         if cfg.data_type == "real":
-            self.dataset = RealData(visualize=False, save_gt=False)
-            # Get the object points and controller points
-            self.object_points = self.dataset.object_points
-            self.object_colors = self.dataset.object_colors
-            self.object_visibilities = self.dataset.object_visibilities
-            self.object_motions_valid = self.dataset.object_motions_valid
-            self.controller_points = self.dataset.controller_points
-            self.structure_points = self.dataset.structure_points
-            self.num_original_points = self.dataset.num_original_points
-            self.num_surface_points = self.dataset.num_surface_points
-            self.num_all_points = self.dataset.num_all_points
+            self.dataset = (
+                dataset_override
+                if dataset_override is not None
+                else RealData(visualize=False, save_gt=False)
+            )
+            self._load_real_dataset_attributes()
         elif cfg.data_type == "synthetic":
             self.dataset = SimpleData(visualize=False)
+            self.use_asap_train_points = False
             self.object_points = self.dataset.data
+            self.train_object_points = self.dataset.data
             self.object_colors = None
             self.object_visibilities = None
             self.object_motions_valid = None
+            self.train_object_visibilities = None
+            self.train_object_motions_valid = None
             self.controller_points = None
+            self.asap_object_points_filled = None
+            self.asap_surface_points = None
+            self.asap_interior_points = None
             self.structure_points = self.dataset.data[0]
             self.num_original_points = None
             self.num_surface_points = None
@@ -120,6 +183,7 @@ class InvPhyTrainerWarp:
             controller_max_neighbours=cfg.controller_max_neighbours,
             mask=self.init_masks,
         )
+        self._log_controller_spring_stats()
 
         self.simulator = SpringMassSystemWarp(
             self.init_vertices,
@@ -145,9 +209,9 @@ class InvPhyTrainerWarp:
             reverse_z=cfg.reverse_z,
             spring_Y_min=cfg.spring_Y_min,
             spring_Y_max=cfg.spring_Y_max,
-            gt_object_points=self.object_points,
-            gt_object_visibilities=self.object_visibilities,
-            gt_object_motions_valid=self.object_motions_valid,
+            gt_object_points=self.train_object_points,
+            gt_object_visibilities=self.train_object_visibilities,
+            gt_object_motions_valid=self.train_object_motions_valid,
             self_collision=cfg.self_collision,
         )
 
@@ -181,6 +245,124 @@ class InvPhyTrainerWarp:
             if not os.path.exists(f"{cfg.base_dir}/train"):
                 # Create directory if it doesn't exist
                 os.makedirs(f"{cfg.base_dir}/train")
+
+    def _load_real_dataset_attributes(self):
+        # Keep these aliases in one place so online buffers can refresh them
+        # after new chunks are appended.
+        self.object_points = self.dataset.object_points
+        self.train_object_points = self.dataset.object_points
+        self.object_colors = self.dataset.object_colors
+        self.object_visibilities = self.dataset.object_visibilities
+        self.object_motions_valid = self.dataset.object_motions_valid
+        self.train_object_visibilities = self.object_visibilities
+        self.train_object_motions_valid = self.object_motions_valid
+        self.controller_points = self.dataset.controller_points
+        self.asap_object_points_filled = self.dataset.asap_object_points_filled
+        self.asap_surface_points = self.dataset.asap_surface_points
+        self.asap_interior_points = self.dataset.asap_interior_points
+        self.structure_points = self.dataset.structure_points
+        self.num_original_points = self.dataset.num_original_points
+        self.num_surface_points = self.dataset.num_surface_points
+        self.num_all_points = self.dataset.num_all_points
+        self.source_frame_indices = getattr(self.dataset, "source_frame_indices", None)
+
+    def refresh_real_data_from_dataset(self):
+        if cfg.data_type != "real":
+            return
+        self._load_real_dataset_attributes()
+        if hasattr(self, "simulator"):
+            self.simulator.gt_object_points = self.train_object_points
+            self.simulator.gt_object_visibilities = self.train_object_visibilities
+            self.simulator.gt_object_motions_valid = self.train_object_motions_valid
+            self.simulator.controller_points = self.controller_points
+
+    def _log_controller_spring_stats(self):
+        if self.controller_points is None:
+            logger.info("[Controller-Springs]: no controller points")
+            return
+
+        num_ctrl = int(self.controller_points.shape[1])
+        ctrl_springs = self.init_springs[self.num_object_springs :]
+        logger.info(
+            "[Controller-Springs]: "
+            f"object_springs={self.num_object_springs}, "
+            f"controller_springs={int(ctrl_springs.shape[0])}, "
+            f"controller_points={num_ctrl}"
+        )
+        if ctrl_springs.shape[0] == 0:
+            logger.warning("[Controller-Springs]: no controller-object springs found")
+            return
+
+        ctrl_idx = (ctrl_springs[:, 0] - self.num_all_points).long()
+        valid = torch.logical_and(ctrl_idx >= 0, ctrl_idx < num_ctrl)
+        if not bool(valid.all()):
+            invalid_count = int((~valid).sum().item())
+            logger.warning(
+                f"[Controller-Springs]: found {invalid_count} springs whose first "
+                "endpoint is not a valid controller point"
+            )
+            ctrl_idx = ctrl_idx[valid]
+
+        degree = torch.bincount(ctrl_idx, minlength=num_ctrl).float()
+        logger.info(
+            "[Controller-Springs]: degree per controller point "
+            f"min={degree.min().item():.0f}, max={degree.max().item():.0f}, "
+            f"mean={degree.mean().item():.2f}, zero_count={(degree == 0).sum().item():.0f}"
+        )
+
+        if self.controller_points.shape[0] > 1:
+            ctrl_disp = torch.linalg.norm(
+                self.controller_points[1:] - self.controller_points[:-1], dim=-1
+            )
+            mean_motion = ctrl_disp.mean(dim=0)
+            max_motion = ctrl_disp.max(dim=0).values
+            logger.info(
+                "[Controller-Motion]: per point displacement "
+                f"mean(min/mean/max)="
+                f"{mean_motion.min().item():.5f}/"
+                f"{mean_motion.mean().item():.5f}/"
+                f"{mean_motion.max().item():.5f}, "
+                f"max(min/mean/max)="
+                f"{max_motion.min().item():.5f}/"
+                f"{max_motion.mean().item():.5f}/"
+                f"{max_motion.max().item():.5f}"
+            )
+
+        if num_ctrl < 2:
+            return
+
+        try:
+            first_ctrl = self.controller_points[0].detach().cpu().numpy()
+            labels = KMeans(n_clusters=2, random_state=0, n_init=10).fit_predict(
+                first_ctrl
+            )
+        except Exception as exc:
+            logger.warning(f"[Controller-Springs]: kmeans split failed: {exc}")
+            return
+
+        for cluster_id in range(2):
+            mask_np = labels == cluster_id
+            if not np.any(mask_np):
+                continue
+            mask = torch.from_numpy(mask_np).to(device=degree.device)
+            cluster_degree = degree[mask]
+            center = first_ctrl[mask_np].mean(axis=0)
+            msg = (
+                f"[Controller-Cluster {cluster_id}]: points={int(mask.sum().item())}, "
+                f"center=({center[0]:.4f}, {center[1]:.4f}, {center[2]:.4f}), "
+                f"degree_sum={cluster_degree.sum().item():.0f}, "
+                f"degree_mean={cluster_degree.mean().item():.2f}, "
+                f"degree_min={cluster_degree.min().item():.0f}, "
+                f"degree_max={cluster_degree.max().item():.0f}"
+            )
+            if self.controller_points.shape[0] > 1:
+                cluster_motion = mean_motion[mask]
+                cluster_max_motion = max_motion[mask]
+                msg += (
+                    f", motion_mean={cluster_motion.mean().item():.5f}, "
+                    f"motion_max={cluster_max_motion.max().item():.5f}"
+                )
+            logger.info(msg)
 
     def _init_start(
         self,
@@ -303,60 +485,547 @@ class InvPhyTrainerWarp:
                 num_object_springs,
             )
 
-    def _append_full_rollout_loss_rows(self, iteration, total_frames, frame_loss_rows):
-        self.simulator.set_init_state(
-            self.simulator.wp_init_vertices,
-            self.simulator.wp_init_velocities,
-            pure_inference=True,
+    def _tile_time_tensor(self, tensor, batch_size):
+        if tensor is None:
+            return None
+        assert tensor.dim() >= 2, "Expected tensor with shape [T, N, ...]"
+        repeats = [1, batch_size] + [1] * (tensor.dim() - 1)
+        view_shape = [tensor.shape[0], batch_size * tensor.shape[1], *tensor.shape[2:]]
+        return tensor.unsqueeze(1).repeat(*repeats).reshape(*view_shape).contiguous()
+
+    def _slice_time_with_padding(self, tensor, start_idx, length):
+        start_idx = int(start_idx)
+        length = int(length)
+        end_idx = start_idx + length
+        sliced = tensor[start_idx : min(end_idx, tensor.shape[0])]
+        if sliced.shape[0] == length:
+            return sliced.contiguous()
+        if sliced.shape[0] == 0:
+            raise ValueError(
+                f"Cannot slice tensor from start_idx={start_idx}; tensor has "
+                f"{tensor.shape[0]} frames"
+            )
+        pad_count = length - sliced.shape[0]
+        pad_shape = [pad_count, *sliced.shape[1:]]
+        pad = sliced[-1:].expand(*pad_shape)
+        return torch.cat([sliced, pad], dim=0).contiguous()
+
+    def _compute_segment_start_indices(self, total_frames):
+        seg_len = int(self.segment_len)
+        seg_stride = int(self.segment_stride)
+        if seg_len <= 1:
+            raise ValueError("segment_len must be >= 2 for rollout training")
+        if seg_stride <= 0:
+            raise ValueError("segment_stride must be positive")
+        if total_frames < seg_len:
+            raise ValueError(
+                f"total_frames ({total_frames}) must be >= segment_len ({seg_len})"
+            )
+        return list(range(0, total_frames - seg_len + 1, seg_stride))
+
+    def _get_trainable_total_frames(self):
+        if cfg.train_frame is None:
+            total_frames = int(self.train_object_points.shape[0])
+        else:
+            total_frames = int(min(cfg.train_frame, self.train_object_points.shape[0]))
+        if self.controller_points is not None:
+            total_frames = min(total_frames, int(self.controller_points.shape[0]))
+        if self.train_object_visibilities is not None:
+            total_frames = min(total_frames, int(self.train_object_visibilities.shape[0]))
+        if self.train_object_motions_valid is not None:
+            total_frames = min(total_frames, int(self.train_object_motions_valid.shape[0]))
+        if self.asap_surface_points is not None:
+            total_frames = min(total_frames, int(self.asap_surface_points.shape[0]))
+        if self.asap_interior_points is not None:
+            total_frames = min(total_frames, int(self.asap_interior_points.shape[0]))
+        return total_frames
+
+    def _estimate_segment_init_velocity(self, start_idx, object_vertices_start):
+        start_idx = int(start_idx)
+        prev_idx = max(0, start_idx - 4)
+        steps = start_idx - prev_idx
+        velocities = torch.zeros_like(object_vertices_start)
+        if steps <= 0:
+            return velocities
+
+        frame_dt = float(cfg.dt) * float(cfg.num_substeps)
+        num_gt_points = int(self.num_original_points)
+        num_surface_extra = int(self.num_surface_points) - num_gt_points
+
+        start_pos = self._get_reset_object_points(start_idx)
+        prev_pos = self._get_reset_object_points(prev_idx)
+        object_velocity = (start_pos - prev_pos) / (steps * frame_dt)
+        object_velocity = torch.nan_to_num(
+            object_velocity, nan=0.0, posinf=0.0, neginf=0.0
         )
-        self.simulator.clear_loss()
+        velocities[:num_gt_points] = object_velocity
 
-        for frame_idx in range(1, int(total_frames)):
-            self.simulator.set_controller_target(frame_idx)
-            if self.simulator.object_collision_flag:
-                self.simulator.update_collision_graph()
+        if num_surface_extra > 0:
+            velocities[num_gt_points : num_gt_points + num_surface_extra] = (
+                self.asap_surface_points[start_idx] - self.asap_surface_points[prev_idx]
+            ) / (steps * frame_dt)
 
-            self.simulator.step()
-            if cfg.data_type == "real":
-                self.simulator.calculate_loss()
-                chamfer_loss = wp.to_torch(
-                    self.simulator.chamfer_loss, requires_grad=False
+        if self.asap_interior_points is not None and self.asap_interior_points.shape[1] > 0:
+            velocities[self.num_surface_points : self.num_all_points] = (
+                self.asap_interior_points[start_idx]
+                - self.asap_interior_points[prev_idx]
+            ) / (steps * frame_dt)
+
+        return velocities
+
+    def _get_valid_object_mask(self, frame_idx):
+        num_gt_points = int(self.num_original_points)
+        valid = torch.isfinite(
+            self.train_object_points[frame_idx, :num_gt_points]
+        ).all(dim=-1)
+        if self.train_object_visibilities is not None:
+            valid = valid & self.train_object_visibilities[frame_idx, :num_gt_points]
+        if self.train_object_motions_valid is not None:
+            valid = valid & self.train_object_motions_valid[frame_idx, :num_gt_points]
+        return valid
+
+    def _get_reset_object_points(self, frame_idx):
+        num_gt_points = int(self.num_original_points)
+        reset_points = self.train_object_points[frame_idx, :num_gt_points].clone()
+        reset_points = torch.nan_to_num(reset_points, nan=0.0, posinf=0.0, neginf=0.0)
+        return reset_points
+
+    def _compute_segment_rest_lengths(self, object_vertices, controller_vertices=None):
+        if controller_vertices is not None:
+            self._log_controller_rest_ratio(object_vertices, controller_vertices)
+            vertices = torch.cat([object_vertices, controller_vertices], dim=0)
+        else:
+            vertices = object_vertices
+
+        springs = self.init_springs.long()
+        p0 = vertices[springs[:, 0]]
+        p1 = vertices[springs[:, 1]]
+        return torch.clamp(torch.linalg.norm(p0 - p1, dim=-1), min=1e-4).contiguous()
+
+    def _log_controller_rest_ratio(self, object_vertices, controller_vertices):
+        if self.rest_debug_log_count >= 20:
+            return
+        ctrl_springs = self.init_springs[self.num_object_springs :].long()
+        if ctrl_springs.numel() == 0:
+            return
+
+        vertices = torch.cat([object_vertices, controller_vertices], dim=0)
+        p0 = vertices[ctrl_springs[:, 0]]
+        p1 = vertices[ctrl_springs[:, 1]]
+        current_dist = torch.linalg.norm(p0 - p1, dim=-1)
+        base_rest = torch.clamp(
+            self.init_rest_lengths[self.num_object_springs :], min=1e-8
+        )
+        ratio = current_dist / base_rest
+        finite = torch.isfinite(ratio)
+        should_log = (
+            self.rest_debug_log_count < 3
+            or not bool(finite.all())
+            or ratio[finite].max().item() > 5.0
+            or ratio[finite].min().item() < 0.2
+        )
+        if not should_log:
+            return
+
+        if bool(finite.any()):
+            finite_ratio = ratio[finite]
+            finite_dist = current_dist[finite]
+            logger.warning(
+                "[Train-Batch-Rest]: controller/object rest ratio "
+                f"min/mean/max="
+                f"{finite_ratio.min().item():.4f}/"
+                f"{finite_ratio.mean().item():.4f}/"
+                f"{finite_ratio.max().item():.4f}, "
+                f"distance min/mean/max="
+                f"{finite_dist.min().item():.6f}/"
+                f"{finite_dist.mean().item():.6f}/"
+                f"{finite_dist.max().item():.6f}, "
+                f"nonfinite={(~finite).sum().item()}"
+            )
+        else:
+            logger.warning("[Train-Batch-Rest]: all controller/object rest ratios are nonfinite")
+        self.rest_debug_log_count += 1
+
+    def _compute_batched_segment_rest_lengths(
+        self, object_vertices_batched, controller_vertices_batched=None
+    ):
+        rest_lengths = []
+        for batch_idx in range(object_vertices_batched.shape[0]):
+            controller_vertices = (
+                controller_vertices_batched[batch_idx]
+                if controller_vertices_batched is not None
+                else None
+            )
+            rest_lengths.append(
+                self._compute_segment_rest_lengths(
+                    object_vertices_batched[batch_idx], controller_vertices
                 )
-                track_loss = wp.to_torch(
-                    self.simulator.track_loss, requires_grad=False
+            )
+        return torch.cat(rest_lengths, dim=0).contiguous()
+
+    def _visible_chamfer_error(self, pred_vertices, frame_idx):
+        if cfg.data_type != "real":
+            return None
+
+        num_surface_points = int(self.num_surface_points)
+        gt_points = self.train_object_points[frame_idx]
+        if self.train_object_visibilities is not None:
+            mask = self.train_object_visibilities[frame_idx]
+        else:
+            mask = torch.isfinite(gt_points).all(dim=-1)
+        gt_visible = gt_points[mask]
+        if gt_visible.shape[0] == 0:
+            return None
+
+        pred_surface = pred_vertices[:num_surface_points]
+        finite_pred = torch.isfinite(pred_surface).all(dim=-1)
+        pred_surface = pred_surface[finite_pred]
+        if pred_surface.shape[0] == 0:
+            return None
+
+        distances = torch.cdist(
+            gt_visible.unsqueeze(0),
+            pred_surface.unsqueeze(0),
+            p=1,
+        )
+        return distances.min(dim=2).values.mean()
+
+    def _overlap_chamfer_error(self, window_idx, segment_starts, segment_len):
+        if (
+            self.prev_rollout_pos_cache is None
+            or window_idx <= 0
+            or window_idx >= len(segment_starts)
+        ):
+            return None
+
+        prev_idx = window_idx - 1
+        prev_start = int(segment_starts[prev_idx])
+        cur_start = int(segment_starts[window_idx])
+        overlap_start = cur_start
+        prev_cache_len = int(self.prev_rollout_pos_cache.shape[1])
+        overlap_end = min(
+            prev_start + prev_cache_len,
+            cur_start + int(segment_len),
+        )
+        total_frames = self._get_trainable_total_frames()
+        overlap_end = min(overlap_end, total_frames)
+
+        errors = []
+        for frame_idx in range(overlap_start, overlap_end):
+            local_prev = frame_idx - prev_start
+            if local_prev < 0 or local_prev >= self.prev_rollout_pos_cache.shape[1]:
+                continue
+            pred_vertices = self.prev_rollout_pos_cache[prev_idx, local_prev]
+            error = self._visible_chamfer_error(pred_vertices, frame_idx)
+            if error is not None and bool(torch.isfinite(error)):
+                errors.append(error)
+
+        if len(errors) == 0:
+            return None
+        return torch.stack(errors).mean()
+
+    def _record_rollout_baseline_errors(self, segment_starts, segment_len):
+        if (
+            not self.rollout_prefix_switch
+            or self.rollout_baseline_iters <= 0
+            or self.prev_rollout_pos_cache is None
+        ):
+            return
+
+        for window_idx in range(1, len(segment_starts)):
+            history = self.rollout_overlap_error_history.setdefault(window_idx, [])
+            if len(history) >= self.rollout_baseline_iters:
+                continue
+
+            error = self._overlap_chamfer_error(window_idx, segment_starts, segment_len)
+            if error is None or not bool(torch.isfinite(error)):
+                continue
+
+            history.append(float(error.detach().cpu().item()))
+
+    def _rollout_threshold_for_window(self, window_idx):
+        if self.rollout_baseline_iters <= 0:
+            return {
+                "threshold": self.rollout_replace_thresh,
+                "baseline": None,
+                "count": 0,
+                "ready": True,
+                "mode": "fixed",
+            }
+
+        history = self.rollout_overlap_error_history.get(window_idx, [])
+        count = len(history)
+        if count < self.rollout_baseline_iters:
+            return {
+                "threshold": None,
+                "baseline": None,
+                "count": count,
+                "ready": False,
+                "mode": "baseline",
+            }
+
+        baseline = float(np.median(np.asarray(history, dtype=np.float64)))
+        return {
+            "threshold": baseline * self.rollout_baseline_ratio,
+            "baseline": baseline,
+            "count": count,
+            "ready": True,
+            "mode": "baseline",
+        }
+
+    def _compute_rollout_switch_info(self, iteration, segment_starts, segment_len):
+        num_windows = len(segment_starts)
+        if not self.rollout_prefix_switch:
+            return {
+                "num_windows": num_windows,
+                "num_forced_windows": 0,
+                "base_prefix": 0,
+                "num_rollout_windows": 0,
+                "close_windows": [],
+                "stop_window": None,
+                "stop_error": None,
+                "stop_threshold": None,
+                "stop_baseline": None,
+                "stop_baseline_count": None,
+                "stop_reason": None,
+            }
+
+        self._record_rollout_baseline_errors(segment_starts, segment_len)
+
+        progress = (int(iteration) - self.rollout_switch_start_iter) / float(
+            self.rollout_switch_ramp_iters
+        )
+        progress = max(0.0, min(1.0, progress))
+        num_forced = int(progress * num_windows)
+        num_forced = max(0, min(num_windows, num_forced))
+
+        # Window 0 is the frame-0 base state. It does not need previous-window cache,
+        # but it anchors prefix extension to window 1.
+        base_prefix = 1 if num_windows > 0 else 0
+        num_rollout = max(num_forced, base_prefix)
+        num_rollout = min(num_rollout, num_windows)
+
+        close_windows = []
+        stop_window = None
+        stop_error = None
+        stop_threshold = None
+        stop_baseline = None
+        stop_baseline_count = None
+        stop_reason = None
+        if self.prev_rollout_pos_cache is None:
+            stop_window = int(num_rollout) if num_rollout < num_windows else None
+            stop_reason = "no previous rollout cache"
+        while num_rollout < num_windows and self.prev_rollout_pos_cache is not None:
+            error = self._overlap_chamfer_error(
+                num_rollout, segment_starts, segment_len
+            )
+            if error is None:
+                stop_window = int(num_rollout)
+                stop_reason = "no valid overlap chamfer"
+                break
+
+            error_value = float(error.detach().cpu().item())
+            threshold_info = self._rollout_threshold_for_window(num_rollout)
+            threshold = threshold_info["threshold"]
+            if threshold is None:
+                stop_window = int(num_rollout)
+                stop_error = error_value
+                stop_baseline_count = threshold_info["count"]
+                stop_reason = (
+                    "baseline collecting "
+                    f"{threshold_info['count']}/{self.rollout_baseline_iters}"
                 )
-                acc_loss = wp.to_torch(self.simulator.acc_loss, requires_grad=False)
-                chamfer_value = float(chamfer_loss.item())
-                track_value = float(track_loss.item())
-                acc_value = float(acc_loss.item())
+                break
+
+            if error_value < threshold:
+                close_windows.append(
+                    {
+                        "window_idx": int(num_rollout),
+                        "start_idx": int(segment_starts[num_rollout]),
+                        "error": error_value,
+                        "threshold": float(threshold),
+                        "baseline": threshold_info["baseline"],
+                        "baseline_count": threshold_info["count"],
+                        "threshold_mode": threshold_info["mode"],
+                    }
+                )
+                num_rollout += 1
             else:
-                self.simulator.calculate_simple_loss()
-                chamfer_value = 0.0
-                track_value = 0.0
-                acc_value = 0.0
+                stop_window = int(num_rollout)
+                stop_error = error_value
+                stop_threshold = float(threshold)
+                stop_baseline = threshold_info["baseline"]
+                stop_baseline_count = threshold_info["count"]
+                stop_reason = "over threshold"
+                break
 
-            loss = wp.to_torch(self.simulator.loss, requires_grad=False)
-            frame_loss_rows.append(
-                [
-                    cfg.run_name,
-                    int(iteration),
-                    -1,
-                    0,
-                    int(frame_idx),
-                    int(frame_idx),
-                    float(loss.item()),
-                    chamfer_value,
-                    track_value,
-                    acc_value,
+        return {
+            "num_windows": num_windows,
+            "num_forced_windows": num_forced,
+            "base_prefix": base_prefix,
+            "num_rollout_windows": num_rollout,
+            "close_windows": close_windows,
+            "stop_window": stop_window,
+            "stop_error": stop_error,
+            "stop_threshold": stop_threshold,
+            "stop_baseline": stop_baseline,
+            "stop_baseline_count": stop_baseline_count,
+            "stop_reason": stop_reason,
+        }
+
+    def _log_rollout_switch_info(self, iteration, switch_info):
+        if not self.rollout_prefix_switch:
+            return
+
+        rollout_count = int(switch_info["num_rollout_windows"])
+        should_log = (
+            iteration % self.rollout_switch_log_interval == 0
+            or self._last_rollout_switch_count != rollout_count
+        )
+        if not should_log:
+            return
+
+        forced = int(switch_info["num_forced_windows"])
+        base_prefix = int(switch_info["base_prefix"])
+        close_extra = max(0, rollout_count - max(forced, base_prefix))
+        logger.info(
+            "[Train-Batched-Switch]: "
+            f"iter={iteration}, rollout_windows={rollout_count}/"
+            f"{switch_info['num_windows']}, forced={forced}, "
+            f"base_prefix={base_prefix}, close_extra={close_extra}, "
+            f"baseline_iters={self.rollout_baseline_iters}, "
+            f"baseline_ratio={self.rollout_baseline_ratio:.3f}"
+        )
+
+        for close_info in switch_info["close_windows"]:
+            baseline = close_info["baseline"]
+            baseline_text = "none" if baseline is None else f"{baseline:.6f}"
+            logger.info(
+                "[Train-Batched-Switch]: close "
+                f"window={close_info['window_idx']}, "
+                f"start={close_info['start_idx']}, "
+                f"overlap_chamfer={close_info['error']:.6f}, "
+                f"baseline={baseline_text}, "
+                f"baseline_count={close_info['baseline_count']}, "
+                f"thresh={close_info['threshold']:.6f}, "
+                f"mode={close_info['threshold_mode']}"
+            )
+
+        if switch_info["stop_window"] is not None:
+            stop_msg = (
+                f"[Train-Batched-Switch]: stop window={switch_info['stop_window']}"
+            )
+            if switch_info["stop_error"] is not None:
+                stop_msg += (
+                    f", overlap_chamfer={switch_info['stop_error']:.6f}"
+                )
+            if switch_info.get("stop_threshold") is not None:
+                stop_msg += f", thresh={switch_info['stop_threshold']:.6f}"
+            if switch_info.get("stop_baseline") is not None:
+                stop_msg += f", baseline={switch_info['stop_baseline']:.6f}"
+            if switch_info.get("stop_baseline_count") is not None:
+                stop_msg += f", baseline_count={switch_info['stop_baseline_count']}"
+            if switch_info.get("stop_reason") is not None:
+                stop_msg += f", reason={switch_info['stop_reason']}"
+            logger.info(stop_msg)
+
+        self._last_rollout_switch_count = rollout_count
+
+    def _init_window_loss_weights(self, num_windows):
+        if not self.batch_loss_weighting:
+            self.window_loss_weights_by_global_id = None
+            return
+        self.window_loss_weights_by_global_id = np.ones(
+            int(num_windows), dtype=np.float32
+        )
+
+    def _get_batch_loss_weights(self, batch_data):
+        batch_size = int(batch_data["batch_size"])
+        if (
+            not self.batch_loss_weighting
+            or self.window_loss_weights_by_global_id is None
+        ):
+            return torch.ones(batch_size, dtype=torch.float32, device=cfg.device)
+
+        offset = int(batch_data["global_window_offset"])
+        weights = np.ones(batch_size, dtype=np.float32)
+        for inst_local_idx in range(batch_size):
+            global_window_id = offset + inst_local_idx
+            if global_window_id < len(self.window_loss_weights_by_global_id):
+                weights[inst_local_idx] = self.window_loss_weights_by_global_id[
+                    global_window_id
                 ]
+
+        return torch.tensor(weights, dtype=torch.float32, device=cfg.device)
+
+    def _update_window_loss_weights(
+        self, iteration, segment_batches, per_inst_total, per_inst_steps
+    ):
+        if not self.batch_loss_weighting:
+            return
+
+        num_windows = sum(len(batch_data["starts"]) for batch_data in segment_batches)
+        errors = np.full(num_windows, np.nan, dtype=np.float64)
+        for group_idx, batch_data in enumerate(segment_batches):
+            offset = int(batch_data["global_window_offset"])
+            for inst_local_idx, _start_idx in enumerate(batch_data["starts"]):
+                steps = int(per_inst_steps[group_idx, inst_local_idx])
+                if steps <= 0:
+                    continue
+                global_window_id = offset + inst_local_idx
+                errors[global_window_id] = (
+                    per_inst_total[group_idx, inst_local_idx] / float(steps)
+                )
+
+        valid = np.isfinite(errors) & (errors > 0.0)
+        if not bool(valid.any()):
+            logger.warning(
+                "[Train-Batched-Weight]: no valid per-window errors; keep previous weights"
+            )
+            return
+
+        mean_error = float(errors[valid].mean())
+        if mean_error <= self.batch_loss_weight_eps:
+            self.window_loss_weights_by_global_id = np.ones(
+                num_windows, dtype=np.float32
+            )
+            return
+
+        weights = np.ones(num_windows, dtype=np.float64)
+        weights[valid] = errors[valid] / mean_error
+        weights[valid] = np.clip(
+            weights[valid], self.batch_loss_weight_min, self.batch_loss_weight_max
+        )
+        mean_weight = float(weights[valid].mean())
+        if mean_weight > self.batch_loss_weight_eps:
+            weights[valid] = weights[valid] / mean_weight
+            weights[valid] = np.clip(
+                weights[valid], self.batch_loss_weight_min, self.batch_loss_weight_max
             )
 
-            self.simulator.clear_loss()
-            self.simulator.set_init_state(
-                self.simulator.wp_states[-1].wp_x,
-                self.simulator.wp_states[-1].wp_v,
-                pure_inference=True,
+        self.window_loss_weights_by_global_id = weights.astype(np.float32)
+
+        should_log = (
+            iteration % self.batch_loss_weight_log_interval == 0
+            or iteration == 0
+        )
+        if should_log:
+            valid_weights = self.window_loss_weights_by_global_id[valid]
+            logger.info(
+                "[Train-Batched-Weight]: "
+                f"iter={iteration}, error min/mean/max="
+                f"{errors[valid].min():.6e}/{mean_error:.6e}/"
+                f"{errors[valid].max():.6e}, weight min/mean/max="
+                f"{valid_weights.min():.4f}/{valid_weights.mean():.4f}/"
+                f"{valid_weights.max():.4f}, clamp="
+                f"{self.batch_loss_weight_min:.3f}-{self.batch_loss_weight_max:.3f}"
             )
+            if num_windows <= 20:
+                logger.info(
+                    "[Train-Batched-Weight]: "
+                    f"iter={iteration}, weights="
+                    f"{self.window_loss_weights_by_global_id.tolist()}"
+                )
 
     def _prepare_timing_csv(self, start_epoch):
         timing_dir = f"{cfg.base_dir}/train/timing"
@@ -416,56 +1085,659 @@ class InvPhyTrainerWarp:
                 ]
             )
 
-    def train(self, start_epoch=-1):
-        # Render the initial visualization
-        video_path = f"{cfg.base_dir}/train/init.mp4"
-        self.visualize_sim(save_only=True, video_path=video_path)
+    def _build_segment_batch_tensors(
+        self,
+        start_indices,
+        global_window_offset=0,
+        num_rollout_windows=0,
+    ):
+        if len(start_indices) == 0:
+            raise ValueError("start_indices cannot be empty")
 
-        per_frame_loss_dir = f"{cfg.base_dir}/train/per_frame_loss"
-        os.makedirs(per_frame_loss_dir, exist_ok=True)
-        per_frame_loss_csv_path = f"{per_frame_loss_dir}/frame_loss.csv"
-        if start_epoch < 0 and os.path.exists(per_frame_loss_csv_path):
-            os.remove(per_frame_loss_csv_path)
-        if not os.path.exists(per_frame_loss_csv_path):
-            with open(per_frame_loss_csv_path, "w", newline="") as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(
+        B = len(start_indices)
+        seg_len = int(self.segment_len)
+        rollout_cache_len = seg_len + int(self.rollout_check_len)
+        device = cfg.device
+        num_gt_points = (
+            int(self.num_original_points)
+            if self.num_original_points is not None
+            else int(self.train_object_points.shape[1])
+        )
+        num_surface_extra = int(self.num_surface_points) - num_gt_points
+
+        obj_segments = [
+            self.train_object_points[s : s + seg_len].contiguous() for s in start_indices
+        ]
+        obj_stack = torch.stack(obj_segments, dim=0)  # [B, T, N_orig, 3]
+        batched_object_points = (
+            obj_stack.permute(1, 0, 2, 3)
+            .contiguous()
+            .reshape(seg_len, B * num_gt_points, 3)
+        )
+
+        batched_controller_points = None
+        if self.controller_points is not None:
+            ctrl_segments = [
+                self._slice_time_with_padding(
+                    self.controller_points, s, rollout_cache_len
+                )
+                for s in start_indices
+            ]
+            ctrl_stack = torch.stack(ctrl_segments, dim=0)  # [B, T, N_ctrl, 3]
+            batched_controller_points = (
+                ctrl_stack.permute(1, 0, 2, 3)
+                .contiguous()
+                .reshape(rollout_cache_len, B * ctrl_stack.shape[2], 3)
+            )
+
+        batched_object_visibilities = None
+        if self.train_object_visibilities is not None:
+            vis_segments = [
+                self.train_object_visibilities[s : s + seg_len].contiguous()
+                for s in start_indices
+            ]
+            vis_stack = torch.stack(vis_segments, dim=0)  # [B, T, N_orig]
+            batched_object_visibilities = (
+                vis_stack.permute(1, 0, 2)
+                .contiguous()
+                .reshape(seg_len, B * num_gt_points)
+            )
+
+        batched_object_motions_valid = None
+        if self.train_object_motions_valid is not None:
+            mot_segments = [
+                self.train_object_motions_valid[s : s + seg_len].contiguous()
+                for s in start_indices
+            ]
+            mot_stack = torch.stack(mot_segments, dim=0)  # [B, T, N_orig]
+            batched_object_motions_valid = (
+                mot_stack.permute(1, 0, 2)
+                .contiguous()
+                .reshape(seg_len, B * num_gt_points)
+            )
+
+        init_object_vertices = []
+        init_object_velocities = []
+        init_rest_lengths = []
+        rollout_mode_mask = []
+        cache_offset = int(self.segment_stride)
+        # A merged prefix should behave like one continuous rollout: x/v are taken
+        # from the previous rollout cache, while rest lengths stay fixed to the
+        # prefix root instead of being recomputed at each window boundary.
+        rollout_chain_rest_lengths = self.init_rest_lengths.detach().clone()
+        for batch_idx, start_idx in enumerate(start_indices):
+            start_idx = int(start_idx)
+            global_window_id = int(global_window_offset) + batch_idx
+            rollout_mode = (
+                self.rollout_prefix_switch
+                and global_window_id < int(num_rollout_windows)
+            )
+            use_rollout_cache = (
+                rollout_mode
+                and global_window_id > 0
+                and self.prev_rollout_pos_cache is not None
+                and self.prev_rollout_vel_cache is not None
+            )
+
+            if use_rollout_cache:
+                if cache_offset >= self.prev_rollout_pos_cache.shape[1]:
+                    raise ValueError(
+                        "segment_stride must be smaller than cached rollout length when "
+                        "rollout prefix switching is enabled"
+                    )
+                vertices = self.prev_rollout_pos_cache[
+                    global_window_id - 1, cache_offset
+                ].detach().clone()
+                velocities = self.prev_rollout_vel_cache[
+                    global_window_id - 1, cache_offset
+                ].detach().clone()
+                rest_lengths = rollout_chain_rest_lengths.clone()
+            else:
+                vertices = self.init_vertices[: self.num_all_points].clone()
+                vertices[:num_gt_points] = self._get_reset_object_points(start_idx)
+                if num_surface_extra > 0:
+                    vertices[
+                        num_gt_points : num_gt_points + num_surface_extra
+                    ] = self.asap_surface_points[start_idx]
+                if (
+                    self.asap_interior_points is not None
+                    and self.asap_interior_points.shape[1] > 0
+                ):
+                    vertices[self.num_surface_points : self.num_all_points] = (
+                        self.asap_interior_points[start_idx]
+                    )
+                velocities = self._estimate_segment_init_velocity(start_idx, vertices)
+                if rollout_mode and global_window_id == 0:
+                    rest_lengths = rollout_chain_rest_lengths.clone()
+                else:
+                    controller_vertices = (
+                        self.controller_points[start_idx]
+                        if self.controller_points is not None
+                        else None
+                    )
+                    rest_lengths = self._compute_segment_rest_lengths(
+                        vertices, controller_vertices
+                    )
+
+            if vertices.shape[0] != self.num_all_points:
+                raise ValueError(
+                    f"Expected {self.num_all_points} rollout vertices, "
+                    f"got {vertices.shape[0]}"
+                )
+            init_object_vertices.append(vertices)
+            init_object_velocities.append(velocities)
+            init_rest_lengths.append(rest_lengths)
+            rollout_mode_mask.append(bool(rollout_mode))
+
+        init_object_vertices_by_batch = torch.stack(init_object_vertices, dim=0)
+        init_object_velocities_by_batch = torch.stack(init_object_velocities, dim=0)
+        init_object_vertices_batched = init_object_vertices_by_batch.reshape(
+            B * self.num_all_points, 3
+        )
+        init_object_velocities_batched = init_object_velocities_by_batch.reshape(
+            B * self.num_all_points, 3
+        )
+
+        init_rest_lengths_batched = torch.cat(init_rest_lengths, dim=0).contiguous()
+
+        if batched_controller_points is not None:
+            ctrl_start = batched_controller_points[0]
+            init_vertices_batched = torch.cat(
+                [init_object_vertices_batched, ctrl_start], dim=0
+            ).contiguous()
+        else:
+            init_vertices_batched = init_object_vertices_batched.contiguous()
+
+        return {
+            "batch_size": B,
+            "segment_len": seg_len,
+            "rollout_cache_len": rollout_cache_len,
+            "starts": start_indices,
+            "gt_object_points": batched_object_points.contiguous(),
+            "controller_points": (
+                batched_controller_points.contiguous()
+                if batched_controller_points is not None
+                else None
+            ),
+            "gt_object_visibilities": (
+                batched_object_visibilities.contiguous()
+                if batched_object_visibilities is not None
+                else None
+            ),
+            "gt_object_motions_valid": (
+                batched_object_motions_valid.contiguous()
+                if batched_object_motions_valid is not None
+                else None
+            ),
+            "init_vertices_batched": init_vertices_batched,
+            "init_object_vertices_batched": init_object_vertices_batched,
+            "init_object_vertices_by_batch": init_object_vertices_by_batch,
+            "init_object_velocities_by_batch": init_object_velocities_by_batch,
+            "init_velocities_batched": init_object_velocities_batched,
+            "init_rest_lengths_batched": init_rest_lengths_batched,
+            "rollout_mode_mask": rollout_mode_mask,
+            "global_window_offset": int(global_window_offset),
+        }
+
+    def _build_single_segment_tensors(self, start_idx, segment_len):
+        total_frames = self._get_trainable_total_frames()
+        if start_idx < 0:
+            raise ValueError(f"start_idx must be non-negative, got {start_idx}")
+        if start_idx + segment_len > total_frames:
+            raise ValueError(
+                f"Segment [{start_idx}, {start_idx + segment_len}) exceeds "
+                f"available frames {total_frames}"
+            )
+
+        num_gt_points = (
+            int(self.num_original_points)
+            if self.num_original_points is not None
+            else int(self.train_object_points.shape[1])
+        )
+        num_surface_extra = int(self.num_surface_points) - num_gt_points
+        object_points = self.train_object_points[
+            start_idx : start_idx + segment_len
+        ].contiguous()
+        controller_points = (
+            self.controller_points[start_idx : start_idx + segment_len].contiguous()
+            if self.controller_points is not None
+            else None
+        )
+
+        init_object_vertices = self.init_vertices[: self.num_all_points].clone()
+        init_object_vertices[:num_gt_points] = self._get_reset_object_points(start_idx)
+        if num_surface_extra > 0:
+            init_object_vertices[
+                num_gt_points : num_gt_points + num_surface_extra
+            ] = self.asap_surface_points[start_idx]
+        if self.asap_interior_points is not None and self.asap_interior_points.shape[1] > 0:
+            init_object_vertices[self.num_surface_points : self.num_all_points] = (
+                self.asap_interior_points[start_idx]
+            )
+
+        init_object_velocities = self._estimate_segment_init_velocity(
+            start_idx, init_object_vertices
+        )
+        init_rest_lengths = self._compute_segment_rest_lengths(
+            init_object_vertices,
+            controller_points[0] if controller_points is not None else None,
+        )
+
+        return {
+            "object_points": object_points,
+            "controller_points": controller_points,
+            "init_object_vertices": init_object_vertices.contiguous(),
+            "init_object_velocities": init_object_velocities.contiguous(),
+            "init_rest_lengths": init_rest_lengths,
+        }
+
+    def _build_single_segment_from_batch_data(self, batch_data, inst_idx):
+        B = int(batch_data["batch_size"])
+        inst_idx = int(inst_idx)
+        start_idx = int(batch_data["starts"][inst_idx])
+        segment_len = int(batch_data["segment_len"])
+        rollout_cache_len = int(batch_data.get("rollout_cache_len", segment_len))
+
+        controller_points = None
+        if batch_data["controller_points"] is not None:
+            num_ctrl = self.controller_points.shape[1]
+            controller_points = (
+                batch_data["controller_points"]
+                .reshape(rollout_cache_len, B, num_ctrl, 3)[:segment_len, inst_idx]
+                .contiguous()
+            )
+
+        init_rest_lengths = batch_data["init_rest_lengths_batched"].reshape(
+            B, self.init_springs.shape[0]
+        )[inst_idx]
+
+        return {
+            "object_points": self.train_object_points[
+                start_idx : start_idx + segment_len
+            ].contiguous(),
+            "controller_points": controller_points,
+            "init_object_vertices": batch_data["init_object_vertices_by_batch"][
+                inst_idx
+            ].contiguous(),
+            "init_object_velocities": batch_data["init_object_velocities_by_batch"][
+                inst_idx
+            ].contiguous(),
+            "init_rest_lengths": init_rest_lengths.contiguous(),
+        }
+
+    def _visualize_segment(self, start_idx, segment_len, video_path, segment=None):
+        logger.info(
+            f"[Visualize-Batched]: rollout segment start={start_idx}, len={segment_len}"
+        )
+        if segment is None:
+            segment = self._build_single_segment_tensors(start_idx, segment_len)
+
+        simulator_controller_points = self.simulator.controller_points
+        simulator_rest_lengths = wp.to_torch(
+            self.simulator.wp_rest_lengths, requires_grad=False
+        ).detach().clone()
+        self.simulator.controller_points = segment["controller_points"]
+        try:
+            self.simulator.set_rest_lengths(segment["init_rest_lengths"])
+            self.simulator.set_init_state(
+                wp.from_torch(
+                    segment["init_object_vertices"], dtype=wp.vec3, requires_grad=False
+                ),
+                wp.from_torch(
+                    segment["init_object_velocities"], dtype=wp.vec3, requires_grad=False
+                ),
+                pure_inference=True,
+            )
+            vertices = [
+                wp.to_torch(self.simulator.wp_states[0].wp_x, requires_grad=False).cpu()
+            ]
+
+            with wp.ScopedTimer("simulate_segment"):
+                for frame_idx in range(1, segment_len):
+                    if self.simulator.controller_points is not None:
+                        self.simulator.set_controller_target(
+                            frame_idx, pure_inference=True
+                        )
+                    if self.simulator.object_collision_flag:
+                        self.simulator.update_collision_graph()
+
+                    if cfg.use_graph:
+                        wp.capture_launch(self.simulator.forward_graph)
+                    else:
+                        self.simulator.step()
+
+                    x = wp.to_torch(
+                        self.simulator.wp_states[-1].wp_x, requires_grad=False
+                    )
+                    vertices.append(x.cpu())
+                    self.simulator.set_init_state(
+                        self.simulator.wp_states[-1].wp_x,
+                        self.simulator.wp_states[-1].wp_v,
+                        pure_inference=True,
+                    )
+        finally:
+            self.simulator.set_rest_lengths(simulator_rest_lengths)
+            self.simulator.controller_points = simulator_controller_points
+
+        object_colors = None
+        if self.object_colors is not None:
+            end_idx = start_idx + segment_len
+            if self.object_colors.shape[0] >= end_idx:
+                object_colors = self.object_colors[start_idx:end_idx]
+            else:
+                object_colors = self.object_colors[:segment_len]
+
+        os.makedirs(os.path.dirname(video_path), exist_ok=True)
+        vertices = torch.stack(vertices, dim=0)
+        visualize_pc(
+            vertices[:, : self.num_all_points, :],
+            object_colors=object_colors,
+            controller_points=segment["controller_points"],
+            visualize=False,
+            save_video=True,
+            save_path=video_path,
+            frame_start_idx=int(start_idx),
+        )
+
+    def _visualize_batch_instances(self, segment_batches, expected_segment_len, iteration):
+        if len(segment_batches) == 0:
+            return
+
+        if self.batch_vis_num_instances == -1:
+            num_instances = self.batch_size
+        else:
+            num_instances = max(1, min(self.batch_size, self.batch_vis_num_instances))
+        num_groups = min(len(segment_batches), self.batch_vis_num_groups)
+
+        if iteration < 0:
+            round_idx = 0
+        else:
+            round_idx = int(iteration // self.batch_vis_interval)
+        group_offset = (round_idx * num_groups) % len(segment_batches)
+        selected_group_indices = [
+            (group_offset + idx) % len(segment_batches) for idx in range(num_groups)
+        ]
+
+        if iteration < 0:
+            save_dir = f"{cfg.base_dir}/train/batch_instances/init"
+        else:
+            save_dir = f"{cfg.base_dir}/train/batch_instances/iter_{iteration}"
+        os.makedirs(save_dir, exist_ok=True)
+
+        for group_idx in selected_group_indices:
+            starts = segment_batches[group_idx]["starts"]
+            for inst_idx, start_idx in enumerate(starts[:num_instances]):
+                video_path = f"{save_dir}/inst_{inst_idx:02d}_start_{int(start_idx):04d}.mp4"
+                segment = self._build_single_segment_from_batch_data(
+                    segment_batches[group_idx], inst_idx
+                )
+                self._visualize_segment(
+                    start_idx=int(start_idx),
+                    segment_len=expected_segment_len,
+                    video_path=video_path,
+                    segment=segment,
+                )
+
+    def _append_full_rollout_loss_rows(
+        self, iteration, total_frames, first_batch_data, frame_loss_rows
+    ):
+        if first_batch_data is None or len(first_batch_data["starts"]) == 0:
+            return
+
+        start_idx = int(first_batch_data["starts"][0])
+        if start_idx != 0:
+            logger.warning(
+                "[Train-Batched-FullRollout]: skip full rollout loss logging because "
+                f"the first window starts at {start_idx}, not 0"
+            )
+            return
+
+        self._sync_single_simulator_from_batch()
+
+        simulator_controller_points = self.simulator.controller_points
+        simulator_rest_lengths = wp.to_torch(
+            self.simulator.wp_rest_lengths, requires_grad=False
+        ).detach().clone()
+
+        batch_size = int(first_batch_data["batch_size"])
+        init_rest_lengths = first_batch_data["init_rest_lengths_batched"].reshape(
+            batch_size, self.init_springs.shape[0]
+        )[0]
+
+        controller_points = None
+        if self.controller_points is not None:
+            controller_points = self.controller_points[:total_frames].contiguous()
+
+        try:
+            self.simulator.controller_points = controller_points
+            self.simulator.set_rest_lengths(init_rest_lengths.contiguous())
+            self.simulator.set_init_state(
+                wp.from_torch(
+                    first_batch_data["init_object_vertices_by_batch"][0].contiguous(),
+                    dtype=wp.vec3,
+                    requires_grad=False,
+                ),
+                wp.from_torch(
+                    first_batch_data["init_object_velocities_by_batch"][0].contiguous(),
+                    dtype=wp.vec3,
+                    requires_grad=False,
+                ),
+                pure_inference=True,
+            )
+            self.simulator.clear_loss()
+
+            for frame_idx in range(1, int(total_frames)):
+                self.simulator.set_controller_target(frame_idx)
+                if self.simulator.object_collision_flag:
+                    self.simulator.update_collision_graph()
+
+                self.simulator.step()
+                if cfg.data_type == "real":
+                    self.simulator.calculate_loss()
+                    chamfer_loss = wp.to_torch(
+                        self.simulator.chamfer_loss, requires_grad=False
+                    )
+                    track_loss = wp.to_torch(
+                        self.simulator.track_loss, requires_grad=False
+                    )
+                    acc_loss = wp.to_torch(
+                        self.simulator.acc_loss, requires_grad=False
+                    )
+                    chamfer_value = float(chamfer_loss.item())
+                    track_value = float(track_loss.item())
+                    acc_value = float(acc_loss.item())
+                else:
+                    self.simulator.calculate_simple_loss()
+                    chamfer_value = 0.0
+                    track_value = 0.0
+                    acc_value = 0.0
+
+                loss = wp.to_torch(self.simulator.loss, requires_grad=False)
+                frame_loss_rows.append(
                     [
-                        "case_name",
-                        "iteration",
-                        "window_id",
-                        "window_start",
-                        "local_frame",
-                        "global_frame",
-                        "total_loss",
-                        "chamfer_loss",
-                        "track_loss",
-                        "acc_loss",
+                        cfg.run_name,
+                        int(iteration),
+                        -1,
+                        -1,
+                        -1,
+                        0,
+                        int(frame_idx),
+                        int(frame_idx),
+                        float(loss.item()),
+                        chamfer_value,
+                        track_value,
+                        acc_value,
                     ]
                 )
 
-        if start_epoch < 0:
-            initial_frame_loss_rows = []
-            self._append_full_rollout_loss_rows(
-                iteration=0,
-                total_frames=cfg.train_frame,
-                frame_loss_rows=initial_frame_loss_rows,
+                self.simulator.clear_loss()
+                self.simulator.set_init_state(
+                    self.simulator.wp_states[-1].wp_x,
+                    self.simulator.wp_states[-1].wp_v,
+                    pure_inference=True,
+                )
+        finally:
+            self.simulator.clear_loss()
+            self.simulator.set_rest_lengths(simulator_rest_lengths)
+            self.simulator.controller_points = simulator_controller_points
+
+    def _load_segment_batch_into_sim(self, sim, batch_data):
+        sim.gt_object_points = batch_data["gt_object_points"]
+        sim.controller_points = batch_data["controller_points"]
+        if "init_rest_lengths_batched" in batch_data:
+            sim.set_rest_lengths(batch_data["init_rest_lengths_batched"])
+        if cfg.data_type == "real":
+            sim.gt_object_visibilities = batch_data["gt_object_visibilities"].int()
+            sim.gt_object_motions_valid = batch_data["gt_object_motions_valid"].int()
+
+    def _build_batched_simulator_for_train(self, batch_data=None):
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+
+        B = self.batch_size if batch_data is None else int(batch_data["batch_size"])
+        num_ctrl_single = (
+            int(self.controller_points.shape[1]) if self.controller_points is not None else 0
+        )
+
+        if batch_data is None:
+            # Batched GT / controller trajectories in flattened layout: [T, B*N, ...]
+            batched_object_points = self._tile_time_tensor(self.train_object_points, B)
+            batched_controller_points = (
+                self._tile_time_tensor(self.controller_points, B)
+                if self.controller_points is not None
+                else None
             )
-            if len(initial_frame_loss_rows) > 0:
-                with open(per_frame_loss_csv_path, "a", newline="") as csv_file:
-                    writer = csv.writer(csv_file)
-                    writer.writerows(initial_frame_loss_rows)
+            batched_object_visibilities = (
+                self._tile_time_tensor(self.train_object_visibilities, B)
+                if self.train_object_visibilities is not None
+                else None
+            )
+            batched_object_motions_valid = (
+                self._tile_time_tensor(self.train_object_motions_valid, B)
+                if self.train_object_motions_valid is not None
+                else None
+            )
+
+            # Batched initial vertices: [B*object_points, B*controller_points]
+            obj_init_single = self.init_vertices[: self.num_all_points]
+            obj_init_batched = (
+                obj_init_single.unsqueeze(0)
+                .repeat(B, 1, 1)
+                .reshape(B * self.num_all_points, 3)
+            )
+            if num_ctrl_single > 0:
+                ctrl_init_single = self.init_vertices[
+                    self.num_all_points : self.num_all_points + num_ctrl_single
+                ]
+                ctrl_init_batched = (
+                    ctrl_init_single.unsqueeze(0)
+                    .repeat(B, 1, 1)
+                    .reshape(B * num_ctrl_single, 3)
+                )
+                init_vertices_batched = torch.cat(
+                    [obj_init_batched, ctrl_init_batched], dim=0
+                )
+            else:
+                init_vertices_batched = obj_init_batched
+
+            batched_init_velocities = None
+            if self.init_velocities is not None:
+                batched_init_velocities = (
+                    self.init_velocities[: self.num_all_points]
+                    .unsqueeze(0)
+                    .repeat(B, 1, 1)
+                    .reshape(B * self.num_all_points, 3)
+                    .contiguous()
+                )
+        else:
+            batched_object_points = batch_data["gt_object_points"]
+            batched_controller_points = batch_data["controller_points"]
+            batched_object_visibilities = batch_data["gt_object_visibilities"]
+            batched_object_motions_valid = batch_data["gt_object_motions_valid"]
+            init_vertices_batched = batch_data["init_vertices_batched"]
+            batched_init_velocities = batch_data["init_velocities_batched"]
+            init_rest_lengths = batch_data["init_rest_lengths_batched"]
+
+        if batch_data is None:
+            init_rest_lengths = self.init_rest_lengths
+
+        self.batch_simulator = SpringMassSystemWarpBatched(
+            init_vertices_batched,
+            self.init_springs,
+            init_rest_lengths,
+            self.init_masses[: self.num_all_points],
+            dt=cfg.dt,
+            num_substeps=cfg.num_substeps,
+            spring_Y=cfg.init_spring_Y,
+            collide_elas=cfg.collide_elas,
+            collide_fric=cfg.collide_fric,
+            dashpot_damping=cfg.dashpot_damping,
+            drag_damping=cfg.drag_damping,
+            collide_object_elas=cfg.collide_object_elas,
+            collide_object_fric=cfg.collide_object_fric,
+            init_masks=self.init_masks,
+            collision_dist=cfg.collision_dist,
+            init_velocities=batched_init_velocities,
+            batch_size=B,
+            num_object_points_single=self.num_all_points,
+            num_control_points_single=num_ctrl_single,
+            num_original_points_single=self.num_original_points,
+            num_surface_points_single=self.num_surface_points,
+            num_object_points=B * self.num_all_points,
+            num_surface_points=(
+                B * self.num_surface_points if self.num_surface_points is not None else None
+            ),
+            num_original_points=(
+                B * self.num_original_points if self.num_original_points is not None else None
+            ),
+            controller_points=batched_controller_points,
+            reverse_z=cfg.reverse_z,
+            spring_Y_min=cfg.spring_Y_min,
+            spring_Y_max=cfg.spring_Y_max,
+            gt_object_points=batched_object_points,
+            gt_object_visibilities=batched_object_visibilities,
+            gt_object_motions_valid=batched_object_motions_valid,
+            self_collision=cfg.self_collision,
+        )
+        self.batch_size_loaded = B
+        self.batch_segment_len_loaded = (
+            int(batched_object_points.shape[0]) if batched_object_points is not None else None
+        )
+
+    def _sync_single_simulator_from_batch(self):
+        if self.batch_simulator is None:
+            return
+
+        spring_Y = wp.to_torch(self.batch_simulator.wp_spring_Y, requires_grad=False).detach().clone()
+        collide_elas = wp.to_torch(self.batch_simulator.wp_collide_elas, requires_grad=False).detach().clone()
+        collide_fric = wp.to_torch(self.batch_simulator.wp_collide_fric, requires_grad=False).detach().clone()
+        collide_object_elas = wp.to_torch(
+            self.batch_simulator.wp_collide_object_elas, requires_grad=False
+        ).detach().clone()
+        collide_object_fric = wp.to_torch(
+            self.batch_simulator.wp_collide_object_fric, requires_grad=False
+        ).detach().clone()
+
+        self.simulator.set_spring_Y(spring_Y)
+        self.simulator.set_collide(collide_elas, collide_fric)
+        self.simulator.set_collide_object(collide_object_elas, collide_object_fric)
+
+    def train(self, start_epoch=-1):
+        if self.batch_mode:
+            return self.train_batched(start_epoch=start_epoch)
+
+        # Render the initial visualization
+        video_path = f"{cfg.base_dir}/train/init.mp4"
+        self.visualize_sim(save_only=True, video_path=video_path)
 
         timing_csv_path = self._prepare_timing_csv(start_epoch)
         best_loss = None
         best_epoch = None
         # Train the model with the physical simulator
         for i in range(start_epoch + 1, cfg.iterations):
-            iteration_id = i + 1
             iter_wall_start = time.perf_counter()
             full_rollout_eval_sec = 0.0
             total_loss = 0.0
-            frame_loss_rows = []
             if cfg.data_type == "real":
                 total_chamfer_loss = 0.0
                 total_track_loss = 0.0
@@ -502,32 +1774,11 @@ class InvPhyTrainerWarp:
                         track_loss = wp.to_torch(
                             self.simulator.track_loss, requires_grad=False
                         )
-                        acc_loss = wp.to_torch(
-                            self.simulator.acc_loss, requires_grad=False
-                        )
                         total_chamfer_loss += chamfer_loss.item()
                         total_track_loss += track_loss.item()
-                    else:
-                        chamfer_loss = None
-                        track_loss = None
-                        acc_loss = None
 
                     loss = wp.to_torch(self.simulator.loss, requires_grad=False)
                     total_loss += loss.item()
-                    frame_loss_rows.append(
-                        [
-                            cfg.run_name,
-                            iteration_id,
-                            0,
-                            0,
-                            j,
-                            j,
-                            loss.item(),
-                            chamfer_loss.item() if chamfer_loss is not None else 0.0,
-                            track_loss.item() if track_loss is not None else 0.0,
-                            acc_loss.item() if acc_loss is not None else 0.0,
-                        ]
-                    )
 
                     if cfg.use_graph:
                         # Only need to clear the gradient, the tape is created in the graph
@@ -542,24 +1793,6 @@ class InvPhyTrainerWarp:
                         self.simulator.wp_states[-1].wp_v,
                     )
             train_iter_sec = time.perf_counter() - train_iter_start
-
-            if len(frame_loss_rows) > 0:
-                with open(per_frame_loss_csv_path, "a", newline="") as csv_file:
-                    writer = csv.writer(csv_file)
-                    writer.writerows(frame_loss_rows)
-
-            full_rollout_frame_loss_rows = []
-            full_rollout_start = time.perf_counter()
-            self._append_full_rollout_loss_rows(
-                iteration=iteration_id,
-                total_frames=cfg.train_frame,
-                frame_loss_rows=full_rollout_frame_loss_rows,
-            )
-            full_rollout_eval_sec = time.perf_counter() - full_rollout_start
-            if len(full_rollout_frame_loss_rows) > 0:
-                with open(per_frame_loss_csv_path, "a", newline="") as csv_file:
-                    writer = csv.writer(csv_file)
-                    writer.writerows(full_rollout_frame_loss_rows)
 
             total_loss /= cfg.train_frame - 1
             if cfg.data_type == "real":
@@ -588,7 +1821,9 @@ class InvPhyTrainerWarp:
                 step=i,
             )
 
-            logger.info(f"[Train]: Iteration: {i}, Loss: {total_loss}")
+            logger.info(
+                f"[Train]: Case: {cfg.run_name}, Iteration: {i}, Loss: {total_loss}"
+            )
 
             if i % cfg.vis_interval == 0 or i == cfg.iterations - 1:
                 video_path = f"{cfg.base_dir}/train/sim_iter{i}.mp4"
@@ -653,7 +1888,7 @@ class InvPhyTrainerWarp:
             self._append_timing_row(
                 timing_csv_path=timing_csv_path,
                 mode="single",
-                iteration=iteration_id,
+                iteration=i,
                 train_iter_sec=train_iter_sec,
                 full_rollout_eval_sec=full_rollout_eval_sec,
                 total_iter_sec=total_iter_sec,
@@ -665,11 +1900,1238 @@ class InvPhyTrainerWarp:
             )
             logger.info(
                 "[Train-Timing]: "
-                f"Case: {cfg.run_name}, Iteration: {iteration_id}, "
+                f"Case: {cfg.run_name}, Iteration: {i}, "
                 f"train_iter_sec={train_iter_sec:.3f}, "
                 f"full_rollout_eval_sec={full_rollout_eval_sec:.3f}, "
                 f"total_iter_sec={total_iter_sec:.3f}"
             )
+
+        wandb.finish()
+
+    def train_batched(self, start_epoch=-1):
+        if self.batch_size <= 1:
+            logger.warning(
+                "[Train-Batched]: batch_size <= 1, fallback to single training loop."
+            )
+            prev_batch_mode = self.batch_mode
+            self.batch_mode = False
+            try:
+                return self.train(start_epoch=start_epoch)
+            finally:
+                self.batch_mode = prev_batch_mode
+
+        total_frames = self._get_trainable_total_frames()
+
+        segment_starts = self._compute_segment_start_indices(total_frames)
+        if len(segment_starts) < self.batch_size:
+            raise ValueError(
+                f"Need at least batch_size ({self.batch_size}) segments, "
+                f"but only got {len(segment_starts)}"
+            )
+
+        remainder = len(segment_starts) % self.batch_size
+        if remainder != 0:
+            logger.warning(
+                "[Train-Batched]: segment count is not divisible by batch_size, "
+                f"dropping last {remainder} segments."
+            )
+            segment_starts = segment_starts[: len(segment_starts) - remainder]
+
+        grouped_starts = [
+            segment_starts[k : k + self.batch_size]
+            for k in range(0, len(segment_starts), self.batch_size)
+        ]
+        self._init_window_loss_weights(len(segment_starts))
+
+        def build_segment_batches(num_rollout_windows=0):
+            batches = []
+            global_window_offset = 0
+            for starts in grouped_starts:
+                batches.append(
+                    self._build_segment_batch_tensors(
+                        starts,
+                        global_window_offset=global_window_offset,
+                        num_rollout_windows=num_rollout_windows,
+                    )
+                )
+                global_window_offset += len(starts)
+            return batches
+
+        segment_batches = build_segment_batches()
+        if len(segment_batches) == 0:
+            raise ValueError("No valid segment batches were built for batched training")
+        logger.info(
+            "[Train-Batched]: Prepared segments before training loop - "
+            f"train_frame_cfg={cfg.train_frame}, train_frame_effective={total_frames}, "
+            f"slices={len(segment_starts)}, groups={len(grouped_starts)}, "
+            f"batch_size={self.batch_size}, segment_len={self.segment_len}, "
+            f"segment_stride={self.segment_stride}, "
+            f"rollout_check_len={self.rollout_check_len}"
+        )
+        if self.batch_loss_weighting:
+            logger.info(
+                "[Train-Batched-Weight]: enabled, using previous-iteration "
+                "per-window total_loss as error, "
+                f"clamp={self.batch_loss_weight_min:.3f}-"
+                f"{self.batch_loss_weight_max:.3f}"
+            )
+
+        # Record per-instance loss progression across iterations.
+        per_instance_loss_dir = f"{cfg.base_dir}/train/per_instance_loss"
+        os.makedirs(per_instance_loss_dir, exist_ok=True)
+        per_instance_loss_csv_path = (
+            f"{per_instance_loss_dir}/batched_instance_loss.csv"
+        )
+        if start_epoch < 0 and os.path.exists(per_instance_loss_csv_path):
+            os.remove(per_instance_loss_csv_path)
+        if not os.path.exists(per_instance_loss_csv_path):
+            with open(per_instance_loss_csv_path, "w", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(
+                    [
+                        "iteration",
+                        "group_idx",
+                        "inst_local_idx",
+                        "start_idx",
+                        "num_steps",
+                        "total_loss",
+                        "chamfer_loss",
+                        "track_loss",
+                        "acc_loss",
+                    ]
+                )
+
+        # Record per-window, per-frame loss for plotting overlapping window rollouts.
+        per_frame_loss_dir = f"{cfg.base_dir}/train/per_frame_loss"
+        os.makedirs(per_frame_loss_dir, exist_ok=True)
+        per_frame_loss_csv_path = f"{per_frame_loss_dir}/batched_frame_loss.csv"
+        if start_epoch < 0 and os.path.exists(per_frame_loss_csv_path):
+            os.remove(per_frame_loss_csv_path)
+        if not os.path.exists(per_frame_loss_csv_path):
+            with open(per_frame_loss_csv_path, "w", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(
+                    [
+                        "case_name",
+                        "iteration",
+                        "group_idx",
+                        "inst_local_idx",
+                        "global_window_id",
+                        "window_start",
+                        "local_frame",
+                        "global_frame",
+                        "total_loss",
+                        "chamfer_loss",
+                        "track_loss",
+                        "acc_loss",
+                    ]
+                )
+
+        timing_csv_path = self._prepare_timing_csv(start_epoch)
+
+        expected_segment_len = int(segment_batches[0]["segment_len"])
+        rollout_cache_len = int(
+            segment_batches[0].get("rollout_cache_len", expected_segment_len)
+        )
+        if (
+            self.batch_simulator is None
+            or self.batch_size_loaded != self.batch_size
+            or self.batch_segment_len_loaded != expected_segment_len
+        ):
+            logger.info(
+                "[Train-Batched]: build batched simulator with "
+                f"batch_size={self.batch_size}, segment_len={expected_segment_len}, "
+                f"rollout_cache_len={rollout_cache_len}"
+            )
+            self._build_batched_simulator_for_train(batch_data=segment_batches[0])
+
+        sim = self.batch_simulator
+        self.optimizer = torch.optim.Adam(
+            [
+                wp.to_torch(sim.wp_spring_Y),
+                wp.to_torch(sim.wp_collide_elas),
+                wp.to_torch(sim.wp_collide_fric),
+                wp.to_torch(sim.wp_collide_object_elas),
+                wp.to_torch(sim.wp_collide_object_fric),
+            ],
+            lr=cfg.base_lr,
+            betas=(0.9, 0.99),
+        )
+
+        best_loss = None
+        best_epoch = None
+
+        if start_epoch < 0:
+            self._sync_single_simulator_from_batch()
+            video_path = f"{cfg.base_dir}/train/init.mp4"
+            logger.info("[Train-Batched]: Save initial full rollout video")
+            self.visualize_sim(save_only=True, video_path=video_path)
+
+            if self.batch_vis_per_instance:
+                logger.info("[Train-Batched]: Save initial per-instance rollout videos")
+                self._visualize_batch_instances(
+                    segment_batches=segment_batches,
+                    expected_segment_len=expected_segment_len,
+                    iteration=-1,
+                )
+
+        for i in range(start_epoch + 1, cfg.iterations):
+            iter_wall_start = time.perf_counter()
+            if self.rollout_prefix_switch:
+                switch_info = self._compute_rollout_switch_info(
+                    i, segment_starts, expected_segment_len
+                )
+                self._log_rollout_switch_info(i, switch_info)
+                segment_batches = build_segment_batches(
+                    num_rollout_windows=switch_info["num_rollout_windows"]
+                )
+
+            frame_loss_rows = []
+            full_rollout_start = time.perf_counter()
+            self._append_full_rollout_loss_rows(
+                iteration=i,
+                total_frames=total_frames,
+                first_batch_data=segment_batches[0],
+                frame_loss_rows=frame_loss_rows,
+            )
+            full_rollout_eval_sec = time.perf_counter() - full_rollout_start
+
+            total_loss = 0.0
+            total_steps = 0
+            if cfg.data_type == "real":
+                total_chamfer_loss = 0.0
+                total_track_loss = 0.0
+
+            num_groups = len(segment_batches)
+            per_inst_total = np.zeros((num_groups, self.batch_size), dtype=np.float64)
+            per_inst_steps = np.zeros((num_groups, self.batch_size), dtype=np.int32)
+            if cfg.data_type == "real":
+                per_inst_chamfer = np.zeros(
+                    (num_groups, self.batch_size), dtype=np.float64
+                )
+                per_inst_track = np.zeros(
+                    (num_groups, self.batch_size), dtype=np.float64
+                )
+                per_inst_acc = np.zeros((num_groups, self.batch_size), dtype=np.float64)
+
+            iter_pos_cache_groups = []
+            iter_vel_cache_groups = []
+            train_iter_start = time.perf_counter()
+            with wp.ScopedTimer("backward_batched"):
+                for batch_group_idx, batch_data in enumerate(tqdm(segment_batches)):
+                    sim.set_loss_weights(self._get_batch_loss_weights(batch_data))
+                    self._load_segment_batch_into_sim(sim, batch_data)
+                    sim.set_init_state(
+                        wp.from_torch(
+                            batch_data["init_object_vertices_batched"],
+                            dtype=wp.vec3,
+                            requires_grad=False,
+                        ),
+                        wp.from_torch(
+                            batch_data["init_velocities_batched"],
+                            dtype=wp.vec3,
+                            requires_grad=False,
+                        ),
+                    )
+                    group_pos_steps = [
+                        batch_data["init_object_vertices_by_batch"].detach().clone()
+                    ]
+                    group_vel_steps = [
+                        batch_data["init_object_velocities_by_batch"].detach().clone()
+                    ]
+
+                    for j in range(1, expected_segment_len):
+                        sim.set_controller_target(j)
+                        if sim.object_collision_flag:
+                            sim.update_collision_graph()
+
+                        if cfg.use_graph:
+                            wp.capture_launch(sim.graph)
+                        else:
+                            if cfg.data_type == "real":
+                                with sim.tape:
+                                    sim.step()
+                                    sim.calculate_loss()
+                                sim.tape.backward(sim.loss)
+                            else:
+                                with sim.tape:
+                                    sim.step()
+                                    sim.calculate_simple_loss()
+                                sim.tape.backward(sim.loss)
+
+                        self.optimizer.step()
+
+                        if cfg.data_type == "real":
+                            chamfer_loss = wp.to_torch(
+                                sim.chamfer_loss, requires_grad=False
+                            )
+                            track_loss = wp.to_torch(
+                                sim.track_loss, requires_grad=False
+                            )
+                            total_chamfer_loss += chamfer_loss.item()
+                            total_track_loss += track_loss.item()
+
+                        loss = wp.to_torch(sim.loss, requires_grad=False)
+                        if not bool(torch.isfinite(loss).all()):
+                            if self.nonfinite_debug_log_count < 20:
+                                loss_per_batch = wp.to_torch(
+                                    sim.loss_per_batch, requires_grad=False
+                                )
+                                logger.error(
+                                    "[Train-Batch-NaN]: non-finite loss detected "
+                                    f"starts={batch_data['starts']}, frame_step={j}, "
+                                    f"loss={loss.detach().cpu().numpy().tolist()}, "
+                                    f"loss_per_batch={loss_per_batch.detach().cpu().numpy().tolist()}"
+                                )
+                                x = wp.to_torch(sim.wp_states[-1].wp_x, requires_grad=False)
+                                finite_x = torch.isfinite(x).all(dim=-1)
+                                if bool(finite_x.any()):
+                                    x_finite = x[finite_x]
+                                    logger.error(
+                                        "[Train-Batch-NaN]: state bbox "
+                                        f"min={x_finite.min(dim=0).values.detach().cpu().numpy().tolist()}, "
+                                        f"max={x_finite.max(dim=0).values.detach().cpu().numpy().tolist()}, "
+                                        f"nonfinite_points={(~finite_x).sum().item()}"
+                                    )
+                                else:
+                                    logger.error("[Train-Batch-NaN]: all state points are nonfinite")
+                                self.nonfinite_debug_log_count += 1
+                        total_loss += loss.item()
+                        total_steps += 1
+
+                        loss_per_batch = (
+                            wp.to_torch(sim.loss_per_batch, requires_grad=False)
+                            .detach()
+                            .cpu()
+                            .numpy()
+                        )
+                        if cfg.data_type == "real":
+                            chamfer_per_batch = (
+                                wp.to_torch(
+                                    sim.chamfer_loss_per_batch, requires_grad=False
+                                )
+                                .detach()
+                                .cpu()
+                                .numpy()
+                            )
+                            track_per_batch = (
+                                wp.to_torch(sim.track_loss_per_batch, requires_grad=False)
+                                .detach()
+                                .cpu()
+                                .numpy()
+                            )
+                            acc_per_batch = (
+                                wp.to_torch(sim.acc_loss_per_batch, requires_grad=False)
+                                .detach()
+                                .cpu()
+                                .numpy()
+                            )
+
+                        for inst_local_idx, _start_idx in enumerate(batch_data["starts"]):
+                            window_start = int(_start_idx)
+                            global_window_id = (
+                                int(batch_data["global_window_offset"])
+                                + int(inst_local_idx)
+                            )
+                            if cfg.data_type == "real":
+                                chamfer_value = float(chamfer_per_batch[inst_local_idx])
+                                track_value = float(track_per_batch[inst_local_idx])
+                                acc_value = float(acc_per_batch[inst_local_idx])
+                            else:
+                                chamfer_value = 0.0
+                                track_value = 0.0
+                                acc_value = 0.0
+                            frame_loss_rows.append(
+                                [
+                                    cfg.run_name,
+                                    i + 1,
+                                    batch_group_idx,
+                                    inst_local_idx,
+                                    global_window_id,
+                                    window_start,
+                                    j,
+                                    window_start + j,
+                                    float(loss_per_batch[inst_local_idx]),
+                                    chamfer_value,
+                                    track_value,
+                                    acc_value,
+                                ]
+                            )
+                            per_inst_total[batch_group_idx, inst_local_idx] += float(
+                                loss_per_batch[inst_local_idx]
+                            )
+                            per_inst_steps[batch_group_idx, inst_local_idx] += 1
+                            if cfg.data_type == "real":
+                                per_inst_chamfer[batch_group_idx, inst_local_idx] += float(
+                                    chamfer_per_batch[inst_local_idx]
+                                )
+                                per_inst_track[batch_group_idx, inst_local_idx] += float(
+                                    track_per_batch[inst_local_idx]
+                                )
+                                per_inst_acc[batch_group_idx, inst_local_idx] += float(
+                                    acc_per_batch[inst_local_idx]
+                                )
+
+                        if cfg.use_graph:
+                            sim.tape.zero()
+                        else:
+                            sim.tape.reset()
+                        sim.clear_loss()
+                        x_cache = wp.to_torch(
+                            sim.wp_states[-1].wp_x, requires_grad=False
+                        )
+                        v_cache = wp.to_torch(
+                            sim.wp_states[-1].wp_v, requires_grad=False
+                        )
+                        group_pos_steps.append(
+                            x_cache.reshape(
+                                batch_data["batch_size"], self.num_all_points, 3
+                            )
+                            .detach()
+                            .clone()
+                        )
+                        group_vel_steps.append(
+                            v_cache.reshape(
+                                batch_data["batch_size"], self.num_all_points, 3
+                            )
+                            .detach()
+                            .clone()
+                        )
+                        sim.set_init_state(sim.wp_states[-1].wp_x, sim.wp_states[-1].wp_v)
+
+                    group_rollout_cache_len = int(
+                        batch_data.get("rollout_cache_len", expected_segment_len)
+                    )
+                    for j in range(expected_segment_len, group_rollout_cache_len):
+                        sim.set_controller_target(j, pure_inference=True)
+                        if sim.object_collision_flag:
+                            sim.update_collision_graph()
+
+                        if cfg.use_graph:
+                            wp.capture_launch(sim.forward_graph)
+                        else:
+                            sim.step()
+
+                        x_cache = wp.to_torch(
+                            sim.wp_states[-1].wp_x, requires_grad=False
+                        )
+                        v_cache = wp.to_torch(
+                            sim.wp_states[-1].wp_v, requires_grad=False
+                        )
+                        group_pos_steps.append(
+                            x_cache.reshape(
+                                batch_data["batch_size"], self.num_all_points, 3
+                            )
+                            .detach()
+                            .clone()
+                        )
+                        group_vel_steps.append(
+                            v_cache.reshape(
+                                batch_data["batch_size"], self.num_all_points, 3
+                            )
+                            .detach()
+                            .clone()
+                        )
+                        sim.set_init_state(sim.wp_states[-1].wp_x, sim.wp_states[-1].wp_v)
+
+                    iter_pos_cache_groups.append(
+                        torch.stack(group_pos_steps, dim=1).detach()
+                    )
+                    iter_vel_cache_groups.append(
+                        torch.stack(group_vel_steps, dim=1).detach()
+                    )
+            train_iter_sec = time.perf_counter() - train_iter_start
+
+            if total_steps == 0:
+                raise RuntimeError("No training steps were executed in train_batched()")
+            if len(iter_pos_cache_groups) > 0:
+                self.prev_rollout_pos_cache = torch.cat(
+                    iter_pos_cache_groups, dim=0
+                ).detach()
+                self.prev_rollout_vel_cache = torch.cat(
+                    iter_vel_cache_groups, dim=0
+                ).detach()
+            total_loss /= total_steps
+            if cfg.data_type == "real":
+                total_chamfer_loss /= total_steps
+                total_track_loss /= total_steps
+            self._update_window_loss_weights(
+                i, segment_batches, per_inst_total, per_inst_steps
+            )
+
+            with open(per_instance_loss_csv_path, "a", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                for group_idx, batch_data in enumerate(segment_batches):
+                    for inst_local_idx, start_idx in enumerate(batch_data["starts"]):
+                        steps = int(per_inst_steps[group_idx, inst_local_idx])
+                        if steps <= 0:
+                            continue
+                        total_avg = per_inst_total[group_idx, inst_local_idx] / float(steps)
+                        if cfg.data_type == "real":
+                            chamfer_avg = per_inst_chamfer[group_idx, inst_local_idx] / float(
+                                steps
+                            )
+                            track_avg = per_inst_track[group_idx, inst_local_idx] / float(
+                                steps
+                            )
+                            acc_avg = per_inst_acc[group_idx, inst_local_idx] / float(steps)
+                        else:
+                            chamfer_avg = 0.0
+                            track_avg = 0.0
+                            acc_avg = 0.0
+                        writer.writerow(
+                            [
+                                i + 1,
+                                group_idx,
+                                inst_local_idx,
+                                int(start_idx),
+                                steps,
+                                total_avg,
+                                chamfer_avg,
+                                track_avg,
+                                acc_avg,
+                            ]
+                        )
+
+            if len(frame_loss_rows) > 0:
+                with open(per_frame_loss_csv_path, "a", newline="") as csv_file:
+                    writer = csv.writer(csv_file)
+                    writer.writerows(frame_loss_rows)
+
+            wandb.log(
+                {
+                    "loss": total_loss,
+                    "chamfer_loss": total_chamfer_loss if cfg.data_type == "real" else 0,
+                    "track_loss": total_track_loss if cfg.data_type == "real" else 0,
+                    "collide_else": wp.to_torch(sim.wp_collide_elas, requires_grad=False).item(),
+                    "collide_fric": wp.to_torch(sim.wp_collide_fric, requires_grad=False).item(),
+                    "collide_object_elas": wp.to_torch(
+                        sim.wp_collide_object_elas, requires_grad=False
+                    ).item(),
+                    "collide_object_fric": wp.to_torch(
+                        sim.wp_collide_object_fric, requires_grad=False
+                    ).item(),
+                    "batch_size": self.batch_size,
+                    "segment_len": expected_segment_len,
+                    "segment_stride": int(self.segment_stride),
+                    "segment_batches": len(segment_batches),
+                },
+                step=i,
+            )
+
+            logger.info(
+                f"[Train-Batched]: Case: {cfg.run_name}, Iteration: {i}, "
+                f"Loss: {total_loss}, Batch: {self.batch_size}"
+            )
+
+            need_global_vis = (i % cfg.vis_interval == 0) or (i == cfg.iterations - 1)
+            need_instance_vis = self.batch_vis_per_instance and (
+                (i % self.batch_vis_interval == 0) or (i == cfg.iterations - 1)
+            )
+
+            if need_global_vis or need_instance_vis:
+                self._sync_single_simulator_from_batch()
+
+            if need_global_vis:
+                video_path = f"{cfg.base_dir}/train/sim_iter{i}.mp4"
+                self.visualize_sim(save_only=True, video_path=video_path)
+                wandb.log(
+                    {
+                        "video": wandb.Video(
+                            video_path,
+                            format="mp4",
+                            fps=cfg.FPS,
+                        ),
+                    },
+                    step=i,
+                )
+
+                cur_model = {
+                    "epoch": i,
+                    "num_object_springs": self.num_object_springs,
+                    "spring_Y": torch.exp(wp.to_torch(sim.wp_spring_Y, requires_grad=False)),
+                    "collide_elas": wp.to_torch(sim.wp_collide_elas, requires_grad=False),
+                    "collide_fric": wp.to_torch(sim.wp_collide_fric, requires_grad=False),
+                    "collide_object_elas": wp.to_torch(
+                        sim.wp_collide_object_elas, requires_grad=False
+                    ),
+                    "collide_object_fric": wp.to_torch(
+                        sim.wp_collide_object_fric, requires_grad=False
+                    ),
+                    "optimizer_state_dict": self.optimizer.state_dict(),
+                }
+
+                if best_loss is None or total_loss < best_loss:
+                    if best_loss is not None:
+                        old_best_model_path = f"{cfg.base_dir}/train/best_{best_epoch}.pth"
+                        if os.path.exists(old_best_model_path):
+                            os.remove(old_best_model_path)
+                    best_loss = total_loss
+                    best_epoch = i
+                    best_model_path = f"{cfg.base_dir}/train/best_{best_epoch}.pth"
+                    torch.save(cur_model, best_model_path)
+                    logger.info(
+                        f"[Train-Batched]: Latest best model saved: epoch {best_epoch}, "
+                        f"loss {best_loss}"
+                    )
+
+                torch.save(cur_model, f"{cfg.base_dir}/train/iter_{i}.pth")
+
+            if need_instance_vis:
+                self._visualize_batch_instances(
+                    segment_batches=segment_batches,
+                    expected_segment_len=expected_segment_len,
+                    iteration=i,
+                )
+
+            total_iter_sec = time.perf_counter() - iter_wall_start
+            self._append_timing_row(
+                timing_csv_path=timing_csv_path,
+                mode="batched",
+                iteration=i,
+                train_iter_sec=train_iter_sec,
+                full_rollout_eval_sec=full_rollout_eval_sec,
+                total_iter_sec=total_iter_sec,
+                num_groups=len(segment_batches),
+                batch_size=self.batch_size,
+                segment_len=expected_segment_len,
+                segment_stride=self.segment_stride,
+                num_train_steps=total_steps,
+            )
+            logger.info(
+                "[Train-Batched-Timing]: "
+                f"Case: {cfg.run_name}, Iteration: {i}, "
+                f"train_iter_sec={train_iter_sec:.3f}, "
+                f"full_rollout_eval_sec={full_rollout_eval_sec:.3f}, "
+                f"total_iter_sec={total_iter_sec:.3f}, "
+                f"steps={total_steps}"
+            )
+
+        final_frame_loss_rows = []
+        self._append_full_rollout_loss_rows(
+            iteration=cfg.iterations,
+            total_frames=total_frames,
+            first_batch_data=segment_batches[0],
+            frame_loss_rows=final_frame_loss_rows,
+        )
+        if len(final_frame_loss_rows) > 0:
+            with open(per_frame_loss_csv_path, "a", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerows(final_frame_loss_rows)
+
+        wandb.finish()
+
+    def _atomic_save_npz(self, output_path, **arrays):
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        tmp_path = output_path + ".tmp"
+        with open(tmp_path, "wb") as f:
+            np.savez_compressed(f, **arrays)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, output_path)
+
+    def _atomic_save_json(self, output_path, data):
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        tmp_path = output_path + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, output_path)
+
+    def _write_realtime_manifest(
+        self,
+        realtime_vis_dir,
+        iteration,
+        arrays,
+    ):
+        iterations_dir = os.path.join(realtime_vis_dir, "iterations")
+        iteration_files = []
+        if os.path.isdir(iterations_dir):
+            iteration_files = sorted(
+                int(path[len("iter_") : -len(".npz")])
+                for path in os.listdir(iterations_dir)
+                if path.startswith("iter_") and path.endswith(".npz")
+            )
+
+        manifest = {
+            "case_name": cfg.run_name,
+            "latest_iteration": int(iteration),
+            "iterations": iteration_files,
+            "latest_file": "latest_window.npz",
+            "iterations_dir": "iterations",
+            "first_seen_dir": "first_seen",
+            "fps": int(cfg.FPS),
+            "image_width": int(cfg.WH[0]) if cfg.WH is not None else None,
+            "image_height": int(cfg.WH[1]) if cfg.WH is not None else None,
+            "window_starts": arrays["window_starts"].astype(int).tolist(),
+            "segment_len": int(arrays["segment_len"]),
+            "num_original_points": int(arrays["num_original_points"]),
+            "num_surface_points": int(arrays["num_surface_points"]),
+            "num_all_points": int(arrays["num_all_points"]),
+            "timestamp": float(arrays["timestamp"]),
+        }
+        self._atomic_save_json(
+            os.path.join(realtime_vis_dir, "manifest.json"),
+            manifest,
+        )
+
+    def _export_realtime_windows(
+        self,
+        realtime_vis_dir,
+        iteration,
+        window_starts,
+        batch_data,
+        pred_windows,
+        write_latest=True,
+        keep_iteration_history=True,
+    ):
+        window_starts = np.asarray(window_starts, dtype=np.int64)
+        pred_points = np.stack(pred_windows, axis=1).astype(np.float32)
+        online_frame_indices = window_starts[:, None] + np.arange(
+            pred_points.shape[1], dtype=np.int64
+        )[None, :]
+        frame_indices = online_frame_indices
+        if self.source_frame_indices is not None:
+            source_frame_indices = self.source_frame_indices
+            if torch.is_tensor(source_frame_indices):
+                source_frame_indices = (
+                    source_frame_indices.detach().cpu().numpy().astype(np.int64)
+                )
+            else:
+                source_frame_indices = np.asarray(source_frame_indices, dtype=np.int64)
+            max_online_idx = int(online_frame_indices.max())
+            if source_frame_indices.shape[0] <= max_online_idx:
+                raise ValueError(
+                    "source_frame_indices is shorter than realtime export indices: "
+                    f"len={source_frame_indices.shape[0]}, max_idx={max_online_idx}"
+                )
+            frame_indices = source_frame_indices[online_frame_indices]
+
+        gt_object_points = np.stack(
+            [
+                self.train_object_points[
+                    int(start_idx) : int(start_idx) + pred_points.shape[1]
+                ]
+                .detach()
+                .cpu()
+                .numpy()
+                .astype(np.float32)
+                for start_idx in window_starts
+            ],
+            axis=0,
+        )
+        object_colors = np.empty((0, 0, 0, 3), dtype=np.float32)
+        if self.object_colors is not None:
+            object_colors = np.stack(
+                [
+                    self.object_colors[
+                        int(start_idx) : int(start_idx) + pred_points.shape[1]
+                    ]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype(np.float32)
+                    for start_idx in window_starts
+                ],
+                axis=0,
+            )
+
+        object_visibilities = np.empty((0, 0, 0), dtype=np.bool_)
+        if self.train_object_visibilities is not None:
+            object_visibilities = np.stack(
+                [
+                    self.train_object_visibilities[
+                        int(start_idx) : int(start_idx) + pred_points.shape[1]
+                    ]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype(np.bool_)
+                    for start_idx in window_starts
+                ],
+                axis=0,
+            )
+
+        controller_points = np.empty(
+            (pred_points.shape[0], pred_points.shape[1], 0, 3), dtype=np.float32
+        )
+        if batch_data["controller_points"] is not None:
+            num_ctrl = int(self.controller_points.shape[1])
+            ctrl = batch_data["controller_points"]
+            controller_points = (
+                ctrl.reshape(ctrl.shape[0], int(batch_data["batch_size"]), num_ctrl, 3)[
+                    : pred_points.shape[1], : pred_points.shape[0]
+                ]
+                .permute(1, 0, 2, 3)
+                .detach()
+                .cpu()
+                .numpy()
+                .astype(np.float32)
+            )
+
+        latest_path = os.path.join(realtime_vis_dir, "latest_window.npz")
+        arrays = {
+            "iteration": np.array(int(iteration), dtype=np.int64),
+            "window_starts": window_starts,
+            "frame_indices": frame_indices,
+            "online_frame_indices": online_frame_indices,
+            "pred_points": pred_points,
+            "gt_object_points": gt_object_points,
+            "object_colors": object_colors,
+            "object_visibilities": object_visibilities,
+            "controller_points": controller_points,
+            "num_original_points": np.array(
+                int(self.num_original_points), dtype=np.int64
+            ),
+            "num_surface_points": np.array(
+                int(self.num_surface_points), dtype=np.int64
+            ),
+            "num_all_points": np.array(int(self.num_all_points), dtype=np.int64),
+            "batch_size": np.array(int(batch_data["batch_size"]), dtype=np.int64),
+            "real_window_count": np.array(
+                int(pred_points.shape[0]), dtype=np.int64
+            ),
+            "segment_len": np.array(int(pred_points.shape[1]), dtype=np.int64),
+            "timestamp": np.array(float(time.time()), dtype=np.float64),
+        }
+
+        first_seen_dir = os.path.join(realtime_vis_dir, "first_seen")
+        for window_idx, start in enumerate(window_starts):
+            first_seen_path = os.path.join(
+                first_seen_dir, f"window_{int(start):06d}.npz"
+            )
+            if os.path.exists(first_seen_path):
+                continue
+            self._atomic_save_npz(
+                first_seen_path,
+                iteration=np.array(int(iteration), dtype=np.int64),
+                first_iteration=np.array(int(iteration), dtype=np.int64),
+                window_start=np.array(int(start), dtype=np.int64),
+                frame_indices=frame_indices[window_idx],
+                online_frame_indices=online_frame_indices[window_idx],
+                pred_points=pred_points[window_idx],
+                gt_object_points=gt_object_points[window_idx],
+                object_colors=(
+                    object_colors[window_idx]
+                    if object_colors.shape[0] == pred_points.shape[0]
+                    else object_colors
+                ),
+                object_visibilities=(
+                    object_visibilities[window_idx]
+                    if object_visibilities.shape[0] == pred_points.shape[0]
+                    else object_visibilities
+                ),
+                controller_points=controller_points[window_idx],
+                num_original_points=arrays["num_original_points"],
+                num_surface_points=arrays["num_surface_points"],
+                num_all_points=arrays["num_all_points"],
+                segment_len=arrays["segment_len"],
+                timestamp=arrays["timestamp"],
+            )
+            logger.info(
+                "[Train-Online-Realtime]: saved first-seen snapshot "
+                f"window_start={int(start)}, iteration={int(iteration)}"
+            )
+
+        if write_latest:
+            if keep_iteration_history:
+                iteration_path = os.path.join(
+                    realtime_vis_dir,
+                    "iterations",
+                    f"iter_{int(iteration):06d}.npz",
+                )
+                self._atomic_save_npz(iteration_path, **arrays)
+            self._atomic_save_npz(latest_path, **arrays)
+            self._write_realtime_manifest(
+                realtime_vis_dir=realtime_vis_dir,
+                iteration=iteration,
+                arrays=arrays,
+            )
+
+    def train_online_batched(
+        self,
+        online_reader,
+        online_buffer,
+        start_epoch=-1,
+        poll_sec=1.0,
+        recent_window_count=8,
+        checkpoint_interval=None,
+        stop_when_finished=False,
+        save_video=False,
+        realtime_vis_dir=None,
+        realtime_vis_every=1,
+        realtime_keep_iterations=True,
+        sample_recent=True,
+    ):
+        if cfg.data_type != "real":
+            raise ValueError("train_online_batched currently supports real data only")
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+
+        if checkpoint_interval is None:
+            checkpoint_interval = int(cfg.vis_interval)
+        checkpoint_interval = int(checkpoint_interval)
+        recent_window_count = max(int(recent_window_count), int(self.batch_size))
+        realtime_vis_every = max(1, int(realtime_vis_every))
+        poll_sec = max(0.0, float(poll_sec))
+        if realtime_vis_dir is not None:
+            os.makedirs(realtime_vis_dir, exist_ok=True)
+            latest_path = os.path.join(realtime_vis_dir, "latest_window.npz")
+            first_seen_dir = os.path.join(realtime_vis_dir, "first_seen")
+            iterations_dir = os.path.join(realtime_vis_dir, "iterations")
+            manifest_path = os.path.join(realtime_vis_dir, "manifest.json")
+            if start_epoch < 0:
+                if os.path.exists(latest_path):
+                    os.remove(latest_path)
+                if os.path.exists(manifest_path):
+                    os.remove(manifest_path)
+                if os.path.isdir(first_seen_dir):
+                    shutil.rmtree(first_seen_dir)
+                if os.path.isdir(iterations_dir):
+                    shutil.rmtree(iterations_dir)
+
+        timing_csv_path = self._prepare_timing_csv(start_epoch)
+        best_loss = None
+        best_epoch = None
+        rng = np.random.default_rng(42)
+        i = start_epoch + 1
+
+        logger.info(
+            "[Train-Online]: start online batched training, "
+            f"batch_size={self.batch_size}, segment_len={self.segment_len}, "
+            f"segment_stride={self.segment_stride}, recent_window_count={recent_window_count}"
+        )
+
+        while i < cfg.iterations:
+            iter_wall_start = time.perf_counter()
+
+            new_chunks = online_reader.load_new_chunks()
+            if len(new_chunks) > 0:
+                online_buffer.append_chunks(new_chunks)
+                online_buffer.sync_to_device(cfg.device)
+                self.refresh_real_data_from_dataset()
+                logger.info(
+                    "[Train-Online]: refreshed online data, "
+                    f"frames={self._get_trainable_total_frames()}, "
+                    f"last_chunk={online_reader.last_loaded_chunk}"
+                )
+
+            total_frames = self._get_trainable_total_frames()
+            if total_frames < int(self.segment_len):
+                if online_reader.is_finished:
+                    raise RuntimeError(
+                        "Online stream finished before enough frames were available "
+                        f"for segment_len={self.segment_len}"
+                    )
+                logger.info(
+                    "[Train-Online]: waiting for frames, "
+                    f"available={total_frames}, need={self.segment_len}"
+                )
+                time.sleep(poll_sec)
+                continue
+
+            segment_starts = self._compute_segment_start_indices(total_frames)
+            if len(segment_starts) == 0:
+                if online_reader.is_finished:
+                    raise RuntimeError(
+                        "Online stream finished before any trainable windows were available"
+                    )
+                logger.info(
+                    "[Train-Online]: waiting for windows, "
+                    f"available={len(segment_starts)}, need=1"
+                )
+                time.sleep(poll_sec)
+                continue
+
+            recent_starts = segment_starts[-recent_window_count:]
+            real_batch_size = min(int(self.batch_size), len(recent_starts))
+            if sample_recent and len(recent_starts) > real_batch_size:
+                selected = rng.choice(
+                    np.asarray(recent_starts, dtype=np.int64),
+                    size=int(real_batch_size),
+                    replace=False,
+                )
+                real_start_indices = sorted(int(v) for v in selected.tolist())
+            else:
+                real_start_indices = recent_starts[-int(real_batch_size) :]
+
+            if len(real_start_indices) == 0:
+                raise RuntimeError("No real online windows selected for training")
+            padded_start_indices = list(real_start_indices)
+            while len(padded_start_indices) < int(self.batch_size):
+                padded_start_indices.append(real_start_indices[-1])
+            loss_weights = torch.zeros(
+                int(self.batch_size), dtype=torch.float32, device=cfg.device
+            )
+            loss_weights[:real_batch_size] = 1.0
+
+            batch_data = self._build_segment_batch_tensors(padded_start_indices)
+            expected_segment_len = int(batch_data["segment_len"])
+            actual_batch_size = int(batch_data["batch_size"])
+            if actual_batch_size != int(self.batch_size):
+                raise RuntimeError(
+                    f"Expected padded online batch size {self.batch_size}, "
+                    f"got {actual_batch_size}"
+                )
+
+            if (
+                self.batch_simulator is None
+                or self.batch_size_loaded != self.batch_size
+                or self.batch_segment_len_loaded != expected_segment_len
+            ):
+                logger.info(
+                    "[Train-Online]: build batched simulator with "
+                    f"batch_size={self.batch_size}, "
+                    f"segment_len={expected_segment_len}"
+                )
+                self._build_batched_simulator_for_train(batch_data=batch_data)
+                sim = self.batch_simulator
+                self.optimizer = torch.optim.Adam(
+                    [
+                        wp.to_torch(sim.wp_spring_Y),
+                        wp.to_torch(sim.wp_collide_elas),
+                        wp.to_torch(sim.wp_collide_fric),
+                        wp.to_torch(sim.wp_collide_object_elas),
+                        wp.to_torch(sim.wp_collide_object_fric),
+                    ],
+                    lr=cfg.base_lr,
+                    betas=(0.9, 0.99),
+                )
+
+            sim = self.batch_simulator
+            train_iter_start = time.perf_counter()
+            total_loss = 0.0
+            total_steps = 0
+            total_chamfer_loss = 0.0
+            total_track_loss = 0.0
+            export_realtime = realtime_vis_dir is not None and (
+                i % realtime_vis_every == 0 or i == cfg.iterations - 1
+            )
+            first_seen_needed = False
+            if realtime_vis_dir is not None:
+                first_seen_dir = os.path.join(realtime_vis_dir, "first_seen")
+                first_seen_needed = any(
+                    not os.path.exists(
+                        os.path.join(
+                            first_seen_dir, f"window_{int(start):06d}.npz"
+                        )
+                    )
+                    for start in real_start_indices
+                )
+            capture_realtime = export_realtime or first_seen_needed
+            realtime_window_starts = None
+            realtime_pred_windows = None
+            if capture_realtime:
+                realtime_window_starts = np.asarray(real_start_indices, dtype=np.int64)
+                realtime_pred_windows = [
+                    batch_data["init_object_vertices_by_batch"][
+                        : int(real_batch_size)
+                    ]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype(np.float32)
+                ]
+
+            with wp.ScopedTimer("backward_online_batched"):
+                sim.set_loss_weights(loss_weights)
+                self._load_segment_batch_into_sim(sim, batch_data)
+                sim.set_init_state(
+                    wp.from_torch(
+                        batch_data["init_object_vertices_batched"],
+                        dtype=wp.vec3,
+                        requires_grad=False,
+                    ),
+                    wp.from_torch(
+                        batch_data["init_velocities_batched"],
+                        dtype=wp.vec3,
+                        requires_grad=False,
+                    ),
+                )
+
+                for j in range(1, expected_segment_len):
+                    sim.set_controller_target(j)
+                    if sim.object_collision_flag:
+                        sim.update_collision_graph()
+
+                    if cfg.use_graph:
+                        wp.capture_launch(sim.graph)
+                    else:
+                        with sim.tape:
+                            sim.step()
+                            sim.calculate_loss()
+                        sim.tape.backward(sim.loss)
+
+                    self.optimizer.step()
+
+                    chamfer_loss = wp.to_torch(
+                        sim.chamfer_loss, requires_grad=False
+                    )
+                    track_loss = wp.to_torch(sim.track_loss, requires_grad=False)
+                    loss = wp.to_torch(sim.loss, requires_grad=False)
+                    total_chamfer_loss += chamfer_loss.item()
+                    total_track_loss += track_loss.item()
+                    total_loss += loss.item()
+                    total_steps += 1
+                    if capture_realtime:
+                        state_x = wp.to_torch(
+                            sim.wp_states[-1].wp_x, requires_grad=False
+                        )
+                        state_x = state_x.reshape(
+                            int(self.batch_size), int(self.num_all_points), 3
+                        )
+                        realtime_pred_windows.append(
+                            state_x[: int(real_batch_size)]
+                            .detach()
+                            .cpu()
+                            .numpy()
+                            .astype(np.float32)
+                        )
+
+                    if cfg.use_graph:
+                        sim.tape.zero()
+                    else:
+                        sim.tape.reset()
+                    sim.clear_loss()
+                    sim.set_init_state(sim.wp_states[-1].wp_x, sim.wp_states[-1].wp_v)
+
+            train_iter_sec = time.perf_counter() - train_iter_start
+            if total_steps == 0:
+                raise RuntimeError("No online training steps were executed")
+
+            total_loss /= total_steps
+            total_chamfer_loss /= total_steps
+            total_track_loss /= total_steps
+            if capture_realtime:
+                self._export_realtime_windows(
+                    realtime_vis_dir=realtime_vis_dir,
+                    iteration=i,
+                    window_starts=realtime_window_starts,
+                    batch_data=batch_data,
+                    pred_windows=realtime_pred_windows,
+                    write_latest=export_realtime,
+                    keep_iteration_history=realtime_keep_iterations,
+                )
+
+            wandb.log(
+                {
+                    "loss": total_loss,
+                    "chamfer_loss": total_chamfer_loss,
+                    "track_loss": total_track_loss,
+                    "online_frames": total_frames,
+                    "online_windows": len(segment_starts),
+                    "online_real_batch_size": real_batch_size,
+                    "online_target_batch_size": self.batch_size,
+                    "online_padded_batch_lanes": self.batch_size - real_batch_size,
+                    "online_last_chunk": online_reader.last_loaded_chunk,
+                    "collide_else": wp.to_torch(
+                        sim.wp_collide_elas, requires_grad=False
+                    ).item(),
+                    "collide_fric": wp.to_torch(
+                        sim.wp_collide_fric, requires_grad=False
+                    ).item(),
+                    "collide_object_elas": wp.to_torch(
+                        sim.wp_collide_object_elas, requires_grad=False
+                    ).item(),
+                    "collide_object_fric": wp.to_torch(
+                        sim.wp_collide_object_fric, requires_grad=False
+                    ).item(),
+                },
+                step=i,
+            )
+
+            logger.info(
+                f"[Train-Online]: Case: {cfg.run_name}, Iteration: {i}, "
+                f"Loss: {total_loss}, frames={total_frames}, "
+                f"batch={real_batch_size}/{self.batch_size}, "
+                f"starts={real_start_indices}, padded_starts={padded_start_indices}"
+            )
+
+            should_save = checkpoint_interval > 0 and (
+                i % checkpoint_interval == 0 or i == cfg.iterations - 1
+            )
+            if should_save:
+                self._sync_single_simulator_from_batch()
+                if save_video:
+                    video_path = f"{cfg.base_dir}/train/online_sim_iter{i}.mp4"
+                    self.visualize_sim(save_only=True, video_path=video_path)
+                    wandb.log(
+                        {
+                            "video": wandb.Video(
+                                video_path,
+                                format="mp4",
+                                fps=cfg.FPS,
+                            ),
+                        },
+                        step=i,
+                    )
+
+                cur_model = {
+                    "epoch": i,
+                    "num_object_springs": self.num_object_springs,
+                    "spring_Y": torch.exp(
+                        wp.to_torch(sim.wp_spring_Y, requires_grad=False)
+                    ),
+                    "collide_elas": wp.to_torch(
+                        sim.wp_collide_elas, requires_grad=False
+                    ),
+                    "collide_fric": wp.to_torch(
+                        sim.wp_collide_fric, requires_grad=False
+                    ),
+                    "collide_object_elas": wp.to_torch(
+                        sim.wp_collide_object_elas, requires_grad=False
+                    ),
+                    "collide_object_fric": wp.to_torch(
+                        sim.wp_collide_object_fric, requires_grad=False
+                    ),
+                    "optimizer_state_dict": self.optimizer.state_dict(),
+                    "online_frames": total_frames,
+                    "online_last_chunk": online_reader.last_loaded_chunk,
+                }
+
+                if best_loss is None or total_loss < best_loss:
+                    if best_loss is not None:
+                        old_best_model_path = (
+                            f"{cfg.base_dir}/train/best_{best_epoch}.pth"
+                        )
+                        if os.path.exists(old_best_model_path):
+                            os.remove(old_best_model_path)
+                    best_loss = total_loss
+                    best_epoch = i
+                    best_model_path = f"{cfg.base_dir}/train/best_{best_epoch}.pth"
+                    torch.save(cur_model, best_model_path)
+                    logger.info(
+                        f"[Train-Online]: latest best model saved: epoch={best_epoch}, "
+                        f"loss={best_loss}"
+                    )
+
+                torch.save(cur_model, f"{cfg.base_dir}/train/iter_{i}.pth")
+
+            total_iter_sec = time.perf_counter() - iter_wall_start
+            self._append_timing_row(
+                timing_csv_path=timing_csv_path,
+                mode="online_batched",
+                iteration=i,
+                train_iter_sec=train_iter_sec,
+                full_rollout_eval_sec=0.0,
+                total_iter_sec=total_iter_sec,
+                num_groups=1,
+                batch_size=self.batch_size,
+                segment_len=expected_segment_len,
+                segment_stride=self.segment_stride,
+                num_train_steps=total_steps,
+            )
+
+            i += 1
+            if stop_when_finished and online_reader.is_finished:
+                logger.info("[Train-Online]: stream finished; stopping training")
+                break
 
         wandb.finish()
 

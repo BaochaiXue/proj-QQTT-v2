@@ -1,4 +1,5 @@
-double_stretch_sloth,sloth,False
-double_lift_sloth,sloth,False
+single_lift_rope,rope,True
+double_lift_sloth,sloth,True
+double_stretch_sloth,sloth,True
+single_lift_dinosor,dinosor,True
 double_lift_cloth_1,cloth,False
-single_lift_rope,rope,False

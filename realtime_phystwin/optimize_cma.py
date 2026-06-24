@@ -33,12 +33,22 @@ if __name__ == "__main__":
     parser.add_argument("--case_name", type=str, required=True)
     parser.add_argument("--train_frame", type=int, required=True)
     parser.add_argument("--max_iter", type=int, default=20)
+    parser.add_argument("--batch_mode", action="store_true")
+    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--segment_len", type=int, default=10)
+    parser.add_argument("--segment_stride", type=int, default=10)
+    parser.add_argument("--batch_debug_interval", type=int, default=5)
     args = parser.parse_args()
 
     base_path = args.base_path
     case_name = args.case_name
     train_frame = args.train_frame
     max_iter = args.max_iter
+    batch_mode = args.batch_mode
+    batch_size = args.batch_size
+    segment_len = args.segment_len
+    segment_stride = args.segment_stride
+    batch_debug_interval = args.batch_debug_interval
 
     if "cloth" in case_name or "package" in case_name:
         cfg.load_from_yaml("configs/cloth.yaml")
@@ -64,5 +74,10 @@ if __name__ == "__main__":
         data_path=f"{base_path}/{case_name}/final_data.pkl",
         base_dir=base_dir,
         train_frame=train_frame,
+        batch_mode=batch_mode,
+        batch_size=batch_size,
+        segment_len=segment_len,
+        segment_stride=segment_stride,
+        batch_debug_interval=batch_debug_interval,
     )
     optimizer.optimize(max_iter=max_iter)

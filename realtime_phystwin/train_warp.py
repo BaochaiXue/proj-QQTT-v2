@@ -8,8 +8,7 @@ from argparse import ArgumentParser
 import os
 import pickle
 import json
-import csv
-import time
+import warnings
 
 
 def set_all_seeds(seed):
@@ -25,65 +24,74 @@ def set_all_seeds(seed):
 seed = 42
 set_all_seeds(seed)
 
+_WARP_SET_CTRL_WARN_PATTERN = (
+    r".*set_control_points.*configured with the option 'enable_backward=False'.*"
+)
+try:
+    from warp.utils import WarpUserWarning  # type: ignore
 
-def write_train_time_record(
-    base_dir,
-    case_name,
-    start_time,
-    end_time,
-    elapsed_seconds,
-    status,
-    args,
-    error_message="",
-):
-    train_dir = os.path.join(base_dir, "train")
-    os.makedirs(train_dir, exist_ok=True)
-
-    record = {
-        "case_name": case_name,
-        "status": status,
-        "start_time": start_time.isoformat(timespec="seconds"),
-        "end_time": end_time.isoformat(timespec="seconds"),
-        "elapsed_seconds": elapsed_seconds,
-        "elapsed_minutes": elapsed_seconds / 60.0,
-        "iterations": getattr(cfg, "iterations", None),
-        "data_type": getattr(cfg, "data_type", None),
-        "device": getattr(cfg, "device", None),
-        "train_frame": args.train_frame,
-        "error": error_message,
-    }
-
-    json_path = os.path.join(train_dir, "train_time.json")
-    with open(json_path, "w") as f:
-        json.dump(record, f, indent=2)
-
-    fieldnames = list(record.keys())
-    case_csv_path = os.path.join(train_dir, "train_time.csv")
-    with open(case_csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerow(record)
-
-    summary_path = os.path.join("experiments", "train_time_summary.csv")
-    os.makedirs(os.path.dirname(summary_path), exist_ok=True)
-    summary_exists = os.path.exists(summary_path)
-    with open(summary_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not summary_exists:
-            writer.writeheader()
-        writer.writerow(record)
-
+    warnings.filterwarnings(
+        "ignore",
+        message=_WARP_SET_CTRL_WARN_PATTERN,
+        category=WarpUserWarning,
+    )
+except Exception:
+    warnings.filterwarnings(
+        "ignore",
+        message=_WARP_SET_CTRL_WARN_PATTERN,
+        category=Warning,
+    )
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--base_path", type=str, required=True)
     parser.add_argument("--case_name", type=str, required=True)
     parser.add_argument("--train_frame", type=int, required=True)
+    parser.add_argument("--batch_mode", action="store_true")
+    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--segment_len", type=int, default=10)
+    parser.add_argument("--segment_stride", type=int, default=10)
+    parser.add_argument("--batch_vis_per_instance", action="store_true")
+    parser.add_argument("--batch_vis_interval", type=int, default=50)
+    parser.add_argument("--batch_vis_num_instances", type=int, default=1)
+    parser.add_argument("--batch_vis_num_groups", type=int, default=1)
+    parser.add_argument("--rollout_prefix_switch", action="store_true")
+    parser.add_argument("--rollout_switch_start_iter", type=int, default=50)
+    parser.add_argument("--rollout_switch_ramp_iters", type=int, default=100)
+    parser.add_argument("--rollout_replace_thresh", type=float, default=0.03)
+    parser.add_argument("--rollout_baseline_iters", type=int, default=5)
+    parser.add_argument("--rollout_baseline_ratio", type=float, default=0.8)
+    parser.add_argument("--rollout_check_len", type=int, default=5)
+    parser.add_argument("--rollout_switch_log_interval", type=int, default=10)
+    parser.add_argument("--batch_loss_weighting", action="store_true")
+    parser.add_argument("--batch_loss_weight_min", type=float, default=0.5)
+    parser.add_argument("--batch_loss_weight_max", type=float, default=2.0)
+    parser.add_argument("--batch_loss_weight_log_interval", type=int, default=10)
     args = parser.parse_args()
 
     base_path = args.base_path
     case_name = args.case_name
     train_frame = args.train_frame
+    batch_mode = args.batch_mode
+    batch_size = args.batch_size
+    segment_len = args.segment_len
+    segment_stride = args.segment_stride
+    batch_vis_per_instance = args.batch_vis_per_instance
+    batch_vis_interval = args.batch_vis_interval
+    batch_vis_num_instances = args.batch_vis_num_instances
+    batch_vis_num_groups = args.batch_vis_num_groups
+    rollout_prefix_switch = args.rollout_prefix_switch
+    rollout_switch_start_iter = args.rollout_switch_start_iter
+    rollout_switch_ramp_iters = args.rollout_switch_ramp_iters
+    rollout_replace_thresh = args.rollout_replace_thresh
+    rollout_baseline_iters = args.rollout_baseline_iters
+    rollout_baseline_ratio = args.rollout_baseline_ratio
+    rollout_check_len = args.rollout_check_len
+    rollout_switch_log_interval = args.rollout_switch_log_interval
+    batch_loss_weighting = args.batch_loss_weighting
+    batch_loss_weight_min = args.batch_loss_weight_min
+    batch_loss_weight_max = args.batch_loss_weight_max
+    batch_loss_weight_log_interval = args.batch_loss_weight_log_interval
 
     if "cloth" in case_name or "package" in case_name:
         cfg.load_from_yaml("configs/cloth.yaml")
@@ -93,7 +101,7 @@ if __name__ == "__main__":
     print(f"[DATA TYPE]: {cfg.data_type}")
 
     base_dir = f"experiments/{case_name}"
-
+ 
     # Read the first-satage optimized parameters
     # optimal_path = f"experiments_optimization/{case_name}/optimal_params.pkl"
     # assert os.path.exists(
@@ -116,37 +124,29 @@ if __name__ == "__main__":
     cfg.overlay_path = f"{base_path}/{case_name}/color"
 
     logger.set_log_file(path=base_dir, name="inv_phy_log")
-    train_start_time = datetime.now()
-    train_start_perf = time.perf_counter()
-    train_status = "success"
-    train_error = ""
-    try:
-        trainer = InvPhyTrainerWarp(
-            data_path=f"{base_path}/{case_name}/final_data.pkl",
-            base_dir=base_dir,
-            train_frame=train_frame,
-        )
-        trainer.train()
-    except Exception as exc:
-        train_status = "failed"
-        train_error = repr(exc)
-        raise
-    finally:
-        train_end_time = datetime.now()
-        train_elapsed = time.perf_counter() - train_start_perf
-        write_train_time_record(
-            base_dir=base_dir,
-            case_name=case_name,
-            start_time=train_start_time,
-            end_time=train_end_time,
-            elapsed_seconds=train_elapsed,
-            status=train_status,
-            args=args,
-            error_message=train_error,
-        )
-        logger.info(
-            "[Train-Time]: "
-            f"case={case_name}, status={train_status}, "
-            f"elapsed_seconds={train_elapsed:.2f}, "
-            f"elapsed_minutes={train_elapsed / 60.0:.2f}"
-        )
+    trainer = InvPhyTrainerWarp(
+        data_path=f"{base_path}/{case_name}/final_data.pkl",
+        base_dir=base_dir,
+        train_frame=train_frame,
+        batch_mode=batch_mode,
+        batch_size=batch_size,
+        segment_len=segment_len,
+        segment_stride=segment_stride,
+        batch_vis_per_instance=batch_vis_per_instance,
+        batch_vis_interval=batch_vis_interval,
+        batch_vis_num_instances=batch_vis_num_instances,
+        batch_vis_num_groups=batch_vis_num_groups,
+        rollout_prefix_switch=rollout_prefix_switch,
+        rollout_switch_start_iter=rollout_switch_start_iter,
+        rollout_switch_ramp_iters=rollout_switch_ramp_iters,
+        rollout_replace_thresh=rollout_replace_thresh,
+        rollout_baseline_iters=rollout_baseline_iters,
+        rollout_baseline_ratio=rollout_baseline_ratio,
+        rollout_check_len=rollout_check_len,
+        rollout_switch_log_interval=rollout_switch_log_interval,
+        batch_loss_weighting=batch_loss_weighting,
+        batch_loss_weight_min=batch_loss_weight_min,
+        batch_loss_weight_max=batch_loss_weight_max,
+        batch_loss_weight_log_interval=batch_loss_weight_log_interval,
+    )
+    trainer.train()

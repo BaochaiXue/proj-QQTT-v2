@@ -60,7 +60,7 @@ def copy_float(data: wp.array(dtype=wp.float32), origin: wp.array(dtype=wp.float
     origin[tid] = data[tid]
 
 
-@wp.kernel(enable_backward=False)
+@wp.kernel
 def set_control_points(
     num_substeps: int,
     original_control_point: wp.array(dtype=wp.vec3),
@@ -91,11 +91,14 @@ def eval_springs(
     dashpot_damping: float,
     spring_Y_min: float,
     spring_Y_max: float,
+    n_springs_single: int,
+    use_batched_rest_lengths: int,
     f: wp.array(dtype=wp.vec3),
 ):
     tid = wp.tid()
+    sid = tid % n_springs_single
 
-    if wp.exp(spring_Y[tid]) > spring_Y_min:
+    if wp.exp(spring_Y[sid]) > spring_Y_min:
 
         idx1 = springs[tid][0]
         idx2 = springs[tid][1]
@@ -113,7 +116,10 @@ def eval_springs(
             x2 = x[idx2]
             v2 = v[idx2]
 
-        rest = rest_lengths[tid]
+        if use_batched_rest_lengths != 0:
+            rest = rest_lengths[tid]
+        else:
+            rest = rest_lengths[sid]
 
         dis = x2 - x1
         dis_len = wp.length(dis)
@@ -121,7 +127,7 @@ def eval_springs(
         d = dis / wp.max(dis_len, 1e-6)
 
         spring_force = (
-            wp.clamp(wp.exp(spring_Y[tid]), low=spring_Y_min, high=spring_Y_max)
+            wp.clamp(wp.exp(spring_Y[sid]), low=spring_Y_min, high=spring_Y_max)
             * (dis_len / rest - 1.0)
             * d
         )
@@ -171,6 +177,7 @@ def loop(
     v: wp.array(dtype=wp.vec3),
     masses: wp.array(dtype=wp.float32),
     masks: wp.array(dtype=wp.int32),
+    num_object_points_single: int,
     collision_dist: float,
     clamp_collide_object_elas: float,
     clamp_collide_object_fric: float,
@@ -182,8 +189,12 @@ def loop(
 
     valid_count = float(0.0)
     J_sum = wp.vec3(0.0, 0.0, 0.0)
+    inst_i = i // num_object_points_single
     for k in range(collision_number[i]):
         index = collision_indices[i][k]
+        inst_j = index // num_object_points_single
+        if inst_j != inst_i:
+            continue
         x2 = x[index]
         v2 = v[index]
         m2 = masses[index]
@@ -230,6 +241,7 @@ def loop(
 def update_potential_collision(
     x: wp.array(dtype=wp.vec3),
     masks: wp.array(dtype=wp.int32),
+    num_object_points_single: int,
     collision_dist: float,
     grid: wp.uint64,
     collision_indices: wp.array2d(dtype=wp.int32),
@@ -242,10 +254,14 @@ def update_potential_collision(
 
     x1 = x[i]
     mask1 = masks[i]
+    inst_i = i // num_object_points_single
 
     neighbors = wp.hash_grid_query(grid, x1, collision_dist * 5.0)
     for index in neighbors:
         if index != i:
+            inst_j = index // num_object_points_single
+            if inst_j != inst_i:
+                continue
             x2 = x[index]
             mask2 = masks[index]
 
@@ -268,6 +284,7 @@ def object_collision(
     collision_dist: float,
     collision_indices: wp.array2d(dtype=wp.int32),
     collision_number: wp.array(dtype=wp.int32),
+    num_object_points_single: int,
     v_new: wp.array(dtype=wp.vec3),
 ):
     tid = wp.tid()
@@ -286,6 +303,7 @@ def object_collision(
         v,
         masses,
         masks,
+        num_object_points_single,
         collision_dist,
         clamp_collide_object_elas,
         clamp_collide_object_fric,
@@ -355,11 +373,15 @@ def compute_distances(
     pred: wp.array(dtype=wp.vec3),
     gt: wp.array(dtype=wp.vec3),
     gt_mask: wp.array(dtype=wp.int32),
+    num_object_points_single: int,
+    num_original_points_single: int,
     distances: wp.array2d(dtype=float),
 ):
     i, j = wp.tid()
     if gt_mask[i] == 1:
-        dist = wp.length(gt[i] - pred[j])
+        batch_idx = i // num_original_points_single
+        pred_idx = batch_idx * num_object_points_single + j
+        dist = wp.length(gt[i] - pred[pred_idx])
         distances[i, j] = dist
     else:
         distances[i, j] = 1e6
@@ -385,17 +407,29 @@ def compute_chamfer_loss(
     pred: wp.array(dtype=wp.vec3),
     gt: wp.array(dtype=wp.vec3),
     gt_mask: wp.array(dtype=wp.int32),
-    num_valid: int,
+    num_valid_per_batch: wp.array(dtype=wp.int32),
+    batch_size: int,
     neigh_indices: wp.array(dtype=wp.int32),
+    num_object_points_single: int,
+    num_original_points_single: int,
     loss_weight: float,
+    window_loss_weights: wp.array(dtype=wp.float32),
     chamfer_loss: wp.array(dtype=float),
+    chamfer_loss_per_batch: wp.array(dtype=wp.float32),
 ):
     i = wp.tid()
     if gt_mask[i] == 1:
-        min_pred = pred[neigh_indices[i]]
+        batch_idx = i // num_original_points_single
+        min_pred = pred[batch_idx * num_object_points_single + neigh_indices[i]]
         min_dist = wp.length(min_pred - gt[i])
-        final_min_dist = loss_weight * min_dist * min_dist / float(num_valid)
-        wp.atomic_add(chamfer_loss, 0, final_min_dist)
+        denom = wp.max(num_valid_per_batch[batch_idx], 1)
+        final_min_dist_per_batch = loss_weight * min_dist * min_dist / float(denom)
+        wp.atomic_add(chamfer_loss_per_batch, batch_idx, final_min_dist_per_batch)
+        wp.atomic_add(
+            chamfer_loss,
+            0,
+            window_loss_weights[batch_idx] * final_min_dist_per_batch / float(batch_size),
+        )
 
 
 @wp.kernel
@@ -403,16 +437,24 @@ def compute_track_loss(
     pred: wp.array(dtype=wp.vec3),
     gt: wp.array(dtype=wp.vec3),
     gt_mask: wp.array(dtype=wp.int32),
-    num_valid: int,
+    num_valid_per_batch: wp.array(dtype=wp.int32),
+    batch_size: int,
+    num_object_points_single: int,
+    num_original_points_single: int,
     loss_weight: float,
+    window_loss_weights: wp.array(dtype=wp.float32),
     track_loss: wp.array(dtype=float),
+    track_loss_per_batch: wp.array(dtype=wp.float32),
 ):
     i = wp.tid()
     if gt_mask[i] == 1:
+        batch_idx = i // num_original_points_single
+        local_idx = i - batch_idx * num_original_points_single
+        pred_idx = batch_idx * num_object_points_single + local_idx
         # Calculate the smooth l1 loss modifed from fvcore.nn.smooth_l1_loss
-        pred_x = pred[i][0]
-        pred_y = pred[i][1]
-        pred_z = pred[i][2]
+        pred_x = pred[pred_idx][0]
+        pred_y = pred[pred_idx][1]
+        pred_z = pred[pred_idx][2]
         gt_x = gt[i][0]
         gt_y = gt[i][1]
         gt_z = gt[i][2]
@@ -438,11 +480,16 @@ def compute_track_loss(
 
         temp_track_loss = temp_track_loss_x + temp_track_loss_y + temp_track_loss_z
 
-        average_factor = float(num_valid) * 3.0
+        denom = wp.max(num_valid_per_batch[batch_idx], 1)
+        average_factor = float(denom) * 3.0
 
-        final_track_loss = loss_weight * temp_track_loss / average_factor
-
-        wp.atomic_add(track_loss, 0, final_track_loss)
+        final_track_loss_per_batch = loss_weight * temp_track_loss / average_factor
+        wp.atomic_add(track_loss_per_batch, batch_idx, final_track_loss_per_batch)
+        wp.atomic_add(
+            track_loss,
+            0,
+            window_loss_weights[batch_idx] * final_track_loss_per_batch / float(batch_size),
+        )
 
 
 @wp.kernel(enable_backward=False)
@@ -465,10 +512,13 @@ def compute_acc_loss(
     v1: wp.array(dtype=wp.vec3),
     v2: wp.array(dtype=wp.vec3),
     prev_acc: wp.array(dtype=wp.vec3),
-    num_object_points: int,
+    num_object_points_single: int,
+    batch_size: int,
     acc_count: wp.array(dtype=wp.int32),
     acc_weight: float,
+    window_loss_weights: wp.array(dtype=wp.float32),
     acc_loss: wp.array(dtype=wp.float32),
+    acc_loss_per_batch: wp.array(dtype=wp.float32),
 ):
     if acc_count[0] == 1:
         # Calculate the smooth l1 loss modifed from fvcore.nn.smooth_l1_loss
@@ -503,11 +553,15 @@ def compute_acc_loss(
 
         temp_acc_loss = temp_acc_loss_x + temp_acc_loss_y + temp_acc_loss_z
 
-        average_factor = float(num_object_points) * 3.0
-
-        final_acc_loss = acc_weight * temp_acc_loss / average_factor
-
-        wp.atomic_add(acc_loss, 0, final_acc_loss)
+        batch_idx = tid // num_object_points_single
+        average_factor = float(num_object_points_single) * 3.0
+        final_acc_loss_per_batch = acc_weight * temp_acc_loss / average_factor
+        wp.atomic_add(acc_loss_per_batch, batch_idx, final_acc_loss_per_batch)
+        wp.atomic_add(
+            acc_loss,
+            0,
+            window_loss_weights[batch_idx] * final_acc_loss_per_batch / float(batch_size),
+        )
 
 
 @wp.kernel
@@ -520,12 +574,30 @@ def compute_final_loss(
     loss[0] = chamfer_loss[0] + track_loss[0] + acc_loss[0]
 
 
+@wp.kernel(enable_backward=False)
+def compute_final_loss_per_batch(
+    chamfer_loss_per_batch: wp.array(dtype=wp.float32),
+    track_loss_per_batch: wp.array(dtype=wp.float32),
+    acc_loss_per_batch: wp.array(dtype=wp.float32),
+    loss_per_batch: wp.array(dtype=wp.float32),
+):
+    tid = wp.tid()
+    loss_per_batch[tid] = (
+        chamfer_loss_per_batch[tid]
+        + track_loss_per_batch[tid]
+        + acc_loss_per_batch[tid]
+    )
+
+
 @wp.kernel
 def compute_simple_loss(
     pred: wp.array(dtype=wp.vec3),
     gt: wp.array(dtype=wp.vec3),
-    num_object_points: int,
+    num_object_points_single: int,
+    batch_size: int,
+    window_loss_weights: wp.array(dtype=wp.float32),
     loss: wp.array(dtype=wp.float32),
+    loss_per_batch: wp.array(dtype=wp.float32),
 ):
     # Calculate the smooth l1 loss modifed from fvcore.nn.smooth_l1_loss
     tid = wp.tid()
@@ -558,14 +630,57 @@ def compute_simple_loss(
 
     temp_simple_loss = temp_simple_loss_x + temp_simple_loss_y + temp_simple_loss_z
 
-    average_factor = float(num_object_points) * 3.0
-
-    final_simple_loss = temp_simple_loss / average_factor
-
-    wp.atomic_add(loss, 0, final_simple_loss)
+    batch_idx = tid // num_object_points_single
+    average_factor = float(num_object_points_single) * 3.0
+    final_simple_loss_per_batch = temp_simple_loss / average_factor
+    wp.atomic_add(loss_per_batch, batch_idx, final_simple_loss_per_batch)
+    wp.atomic_add(
+        loss,
+        0,
+        window_loss_weights[batch_idx] * final_simple_loss_per_batch / float(batch_size),
+    )
 
 
 class SpringMassSystemWarp:
+    def _build_batched_springs(self, init_springs):
+        """Tile single-instance springs to batched global indices."""
+        if self.batch_size == 1:
+            return init_springs.contiguous()
+
+        springs = init_springs.to(dtype=torch.int64)
+        batched = []
+        for b in range(self.batch_size):
+            s = springs.clone()
+
+            # Endpoint 0
+            e0_obj = s[:, 0] < self.num_object_points_single
+            s[e0_obj, 0] += b * self.num_object_points_single
+            if self.num_control_points_single > 0:
+                s[~e0_obj, 0] = (
+                    self.num_object_points_total
+                    + b * self.num_control_points_single
+                    + (s[~e0_obj, 0] - self.num_object_points_single)
+                )
+
+            # Endpoint 1
+            e1_obj = s[:, 1] < self.num_object_points_single
+            s[e1_obj, 1] += b * self.num_object_points_single
+            if self.num_control_points_single > 0:
+                s[~e1_obj, 1] = (
+                    self.num_object_points_total
+                    + b * self.num_control_points_single
+                    + (s[~e1_obj, 1] - self.num_object_points_single)
+                )
+
+            batched.append(s)
+
+        return torch.cat(batched, dim=0).to(dtype=torch.int32, device=init_springs.device)
+
+    def _compute_num_valid_per_batch(self, mask):
+        """Compute per-batch valid counts from a flattened [B*N_single] mask."""
+        mask_i32 = mask.int().reshape(self.batch_size, self.num_original_points_single)
+        return mask_i32.sum(dim=1).to(dtype=torch.int32, device=self.device)
+
     def __init__(
         self,
         init_vertices,
@@ -584,6 +699,11 @@ class SpringMassSystemWarp:
         init_masks=None,
         collision_dist=0.02,
         init_velocities=None,
+        batch_size=1,
+        num_object_points_single=None,
+        num_control_points_single=None,
+        num_original_points_single=None,
+        num_surface_points_single=None,
         num_object_points=None,
         num_surface_points=None,
         num_original_points=None,
@@ -594,11 +714,73 @@ class SpringMassSystemWarp:
         gt_object_points=None,
         gt_object_visibilities=None,
         gt_object_motions_valid=None,
+        loss_weights=None,
         self_collision=False,
         disable_backward=False,
     ):
         logger.info(f"[SIMULATION]: Initialize the Spring-Mass System")
         self.device = cfg.device
+        self.batch_size = int(batch_size)
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+
+        # Keep both single-instance counts and total (batched) counts.
+        if num_object_points is None and num_object_points_single is None:
+            raise ValueError(
+                "Either num_object_points or num_object_points_single must be provided"
+            )
+        if num_object_points_single is None:
+            if num_object_points % self.batch_size != 0:
+                raise ValueError(
+                    f"num_object_points ({num_object_points}) is not divisible by "
+                    f"batch_size ({self.batch_size})"
+                )
+            num_object_points_single = num_object_points // self.batch_size
+        if num_object_points is None:
+            num_object_points = num_object_points_single * self.batch_size
+        if num_object_points != num_object_points_single * self.batch_size:
+            raise ValueError(
+                "num_object_points must equal num_object_points_single * batch_size"
+            )
+
+        num_control_points_total = (
+            controller_points.shape[1] if controller_points is not None else 0
+        )
+        if num_control_points_single is None:
+            if num_control_points_total == 0:
+                num_control_points_single = 0
+            else:
+                if num_control_points_total % self.batch_size != 0:
+                    raise ValueError(
+                        f"controller_points.shape[1] ({num_control_points_total}) is not "
+                        f"divisible by batch_size ({self.batch_size})"
+                    )
+                num_control_points_single = (
+                    num_control_points_total // self.batch_size
+                )
+        if num_control_points_total and (
+            num_control_points_total
+            != num_control_points_single * self.batch_size
+        ):
+            raise ValueError(
+                "controller_points.shape[1] must equal "
+                "num_control_points_single * batch_size"
+            )
+
+        if num_original_points_single is None and num_original_points is not None:
+            if num_original_points % self.batch_size != 0:
+                raise ValueError(
+                    f"num_original_points ({num_original_points}) is not divisible by "
+                    f"batch_size ({self.batch_size})"
+                )
+            num_original_points_single = num_original_points // self.batch_size
+        if num_surface_points_single is None and num_surface_points is not None:
+            if num_surface_points % self.batch_size != 0:
+                raise ValueError(
+                    f"num_surface_points ({num_surface_points}) is not divisible by "
+                    f"batch_size ({self.batch_size})"
+                )
+            num_surface_points_single = num_surface_points // self.batch_size
 
         # Record the parameters
         self.wp_init_vertices = wp.from_torch(
@@ -618,7 +800,10 @@ class SpringMassSystemWarp:
             )
 
         self.n_vertices = init_vertices.shape[0]
-        self.n_springs = init_springs.shape[0]
+        self.n_springs_single = init_springs.shape[0]
+        self.n_springs_total = self.n_springs_single * self.batch_size
+        # Keep compatibility with existing trainer/checkpoint logic.
+        self.n_springs = self.n_springs_single
 
         self.dt = dt
         self.num_substeps = num_substeps
@@ -632,10 +817,13 @@ class SpringMassSystemWarp:
             assert num_object_points == self.n_vertices
         else:
             assert (controller_points.shape[1] + num_object_points) == self.n_vertices
-        self.num_object_points = num_object_points
-        self.num_control_points = (
-            controller_points.shape[1] if not controller_points is None else 0
-        )
+        self.num_object_points_single = int(num_object_points_single)
+        self.num_object_points_total = int(num_object_points)
+        self.num_object_points = self.num_object_points_total
+
+        self.num_control_points_single = int(num_control_points_single)
+        self.num_control_points_total = int(num_control_points_total)
+        self.num_control_points = self.num_control_points_total
         self.controller_points = controller_points
 
         # Deal with the any collision detection
@@ -647,14 +835,22 @@ class SpringMassSystemWarp:
         if self_collision:
             assert init_masks is None
             self.object_collision_flag = 1
-            # Make all points as the collision points
+            # Make each object point collide with all other object points
+            # within the same instance.
             init_masks = torch.arange(
-                self.n_vertices, dtype=torch.int32, device=self.device
+                self.num_object_points_single, dtype=torch.int32, device=self.device
             )
 
         if self.object_collision_flag:
+            if init_masks.shape[0] == self.num_object_points_single and self.batch_size > 1:
+                init_masks = init_masks.repeat(self.batch_size)
+            if init_masks.shape[0] < self.num_object_points_total:
+                raise ValueError(
+                    f"init_masks length ({init_masks.shape[0]}) is smaller than "
+                    f"num_object_points_total ({self.num_object_points_total})"
+                )
             self.wp_masks = wp.from_torch(
-                init_masks[:num_object_points].int(),
+                init_masks[: self.num_object_points_total].int(),
                 dtype=wp.int32,
                 requires_grad=False,
             )
@@ -677,20 +873,72 @@ class SpringMassSystemWarp:
             self.gt_object_visibilities = gt_object_visibilities.int()
             self.gt_object_motions_valid = gt_object_motions_valid.int()
 
+        self.num_surface_points_single = num_surface_points_single
+        self.num_original_points_single = num_original_points_single
         self.num_surface_points = num_surface_points
         self.num_original_points = num_original_points
         if num_original_points is None:
             self.num_original_points = self.num_object_points
+        if self.num_original_points_single is None:
+            if self.num_original_points % self.batch_size != 0:
+                raise ValueError(
+                    f"num_original_points ({self.num_original_points}) is not divisible by "
+                    f"batch_size ({self.batch_size})"
+                )
+            self.num_original_points_single = (
+                self.num_original_points // self.batch_size
+            )
+        if self.num_surface_points_single is None and self.num_surface_points is not None:
+            if self.num_surface_points % self.batch_size != 0:
+                raise ValueError(
+                    f"num_surface_points ({self.num_surface_points}) is not divisible by "
+                    f"batch_size ({self.batch_size})"
+                )
+            self.num_surface_points_single = (
+                self.num_surface_points // self.batch_size
+            )
+        self.num_original_points_total = int(self.num_original_points)
+        self.num_surface_points_total = (
+            int(self.num_surface_points) if self.num_surface_points is not None else None
+        )
+        self.num_original_points = self.num_original_points_total
+        self.num_surface_points = self.num_surface_points_total
 
         # # Do some initialization to initialize the warp cuda graph
+        batched_springs = self._build_batched_springs(init_springs)
         self.wp_springs = wp.from_torch(
-            init_springs, dtype=wp.vec2i, requires_grad=False
+            batched_springs, dtype=wp.vec2i, requires_grad=False
         )
+        if init_rest_lengths.shape[0] == self.n_springs_total:
+            self.use_batched_rest_lengths = 1
+            rest_lengths_to_use = init_rest_lengths
+            self.n_rest_lengths = self.n_springs_total
+        elif init_rest_lengths.shape[0] == self.n_springs_single:
+            self.use_batched_rest_lengths = 0
+            rest_lengths_to_use = init_rest_lengths[: self.n_springs_single]
+            self.n_rest_lengths = self.n_springs_single
+        else:
+            raise ValueError(
+                "init_rest_lengths must have length "
+                f"{self.n_springs_single} or {self.n_springs_total}, "
+                f"got {init_rest_lengths.shape[0]}"
+            )
         self.wp_rest_lengths = wp.from_torch(
-            init_rest_lengths, dtype=wp.float32, requires_grad=False
+            rest_lengths_to_use.contiguous(),
+            dtype=wp.float32,
+            requires_grad=False,
         )
+        if init_masses.shape[0] == self.num_object_points_single and self.batch_size > 1:
+            init_masses = init_masses.repeat(self.batch_size)
+        if init_masses.shape[0] < self.num_object_points_total:
+            raise ValueError(
+                f"init_masses length ({init_masses.shape[0]}) is smaller than "
+                f"num_object_points_total ({self.num_object_points_total})"
+            )
         self.wp_masses = wp.from_torch(
-            init_masses[:num_object_points], dtype=wp.float32, requires_grad=False
+            init_masses[: self.num_object_points_total],
+            dtype=wp.float32,
+            requires_grad=False,
         )
         if cfg.data_type == "real":
             self.prev_acc = wp.zeros_like(self.wp_init_vertices, requires_grad=False)
@@ -710,6 +958,22 @@ class SpringMassSystemWarp:
                 dtype=wp.int32,
                 requires_grad=False,
             )
+            self.num_valid_visibilities_per_batch = self._compute_num_valid_per_batch(
+                self.gt_object_visibilities[1]
+            )
+            self.num_valid_motions_per_batch = self._compute_num_valid_per_batch(
+                self.gt_object_motions_valid[0]
+            )
+            self.wp_num_valid_visibilities = wp.from_torch(
+                self.num_valid_visibilities_per_batch.clone(),
+                dtype=wp.int32,
+                requires_grad=False,
+            )
+            self.wp_num_valid_motions = wp.from_torch(
+                self.num_valid_motions_per_batch.clone(),
+                dtype=wp.int32,
+                requires_grad=False,
+            )
             self.num_valid_visibilities = int(self.gt_object_visibilities[1].sum())
             self.num_valid_motions = int(self.gt_object_motions_valid[0].sum())
 
@@ -723,7 +987,35 @@ class SpringMassSystemWarp:
             self.chamfer_loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
             self.track_loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
             self.acc_loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
+            self.chamfer_loss_per_batch = wp.zeros(
+                self.batch_size, dtype=wp.float32, requires_grad=False
+            )
+            self.track_loss_per_batch = wp.zeros(
+                self.batch_size, dtype=wp.float32, requires_grad=False
+            )
+            self.acc_loss_per_batch = wp.zeros(
+                self.batch_size, dtype=wp.float32, requires_grad=False
+            )
         self.loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
+        self.loss_per_batch = wp.zeros(
+            self.batch_size, dtype=wp.float32, requires_grad=False
+        )
+        if loss_weights is None:
+            loss_weights = torch.ones(
+                self.batch_size, dtype=torch.float32, device=self.device
+            )
+        else:
+            loss_weights = loss_weights.to(
+                device=self.device, dtype=torch.float32
+            ).contiguous()
+            if loss_weights.shape[0] != self.batch_size:
+                raise ValueError(
+                    f"loss_weights length ({loss_weights.shape[0]}) must match "
+                    f"batch_size ({self.batch_size})"
+                )
+        self.wp_loss_weights = wp.from_torch(
+            loss_weights.contiguous(), dtype=wp.float32, requires_grad=False
+        )
 
         # Initialize the warp parameters
         self.wp_states = []
@@ -731,11 +1023,16 @@ class SpringMassSystemWarp:
             state = State(self.wp_init_velocities, self.num_control_points)
             self.wp_states.append(state)
         if cfg.data_type == "real":
+            if self.num_surface_points_single is None:
+                raise ValueError(
+                    "num_surface_points_single must be provided for real-data batched loss"
+                )
             self.distance_matrix = wp.zeros(
-                (self.num_original_points, self.num_surface_points), requires_grad=False
+                (self.num_original_points_total, self.num_surface_points_single),
+                requires_grad=False,
             )
             self.neigh_indices = wp.zeros(
-                (self.num_original_points), dtype=wp.int32, requires_grad=False
+                (self.num_original_points_total), dtype=wp.int32, requires_grad=False
             )
 
         # Parameter to be optimized
@@ -808,13 +1105,13 @@ class SpringMassSystemWarp:
             # Set the controller points
             wp.launch(
                 copy_vec3,
-                dim=self.num_control_points,
+                dim=self.num_control_points_total,
                 inputs=[self.controller_points[frame_idx - 1]],
                 outputs=[self.wp_original_control_point],
             )
             wp.launch(
                 copy_vec3,
-                dim=self.num_control_points,
+                dim=self.num_control_points_total,
                 inputs=[self.controller_points[frame_idx]],
                 outputs=[self.wp_target_control_point],
             )
@@ -823,7 +1120,7 @@ class SpringMassSystemWarp:
             # Set the target points
             wp.launch(
                 copy_vec3,
-                dim=self.num_original_points,
+                dim=self.num_original_points_total,
                 inputs=[self.gt_object_points[frame_idx]],
                 outputs=[self.wp_current_object_points],
             )
@@ -831,17 +1128,35 @@ class SpringMassSystemWarp:
             if cfg.data_type == "real":
                 wp.launch(
                     copy_int,
-                    dim=self.num_original_points,
+                    dim=self.num_original_points_total,
                     inputs=[self.gt_object_visibilities[frame_idx]],
                     outputs=[self.wp_current_object_visibilities],
                 )
                 wp.launch(
                     copy_int,
-                    dim=self.num_original_points,
+                    dim=self.num_original_points_total,
                     inputs=[self.gt_object_motions_valid[frame_idx - 1]],
                     outputs=[self.wp_current_object_motions_valid],
                 )
 
+                self.num_valid_visibilities_per_batch = self._compute_num_valid_per_batch(
+                    self.gt_object_visibilities[frame_idx]
+                )
+                self.num_valid_motions_per_batch = self._compute_num_valid_per_batch(
+                    self.gt_object_motions_valid[frame_idx - 1]
+                )
+                wp.launch(
+                    copy_int,
+                    dim=self.batch_size,
+                    inputs=[self.num_valid_visibilities_per_batch],
+                    outputs=[self.wp_num_valid_visibilities],
+                )
+                wp.launch(
+                    copy_int,
+                    dim=self.batch_size,
+                    inputs=[self.num_valid_motions_per_batch],
+                    outputs=[self.wp_num_valid_motions],
+                )
                 self.num_valid_visibilities = int(
                     self.gt_object_visibilities[frame_idx].sum()
                 )
@@ -855,13 +1170,13 @@ class SpringMassSystemWarp:
         # Set the controller points
         wp.launch(
             copy_vec3,
-            dim=self.num_control_points,
+            dim=self.num_control_points_total,
             inputs=[last_controller_interactive],
             outputs=[self.wp_original_control_point],
         )
         wp.launch(
             copy_vec3,
-            dim=self.num_control_points,
+            dim=self.num_control_points_total,
             inputs=[controller_interactive],
             outputs=[self.wp_target_control_point],
         )
@@ -869,33 +1184,33 @@ class SpringMassSystemWarp:
     def set_init_state(self, wp_x, wp_v, pure_inference=False):
         # Detach and clone and set requires_grad=True
         assert (
-            self.num_object_points == wp_x.shape[0]
-            and self.num_object_points == self.wp_states[0].wp_x.shape[0]
+            self.num_object_points_total == wp_x.shape[0]
+            and self.num_object_points_total == self.wp_states[0].wp_x.shape[0]
         )
 
         if not pure_inference:
             wp.launch(
                 copy_vec3,
-                dim=self.num_object_points,
+                dim=self.num_object_points_total,
                 inputs=[wp.clone(wp_x, requires_grad=False)],
                 outputs=[self.wp_states[0].wp_x],
             )
             wp.launch(
                 copy_vec3,
-                dim=self.num_object_points,
+                dim=self.num_object_points_total,
                 inputs=[wp.clone(wp_v, requires_grad=False)],
                 outputs=[self.wp_states[0].wp_v],
             )
         else:
             wp.launch(
                 copy_vec3,
-                dim=self.num_object_points,
+                dim=self.num_object_points_total,
                 inputs=[wp_x],
                 outputs=[self.wp_states[0].wp_x],
             )
             wp.launch(
                 copy_vec3,
-                dim=self.num_object_points,
+                dim=self.num_object_points_total,
                 inputs=[wp_v],
                 outputs=[self.wp_states[0].wp_v],
             )
@@ -915,7 +1230,7 @@ class SpringMassSystemWarp:
     def update_acc(self):
         wp.launch(
             update_acc,
-            dim=self.num_object_points,
+            dim=self.num_object_points_total,
             inputs=[
                 wp.clone(self.wp_states[0].wp_v, requires_grad=False),
                 wp.clone(self.wp_states[-1].wp_v, requires_grad=False),
@@ -929,10 +1244,11 @@ class SpringMassSystemWarp:
         self.wp_collision_number.zero_()
         wp.launch(
             update_potential_collision,
-            dim=self.num_object_points,
+            dim=self.num_object_points_total,
             inputs=[
                 self.wp_states[0].wp_x,
                 self.wp_masks,
+                self.num_object_points_single,
                 self.collision_dist,
                 self.collision_grid.id,
             ],
@@ -946,7 +1262,7 @@ class SpringMassSystemWarp:
                 # Set the control point
                 wp.launch(
                     set_control_points,
-                    dim=self.num_control_points,
+                    dim=self.num_control_points_total,
                     inputs=[
                         self.num_substeps,
                         self.wp_original_control_point,
@@ -959,19 +1275,21 @@ class SpringMassSystemWarp:
             # Calculate the spring forces
             wp.launch(
                 kernel=eval_springs,
-                dim=self.n_springs,
+                dim=self.n_springs_total,
                 inputs=[
                     self.wp_states[i].wp_x,
                     self.wp_states[i].wp_v,
                     self.wp_states[i].wp_control_x,
                     self.wp_states[i].wp_control_v,
-                    self.num_object_points,
+                    self.num_object_points_total,
                     self.wp_springs,
                     self.wp_rest_lengths,
                     self.wp_spring_Y,
                     self.dashpot_damping,
                     self.spring_Y_min,
                     self.spring_Y_max,
+                    self.n_springs_single,
+                    self.use_batched_rest_lengths,
                 ],
                 outputs=[self.wp_states[i].wp_vertice_forces],
             )
@@ -984,7 +1302,7 @@ class SpringMassSystemWarp:
             # Update the output_v using the vertive_forces
             wp.launch(
                 kernel=update_vel_from_force,
-                dim=self.num_object_points,
+                dim=self.num_object_points_total,
                 inputs=[
                     self.wp_states[i].wp_v,
                     self.wp_states[i].wp_vertice_forces,
@@ -1000,7 +1318,7 @@ class SpringMassSystemWarp:
                 # Update the wp_v_before_ground based on the collision handling
                 wp.launch(
                     kernel=object_collision,
-                    dim=self.num_object_points,
+                    dim=self.num_object_points_total,
                     inputs=[
                         self.wp_states[i].wp_x,
                         self.wp_states[i].wp_v_before_collision,
@@ -1011,6 +1329,7 @@ class SpringMassSystemWarp:
                         self.collision_dist,
                         self.wp_collision_indices,
                         self.wp_collision_number,
+                        self.num_object_points_single,
                     ],
                     outputs=[self.wp_states[i].wp_v_before_ground],
                 )
@@ -1018,7 +1337,7 @@ class SpringMassSystemWarp:
             # Update the x and v
             wp.launch(
                 kernel=integrate_ground_collision,
-                dim=self.num_object_points,
+                dim=self.num_object_points_total,
                 inputs=[
                     self.wp_states[i].wp_x,
                     self.wp_states[i].wp_v_before_ground,
@@ -1035,62 +1354,85 @@ class SpringMassSystemWarp:
         # Precompute the distances matrix for the chamfer loss
         wp.launch(
             compute_distances,
-            dim=(self.num_original_points, self.num_surface_points),
+            dim=(self.num_original_points_total, self.num_surface_points_single),
             inputs=[
                 self.wp_states[-1].wp_x,
                 self.wp_current_object_points,
                 self.wp_current_object_visibilities,
+                self.num_object_points_single,
+                self.num_original_points_single,
             ],
             outputs=[self.distance_matrix],
         )
 
         wp.launch(
             compute_neigh_indices,
-            dim=self.num_original_points,
+            dim=self.num_original_points_total,
             inputs=[self.distance_matrix],
             outputs=[self.neigh_indices],
         )
 
         wp.launch(
             compute_chamfer_loss,
-            dim=self.num_original_points,
+            dim=self.num_original_points_total,
             inputs=[
                 self.wp_states[-1].wp_x,
                 self.wp_current_object_points,
                 self.wp_current_object_visibilities,
-                self.num_valid_visibilities,
+                self.wp_num_valid_visibilities,
+                self.batch_size,
                 self.neigh_indices,
+                self.num_object_points_single,
+                self.num_original_points_single,
                 cfg.chamfer_weight,
+                self.wp_loss_weights,
             ],
-            outputs=[self.chamfer_loss],
+            outputs=[self.chamfer_loss, self.chamfer_loss_per_batch],
         )
 
         # Compute the tracking loss
         wp.launch(
             compute_track_loss,
-            dim=self.num_original_points,
+            dim=self.num_original_points_total,
             inputs=[
                 self.wp_states[-1].wp_x,
                 self.wp_current_object_points,
                 self.wp_current_object_motions_valid,
-                self.num_valid_motions,
+                self.wp_num_valid_motions,
+                self.batch_size,
+                self.num_object_points_single,
+                self.num_original_points_single,
                 cfg.track_weight,
+                self.wp_loss_weights,
             ],
-            outputs=[self.track_loss],
+            outputs=[self.track_loss, self.track_loss_per_batch],
         )
 
         wp.launch(
             compute_acc_loss,
-            dim=self.num_object_points,
+            dim=self.num_object_points_total,
             inputs=[
                 self.wp_states[0].wp_v,
                 self.wp_states[-1].wp_v,
                 self.prev_acc,
-                self.num_object_points,
+                self.num_object_points_single,
+                self.batch_size,
                 self.acc_count,
                 cfg.acc_weight,
+                self.wp_loss_weights,
             ],
-            outputs=[self.acc_loss],
+            outputs=[self.acc_loss, self.acc_loss_per_batch],
+        )
+
+        wp.launch(
+            compute_final_loss_per_batch,
+            dim=self.batch_size,
+            inputs=[
+                self.chamfer_loss_per_batch,
+                self.track_loss_per_batch,
+                self.acc_loss_per_batch,
+            ],
+            outputs=[self.loss_per_batch],
         )
 
         wp.launch(
@@ -1103,13 +1445,15 @@ class SpringMassSystemWarp:
     def calculate_simple_loss(self):
         wp.launch(
             compute_simple_loss,
-            dim=self.num_object_points,
+            dim=self.num_object_points_total,
             inputs=[
                 self.wp_states[-1].wp_x,
                 self.wp_current_object_points,
-                self.num_object_points,
+                self.num_object_points_single,
+                self.batch_size,
+                self.wp_loss_weights,
             ],
-            outputs=[self.loss],
+            outputs=[self.loss, self.loss_per_batch],
         )
 
     def clear_loss(self):
@@ -1119,7 +1463,11 @@ class SpringMassSystemWarp:
             self.chamfer_loss.zero_()
             self.track_loss.zero_()
             self.acc_loss.zero_()
+            self.chamfer_loss_per_batch.zero_()
+            self.track_loss_per_batch.zero_()
+            self.acc_loss_per_batch.zero_()
         self.loss.zero_()
+        self.loss_per_batch.zero_()
 
     # Functions used to load the parmeters
     def set_spring_Y(self, spring_Y):
@@ -1134,9 +1482,17 @@ class SpringMassSystemWarp:
     def set_rest_lengths(self, rest_lengths):
         wp.launch(
             copy_float,
-            dim=self.n_springs,
+            dim=self.n_rest_lengths,
             inputs=[rest_lengths],
             outputs=[self.wp_rest_lengths],
+        )
+
+    def set_loss_weights(self, loss_weights):
+        wp.launch(
+            copy_float,
+            dim=self.batch_size,
+            inputs=[loss_weights.contiguous()],
+            outputs=[self.wp_loss_weights],
         )
 
     def set_collide(self, collide_elas, collide_fric):

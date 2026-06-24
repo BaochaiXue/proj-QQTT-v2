@@ -30,16 +30,9 @@ def checkpoint_output_name(path):
     return f"{stem}.pkl"
 
 
-def torch_load_checkpoint(model_path):
-    try:
-        return torch.load(model_path, map_location=cfg.device, weights_only=False)
-    except TypeError:
-        return torch.load(model_path, map_location=cfg.device)
-
-
 def load_checkpoint_into_simulator(trainer, model_path):
     logger.info(f"[Inference-By-Checkpoint]: load {model_path}")
-    checkpoint = torch_load_checkpoint(model_path)
+    checkpoint = torch.load(model_path, map_location=cfg.device)
 
     spring_Y = checkpoint["spring_Y"]
     collide_elas = checkpoint["collide_elas"]
@@ -97,29 +90,29 @@ def rollout_vertices(trainer):
     return torch.stack(vertices, dim=0).numpy()
 
 
-def build_trainer(base_path, case_name, experiments_dir):
+def build_trainer(base_path, case_name):
     if "cloth" in case_name or "package" in case_name:
         cfg.load_from_yaml("configs/cloth.yaml")
     else:
         cfg.load_from_yaml("configs/real.yaml")
 
-    base_dir = os.path.join(experiments_dir, case_name)
+    base_dir = f"experiments/{case_name}"
 
-    with open(os.path.join(base_path, case_name, "calibrate.pkl"), "rb") as f:
+    with open(f"{base_path}/{case_name}/calibrate.pkl", "rb") as f:
         c2ws = pickle.load(f)
     w2cs = [np.linalg.inv(c2w) for c2w in c2ws]
     cfg.c2ws = np.array(c2ws)
     cfg.w2cs = np.array(w2cs)
 
-    with open(os.path.join(base_path, case_name, "metadata.json"), "r") as f:
+    with open(f"{base_path}/{case_name}/metadata.json", "r") as f:
         metadata = json.load(f)
     cfg.intrinsics = np.array(metadata["intrinsics"])
     cfg.WH = metadata["WH"]
-    cfg.overlay_path = os.path.join(base_path, case_name, "color")
+    cfg.overlay_path = f"{base_path}/{case_name}/color"
 
     logger.set_log_file(path=base_dir, name="inference_by_checkpoint_log")
     return InvPhyTrainerWarp(
-        data_path=os.path.join(base_path, case_name, "final_data.pkl"),
+        data_path=f"{base_path}/{case_name}/final_data.pkl",
         base_dir=base_dir,
         pure_inference_mode=True,
     )
@@ -161,7 +154,7 @@ def run_case(args, case_name):
         f"[CASE] {case_name}: {len(checkpoint_paths)} checkpoints, "
         f"output={out_dir}"
     )
-    trainer = build_trainer(args.base_path, case_name, args.experiments_dir)
+    trainer = build_trainer(args.base_path, case_name)
 
     for checkpoint_path in checkpoint_paths:
         out_path = os.path.join(out_dir, checkpoint_output_name(checkpoint_path))

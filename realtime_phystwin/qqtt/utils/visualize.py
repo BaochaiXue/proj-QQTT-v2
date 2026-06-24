@@ -18,6 +18,7 @@ def visualize_pc(
     save_video=False,
     save_path=None,
     vis_cam_idx=0,
+    frame_start_idx=0,
 ):
     # Deprecated function, use visualize_pc instead
     FPS = cfg.FPS
@@ -133,8 +134,10 @@ def visualize_pc(
             if cfg.overlay_path is not None:
                 # Get the mask where the pixel is white
                 mask = np.all(frame == [255, 255, 255], axis=-1)
-                image_path = f"{cfg.overlay_path}/{vis_cam_idx}/{i}.png"
+                image_path = f"{cfg.overlay_path}/{vis_cam_idx}/{frame_start_idx + i}.png"
                 overlay = cv2.imread(image_path)
+                if overlay is None:
+                    raise FileNotFoundError(f"Cannot read overlay image: {image_path}")
                 overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
                 frame[mask] = overlay[mask]
             # Convert RGB to BGR
